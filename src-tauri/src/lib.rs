@@ -56,6 +56,7 @@ pub fn run() {
             commands::start_record,
             commands::stop_record,
             commands::reregister_shortcuts,
+            commands::validate_shortcut,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

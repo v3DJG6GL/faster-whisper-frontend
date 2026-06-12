@@ -3,8 +3,22 @@ import { Mic, Check, Info, Keyboard, RefreshCw, Square } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Kbd, Segmented, Select, SettingRow, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
-import { listAudioDevices, startMicTest, stopMicTest, onAudioLevel } from "@/lib/api";
-import type { AudioDevice } from "@/lib/types";
+import { listAudioDevices, startMicTest, stopMicTest, onAudioLevel, validateShortcut } from "@/lib/api";
+import type { AudioDevice, DictationModeId } from "@/lib/types";
+
+/** Map a KeyboardEvent.code to an accelerator key token (null = unsupported). */
+function codeToToken(code: string): string | null {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
+  const map: Record<string, string> = {
+    Space: "Space",
+    Enter: "Enter",
+    Tab: "Tab",
+    Backquote: "`",
+  };
+  return map[code] ?? null;
+}
 
 const TABS = ["General", "Audio", "Recording", "Shortcuts", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
@@ -104,6 +118,37 @@ export default function Settings() {
   const modes = useApp((st) => st.modes);
   const profiles = useApp((st) => st.profiles);
   const updateMode = useApp((st) => st.updateMode);
+  const [capturing, setCapturing] = useState<DictationModeId | null>(null);
+
+  // Key-capture for rebinding: grab the next combo, validate it, save it.
+  useEffect(() => {
+    if (!capturing) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setCapturing(null);
+        return;
+      }
+      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return; // wait for a real key
+      const token = codeToToken(e.code);
+      if (!token) return;
+      const mods: string[] = [];
+      if (e.ctrlKey) mods.push("Ctrl");
+      if (e.altKey) mods.push("Alt");
+      if (e.shiftKey) mods.push("Shift");
+      if (e.metaKey) mods.push("Super");
+      const accel = [...mods, token].join("+");
+      const mode = capturing;
+      void validateShortcut(accel)
+        .then((ok) => {
+          if (ok) updateMode(mode, { hotkey: accel });
+        })
+        .finally(() => setCapturing(null));
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [capturing, updateMode]);
 
   return (
     <div className="mx-auto flex max-w-[880px] gap-8 px-10 py-12">
@@ -216,9 +261,17 @@ export default function Settings() {
                 </div>
                 <div className="mt-5 flex items-center justify-between gap-4 border-t border-line pt-4">
                   <div className="flex items-center gap-3">
-                    <HotkeyChips hotkey={m.hotkey} />
-                    <Button variant="ghost" size="sm">
-                      <Keyboard className="size-4" /> Rebind
+                    {capturing === m.mode ? (
+                      <span className="font-mono text-[12px] text-accent">Press a key combo… (Esc to cancel)</span>
+                    ) : (
+                      <HotkeyChips hotkey={m.hotkey} />
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCapturing(capturing === m.mode ? null : m.mode)}
+                    >
+                      <Keyboard className="size-4" /> {capturing === m.mode ? "Cancel" : "Rebind"}
                     </Button>
                   </div>
                   <div className="flex items-center gap-2">

@@ -183,3 +183,10 @@ pub fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
     crate::triggers::register_from_config(&app, &cfg.modes);
     Ok(())
 }
+
+/// Whether an accelerator string can be registered as a global shortcut.
+#[tauri::command]
+pub fn validate_shortcut(accelerator: String) -> bool {
+    use std::str::FromStr;
+    tauri_plugin_global_shortcut::Shortcut::from_str(&accelerator).is_ok()
+}

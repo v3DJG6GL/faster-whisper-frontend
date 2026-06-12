@@ -143,6 +143,12 @@ export async function reregisterShortcuts(): Promise<void> {
   await invoke("reregister_shortcuts");
 }
 
+/** Whether an accelerator (e.g. "Ctrl+Shift+Space") can be registered as a global shortcut. */
+export async function validateShortcut(accelerator: string): Promise<boolean> {
+  if (!isTauri) return true;
+  return invoke<boolean>("validate_shortcut", { accelerator });
+}
+
 export interface TriggerEvent {
   mode: "hold" | "handsfree";
   action: "start" | "stop" | "toggle";
