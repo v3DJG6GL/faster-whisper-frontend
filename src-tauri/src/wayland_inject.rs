@@ -51,8 +51,17 @@ mod imp {
         }
     }
 
+    /// Map a character to an XKB keysym. Latin-1 (incl. äöüß) uses the bare
+    /// codepoint — which IS the standard keysym and is reliably injectable —
+    /// while higher codepoints use the Unicode keysym range. Newline/tab map to
+    /// Return/Tab.
     fn char_to_keysym(c: char) -> i32 {
-        (0x0100_0000_u32 | c as u32) as i32
+        match c {
+            '\n' | '\r' => KEYSYM_RETURN,
+            '\t' => 0xFF09, // Tab
+            c if (c as u32) <= 0xFF => c as i32,
+            c => (0x0100_0000_u32 | c as u32) as i32,
+        }
     }
 
     pub async fn type_text(
@@ -120,7 +129,9 @@ mod imp {
                 .await
                 .map_err(|e| e.to_string())?;
         }
-        // proxy/session drop here, after injection completes.
+        // Keep the session alive briefly so KWin finishes processing the queued
+        // events before we drop it (dropping closes the session immediately).
+        tokio::time::sleep(Duration::from_millis(120)).await;
         Ok(())
     }
 }
