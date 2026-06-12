@@ -31,6 +31,10 @@ pub fn run() {
                 .with_handler(triggers::handle_shortcut)
                 .build(),
         )
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(audio::AudioState::default())
         .manage(session::StreamState::default())
         .manage(session::RecordState::default())
@@ -39,9 +43,19 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             tray::create(app)?;
-            if let Ok(dir) = app.path().app_config_dir() {
-                let cfg = config::load(&dir);
-                triggers::register_from_config(app.handle(), &cfg.modes);
+            let cfg = app
+                .path()
+                .app_config_dir()
+                .map(|dir| config::load(&dir))
+                .unwrap_or_default();
+            triggers::register_from_config(app.handle(), &cfg.modes);
+            // Keep the OS autostart entry in sync with the saved preference.
+            commands::sync_autostart(app.handle(), cfg.settings.general.open_at_login);
+            // Start hidden to the tray if requested (reachable via the tray menu).
+            if cfg.settings.general.start_minimized {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.hide();
+                }
             }
             Ok(())
         })

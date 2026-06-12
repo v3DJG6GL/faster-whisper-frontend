@@ -34,7 +34,17 @@ pub fn load_config(app: AppHandle) -> Config {
 #[tauri::command]
 pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     let dir = config_dir(&app)?;
-    config::save(&dir, &config).map_err(|e| e.to_string())
+    config::save(&dir, &config).map_err(|e| e.to_string())?;
+    sync_autostart(&app, config.settings.general.open_at_login);
+    Ok(())
+}
+
+/// Keep the OS "launch at login" entry in sync with the saved preference. Called
+/// on startup and whenever the config is saved.
+pub fn sync_autostart(app: &AppHandle, enabled: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+    let mgr = app.autolaunch();
+    let _ = if enabled { mgr.enable() } else { mgr.disable() };
 }
 
 #[tauri::command]
