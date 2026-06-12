@@ -26,6 +26,7 @@ mod imp {
     use tauri::{AppHandle, Manager};
 
     const KEYSYM_RETURN: i32 = 0xFF0D;
+    const KEYSYM_SHIFT_L: i32 = 0xFFE1;
 
     fn token_path(app: &AppHandle) -> Option<PathBuf> {
         app.path()
@@ -51,16 +52,22 @@ mod imp {
         }
     }
 
-    /// Map a character to an XKB keysym. Latin-1 (incl. äöüß) uses the bare
-    /// codepoint — which IS the standard keysym and is reliably injectable —
-    /// while higher codepoints use the Unicode keysym range. Newline/tab map to
-    /// Return/Tab.
-    fn char_to_keysym(c: char) -> i32 {
+    /// Map a character to a (base keysym, needs_shift) pair. We hold Shift
+    /// ourselves around the *unshifted* keysym rather than sending the shifted
+    /// keysym directly — KWin's auto-shift handling desyncs by one event. Letters
+    /// are layout-independent (Shift + lowercase = uppercase); German umlauts use
+    /// the lowercase Latin-1 keysym + Shift for the capital. Other Latin-1 chars
+    /// pass through bare; higher codepoints use the Unicode keysym range.
+    fn char_to_key(c: char) -> (i32, bool) {
         match c {
-            '\n' | '\r' => KEYSYM_RETURN,
-            '\t' => 0xFF09, // Tab
-            c if (c as u32) <= 0xFF => c as i32,
-            c => (0x0100_0000_u32 | c as u32) as i32,
+            '\n' | '\r' => (KEYSYM_RETURN, false),
+            '\t' => (0xFF09, false),
+            'A'..='Z' => (c.to_ascii_lowercase() as i32, true),
+            'Ä' => (0xE4, true),
+            'Ö' => (0xF6, true),
+            'Ü' => (0xFC, true),
+            c if (c as u32) <= 0xFF => (c as i32, false),
+            c => ((0x0100_0000_u32 | c as u32) as i32, false),
         }
     }
 
@@ -107,16 +114,31 @@ mod imp {
         }
 
         for c in text.chars() {
-            let ks = char_to_keysym(c);
+            let (ks, shift) = char_to_key(c);
+            if shift {
+                proxy
+                    .notify_keyboard_keysym(&session, KEYSYM_SHIFT_L, KeyState::Pressed, Default::default())
+                    .await
+                    .map_err(|e| e.to_string())?;
+                tokio::time::sleep(Duration::from_millis(6)).await;
+            }
             proxy
                 .notify_keyboard_keysym(&session, ks, KeyState::Pressed, Default::default())
                 .await
                 .map_err(|e| e.to_string())?;
+            tokio::time::sleep(Duration::from_millis(6)).await;
             proxy
                 .notify_keyboard_keysym(&session, ks, KeyState::Released, Default::default())
                 .await
                 .map_err(|e| e.to_string())?;
-            tokio::time::sleep(Duration::from_millis(4)).await;
+            if shift {
+                tokio::time::sleep(Duration::from_millis(6)).await;
+                proxy
+                    .notify_keyboard_keysym(&session, KEYSYM_SHIFT_L, KeyState::Released, Default::default())
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+            tokio::time::sleep(Duration::from_millis(8)).await;
         }
 
         if auto_enter {
