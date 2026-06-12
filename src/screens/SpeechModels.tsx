@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from "react";
-import { Plus, Server, Pencil, Trash2, Plug } from "lucide-react";
+import { Plus, Server, Pencil, Trash2, Plug, Loader2, Check, AlertTriangle } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
-import type { ModelProfile } from "@/lib/types";
+import { testConnection, setProfileKey, deleteProfileKey } from "@/lib/api";
+import type { ConnectionInfo, ModelProfile } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
 function blankProfile(): ModelProfile {
@@ -33,10 +34,45 @@ function Badge({ children, tone }: { children: ReactNode; tone?: "accent" | "dim
   );
 }
 
-function Editor({ initial, onSave, onCancel }: { initial: ModelProfile; onSave: (p: ModelProfile) => void; onCancel: () => void }) {
+function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={className}>
+      <label className="mb-2 block text-[12px] font-medium text-dim">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function Editor({
+  initial,
+  onSave,
+  onCancel,
+}: {
+  initial: ModelProfile;
+  onSave: (p: ModelProfile, typedKey: string) => void;
+  onCancel: () => void;
+}) {
+  const setConnection = useApp((s) => s.setConnection);
   const [p, setP] = useState<ModelProfile>(initial);
   const [key, setKey] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<ConnectionInfo | null>(null);
   const set = (patch: Partial<ModelProfile>) => setP((x) => ({ ...x, ...patch }));
+
+  const runTest = async () => {
+    setTesting(true);
+    try {
+      const info = await testConnection({
+        serverUrl: p.serverUrl,
+        profileId: p.id,
+        apiKey: key || null,
+      });
+      setResult(info);
+      setConnection(p.id, info);
+    } finally {
+      setTesting(false);
+    }
+  };
 
   return (
     <Card className="p-6">
@@ -62,9 +98,9 @@ function Editor({ initial, onSave, onCancel }: { initial: ModelProfile; onSave: 
             value={key}
             onChange={(e) => {
               setKey(e.target.value);
-              set({ hasApiKey: e.target.value.length > 0 });
+              set({ hasApiKey: e.target.value.length > 0 || initial.hasApiKey });
             }}
-            placeholder={p.hasApiKey ? "•••••••••• (stored)" : "wk_…"}
+            placeholder={initial.hasApiKey ? "•••••••••• (stored — leave blank to keep)" : "wk_…"}
           />
         </Labeled>
         <Labeled label="Language">
@@ -82,6 +118,30 @@ function Editor({ initial, onSave, onCancel }: { initial: ModelProfile; onSave: 
         </Labeled>
       </div>
 
+      {result?.ok && result.models.length > 0 && (
+        <div className="mt-4">
+          <div className="mb-2 text-[12px] font-medium text-dim">Models on this server — click to use</div>
+          <div className="flex flex-wrap gap-2">
+            {result.models.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => set({ model: m.id })}
+                className={cn(
+                  "ring-signal rounded-pill border px-3 py-1 font-mono text-[12px] transition-colors",
+                  p.model === m.id
+                    ? "border-accent bg-accent-soft text-accent"
+                    : "border-line bg-surface-2 text-dim hover:text-text",
+                )}
+              >
+                {m.id}
+                {m.loaded && <span className="ml-1.5 text-ok">●</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <Labeled label="Vocabulary / prompt (optional)" className="mt-4">
         <textarea
           value={p.prompt}
@@ -92,23 +152,45 @@ function Editor({ initial, onSave, onCancel }: { initial: ModelProfile; onSave: 
         />
       </Labeled>
 
+      {result && <ConnResult info={result} />}
+
       <div className="mt-6 flex items-center justify-between">
         <Button variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button variant="accent" onClick={() => onSave(p)}>
-          Save profile
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="default" onClick={runTest} disabled={testing}>
+            {testing ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
+            Test connection
+          </Button>
+          <Button variant="accent" onClick={() => onSave(p, key)}>
+            Save profile
+          </Button>
+        </div>
       </div>
     </Card>
   );
 }
 
-function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+function ConnResult({ info }: { info: ConnectionInfo }) {
   return (
-    <div className={className}>
-      <label className="mb-2 block text-[12px] font-medium text-dim">{label}</label>
-      {children}
+    <div
+      className={cn(
+        "mt-4 flex items-start gap-2 rounded-xl border px-3.5 py-2.5 text-[12.5px]",
+        info.ok ? "border-ok/30 bg-ok/5 text-ok" : "border-warn/30 bg-warn/5 text-warn",
+      )}
+    >
+      {info.ok ? <Check className="mt-0.5 size-4 shrink-0" /> : <AlertTriangle className="mt-0.5 size-4 shrink-0" />}
+      <div>
+        {info.ok ? (
+          <>
+            Connected — {info.models.length} model{info.models.length === 1 ? "" : "s"}
+            {info.openMode ? " · open mode (no auth)" : info.username ? ` · ${info.username}` : ""}.
+          </>
+        ) : (
+          info.error
+        )}
+      </div>
     </div>
   );
 }
@@ -118,7 +200,30 @@ export default function SpeechModels() {
   const connections = useApp((s) => s.connections);
   const upsertProfile = useApp((s) => s.upsertProfile);
   const removeProfile = useApp((s) => s.removeProfile);
+  const setConnection = useApp((s) => s.setConnection);
   const [editing, setEditing] = useState<ModelProfile | null>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
+
+  const handleTest = async (p: ModelProfile) => {
+    setTestingId(p.id);
+    try {
+      const info = await testConnection({ serverUrl: p.serverUrl, profileId: p.id });
+      setConnection(p.id, info);
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  const handleRemove = (id: string) => {
+    removeProfile(id);
+    void deleteProfileKey(id);
+  };
+
+  const handleSave = (p: ModelProfile, typedKey: string) => {
+    upsertProfile(p);
+    if (typedKey) void setProfileKey(p.id, typedKey);
+    setEditing(null);
+  };
 
   return (
     <div className="mx-auto max-w-[820px] px-10 py-12">
@@ -139,14 +244,7 @@ export default function SpeechModels() {
 
       {editing ? (
         <div className="mt-8">
-          <Editor
-            initial={editing}
-            onCancel={() => setEditing(null)}
-            onSave={(p) => {
-              upsertProfile(p);
-              setEditing(null);
-            }}
-          />
+          <Editor initial={editing} onCancel={() => setEditing(null)} onSave={handleSave} />
         </div>
       ) : (
         <>
@@ -164,6 +262,7 @@ export default function SpeechModels() {
                       <span className="truncate text-[14px] font-semibold text-text">{p.name}</span>
                       <Badge tone="accent">{p.endpoint}</Badge>
                       <Badge>{languageLabel(p.language)}</Badge>
+                      {p.hasApiKey && <Badge>key</Badge>}
                     </div>
                     <div className="mt-1 flex items-center gap-2 font-mono text-[12px] text-dim">
                       <span className="truncate">{p.serverUrl}</span>
@@ -171,18 +270,18 @@ export default function SpeechModels() {
                       <span className="text-faint">{p.model}</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 text-[12px] text-dim">
+                  <div className="flex w-24 items-center justify-end gap-1.5 text-[12px] text-dim" title={conn?.error}>
                     <StatusDot tone={conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
-                    {conn?.ok ? "connected" : conn?.error ? "error" : "untested"}
+                    {testingId === p.id ? "testing…" : conn?.ok ? "connected" : conn?.error ? "error" : "untested"}
                   </div>
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="sm" title="Test connection">
-                      <Plug className="size-4" />
+                    <Button variant="ghost" size="sm" title="Test connection" onClick={() => handleTest(p)} disabled={testingId === p.id}>
+                      {testingId === p.id ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setEditing(p)}>
+                    <Button variant="ghost" size="sm" title="Edit" onClick={() => setEditing(p)}>
                       <Pencil className="size-4" />
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => removeProfile(p.id)}>
+                    <Button variant="ghost" size="sm" title="Remove" onClick={() => handleRemove(p.id)}>
                       <Trash2 className="size-4" />
                     </Button>
                   </div>
