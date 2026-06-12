@@ -1,9 +1,10 @@
 //! Tauri commands exposed to the web UI (config load/save + secret-store keys).
 
+use crate::audio::{self, AudioDevice, AudioState};
 use crate::config::{self, Config};
 use crate::transport;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
@@ -73,4 +74,27 @@ pub async fn transcribe_file(
     transport::batch::transcribe(&server_url, key.as_deref(), &model, &language, &prompt, &file_path)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_audio_devices() -> Vec<AudioDevice> {
+    audio::device::list_input_devices()
+}
+
+#[tauri::command]
+pub fn start_mic_test(
+    app: AppHandle,
+    state: State<AudioState>,
+    device_id: Option<String>,
+) -> Result<(), String> {
+    let handle = audio::capture::start_level_meter(app, device_id)?;
+    // Replacing the Option drops (and stops) any previous capture.
+    *state.0.lock().map_err(|_| "audio state poisoned")? = Some(handle);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_mic_test(state: State<AudioState>) -> Result<(), String> {
+    *state.0.lock().map_err(|_| "audio state poisoned")? = None;
+    Ok(())
 }
