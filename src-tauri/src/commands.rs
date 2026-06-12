@@ -174,3 +174,12 @@ pub fn stop_record(state: State<RecordState>) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Re-read config and re-register global hotkeys (call after hotkeys change).
+#[tauri::command]
+pub fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
+    let dir = config_dir(&app)?;
+    let cfg = config::load(&dir);
+    crate::triggers::register_from_config(&app, &cfg.modes);
+    Ok(())
+}

@@ -22,11 +22,22 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(triggers::handle_shortcut)
+                .build(),
+        )
         .manage(audio::AudioState::default())
         .manage(session::StreamState::default())
         .manage(session::RecordState::default())
+        .manage(triggers::ShortcutRegistry::default())
         .setup(|app| {
+            use tauri::Manager;
             tray::create(app)?;
+            if let Ok(dir) = app.path().app_config_dir() {
+                let cfg = config::load(&dir);
+                triggers::register_from_config(app.handle(), &cfg.modes);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -44,6 +55,7 @@ pub fn run() {
             commands::stop_stream,
             commands::start_record,
             commands::stop_record,
+            commands::reregister_shortcuts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

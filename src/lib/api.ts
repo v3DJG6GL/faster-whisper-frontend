@@ -137,6 +137,12 @@ export async function stopRecord(): Promise<void> {
   await invoke("stop_record");
 }
 
+/** Re-register global hotkeys after the bindings change. */
+export async function reregisterShortcuts(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("reregister_shortcuts");
+}
+
 export interface TriggerEvent {
   mode: "hold" | "handsfree";
   action: "start" | "stop" | "toggle";

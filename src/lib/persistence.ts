@@ -1,5 +1,5 @@
 import { useApp } from "./store";
-import { isTauri, loadConfig, saveConfig } from "./api";
+import { isTauri, loadConfig, saveConfig, reregisterShortcuts } from "./api";
 
 /**
  * Load persisted config on startup, then auto-save (debounced) whenever
@@ -16,6 +16,7 @@ export async function initConfig(): Promise<void> {
   }
 
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let pendingModeChange = false;
   useApp.subscribe((state, prev) => {
     if (
       state.settings === prev.settings &&
@@ -24,12 +25,15 @@ export async function initConfig(): Promise<void> {
     ) {
       return;
     }
+    if (state.modes !== prev.modes) pendingModeChange = true;
     clearTimeout(timer);
     timer = setTimeout(() => {
       const s = useApp.getState();
-      saveConfig({ settings: s.settings, profiles: s.profiles, modes: s.modes }).catch((e) =>
-        console.error("saveConfig failed", e),
-      );
+      const reReg = pendingModeChange;
+      pendingModeChange = false;
+      saveConfig({ settings: s.settings, profiles: s.profiles, modes: s.modes })
+        .then(() => (reReg ? reregisterShortcuts() : undefined))
+        .catch((e) => console.error("saveConfig failed", e));
     }, 400);
   });
 }
