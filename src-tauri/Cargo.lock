@@ -1230,6 +1230,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "xkbcommon",
 ]
 
 [[package]]

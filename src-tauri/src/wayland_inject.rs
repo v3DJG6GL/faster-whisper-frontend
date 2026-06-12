@@ -1,9 +1,12 @@
-//! Direct Unicode text typing on Linux Wayland via the XDG RemoteDesktop portal.
+//! Layout-correct text typing on Linux Wayland via the XDG RemoteDesktop portal.
 //!
-//! enigo's X11/XTEST text path can't type arbitrary Unicode into native-Wayland
-//! windows (KWin's XWayland doesn't honor the keycode remapping), so on Wayland we
-//! type each character as a Unicode keysym (`0x01000000 | codepoint`) through the
-//! portal, which KWin resolves itself via `NotifyKeyboardKeysym` (no libei/EIS).
+//! enigo's X11/XTEST text path can't type into native-Wayland windows, and sending
+//! keysyms lets KWin pick a mismatched keymap (wrong symbols / y↔z). Instead we
+//! read the machine's **active** XKB layout (`setxkbmap -query`), build that keymap
+//! with libxkbcommon, look up the exact `(keycode, Shift/AltGr)` that produces each
+//! character on it, and inject those **keycodes** via `NotifyKeyboardKeycode`. The
+//! focused app interprets the keycode with the same layout, so every character —
+//! `!`, `y`/`z`, AltGr symbols — comes out right, on any layout (CH-de, FR, US, …).
 //! A persisted `restore_token` skips the consent dialog after the first grant.
 
 use tauri::AppHandle;
@@ -21,12 +24,26 @@ mod imp {
         PersistMode,
     };
     use ashpd::enumflags2::BitFlags;
+    use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::process::Command;
     use std::time::Duration;
     use tauri::{AppHandle, Manager};
+    use xkbcommon::xkb;
 
-    const KEYSYM_RETURN: i32 = 0xFF0D;
-    const KEYSYM_SHIFT_L: i32 = 0xFFE1;
+    // evdev key codes (Linux input-event-codes), which the portal expects.
+    const EVDEV_OFFSET: u32 = 8; // xkb keycode = evdev code + 8
+    const KEY_TAB: i32 = 15;
+    const KEY_ENTER: i32 = 28;
+    const KEY_LEFTSHIFT: i32 = 42;
+    const KEY_RIGHTALT: i32 = 100; // AltGr / ISO_Level3_Shift
+
+    #[derive(Clone, Copy)]
+    struct KeySpec {
+        keycode: i32,
+        shift: bool,
+        altgr: bool,
+    }
 
     fn token_path(app: &AppHandle) -> Option<PathBuf> {
         app.path()
@@ -52,22 +69,78 @@ mod imp {
         }
     }
 
-    /// Map a character to a (base keysym, needs_shift) pair. We hold Shift
-    /// ourselves around the *unshifted* keysym rather than sending the shifted
-    /// keysym directly — KWin's auto-shift handling desyncs by one event. Letters
-    /// are layout-independent (Shift + lowercase = uppercase); German umlauts use
-    /// the lowercase Latin-1 keysym + Shift for the capital. Other Latin-1 chars
-    /// pass through bare; higher codepoints use the Unicode keysym range.
-    fn char_to_key(c: char) -> (i32, bool) {
+    /// The machine's active XKB layout (rules, model, layout, variant), via
+    /// `setxkbmap -query` (KWin keeps XWayland in sync with the Wayland layout).
+    fn query_layout() -> (String, String, String, String) {
+        let mut rules = "evdev".to_string();
+        let mut model = "pc105".to_string();
+        let mut layout = "us".to_string();
+        let mut variant = String::new();
+        if let Ok(out) = Command::new("setxkbmap").arg("-query").output() {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                if let Some(v) = line.strip_prefix("rules:") {
+                    rules = v.trim().to_string();
+                } else if let Some(v) = line.strip_prefix("model:") {
+                    model = v.trim().to_string();
+                } else if let Some(v) = line.strip_prefix("layout:") {
+                    layout = v.trim().to_string();
+                } else if let Some(v) = line.strip_prefix("variant:") {
+                    variant = v.trim().to_string();
+                }
+            }
+        }
+        (rules, model, layout, variant)
+    }
+
+    /// Build a character → (keycode, modifiers) map for the active layout.
+    fn build_charmap() -> Option<HashMap<char, KeySpec>> {
+        let (rules, model, layout, variant) = query_layout();
+        let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_names(
+            &ctx,
+            &rules,
+            &model,
+            &layout,
+            &variant,
+            None,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )?;
+
+        let mut map: HashMap<char, KeySpec> = HashMap::new();
+        for kc in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
+            let key = xkb::Keycode::new(kc);
+            if keymap.num_layouts_for_key(key) == 0 {
+                continue;
+            }
+            let levels = keymap.num_levels_for_key(key, 0);
+            for level in 0..levels {
+                for sym in keymap.key_get_syms_by_level(key, 0, level) {
+                    let cp = xkb::keysym_to_utf32(*sym);
+                    if cp == 0 {
+                        continue;
+                    }
+                    if let Some(ch) = char::from_u32(cp) {
+                        if ch.is_control() {
+                            continue;
+                        }
+                        // First (lowest-level) occurrence wins.
+                        map.entry(ch).or_insert(KeySpec {
+                            keycode: (kc - EVDEV_OFFSET) as i32,
+                            shift: level == 1 || level == 3,
+                            altgr: level == 2 || level == 3,
+                        });
+                    }
+                }
+            }
+        }
+        Some(map)
+    }
+
+    fn key_spec_for(c: char, map: &HashMap<char, KeySpec>) -> Option<KeySpec> {
         match c {
-            '\n' | '\r' => (KEYSYM_RETURN, false),
-            '\t' => (0xFF09, false),
-            'A'..='Z' => (c.to_ascii_lowercase() as i32, true),
-            'Ä' => (0xE4, true),
-            'Ö' => (0xF6, true),
-            'Ü' => (0xFC, true),
-            c if (c as u32) <= 0xFF => (c as i32, false),
-            c => ((0x0100_0000_u32 | c as u32) as i32, false),
+            '\n' | '\r' => Some(KeySpec { keycode: KEY_ENTER, shift: false, altgr: false }),
+            '\t' => Some(KeySpec { keycode: KEY_TAB, shift: false, altgr: false }),
+            _ => map.get(&c).copied(),
         }
     }
 
@@ -77,6 +150,8 @@ mod imp {
         text: &str,
         auto_enter: bool,
     ) -> Result<(), String> {
+        let charmap = build_charmap().ok_or("could not build a keymap for the active layout")?;
+
         // Seed the in-memory token from disk on first use.
         {
             let mut guard = state.0.lock().await;
@@ -113,46 +188,49 @@ mod imp {
             *state.0.lock().await = Some(new_token.to_string());
         }
 
+        // Inject one key event at a time. `kc!` sends a keycode press/release.
+        macro_rules! kc {
+            ($code:expr, $state:expr) => {
+                proxy
+                    .notify_keyboard_keycode(&session, $code, $state, Default::default())
+                    .await
+                    .map_err(|e| e.to_string())?
+            };
+        }
+
         for c in text.chars() {
-            let (ks, shift) = char_to_key(c);
-            if shift {
-                proxy
-                    .notify_keyboard_keysym(&session, KEYSYM_SHIFT_L, KeyState::Pressed, Default::default())
-                    .await
-                    .map_err(|e| e.to_string())?;
-                tokio::time::sleep(Duration::from_millis(6)).await;
+            let Some(spec) = key_spec_for(c, &charmap) else {
+                continue; // char not reachable on this layout — skip
+            };
+            if spec.shift {
+                kc!(KEY_LEFTSHIFT, KeyState::Pressed);
+                tokio::time::sleep(Duration::from_millis(4)).await;
             }
-            proxy
-                .notify_keyboard_keysym(&session, ks, KeyState::Pressed, Default::default())
-                .await
-                .map_err(|e| e.to_string())?;
+            if spec.altgr {
+                kc!(KEY_RIGHTALT, KeyState::Pressed);
+                tokio::time::sleep(Duration::from_millis(4)).await;
+            }
+            kc!(spec.keycode, KeyState::Pressed);
+            tokio::time::sleep(Duration::from_millis(4)).await;
+            kc!(spec.keycode, KeyState::Released);
+            if spec.altgr {
+                tokio::time::sleep(Duration::from_millis(4)).await;
+                kc!(KEY_RIGHTALT, KeyState::Released);
+            }
+            if spec.shift {
+                tokio::time::sleep(Duration::from_millis(4)).await;
+                kc!(KEY_LEFTSHIFT, KeyState::Released);
+            }
             tokio::time::sleep(Duration::from_millis(6)).await;
-            proxy
-                .notify_keyboard_keysym(&session, ks, KeyState::Released, Default::default())
-                .await
-                .map_err(|e| e.to_string())?;
-            if shift {
-                tokio::time::sleep(Duration::from_millis(6)).await;
-                proxy
-                    .notify_keyboard_keysym(&session, KEYSYM_SHIFT_L, KeyState::Released, Default::default())
-                    .await
-                    .map_err(|e| e.to_string())?;
-            }
-            tokio::time::sleep(Duration::from_millis(8)).await;
         }
 
         if auto_enter {
-            proxy
-                .notify_keyboard_keysym(&session, KEYSYM_RETURN, KeyState::Pressed, Default::default())
-                .await
-                .map_err(|e| e.to_string())?;
-            proxy
-                .notify_keyboard_keysym(&session, KEYSYM_RETURN, KeyState::Released, Default::default())
-                .await
-                .map_err(|e| e.to_string())?;
+            kc!(KEY_ENTER, KeyState::Pressed);
+            kc!(KEY_ENTER, KeyState::Released);
         }
-        // Keep the session alive briefly so KWin finishes processing the queued
-        // events before we drop it (dropping closes the session immediately).
+
+        // Keep the session alive briefly so KWin processes the queued events
+        // before we drop it (dropping closes the session immediately).
         tokio::time::sleep(Duration::from_millis(120)).await;
         Ok(())
     }

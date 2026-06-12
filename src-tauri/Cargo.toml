@@ -64,6 +64,7 @@ arboard = { version = "3.6.1", default-features = false, features = ["wayland-da
 # accepts NotifyKeyboardKeysym directly — no libei/EIS needed).
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.13", features = ["remote_desktop", "screencast"] }
+xkbcommon = "0.9.0"
 
 # NOTE: `time` is pinned to 0.3.47 in Cargo.lock. time 0.3.48 introduced a trait
 # impl that collides (E0119) with `cookie` 0.18.1 (a transitive Tauri dep). Do not
