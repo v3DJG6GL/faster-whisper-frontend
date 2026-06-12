@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod transport;
 mod tray;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -13,6 +14,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             tray::create(app)?;
             Ok(())
@@ -23,6 +25,8 @@ pub fn run() {
             commands::set_profile_key,
             commands::delete_profile_key,
             commands::app_version,
+            commands::test_connection,
+            commands::transcribe_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

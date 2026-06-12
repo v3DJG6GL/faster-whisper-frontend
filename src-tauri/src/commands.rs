@@ -1,11 +1,23 @@
 //! Tauri commands exposed to the web UI (config load/save + secret-store keys).
 
 use crate::config::{self, Config};
+use crate::transport;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
+}
+
+/// Resolve an API key: an explicit (just-typed) key wins; otherwise look it up in
+/// the OS keyring by profile id.
+fn resolve_key(explicit: Option<String>, profile_id: Option<String>) -> Option<String> {
+    if let Some(k) = explicit {
+        if !k.is_empty() {
+            return Some(k);
+        }
+    }
+    profile_id.and_then(|pid| config::keys::get(&pid))
 }
 
 #[tauri::command]
@@ -35,4 +47,30 @@ pub fn delete_profile_key(profile_id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
+}
+
+#[tauri::command]
+pub async fn test_connection(
+    server_url: String,
+    profile_id: Option<String>,
+    api_key: Option<String>,
+) -> transport::ConnectionInfo {
+    let key = resolve_key(api_key, profile_id);
+    transport::discovery::test_connection(&server_url, key.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn transcribe_file(
+    server_url: String,
+    profile_id: Option<String>,
+    api_key: Option<String>,
+    model: String,
+    language: String,
+    prompt: String,
+    file_path: String,
+) -> Result<transport::batch::BatchResult, String> {
+    let key = resolve_key(api_key, profile_id);
+    transport::batch::transcribe(&server_url, key.as_deref(), &model, &language, &prompt, &file_path)
+        .await
+        .map_err(|e| e.to_string())
 }

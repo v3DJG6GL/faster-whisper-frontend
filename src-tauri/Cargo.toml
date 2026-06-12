@@ -22,8 +22,13 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# HTTP client for the backend (batch transcription + model discovery). rustls to
+# avoid a system OpenSSL dependency.
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 
 # Errors / logging
 anyhow = "1"
