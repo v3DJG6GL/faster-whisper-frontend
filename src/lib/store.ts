@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   AppSettings,
+  Config,
   ConnectionInfo,
   DictationStatus,
   ModelProfile,
@@ -75,6 +76,9 @@ interface AppState {
   updateMode: (mode: ModeBinding["mode"], patch: Partial<ModeBinding>) => void;
 
   setConnection: (profileId: string, info: ConnectionInfo) => void;
+
+  /** Replace settings/profiles/modes from the persisted config (on startup). */
+  hydrate: (cfg: Config) => void;
 }
 
 export const useApp = create<AppState>((set) => ({
@@ -117,4 +121,7 @@ export const useApp = create<AppState>((set) => ({
 
   setConnection: (profileId, info) =>
     set((s) => ({ connections: { ...s.connections, [profileId]: info } })),
+
+  hydrate: (cfg) =>
+    set({ settings: cfg.settings, profiles: cfg.profiles, modes: cfg.modes }),
 }));

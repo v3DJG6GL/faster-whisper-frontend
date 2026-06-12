@@ -83,3 +83,17 @@ export interface ConnectionInfo {
   models: ServerModel[];
   error?: string;
 }
+
+/** The persisted config blob (mirrors the Rust `Config`). */
+export interface Config {
+  settings: AppSettings;
+  profiles: ModelProfile[];
+  modes: ModeBinding[];
+}
+
+/** Result of a batch transcription. */
+export interface BatchResult {
+  text: string;
+  language?: string;
+  duration?: number;
+}
