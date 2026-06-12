@@ -1,6 +1,7 @@
 mod audio;
 mod commands;
 mod config;
+mod inject;
 mod session;
 mod transport;
 mod tray;
@@ -57,6 +58,7 @@ pub fn run() {
             commands::stop_record,
             commands::reregister_shortcuts,
             commands::validate_shortcut,
+            commands::inject_text,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

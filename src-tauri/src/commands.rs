@@ -190,3 +190,14 @@ pub fn validate_shortcut(accelerator: String) -> bool {
     use std::str::FromStr;
     tauri_plugin_global_shortcut::Shortcut::from_str(&accelerator).is_ok()
 }
+
+/// Insert text into the focused field of the active app (paste or direct typing).
+#[tauri::command]
+pub fn inject_text(
+    text: String,
+    method: String,
+    auto_enter: bool,
+    restore_clipboard: bool,
+) -> Result<(), String> {
+    crate::inject::inject(&text, &method, auto_enter, restore_clipboard)
+}

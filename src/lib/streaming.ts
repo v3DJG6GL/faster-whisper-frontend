@@ -4,7 +4,7 @@
 // sends authoritative strings, so we just replace.
 
 import { useApp } from "./store";
-import { isTauri, startStream, stopStream, startRecord, stopRecord } from "./api";
+import { isTauri, startStream, stopStream, startRecord, stopRecord, injectText } from "./api";
 import type { ModelProfile } from "./types";
 
 let wired = false;
@@ -40,8 +40,23 @@ async function ensureListeners(): Promise<void> {
     } else if (e.payload === "closed") {
       // Don't clobber an error — `error` is followed immediately by `closed`, and
       // we want the error to stay visible until the next attempt.
-      if (useApp.getState().status === "error") setDictation({ level: 0 });
-      else setDictation({ status: "idle", level: 0 });
+      const st = useApp.getState();
+      if (st.status === "error") {
+        setDictation({ level: 0 });
+        return;
+      }
+      setDictation({ status: "idle", level: 0 });
+      // Inject the final transcript into the focused app.
+      const text = committedDoc.trim();
+      const g = st.settings.general;
+      if (text && g.autoPaste) {
+        void injectText({
+          text,
+          method: g.insertMethod,
+          autoEnter: g.autoEnter,
+          restoreClipboard: g.restoreClipboard,
+        });
+      }
     }
   });
 

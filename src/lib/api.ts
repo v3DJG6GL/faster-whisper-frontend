@@ -149,6 +149,22 @@ export async function validateShortcut(accelerator: string): Promise<boolean> {
   return invoke<boolean>("validate_shortcut", { accelerator });
 }
 
+/** Insert text into the focused field of the active app. */
+export async function injectText(args: {
+  text: string;
+  method: "paste" | "direct";
+  autoEnter: boolean;
+  restoreClipboard: boolean;
+}): Promise<void> {
+  if (!isTauri) return;
+  await invoke("inject_text", {
+    text: args.text,
+    method: args.method,
+    autoEnter: args.autoEnter,
+    restoreClipboard: args.restoreClipboard,
+  });
+}
+
 export interface TriggerEvent {
   mode: "hold" | "handsfree";
   action: "start" | "stop" | "toggle";

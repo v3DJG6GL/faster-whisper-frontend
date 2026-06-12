@@ -57,6 +57,8 @@ parking_lot = "0.12"
 # Secure API-key storage in the OS secret store. Pure-Rust crypto + zbus-based
 # Secret Service on Linux (no system libdbus/openssl needed); native stores elsewhere.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+enigo = "0.6.1"
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 
 # NOTE: `time` is pinned to 0.3.47 in Cargo.lock. time 0.3.48 introduced a trait
 # impl that collides (E0119) with `cookie` 0.18.1 (a transitive Tauri dep). Do not
