@@ -4,6 +4,7 @@ use crate::audio::{self, AudioDevice, AudioState};
 use crate::config::{self, Config};
 use crate::session::{self, RecordParams, RecordState, StartParams, StreamState};
 use crate::transport;
+use crate::wayland_inject::WaylandTokenState;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
 
@@ -192,12 +193,24 @@ pub fn validate_shortcut(accelerator: String) -> bool {
 }
 
 /// Insert text into the focused field of the active app (paste or direct typing).
+/// Direct typing on Wayland routes through the RemoteDesktop portal; everything
+/// else uses enigo (clipboard paste, or direct on X11/Windows).
 #[tauri::command]
-pub fn inject_text(
+pub async fn inject_text(
+    app: AppHandle,
+    wl: State<'_, WaylandTokenState>,
     text: String,
     method: String,
     auto_enter: bool,
     restore_clipboard: bool,
 ) -> Result<(), String> {
-    crate::inject::inject(&text, &method, auto_enter, restore_clipboard)
+    if method == "direct" && crate::inject::is_wayland() {
+        crate::wayland_inject::type_text(&app, wl.inner(), &text, auto_enter).await
+    } else {
+        tokio::task::spawn_blocking(move || {
+            crate::inject::inject(&text, &method, auto_enter, restore_clipboard)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
 }

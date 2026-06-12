@@ -59,7 +59,7 @@ struct ShortcutTarget {
 }
 
 #[derive(Default)]
-pub struct ShortcutRegistry(pub Mutex<HashMap<Shortcut, ShortcutTarget>>);
+pub struct ShortcutRegistry(Mutex<HashMap<Shortcut, ShortcutTarget>>);
 
 fn mode_id_str(m: DictationModeId) -> &'static str {
     match m {

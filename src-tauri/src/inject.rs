@@ -12,6 +12,19 @@
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::time::Duration;
 
+/// True on a native Wayland session (where enigo's X11 text path can't type
+/// Unicode into native windows — direct typing routes through the portal instead).
+pub fn is_wayland() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("WAYLAND_DISPLAY").is_some()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 pub fn inject(
     text: &str,
     method: &str,

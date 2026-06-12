@@ -6,6 +6,7 @@ mod session;
 mod transport;
 mod tray;
 mod triggers;
+mod wayland_inject;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -32,6 +33,7 @@ pub fn run() {
         .manage(session::StreamState::default())
         .manage(session::RecordState::default())
         .manage(triggers::ShortcutRegistry::default())
+        .manage(wayland_inject::WaylandTokenState::default())
         .setup(|app| {
             use tauri::Manager;
             tray::create(app)?;
