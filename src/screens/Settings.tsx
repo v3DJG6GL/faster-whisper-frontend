@@ -1,0 +1,204 @@
+import { useState } from "react";
+import { Mic, Check, Info, Keyboard } from "lucide-react";
+import { useApp } from "@/lib/store";
+import { Button, Card, Kbd, Segmented, Select, SettingRow, StatusDot, Toggle } from "@/components/ui";
+
+const TABS = ["General", "Audio", "Recording", "Shortcuts", "Permissions"] as const;
+type Tab = (typeof TABS)[number];
+
+function HotkeyChips({ hotkey }: { hotkey: string }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {hotkey.split("+").map((k, i) => (
+        <span key={i} className="inline-flex items-center gap-1">
+          {i > 0 && <span className="text-faint">+</span>}
+          <Kbd>{k}</Kbd>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+export default function Settings() {
+  const [tab, setTab] = useState<Tab>("General");
+  const s = useApp((st) => st.settings);
+  const updateGeneral = useApp((st) => st.updateGeneral);
+  const updateRecording = useApp((st) => st.updateRecording);
+  const updateSettings = useApp((st) => st.updateSettings);
+  const modes = useApp((st) => st.modes);
+  const profiles = useApp((st) => st.profiles);
+  const updateMode = useApp((st) => st.updateMode);
+
+  return (
+    <div className="mx-auto flex max-w-[880px] gap-8 px-10 py-12">
+      <div className="w-[150px] shrink-0">
+        <h1 className="mb-5 font-display text-[22px] font-bold tracking-tight text-text">Settings</h1>
+        <div className="flex flex-col gap-0.5">
+          {TABS.map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={
+                "ring-signal rounded-lg px-3 py-2 text-left text-[13px] font-medium transition-colors " +
+                (tab === t ? "bg-surface-2 text-text" : "text-dim hover:text-text")
+              }
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="min-w-0 flex-1">
+        {tab === "General" && (
+          <Card className="px-6">
+            <SettingRow title="Open at login" desc="Launch automatically when you sign in.">
+              <Toggle checked={s.general.openAtLogin} onChange={(v) => updateGeneral({ openAtLogin: v })} />
+            </SettingRow>
+            <SettingRow title="Start minimized to tray" desc="Start hidden; reach it from the system tray.">
+              <Toggle checked={s.general.startMinimized} onChange={(v) => updateGeneral({ startMinimized: v })} />
+            </SettingRow>
+            <SettingRow title="Insert automatically" desc="Place the transcription into the focused field as soon as it’s ready.">
+              <Toggle checked={s.general.autoPaste} onChange={(v) => updateGeneral({ autoPaste: v })} />
+            </SettingRow>
+            <SettingRow
+              title="Insertion method"
+              desc="Clipboard paste is the most reliable. Direct typing never touches the clipboard, but can struggle with some keyboard layouts."
+            >
+              <Select
+                value={s.general.insertMethod}
+                onChange={(v) => updateGeneral({ insertMethod: v })}
+                options={[
+                  { value: "paste", label: "Clipboard paste" },
+                  { value: "direct", label: "Direct typing" },
+                ]}
+                className="w-52"
+              />
+            </SettingRow>
+            <SettingRow title="Press Enter after" desc="Send a Return key once the text is inserted.">
+              <Toggle checked={s.general.autoEnter} onChange={(v) => updateGeneral({ autoEnter: v })} />
+            </SettingRow>
+            <SettingRow
+              title="Restore clipboard afterward"
+              desc="Put your previous clipboard contents back once the paste is done."
+            >
+              <Toggle checked={s.general.restoreClipboard} onChange={(v) => updateGeneral({ restoreClipboard: v })} />
+            </SettingRow>
+            <SettingRow title="Sound cues" desc="A short tone when dictation starts and stops." last>
+              <Toggle checked={s.general.soundEffects} onChange={(v) => updateGeneral({ soundEffects: v })} />
+            </SettingRow>
+          </Card>
+        )}
+
+        {tab === "Audio" && (
+          <Card className="px-6">
+            <SettingRow title="Microphone" desc="Audio input device used for dictation." last>
+              <Select
+                value={s.microphoneId ?? "default"}
+                onChange={(v) => updateSettings({ microphoneId: v === "default" ? null : v })}
+                options={[{ value: "default", label: "System default" }]}
+                className="w-56"
+              />
+            </SettingRow>
+          </Card>
+        )}
+
+        {tab === "Recording" && (
+          <Card className="px-6">
+            <SettingRow title="Overlay position" desc="Where the dictation chip sits on screen while you talk.">
+              <Segmented
+                value={s.recording.indicatorPosition}
+                onChange={(v) => updateRecording({ indicatorPosition: v })}
+                options={[
+                  { value: "top", label: "Top" },
+                  { value: "bottom", label: "Bottom" },
+                  { value: "off", label: "Off" },
+                ]}
+              />
+            </SettingRow>
+            <SettingRow title="Keep audio recordings" desc="Save a .wav of each dictation locally.">
+              <Toggle checked={s.recording.saveRecordings} onChange={(v) => updateRecording({ saveRecordings: v })} />
+            </SettingRow>
+            <SettingRow title="Silence other apps while recording" desc="Mute system audio for the duration of a dictation.">
+              <Toggle checked={s.recording.muteSystemAudio} onChange={(v) => updateRecording({ muteSystemAudio: v })} />
+            </SettingRow>
+            <SettingRow
+              title="Live transcript in overlay"
+              desc="Show words appear in the chip as you speak (streaming profiles only)."
+              last
+            >
+              <Toggle checked={s.recording.realtimePreview} onChange={(v) => updateRecording({ realtimePreview: v })} />
+            </SettingRow>
+          </Card>
+        )}
+
+        {tab === "Shortcuts" && (
+          <div className="flex flex-col gap-4">
+            {modes.map((m) => (
+              <Card key={m.mode} className="p-5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-[14px] font-semibold text-text">
+                      {m.mode === "hold" ? "Push-to-talk" : "Latch"}
+                    </div>
+                    <div className="mt-0.5 text-[12.5px] text-dim">
+                      {m.mode === "hold"
+                        ? "Hold the hotkey while you speak; release to stop."
+                        : "Tap once to start, tap again to stop."}
+                    </div>
+                  </div>
+                  <Toggle checked={m.enabled} onChange={(v) => updateMode(m.mode, { enabled: v })} />
+                </div>
+                <div className="mt-5 flex items-center justify-between gap-4 border-t border-line pt-4">
+                  <div className="flex items-center gap-3">
+                    <HotkeyChips hotkey={m.hotkey} />
+                    <Button variant="ghost" size="sm">
+                      <Keyboard className="size-4" /> Rebind
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] text-faint">Profile</span>
+                    <Select
+                      value={m.profileId ?? ""}
+                      onChange={(v) => updateMode(m.mode, { profileId: v || null })}
+                      options={profiles.map((p) => ({ value: p.id, label: p.name }))}
+                      className="w-44"
+                    />
+                  </div>
+                </div>
+              </Card>
+            ))}
+            <div className="flex items-start gap-2 px-1 text-[12px] text-faint">
+              <Info className="mt-0.5 size-3.5 shrink-0" />
+              On Wayland, press-&-hold needs the optional evdev backend (Permissions). Toggle works everywhere; you can
+              also bind these in your desktop’s shortcut settings.
+            </div>
+          </div>
+        )}
+
+        {tab === "Permissions" && (
+          <Card className="px-6">
+            <SettingRow title="Microphone access" desc="Required to capture your voice.">
+              <span className="inline-flex items-center gap-1.5 text-[12.5px] text-ok">
+                <StatusDot tone="ok" /> Granted
+              </span>
+            </SettingRow>
+            <SettingRow
+              title="Press-&-hold on Wayland (input group)"
+              desc="Optional: enables true hold-to-talk by reading /dev/input. Adds your user to the input group via a udev rule."
+              last
+            >
+              <Button variant="default" size="sm">
+                <Mic className="size-4" /> Set up
+              </Button>
+            </SettingRow>
+          </Card>
+        )}
+
+        <div className="mt-5 flex items-center gap-2 px-1 font-mono text-[11px] text-faint">
+          <Check className="size-3.5 text-ok" /> changes apply immediately
+        </div>
+      </div>
+    </div>
+  );
+}

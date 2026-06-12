@@ -1,0 +1,191 @@
+@import "tailwindcss";
+
+/* ──────────────────────────────────────────────────────────────────────────
+   "Signal" — a precision voice instrument.
+   Warm dark-first chrome · neutral warm grays · single electric-amber signal
+   accent (VU-meter lineage, deliberately not purple/cyan) · coral reserved for
+   the live recording pulse. Type: Hubot Sans (display) / Mona Sans (UI) /
+   Geist Mono (numerics & readouts) — all OFL.
+   ────────────────────────────────────────────────────────────────────────── */
+
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-panel: var(--c-panel);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-text: var(--c-text);
+  --color-dim: var(--c-dim);
+  --color-faint: var(--c-faint);
+  --color-accent: var(--c-accent);
+  --color-accent-ink: var(--c-accent-ink);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-rec: var(--c-rec);
+  --color-ok: var(--c-ok);
+  --color-warn: var(--c-warn);
+
+  --font-display: "Hubot Sans Variable", system-ui, sans-serif;
+  --font-sans: "Mona Sans Variable", system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SFMono-Regular", monospace;
+
+  --radius-card: 14px;
+  --radius-pill: 999px;
+}
+
+:root,
+[data-theme="dark"] {
+  --c-bg: #0e0d0b;
+  --c-panel: #141210;
+  --c-surface: #1a1714;
+  --c-surface-2: #221e19;
+  --c-line: rgba(244, 238, 229, 0.08);
+  --c-line-strong: rgba(244, 238, 229, 0.16);
+  --c-text: #f3eee6;
+  --c-dim: #a89f93;
+  --c-faint: #6f675c;
+  --c-accent: #ff9e2c;
+  --c-accent-ink: #1a1207; /* text on accent fills */
+  --c-accent-soft: rgba(255, 158, 44, 0.14);
+  --c-rec: #ff5c46;
+  --c-ok: #93b76f;
+  --c-warn: #e0a33a;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --c-bg: #f4efe6;
+  --c-panel: #fbf8f1;
+  --c-surface: #fffdf9;
+  --c-surface-2: #f1eadd;
+  --c-line: rgba(30, 22, 12, 0.1);
+  --c-line-strong: rgba(30, 22, 12, 0.18);
+  --c-text: #221b13;
+  --c-dim: #6b6356;
+  --c-faint: #9a9082;
+  --c-accent: #bf6f12;
+  --c-accent-ink: #fff8ec;
+  --c-accent-soft: rgba(191, 111, 18, 0.12);
+  --c-rec: #cf3a22;
+  --c-ok: #5e8a3c;
+  --c-warn: #b9791f;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* The overlay (dictation chip) window paints its own transparent surface. */
+body[data-window="overlay"] {
+  background: transparent;
+}
+
+/* Subtle warm atmosphere behind the main app — a faint signal glow, not a gradient cliché. */
+body[data-window="main"]::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(120% 80% at 78% -10%, color-mix(in oklab, var(--c-accent) 9%, transparent), transparent 60%),
+    radial-gradient(90% 60% at -10% 110%, color-mix(in oklab, var(--c-accent) 5%, transparent), transparent 55%);
+}
+
+input,
+textarea {
+  font-family: inherit;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+::selection {
+  background: var(--c-accent-soft);
+  color: var(--c-text);
+}
+
+/* Thin, unobtrusive scrollbars that match the warm chrome. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--c-line-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--c-faint);
+  background-clip: padding-box;
+}
+
+@layer utilities {
+  .font-num {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum" 1, "zero" 1;
+  }
+  .tracking-label {
+    letter-spacing: 0.14em;
+  }
+  /* focus ring used across interactive controls */
+  .ring-signal:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--c-bg), 0 0 0 4px var(--c-accent);
+  }
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+.animate-rec-pulse {
+  animation: rec-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes chip-in {
+  from {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-chip-in {
+  animation: chip-in 0.34s cubic-bezier(0.2, 0.9, 0.2, 1);
+}
