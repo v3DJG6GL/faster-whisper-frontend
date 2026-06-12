@@ -20,11 +20,15 @@ export default function Overlay() {
   const [state, setState] = useState<ChipState>({ status: "listening", level: 0.2, partial: "" });
 
   // Keep the newest words in view: pin the preview to its right edge so older
-  // text scrolls off the left (behind a fade) instead of the latest being cut.
+  // text scrolls off the left instead of the latest being cut. The left fade is
+  // only applied while the text actually overflows (so a short word isn't faded).
   const textRef = useRef<HTMLDivElement>(null);
+  const [faded, setFaded] = useState(false);
   useEffect(() => {
     const el = textRef.current;
-    if (el) el.scrollLeft = el.scrollWidth;
+    if (!el) return;
+    el.scrollLeft = el.scrollWidth;
+    setFaded(el.scrollWidth - el.clientWidth > 2);
   }, [state.partial]);
 
   // Live updates from the Rust core when running under Tauri.
@@ -71,7 +75,7 @@ export default function Overlay() {
 
   return (
     <div className="flex h-screen w-screen items-start justify-center pt-2">
-      <div className="animate-chip-in flex w-full max-w-[440px] flex-col items-center gap-2">
+      <div className="animate-chip-in flex w-full max-w-[660px] flex-col items-center gap-2">
         {/* The pill */}
         <div className="flex h-[52px] items-center gap-3 rounded-pill border border-white/10 bg-[#16140f]/95 pl-4 pr-5 shadow-[0_10px_40px_-8px_rgba(0,0,0,0.7)] backdrop-blur-xl">
           <span
@@ -88,16 +92,20 @@ export default function Overlay() {
             tone={recording ? "rec" : "accent"}
             className="h-6 w-[88px]"
           />
-          <div className="min-w-0 max-w-[260px]">
+          <div className="min-w-0 max-w-[470px]">
             {state.partial ? (
               <div
                 ref={textRef}
                 dir="auto"
                 className="overflow-hidden whitespace-nowrap font-mono text-[12.5px] text-[#f3eee6]"
-                style={{
-                  maskImage: "linear-gradient(to right, transparent, #000 28px)",
-                  WebkitMaskImage: "linear-gradient(to right, transparent, #000 28px)",
-                }}
+                style={
+                  faded
+                    ? {
+                        maskImage: "linear-gradient(to right, transparent, #000 28px)",
+                        WebkitMaskImage: "linear-gradient(to right, transparent, #000 28px)",
+                      }
+                    : undefined
+                }
               >
                 {state.partial}
               </div>

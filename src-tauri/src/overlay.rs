@@ -22,7 +22,7 @@
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow};
 
 /// Logical size declared for the `overlay` window in tauri.conf.json.
-const CHIP_W: f64 = 460.0;
+const CHIP_W: f64 = 680.0;
 const CHIP_H: f64 = 132.0;
 /// Gap from the screen edge, in logical pixels.
 const MARGIN: f64 = 28.0;
