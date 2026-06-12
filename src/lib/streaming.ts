@@ -1,0 +1,62 @@
+// Live streaming dictation: start/stop a session and fold the Rust `stream://*`
+// events into the store (status / level / live transcript). The full live text
+// is `committed + pending` (partials) or `committed + tail` (finals) — the server
+// sends authoritative strings, so we just replace.
+
+import { useApp } from "./store";
+import { isTauri, startStream, stopStream } from "./api";
+import type { ModelProfile } from "./types";
+
+let wired = false;
+
+async function ensureListeners(): Promise<void> {
+  if (wired || !isTauri) return;
+  wired = true;
+  const { listen } = await import("@tauri-apps/api/event");
+  const setDictation = useApp.getState().setDictation;
+
+  await listen<number>("stream://level", (e) => setDictation({ level: e.payload }));
+
+  await listen<{ committed: string; pending: string }>("stream://partial", (e) =>
+    setDictation({ status: "listening", partial: e.payload.committed + e.payload.pending }),
+  );
+
+  await listen<{ committed: string; tail: string; last: boolean }>("stream://final", (e) =>
+    setDictation({ partial: e.payload.committed + e.payload.tail }),
+  );
+
+  await listen<string>("stream://status", (e) => {
+    if (e.payload === "ready") setDictation({ status: "listening" });
+    else if (e.payload === "closed") setDictation({ status: "idle", level: 0 });
+  });
+
+  await listen<string>("stream://error", (e) => {
+    console.error("stream error:", e.payload);
+    setDictation({ status: "error" });
+  });
+}
+
+export async function startLive(profile: ModelProfile, deviceId: string | null): Promise<void> {
+  await ensureListeners();
+  const setDictation = useApp.getState().setDictation;
+  setDictation({ status: "listening", partial: "", level: 0 });
+  try {
+    await startStream({
+      serverUrl: profile.serverUrl,
+      profileId: profile.id,
+      model: profile.model,
+      language: profile.language,
+      responseFormat: profile.responseFormat,
+      deviceId,
+    });
+  } catch (e) {
+    console.error("startStream failed:", e);
+    setDictation({ status: "error" });
+  }
+}
+
+export async function stopLive(): Promise<void> {
+  // The server flushes + drains; the `closed` status resets us to idle.
+  useApp.getState().setDictation({ status: "transcribing" });
+  await stopStream();
+}

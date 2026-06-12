@@ -77,6 +77,16 @@ interface AppState {
 
   setConnection: (profileId: string, info: ConnectionInfo) => void;
 
+  /** Update live dictation runtime (status / level / partial transcript). */
+  setDictation: (
+    patch: Partial<{
+      status: DictationStatus;
+      level: number;
+      partial: string;
+      activeMode: ModeBinding["mode"] | null;
+    }>,
+  ) => void;
+
   /** Replace settings/profiles/modes from the persisted config (on startup). */
   hydrate: (cfg: Config) => void;
 }
@@ -121,6 +131,8 @@ export const useApp = create<AppState>((set) => ({
 
   setConnection: (profileId, info) =>
     set((s) => ({ connections: { ...s.connections, [profileId]: info } })),
+
+  setDictation: (patch) => set(patch),
 
   hydrate: (cfg) =>
     set({ settings: cfg.settings, profiles: cfg.profiles, modes: cfg.modes }),

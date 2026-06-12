@@ -85,6 +85,32 @@ export async function onAudioLevel(cb: (level: number) => void): Promise<() => v
   return listen<number>("audio://level", (e) => cb(e.payload));
 }
 
+export async function startStream(args: {
+  serverUrl: string;
+  profileId?: string | null;
+  apiKey?: string | null;
+  model: string;
+  language: string;
+  responseFormat: string;
+  deviceId?: string | null;
+}): Promise<void> {
+  if (!isTauri) return;
+  await invoke("start_stream", {
+    serverUrl: args.serverUrl,
+    profileId: args.profileId ?? null,
+    apiKey: args.apiKey ?? null,
+    model: args.model,
+    language: args.language,
+    responseFormat: args.responseFormat,
+    deviceId: args.deviceId ?? null,
+  });
+}
+
+export async function stopStream(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("stop_stream");
+}
+
 /** Native "open file" dialog → absolute path (or null if cancelled / not in Tauri). */
 export async function pickAudioFile(): Promise<string | null> {
   if (!isTauri) return null;

@@ -1,7 +1,8 @@
-import { Mic, Radio, Hand } from "lucide-react";
+import { Mic, Radio, Hand, Square } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Card, Kbd, SectionLabel, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
+import { startLive, stopLive } from "@/lib/streaming";
 import type { ModeBinding } from "@/lib/types";
 
 function HotkeyChips({ hotkey }: { hotkey: string }) {
@@ -52,9 +53,16 @@ export default function Home() {
   const profiles = useApp((s) => s.profiles);
   const level = useApp((s) => s.level);
   const status = useApp((s) => s.status);
+  const partial = useApp((s) => s.partial);
+  const micId = useApp((s) => s.settings.microphoneId);
   const hold = modes.find((m) => m.mode === "hold")!;
   const handsfree = modes.find((m) => m.mode === "handsfree")!;
   const active = profiles.find((p) => p.id === hold.profileId) ?? profiles[0];
+  const dictating = status === "listening" || status === "transcribing";
+  const toggle = () => {
+    if (dictating) void stopLive();
+    else if (active) void startLive(active, micId);
+  };
 
   return (
     <div className="mx-auto max-w-[900px] px-10 py-12">
@@ -79,10 +87,14 @@ export default function Home() {
         <div className="flex items-center gap-6 px-8 py-7">
           <button
             type="button"
-            className="ring-signal group grid size-16 shrink-0 place-items-center rounded-full bg-accent text-accent-ink transition-transform hover:scale-105"
-            title="Press your hotkey to dictate"
+            onClick={toggle}
+            className={
+              "ring-signal grid size-16 shrink-0 place-items-center rounded-full transition-transform hover:scale-105 " +
+              (dictating ? "bg-rec text-white" : "bg-accent text-accent-ink")
+            }
+            title={dictating ? "Stop dictation" : "Start a live dictation"}
           >
-            <Mic className="size-7" />
+            {dictating ? <Square className="size-6" /> : <Mic className="size-7" />}
           </button>
           <div className="min-w-0 flex-1">
             <div className="text-[15px] text-text">
@@ -100,6 +112,25 @@ export default function Home() {
           <Readout label="language" value={active?.language ?? "auto"} last />
         </div>
       </Card>
+
+      {(dictating || partial) && (
+        <Card className="mt-4 p-5">
+          <div className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-label text-faint">
+            <Waveform
+              level={level}
+              active={dictating}
+              bars={5}
+              variant="dots"
+              tone={status === "transcribing" ? "accent" : status === "error" ? "dim" : "rec"}
+              className="h-4 w-10"
+            />
+            {status === "transcribing" ? "finalizing…" : status === "error" ? "error" : "listening"}
+          </div>
+          <div className="min-h-6 select-text whitespace-pre-wrap text-[15px] leading-relaxed text-text">
+            {partial || <span className="text-faint">…</span>}
+          </div>
+        </Card>
+      )}
 
       <SectionLabel className="mb-3 mt-10">Dictation modes</SectionLabel>
       <div className="grid grid-cols-2 gap-4">
