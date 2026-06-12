@@ -19,6 +19,14 @@ const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 export default function Overlay() {
   const [state, setState] = useState<ChipState>({ status: "listening", level: 0.2, partial: "" });
 
+  // Keep the newest words in view: pin the preview to its right edge so older
+  // text scrolls off the left (behind a fade) instead of the latest being cut.
+  const textRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = textRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [state.partial]);
+
   // Live updates from the Rust core when running under Tauri.
   useEffect(() => {
     if (!isTauri) return;
@@ -82,7 +90,15 @@ export default function Overlay() {
           />
           <div className="min-w-0 max-w-[260px]">
             {state.partial ? (
-              <div className="truncate font-mono text-[12.5px] text-[#f3eee6]" dir="auto">
+              <div
+                ref={textRef}
+                dir="auto"
+                className="overflow-hidden whitespace-nowrap font-mono text-[12.5px] text-[#f3eee6]"
+                style={{
+                  maskImage: "linear-gradient(to right, transparent, #000 28px)",
+                  WebkitMaskImage: "linear-gradient(to right, transparent, #000 28px)",
+                }}
+              >
                 {state.partial}
               </div>
             ) : (
