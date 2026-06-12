@@ -1,0 +1,46 @@
+[package]
+name = "faster-whisper-frontend"
+version = "0.1.0"
+description = "A FOSS cross-platform dictation client for a self-hosted faster-whisper server"
+authors = ["faster-whisper-frontend contributors"]
+license = "AGPL-3.0-or-later"
+edition = "2021"
+rust-version = "1.77"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "faster_whisper_frontend_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Errors / logging
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Config + identifiers + concurrency
+uuid = { version = "1", features = ["v4", "serde"] }
+parking_lot = "0.12"
+
+# Secure API-key storage in the OS secret store. Pure-Rust crypto + zbus-based
+# Secret Service on Linux (no system libdbus/openssl needed); native stores elsewhere.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+
+# NOTE: `time` is pinned to 0.3.47 in Cargo.lock. time 0.3.48 introduced a trait
+# impl that collides (E0119) with `cookie` 0.18.1 (a transitive Tauri dep). Do not
+# `cargo update -p time` past 0.3.47 until Tauri bumps `cookie`.
+[lints.rust]
+unused_crate_dependencies = "allow"
