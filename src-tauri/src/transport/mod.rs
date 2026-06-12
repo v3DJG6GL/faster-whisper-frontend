@@ -9,6 +9,7 @@ use std::time::Duration;
 
 pub mod batch;
 pub mod discovery;
+pub mod stream;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -33,6 +33,12 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "mul
 # Microphone capture (ALSA/PipeWire on Linux, WASAPI on Windows).
 cpal = "0.15"
 
+# Streaming dictation: resample to 16 kHz + WebSocket to the backend.
+rubato = "0.15"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+
 # Errors / logging
 anyhow = "1"
 thiserror = "2"

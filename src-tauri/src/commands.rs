@@ -2,6 +2,7 @@
 
 use crate::audio::{self, AudioDevice, AudioState};
 use crate::config::{self, Config};
+use crate::session::{self, StartParams, StreamState};
 use crate::transport;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
@@ -96,5 +97,41 @@ pub fn start_mic_test(
 #[tauri::command]
 pub fn stop_mic_test(state: State<AudioState>) -> Result<(), String> {
     *state.0.lock().map_err(|_| "audio state poisoned")? = None;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn start_stream(
+    app: AppHandle,
+    state: State<StreamState>,
+    server_url: String,
+    profile_id: Option<String>,
+    api_key: Option<String>,
+    model: String,
+    language: String,
+    response_format: String,
+    device_id: Option<String>,
+) -> Result<(), String> {
+    let key = resolve_key(api_key, profile_id);
+    let mut guard = state.0.lock().map_err(|_| "stream state poisoned")?;
+    *guard = None; // stop any previous session first (Drop joins capture, drains WS)
+    let sess = session::start(
+        app,
+        StartParams {
+            server_url,
+            api_key: key,
+            model,
+            language,
+            response_format,
+            device_id,
+        },
+    )?;
+    *guard = Some(sess);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_stream(state: State<StreamState>) -> Result<(), String> {
+    *state.0.lock().map_err(|_| "stream state poisoned")? = None;
     Ok(())
 }

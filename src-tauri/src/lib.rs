@@ -1,6 +1,7 @@
 mod audio;
 mod commands;
 mod config;
+mod session;
 mod transport;
 mod tray;
 
@@ -17,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(audio::AudioState::default())
+        .manage(session::StreamState::default())
         .setup(|app| {
             tray::create(app)?;
             Ok(())
@@ -32,6 +34,8 @@ pub fn run() {
             commands::list_audio_devices,
             commands::start_mic_test,
             commands::stop_mic_test,
+            commands::start_stream,
+            commands::stop_stream,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -7,6 +7,7 @@ use std::sync::Mutex;
 
 pub mod capture;
 pub mod device;
+pub mod resample;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
