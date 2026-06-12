@@ -26,8 +26,14 @@ async function ensureListeners(): Promise<void> {
   );
 
   await listen<string>("stream://status", (e) => {
-    if (e.payload === "ready") setDictation({ status: "listening", dictationError: null });
-    else if (e.payload === "closed") setDictation({ status: "idle", level: 0 });
+    if (e.payload === "ready") {
+      setDictation({ status: "listening", dictationError: null });
+    } else if (e.payload === "closed") {
+      // Don't clobber an error — `error` is followed immediately by `closed`, and
+      // we want the error to stay visible until the next attempt.
+      if (useApp.getState().status === "error") setDictation({ level: 0 });
+      else setDictation({ status: "idle", level: 0 });
+    }
   });
 
   await listen<string>("stream://error", (e) => {
