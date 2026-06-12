@@ -2,6 +2,7 @@ mod audio;
 mod commands;
 mod config;
 mod inject;
+mod overlay;
 mod session;
 mod transport;
 mod tray;
@@ -61,6 +62,8 @@ pub fn run() {
             commands::reregister_shortcuts,
             commands::validate_shortcut,
             commands::inject_text,
+            overlay::show_overlay,
+            overlay::hide_overlay,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

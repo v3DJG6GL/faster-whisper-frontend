@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
 import { useApp } from "@/lib/store";
 import { initConfig } from "@/lib/persistence";
+import { initOverlayController } from "@/lib/overlay";
 import { onTrigger } from "@/lib/api";
 import { dictate } from "@/lib/dictation";
 import Home from "@/screens/Home";
@@ -15,6 +16,7 @@ export default function App() {
 
   useEffect(() => {
     void initConfig();
+    void initOverlayController();
   }, []);
 
   // Global dictation triggers (CLI / hotkeys) → start/stop the right mode.

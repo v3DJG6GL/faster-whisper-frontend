@@ -165,6 +165,18 @@ export async function injectText(args: {
   });
 }
 
+/** Show + position the dictation chip overlay at the given screen edge. */
+export async function showOverlay(position: "top" | "bottom"): Promise<void> {
+  if (!isTauri) return;
+  await invoke("show_overlay", { position });
+}
+
+/** Hide the dictation chip overlay. */
+export async function hideOverlay(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("hide_overlay");
+}
+
 export interface TriggerEvent {
   mode: "hold" | "handsfree";
   action: "start" | "stop" | "toggle";

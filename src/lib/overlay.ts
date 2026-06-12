@@ -1,0 +1,63 @@
+// Dictation chip controller (runs in the main window). The chip is a separate
+// webview with its own JS context, so it can't read this window's store; instead
+// we broadcast the assembled `{status, level, partial}` as a `dictation://update`
+// event (the overlay listens for it) and drive the window's show/hide via Rust.
+//
+// Show/hide is gated by the Recording → indicator-position setting ("top" |
+// "bottom" | "off"). The chip lingers briefly after a session so the final
+// transcript (or an error) stays readable before it disappears.
+
+import { useApp } from "./store";
+import { isTauri, showOverlay, hideOverlay } from "./api";
+import type { DictationStatus } from "./types";
+
+const ACTIVE: DictationStatus[] = ["listening", "transcribing", "injecting"];
+
+let started = false;
+let visible = false;
+let hideTimer: ReturnType<typeof setTimeout> | undefined;
+
+export async function initOverlayController(): Promise<void> {
+  if (!isTauri || started) return;
+  started = true;
+
+  const { emit } = await import("@tauri-apps/api/event");
+
+  useApp.subscribe((state, prev) => {
+    // Forward the live chip state whenever the relevant fields change.
+    if (
+      state.status !== prev.status ||
+      state.level !== prev.level ||
+      state.partial !== prev.partial
+    ) {
+      void emit("dictation://update", {
+        status: state.status,
+        level: state.level,
+        partial: state.partial,
+      });
+    }
+
+    const pos = state.settings.recording.indicatorPosition;
+    const active = ACTIVE.includes(state.status);
+
+    if (active && pos !== "off") {
+      if (!visible) {
+        visible = true;
+        clearTimeout(hideTimer);
+        void showOverlay(pos);
+      }
+      return;
+    }
+
+    // Inactive, or the overlay is disabled — hide it (with a short linger so the
+    // final transcript / error is readable; immediately if it was turned off).
+    if (visible) {
+      clearTimeout(hideTimer);
+      const delay = pos === "off" ? 0 : state.status === "error" ? 2400 : 700;
+      hideTimer = setTimeout(() => {
+        visible = false;
+        void hideOverlay();
+      }, delay);
+    }
+  });
+}
