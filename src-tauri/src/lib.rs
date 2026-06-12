@@ -4,6 +4,7 @@ mod config;
 mod inject;
 mod overlay;
 mod session;
+mod sound;
 mod transport;
 mod tray;
 mod triggers;
@@ -64,6 +65,8 @@ pub fn run() {
             commands::inject_text,
             overlay::show_overlay,
             overlay::hide_overlay,
+            sound::play_cue,
+            tray::set_tray_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

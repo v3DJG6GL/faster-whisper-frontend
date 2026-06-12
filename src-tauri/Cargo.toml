@@ -38,6 +38,12 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "mul
 # Microphone capture (ALSA/PipeWire on Linux, WASAPI on Windows).
 cpal = "0.15"
 
+# Synthesised start/stop/error cues, played from Rust so they fire for
+# hotkey-triggered dictations (the WebView would block autoplay). Uses the same
+# cpal 0.15 backend; no audio assets to bundle. default-features off drops the
+# media decoders we don't need.
+rodio = { version = "0.20", default-features = false }
+
 # Streaming dictation: resample to 16 kHz + WebSocket to the backend.
 rubato = "0.15"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }

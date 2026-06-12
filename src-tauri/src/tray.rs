@@ -7,12 +7,15 @@ use tauri::{
     App, AppHandle, Manager,
 };
 
+/// Stable id so the tray can be looked up later to reflect dictation state.
+const TRAY_ID: &str = "fwf-tray";
+
 pub fn create(app: &App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show window", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
-    let mut builder = TrayIconBuilder::new()
+    let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("faster-whisper-frontend")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -35,4 +38,21 @@ fn show_main(app: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+/// Reflect the live dictation status in the tray tooltip. This is the reliable
+/// status cue where the overlay chip can't be pinned (GNOME / non-KDE Wayland).
+#[tauri::command]
+pub fn set_tray_state(app: AppHandle, status: String) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    let tip = match status.as_str() {
+        "listening" => "faster-whisper — recording…",
+        "transcribing" => "faster-whisper — transcribing…",
+        "injecting" => "faster-whisper — inserting…",
+        "error" => "faster-whisper — error",
+        _ => "faster-whisper-frontend",
+    };
+    let _ = tray.set_tooltip(Some(tip));
 }

@@ -177,6 +177,18 @@ export async function hideOverlay(): Promise<void> {
   await invoke("hide_overlay");
 }
 
+/** Reflect the dictation status in the tray tooltip. */
+export async function setTrayState(status: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("set_tray_state", { status });
+}
+
+/** Play a short start/stop/error cue (no-op outside Tauri). */
+export async function playCue(kind: "start" | "stop" | "error"): Promise<void> {
+  if (!isTauri) return;
+  await invoke("play_cue", { kind });
+}
+
 export interface TriggerEvent {
   mode: "hold" | "handsfree";
   action: "start" | "stop" | "toggle";

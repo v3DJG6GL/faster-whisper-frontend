@@ -8,7 +8,7 @@
 // transcript (or an error) stays readable before it disappears.
 
 import { useApp } from "./store";
-import { isTauri, showOverlay, hideOverlay } from "./api";
+import { isTauri, showOverlay, hideOverlay, setTrayState, playCue } from "./api";
 import type { DictationStatus } from "./types";
 
 const ACTIVE: DictationStatus[] = ["listening", "transcribing", "injecting"];
@@ -35,6 +35,17 @@ export async function initOverlayController(): Promise<void> {
         level: state.level,
         partial: state.partial,
       });
+    }
+
+    // On a status change, reflect it in the tray and play the matching cue —
+    // the reliable status signal where the overlay can't be pinned.
+    if (state.status !== prev.status) {
+      void setTrayState(state.status);
+      if (state.settings.general.soundEffects) {
+        if (state.status === "listening" && prev.status !== "listening") void playCue("start");
+        else if (state.status === "transcribing" && prev.status === "listening") void playCue("stop");
+        else if (state.status === "error") void playCue("error");
+      }
     }
 
     const pos = state.settings.recording.indicatorPosition;
