@@ -26,20 +26,20 @@ async function ensureListeners(): Promise<void> {
   );
 
   await listen<string>("stream://status", (e) => {
-    if (e.payload === "ready") setDictation({ status: "listening" });
+    if (e.payload === "ready") setDictation({ status: "listening", dictationError: null });
     else if (e.payload === "closed") setDictation({ status: "idle", level: 0 });
   });
 
   await listen<string>("stream://error", (e) => {
     console.error("stream error:", e.payload);
-    setDictation({ status: "error" });
+    setDictation({ status: "error", dictationError: e.payload, level: 0 });
   });
 }
 
 export async function startLive(profile: ModelProfile, deviceId: string | null): Promise<void> {
   await ensureListeners();
   const setDictation = useApp.getState().setDictation;
-  setDictation({ status: "listening", partial: "", level: 0 });
+  setDictation({ status: "listening", partial: "", level: 0, dictationError: null });
   try {
     await startStream({
       serverUrl: profile.serverUrl,
@@ -51,7 +51,7 @@ export async function startLive(profile: ModelProfile, deviceId: string | null):
     });
   } catch (e) {
     console.error("startStream failed:", e);
-    setDictation({ status: "error" });
+    setDictation({ status: "error", dictationError: String(e) });
   }
 }
 

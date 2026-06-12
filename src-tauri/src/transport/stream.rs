@@ -50,26 +50,44 @@ fn text_msg(s: String) -> Message {
 }
 
 /// Drive the stream until stopped or the socket closes. `on_event` is called for
-/// every server message (and a final `Closed`).
+/// every server message; a terminal `Closed` (and an `Error` on failure) is
+/// ALWAYS emitted on every exit path so the UI can never get stuck.
 pub async fn run<F>(
     params: StreamParams,
     mut pcm_rx: mpsc::UnboundedReceiver<Vec<f32>>,
     mut stop_rx: watch::Receiver<bool>,
     on_event: F,
-) -> anyhow::Result<()>
-where
+) where
     F: Fn(StreamEvent) + Send + 'static,
 {
-    let mut request = params.ws_url.as_str().into_client_request()?;
+    // On any setup failure, surface the error AND a terminal Closed, then bail.
+    macro_rules! fail {
+        ($msg:expr) => {{
+            on_event(StreamEvent::Error($msg));
+            on_event(StreamEvent::Closed);
+            return;
+        }};
+    }
+
+    let mut request = match params.ws_url.as_str().into_client_request() {
+        Ok(r) => r,
+        Err(e) => fail!(format!("Invalid stream URL {}: {e}", params.ws_url)),
+    };
     if let Some(k) = &params.api_key {
         if !k.is_empty() {
-            request
-                .headers_mut()
-                .insert(AUTHORIZATION, format!("Bearer {k}").parse()?);
+            match format!("Bearer {k}").parse() {
+                Ok(v) => {
+                    request.headers_mut().insert(AUTHORIZATION, v);
+                }
+                Err(e) => fail!(format!("Invalid API key: {e}")),
+            }
         }
     }
 
-    let (ws, _resp) = tokio_tungstenite::connect_async(request).await?;
+    let (ws, _resp) = match tokio_tungstenite::connect_async(request).await {
+        Ok(pair) => pair,
+        Err(e) => fail!(format!("Could not connect to {}: {e}", params.ws_url)),
+    };
     let (mut write, mut read) = ws.split();
 
     let lang = if params.language.is_empty() || params.language == "auto" {
@@ -84,9 +102,14 @@ where
         "response_format": params.response_format,
         "audio": { "format": "pcm_s16le", "sample_rate": 16000 }
     });
-    write.send(text_msg(config.to_string())).await?;
+    if let Err(e) = write.send(text_msg(config.to_string())).await {
+        fail!(format!("Failed to send stream config: {e}"));
+    }
 
-    let mut resampler = Resampler16k::new(params.in_rate).map_err(|e| anyhow::anyhow!(e))?;
+    let mut resampler = match Resampler16k::new(params.in_rate) {
+        Ok(r) => r,
+        Err(e) => fail!(format!("Resampler init failed: {e}")),
+    };
     let mut draining = false;
 
     loop {
@@ -134,7 +157,6 @@ where
     }
 
     on_event(StreamEvent::Closed);
-    Ok(())
 }
 
 /// Parse one server text frame, emit the matching event, return true if it was the

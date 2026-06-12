@@ -112,9 +112,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
     };
 
     let ws_task = tauri::async_runtime::spawn(async move {
-        if let Err(e) = stream::run(params, pcm_rx, ws_stop_rx, on_event).await {
-            tracing::warn!("[stream] ws ended: {e}");
-        }
+        stream::run(params, pcm_rx, ws_stop_rx, on_event).await;
     });
 
     Ok(StreamSession {

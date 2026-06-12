@@ -54,6 +54,7 @@ export default function Home() {
   const level = useApp((s) => s.level);
   const status = useApp((s) => s.status);
   const partial = useApp((s) => s.partial);
+  const dictationError = useApp((s) => s.dictationError);
   const micId = useApp((s) => s.settings.microphoneId);
   const hold = modes.find((m) => m.mode === "hold")!;
   const handsfree = modes.find((m) => m.mode === "handsfree")!;
@@ -113,7 +114,7 @@ export default function Home() {
         </div>
       </Card>
 
-      {(dictating || partial) && (
+      {(dictating || partial || status === "error") && (
         <Card className="mt-4 p-5">
           <div className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-label text-faint">
             <Waveform
@@ -126,9 +127,13 @@ export default function Home() {
             />
             {status === "transcribing" ? "finalizing…" : status === "error" ? "error" : "listening"}
           </div>
-          <div className="min-h-6 select-text whitespace-pre-wrap text-[15px] leading-relaxed text-text">
-            {partial || <span className="text-faint">…</span>}
-          </div>
+          {status === "error" && dictationError ? (
+            <div className="select-text text-[13.5px] leading-relaxed text-rec">{dictationError}</div>
+          ) : (
+            <div className="min-h-6 select-text whitespace-pre-wrap text-[15px] leading-relaxed text-text">
+              {partial || <span className="text-faint">…</span>}
+            </div>
+          )}
         </Card>
       )}
 

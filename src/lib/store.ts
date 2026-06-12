@@ -58,11 +58,12 @@ interface AppState {
   profiles: ModelProfile[];
   modes: ModeBinding[];
 
-  // live dictation runtime (driven by Rust events in later milestones)
+  // live dictation runtime (driven by Rust events)
   status: DictationStatus;
   level: number; // 0..1 audio RMS for the visualizer
   partial: string; // live partial transcript for the chip preview
   activeMode: ModeBinding["mode"] | null;
+  dictationError: string | null;
 
   connections: Record<string, ConnectionInfo | undefined>;
 
@@ -84,6 +85,7 @@ interface AppState {
       level: number;
       partial: string;
       activeMode: ModeBinding["mode"] | null;
+      dictationError: string | null;
     }>,
   ) => void;
 
@@ -100,6 +102,7 @@ export const useApp = create<AppState>((set) => ({
   level: 0,
   partial: "",
   activeMode: null,
+  dictationError: null,
 
   connections: {},
 
