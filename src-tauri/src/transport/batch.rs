@@ -2,6 +2,7 @@
 
 use super::{base_url, client, with_auth};
 use anyhow::{bail, Context};
+use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -25,7 +26,12 @@ struct VerboseJson {
 }
 
 fn mime_for(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
         Some("wav") => "audio/wav",
         Some("mp3") => "audio/mpeg",
         Some("m4a") | Some("mp4") | Some("aac") => "audio/mp4",
@@ -36,8 +42,7 @@ fn mime_for(path: &Path) -> &'static str {
     }
 }
 
-/// Upload a file for transcription. `language` is the per-profile value ("auto"
-/// means omit it so the server auto-detects); empty `prompt` is omitted.
+/// Transcribe a file from disk (used by the Transcribe screen).
 pub async fn transcribe(
     server_url: &str,
     api_key: Option<&str>,
@@ -53,13 +58,33 @@ pub async fn transcribe(
         .and_then(|f| f.to_str())
         .unwrap_or("audio")
         .to_string();
+    let part = Part::bytes(bytes).file_name(filename).mime_str(mime_for(path))?;
+    post(server_url, api_key, model, language, prompt, part).await
+}
 
-    let part = reqwest::multipart::Part::bytes(bytes)
-        .file_name(filename)
-        .mime_str(mime_for(path))?;
+/// Transcribe an in-memory WAV (used by batch-mode dictation recording).
+pub async fn transcribe_wav_bytes(
+    server_url: &str,
+    api_key: Option<&str>,
+    model: &str,
+    language: &str,
+    prompt: &str,
+    wav: Vec<u8>,
+) -> anyhow::Result<BatchResult> {
+    let part = Part::bytes(wav).file_name("recording.wav").mime_str("audio/wav")?;
+    post(server_url, api_key, model, language, prompt, part).await
+}
 
+async fn post(
+    server_url: &str,
+    api_key: Option<&str>,
+    model: &str,
+    language: &str,
+    prompt: &str,
+    file_part: Part,
+) -> anyhow::Result<BatchResult> {
     let mut form = reqwest::multipart::Form::new()
-        .part("file", part)
+        .part("file", file_part)
         .text("model", model.to_string())
         .text("response_format", "verbose_json");
 

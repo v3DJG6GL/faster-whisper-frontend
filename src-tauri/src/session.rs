@@ -6,6 +6,8 @@
 //! emitted as `stream://level`; transcripts as `stream://partial`/`final`;
 //! state as `stream://status`. Dropping a [`StreamSession`] stops everything.
 
+use crate::audio::resample::Resampler16k;
+use crate::transport::batch;
 use crate::transport::stream::{self, StreamEvent, StreamParams};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleFormat, StreamConfig, StreamError};
@@ -267,5 +269,245 @@ fn run_capture(
         std::thread::sleep(Duration::from_millis(33));
     }
     // `stream` (and the cloned sender) drop here, ending capture and the channel.
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Batch-mode dictation: record to a buffer, transcribe the whole clip on stop.
+// Emits the same stream:// events the UI already handles (level, then final +
+// closed after the POST).
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Default)]
+pub struct RecordState(pub Mutex<Option<RecordSession>>);
+
+#[derive(Clone)]
+pub struct RecordParams {
+    pub server_url: String,
+    pub api_key: Option<String>,
+    pub model: String,
+    pub language: String,
+    pub prompt: String,
+    pub device_id: Option<String>,
+}
+
+pub struct RecordSession {
+    app: AppHandle,
+    params: RecordParams,
+    buffer: Arc<Mutex<Vec<u8>>>,
+    capture_stop: Arc<AtomicBool>,
+    capture_join: Option<JoinHandle<()>>,
+}
+
+impl Drop for RecordSession {
+    fn drop(&mut self) {
+        self.capture_stop.store(true, Ordering::SeqCst);
+        if let Some(j) = self.capture_join.take() {
+            let _ = j.join();
+        }
+    }
+}
+
+impl RecordSession {
+    /// Stop recording and transcribe the captured clip in the background.
+    pub fn finish(mut self) {
+        self.capture_stop.store(true, Ordering::SeqCst);
+        if let Some(j) = self.capture_join.take() {
+            let _ = j.join();
+        }
+        let pcm = self
+            .buffer
+            .lock()
+            .map(|mut b| std::mem::take(&mut *b))
+            .unwrap_or_default();
+        let app = self.app.clone();
+        let params = self.params.clone();
+        tauri::async_runtime::spawn(async move {
+            transcribe_recording(app, params, pcm).await;
+        });
+    }
+}
+
+pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, String> {
+    let (device, format, channels, config, in_rate) = open_input(p.device_id.clone())?;
+    let buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let level = Arc::new(AtomicU32::new(0));
+    let capture_stop = Arc::new(AtomicBool::new(false));
+
+    let capture_join = {
+        let app = app.clone();
+        let buffer = buffer.clone();
+        let level = level.clone();
+        let stop = capture_stop.clone();
+        std::thread::Builder::new()
+            .name("record-capture".into())
+            .spawn(move || {
+                if let Err(e) =
+                    run_record_capture(&app, device, format, channels, config, in_rate, buffer, level, &stop)
+                {
+                    tracing::warn!("[record] capture: {e}");
+                }
+            })
+            .map_err(|e| e.to_string())?
+    };
+
+    Ok(RecordSession {
+        app,
+        params: p,
+        buffer,
+        capture_stop,
+        capture_join: Some(capture_join),
+    })
+}
+
+async fn transcribe_recording(app: AppHandle, params: RecordParams, pcm: Vec<u8>) {
+    if pcm.len() < 32_000 {
+        // < ~1 s of 16 kHz mono audio — nothing meaningful captured.
+        let _ = app.emit("stream://status", "closed");
+        return;
+    }
+    let wav = wav_from_pcm16(&pcm, 16_000);
+    match batch::transcribe_wav_bytes(
+        &params.server_url,
+        params.api_key.as_deref(),
+        &params.model,
+        &params.language,
+        &params.prompt,
+        wav,
+    )
+    .await
+    {
+        Ok(res) => {
+            let _ = app.emit(
+                "stream://final",
+                FinalPayload {
+                    committed: res.text,
+                    tail: String::new(),
+                    last: true,
+                },
+            );
+            let _ = app.emit("stream://status", "closed");
+        }
+        Err(e) => {
+            let _ = app.emit("stream://error", format!("Transcription failed: {e}"));
+            let _ = app.emit("stream://status", "closed");
+        }
+    }
+}
+
+/// Wrap mono 16-bit little-endian PCM in a minimal WAV container.
+fn wav_from_pcm16(pcm: &[u8], sample_rate: u32) -> Vec<u8> {
+    let channels: u16 = 1;
+    let bits: u16 = 16;
+    let byte_rate = sample_rate * channels as u32 * (bits as u32 / 8);
+    let block_align = channels * (bits / 8);
+    let data_len = pcm.len() as u32;
+    let mut wav = Vec::with_capacity(44 + pcm.len());
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+    wav.extend_from_slice(b"WAVE");
+    wav.extend_from_slice(b"fmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    wav.extend_from_slice(&channels.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&byte_rate.to_le_bytes());
+    wav.extend_from_slice(&block_align.to_le_bytes());
+    wav.extend_from_slice(&bits.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    wav.extend_from_slice(pcm);
+    wav
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_record_capture(
+    app: &AppHandle,
+    device: Device,
+    format: SampleFormat,
+    channels: usize,
+    config: StreamConfig,
+    in_rate: u32,
+    buffer: Arc<Mutex<Vec<u8>>>,
+    level: Arc<AtomicU32>,
+    stop: &AtomicBool,
+) -> Result<(), String> {
+    let stream = match format {
+        SampleFormat::F32 => {
+            let buf = buffer.clone();
+            let lvl = level.clone();
+            let mut sm = 0.0f32;
+            let mut resampler = Resampler16k::new(in_rate).map_err(|e| e.to_string())?;
+            device.build_input_stream(
+                &config,
+                move |data: &[f32], _| {
+                    let mono = downmix(data, channels, |s| s);
+                    sm = sm * 0.7 + (rms(&mono) * 6.0).clamp(0.0, 1.0) * 0.3;
+                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    let bytes = resampler.push(&mono);
+                    if !bytes.is_empty() {
+                        if let Ok(mut b) = buf.lock() {
+                            b.extend_from_slice(&bytes);
+                        }
+                    }
+                },
+                err_cb,
+                None,
+            )
+        }
+        SampleFormat::I16 => {
+            let buf = buffer.clone();
+            let lvl = level.clone();
+            let mut sm = 0.0f32;
+            let mut resampler = Resampler16k::new(in_rate).map_err(|e| e.to_string())?;
+            device.build_input_stream(
+                &config,
+                move |data: &[i16], _| {
+                    let mono = downmix(data, channels, |s| s as f32 / 32768.0);
+                    sm = sm * 0.7 + (rms(&mono) * 6.0).clamp(0.0, 1.0) * 0.3;
+                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    let bytes = resampler.push(&mono);
+                    if !bytes.is_empty() {
+                        if let Ok(mut b) = buf.lock() {
+                            b.extend_from_slice(&bytes);
+                        }
+                    }
+                },
+                err_cb,
+                None,
+            )
+        }
+        SampleFormat::U16 => {
+            let buf = buffer.clone();
+            let lvl = level.clone();
+            let mut sm = 0.0f32;
+            let mut resampler = Resampler16k::new(in_rate).map_err(|e| e.to_string())?;
+            device.build_input_stream(
+                &config,
+                move |data: &[u16], _| {
+                    let mono = downmix(data, channels, |s| (s as f32 - 32768.0) / 32768.0);
+                    sm = sm * 0.7 + (rms(&mono) * 6.0).clamp(0.0, 1.0) * 0.3;
+                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    let bytes = resampler.push(&mono);
+                    if !bytes.is_empty() {
+                        if let Ok(mut b) = buf.lock() {
+                            b.extend_from_slice(&bytes);
+                        }
+                    }
+                },
+                err_cb,
+                None,
+            )
+        }
+        other => return Err(format!("unsupported sample format: {other:?}")),
+    }
+    .map_err(|e| e.to_string())?;
+
+    stream.play().map_err(|e| e.to_string())?;
+    while !stop.load(Ordering::SeqCst) {
+        let l = f32::from_bits(level.load(Ordering::Relaxed));
+        let _ = app.emit("stream://level", l);
+        std::thread::sleep(Duration::from_millis(33));
+    }
     Ok(())
 }

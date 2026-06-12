@@ -111,6 +111,32 @@ export async function stopStream(): Promise<void> {
   await invoke("stop_stream");
 }
 
+export async function startRecord(args: {
+  serverUrl: string;
+  profileId?: string | null;
+  apiKey?: string | null;
+  model: string;
+  language: string;
+  prompt: string;
+  deviceId?: string | null;
+}): Promise<void> {
+  if (!isTauri) return;
+  await invoke("start_record", {
+    serverUrl: args.serverUrl,
+    profileId: args.profileId ?? null,
+    apiKey: args.apiKey ?? null,
+    model: args.model,
+    language: args.language,
+    prompt: args.prompt,
+    deviceId: args.deviceId ?? null,
+  });
+}
+
+export async function stopRecord(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("stop_record");
+}
+
 /** Native "open file" dialog → absolute path (or null if cancelled / not in Tauri). */
 export async function pickAudioFile(): Promise<string | null> {
   if (!isTauri) return null;

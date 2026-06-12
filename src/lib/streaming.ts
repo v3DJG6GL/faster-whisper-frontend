@@ -4,10 +4,11 @@
 // sends authoritative strings, so we just replace.
 
 import { useApp } from "./store";
-import { isTauri, startStream, stopStream } from "./api";
+import { isTauri, startStream, stopStream, startRecord, stopRecord } from "./api";
 import type { ModelProfile } from "./types";
 
 let wired = false;
+let activeEndpoint: "stream" | "batch" | null = null;
 
 async function ensureListeners(): Promise<void> {
   if (wired || !isTauri) return;
@@ -46,23 +47,38 @@ export async function startLive(profile: ModelProfile, deviceId: string | null):
   await ensureListeners();
   const setDictation = useApp.getState().setDictation;
   setDictation({ status: "listening", partial: "", level: 0, dictationError: null });
+  activeEndpoint = profile.endpoint;
   try {
-    await startStream({
-      serverUrl: profile.serverUrl,
-      profileId: profile.id,
-      model: profile.model,
-      language: profile.language,
-      responseFormat: profile.responseFormat,
-      deviceId,
-    });
+    if (profile.endpoint === "batch") {
+      // Record the whole clip; transcription happens on stop.
+      await startRecord({
+        serverUrl: profile.serverUrl,
+        profileId: profile.id,
+        model: profile.model,
+        language: profile.language,
+        prompt: profile.prompt,
+        deviceId,
+      });
+    } else {
+      await startStream({
+        serverUrl: profile.serverUrl,
+        profileId: profile.id,
+        model: profile.model,
+        language: profile.language,
+        responseFormat: profile.responseFormat,
+        deviceId,
+      });
+    }
   } catch (e) {
-    console.error("startStream failed:", e);
+    console.error("start dictation failed:", e);
     setDictation({ status: "error", dictationError: String(e) });
   }
 }
 
 export async function stopLive(): Promise<void> {
-  // The server flushes + drains; the `closed` status resets us to idle.
+  // Streaming: server flushes + drains. Batch: transcription runs now. Either
+  // way the `closed` status resets us to idle.
   useApp.getState().setDictation({ status: "transcribing" });
-  await stopStream();
+  if (activeEndpoint === "batch") await stopRecord();
+  else await stopStream();
 }

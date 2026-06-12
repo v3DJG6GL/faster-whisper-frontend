@@ -19,6 +19,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(audio::AudioState::default())
         .manage(session::StreamState::default())
+        .manage(session::RecordState::default())
         .setup(|app| {
             tray::create(app)?;
             Ok(())
@@ -36,6 +37,8 @@ pub fn run() {
             commands::stop_mic_test,
             commands::start_stream,
             commands::stop_stream,
+            commands::start_record,
+            commands::stop_record,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
