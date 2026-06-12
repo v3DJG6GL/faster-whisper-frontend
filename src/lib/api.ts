@@ -2,7 +2,7 @@
 // browser (`pnpm dev`) — outside Tauri the calls no-op or return safe defaults.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { BatchResult, Config, ConnectionInfo } from "./types";
+import type { AudioDevice, BatchResult, Config, ConnectionInfo } from "./types";
 
 export const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -61,6 +61,28 @@ export async function transcribeFile(args: {
     prompt: args.prompt,
     filePath: args.filePath,
   });
+}
+
+export async function listAudioDevices(): Promise<AudioDevice[]> {
+  if (!isTauri) return [];
+  return invoke<AudioDevice[]>("list_audio_devices");
+}
+
+export async function startMicTest(deviceId: string | null): Promise<void> {
+  if (!isTauri) return;
+  await invoke("start_mic_test", { deviceId });
+}
+
+export async function stopMicTest(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("stop_mic_test");
+}
+
+/** Subscribe to live RMS levels (0..1) emitted during capture. Returns an unlisten fn. */
+export async function onAudioLevel(cb: (level: number) => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<number>("audio://level", (e) => cb(e.payload));
 }
 
 /** Native "open file" dialog → absolute path (or null if cancelled / not in Tauri). */

@@ -1,7 +1,10 @@
-import { useState } from "react";
-import { Mic, Check, Info, Keyboard } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Mic, Check, Info, Keyboard, RefreshCw, Square } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Kbd, Segmented, Select, SettingRow, StatusDot, Toggle } from "@/components/ui";
+import { Waveform } from "@/components/Waveform";
+import { listAudioDevices, startMicTest, stopMicTest, onAudioLevel } from "@/lib/api";
+import type { AudioDevice } from "@/lib/types";
 
 const TABS = ["General", "Audio", "Recording", "Shortcuts", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
@@ -19,12 +22,85 @@ function HotkeyChips({ hotkey }: { hotkey: string }) {
   );
 }
 
+function AudioTab() {
+  const microphoneId = useApp((s) => s.settings.microphoneId);
+  const updateSettings = useApp((s) => s.updateSettings);
+  const [devices, setDevices] = useState<AudioDevice[]>([]);
+  const [testing, setTesting] = useState(false);
+  const [level, setLevel] = useState(0);
+
+  const refresh = useCallback(async () => {
+    setDevices(await listAudioDevices());
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // Mic test: subscribe to levels and open the device while `testing` is on.
+  useEffect(() => {
+    if (!testing) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      unlisten = await onAudioLevel((l) => {
+        if (active) setLevel(l);
+      });
+      await startMicTest(microphoneId);
+    })();
+    return () => {
+      active = false;
+      unlisten?.();
+      void stopMicTest();
+      setLevel(0);
+    };
+  }, [testing, microphoneId]);
+
+  const options = [
+    { value: "default", label: "System default" },
+    ...devices.map((d) => ({ value: d.id, label: d.label })),
+  ];
+
+  return (
+    <Card className="px-6">
+      <SettingRow title="Microphone" desc="Audio input device used for dictation.">
+        <div className="flex items-center gap-2">
+          <Select
+            value={microphoneId ?? "default"}
+            onChange={(v) => updateSettings({ microphoneId: v === "default" ? null : v })}
+            options={options}
+            className="w-56"
+          />
+          <Button variant="ghost" size="sm" title="Refresh devices" onClick={() => void refresh()}>
+            <RefreshCw className="size-4" />
+          </Button>
+        </div>
+      </SettingRow>
+      <SettingRow title="Test microphone" desc="Open the mic and watch the input level." last>
+        <div className="flex items-center gap-3">
+          <Waveform level={level} active={testing} bars={16} tone={testing ? "accent" : "dim"} className="h-7 w-28" />
+          <Button variant={testing ? "danger" : "default"} size="sm" onClick={() => setTesting((t) => !t)}>
+            {testing ? (
+              <>
+                <Square className="size-3.5" /> Stop
+              </>
+            ) : (
+              <>
+                <Mic className="size-4" /> Test
+              </>
+            )}
+          </Button>
+        </div>
+      </SettingRow>
+    </Card>
+  );
+}
+
 export default function Settings() {
   const [tab, setTab] = useState<Tab>("General");
   const s = useApp((st) => st.settings);
   const updateGeneral = useApp((st) => st.updateGeneral);
   const updateRecording = useApp((st) => st.updateRecording);
-  const updateSettings = useApp((st) => st.updateSettings);
   const modes = useApp((st) => st.modes);
   const profiles = useApp((st) => st.profiles);
   const updateMode = useApp((st) => st.updateMode);
@@ -90,18 +166,7 @@ export default function Settings() {
           </Card>
         )}
 
-        {tab === "Audio" && (
-          <Card className="px-6">
-            <SettingRow title="Microphone" desc="Audio input device used for dictation." last>
-              <Select
-                value={s.microphoneId ?? "default"}
-                onChange={(v) => updateSettings({ microphoneId: v === "default" ? null : v })}
-                options={[{ value: "default", label: "System default" }]}
-                className="w-56"
-              />
-            </SettingRow>
-          </Card>
-        )}
+        {tab === "Audio" && <AudioTab />}
 
         {tab === "Recording" && (
           <Card className="px-6">
