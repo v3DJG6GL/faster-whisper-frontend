@@ -33,7 +33,8 @@ export async function initOverlayController(): Promise<void> {
       void emit("dictation://update", {
         status: state.status,
         level: state.level,
-        partial: state.partial,
+        // "Live transcript in overlay" off → show the status label, not words.
+        partial: state.settings.recording.realtimePreview ? state.partial : "",
       });
     }
 

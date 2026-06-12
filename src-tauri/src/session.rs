@@ -14,6 +14,7 @@ use cpal::{Device, SampleFormat, StreamConfig, StreamError};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -29,6 +30,8 @@ pub struct StartParams {
     pub language: String,
     pub response_format: String,
     pub device_id: Option<String>,
+    pub save_dir: Option<PathBuf>,
+    pub mute_system: bool,
 }
 
 pub struct StreamSession {
@@ -36,6 +39,8 @@ pub struct StreamSession {
     capture_join: Option<JoinHandle<()>>,
     ws_stop: watch::Sender<bool>,
     ws_task: Option<tauri::async_runtime::JoinHandle<()>>,
+    // Unmutes system audio on drop (after the Drop body below runs).
+    _mute: SystemMuteGuard,
 }
 
 impl Drop for StreamSession {
@@ -68,6 +73,7 @@ struct FinalPayload {
 
 pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
     let (device, format, channels, config, in_rate) = open_input(p.device_id)?;
+    let mute = SystemMuteGuard::new(p.mute_system);
 
     let (pcm_tx, pcm_rx) = mpsc::unbounded_channel::<Vec<f32>>();
     let (ws_stop_tx, ws_stop_rx) = watch::channel(false);
@@ -92,6 +98,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         response_format: p.response_format,
         api_key: p.api_key,
         in_rate,
+        save_dir: p.save_dir,
     };
 
     let appc = app.clone();
@@ -122,6 +129,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         capture_join: Some(capture_join),
         ws_stop: ws_stop_tx,
         ws_task: Some(ws_task),
+        _mute: mute,
     })
 }
 
@@ -289,6 +297,8 @@ pub struct RecordParams {
     pub language: String,
     pub prompt: String,
     pub device_id: Option<String>,
+    pub save_dir: Option<PathBuf>,
+    pub mute_system: bool,
 }
 
 pub struct RecordSession {
@@ -297,6 +307,7 @@ pub struct RecordSession {
     buffer: Arc<Mutex<Vec<u8>>>,
     capture_stop: Arc<AtomicBool>,
     capture_join: Option<JoinHandle<()>>,
+    _mute: SystemMuteGuard,
 }
 
 impl Drop for RecordSession {
@@ -330,6 +341,7 @@ impl RecordSession {
 
 pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, String> {
     let (device, format, channels, config, in_rate) = open_input(p.device_id.clone())?;
+    let mute = SystemMuteGuard::new(p.mute_system);
     let buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
     let level = Arc::new(AtomicU32::new(0));
     let capture_stop = Arc::new(AtomicBool::new(false));
@@ -357,6 +369,7 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
         buffer,
         capture_stop,
         capture_join: Some(capture_join),
+        _mute: mute,
     })
 }
 
@@ -366,7 +379,10 @@ async fn transcribe_recording(app: AppHandle, params: RecordParams, pcm: Vec<u8>
         let _ = app.emit("stream://status", "closed");
         return;
     }
-    let wav = wav_from_pcm16(&pcm, 16_000);
+    if let Some(dir) = &params.save_dir {
+        crate::audio::save_recording(dir, &pcm, 16_000);
+    }
+    let wav = crate::audio::wav_from_pcm16(&pcm, 16_000);
     match batch::transcribe_wav_bytes(
         &params.server_url,
         params.api_key.as_deref(),
@@ -395,29 +411,60 @@ async fn transcribe_recording(app: AppHandle, params: RecordParams, pcm: Vec<u8>
     }
 }
 
-/// Wrap mono 16-bit little-endian PCM in a minimal WAV container.
-fn wav_from_pcm16(pcm: &[u8], sample_rate: u32) -> Vec<u8> {
-    let channels: u16 = 1;
-    let bits: u16 = 16;
-    let byte_rate = sample_rate * channels as u32 * (bits as u32 / 8);
-    let block_align = channels * (bits / 8);
-    let data_len = pcm.len() as u32;
-    let mut wav = Vec::with_capacity(44 + pcm.len());
-    wav.extend_from_slice(b"RIFF");
-    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
-    wav.extend_from_slice(b"WAVE");
-    wav.extend_from_slice(b"fmt ");
-    wav.extend_from_slice(&16u32.to_le_bytes());
-    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
-    wav.extend_from_slice(&channels.to_le_bytes());
-    wav.extend_from_slice(&sample_rate.to_le_bytes());
-    wav.extend_from_slice(&byte_rate.to_le_bytes());
-    wav.extend_from_slice(&block_align.to_le_bytes());
-    wav.extend_from_slice(&bits.to_le_bytes());
-    wav.extend_from_slice(b"data");
-    wav.extend_from_slice(&data_len.to_le_bytes());
-    wav.extend_from_slice(pcm);
-    wav
+// ── System-audio mute guard ─────────────────────────────────────────────────
+// Optionally mutes the default audio output for the duration of a dictation, so
+// playback / notification sounds don't leak into the mic, restoring the prior
+// state on drop. Best-effort: PipeWire (`wpctl`) first, then PulseAudio (`pactl`);
+// a no-op where neither exists (e.g. Windows). A hard crash mid-dictation can
+// leave it muted until the next dictation restores it.
+
+struct SystemMuteGuard {
+    prior: Option<bool>,
+}
+
+impl SystemMuteGuard {
+    fn new(enabled: bool) -> Self {
+        if !enabled {
+            return Self { prior: None };
+        }
+        let prior = get_system_mute().unwrap_or(false);
+        set_system_mute(true);
+        Self { prior: Some(prior) }
+    }
+}
+
+impl Drop for SystemMuteGuard {
+    fn drop(&mut self) {
+        if let Some(prior) = self.prior {
+            set_system_mute(prior);
+        }
+    }
+}
+
+/// Current mute state of the default sink, via `wpctl get-volume` ("[MUTED]").
+fn get_system_mute() -> Option<bool> {
+    let out = std::process::Command::new("wpctl")
+        .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).contains("[MUTED]"))
+}
+
+fn set_system_mute(mute: bool) {
+    let v = if mute { "1" } else { "0" };
+    let ok = std::process::Command::new("wpctl")
+        .args(["set-mute", "@DEFAULT_AUDIO_SINK@", v])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        let _ = std::process::Command::new("pactl")
+            .args(["set-sink-mute", "@DEFAULT_SINK@", v])
+            .status();
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

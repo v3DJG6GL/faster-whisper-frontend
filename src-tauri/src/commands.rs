@@ -12,6 +12,11 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
 }
 
+/// Folder where saved dictation `.wav` files go (when "Keep recordings" is on).
+fn recordings_dir(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("recordings"))
+}
+
 /// Resolve an API key: an explicit (just-typed) key wins; otherwise look it up in
 /// the OS keyring by profile id.
 fn resolve_key(explicit: Option<String>, profile_id: Option<String>) -> Option<String> {
@@ -122,8 +127,11 @@ pub fn start_stream(
     language: String,
     response_format: String,
     device_id: Option<String>,
+    save: bool,
+    mute_system: bool,
 ) -> Result<(), String> {
     let key = resolve_key(api_key, profile_id);
+    let save_dir = if save { recordings_dir(&app) } else { None };
     let mut guard = state.0.lock().map_err(|_| "stream state poisoned")?;
     *guard = None; // stop any previous session first (Drop joins capture, drains WS)
     let sess = session::start(
@@ -135,6 +143,8 @@ pub fn start_stream(
             language,
             response_format,
             device_id,
+            save_dir,
+            mute_system,
         },
     )?;
     *guard = Some(sess);
@@ -158,8 +168,11 @@ pub fn start_record(
     language: String,
     prompt: String,
     device_id: Option<String>,
+    save: bool,
+    mute_system: bool,
 ) -> Result<(), String> {
     let key = resolve_key(api_key, profile_id);
+    let save_dir = if save { recordings_dir(&app) } else { None };
     let mut guard = state.0.lock().map_err(|_| "record state poisoned")?;
     *guard = None;
     let sess = session::start_record(
@@ -171,6 +184,8 @@ pub fn start_record(
             language,
             prompt,
             device_id,
+            save_dir,
+            mute_system,
         },
     )?;
     *guard = Some(sess);

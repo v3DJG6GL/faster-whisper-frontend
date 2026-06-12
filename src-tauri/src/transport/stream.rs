@@ -8,6 +8,7 @@
 use crate::audio::resample::Resampler16k;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -30,6 +31,7 @@ pub struct StreamParams {
     pub response_format: String, // "json" | "verbose_json"
     pub api_key: Option<String>,
     pub in_rate: u32,
+    pub save_dir: Option<PathBuf>, // Some → save the streamed 16 kHz audio as .wav
 }
 
 /// Derive the streaming WS URL from a profile's http(s) server URL.
@@ -111,6 +113,8 @@ pub async fn run<F>(
         Err(e) => fail!(format!("Resampler init failed: {e}")),
     };
     let mut draining = false;
+    let saving = params.save_dir.is_some();
+    let mut saved: Vec<u8> = Vec::new();
 
     loop {
         tokio::select! {
@@ -121,8 +125,13 @@ pub async fn run<F>(
                 match maybe {
                     Some(chunk) => {
                         let bytes = resampler.push(&chunk);
-                        if !bytes.is_empty() && write.send(Message::Binary(bytes.into())).await.is_err() {
-                            break;
+                        if !bytes.is_empty() {
+                            if saving {
+                                saved.extend_from_slice(&bytes);
+                            }
+                            if write.send(Message::Binary(bytes.into())).await.is_err() {
+                                break;
+                            }
                         }
                     }
                     None => { draining = true; break; } // capture ended
@@ -156,6 +165,9 @@ pub async fn run<F>(
         .await;
     }
 
+    if let Some(dir) = &params.save_dir {
+        crate::audio::save_recording(dir, &saved, 16_000);
+    }
     on_event(StreamEvent::Closed);
 }
 

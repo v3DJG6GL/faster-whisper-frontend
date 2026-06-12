@@ -93,6 +93,8 @@ export async function startStream(args: {
   language: string;
   responseFormat: string;
   deviceId?: string | null;
+  save?: boolean;
+  muteSystem?: boolean;
 }): Promise<void> {
   if (!isTauri) return;
   await invoke("start_stream", {
@@ -103,6 +105,8 @@ export async function startStream(args: {
     language: args.language,
     responseFormat: args.responseFormat,
     deviceId: args.deviceId ?? null,
+    save: args.save ?? false,
+    muteSystem: args.muteSystem ?? false,
   });
 }
 
@@ -119,6 +123,8 @@ export async function startRecord(args: {
   language: string;
   prompt: string;
   deviceId?: string | null;
+  save?: boolean;
+  muteSystem?: boolean;
 }): Promise<void> {
   if (!isTauri) return;
   await invoke("start_record", {
@@ -129,6 +135,8 @@ export async function startRecord(args: {
     language: args.language,
     prompt: args.prompt,
     deviceId: args.deviceId ?? null,
+    save: args.save ?? false,
+    muteSystem: args.muteSystem ?? false,
   });
 }
 

@@ -69,6 +69,7 @@ async function ensureListeners(): Promise<void> {
 export async function startLive(profile: ModelProfile, deviceId: string | null): Promise<void> {
   await ensureListeners();
   const setDictation = useApp.getState().setDictation;
+  const rec = useApp.getState().settings.recording;
   setDictation({ status: "listening", partial: "", level: 0, dictationError: null });
   activeEndpoint = profile.endpoint;
   committedDoc = "";
@@ -82,6 +83,8 @@ export async function startLive(profile: ModelProfile, deviceId: string | null):
         language: profile.language,
         prompt: profile.prompt,
         deviceId,
+        save: rec.saveRecordings,
+        muteSystem: rec.muteSystemAudio,
       });
     } else {
       await startStream({
@@ -91,6 +94,8 @@ export async function startLive(profile: ModelProfile, deviceId: string | null):
         language: profile.language,
         responseFormat: profile.responseFormat,
         deviceId,
+        save: rec.saveRecordings,
+        muteSystem: rec.muteSystemAudio,
       });
     }
   } catch (e) {
