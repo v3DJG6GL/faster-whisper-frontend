@@ -3,6 +3,8 @@ import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
 import { useApp } from "@/lib/store";
 import { initConfig } from "@/lib/persistence";
+import { onTrigger } from "@/lib/api";
+import { dictate } from "@/lib/dictation";
 import Home from "@/screens/Home";
 import Transcribe from "@/screens/Transcribe";
 import SpeechModels from "@/screens/SpeechModels";
@@ -13,6 +15,15 @@ export default function App() {
 
   useEffect(() => {
     void initConfig();
+  }, []);
+
+  // Global dictation triggers (CLI / hotkeys) → start/stop the right mode.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void onTrigger((e) => dictate(e.mode, e.action)).then((u) => {
+      unlisten = u;
+    });
+    return () => unlisten?.();
   }, []);
 
   useEffect(() => {

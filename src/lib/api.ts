@@ -137,6 +137,18 @@ export async function stopRecord(): Promise<void> {
   await invoke("stop_record");
 }
 
+export interface TriggerEvent {
+  mode: "hold" | "handsfree";
+  action: "start" | "stop" | "toggle";
+}
+
+/** Subscribe to dictation triggers (CLI / global hotkey). Returns an unlisten fn. */
+export async function onTrigger(cb: (e: TriggerEvent) => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<TriggerEvent>("trigger", (e) => cb(e.payload));
+}
+
 /** Native "open file" dialog → absolute path (or null if cancelled / not in Tauri). */
 export async function pickAudioFile(): Promise<string | null> {
   if (!isTauri) return null;

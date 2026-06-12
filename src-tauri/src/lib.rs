@@ -4,6 +4,7 @@ mod config;
 mod session;
 mod transport;
 mod tray;
+mod triggers;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -15,6 +16,10 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
+        // single-instance MUST be the first plugin registered.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            triggers::handle_cli_args(app, &argv);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(audio::AudioState::default())
