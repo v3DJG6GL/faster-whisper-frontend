@@ -4,13 +4,14 @@
 //! modifiers, or AltGr on Wayland. Reading `/dev/input` directly can — at the cost
 //! of system-wide key-read access (the user must be in the `input` group; see
 //! `setup`). Strictly opt-in (`general.evdevEnabled`); we only enumerate keyboards,
-//! react to the configured chord, and never persist or transmit scancodes.
+//! react to the configured chords, and never persist or transmit scancodes.
 //!
-//! Each keyboard runs an async event loop tracking a held-key set; when a mode's
-//! chord (mapped from the binding's `event.code` list via [`codes_to_keys`])
+//! Each keyboard runs an async event loop tracking a held-key set; when a
+//! Profile's chord (mapped from its `event.code` list via [`codes_to_keys`])
 //! completes we emit the same `trigger` event the CLI/plugin paths use — so it
 //! plugs straight into the existing controller. Hold = start on chord-complete /
-//! stop on chord-break; latch = toggle on chord-complete.
+//! stop on chord-break; latch = toggle on chord-complete. Any number of Profiles
+//! (chords) are matched at once, with "most-specific chord wins" suppression.
 
 use tauri::async_runtime::JoinHandle;
 
@@ -45,7 +46,7 @@ pub fn permitted() -> bool {
     false
 }
 #[cfg(not(target_os = "linux"))]
-pub fn start(_app: &tauri::AppHandle, _state: &EvdevState, _modes: &[crate::config::ModeBinding]) {}
+pub fn start(_app: &tauri::AppHandle, _state: &EvdevState, _profiles: &[crate::config::Profile]) {}
 #[cfg(not(target_os = "linux"))]
 pub async fn setup() -> Result<String, String> {
     Err("The evdev backend is Linux-only.".into())
@@ -54,11 +55,20 @@ pub async fn setup() -> Result<String, String> {
 #[cfg(target_os = "linux")]
 mod imp {
     use super::{EvdevState, Running};
-    use crate::config::{DictationModeId, ModeBinding};
+    use crate::config::{ActivationType, Profile};
     use crate::triggers::TriggerPayload;
     use evdev::{Device, EventType, Key};
     use std::collections::HashSet;
+    use std::sync::Arc;
     use tauri::{AppHandle, Emitter};
+
+    /// One enabled Profile's chord, ready for matching.
+    #[derive(Clone)]
+    struct ChordDesc {
+        profile_id: String,
+        activation: ActivationType,
+        keys: Vec<Key>,
+    }
 
     fn is_keyboard(d: &Device) -> bool {
         d.supported_keys()
@@ -92,33 +102,80 @@ mod imp {
         }
     }
 
-    /// Build (chord keys, is_hold) for one enabled mode, or None if it's disabled,
-    /// has no binding, or contains a key this backend can't map.
-    fn chord_for(modes: &[ModeBinding], want: DictationModeId) -> Option<(Vec<Key>, bool)> {
-        let m = modes.iter().find(|m| m.mode == want && m.enabled)?;
-        let keys = codes_to_keys(&m.hotkey)?;
-        if keys.is_empty() {
-            return None;
+    /// Build chord descriptors for every enabled Profile whose hotkey maps cleanly.
+    /// Equal chords are de-duped (first by config order wins) so one keypress can't
+    /// fire two Profiles. Disabled / unmappable / empty chords are skipped.
+    fn chords_from(profiles: &[Profile]) -> Vec<ChordDesc> {
+        let mut out: Vec<ChordDesc> = Vec::new();
+        for p in profiles.iter().filter(|p| p.enabled) {
+            let Some(keys) = codes_to_keys(&p.hotkey) else {
+                continue;
+            };
+            if keys.is_empty() {
+                continue;
+            }
+            let codes: HashSet<u16> = keys.iter().map(|k| k.code()).collect();
+            let dup = out.iter().any(|c| {
+                c.keys.len() == keys.len() && c.keys.iter().all(|k| codes.contains(&k.code()))
+            });
+            if dup {
+                tracing::warn!(
+                    "[evdev] profile '{}' has the same chord as an earlier one; ignoring the duplicate",
+                    p.id
+                );
+                continue;
+            }
+            out.push(ChordDesc {
+                profile_id: p.id.clone(),
+                activation: p.activation,
+                keys,
+            });
         }
-        Some((keys, matches!(want, DictationModeId::Hold)))
+        out
     }
 
-    pub fn start(app: &AppHandle, state: &EvdevState, modes: &[ModeBinding]) {
+    /// For each chord `i`, the indices of OTHER chords that are a strict superset of
+    /// it (more keys, and contain all of `i`'s keys). Chord `i` is suppressed while
+    /// any such superset is fully held — generalizing "most-specific chord wins" to
+    /// N chords (e.g. bare-Alt PTT stays silent while Ctrl+Alt latch is held).
+    fn compute_strict_supersets(chords: &[ChordDesc]) -> Vec<Vec<usize>> {
+        let sets: Vec<HashSet<u16>> = chords
+            .iter()
+            .map(|c| c.keys.iter().map(|k| k.code()).collect())
+            .collect();
+        let mut out = vec![Vec::new(); chords.len()];
+        for i in 0..chords.len() {
+            for j in 0..chords.len() {
+                if i != j
+                    && sets[j].len() > sets[i].len()
+                    && sets[i].iter().all(|c| sets[j].contains(c))
+                {
+                    out[i].push(j);
+                }
+            }
+        }
+        out
+    }
+
+    pub fn start(app: &AppHandle, state: &EvdevState, profiles: &[Profile]) {
         stop(state);
-        let hold = chord_for(modes, DictationModeId::Hold);
-        let latch = chord_for(modes, DictationModeId::Handsfree);
-        if hold.is_none() && latch.is_none() {
+        let chords = chords_from(profiles);
+        if chords.is_empty() {
             tracing::info!("[evdev] no mappable chords; not starting");
             return;
         }
+        // Fixed for the life of the listener → precompute once and share read-only.
+        let supersets = Arc::new(compute_strict_supersets(&chords));
+        let chords = Arc::new(chords);
+
         let mut tasks = Vec::new();
         for (path, dev) in evdev::enumerate() {
             if !is_keyboard(&dev) {
                 continue;
             }
             let app = app.clone();
-            let hold = hold.clone();
-            let latch = latch.clone();
+            let chords = chords.clone();
+            let supersets = supersets.clone();
             tasks.push(tauri::async_runtime::spawn(async move {
                 // into_event_stream() builds a tokio AsyncFd, so it MUST run inside
                 // the async runtime — calling it on the main thread (where the
@@ -130,10 +187,14 @@ mod imp {
                         return;
                     }
                 };
-                run_device(app, stream, hold, latch).await;
+                run_device(app, stream, chords, supersets).await;
             }));
         }
-        tracing::info!("[evdev] listening on {} keyboard(s)", tasks.len());
+        tracing::info!(
+            "[evdev] listening on {} keyboard(s), {} chord(s)",
+            tasks.len(),
+            chords.len()
+        );
         if let Ok(mut g) = state.0.lock() {
             *g = Some(Running { tasks });
         }
@@ -145,11 +206,11 @@ mod imp {
         }
     }
 
-    fn emit(app: &AppHandle, mode: &str, action: &str) {
+    fn emit(app: &AppHandle, profile_id: &str, action: &str) {
         let _ = app.emit(
             "trigger",
             TriggerPayload {
-                mode: mode.to_string(),
+                profile_id: profile_id.to_string(),
                 action: action.to_string(),
             },
         );
@@ -158,26 +219,18 @@ mod imp {
     async fn run_device(
         app: AppHandle,
         mut stream: evdev::EventStream,
-        hold: Option<(Vec<Key>, bool)>,
-        latch: Option<(Vec<Key>, bool)>,
+        chords: Arc<Vec<ChordDesc>>,
+        supersets: Arc<Vec<Vec<usize>>>,
     ) {
         let mut held: HashSet<u16> = HashSet::new();
-        let mut hold_active = false;
-        let mut latch_armed = false;
-
-        // Most-specific chord wins. If one chord's keys are a strict subset of the
-        // other's (e.g. PTT = Alt, Latch = Ctrl+Alt), the SHORTER chord must not fire
-        // while the LONGER one is fully held — otherwise pressing Ctrl+Alt also fires
-        // the bare-Alt PTT and the two collide (the reported "Ctrl+Alt can't activate
-        // latch"). The chords are fixed for the life of this loop, so resolve the
-        // strict-subset relation once up front.
-        let (hold_shadowed_by_latch, latch_shadowed_by_hold) = match (&hold, &latch) {
-            (Some((h, _)), Some((l, _))) => (
-                h.len() < l.len() && h.iter().all(|k| l.contains(k)),
-                l.len() < h.len() && l.iter().all(|k| h.contains(k)),
-            ),
-            _ => (false, false),
-        };
+        // Per-chord state — hold: currently emitting; latch: armed (rising-edge
+        // debounce, so one press = one toggle).
+        let mut active = vec![false; chords.len()];
+        // Pre-extract key codes for fast "fully held" tests.
+        let key_codes: Vec<Vec<u16>> = chords
+            .iter()
+            .map(|c| c.keys.iter().map(|k| k.code()).collect())
+            .collect();
 
         loop {
             let ev = match stream.next_event().await {
@@ -197,28 +250,34 @@ mod imp {
                 _ => continue, // 2 = autorepeat
             }
 
-            let down = |keys: &[Key]| keys.iter().all(|k| held.contains(&k.code()));
-            let hold_down = hold.as_ref().map_or(false, |(k, _)| down(k));
-            let latch_down = latch.as_ref().map_or(false, |(k, _)| down(k));
-            // Suppress a chord while a strict-superset chord is also fully held.
-            let hold_on = hold_down && !(hold_shadowed_by_latch && latch_down);
-            let latch_on = latch_down && !(latch_shadowed_by_hold && hold_down);
+            // Which chords are fully held right now? (Small N → recomputing the whole
+            // set per event is O(N·chord-len) and negligible.)
+            let fully: Vec<bool> = key_codes
+                .iter()
+                .map(|codes| codes.iter().all(|c| held.contains(c)))
+                .collect();
 
-            if hold.is_some() {
-                if hold_on && !hold_active {
-                    hold_active = true;
-                    emit(&app, "hold", "start");
-                } else if !hold_on && hold_active {
-                    hold_active = false;
-                    emit(&app, "hold", "stop");
-                }
-            }
-            if latch.is_some() {
-                if latch_on && !latch_armed {
-                    latch_armed = true;
-                    emit(&app, "handsfree", "toggle");
-                } else if !latch_on {
-                    latch_armed = false;
+            for i in 0..chords.len() {
+                // Active iff fully held AND no strict-superset chord is also fully held.
+                let on = fully[i] && !supersets[i].iter().any(|&j| fully[j]);
+                match chords[i].activation {
+                    ActivationType::Hold => {
+                        if on && !active[i] {
+                            active[i] = true;
+                            emit(&app, &chords[i].profile_id, "start");
+                        } else if !on && active[i] {
+                            active[i] = false;
+                            emit(&app, &chords[i].profile_id, "stop");
+                        }
+                    }
+                    ActivationType::Latch => {
+                        if on && !active[i] {
+                            active[i] = true;
+                            emit(&app, &chords[i].profile_id, "toggle");
+                        } else if !on {
+                            active[i] = false;
+                        }
+                    }
                 }
             }
         }
