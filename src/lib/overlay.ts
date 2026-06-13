@@ -9,6 +9,7 @@
 
 import { useApp } from "./store";
 import { isTauri, showOverlay, hideOverlay, setTrayState, playCue } from "./api";
+import { chipTagFor } from "./profileTag";
 import type { DictationStatus } from "./types";
 
 const ACTIVE: DictationStatus[] = ["listening", "transcribing", "injecting"];
@@ -30,18 +31,37 @@ export async function initOverlayController(): Promise<void> {
       state.level !== prev.level ||
       state.partial !== prev.partial ||
       state.dictationError !== prev.dictationError ||
-      state.settings !== prev.settings // theme / position / preview toggles
+      state.activeProfile !== prev.activeProfile || // switching Profiles mid-session
+      state.settings !== prev.settings // theme / position / preview / show-profile toggles
     ) {
+      const rec = state.settings.recording;
+      // Which Profile is dictating, for the chip's identity tag (+ its language /
+      // stream-vs-batch mode). Resolved here because the overlay webview can't read
+      // this store. Omitted entirely when the feature is off or no Profile is active.
+      let chip: { profileTag?: string; language?: string; mode?: "stream" | "batch" } = {};
+      if (rec.showProfileOnOverlay && state.activeProfile) {
+        const profile = state.profiles.find((p) => p.id === state.activeProfile);
+        if (profile) {
+          const backend = state.backends.find((b) => b.id === profile.backendId) ?? state.backends[0];
+          chip = {
+            profileTag: chipTagFor(profile),
+            // Effective language: a set per-Profile override wins; else the Backend's.
+            language: profile.language?.trim() ? profile.language : backend?.language,
+            mode: backend?.endpoint,
+          };
+        }
+      }
       void emit("dictation://update", {
         status: state.status,
         level: state.level,
         // "Live transcript in overlay" off → show the status label, not words.
-        partial: state.settings.recording.realtimePreview ? state.partial : "",
+        partial: rec.realtimePreview ? state.partial : "",
         dictationError: state.dictationError ?? "",
         // So the chip can pin itself to the correct edge of its window.
-        position: state.settings.recording.indicatorPosition,
+        position: rec.indicatorPosition,
         // So the chip can follow the app's dark/light theme.
         theme: state.settings.theme,
+        ...chip,
       });
     }
 
