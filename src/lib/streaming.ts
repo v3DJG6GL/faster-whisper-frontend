@@ -240,6 +240,7 @@ export async function startLive(
         profileId: profile.id,
         model: profile.model,
         language: profile.language,
+        prompt: profile.prompt,
         responseFormat: profile.responseFormat,
         deviceId,
         save: rec.saveRecordings,

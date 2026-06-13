@@ -91,6 +91,7 @@ export async function startStream(args: {
   apiKey?: string | null;
   model: string;
   language: string;
+  prompt: string;
   responseFormat: string;
   deviceId?: string | null;
   save?: boolean;
@@ -103,6 +104,7 @@ export async function startStream(args: {
     apiKey: args.apiKey ?? null,
     model: args.model,
     language: args.language,
+    prompt: args.prompt,
     responseFormat: args.responseFormat,
     deviceId: args.deviceId ?? null,
     save: args.save ?? false,

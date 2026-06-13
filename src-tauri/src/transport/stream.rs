@@ -32,6 +32,7 @@ pub struct StreamParams {
     pub model: String,
     pub language: String, // "" / "auto" → omit (server auto-detects)
     pub response_format: String, // "json" | "verbose_json"
+    pub prompt: String, // profile "Vocabulary / prompt" → initial_prompt ("" → server default)
     pub api_key: Option<String>,
     pub in_rate: u32,
     pub save_dir: Option<PathBuf>, // Some → save the streamed 16 kHz audio as .wav
@@ -133,6 +134,8 @@ pub async fn run<F>(
         "model": params.model,
         "language": lang,
         "response_format": params.response_format,
+        // Empty string = let the server fall back to its DEFAULT_PROMPT (then None).
+        "prompt": params.prompt,
         "audio": { "format": "pcm_s16le", "sample_rate": 16000 }
     });
     if let Err(e) = write.send(text_msg(config.to_string())).await {
