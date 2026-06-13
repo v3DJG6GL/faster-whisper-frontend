@@ -1,6 +1,7 @@
-import { Mic, Radio, Hand, Square } from "lucide-react";
+import { Mic, Radio, Hand, Square, Pencil } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
-import { Card, SectionLabel, Select, StatusDot, Toggle } from "@/components/ui";
+import { Button, Card, SectionLabel, Select, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { startLive, stopLive } from "@/lib/streaming";
@@ -11,6 +12,7 @@ const GLYPH = { hold: Mic, latch: Hand } as const;
 function ProfileCard({ p }: { p: Profile }) {
   const backends = useApp((s) => s.backends);
   const updateProfile = useApp((s) => s.updateProfile);
+  const navigate = useNavigate();
   const backend = backends.find((b) => b.id === p.backendId);
   const Glyph = GLYPH[p.activation];
   return (
@@ -27,7 +29,17 @@ function ProfileCard({ p }: { p: Profile }) {
             </div>
           </div>
         </div>
-        <Toggle checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Edit profile"
+            onClick={() => navigate(`/profiles?edit=${p.id}`)}
+          >
+            <Pencil className="size-4" />
+          </Button>
+          <Toggle checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
+        </div>
       </div>
       <div className="mt-5 flex items-center justify-between">
         <HotkeyChips codes={p.hotkey} />

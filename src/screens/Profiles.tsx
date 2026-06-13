@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Plus, Mic, Hand, Pencil, Copy, Trash2, Keyboard, AlertTriangle, Info, Server } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Kbd, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
@@ -396,6 +397,21 @@ export default function Profiles() {
   const duplicateProfile = useApp((s) => s.duplicateProfile);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Profile | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Open the editor for a profile deep-linked from elsewhere (Home's Edit button →
+  // /profiles?edit=<id>). Consume the param once so navigating back here later
+  // doesn't reopen the editor.
+  useEffect(() => {
+    const id = searchParams.get("edit");
+    if (!id) return;
+    const p = profiles.find((x) => x.id === id);
+    if (p) {
+      setDraft(p);
+      setEditingId(p.id);
+    }
+    setSearchParams({}, { replace: true });
+  }, [searchParams, profiles, setSearchParams]);
 
   const conflicts = conflictsByProfile(profiles);
   const nameOf = (id: string) => profiles.find((p) => p.id === id)?.name ?? "another profile";
