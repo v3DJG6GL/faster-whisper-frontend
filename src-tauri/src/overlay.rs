@@ -49,7 +49,7 @@ fn position(win: &WebviewWindow, edge: &str) {
 
     let x = m_pos.x + (m_size.width as i32 - chip_w) / 2;
     let y = if edge == "bottom" {
-        m_pos.y + m_size.height as i32 - chip_h - margin * 3
+        m_pos.y + m_size.height as i32 - chip_h - margin * 2
     } else {
         m_pos.y + margin
     };
@@ -69,12 +69,31 @@ pub fn show_overlay(app: AppHandle, position: String) {
     if kwin::is_kde_wayland() {
         let _ = win.set_title(CHIP_TITLE);
         let _ = win.show();
+        ignore_cursor(&win);
         // Pin the chip top/bottom-centre of the *active* output via a KWin rule.
-        kwin::place_chip(kwin::chip_position(&position, CHIP_W, CHIP_H, MARGIN));
+        // This shells out (qdbus6 / kscreen-doctor / kwriteconfig6 / dbus-send), which
+        // can BLOCK: a write to kwinrulesrc can D-Bus-activate a KDE helper (kded6,
+        // kconf_update) that inherits the captured stdout pipe and never closes it, so
+        // `.output()` waits on EOF forever. show_overlay is a *sync* Tauri command, so
+        // it runs on the GTK/UI thread — a hang here freezes the whole app and every
+        // queued command (text injection included). Do it on a detached thread; the
+        // window is already shown, the rule only nudges it into position afterwards.
+        std::thread::spawn(move || {
+            kwin::place_chip(kwin::chip_position(&position, CHIP_W, CHIP_H, MARGIN));
+        });
         return;
     }
 
     let _ = win.show();
+    ignore_cursor(&win);
+}
+
+/// Make the (display-only) chip click-through so the big mostly-transparent window
+/// never swallows clicks meant for the app beneath. MUST be called only AFTER
+/// `show()` — on GTK/KDE-Wayland calling it on a still-hidden (unrealized) window
+/// unwraps a `None` in tao and aborts the whole app.
+fn ignore_cursor(win: &WebviewWindow) {
+    let _ = win.set_ignore_cursor_events(true);
 }
 
 /// Hide the chip.
@@ -93,7 +112,7 @@ pub fn hide_overlay(app: AppHandle) {
 /// chip, identified by its unique title.
 #[cfg(target_os = "linux")]
 mod kwin {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
 
@@ -126,6 +145,8 @@ mod kwin {
         for q in ["qdbus6", "qdbus-qt6", "qdbus"] {
             if let Ok(out) = Command::new(q)
                 .args(["org.kde.KWin", "/KWin", "org.kde.KWin.activeOutputName"])
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
                 .output()
             {
                 let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -142,7 +163,12 @@ mod kwin {
     /// is physical, so logical size = size / scale.
     fn active_output_geometry() -> Option<(i32, i32, i32, i32)> {
         let name = active_output_name()?;
-        let out = Command::new("kscreen-doctor").arg("--json").output().ok()?;
+        let out = Command::new("kscreen-doctor")
+            .arg("--json")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
         let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
         for o in v.get("outputs")?.as_array()? {
             if o.get("name").and_then(|n| n.as_str()) != Some(name.as_str()) {
@@ -168,7 +194,7 @@ mod kwin {
         let m = margin as i32;
         let x = ox + ((ow - cw) / 2).max(0);
         let y = if edge == "bottom" {
-            oy + (oh - ch - m * 3).max(0)
+            oy + (oh - ch - m * 2).max(0)
         } else {
             oy + m
         };
@@ -179,19 +205,35 @@ mod kwin {
     fn tool(candidates: &[&'static str]) -> Option<&'static str> {
         candidates
             .iter()
-            .find(|name| Command::new(name).arg("--help").output().is_ok())
+            .find(|name| {
+                Command::new(name)
+                    .arg("--help")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .is_ok()
+            })
             .copied()
     }
 
     fn set_key(tool: &str, group: &str, key: &str, value: &str) {
+        // No piped stdout: writing kwinrulesrc can D-Bus-activate kded6/kconf_update,
+        // which would inherit a captured stdout pipe and hold it open, deadlocking the
+        // wait. With null stdio there's no pipe to leak — and we never read the output.
         let _ = Command::new(tool)
             .args(["--file", "kwinrulesrc", "--group", group, "--key", key, value])
-            .output();
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 
     fn read_key(tool: &str, group: &str, key: &str) -> Option<String> {
         let out = Command::new(tool)
             .args(["--file", "kwinrulesrc", "--group", group, "--key", key])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
             .output()
             .ok()?;
         let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -207,7 +249,10 @@ mod kwin {
                 "/KWin",
                 "org.kde.KWin.reconfigure",
             ])
-            .output();
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 
     /// Merge our group into General/rules, preserving any existing user rules.
