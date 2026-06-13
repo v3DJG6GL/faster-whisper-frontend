@@ -3,6 +3,7 @@ import { Mic, Check, Info, Keyboard, RefreshCw, Square } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Kbd, Segmented, Select, SettingRow, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
+import { HotkeyChips } from "@/components/HotkeyChips";
 import {
   listAudioDevices,
   startMicTest,
@@ -12,37 +13,11 @@ import {
   suspendShortcuts,
   reregisterShortcuts,
 } from "@/lib/api";
+import { codeToToken, isModifierKey } from "@/lib/keys";
 import type { AudioDevice, DictationModeId } from "@/lib/types";
-
-/** Map a KeyboardEvent.code to an accelerator key token (null = unsupported). */
-function codeToToken(code: string): string | null {
-  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
-  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
-  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
-  const map: Record<string, string> = {
-    Space: "Space",
-    Enter: "Enter",
-    Tab: "Tab",
-    Backquote: "`",
-  };
-  return map[code] ?? null;
-}
 
 const TABS = ["General", "Audio", "Recording", "Shortcuts", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
-
-function HotkeyChips({ hotkey }: { hotkey: string }) {
-  return (
-    <span className="inline-flex items-center gap-1">
-      {hotkey.split("+").map((k, i) => (
-        <span key={i} className="inline-flex items-center gap-1">
-          {i > 0 && <span className="text-faint">+</span>}
-          <Kbd>{k}</Kbd>
-        </span>
-      ))}
-    </span>
-  );
-}
 
 function AudioTab() {
   const microphoneId = useApp((s) => s.settings.microphoneId);
@@ -127,43 +102,66 @@ export default function Settings() {
   const profiles = useApp((st) => st.profiles);
   const updateMode = useApp((st) => st.updateMode);
   const [capturing, setCapturing] = useState<DictationModeId | null>(null);
+  const [heldMods, setHeldMods] = useState<string[]>([]); // live modifier preview
+  const [captureWarn, setCaptureWarn] = useState<string | null>(null);
 
-  // Key-capture for rebinding: grab the next combo, validate it, save it.
+  // Key-capture for rebinding: show modifiers live as they're held, then finalize
+  // on the first real key — validate it, and warn (don't silently drop) on reject.
   useEffect(() => {
-    if (!capturing) return;
+    if (!capturing) {
+      setHeldMods([]);
+      setCaptureWarn(null);
+      return;
+    }
     // Suspend global hotkeys during capture so pressing the current binding only
     // rebinds — it must not also fire dictation (that race left a stuck session).
     void suspendShortcuts();
-    const onKey = (e: KeyboardEvent) => {
+    const modsOf = (e: KeyboardEvent): string[] => {
+      const m: string[] = [];
+      if (e.ctrlKey) m.push("Ctrl");
+      if (e.altKey) m.push("Alt");
+      if (e.shiftKey) m.push("Shift");
+      if (e.metaKey) m.push("Super");
+      return m;
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
       if (e.key === "Escape") {
         setCapturing(null);
         return;
       }
-      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return; // wait for a real key
+      setHeldMods(modsOf(e));
+      if (isModifierKey(e.key)) return; // still building the chord
       const token = codeToToken(e.code);
-      if (!token) return;
-      const mods: string[] = [];
-      if (e.ctrlKey) mods.push("Ctrl");
-      if (e.altKey) mods.push("Alt");
-      if (e.shiftKey) mods.push("Shift");
-      if (e.metaKey) mods.push("Super");
-      const accel = [...mods, token].join("+");
+      if (!token) {
+        setCaptureWarn("That key can't be a global shortcut — try another");
+        return; // keep listening
+      }
+      const accel = [...modsOf(e), token].join("+");
       const mode = capturing;
-      // Don't allow the same combo on both modes — keep listening for another.
       if (useApp.getState().modes.some((m) => m.mode !== mode && m.hotkey === accel)) {
+        setCaptureWarn("Already bound to the other mode");
         return;
       }
-      void validateShortcut(accel)
-        .then((ok) => {
-          if (ok) updateMode(mode, { hotkey: accel });
-        })
-        .finally(() => setCapturing(null));
+      void validateShortcut(accel).then((ok) => {
+        if (ok) {
+          updateMode(mode, { hotkey: accel });
+          setCapturing(null);
+        } else {
+          setCaptureWarn("That combination can't be registered as a global shortcut");
+        }
+      });
     };
-    window.addEventListener("keydown", onKey, true);
+    const onKeyUp = (e: KeyboardEvent) => {
+      e.preventDefault();
+      setHeldMods(modsOf(e));
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
     return () => {
-      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
       void reregisterShortcuts(); // restore hotkeys when capture ends
     };
   }, [capturing, updateMode]);
@@ -295,7 +293,22 @@ export default function Settings() {
                 <div className="mt-5 flex items-center justify-between gap-4 border-t border-line pt-4">
                   <div className="flex items-center gap-3">
                     {capturing === m.mode ? (
-                      <span className="font-mono text-[12px] text-accent">Press a key combo… (Esc to cancel)</span>
+                      <div className="flex items-center gap-2 rounded-lg border border-accent/60 bg-accent-soft/40 px-3 py-1.5 ring-2 ring-accent/25">
+                        <span className="size-2 animate-pulse rounded-full bg-accent" />
+                        <span className="inline-flex items-center gap-1">
+                          {heldMods.map((k, i) => (
+                            <span key={i} className="inline-flex items-center gap-1">
+                              {i > 0 && <span className="text-faint">+</span>}
+                              <Kbd>{k}</Kbd>
+                            </span>
+                          ))}
+                          {heldMods.length > 0 && <span className="text-faint">+</span>}
+                          <Kbd>…</Kbd>
+                        </span>
+                        <span className={"text-[12px] " + (captureWarn ? "text-rec" : "text-dim")}>
+                          {captureWarn ?? "Press your shortcut · Esc to cancel"}
+                        </span>
+                      </div>
                     ) : (
                       <HotkeyChips hotkey={m.hotkey} />
                     )}

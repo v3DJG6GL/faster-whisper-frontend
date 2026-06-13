@@ -1,23 +1,10 @@
 import { Mic, Radio, Hand, Square } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Card, Kbd, SectionLabel, StatusDot, Toggle } from "@/components/ui";
+import { Card, SectionLabel, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
+import { HotkeyChips } from "@/components/HotkeyChips";
 import { startLive, stopLive } from "@/lib/streaming";
 import type { ModeBinding } from "@/lib/types";
-
-function HotkeyChips({ hotkey }: { hotkey: string }) {
-  const keys = hotkey.split("+");
-  return (
-    <span className="inline-flex items-center gap-1">
-      {keys.map((k, i) => (
-        <span key={i} className="inline-flex items-center gap-1">
-          {i > 0 && <span className="text-faint">+</span>}
-          <Kbd>{k}</Kbd>
-        </span>
-      ))}
-    </span>
-  );
-}
 
 function ModeCard({ mode, icon: Icon, title, hint }: { mode: ModeBinding; icon: typeof Mic; title: string; hint: string }) {
   const profiles = useApp((s) => s.profiles);
