@@ -88,11 +88,11 @@ export async function initOverlayController(): Promise<void> {
       return;
     }
 
-    // Inactive, or the overlay is disabled — hide it (with a short linger so the
-    // final transcript / error is readable; immediately if it was turned off).
+    // Inactive, or the overlay is disabled — hide it (with a linger so the final
+    // transcript / error stays readable; immediately if it was turned off).
     if (visible) {
       clearTimeout(hideTimer);
-      const delay = pos === "off" ? 0 : state.status === "error" ? 2400 : 700;
+      const delay = pos === "off" ? 0 : state.status === "error" ? 2400 : 1800;
       hideTimer = setTimeout(() => {
         visible = false;
         void hideOverlay();

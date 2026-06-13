@@ -31,6 +31,11 @@ const SPEAK_HIGH = 0.08; // enter "speaking" above this (smoothed)
 const SPEAK_LOW = 0.04; // candidate for "silent" below this …
 const SILENCE_HOLD_MS = 900; // … but only after staying low this long
 
+// After speech stops, the pill stays expanded this long before collapsing back to
+// the dot — so the last words you spoke remain readable instead of vanishing the
+// instant you pause. Stacks on top of SILENCE_HOLD_MS.
+const COLLAPSE_LINGER_MS = 2000;
+
 // The chip morph: one element fluidly grows from a calm dot into the full pill
 // (Motion `layout` → FLIP/transform, smooth on WebKit). Spring tuned snappy-but-
 // settled (Apple-fluid). We deliberately DON'T use backdrop-blur — on WebKitGTK
@@ -128,11 +133,23 @@ export default function Overlay() {
   }, [state.level, state.status, speaking]);
 
   // Collapsed = armed but silent (or idle, when the window is hidden anyway).
-  const expanded =
+  const wantExpanded =
     state.status === "transcribing" ||
     state.status === "injecting" ||
     state.status === "error" ||
     (state.status === "listening" && speaking);
+
+  // Expand instantly when speech (or a state change) wants it; collapse only after a
+  // linger, so the final words linger on screen rather than snapping shut on a pause.
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (wantExpanded) {
+      setExpanded(true);
+      return;
+    }
+    const t = setTimeout(() => setExpanded(false), COLLAPSE_LINGER_MS);
+    return () => clearTimeout(t);
+  }, [wantExpanded]);
 
   // Hover-to-reveal: holding the cursor over the chip for ≥1s expands it to show
   // the language + stream/batch detail beside the tag. (Under Tauri this only fires
