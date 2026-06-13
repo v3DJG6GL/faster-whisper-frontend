@@ -11,16 +11,16 @@ function basename(path: string): string {
 }
 
 export default function Transcribe() {
-  const profiles = useApp((s) => s.profiles);
-  const [profileId, setProfileId] = useState(profiles[0]?.id ?? "");
-  const [language, setLanguage] = useState(profiles[0]?.language ?? "auto");
+  const backends = useApp((s) => s.backends);
+  const [backendId, setBackendId] = useState(backends[0]?.id ?? "");
+  const [language, setLanguage] = useState(backends[0]?.language ?? "auto");
   const [filePath, setFilePath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<BatchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const profile = profiles.find((p) => p.id === profileId) ?? profiles[0];
+  const backend = backends.find((b) => b.id === backendId) ?? backends[0];
 
   const choose = async () => {
     const path = await pickAudioFile();
@@ -32,17 +32,17 @@ export default function Transcribe() {
   };
 
   const run = async () => {
-    if (!filePath || !profile) return;
+    if (!filePath || !backend) return;
     setBusy(true);
     setError(null);
     setResult(null);
     try {
       const res = await transcribeFile({
-        serverUrl: profile.serverUrl,
-        profileId: profile.id,
-        model: profile.model,
+        serverUrl: backend.serverUrl,
+        backendId: backend.id,
+        model: backend.model,
         language,
-        prompt: profile.prompt,
+        prompt: backend.prompt,
         filePath,
       });
       setResult(res);
@@ -65,7 +65,7 @@ export default function Transcribe() {
       <div className="font-mono text-[11px] uppercase tracking-label text-accent">batch</div>
       <h1 className="mt-2 font-display text-[30px] font-bold tracking-tight text-text">Transcribe a file</h1>
       <p className="mt-2 max-w-md text-[13.5px] text-dim">
-        Send an audio or video file to one of your servers via the batch endpoint.
+        Send an audio or video file to one of your backends via the batch endpoint.
       </p>
 
       <button
@@ -103,15 +103,15 @@ export default function Transcribe() {
 
       <div className="mt-6 grid grid-cols-2 gap-4">
         <div>
-          <label className="mb-2 block text-[12px] font-medium text-dim">Server profile</label>
+          <label className="mb-2 block text-[12px] font-medium text-dim">Backend</label>
           <Select
-            value={profileId}
+            value={backendId}
             onChange={(v) => {
-              setProfileId(v);
-              const p = profiles.find((x) => x.id === v);
-              if (p) setLanguage(p.language);
+              setBackendId(v);
+              const b = backends.find((x) => x.id === v);
+              if (b) setLanguage(b.language);
             }}
-            options={profiles.map((p) => ({ value: p.id, label: p.name }))}
+            options={backends.map((b) => ({ value: b.id, label: b.name }))}
           />
         </div>
         <div>

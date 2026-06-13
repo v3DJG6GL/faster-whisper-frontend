@@ -1,25 +1,20 @@
 import { useState, useEffect, useCallback } from "react";
-import { Mic, Check, Info, Keyboard, RefreshCw, Square } from "lucide-react";
+import { Mic, Check, RefreshCw, Square } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Kbd, Segmented, Select, SettingRow, StatusDot, Toggle } from "@/components/ui";
+import { Button, Card, Segmented, Select, SettingRow, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
-import { HotkeyChips } from "@/components/HotkeyChips";
 import {
   listAudioDevices,
   startMicTest,
   stopMicTest,
   onAudioLevel,
-  validateCodes,
-  suspendShortcuts,
-  reregisterShortcuts,
   evdevStatus,
   evdevSetup,
   type EvdevStatus,
 } from "@/lib/api";
-import { codeToToken, MODIFIER_CODES, canonicalizeCodes, sameCodes, codesToLabels } from "@/lib/keys";
-import type { AudioDevice, DictationModeId } from "@/lib/types";
+import type { AudioDevice } from "@/lib/types";
 
-const TABS = ["General", "Audio", "Recording", "Shortcuts", "Permissions"] as const;
+const TABS = ["General", "Audio", "Recording", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
 
 function AudioTab() {
@@ -101,12 +96,6 @@ export default function Settings() {
   const s = useApp((st) => st.settings);
   const updateGeneral = useApp((st) => st.updateGeneral);
   const updateRecording = useApp((st) => st.updateRecording);
-  const modes = useApp((st) => st.modes);
-  const profiles = useApp((st) => st.profiles);
-  const updateMode = useApp((st) => st.updateMode);
-  const [capturing, setCapturing] = useState<DictationModeId | null>(null);
-  const [heldCodes, setHeldCodes] = useState<string[]>([]); // live chord preview
-  const [captureWarn, setCaptureWarn] = useState<string | null>(null);
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
   const [evdevMsg, setEvdevMsg] = useState<string | null>(null);
   const [evdevBusy, setEvdevBusy] = useState(false);
@@ -114,13 +103,6 @@ export default function Settings() {
   useEffect(() => {
     void evdevStatus().then(setEvdev);
   }, [tab]);
-
-  // When the evdev backend is enabled it owns the modes and can bind modifier-only
-  // / AltGr / left-right chords the plugin can't — so capture validates differently.
-  // Gate on the config flag (synchronous + reliable), not the polled permitted
-  // status (async; can be null/stale on the Shortcuts tab). The enable toggle only
-  // appears once permitted, so evdevEnabled already implies it was grantable.
-  const evdevActive = s.general.evdevEnabled;
 
   const runEvdevSetup = () => {
     setEvdevBusy(true);
@@ -133,90 +115,6 @@ export default function Settings() {
       .catch((e) => setEvdevMsg(String(e)))
       .finally(() => setEvdevBusy(false));
   };
-
-  // Key-capture for rebinding: track held modifier codes (per side) live, then
-  // finalize on the first real key — validate it, warn (don't silently drop) on
-  // reject. Bindings are stored as event.code lists (carrying side + AltGr).
-  useEffect(() => {
-    if (!capturing) {
-      setHeldCodes([]);
-      setCaptureWarn(null);
-      return;
-    }
-    // Suspend global hotkeys during capture so pressing the current binding only
-    // rebinds — it must not also fire dictation (that race left a stuck session).
-    void suspendShortcuts();
-    const pressed = new Set<string>();
-    let peak: string[] = []; // largest modifier-only set held (for evdev chords)
-    let done = false;
-    const finalize = (codes: string[]) => {
-      const mode = capturing;
-      if (useApp.getState().modes.some((m) => m.mode !== mode && sameCodes(m.hotkey, codes))) {
-        setCaptureWarn("Already bound to the other mode");
-        done = false;
-        return;
-      }
-      if (evdevActive) {
-        // evdev owns the modes — it can bind modifier-only / AltGr / left-right.
-        updateMode(mode, { hotkey: codes });
-        setCapturing(null);
-      } else {
-        void validateCodes(codes).then((ok) => {
-          if (ok) {
-            updateMode(mode, { hotkey: codes });
-            setCapturing(null);
-          } else {
-            setCaptureWarn("Can't register that — add a letter/digit, or enable the evdev backend (Permissions) for modifier-only / AltGr");
-            done = false;
-          }
-        });
-      }
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === "Escape") {
-        setCapturing(null);
-        return;
-      }
-      if (MODIFIER_CODES.has(e.code)) {
-        pressed.add(e.code);
-        const cur = canonicalizeCodes([...pressed]);
-        if (cur.length > peak.length) peak = cur;
-        setHeldCodes(cur);
-        return; // still building the chord
-      }
-      if (!codeToToken(e.code) && !evdevActive) {
-        setCaptureWarn("That key can't be a global shortcut — try another");
-        return; // keep listening
-      }
-      done = true;
-      finalize(canonicalizeCodes([...pressed, e.code]));
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      e.preventDefault();
-      pressed.delete(e.code);
-      setHeldCodes(canonicalizeCodes([...pressed]));
-      // Modifier-only chord (e.g. Ctrl+Shift): no real key was pressed and every
-      // key has been released — finalize the peak set. Only the evdev backend can
-      // honour these; on the plugin path, nudge the user instead.
-      if (!done && pressed.size === 0 && peak.length > 0) {
-        if (evdevActive) {
-          done = true;
-          finalize(peak);
-        } else {
-          setCaptureWarn("Modifier-only chords need the evdev backend (Permissions)");
-        }
-      }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    window.addEventListener("keyup", onKeyUp, true);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-      window.removeEventListener("keyup", onKeyUp, true);
-      void reregisterShortcuts(); // restore hotkeys when capture ends
-    };
-  }, [capturing, updateMode, evdevActive]);
 
   return (
     <div className="mx-auto flex max-w-[880px] gap-8 px-10 py-12">
@@ -249,7 +147,7 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title="Auto-insert"
-              desc="When to place the transcription into the focused field. “Live” inserts each finished phrase as you speak (streaming profiles; batch inserts on stop)."
+              desc="When to place the transcription into the focused field. “Live” inserts each finished phrase as you speak (streaming backends; batch inserts on stop)."
             >
               <Segmented
                 value={s.general.insertTiming}
@@ -317,79 +215,12 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title="Live transcript in overlay"
-              desc="Show words appear in the chip as you speak (streaming profiles only)."
+              desc="Show words appear in the chip as you speak (streaming backends only)."
               last
             >
               <Toggle checked={s.recording.realtimePreview} onChange={(v) => updateRecording({ realtimePreview: v })} />
             </SettingRow>
           </Card>
-        )}
-
-        {tab === "Shortcuts" && (
-          <div className="flex flex-col gap-4">
-            {modes.map((m) => (
-              <Card key={m.mode} className="p-5">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-[14px] font-semibold text-text">
-                      {m.mode === "hold" ? "Push-to-talk" : "Latch"}
-                    </div>
-                    <div className="mt-0.5 text-[12.5px] text-dim">
-                      {m.mode === "hold"
-                        ? "Hold the hotkey while you speak; release to stop."
-                        : "Tap once to start, tap again to stop."}
-                    </div>
-                  </div>
-                  <Toggle checked={m.enabled} onChange={(v) => updateMode(m.mode, { enabled: v })} />
-                </div>
-                <div className="mt-5 flex items-center justify-between gap-4 border-t border-line pt-4">
-                  <div className="flex items-center gap-3">
-                    {capturing === m.mode ? (
-                      <div className="flex items-center gap-2 rounded-lg border border-accent/60 bg-accent-soft/40 px-3 py-1.5 ring-2 ring-accent/25">
-                        <span className="size-2 animate-pulse rounded-full bg-accent" />
-                        <span className="inline-flex items-center gap-1">
-                          {codesToLabels(heldCodes).map((k, i) => (
-                            <span key={i} className="inline-flex items-center gap-1">
-                              {i > 0 && <span className="text-faint">+</span>}
-                              <Kbd>{k}</Kbd>
-                            </span>
-                          ))}
-                          {heldCodes.length > 0 && <span className="text-faint">+</span>}
-                          <Kbd>…</Kbd>
-                        </span>
-                        <span className={"text-[12px] " + (captureWarn ? "text-rec" : "text-dim")}>
-                          {captureWarn ?? "Press your shortcut · Esc to cancel"}
-                        </span>
-                      </div>
-                    ) : (
-                      <HotkeyChips codes={m.hotkey} />
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setCapturing(capturing === m.mode ? null : m.mode)}
-                    >
-                      <Keyboard className="size-4" /> {capturing === m.mode ? "Cancel" : "Rebind"}
-                    </Button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[12px] text-faint">Profile</span>
-                    <Select
-                      value={m.profileId ?? ""}
-                      onChange={(v) => updateMode(m.mode, { profileId: v || null })}
-                      options={profiles.map((p) => ({ value: p.id, label: p.name }))}
-                      className="w-44"
-                    />
-                  </div>
-                </div>
-              </Card>
-            ))}
-            <div className="flex items-start gap-2 px-1 text-[12px] text-faint">
-              <Info className="mt-0.5 size-3.5 shrink-0" />
-              On Wayland, press-&-hold needs the optional evdev backend (Permissions). Toggle works everywhere; you can
-              also bind these in your desktop’s shortcut settings.
-            </div>
-          </div>
         )}
 
         {tab === "Permissions" && (
@@ -423,7 +254,7 @@ export default function Settings() {
             {evdevMsg && <div className="px-1 pt-3 text-[12px] text-dim">{evdevMsg}</div>}
             {evdev && evdev.permitted && (
               <div className="px-1 pt-3 text-[12px] text-faint">
-                Bindings using AltGr or a specific left/right modifier only fire while this is on.
+                Profiles using AltGr or a specific left/right modifier only fire while this is on.
               </div>
             )}
           </Card>

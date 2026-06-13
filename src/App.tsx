@@ -8,7 +8,8 @@ import { onTrigger } from "@/lib/api";
 import { dictate } from "@/lib/dictation";
 import Home from "@/screens/Home";
 import Transcribe from "@/screens/Transcribe";
-import SpeechModels from "@/screens/SpeechModels";
+import Profiles from "@/screens/Profiles";
+import Backends from "@/screens/Backends";
 import Settings from "@/screens/Settings";
 
 export default function App() {
@@ -27,7 +28,7 @@ export default function App() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    void onTrigger((e) => dictate(e.mode, e.action)).then((u) => {
+    void onTrigger((e) => dictate(e.profileId, e.action)).then((u) => {
       if (cancelled) u();
       else unlisten = u;
     });
@@ -49,7 +50,10 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/transcribe" element={<Transcribe />} />
-            <Route path="/models" element={<SpeechModels />} />
+            <Route path="/profiles" element={<Profiles />} />
+            <Route path="/backends" element={<Backends />} />
+            {/* legacy path → Backends (renamed from "Servers"/models) */}
+            <Route path="/models" element={<Navigate to="/backends" replace />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

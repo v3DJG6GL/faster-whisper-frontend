@@ -3,14 +3,14 @@ import { Plus, Server, Pencil, Trash2, Plug, Loader2, Check, AlertTriangle } fro
 import { useApp } from "@/lib/store";
 import { Button, Card, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
-import { testConnection, setProfileKey, deleteProfileKey } from "@/lib/api";
-import type { ConnectionInfo, ModelProfile } from "@/lib/types";
+import { testConnection, setBackendKey, deleteBackendKey } from "@/lib/api";
+import type { Backend, ConnectionInfo } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
-function blankProfile(): ModelProfile {
+function blankBackend(): Backend {
   return {
     id: crypto.randomUUID(),
-    name: "New server",
+    name: "New backend",
     serverUrl: "http://localhost:8000",
     hasApiKey: false,
     model: "whisper-1",
@@ -48,27 +48,27 @@ function Editor({
   onSave,
   onCancel,
 }: {
-  initial: ModelProfile;
-  onSave: (p: ModelProfile, typedKey: string) => void;
+  initial: Backend;
+  onSave: (b: Backend, typedKey: string) => void;
   onCancel: () => void;
 }) {
   const setConnection = useApp((s) => s.setConnection);
-  const [p, setP] = useState<ModelProfile>(initial);
+  const [b, setB] = useState<Backend>(initial);
   const [key, setKey] = useState("");
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ConnectionInfo | null>(null);
-  const set = (patch: Partial<ModelProfile>) => setP((x) => ({ ...x, ...patch }));
+  const set = (patch: Partial<Backend>) => setB((x) => ({ ...x, ...patch }));
 
   const runTest = async () => {
     setTesting(true);
     try {
       const info = await testConnection({
-        serverUrl: p.serverUrl,
-        profileId: p.id,
+        serverUrl: b.serverUrl,
+        backendId: b.id,
         apiKey: key || null,
       });
       setResult(info);
-      setConnection(p.id, info);
+      setConnection(b.id, info);
     } finally {
       setTesting(false);
     }
@@ -78,19 +78,19 @@ function Editor({
     <Card className="p-6">
       <div className="flex items-center gap-2 text-text">
         <Server className="size-[18px] text-accent" />
-        <span className="text-[14px] font-semibold">Server profile</span>
+        <span className="text-[14px] font-semibold">Backend</span>
         <span className="text-[12px] text-dim">· faster-whisper / OpenAI-compatible</span>
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-4">
         <Labeled label="Name">
-          <TextInput value={p.name} onChange={(e) => set({ name: e.target.value })} placeholder="My server" />
+          <TextInput value={b.name} onChange={(e) => set({ name: e.target.value })} placeholder="My backend" />
         </Labeled>
         <Labeled label="Server URL">
-          <TextInput value={p.serverUrl} onChange={(e) => set({ serverUrl: e.target.value })} placeholder="http://host:8000" />
+          <TextInput value={b.serverUrl} onChange={(e) => set({ serverUrl: e.target.value })} placeholder="http://host:8000" />
         </Labeled>
         <Labeled label="Model">
-          <TextInput value={p.model} onChange={(e) => set({ model: e.target.value })} placeholder="whisper-1 / large-v3" />
+          <TextInput value={b.model} onChange={(e) => set({ model: e.target.value })} placeholder="whisper-1 / large-v3" />
         </Labeled>
         <Labeled label="API key (optional)">
           <TextInput
@@ -103,12 +103,12 @@ function Editor({
             placeholder={initial.hasApiKey ? "•••••••••• (stored — leave blank to keep)" : "wk_…"}
           />
         </Labeled>
-        <Labeled label="Language">
-          <Select value={p.language} onChange={(v) => set({ language: v })} options={LANGUAGES} />
+        <Labeled label="Default language">
+          <Select value={b.language} onChange={(v) => set({ language: v })} options={LANGUAGES} />
         </Labeled>
         <Labeled label="Endpoint">
           <Segmented
-            value={p.endpoint}
+            value={b.endpoint}
             onChange={(v) => set({ endpoint: v })}
             options={[
               { value: "stream", label: "Streaming" },
@@ -129,7 +129,7 @@ function Editor({
                 onClick={() => set({ model: m.id })}
                 className={cn(
                   "ring-signal rounded-pill border px-3 py-1 font-mono text-[12px] transition-colors",
-                  p.model === m.id
+                  b.model === m.id
                     ? "border-accent bg-accent-soft text-accent"
                     : "border-line bg-surface-2 text-dim hover:text-text",
                 )}
@@ -142,9 +142,9 @@ function Editor({
         </div>
       )}
 
-      <Labeled label="Vocabulary / prompt (optional)" className="mt-4">
+      <Labeled label="Default vocabulary / prompt (optional)" className="mt-4">
         <textarea
-          value={p.prompt}
+          value={b.prompt}
           onChange={(e) => set({ prompt: e.target.value })}
           rows={2}
           placeholder="Bias terms — names, jargon…"
@@ -163,8 +163,8 @@ function Editor({
             {testing ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
             Test connection
           </Button>
-          <Button variant="accent" onClick={() => onSave(p, key)}>
-            Save profile
+          <Button variant="accent" onClick={() => onSave(b, key)}>
+            Save backend
           </Button>
         </div>
       </div>
@@ -195,33 +195,33 @@ function ConnResult({ info }: { info: ConnectionInfo }) {
   );
 }
 
-export default function SpeechModels() {
-  const profiles = useApp((s) => s.profiles);
+export default function Backends() {
+  const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
-  const upsertProfile = useApp((s) => s.upsertProfile);
-  const removeProfile = useApp((s) => s.removeProfile);
+  const upsertBackend = useApp((s) => s.upsertBackend);
+  const removeBackend = useApp((s) => s.removeBackend);
   const setConnection = useApp((s) => s.setConnection);
-  const [editing, setEditing] = useState<ModelProfile | null>(null);
+  const [editing, setEditing] = useState<Backend | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
 
-  const handleTest = async (p: ModelProfile) => {
-    setTestingId(p.id);
+  const handleTest = async (b: Backend) => {
+    setTestingId(b.id);
     try {
-      const info = await testConnection({ serverUrl: p.serverUrl, profileId: p.id });
-      setConnection(p.id, info);
+      const info = await testConnection({ serverUrl: b.serverUrl, backendId: b.id });
+      setConnection(b.id, info);
     } finally {
       setTestingId(null);
     }
   };
 
   const handleRemove = (id: string) => {
-    removeProfile(id);
-    void deleteProfileKey(id);
+    removeBackend(id);
+    void deleteBackendKey(id);
   };
 
-  const handleSave = (p: ModelProfile, typedKey: string) => {
-    upsertProfile(p);
-    if (typedKey) void setProfileKey(p.id, typedKey);
+  const handleSave = (b: Backend, typedKey: string) => {
+    upsertBackend(b);
+    if (typedKey) void setBackendKey(b.id, typedKey);
     setEditing(null);
   };
 
@@ -229,15 +229,16 @@ export default function SpeechModels() {
     <div className="mx-auto max-w-[820px] px-10 py-12">
       <div className="flex items-end justify-between">
         <div>
-          <div className="font-mono text-[11px] uppercase tracking-label text-accent">servers</div>
-          <h1 className="mt-2 font-display text-[30px] font-bold tracking-tight text-text">Servers</h1>
+          <div className="font-mono text-[11px] uppercase tracking-label text-accent">backends</div>
+          <h1 className="mt-2 font-display text-[30px] font-bold tracking-tight text-text">Backends</h1>
           <p className="mt-2 max-w-md text-[13.5px] text-dim">
-            Each profile points at a transcription server and carries its own model, language, and endpoint.
+            A backend is a connection to a transcription server, with its own model, default
+            language, and endpoint. Profiles point at one.
           </p>
         </div>
         {!editing && (
-          <Button variant="accent" onClick={() => setEditing(blankProfile())}>
-            <Plus className="size-4" /> Add profile
+          <Button variant="accent" onClick={() => setEditing(blankBackend())}>
+            <Plus className="size-4" /> Add backend
           </Button>
         )}
       </div>
@@ -250,38 +251,38 @@ export default function SpeechModels() {
         <>
           <SectionLabel className="mb-3 mt-8">Configured</SectionLabel>
           <div className="flex flex-col gap-3">
-            {profiles.map((p) => {
-              const conn = connections[p.id];
+            {backends.map((b) => {
+              const conn = connections[b.id];
               return (
-                <Card key={p.id} className="flex items-center gap-4 p-5">
+                <Card key={b.id} className="flex items-center gap-4 p-5">
                   <div className="grid size-10 place-items-center rounded-xl bg-surface-2 text-accent">
                     <Server className="size-[18px]" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate text-[14px] font-semibold text-text">{p.name}</span>
-                      <Badge tone="accent">{p.endpoint}</Badge>
-                      <Badge>{languageLabel(p.language)}</Badge>
-                      {p.hasApiKey && <Badge>key</Badge>}
+                      <span className="truncate text-[14px] font-semibold text-text">{b.name}</span>
+                      <Badge tone="accent">{b.endpoint}</Badge>
+                      <Badge>{languageLabel(b.language)}</Badge>
+                      {b.hasApiKey && <Badge>key</Badge>}
                     </div>
                     <div className="mt-1 flex items-center gap-2 font-mono text-[12px] text-dim">
-                      <span className="truncate">{p.serverUrl}</span>
+                      <span className="truncate">{b.serverUrl}</span>
                       <span className="text-faint">·</span>
-                      <span className="text-faint">{p.model}</span>
+                      <span className="text-faint">{b.model}</span>
                     </div>
                   </div>
                   <div className="flex w-24 items-center justify-end gap-1.5 text-[12px] text-dim" title={conn?.error}>
                     <StatusDot tone={conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
-                    {testingId === p.id ? "testing…" : conn?.ok ? "connected" : conn?.error ? "error" : "untested"}
+                    {testingId === b.id ? "testing…" : conn?.ok ? "connected" : conn?.error ? "error" : "untested"}
                   </div>
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="sm" title="Test connection" onClick={() => handleTest(p)} disabled={testingId === p.id}>
-                      {testingId === p.id ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
+                    <Button variant="ghost" size="sm" title="Test connection" onClick={() => handleTest(b)} disabled={testingId === b.id}>
+                      {testingId === b.id ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
                     </Button>
-                    <Button variant="ghost" size="sm" title="Edit" onClick={() => setEditing(p)}>
+                    <Button variant="ghost" size="sm" title="Edit" onClick={() => setEditing(b)}>
                       <Pencil className="size-4" />
                     </Button>
-                    <Button variant="ghost" size="sm" title="Remove" onClick={() => handleRemove(p.id)}>
+                    <Button variant="ghost" size="sm" title="Remove" onClick={() => handleRemove(b.id)}>
                       <Trash2 className="size-4" />
                     </Button>
                   </div>

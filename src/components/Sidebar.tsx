@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { Home, AudioLines, Server, Settings as SettingsIcon, Moon, Sun } from "lucide-react";
+import { Home, AudioLines, Server, Command, Settings as SettingsIcon, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
 import { StatusDot } from "./ui";
@@ -7,7 +7,8 @@ import { StatusDot } from "./ui";
 const NAV = [
   { to: "/", label: "Home", icon: Home, end: true },
   { to: "/transcribe", label: "Transcribe", icon: AudioLines, end: false },
-  { to: "/models", label: "Servers", icon: Server, end: false },
+  { to: "/profiles", label: "Profiles", icon: Command, end: false },
+  { to: "/backends", label: "Backends", icon: Server, end: false },
 ];
 
 function BrandMark() {
