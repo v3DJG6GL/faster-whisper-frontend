@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Plus, Server, Pencil, Trash2, Plug, Loader2, Check, AlertTriangle } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
+import { DecodeFields } from "@/components/DecodeFields";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
@@ -57,6 +58,9 @@ function Editor({
   const [key, setKey] = useState("");
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ConnectionInfo | null>(null);
+  const [showDecode, setShowDecode] = useState(
+    () => !!initial.decodeOverrides && Object.keys(initial.decodeOverrides).length > 0,
+  );
   const set = (patch: Partial<Backend>) => setB((x) => ({ ...x, ...patch }));
 
   const runTest = async () => {
@@ -151,6 +155,34 @@ function Editor({
           className="ring-signal w-full resize-none rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[13px] text-text placeholder:text-faint"
         />
       </Labeled>
+
+      <div className="mt-5">
+        <button
+          type="button"
+          onClick={() => setShowDecode((v) => !v)}
+          className="ring-signal inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium text-dim hover:text-text"
+        >
+          <span className={cn("transition-transform", showDecode && "rotate-90")}>›</span>
+          Decode defaults
+          {b.decodeOverrides && Object.keys(b.decodeOverrides).length ? (
+            <span className="text-accent">· set</span>
+          ) : (
+            <span className="text-faint">· inherit server</span>
+          )}
+        </button>
+        {showDecode && (
+          <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
+            <p className="mb-3 text-[12px] text-dim">
+              Defaults for every profile that uses this backend (a profile can still
+              override per field). Empty = the server&apos;s per-model config.
+            </p>
+            <DecodeFields
+              value={b.decodeOverrides ?? {}}
+              onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
+            />
+          </div>
+        )}
+      </div>
 
       {result && <ConnResult info={result} />}
 

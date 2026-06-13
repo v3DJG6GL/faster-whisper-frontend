@@ -3,6 +3,7 @@ import { Plus, Mic, Hand, Pencil, Copy, Trash2, Keyboard, AlertTriangle, Info, S
 import { useApp } from "@/lib/store";
 import { Button, Card, Kbd, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
+import { DecodeFields } from "@/components/DecodeFields";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { validateCodes, suspendShortcuts, reregisterShortcuts } from "@/lib/api";
 import { MODIFIER_CODES, codeToToken, canonicalizeCodes, codesToLabels } from "@/lib/keys";
@@ -143,7 +144,10 @@ function Editor({
   const evdevActive = useApp((s) => s.settings.general.evdevEnabled);
   const [p, setP] = useState<Profile>(initial);
   const [capturing, setCapturing] = useState(false);
-  const [showOverrides, setShowOverrides] = useState(!!(initial.language || initial.prompt));
+  const [showOverrides, setShowOverrides] = useState(
+    !!(initial.language || initial.prompt ||
+      (initial.decodeOverrides && Object.keys(initial.decodeOverrides).length)),
+  );
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
 
   const { heldCodes, warn } = useHotkeyCapture({
@@ -238,28 +242,44 @@ function Editor({
         className="ring-signal mt-5 inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium text-dim hover:text-text"
       >
         <span className={cn("transition-transform", showOverrides && "rotate-90")}>›</span>
-        Overrides {p.language || p.prompt ? <span className="text-accent">· set</span> : <span className="text-faint">· inherit backend</span>}
+        Overrides{" "}
+        {p.language || p.prompt || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) ? (
+          <span className="text-accent">· set</span>
+        ) : (
+          <span className="text-faint">· inherit backend</span>
+        )}
       </button>
 
       {showOverrides && (
-        <div className="mt-3 grid grid-cols-2 gap-4 rounded-xl border border-line bg-surface-2/40 p-4">
-          <Labeled label="Language">
-            <Select
-              value={p.language ?? ""}
-              onChange={(v) => set({ language: v })}
-              options={[{ value: "", label: "Inherit from backend" }, ...LANGUAGES]}
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-4 rounded-xl border border-line bg-surface-2/40 p-4">
+            <Labeled label="Language">
+              <Select
+                value={p.language ?? ""}
+                onChange={(v) => set({ language: v })}
+                options={[{ value: "", label: "Inherit from backend" }, ...LANGUAGES]}
+              />
+            </Labeled>
+            <Labeled label="Vocabulary / prompt">
+              <textarea
+                value={p.prompt ?? ""}
+                onChange={(e) => set({ prompt: e.target.value })}
+                rows={2}
+                placeholder="Inherit from backend"
+                className="ring-signal w-full resize-none rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[13px] text-text placeholder:text-faint"
+              />
+            </Labeled>
+          </div>
+          <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
+            <div className="mb-3 text-[12px] font-medium text-dim">
+              Decode overrides <span className="text-faint">· empty inherits the backend</span>
+            </div>
+            <DecodeFields
+              value={p.decodeOverrides ?? {}}
+              onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
             />
-          </Labeled>
-          <Labeled label="Vocabulary / prompt">
-            <textarea
-              value={p.prompt ?? ""}
-              onChange={(e) => set({ prompt: e.target.value })}
-              rows={2}
-              placeholder="Inherit from backend"
-              className="ring-signal w-full resize-none rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[13px] text-text placeholder:text-faint"
-            />
-          </Labeled>
-        </div>
+          </div>
+        </>
       )}
 
       <div className="mt-5 flex items-start gap-2 text-[12px] text-faint">
