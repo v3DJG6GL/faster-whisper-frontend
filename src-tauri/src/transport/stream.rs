@@ -20,6 +20,9 @@ pub enum StreamEvent {
     Ready,
     Partial { committed: String, pending: String },
     Final { committed: String, tail: String, last: bool },
+    /// Long-silence hard break: the server reset its document. The client should
+    /// reset its injection baseline and optionally type `separator` between docs.
+    Boundary { separator: String },
     Error(String),
     Closed,
 }
@@ -197,6 +200,12 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
                 last,
             });
             last
+        }
+        Some("boundary") => {
+            on_event(StreamEvent::Boundary {
+                separator: str_field(&v, "separator"),
+            });
+            false
         }
         Some("error") => {
             on_event(StreamEvent::Error(str_field(&v, "message")));

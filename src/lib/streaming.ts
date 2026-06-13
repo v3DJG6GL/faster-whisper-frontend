@@ -8,11 +8,11 @@
 //              chosen Insertion-method: clipboard paste or direct typing).
 //   • "live" — insert each phrase AS YOU FINISH IT (streaming profiles only).
 //
-// Live insert uses DIFF-CORRECT keystroke typing: on each `final` we type the new
-// suffix of the whole document (committed + tail), and on the rare occasion the
-// backend revises an already-typed word (cross-phrase post-processing), we
-// backspace the changed part and retype it. This needs keystrokes (clipboard
-// can't backspace), so live always types regardless of the paste/direct setting.
+// Live insert is APPEND-ONLY: on each `final` we type only the new suffix of the
+// whole document (committed + tail) beyond what we've already typed — we never
+// backspace/revise. This honours the chosen method (clipboard paste or direct).
+// On a server "boundary" (long-silence hard break) the document resets: we drop our
+// baseline so the next utterance starts fresh, and optionally type a separator.
 
 import { useApp } from "./store";
 import {
@@ -22,7 +22,8 @@ import {
   startRecord,
   stopRecord,
   injectText,
-  injectLive,
+  beginInjection,
+  endInjection,
 } from "./api";
 import type { ModelProfile } from "./types";
 
@@ -33,8 +34,11 @@ let activeEndpoint: "stream" | "batch" | null = null;
 // prepend this to keep earlier lines visible while the next sentence is spoken.
 let committedDoc = "";
 // The exact text we've typed into the focused field so far (live mode), so we can
-// diff the next document against it and backspace+retype only what changed.
+// diff the next document against it and append only what's new.
 let injectedText = "";
+// Documents completed before a hard break, accumulated for the "stop"-timing single
+// insert. Live mode types as it goes, so it doesn't read this back.
+let bankedDoc = "";
 // Insertion config captured at dictation start.
 interface InsertCfg {
   timing: "off" | "stop" | "live";
@@ -75,17 +79,52 @@ async function ensureListeners(): Promise<void> {
     // committed+tail is the whole document so far — fold it in and show it.
     committedDoc = e.payload.committed + e.payload.tail;
     setDictation({ partial: committedDoc });
-    // Live mode: diff the new document against what we've typed and inject the
-    // delta (backspacing any revised suffix). The newest phrase is in `tail`, so
-    // this types it immediately rather than waiting for the next phrase to lock it.
+    // Live mode (append-only): type the newest phrase from `tail` immediately,
+    // only ever APPENDING what's new beyond what we've already typed — we never
+    // backspace/revise. On the rare occasion the backend re-tidies a seam (e.g.
+    // a space before a comma) this can leave a tiny artifact, but nothing is ever
+    // un-typed. `injectedText` tracks the backend's document so later phrases
+    // append at the right point.
     if (insertCfg?.live) {
-      const target = committedDoc;
+      // Strip the document's leading whitespace (Whisper prefixes a space) so the
+      // first phrase isn't injected with a leading space. Only the START — inner
+      // and inter-phrase spacing is preserved.
+      const target = committedDoc.replace(/^\s+/, "");
       const c = commonPrefixLen(injectedText, target);
-      const backspaces = injectedText.length - c;
       const toType = target.slice(c);
       injectedText = target;
-      if (backspaces > 0 || toType.length > 0) {
-        enqueueInject(() => injectLive(backspaces, toType));
+      if (toType.length > 0) {
+        const method = insertCfg.method;
+        // Append-only → paste works too; honour the chosen method. No per-segment
+        // clipboard restore (begin/endInjection snapshots once around the session).
+        enqueueInject(() =>
+          injectText({ text: toType, method, autoEnter: false, restoreClipboard: false }),
+        );
+      }
+    }
+  });
+
+  await listen<string>("stream://boundary", (e) => {
+    // Long-silence hard break: the server reset its document. Bank what we have (for
+    // the stop-timing single insert), drop our live baseline so the next utterance
+    // starts fresh, clear the preview, and optionally type the configured separator.
+    const sep = e.payload || "";
+    if (committedDoc) bankedDoc += committedDoc + sep;
+    committedDoc = "";
+    injectedText = "";
+    setDictation({ partial: "" });
+    if (insertCfg?.live && sep) {
+      const method = insertCfg.method;
+      // A "\n" separator is a real Enter (a pasted newline gets swallowed by some
+      // apps); anything else is typed/pasted literally.
+      if (sep.includes("\n")) {
+        enqueueInject(() =>
+          injectText({ text: "", method, autoEnter: true, restoreClipboard: false }),
+        );
+      } else {
+        enqueueInject(() =>
+          injectText({ text: sep, method, autoEnter: false, restoreClipboard: false }),
+        );
       }
     }
   });
@@ -105,12 +144,21 @@ async function ensureListeners(): Promise<void> {
       const cfg = insertCfg;
       if (!cfg || cfg.timing === "off") return;
       if (cfg.live) {
-        // Phrases were injected live; the `last` final already reconciled the
-        // whole document. Just append Enter if requested.
-        if (cfg.autoEnter) enqueueInject(() => injectLive(0, "\n"));
+        // Phrases were injected live; the `last` final already delivered the rest.
+        // Press a real Enter (not a pasted "\n", which some apps swallow).
+        if (cfg.autoEnter) {
+          enqueueInject(() =>
+            injectText({ text: "", method: cfg.method, autoEnter: true, restoreClipboard: false }),
+          );
+        }
+        // Restore the clipboard once, after the last paste in the queue.
+        if (cfg.method === "paste" && cfg.restoreClipboard) {
+          enqueueInject(() => endInjection());
+        }
       } else {
         // "stop" (and "live" on a batch profile): insert the whole transcript once.
-        const text = committedDoc.trim();
+        // bankedDoc holds any documents finalized before a hard break this session.
+        const text = (bankedDoc + committedDoc).trim();
         if (text) {
           void injectText({
             text,
@@ -145,10 +193,21 @@ export async function startLive(profile: ModelProfile, deviceId: string | null):
   };
   committedDoc = "";
   injectedText = "";
+  bankedDoc = "";
   injectChain = Promise.resolve();
 
   setDictation({ status: "listening", partial: "", level: 0, dictationError: null });
   activeEndpoint = profile.endpoint;
+
+  // Live paste: snapshot the clipboard once so we can restore it on stop (we skip
+  // per-segment restore to avoid churn while pasting each phrase).
+  if (insertCfg.live && insertCfg.method === "paste" && insertCfg.restoreClipboard) {
+    try {
+      await beginInjection();
+    } catch (e) {
+      console.error("beginInjection failed:", e);
+    }
+  }
 
   try {
     if (profile.endpoint === "batch") {

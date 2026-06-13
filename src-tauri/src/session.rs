@@ -136,6 +136,10 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             );
             let _ = appc.emit("stream://final", FinalPayload { committed, tail, last });
         }
+        StreamEvent::Boundary { separator } => {
+            tracing::info!("[stream] boundary (hard break)");
+            let _ = appc.emit("stream://boundary", separator);
+        }
         StreamEvent::Error(m) => {
             let _ = appc.emit("stream://error", m);
         }
