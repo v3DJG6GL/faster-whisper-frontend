@@ -116,17 +116,20 @@ mod imp {
             if !is_keyboard(&dev) {
                 continue;
             }
-            let stream = match dev.into_event_stream() {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!("[evdev] can't read {}: {e}", path.display());
-                    continue;
-                }
-            };
             let app = app.clone();
             let hold = hold.clone();
             let latch = latch.clone();
             tasks.push(tauri::async_runtime::spawn(async move {
+                // into_event_stream() builds a tokio AsyncFd, so it MUST run inside
+                // the async runtime — calling it on the main thread (where the
+                // command runs) panics with "no reactor running".
+                let stream = match dev.into_event_stream() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("[evdev] can't read {}: {e}", path.display());
+                        return;
+                    }
+                };
                 run_device(app, stream, hold, latch).await;
             }));
         }
