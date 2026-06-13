@@ -115,9 +115,12 @@ export default function Settings() {
     void evdevStatus().then(setEvdev);
   }, [tab]);
 
-  // When the evdev backend owns the modes, it can bind modifier-only / AltGr /
-  // left-right chords the plugin can't — so capture validates differently.
-  const evdevActive = !!(s.general.evdevEnabled && evdev?.permitted);
+  // When the evdev backend is enabled it owns the modes and can bind modifier-only
+  // / AltGr / left-right chords the plugin can't — so capture validates differently.
+  // Gate on the config flag (synchronous + reliable), not the polled permitted
+  // status (async; can be null/stale on the Shortcuts tab). The enable toggle only
+  // appears once permitted, so evdevEnabled already implies it was grantable.
+  const evdevActive = s.general.evdevEnabled;
 
   const runEvdevSetup = () => {
     setEvdevBusy(true);
