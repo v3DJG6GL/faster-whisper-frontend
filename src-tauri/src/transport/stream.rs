@@ -91,36 +91,36 @@ pub async fn run<F>(
         }
     }
 
-    // Connect with a bounded timeout, and let an early Stop abort it instantly.
-    // Without this an unreachable host hangs in the TCP handshake (SYN retries)
-    // for the OS default (a minute+) — Stop can't interrupt it (we're not in the
-    // select loop yet) and no error surfaces, so the UI sticks at "finalizing…".
+    // Connect with a bounded timeout. A Stop may arrive before we've connected — most
+    // commonly a quick push-to-talk *tap* (press + release within a fraction of a
+    // second), which fires the stop before the millisecond-fast handshake to a
+    // reachable server completes. Treating that as "unreachable" gave a false error on
+    // every quick tap. So we DON'T bail on early stop: we remember it and let the
+    // in-flight connection finish. If it connects we fall straight through to draining
+    // (flush + stop → a clean no-op, no audio, no error); only a genuine connect
+    // failure / timeout surfaces the unreachable error. The timeout still bounds an
+    // unreachable host (whose handshake would otherwise hang on SYN retries for the OS
+    // default of a minute+, sticking the UI at "finalizing…").
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-    let (ws, _resp) = tokio::select! {
-        biased;
-        res = stop_rx.changed() => {
-            // Stopped before the connection was even established. A reachable server
-            // completes the WS handshake in milliseconds, so releasing the shortcut
-            // before we connected almost always means it's unreachable — surface that
-            // (otherwise an unreachable backend gives no feedback at all), then close.
-            let _ = res;
-            on_event(StreamEvent::Error(format!(
-                "Couldn't reach the server at {} — is it running and the URL correct?",
-                params.ws_url
-            )));
-            on_event(StreamEvent::Closed);
-            return;
-        }
-        res = tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(request)) => {
-            match res {
-                Ok(Ok(pair)) => pair,
+    let mut stop_requested = false;
+    let connect = tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(request));
+    tokio::pin!(connect);
+    let (ws, _resp) = loop {
+        tokio::select! {
+            biased;
+            res = stop_rx.changed(), if !stop_requested => {
+                let _ = res;
+                stop_requested = true; // disables this branch; keep awaiting the connect
+            }
+            res = &mut connect => match res {
+                Ok(Ok(pair)) => break pair,
                 Ok(Err(e)) => fail!(format!("Could not connect to {}: {e}", params.ws_url)),
                 Err(_) => fail!(format!(
                     "Could not connect to {} — timed out after {}s (server unreachable?)",
                     params.ws_url,
                     CONNECT_TIMEOUT.as_secs()
                 )),
-            }
+            },
         }
     };
     let (mut write, mut read) = ws.split();
@@ -153,11 +153,13 @@ pub async fn run<F>(
         Ok(r) => r,
         Err(e) => fail!(format!("Resampler init failed: {e}")),
     };
-    let mut draining = false;
+    // If Stop already arrived during connect (a quick tap), skip straight to draining
+    // so we flush + stop the empty session and close cleanly without sending audio.
+    let mut draining = stop_requested;
     let saving = params.save_dir.is_some();
     let mut saved: Vec<u8> = Vec::new();
 
-    loop {
+    while !draining {
         tokio::select! {
             res = stop_rx.changed() => {
                 if res.is_err() || *stop_rx.borrow() { draining = true; break; }
@@ -207,7 +209,10 @@ pub async fn run<F>(
     }
 
     if let Some(dir) = &params.save_dir {
-        crate::audio::save_recording(dir, &saved, 16_000);
+        // Skip empties (e.g. a quick tap that connected then drained without audio).
+        if !saved.is_empty() {
+            crate::audio::save_recording(dir, &saved, 16_000);
+        }
     }
     on_event(StreamEvent::Closed);
 }
