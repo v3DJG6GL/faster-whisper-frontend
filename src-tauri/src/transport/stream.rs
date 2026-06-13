@@ -97,9 +97,15 @@ pub async fn run<F>(
     let (ws, _resp) = tokio::select! {
         biased;
         res = stop_rx.changed() => {
-            // Stopped (or the session was dropped) before we connected — nothing
-            // to drain; just close cleanly so the UI resets to idle.
+            // Stopped before the connection was even established. A reachable server
+            // completes the WS handshake in milliseconds, so releasing the shortcut
+            // before we connected almost always means it's unreachable — surface that
+            // (otherwise an unreachable backend gives no feedback at all), then close.
             let _ = res;
+            on_event(StreamEvent::Error(format!(
+                "Couldn't reach the server at {} — is it running and the URL correct?",
+                params.ws_url
+            )));
             on_event(StreamEvent::Closed);
             return;
         }
