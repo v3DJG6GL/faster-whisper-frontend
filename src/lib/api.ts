@@ -237,6 +237,16 @@ export async function hideOverlay(): Promise<void> {
   await invoke("hide_overlay");
 }
 
+/**
+ * Shape the overlay window's mouse input region to just the visible chip (logical
+ * px, relative to the window's top-left), so the chip becomes hoverable while the
+ * rest of the transparent strip stays click-through. No-op outside Tauri.
+ */
+export async function setChipHitRegion(x: number, y: number, w: number, h: number): Promise<void> {
+  if (!isTauri) return;
+  await invoke("set_chip_hit_region", { x, y, w, h });
+}
+
 /** Reflect the dictation status in the tray tooltip. */
 export async function setTrayState(status: string): Promise<void> {
   if (!isTauri) return;

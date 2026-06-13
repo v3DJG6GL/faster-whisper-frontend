@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence, MotionConfig } from "motion/react";
 import { Waveform } from "@/components/Waveform";
+import { setChipHitRegion } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import type { DictationStatus, ThemeName } from "@/lib/types";
 
@@ -35,7 +36,11 @@ const SILENCE_HOLD_MS = 900; // … but only after staying low this long
 // settled (Apple-fluid). We deliberately DON'T use backdrop-blur — on WebKitGTK
 // over a transparent window it re-blurs every frame during the resize (jitter)
 // and barely shows behind a ~96% opaque fill anyway.
-const MORPH = { type: "spring", stiffness: 380, damping: 30, mass: 0.8 } as const;
+// A short, monotonic tween rather than a spring: spring overshoot scales the pill
+// past its target and bounces back, which re-rasterizes the rounded clip many times
+// on WebKitGTK (the morph "flicker"). A brief ease-out is smooth and too quick to
+// perceive any residual edge re-raster.
+const MORPH = { type: "tween", duration: 0.2, ease: [0.22, 1, 0.36, 1] } as const;
 
 /**
  * The dictation chip — a frameless, transparent, always-on-top window painted by
@@ -134,26 +139,55 @@ export default function Overlay() {
   // once the chip's input region is shaped — see overlay.rs / setChipHitRegion;
   // in the browser preview there's no click-through, so it works directly.)
   const [hoverReveal, setHoverReveal] = useState(false);
+  const [hovering, setHovering] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onPointerEnter = () => {
+    setHovering(true);
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => setHoverReveal(true), HOVER_REVEAL_MS);
   };
   const onPointerLeave = () => {
+    setHovering(false);
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     setHoverReveal(false);
   };
   const detail = [state.language, state.mode].filter(Boolean).join(" · ");
+
+  // Report the chip's on-screen bounds to Rust, which shapes the overlay window's
+  // input region to just that rectangle — so only the chip captures the cursor and
+  // the rest of the transparent strip stays click-through. Measured in CSS px from
+  // the window's top-left (= the webview viewport), which maps to GDK's logical
+  // coordinate space. No-op outside Tauri.
+  const chipRef = useRef<HTMLDivElement>(null);
+  const reportBounds = useCallback(() => {
+    const el = chipRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) void setChipHitRegion(r.x, r.y, r.width, r.height);
+  }, []);
+  // Report bounds ONLY at settled moments — never mid-morph. A region that resizes
+  // out from under the cursor causes hover enter/leave thrash (chip flickering
+  // open/closed, "stuck" open, needing a click to wake). So updates come only from
+  // the width animations settling (`onAnimationComplete`/`onExitComplete` below) plus
+  // a few retries when a session starts or the chip moves (the overlay window
+  // realizes its GdkWindow asynchronously on show).
+  useEffect(() => {
+    if (state.status === "idle") return;
+    const ids = [0, 160, 420, 850].map((ms) => setTimeout(reportBounds, ms));
+    return () => ids.forEach(clearTimeout);
+  }, [reportBounds, state.status, state.position]);
 
   // After sitting armed-but-silent for a while, fade the chip down so it's
   // unobtrusive; any speech / state change snaps it back to full opacity.
   const [dimmed, setDimmed] = useState(false);
   useEffect(() => {
     setDimmed(false);
-    if (expanded || state.status !== "listening") return;
+    // Don't fade while the cursor is on the chip — hovering should keep it fully
+    // legible (and the reveal detail un-dimmed).
+    if (expanded || hovering || state.status !== "listening") return;
     const t = setTimeout(() => setDimmed(true), 10000);
     return () => clearTimeout(t);
-  }, [expanded, state.status]);
+  }, [expanded, hovering, state.status]);
 
   // Keep the newest words in view: pin the preview to its right edge.
   const textRef = useRef<HTMLDivElement>(null);
@@ -194,101 +228,118 @@ export default function Overlay() {
         )}
       >
         <motion.div
-          layout
-          layoutDependency={`${expanded}|${hoverReveal}|${state.profileTag ?? ""}`}
+          ref={chipRef}
           onPointerEnter={onPointerEnter}
           onPointerLeave={onPointerLeave}
           style={{ borderRadius: 9999 }}
           animate={{ opacity: dimmed ? 0.4 : 1 }}
-          transition={{ layout: MORPH, opacity: { duration: 0.7 } }}
-          className={cn(
-            // The chip shell is kept in BOTH states (a small dark pill when armed,
-            // widening when you speak). Constant height so the dot's vertical centre
-            // never shifts — only the width morphs (the chip grows out of the dot).
-            "flex h-[46px] items-center overflow-hidden border border-line bg-panel/95 shadow-[0_10px_40px_-8px_rgba(0,0,0,0.55)]",
-            expanded ? "px-5" : "px-[17px]",
-            state.profileTag ? "gap-2.5" : expanded ? "gap-3" : "",
-          )}
+          transition={{ opacity: { duration: 0.7 } }}
+          // Width-driven morph — NOT Motion `layout`/FLIP. Children animate their WIDTH
+          // (0 ↔ auto) and the content-sized pill reflows around them. Reflow is crisp:
+          // no transform-scale (which re-rasterized/shimmered the small mono text), no
+          // layout projection (which dropped the tag for a few frames on expand), and
+          // no GPU layer (whose churn flickered after a few hovers). The pill stays
+          // centred via the parent's justify-center, so the dot/tag translate (never
+          // scale) as it grows.
+          className="inline-flex h-[42px] items-center overflow-hidden border border-line bg-panel/95 px-3.5 shadow-[0_10px_40px_-8px_rgba(0,0,0,0.55)]"
         >
           {/* The persistent status dot — the seed the pill grows out of. */}
-          <motion.span
-            layout
-            layoutDependency={expanded}
+          <span
             style={{ boxShadow: dotGlow }}
             className={cn(
-              "size-3 shrink-0 rounded-full transition-colors duration-300",
+              "size-2.5 shrink-0 rounded-full transition-colors duration-300",
               dotColorClass,
               !expanded && "animate-chip-breathe",
               state.status === "transcribing" && "animate-chip-think",
             )}
           />
 
-          {/* Persistent active-Profile tag; hover (≥1s) reveals language · mode. */}
+          {/* Persistent active-Profile tag; hover (≥1s) reveals "· language · mode",
+              which animates its WIDTH open (clipped) so the text never scales. */}
           {state.profileTag && (
-            <motion.div
-              layout
-              className="flex shrink-0 items-center font-mono text-[11px] leading-none tracking-[0.12em]"
-            >
+            <div className="ml-2 flex shrink-0 items-center font-mono text-[11px] leading-none tracking-[0.12em]">
               <span className="max-w-[140px] truncate uppercase text-accent/85">{state.profileTag}</span>
-              {hoverReveal && detail && (
-                <span className="ml-1.5 whitespace-nowrap normal-case text-faint">· {detail}</span>
-              )}
-            </motion.div>
+              <AnimatePresence>
+                {hoverReveal && detail && (
+                  <motion.span
+                    key="detail"
+                    initial={{ width: 0, opacity: 0 }}
+                    animate={{ width: "auto", opacity: 1 }}
+                    exit={{ width: 0, opacity: 0 }}
+                    transition={MORPH}
+                    onAnimationComplete={reportBounds}
+                    className="inline-block overflow-hidden align-middle"
+                  >
+                    <span className="whitespace-nowrap pl-1.5 normal-case text-faint">· {detail}</span>
+                  </motion.span>
+                )}
+              </AnimatePresence>
+            </div>
           )}
 
-          <AnimatePresence initial={false}>
+          {/* Body (waveform + transcript) reveals by animating its WIDTH 0 → auto,
+              clipping a natural-width (w-max) inner row so the content is revealed —
+              never squished or scaled. Clean grow AND shrink, no empty-pill frame. */}
+          <AnimatePresence onExitComplete={reportBounds}>
             {expanded && (
               <motion.div
                 key="body"
-                initial={{ opacity: 0, x: -6 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -6 }}
-                transition={{ duration: 0.2, delay: 0.05 }}
-                className="flex items-center gap-3"
+                initial={{ width: 0, opacity: 0 }}
+                animate={{ width: "auto", opacity: 1 }}
+                exit={{ width: 0, opacity: 0 }}
+                transition={MORPH}
+                onAnimationComplete={reportBounds}
+                className="overflow-hidden"
               >
-                {state.profileTag && <span className="h-4 w-px shrink-0 bg-line" aria-hidden />}
-                {state.status === "error" ? (
-                  <div className="max-w-[520px] truncate font-mono text-[12.5px] text-rec">
-                    <span aria-hidden className="mr-1.5">
-                      ⚠
-                    </span>
-                    {state.dictationError || "error"}
-                  </div>
-                ) : (
-                  <>
-                    <Waveform
-                      level={state.level}
-                      active={speaking}
-                      bars={11}
-                      variant="bars"
-                      tone={barTone}
-                      className="h-6 w-[92px]"
-                    />
-                    <div className="min-w-0 max-w-[470px]">
-                      {state.partial ? (
-                        <div
-                          ref={textRef}
-                          dir="auto"
-                          className="overflow-hidden whitespace-nowrap font-mono text-[12.5px] text-text"
-                          style={
-                            faded
-                              ? {
-                                  maskImage: "linear-gradient(to right, transparent, #000 28px)",
-                                  WebkitMaskImage: "linear-gradient(to right, transparent, #000 28px)",
-                                }
-                              : undefined
-                          }
-                        >
-                          {state.partial}
-                        </div>
-                      ) : (
-                        <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-dim">
-                          {label}
-                        </div>
-                      )}
+                <div className="flex w-max items-center gap-3 pl-3">
+                  {state.profileTag && <span className="h-4 w-px shrink-0 bg-line" aria-hidden />}
+                  {state.status === "error" ? (
+                    <div className="max-w-[520px] truncate font-mono text-[12.5px] text-rec">
+                      <span aria-hidden className="mr-1.5">
+                        ⚠
+                      </span>
+                      {state.dictationError || "error"}
                     </div>
-                  </>
-                )}
+                  ) : (
+                    <>
+                      <Waveform
+                        level={state.level}
+                        active={speaking}
+                        bars={11}
+                        variant="bars"
+                        tone={barTone}
+                        className="h-6 w-[92px] shrink-0"
+                      />
+                      <div className="min-w-0 max-w-[470px]">
+                        {state.partial ? (
+                          // Left-edge fade via a STATIC overlay rather than a CSS mask:
+                          // the transcript text/scroll changes several times a second,
+                          // and re-evaluating a mask-image each time flickers on
+                          // WebKitGTK. The overlay never repaints with the text.
+                          <div className="relative">
+                            <div
+                              ref={textRef}
+                              dir="auto"
+                              className="overflow-hidden whitespace-nowrap font-mono text-[12.5px] text-text"
+                            >
+                              {state.partial}
+                            </div>
+                            {faded && (
+                              <div
+                                aria-hidden
+                                className="pointer-events-none absolute inset-y-0 left-0 w-7 bg-gradient-to-r from-panel to-panel/0"
+                              />
+                            )}
+                          </div>
+                        ) : (
+                          <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-dim">
+                            {label}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
