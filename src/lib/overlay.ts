@@ -28,13 +28,20 @@ export async function initOverlayController(): Promise<void> {
     if (
       state.status !== prev.status ||
       state.level !== prev.level ||
-      state.partial !== prev.partial
+      state.partial !== prev.partial ||
+      state.dictationError !== prev.dictationError ||
+      state.settings !== prev.settings // theme / position / preview toggles
     ) {
       void emit("dictation://update", {
         status: state.status,
         level: state.level,
         // "Live transcript in overlay" off → show the status label, not words.
         partial: state.settings.recording.realtimePreview ? state.partial : "",
+        dictationError: state.dictationError ?? "",
+        // So the chip can pin itself to the correct edge of its window.
+        position: state.settings.recording.indicatorPosition,
+        // So the chip can follow the app's dark/light theme.
+        theme: state.settings.theme,
       });
     }
 

@@ -22,6 +22,7 @@
   --color-accent-ink: var(--c-accent-ink);
   --color-accent-soft: var(--c-accent-soft);
   --color-rec: var(--c-rec);
+  --color-live: var(--c-live);
   --color-ok: var(--c-ok);
   --color-warn: var(--c-warn);
 
@@ -48,6 +49,7 @@
   --c-accent-ink: #1a1207; /* text on accent fills */
   --c-accent-soft: rgba(255, 158, 44, 0.14);
   --c-rec: #ff5c46;
+  --c-live: #36d07a; /* green: actively-speaking (≈9.6:1 on --c-bg) */
   --c-ok: #93b76f;
   --c-warn: #e0a33a;
   color-scheme: dark;
@@ -67,6 +69,7 @@
   --c-accent-ink: #fff8ec;
   --c-accent-soft: rgba(191, 111, 18, 0.12);
   --c-rec: #cf3a22;
+  --c-live: #1f9d57; /* green: actively-speaking (darker for light bg) */
   --c-ok: #5e8a3c;
   --c-warn: #b9791f;
   color-scheme: light;
@@ -188,4 +191,45 @@ textarea {
 }
 .animate-chip-in {
   animation: chip-in 0.34s cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+/* Calm "breathing" for the armed-but-silent dot and the transcribing label —
+   OPACITY ONLY (vestibular-safe), floor 0.55 keeps the dim-amber dot ≥3:1 on the
+   near-black pill, and ~0.33Hz is far under the 3Hz seizure threshold. */
+@keyframes chip-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+.animate-chip-breathe {
+  animation: chip-breathe 3s ease-in-out infinite;
+}
+.animate-chip-think {
+  animation: chip-breathe 1.6s ease-in-out infinite;
+}
+
+/* Smoothly morph the pill between its collapsed (dot) and expanded states. */
+.chip-morph {
+  transition:
+    max-width 0.22s cubic-bezier(0.2, 0.9, 0.2, 1),
+    padding 0.22s cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+/* Honor the OS "reduce motion" setting: drop looping/scaling motion, keep state
+   legible via static opacity/color. The Waveform canvas (a JS RAF) freezes to a
+   static readout in its own component when this is set. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-chip-in,
+  .animate-chip-breathe,
+  .animate-chip-think,
+  .animate-rec-pulse {
+    animation: none !important;
+  }
+  .chip-morph {
+    transition: none !important;
+  }
 }

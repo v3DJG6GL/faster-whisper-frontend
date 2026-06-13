@@ -26,7 +26,8 @@ function detectWindowLabel(): "main" | "overlay" {
 const label = detectWindowLabel();
 document.body.dataset.window = label;
 if (label === "overlay") {
-  // The chip is always the dark instrument regardless of app theme.
+  // Initial default; the chip then follows the app theme broadcast on
+  // `dictation://update` (see Overlay.tsx) before it's ever shown.
   document.documentElement.dataset.theme = "dark";
 }
 

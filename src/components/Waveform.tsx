@@ -18,7 +18,7 @@ export function Waveform({
   active: boolean;
   bars?: number;
   variant?: "bars" | "dots";
-  tone?: "accent" | "rec" | "dim";
+  tone?: "accent" | "rec" | "dim" | "live";
   className?: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -32,6 +32,11 @@ export function Waveform({
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
+    // Under "reduce motion", freeze to a static silhouette (no wobble, no
+    // amplitude reaction) — the loop keeps running only so tone/active changes
+    // still repaint, but every frame is identical, so there's no perceived motion.
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 
     const heights = new Array(bars).fill(0.16);
     const phases = heights.map((_, i) => (i / bars) * Math.PI * 2 + Math.random());
@@ -71,17 +76,27 @@ export function Waveform({
       ctx.fillStyle = color;
 
       const isActive = activeRef.current;
-      const lvl = levelRef.current;
-      t += isActive ? 0.16 : 0.05;
+      // Perceptual curve: loudness ≈ amplitude^0.7, so quiet speech still moves it.
+      const lvl = Math.pow(Math.max(0, Math.min(1, levelRef.current)), 0.7);
+      const mid = (bars - 1) / 2;
+      if (!reduce) t += isActive ? 0.16 : 0.05;
       const slot = w / bars;
       const bw = variant === "dots" ? Math.min(slot * 0.4, h * 0.22) : Math.max(2.5, slot * 0.42);
 
       for (let i = 0; i < bars; i++) {
+        // Center-boost: middle bars run taller → the classic VU-meter "smile".
+        const edge = mid === 0 ? 0 : Math.abs(i - mid) / mid; // 0 centre … 1 edge
+        const cb = 1 - 0.35 * edge;
         const wobble = Math.sin(t + phases[i]) * 0.5 + 0.5;
-        const target = isActive
-          ? Math.max(0.14, Math.min(1, lvl * (0.55 + 0.9 * wobble)))
-          : 0.12 + 0.05 * wobble;
-        heights[i] += (target - heights[i]) * 0.25;
+        let target: number;
+        if (reduce) {
+          target = (0.18 + 0.3 * (1 - edge)) * (isActive ? 1 : 0.85);
+        } else if (isActive) {
+          target = Math.max(0.14, Math.min(1, lvl * (0.55 + 0.9 * wobble) * cb));
+        } else {
+          target = (0.12 + 0.05 * wobble) * cb;
+        }
+        heights[i] += reduce ? target - heights[i] : (target - heights[i]) * 0.25;
         const x = (i + 0.5) * slot;
         ctx.globalAlpha = isActive ? 1 : 0.55;
         if (variant === "dots") {
@@ -106,7 +121,13 @@ export function Waveform({
       ref={ref}
       aria-hidden
       className={cn(
-        tone === "rec" ? "text-rec" : tone === "dim" ? "text-faint" : "text-accent",
+        tone === "rec"
+          ? "text-rec"
+          : tone === "live"
+            ? "text-live"
+            : tone === "dim"
+              ? "text-faint"
+              : "text-accent",
         className,
       )}
     />
