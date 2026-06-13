@@ -216,6 +216,12 @@ export default function Overlay() {
     setFaded(el.scrollWidth - el.clientWidth > 2);
   }, [state.partial, expanded]);
 
+  // Post-speech "working" phase: the server is finalizing the transcript and/or it's
+  // being written out to the focused field. There's no audio to react to, so the chip
+  // shows a self-driven processing motion (sweeping bars + a quicker pulsing dot)
+  // rather than the frozen-looking bars it used to.
+  const processing = state.status === "transcribing" || state.status === "injecting";
+
   const label =
     state.status === "transcribing"
       ? "transcribing…"
@@ -267,7 +273,7 @@ export default function Overlay() {
               "size-2.5 shrink-0 rounded-full transition-colors duration-300",
               dotColorClass,
               !expanded && "animate-chip-breathe",
-              state.status === "transcribing" && "animate-chip-think",
+              processing && "animate-chip-think",
             )}
           />
 
@@ -322,6 +328,7 @@ export default function Overlay() {
                       <Waveform
                         level={state.level}
                         active={speaking}
+                        processing={processing}
                         bars={11}
                         variant="bars"
                         tone={barTone}
