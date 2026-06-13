@@ -18,14 +18,14 @@ fn recordings_dir(app: &AppHandle) -> Option<PathBuf> {
 }
 
 /// Resolve an API key: an explicit (just-typed) key wins; otherwise look it up in
-/// the OS keyring by profile id.
-fn resolve_key(explicit: Option<String>, profile_id: Option<String>) -> Option<String> {
+/// the OS keyring by Backend id.
+fn resolve_key(explicit: Option<String>, backend_id: Option<String>) -> Option<String> {
     if let Some(k) = explicit {
         if !k.is_empty() {
             return Some(k);
         }
     }
-    profile_id.and_then(|pid| config::keys::get(&pid))
+    backend_id.and_then(|id| config::keys::get(&id))
 }
 
 #[tauri::command]
@@ -53,13 +53,13 @@ pub fn sync_autostart(app: &AppHandle, enabled: bool) {
 }
 
 #[tauri::command]
-pub fn set_profile_key(profile_id: String, key: String) -> Result<(), String> {
-    config::keys::set(&profile_id, &key).map_err(|e| e.to_string())
+pub fn set_backend_key(backend_id: String, key: String) -> Result<(), String> {
+    config::keys::set(&backend_id, &key).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn delete_profile_key(profile_id: String) -> Result<(), String> {
-    config::keys::delete(&profile_id).map_err(|e| e.to_string())
+pub fn delete_backend_key(backend_id: String) -> Result<(), String> {
+    config::keys::delete(&backend_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -70,24 +70,24 @@ pub fn app_version(app: AppHandle) -> String {
 #[tauri::command]
 pub async fn test_connection(
     server_url: String,
-    profile_id: Option<String>,
+    backend_id: Option<String>,
     api_key: Option<String>,
 ) -> transport::ConnectionInfo {
-    let key = resolve_key(api_key, profile_id);
+    let key = resolve_key(api_key, backend_id);
     transport::discovery::test_connection(&server_url, key.as_deref()).await
 }
 
 #[tauri::command]
 pub async fn transcribe_file(
     server_url: String,
-    profile_id: Option<String>,
+    backend_id: Option<String>,
     api_key: Option<String>,
     model: String,
     language: String,
     prompt: String,
     file_path: String,
 ) -> Result<transport::batch::BatchResult, String> {
-    let key = resolve_key(api_key, profile_id);
+    let key = resolve_key(api_key, backend_id);
     transport::batch::transcribe(&server_url, key.as_deref(), &model, &language, &prompt, &file_path)
         .await
         .map_err(|e| e.to_string())
@@ -121,7 +121,7 @@ pub fn start_stream(
     app: AppHandle,
     state: State<StreamState>,
     server_url: String,
-    profile_id: Option<String>,
+    backend_id: Option<String>,
     api_key: Option<String>,
     model: String,
     language: String,
@@ -131,7 +131,7 @@ pub fn start_stream(
     save: bool,
     mute_system: bool,
 ) -> Result<(), String> {
-    let key = resolve_key(api_key, profile_id);
+    let key = resolve_key(api_key, backend_id);
     let save_dir = if save { recordings_dir(&app) } else { None };
     let mut guard = state.0.lock().map_err(|_| "stream state poisoned")?;
     *guard = None; // stop any previous session first (Drop joins capture, drains WS)
@@ -167,7 +167,7 @@ pub fn start_record(
     app: AppHandle,
     state: State<RecordState>,
     server_url: String,
-    profile_id: Option<String>,
+    backend_id: Option<String>,
     api_key: Option<String>,
     model: String,
     language: String,
@@ -176,7 +176,7 @@ pub fn start_record(
     save: bool,
     mute_system: bool,
 ) -> Result<(), String> {
-    let key = resolve_key(api_key, profile_id);
+    let key = resolve_key(api_key, backend_id);
     let save_dir = if save { recordings_dir(&app) } else { None };
     let mut guard = state.0.lock().map_err(|_| "record state poisoned")?;
     *guard = None;
@@ -206,27 +206,32 @@ pub fn stop_record(state: State<RecordState>) -> Result<(), String> {
     Ok(())
 }
 
-/// Suspend all global hotkeys (while the user captures a new binding). Pair with
-/// `reregister_shortcuts` to restore them when capture ends.
+/// Suspend ALL hotkey backends (while the user captures a new binding) so pressing
+/// an existing profile's chord only rebinds — it must not also fire dictation. This
+/// silences both the global-shortcut plugin AND the evdev reader (which otherwise
+/// keeps firing from /dev/input). Pair with `reregister_shortcuts` (apply_bindings)
+/// to restore whichever backend is active when capture ends.
 #[tauri::command]
 pub fn suspend_shortcuts(app: AppHandle) {
     crate::triggers::unregister_all(&app);
+    let state = app.state::<crate::evdev_hotkeys::EvdevState>();
+    crate::evdev_hotkeys::stop(&state);
 }
 
 /// Apply the current bindings to the right backend: when the evdev backend is
-/// enabled AND permitted it owns the modes and the global-shortcut plugin is
-/// silenced (mutual exclusion); otherwise the plugin registers and evdev stops.
+/// enabled AND permitted it owns the Profiles' chords and the global-shortcut
+/// plugin is silenced (mutual exclusion); otherwise the plugin registers and evdev stops.
 pub fn apply_bindings(app: &AppHandle) {
     let Ok(dir) = config_dir(app) else { return };
     let cfg = config::load(&dir);
     let state = app.state::<crate::evdev_hotkeys::EvdevState>();
     if cfg.settings.general.evdev_enabled && crate::evdev_hotkeys::permitted() {
         crate::triggers::unregister_all(app);
-        crate::evdev_hotkeys::start(app, &state, &cfg.modes);
+        crate::evdev_hotkeys::start(app, &state, &cfg.profiles);
         tracing::info!("[bindings] evdev backend active (plugin silenced)");
     } else {
         crate::evdev_hotkeys::stop(&state);
-        crate::triggers::register_from_config(app, &cfg.modes);
+        crate::triggers::register_from_config(app, &cfg.profiles);
     }
 }
 

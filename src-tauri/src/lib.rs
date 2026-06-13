@@ -65,8 +65,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::load_config,
             commands::save_config,
-            commands::set_profile_key,
-            commands::delete_profile_key,
+            commands::set_backend_key,
+            commands::delete_backend_key,
             commands::app_version,
             commands::test_connection,
             commands::transcribe_file,
