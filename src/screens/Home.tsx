@@ -98,11 +98,23 @@ export default function Home() {
             {dictating ? <Square className="size-6" /> : <Mic className="size-7" />}
           </button>
           <div className="min-w-0 flex-1">
-            <div className="text-[15px] text-text">
-              Hold <HotkeyChips hotkey={hold.hotkey} /> and speak.
+            <div className="text-[15px] leading-relaxed text-text">
+              {hold.enabled && (
+                <>
+                  Hold <HotkeyChips hotkey={hold.hotkey} /> to talk.{" "}
+                </>
+              )}
+              {handsfree.enabled && (
+                <>
+                  Tap <HotkeyChips hotkey={handsfree.hotkey} /> to latch hands-free.
+                </>
+              )}
+              {!hold.enabled && !handsfree.enabled && (
+                <span className="text-dim">Enable a dictation mode below to begin.</span>
+              )}
             </div>
             <div className="mt-1.5 text-[12.5px] text-dim">
-              Release to transcribe · {handsfree.hotkey} latches it on
+              The transcript appears wherever your cursor is.
             </div>
           </div>
           <Waveform level={level} active={status !== "idle"} bars={28} variant="bars" className="h-12 w-48" />
