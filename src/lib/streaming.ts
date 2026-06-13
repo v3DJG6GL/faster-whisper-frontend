@@ -61,6 +61,25 @@ function enqueueInject(fn: () => Promise<void>): void {
   injectChain = injectChain.then(fn).catch((e) => console.error("inject failed:", e));
 }
 
+// Hold the "injecting" state at least this long, so the writing-out phase is actually
+// perceivable on screen. A sub-frame flash would just read as the chip snapping shut
+// the instant you stop — which is the very thing we're fixing.
+const MIN_INJECT_VISIBLE_MS = 450;
+
+// Return to idle once the injection queue has fully drained (the text has landed in
+// the focused field) — but never before MIN_INJECT_VISIBLE_MS, and never over a status
+// that has moved on (a fresh session, or an error that arrived meanwhile).
+function settleToIdleAfterInjection(startedAt: number): void {
+  void injectChain.then(() => {
+    const wait = Math.max(0, MIN_INJECT_VISIBLE_MS - (performance.now() - startedAt));
+    setTimeout(() => {
+      if (useApp.getState().status === "injecting") {
+        useApp.getState().setDictation({ status: "idle" });
+      }
+    }, wait);
+  });
+}
+
 function commonPrefixLen(a: string, b: string): number {
   const n = Math.min(a.length, b.length);
   let i = 0;
@@ -146,34 +165,58 @@ async function ensureListeners(): Promise<void> {
         setDictation({ level: 0 });
         return;
       }
-      setDictation({ status: "idle", level: 0 });
+      // Capture has stopped; freeze the meter. From here we hold an "injecting" state
+      // while the transcript is written out to the focused field — so the chip keeps
+      // showing a processing indicator until the text actually lands, rather than
+      // collapsing the instant the server closes (the injection is async). We only
+      // return to idle once the queue drains (see settleToIdleAfterInjection).
+      setDictation({ level: 0 });
 
       const cfg = insertCfg;
-      if (!cfg || cfg.timing === "off") return;
+      if (!cfg || cfg.timing === "off") {
+        setDictation({ status: "idle" });
+        return;
+      }
+
+      const startedAt = performance.now();
       if (cfg.live) {
-        // Phrases were injected live; the `last` final already delivered the rest.
-        // Press a real Enter (not a pasted "\n", which some apps swallow).
+        // Phrases were injected live as you spoke; only the tail is left — a real Enter
+        // (not a pasted "\n", which some apps swallow) and the one-shot clipboard
+        // restore. Show "injecting" only if there's actually tail work to write out,
+        // and only until the queue (any still-in-flight live phrases + the tail) drains.
+        const hasTail = cfg.autoEnter || (cfg.method === "paste" && cfg.restoreClipboard);
+        if (!hasTail) {
+          setDictation({ status: "idle" });
+          return;
+        }
+        setDictation({ status: "injecting" });
         if (cfg.autoEnter) {
           enqueueInject(() =>
             injectText({ text: "", method: cfg.method, autoEnter: true, restoreClipboard: false }),
           );
         }
-        // Restore the clipboard once, after the last paste in the queue.
         if (cfg.method === "paste" && cfg.restoreClipboard) {
           enqueueInject(() => endInjection());
         }
+        settleToIdleAfterInjection(startedAt);
       } else {
         // "stop" (and "live" on a batch profile): insert the whole transcript once.
         // bankedDoc holds any documents finalized before a hard break this session.
         const text = (bankedDoc + committedDoc).trim();
-        if (text) {
-          void injectText({
+        if (!text) {
+          setDictation({ status: "idle" });
+          return;
+        }
+        setDictation({ status: "injecting" });
+        enqueueInject(() =>
+          injectText({
             text,
             method: cfg.method,
             autoEnter: cfg.autoEnter,
             restoreClipboard: cfg.restoreClipboard,
-          });
-        }
+          }),
+        );
+        settleToIdleAfterInjection(startedAt);
       }
     }
   });
@@ -279,8 +322,9 @@ export async function startLive(
 }
 
 export async function stopLive(): Promise<void> {
-  // Streaming: server flushes + drains. Batch: transcription runs now. Either
-  // way the `closed` status resets us to idle.
+  // Streaming: server flushes + drains. Batch: transcription runs now. Either way the
+  // `closed` event then moves us "transcribing" → "injecting" (while the text is
+  // written out) → "idle" — so the chip shows progress the whole way through.
   useApp.getState().setDictation({ status: "transcribing" });
   if (activeEndpoint === "batch") await stopRecord();
   else await stopStream();
