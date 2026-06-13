@@ -9,6 +9,7 @@ import { cn } from "@/lib/cn";
 export function Waveform({
   level,
   active,
+  processing = false,
   bars = 5,
   variant = "bars",
   tone = "accent",
@@ -16,6 +17,10 @@ export function Waveform({
 }: {
   level: number;
   active: boolean;
+  /** Indeterminate "working" motion (a soft bump sweeping across the bars), driven by
+   *  the clock rather than `level`. For the post-speech transcribing / writing-out
+   *  phase, where there's no audio to react to but the system is still busy. */
+  processing?: boolean;
   bars?: number;
   variant?: "bars" | "dots";
   tone?: "accent" | "rec" | "dim" | "live";
@@ -24,8 +29,10 @@ export function Waveform({
   const ref = useRef<HTMLCanvasElement>(null);
   const levelRef = useRef(level);
   const activeRef = useRef(active);
+  const processingRef = useRef(processing);
   levelRef.current = level;
   activeRef.current = active;
+  processingRef.current = processing;
 
   useEffect(() => {
     const canvas = ref.current;
@@ -76,12 +83,20 @@ export function Waveform({
       ctx.fillStyle = color;
 
       const isActive = activeRef.current;
+      const isProcessing = processingRef.current && !isActive;
       // Perceptual curve: loudness ≈ amplitude^0.7, so quiet speech still moves it.
       const lvl = Math.pow(Math.max(0, Math.min(1, levelRef.current)), 0.7);
       const mid = (bars - 1) / 2;
-      if (!reduce) t += isActive ? 0.16 : 0.05;
+      if (!reduce) t += isProcessing ? 0.14 : isActive ? 0.16 : 0.05;
       const slot = w / bars;
       const bw = variant === "dots" ? Math.min(slot * 0.4, h * 0.22) : Math.max(2.5, slot * 0.42);
+
+      // Processing: a soft Gaussian bump that scans left↔right across the bars. Self-
+      // driven (ignores `level`), so it reads unmistakably as "machine working" — a
+      // distinct gait from the audio-reactive listening bars.
+      const span = bars + 2;
+      const sweep = ((t * 1.0) % (span * 2));
+      const center = (sweep < span ? sweep : span * 2 - sweep) - 1; // bounce -1 … bars
 
       for (let i = 0; i < bars; i++) {
         // Center-boost: middle bars run taller → the classic VU-meter "smile".
@@ -90,7 +105,11 @@ export function Waveform({
         const wobble = Math.sin(t + phases[i]) * 0.5 + 0.5;
         let target: number;
         if (reduce) {
-          target = (0.18 + 0.3 * (1 - edge)) * (isActive ? 1 : 0.85);
+          target = isProcessing ? 0.4 : (0.18 + 0.3 * (1 - edge)) * (isActive ? 1 : 0.85);
+        } else if (isProcessing) {
+          const d = i - center;
+          const bump = Math.exp(-(d * d) / (2 * 1.3 * 1.3));
+          target = Math.max(0.16, Math.min(1, 0.2 + 0.72 * bump));
         } else if (isActive) {
           target = Math.max(0.14, Math.min(1, lvl * (0.55 + 0.9 * wobble) * cb));
         } else {
@@ -98,7 +117,7 @@ export function Waveform({
         }
         heights[i] += reduce ? target - heights[i] : (target - heights[i]) * 0.25;
         const x = (i + 0.5) * slot;
-        ctx.globalAlpha = isActive ? 1 : 0.55;
+        ctx.globalAlpha = isActive ? 1 : isProcessing ? 0.92 : 0.55;
         if (variant === "dots") {
           const r = bw / 2 + heights[i] * (h * 0.16);
           ctx.beginPath();
