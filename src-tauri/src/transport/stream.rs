@@ -89,9 +89,31 @@ pub async fn run<F>(
         }
     }
 
-    let (ws, _resp) = match tokio_tungstenite::connect_async(request).await {
-        Ok(pair) => pair,
-        Err(e) => fail!(format!("Could not connect to {}: {e}", params.ws_url)),
+    // Connect with a bounded timeout, and let an early Stop abort it instantly.
+    // Without this an unreachable host hangs in the TCP handshake (SYN retries)
+    // for the OS default (a minute+) — Stop can't interrupt it (we're not in the
+    // select loop yet) and no error surfaces, so the UI sticks at "finalizing…".
+    const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+    let (ws, _resp) = tokio::select! {
+        biased;
+        res = stop_rx.changed() => {
+            // Stopped (or the session was dropped) before we connected — nothing
+            // to drain; just close cleanly so the UI resets to idle.
+            let _ = res;
+            on_event(StreamEvent::Closed);
+            return;
+        }
+        res = tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(request)) => {
+            match res {
+                Ok(Ok(pair)) => pair,
+                Ok(Err(e)) => fail!(format!("Could not connect to {}: {e}", params.ws_url)),
+                Err(_) => fail!(format!(
+                    "Could not connect to {} — timed out after {}s (server unreachable?)",
+                    params.ws_url,
+                    CONNECT_TIMEOUT.as_secs()
+                )),
+            }
+        }
     };
     let (mut write, mut read) = ws.split();
 
