@@ -30,6 +30,8 @@ pub struct StartParams {
     pub language: String,
     pub response_format: String,
     pub prompt: String,
+    /// Per-request decode overrides (opaque JSON object) forwarded to the backend.
+    pub decode_overrides: Option<serde_json::Value>,
     pub device_id: Option<String>,
     pub save_dir: Option<PathBuf>,
     pub mute_system: bool,
@@ -116,6 +118,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         language: p.language,
         response_format: p.response_format,
         prompt: p.prompt,
+        decode_overrides: p.decode_overrides,
         api_key: p.api_key,
         in_rate,
         save_dir: p.save_dir,
@@ -326,6 +329,8 @@ pub struct RecordParams {
     pub model: String,
     pub language: String,
     pub prompt: String,
+    /// Per-request decode overrides (opaque JSON object) forwarded to the backend.
+    pub decode_overrides: Option<serde_json::Value>,
     pub device_id: Option<String>,
     pub save_dir: Option<PathBuf>,
     pub mute_system: bool,
@@ -419,6 +424,7 @@ async fn transcribe_recording(app: AppHandle, params: RecordParams, pcm: Vec<u8>
         &params.model,
         &params.language,
         &params.prompt,
+        params.decode_overrides.as_ref(),
         wav,
     )
     .await

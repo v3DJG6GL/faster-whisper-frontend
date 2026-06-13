@@ -49,6 +49,7 @@ pub async fn transcribe(
     model: &str,
     language: &str,
     prompt: &str,
+    overrides: Option<&serde_json::Value>,
     file_path: &str,
 ) -> anyhow::Result<BatchResult> {
     let path = Path::new(file_path);
@@ -59,7 +60,7 @@ pub async fn transcribe(
         .unwrap_or("audio")
         .to_string();
     let part = Part::bytes(bytes).file_name(filename).mime_str(mime_for(path))?;
-    post(server_url, api_key, model, language, prompt, part).await
+    post(server_url, api_key, model, language, prompt, overrides, part).await
 }
 
 /// Transcribe an in-memory WAV (used by batch-mode dictation recording).
@@ -69,10 +70,11 @@ pub async fn transcribe_wav_bytes(
     model: &str,
     language: &str,
     prompt: &str,
+    overrides: Option<&serde_json::Value>,
     wav: Vec<u8>,
 ) -> anyhow::Result<BatchResult> {
     let part = Part::bytes(wav).file_name("recording.wav").mime_str("audio/wav")?;
-    post(server_url, api_key, model, language, prompt, part).await
+    post(server_url, api_key, model, language, prompt, overrides, part).await
 }
 
 async fn post(
@@ -81,6 +83,7 @@ async fn post(
     model: &str,
     language: &str,
     prompt: &str,
+    overrides: Option<&serde_json::Value>,
     file_part: Part,
 ) -> anyhow::Result<BatchResult> {
     let mut form = reqwest::multipart::Form::new()
@@ -93,6 +96,14 @@ async fn post(
     }
     if !prompt.is_empty() {
         form = form.text("prompt", prompt.to_string());
+    }
+    // Per-request decode overrides as a JSON Form field (only when non-empty).
+    if let Some(v) = overrides {
+        if v.as_object().map_or(false, |m| !m.is_empty()) {
+            if let Ok(s) = serde_json::to_string(v) {
+                form = form.text("decode_overrides", s);
+            }
+        }
     }
 
     let base = base_url(server_url);

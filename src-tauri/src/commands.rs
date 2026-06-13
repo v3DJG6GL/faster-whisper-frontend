@@ -85,12 +85,21 @@ pub async fn transcribe_file(
     model: String,
     language: String,
     prompt: String,
+    decode_overrides: Option<serde_json::Value>,
     file_path: String,
 ) -> Result<transport::batch::BatchResult, String> {
     let key = resolve_key(api_key, backend_id);
-    transport::batch::transcribe(&server_url, key.as_deref(), &model, &language, &prompt, &file_path)
-        .await
-        .map_err(|e| e.to_string())
+    transport::batch::transcribe(
+        &server_url,
+        key.as_deref(),
+        &model,
+        &language,
+        &prompt,
+        decode_overrides.as_ref(),
+        &file_path,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -127,6 +136,7 @@ pub fn start_stream(
     language: String,
     response_format: String,
     prompt: String,
+    decode_overrides: Option<serde_json::Value>,
     device_id: Option<String>,
     save: bool,
     mute_system: bool,
@@ -144,6 +154,7 @@ pub fn start_stream(
             language,
             response_format,
             prompt,
+            decode_overrides,
             device_id,
             save_dir,
             mute_system,
@@ -172,6 +183,7 @@ pub fn start_record(
     model: String,
     language: String,
     prompt: String,
+    decode_overrides: Option<serde_json::Value>,
     device_id: Option<String>,
     save: bool,
     mute_system: bool,
@@ -188,6 +200,7 @@ pub fn start_record(
             model,
             language,
             prompt,
+            decode_overrides,
             device_id,
             save_dir,
             mute_system,

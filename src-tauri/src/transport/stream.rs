@@ -33,6 +33,7 @@ pub struct StreamParams {
     pub language: String, // "" / "auto" → omit (server auto-detects)
     pub response_format: String, // "json" | "verbose_json"
     pub prompt: String, // profile "Vocabulary / prompt" → initial_prompt ("" → server default)
+    pub decode_overrides: Option<serde_json::Value>, // opaque JSON object → handshake "decode_overrides"
     pub api_key: Option<String>,
     pub in_rate: u32,
     pub save_dir: Option<PathBuf>, // Some → save the streamed 16 kHz audio as .wav
@@ -129,7 +130,7 @@ pub async fn run<F>(
     } else {
         params.language.clone()
     };
-    let config = json!({
+    let mut config = json!({
         "type": "config",
         "model": params.model,
         "language": lang,
@@ -138,6 +139,12 @@ pub async fn run<F>(
         "prompt": params.prompt,
         "audio": { "format": "pcm_s16le", "sample_rate": 16000 }
     });
+    // Forward per-request decode overrides as a nested object (only when non-empty).
+    if let Some(v) = &params.decode_overrides {
+        if v.as_object().map_or(false, |m| !m.is_empty()) {
+            config["decode_overrides"] = v.clone();
+        }
+    }
     if let Err(e) = write.send(text_msg(config.to_string())).await {
         fail!(format!("Failed to send stream config: {e}"));
     }
