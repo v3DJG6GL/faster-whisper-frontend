@@ -108,7 +108,11 @@ export function DecodeFields({
     );
   };
 
-  const FieldGrid = ({ fields }: { fields: Field[] }) => (
+  // NB: this is a plain render helper, NOT a nested component. Rendering it as
+  // <FieldGrid/> would give it a fresh identity on every keystroke, so React
+  // would remount the subtree and the focused <input> would lose focus after a
+  // single character. Calling it as a function reconciles the inputs in place.
+  const fieldGrid = (fields: Field[]) => (
     <div className="grid grid-cols-2 gap-x-4 gap-y-3">
       {fields.map((f) => (
         <div key={f.key}>
@@ -121,7 +125,7 @@ export function DecodeFields({
 
   return (
     <div>
-      <FieldGrid fields={FIELDS.filter((f) => !f.advanced)} />
+      {fieldGrid(FIELDS.filter((f) => !f.advanced))}
       <button
         type="button"
         onClick={() => setShowAdvanced((v) => !v)}
@@ -130,11 +134,7 @@ export function DecodeFields({
         <span className={cn("transition-transform", showAdvanced && "rotate-90")}>›</span>
         Advanced decode params
       </button>
-      {showAdvanced && (
-        <div className="mt-3">
-          <FieldGrid fields={FIELDS.filter((f) => f.advanced)} />
-        </div>
-      )}
+      {showAdvanced && <div className="mt-3">{fieldGrid(FIELDS.filter((f) => f.advanced))}</div>}
     </div>
   );
 }
