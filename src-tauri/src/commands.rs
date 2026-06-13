@@ -153,7 +153,10 @@ pub fn start_stream(
 
 #[tauri::command]
 pub fn stop_stream(state: State<StreamState>) -> Result<(), String> {
-    *state.0.lock().map_err(|_| "stream state poisoned")? = None;
+    let sess = state.0.lock().map_err(|_| "stream state poisoned")?.take();
+    if let Some(s) = sess {
+        s.finish(); // drain in the background to deliver the last utterance
+    }
     Ok(())
 }
 
@@ -257,7 +260,8 @@ pub async fn inject_text(
     auto_enter: bool,
     restore_clipboard: bool,
 ) -> Result<(), String> {
-    if method == "direct" && crate::inject::is_wayland() {
+    tracing::info!("[inject] {} chars via {} (auto_enter={})", text.len(), method, auto_enter);
+    let res = if method == "direct" && crate::inject::is_wayland() {
         crate::wayland_inject::type_text(&app, wl.inner(), &text, auto_enter).await
     } else {
         tokio::task::spawn_blocking(move || {
@@ -265,5 +269,32 @@ pub async fn inject_text(
         })
         .await
         .map_err(|e| e.to_string())?
+    };
+    if let Err(ref e) = res {
+        tracing::warn!("[inject] FAILED: {e}");
     }
+    res
+}
+
+/// Live streaming injection: delete `backspaces` chars, then type `text`. Always
+/// keystrokes (Wayland portal / enigo) so backspacing the revised suffix works —
+/// clipboard paste can't backspace.
+#[tauri::command]
+pub async fn inject_live(
+    app: AppHandle,
+    wl: State<'_, WaylandTokenState>,
+    backspaces: u32,
+    text: String,
+) -> Result<(), String> {
+    let res = if crate::inject::is_wayland() {
+        crate::wayland_inject::type_diff(&app, wl.inner(), backspaces as usize, &text).await
+    } else {
+        tokio::task::spawn_blocking(move || crate::inject::type_diff(backspaces, &text))
+            .await
+            .map_err(|e| e.to_string())?
+    };
+    if let Err(ref e) = res {
+        tracing::warn!("[inject-live] FAILED: {e}");
+    }
+    res
 }

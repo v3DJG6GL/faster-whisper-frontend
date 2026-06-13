@@ -33,6 +33,7 @@ mod imp {
 
     // evdev key codes (Linux input-event-codes), which the portal expects.
     const EVDEV_OFFSET: u32 = 8; // xkb keycode = evdev code + 8
+    const KEY_BACKSPACE: i32 = 14;
     const KEY_TAB: i32 = 15;
     const KEY_ENTER: i32 = 28;
     const KEY_LEFTSHIFT: i32 = 42;
@@ -144,9 +145,10 @@ mod imp {
         }
     }
 
-    pub async fn type_text(
+    pub async fn type_keys(
         app: &AppHandle,
         state: &WaylandTokenState,
+        backspaces: usize,
         text: &str,
         auto_enter: bool,
     ) -> Result<(), String> {
@@ -198,6 +200,14 @@ mod imp {
             };
         }
 
+        // Live diff-correct: delete the revised suffix before retyping it.
+        for _ in 0..backspaces {
+            kc!(KEY_BACKSPACE, KeyState::Pressed);
+            tokio::time::sleep(Duration::from_millis(3)).await;
+            kc!(KEY_BACKSPACE, KeyState::Released);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
         for c in text.chars() {
             let Some(spec) = key_spec_for(c, &charmap) else {
                 continue; // char not reachable on this layout — skip
@@ -243,7 +253,18 @@ pub async fn type_text(
     text: &str,
     auto_enter: bool,
 ) -> Result<(), String> {
-    imp::type_text(app, state, text, auto_enter).await
+    imp::type_keys(app, state, 0, text, auto_enter).await
+}
+
+/// Live diff-correct: delete `backspaces` characters, then type `text`.
+#[cfg(target_os = "linux")]
+pub async fn type_diff(
+    app: &AppHandle,
+    state: &WaylandTokenState,
+    backspaces: usize,
+    text: &str,
+) -> Result<(), String> {
+    imp::type_keys(app, state, backspaces, text, false).await
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -252,6 +273,16 @@ pub async fn type_text(
     _state: &WaylandTokenState,
     _text: &str,
     _auto_enter: bool,
+) -> Result<(), String> {
+    Err("Wayland text injection is only available on Linux".into())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn type_diff(
+    _app: &AppHandle,
+    _state: &WaylandTokenState,
+    _backspaces: usize,
+    _text: &str,
 ) -> Result<(), String> {
     Err("Wayland text injection is only available on Linux".into())
 }

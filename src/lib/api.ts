@@ -157,6 +157,12 @@ export async function validateShortcut(accelerator: string): Promise<boolean> {
   return invoke<boolean>("validate_shortcut", { accelerator });
 }
 
+/** Live streaming injection: delete `backspaces` chars, then type `text` (keystrokes). */
+export async function injectLive(backspaces: number, text: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("inject_live", { backspaces, text });
+}
+
 /** Snapshot the clipboard before a live paste-injection session. */
 export async function beginInjection(): Promise<void> {
   if (!isTauri) return;

@@ -20,12 +20,21 @@ export default function App() {
   }, []);
 
   // Global dictation triggers (CLI / hotkeys) → start/stop the right mode.
+  // The cancelled flag is essential: React StrictMode (dev) mounts → unmounts →
+  // remounts, and the cleanup runs before `listen()` resolves. Without it the
+  // first listener is never removed and a second is added, so every trigger
+  // fires dictate() twice (double sound + duplicate backend sessions).
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let cancelled = false;
     void onTrigger((e) => dictate(e.mode, e.action)).then((u) => {
-      unlisten = u;
+      if (cancelled) u();
+      else unlisten = u;
     });
-    return () => unlisten?.();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {

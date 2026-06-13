@@ -43,6 +43,21 @@ pub struct StreamSession {
     _mute: SystemMuteGuard,
 }
 
+impl StreamSession {
+    /// User-requested stop: stop capture, then let the WS task drain (flush + stop
+    /// + final) in the background so the last utterance is still delivered. Takes
+    /// the task out first so the `Drop` below won't abort it.
+    pub fn finish(mut self) {
+        self.capture_stop.store(true, Ordering::SeqCst);
+        let _ = self.ws_stop.send(true);
+        if let Some(j) = self.capture_join.take() {
+            let _ = j.join();
+        }
+        drop(self.ws_task.take()); // detach → drains to completion on its own
+        tracing::info!("[stream] session finished (draining)");
+    }
+}
+
 impl Drop for StreamSession {
     fn drop(&mut self) {
         self.capture_stop.store(true, Ordering::SeqCst);
@@ -50,9 +65,12 @@ impl Drop for StreamSession {
         if let Some(j) = self.capture_join.take() {
             let _ = j.join();
         }
-        // Detach the WS task so it can flush + drain the final utterance in the
-        // background; it ends on its own once it sees the stop signal.
-        drop(self.ws_task.take());
+        // Abort the WS task immediately (no drain). This path runs when a session
+        // is REPLACED by a new one; draining a stale session would keep emitting
+        // finals/closed and spam the UI. The explicit-stop path (`finish`) drains.
+        if let Some(task) = self.ws_task.take() {
+            task.abort();
+        }
     }
 }
 
@@ -110,6 +128,12 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             let _ = appc.emit("stream://partial", PartialPayload { committed, pending });
         }
         StreamEvent::Final { committed, tail, last } => {
+            tracing::info!(
+                "[stream] final committed={} tail={} last={}",
+                committed.len(),
+                tail.len(),
+                last
+            );
             let _ = appc.emit("stream://final", FinalPayload { committed, tail, last });
         }
         StreamEvent::Error(m) => {

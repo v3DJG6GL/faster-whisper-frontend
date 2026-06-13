@@ -80,6 +80,7 @@ pub fn run() {
             commands::inject_text,
             commands::begin_injection,
             commands::end_injection,
+            commands::inject_live,
             overlay::show_overlay,
             overlay::hide_overlay,
             sound::play_cue,

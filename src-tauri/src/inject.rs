@@ -49,6 +49,21 @@ pub fn inject(
     Ok(())
 }
 
+/// Live diff-correct (X11 / Windows / Wayland-via-XTEST): delete `backspaces`
+/// characters, then type `text` directly. Used for streaming live injection.
+pub fn type_diff(backspaces: u32, text: &str) -> Result<(), String> {
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+    for _ in 0..backspaces {
+        enigo
+            .key(Key::Backspace, Direction::Click)
+            .map_err(|e| e.to_string())?;
+    }
+    if !text.is_empty() {
+        enigo.text(text).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn paste(enigo: &mut Enigo, text: &str, restore_clipboard: bool) -> Result<(), String> {
     use arboard::Clipboard;
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;

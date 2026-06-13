@@ -195,7 +195,11 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title="Insertion method"
-              desc="Clipboard paste is the most reliable. Direct typing never touches the clipboard, but can struggle with some keyboard layouts."
+              desc={
+                s.general.insertTiming === "live"
+                  ? "Applies to “When I stop”. Live always types (keystrokes) — it has to backspace-correct revised words, which the clipboard can’t do."
+                  : "Clipboard paste is the most reliable. Direct typing never touches the clipboard, but can struggle with some keyboard layouts."
+              }
             >
               <Select
                 value={s.general.insertMethod}
