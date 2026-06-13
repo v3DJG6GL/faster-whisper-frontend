@@ -120,6 +120,7 @@ interface AppState {
 
   upsertBackend: (b: Backend) => void;
   removeBackend: (id: string) => void;
+  duplicateBackend: (id: string) => void;
 
   upsertProfile: (p: Profile) => void;
   updateProfile: (id: string, patch: Partial<Profile>) => void;
@@ -179,6 +180,19 @@ export const useApp = create<AppState>((set) => ({
       backends: s.backends.filter((b) => b.id !== id),
       profiles: s.profiles.map((p) => (p.backendId === id ? { ...p, backendId: null } : p)),
     })),
+  duplicateBackend: (id) =>
+    set((s) => {
+      const i = s.backends.findIndex((b) => b.id === id);
+      if (i < 0) return {};
+      const src = s.backends[i];
+      // The API key lives in the OS keyring under the source id, not in this object,
+      // so it can't be carried to the new id — mark it absent so the editor prompts
+      // for a fresh one.
+      const copy: Backend = { ...src, id: crypto.randomUUID(), name: `${src.name} copy`, hasApiKey: false };
+      const backends = [...s.backends];
+      backends.splice(i + 1, 0, copy);
+      return { backends };
+    }),
 
   upsertProfile: (p) =>
     set((s) => {

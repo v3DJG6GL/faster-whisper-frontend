@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Plus, Server, Pencil, Trash2, Plug, Loader2, Check, AlertTriangle } from "lucide-react";
+import { Plus, Server, Pencil, Copy, Trash2, Plug, Loader2, Check, AlertTriangle } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
@@ -232,6 +232,7 @@ export default function Backends() {
   const connections = useApp((s) => s.connections);
   const upsertBackend = useApp((s) => s.upsertBackend);
   const removeBackend = useApp((s) => s.removeBackend);
+  const duplicateBackend = useApp((s) => s.duplicateBackend);
   const setConnection = useApp((s) => s.setConnection);
   const [editing, setEditing] = useState<Backend | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -313,6 +314,9 @@ export default function Backends() {
                     </Button>
                     <Button variant="ghost" size="sm" title="Edit" onClick={() => setEditing(b)}>
                       <Pencil className="size-4" />
+                    </Button>
+                    <Button variant="ghost" size="sm" title="Duplicate" onClick={() => duplicateBackend(b.id)}>
+                      <Copy className="size-4" />
                     </Button>
                     <Button variant="ghost" size="sm" title="Remove" onClick={() => handleRemove(b.id)}>
                       <Trash2 className="size-4" />
