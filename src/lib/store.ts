@@ -39,6 +39,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     autoEnter: false,
     restoreClipboard: true,
     soundEffects: true,
+    evdevEnabled: false,
   },
   recording: {
     indicatorPosition: "top",

@@ -25,7 +25,15 @@ export async function initConfig(): Promise<void> {
     ) {
       return;
     }
-    if (state.modes !== prev.modes) pendingModeChange = true;
+    // Re-apply bindings when the modes change OR the evdev backend is toggled
+    // (which mode owner — plugin vs evdev — must switch). reregister runs after the
+    // save resolves, so the Rust side reads the just-persisted config (no race).
+    if (
+      state.modes !== prev.modes ||
+      state.settings.general.evdevEnabled !== prev.settings.general.evdevEnabled
+    ) {
+      pendingModeChange = true;
+    }
     clearTimeout(timer);
     timer = setTimeout(() => {
       const s = useApp.getState();

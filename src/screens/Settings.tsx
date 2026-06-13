@@ -12,6 +12,9 @@ import {
   validateCodes,
   suspendShortcuts,
   reregisterShortcuts,
+  evdevStatus,
+  evdevSetup,
+  type EvdevStatus,
 } from "@/lib/api";
 import { codeToToken, MODIFIER_CODES, canonicalizeCodes, sameCodes, codesToLabels } from "@/lib/keys";
 import type { AudioDevice, DictationModeId } from "@/lib/types";
@@ -104,6 +107,25 @@ export default function Settings() {
   const [capturing, setCapturing] = useState<DictationModeId | null>(null);
   const [heldCodes, setHeldCodes] = useState<string[]>([]); // live chord preview
   const [captureWarn, setCaptureWarn] = useState<string | null>(null);
+  const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
+  const [evdevMsg, setEvdevMsg] = useState<string | null>(null);
+  const [evdevBusy, setEvdevBusy] = useState(false);
+
+  useEffect(() => {
+    if (tab === "Permissions") void evdevStatus().then(setEvdev);
+  }, [tab]);
+
+  const runEvdevSetup = () => {
+    setEvdevBusy(true);
+    setEvdevMsg(null);
+    void evdevSetup()
+      .then((m) => {
+        setEvdevMsg(m);
+        return evdevStatus().then(setEvdev);
+      })
+      .catch((e) => setEvdevMsg(String(e)))
+      .finally(() => setEvdevBusy(false));
+  };
 
   // Key-capture for rebinding: track held modifier codes (per side) live, then
   // finalize on the first real key — validate it, warn (don't silently drop) on
@@ -345,14 +367,32 @@ export default function Settings() {
               </span>
             </SettingRow>
             <SettingRow
-              title="Press-&-hold on Wayland (input group)"
-              desc="Optional: enables true hold-to-talk by reading /dev/input. Adds your user to the input group via a udev rule."
+              title="Hardware hotkeys (evdev)"
+              desc="Reliable hold-to-talk + left/right modifiers + AltGr on Wayland by reading /dev/input. Reads all keyboard input — strictly opt-in, and needs the 'input' group."
               last
             >
-              <Button variant="default" size="sm">
-                <Mic className="size-4" /> Set up
-              </Button>
+              {evdev && !evdev.available ? (
+                <span className="text-[12.5px] text-faint">Linux only</span>
+              ) : evdev && evdev.permitted ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] text-dim">{s.general.evdevEnabled ? "On" : "Off"}</span>
+                  <Toggle
+                    checked={s.general.evdevEnabled}
+                    onChange={(v) => updateGeneral({ evdevEnabled: v })}
+                  />
+                </div>
+              ) : (
+                <Button variant="default" size="sm" onClick={runEvdevSetup} disabled={evdevBusy}>
+                  <Mic className="size-4" /> {evdevBusy ? "Authorizing…" : "Set up"}
+                </Button>
+              )}
             </SettingRow>
+            {evdevMsg && <div className="px-1 pt-3 text-[12px] text-dim">{evdevMsg}</div>}
+            {evdev && evdev.permitted && (
+              <div className="px-1 pt-3 text-[12px] text-faint">
+                Bindings using AltGr or a specific left/right modifier only fire while this is on.
+              </div>
+            )}
           </Card>
         )}
 

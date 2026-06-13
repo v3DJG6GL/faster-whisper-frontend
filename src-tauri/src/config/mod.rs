@@ -244,6 +244,10 @@ pub struct GeneralSettings {
     pub auto_enter: bool,
     pub restore_clipboard: bool,
     pub sound_effects: bool,
+    /// Opt-in: use the evdev backend (reads /dev/input) for reliable hold-to-talk +
+    /// left/right + AltGr on Wayland. `#[serde(default)]` so older configs load.
+    #[serde(default)]
+    pub evdev_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -286,6 +290,7 @@ impl Default for Config {
                     auto_enter: false,
                     restore_clipboard: true,
                     sound_effects: true,
+                    evdev_enabled: false,
                 },
                 recording: RecordingSettings {
                     indicator_position: IndicatorPosition::Top,

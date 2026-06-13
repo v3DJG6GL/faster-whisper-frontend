@@ -1,6 +1,7 @@
 mod audio;
 mod commands;
 mod config;
+mod evdev_hotkeys;
 mod inject;
 mod overlay;
 mod session;
@@ -41,6 +42,7 @@ pub fn run() {
         .manage(triggers::ShortcutRegistry::default())
         .manage(wayland_inject::WaylandTyper::default())
         .manage(commands::ClipboardSnapshot::default())
+        .manage(evdev_hotkeys::EvdevState::default())
         .setup(|app| {
             use tauri::Manager;
             tray::create(app)?;
@@ -49,7 +51,7 @@ pub fn run() {
                 .app_config_dir()
                 .map(|dir| config::load(&dir))
                 .unwrap_or_default();
-            triggers::register_from_config(app.handle(), &cfg.modes);
+            commands::apply_bindings(app.handle());
             // Keep the OS autostart entry in sync with the saved preference.
             commands::sync_autostart(app.handle(), cfg.settings.general.open_at_login);
             // Start hidden to the tray if requested (reachable via the tray menu).
@@ -79,6 +81,8 @@ pub fn run() {
             commands::suspend_shortcuts,
             commands::validate_shortcut,
             commands::validate_codes,
+            commands::evdev_status,
+            commands::evdev_setup,
             commands::inject_text,
             commands::begin_injection,
             commands::end_injection,

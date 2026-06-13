@@ -211,13 +211,59 @@ pub fn suspend_shortcuts(app: AppHandle) {
     crate::triggers::unregister_all(&app);
 }
 
-/// Re-read config and re-register global hotkeys (call after hotkeys change).
+/// Apply the current bindings to the right backend: when the evdev backend is
+/// enabled AND permitted it owns the modes and the global-shortcut plugin is
+/// silenced (mutual exclusion); otherwise the plugin registers and evdev stops.
+pub fn apply_bindings(app: &AppHandle) {
+    let Ok(dir) = config_dir(app) else { return };
+    let cfg = config::load(&dir);
+    let state = app.state::<crate::evdev_hotkeys::EvdevState>();
+    if cfg.settings.general.evdev_enabled && crate::evdev_hotkeys::permitted() {
+        crate::triggers::unregister_all(app);
+        crate::evdev_hotkeys::start(app, &state, &cfg.modes);
+        tracing::info!("[bindings] evdev backend active (plugin silenced)");
+    } else {
+        crate::evdev_hotkeys::stop(&state);
+        crate::triggers::register_from_config(app, &cfg.modes);
+    }
+}
+
+/// Re-read config and re-apply bindings (call after hotkeys / evdev toggle change).
 #[tauri::command]
 pub fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
-    let dir = config_dir(&app)?;
-    let cfg = config::load(&dir);
-    crate::triggers::register_from_config(&app, &cfg.modes);
+    apply_bindings(&app);
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvdevStatus {
+    /// evdev is a Linux-only backend.
+    available: bool,
+    /// We can actually open a keyboard (i.e. the user is in the `input` group).
+    permitted: bool,
+    /// The user has turned the backend on in config.
+    enabled: bool,
+}
+
+/// Status for the Permissions UI: is evdev available / permitted / enabled?
+#[tauri::command]
+pub fn evdev_status(app: AppHandle) -> EvdevStatus {
+    let enabled = config_dir(&app)
+        .map(|d| config::load(&d).settings.general.evdev_enabled)
+        .unwrap_or(false);
+    EvdevStatus {
+        available: cfg!(target_os = "linux"),
+        permitted: crate::evdev_hotkeys::permitted(),
+        enabled,
+    }
+}
+
+/// Add the user to the `input` group via `pkexec` (polkit GUI auth). The user must
+/// log out and back in for it to take effect.
+#[tauri::command]
+pub async fn evdev_setup() -> Result<String, String> {
+    crate::evdev_hotkeys::setup().await
 }
 
 /// Whether an accelerator string can be registered as a global shortcut.

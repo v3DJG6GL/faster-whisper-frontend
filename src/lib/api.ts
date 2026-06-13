@@ -171,6 +171,24 @@ export async function validateCodes(codes: string[]): Promise<boolean> {
   return invoke<boolean>("validate_codes", { codes });
 }
 
+export interface EvdevStatus {
+  available: boolean; // Linux-only backend
+  permitted: boolean; // user can read /dev/input (in the `input` group)
+  enabled: boolean; // turned on in config
+}
+
+/** Whether the evdev hotkey backend is available / permitted / enabled. */
+export async function evdevStatus(): Promise<EvdevStatus> {
+  if (!isTauri) return { available: false, permitted: false, enabled: false };
+  return invoke<EvdevStatus>("evdev_status");
+}
+
+/** Add the user to the `input` group via pkexec (polkit). Returns a status message. */
+export async function evdevSetup(): Promise<string> {
+  if (!isTauri) throw new Error("Requires the desktop app.");
+  return invoke<string>("evdev_setup");
+}
+
 /** Snapshot the clipboard before a live paste-injection session. */
 export async function beginInjection(): Promise<void> {
   if (!isTauri) return;

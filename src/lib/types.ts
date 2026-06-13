@@ -42,6 +42,7 @@ export interface GeneralSettings {
   autoEnter: boolean;
   restoreClipboard: boolean;
   soundEffects: boolean;
+  evdevEnabled: boolean; // opt-in evdev backend (reliable hold / L-R / AltGr on Wayland)
 }
 
 export interface RecordingSettings {
