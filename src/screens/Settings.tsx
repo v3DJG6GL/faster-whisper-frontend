@@ -167,14 +167,13 @@ export default function Settings() {
                   : "Clipboard paste is the most reliable. Direct typing never touches the clipboard, but can struggle with some keyboard layouts."
               }
             >
-              <Select
+              <Segmented
                 value={s.general.insertMethod}
                 onChange={(v) => updateGeneral({ insertMethod: v })}
                 options={[
                   { value: "paste", label: "Clipboard paste" },
                   { value: "direct", label: "Direct typing" },
                 ]}
-                className="w-52"
               />
             </SettingRow>
             <SettingRow title="Press Enter after" desc="Send a Return key once the text is inserted.">
