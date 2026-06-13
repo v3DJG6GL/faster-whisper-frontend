@@ -6,12 +6,32 @@ export type EndpointKind = "stream" | "batch";
 export type ResponseFormat = "json" | "verbose_json";
 
 /**
- * Phase-B placeholder: per-field decode-param overrides. Every field optional;
- * absent = "inherit from server". Lives on both Backend (defaults) and Profile
- * (override). Phase B narrows this shape.
+ * Per-field decode-param overrides. Every field optional; absent/empty = "inherit
+ * from server" (the backend falls back to its per-model config). Lives on both
+ * Backend (defaults) and Profile (override-of-defaults). Keys match the backend's
+ * faster-whisper kwarg names so they pass straight through the wire. The backend
+ * clamps every value to the admin-config bounds.
  */
 export interface DecodeOverrides {
-  [key: string]: unknown;
+  beam_size?: number; // 1..20
+  best_of?: number; // 1..20
+  temperature?: number; // 0..1 (single value; overrides the server's ladder)
+  condition_on_previous_text?: boolean;
+  vad_filter?: boolean;
+  vad_threshold?: number; // 0..1
+  vad_min_silence_duration_ms?: number; // 0..10000
+  vad_speech_pad_ms?: number; // 0..2000
+  no_speech_threshold?: number; // 0..1
+  log_prob_threshold?: number; // -10..0
+  compression_ratio_threshold?: number; // 0..10
+  hotwords?: string;
+  prepend_punctuations?: string;
+  append_punctuations?: string;
+  suppress_tokens?: string; // comma-separated token ids
+  patience?: number; // 0.5..5
+  length_penalty?: number; // 0.1..5
+  repetition_penalty?: number; // 0.5..5
+  no_repeat_ngram_size?: number; // 0..10
 }
 
 /** A configured connection to a faster-whisper / OpenAI-compatible server. */
