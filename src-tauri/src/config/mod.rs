@@ -44,6 +44,10 @@ fn default_insert_timing() -> InsertTiming {
     InsertTiming::Live
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum IndicatorPosition {
@@ -106,6 +110,9 @@ pub struct Profile {
     pub hotkey: Vec<String>,
     #[serde(default)]
     pub backend_id: Option<String>,
+    /// Short label for the overlay chip; None/empty = derive from `name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
     /// Override the Backend's language; None/empty = inherit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
@@ -282,6 +289,10 @@ pub struct RecordingSettings {
     pub save_recordings: bool,
     pub mute_system_audio: bool,
     pub realtime_preview: bool,
+    /// Show the active Profile's tag on the overlay chip. `#[serde(default = …)]`
+    /// so older configs load (and default the feature on).
+    #[serde(default = "default_true")]
+    pub show_profile_on_overlay: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,6 +342,7 @@ impl Default for Config {
                     save_recordings: false,
                     mute_system_audio: false,
                     realtime_preview: true,
+                    show_profile_on_overlay: true,
                 },
             },
             backends: vec![Backend {
@@ -353,6 +365,7 @@ impl Default for Config {
                     enabled: true,
                     hotkey: vec!["ControlLeft".into(), "ShiftLeft".into()],
                     backend_id: Some("default".into()),
+                    tag: None,
                     language: None,
                     prompt: None,
                     decode_overrides: None,
@@ -364,6 +377,7 @@ impl Default for Config {
                     enabled: true,
                     hotkey: vec!["ControlLeft".into(), "KeyH".into()],
                     backend_id: Some("default".into()),
+                    tag: None,
                     language: None,
                     prompt: None,
                     decode_overrides: None,
@@ -430,6 +444,7 @@ fn migrate_legacy(text: &str) -> Option<Config> {
                 enabled: m.enabled,
                 hotkey: m.hotkey,
                 backend_id: m.profile_id,
+                tag: None,
                 language: None,
                 prompt: None,
                 decode_overrides: None,

@@ -59,6 +59,7 @@ export interface Profile {
   enabled: boolean;
   hotkey: string[]; // ordered KeyboardEvent.code list, e.g. ["ControlLeft","KeyB"]
   backendId: string | null; // references a Backend
+  tag?: string; // short label for the overlay chip; empty/undefined = derive from name
   language?: string; // override Backend.language; empty/undefined = inherit
   prompt?: string; // override Backend.prompt; empty/undefined = inherit
   decodeOverrides?: DecodeOverrides; // Phase-B: per-Profile decode overrides
@@ -86,6 +87,7 @@ export interface RecordingSettings {
   saveRecordings: boolean;
   muteSystemAudio: boolean;
   realtimePreview: boolean;
+  showProfileOnOverlay: boolean; // show the active Profile's tag on the chip
 }
 
 export interface AppSettings {

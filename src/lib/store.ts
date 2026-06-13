@@ -50,6 +50,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     saveRecordings: false,
     muteSystemAudio: false,
     realtimePreview: true,
+    showProfileOnOverlay: true,
   },
 };
 
