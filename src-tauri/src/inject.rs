@@ -31,14 +31,16 @@ pub fn inject(
     auto_enter: bool,
     restore_clipboard: bool,
 ) -> Result<(), String> {
-    if text.is_empty() {
+    if text.is_empty() && !auto_enter {
         return Ok(());
     }
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
 
-    match method {
-        "direct" => enigo.text(text).map_err(|e| e.to_string())?,
-        _ => paste(&mut enigo, text, restore_clipboard)?,
+    if !text.is_empty() {
+        match method {
+            "direct" => enigo.text(text).map_err(|e| e.to_string())?,
+            _ => paste(&mut enigo, text, restore_clipboard)?,
+        }
     }
 
     if auto_enter {

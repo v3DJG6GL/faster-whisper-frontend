@@ -145,10 +145,17 @@ export async function stopRecord(): Promise<void> {
   await invoke("stop_record");
 }
 
-/** Re-register global hotkeys after the bindings change. */
+/** Re-register global hotkeys after the bindings change (or to restore them). */
 export async function reregisterShortcuts(): Promise<void> {
   if (!isTauri) return;
   await invoke("reregister_shortcuts");
+}
+
+/** Suspend all global hotkeys while capturing a new binding (so a keypress only
+ *  rebinds and doesn't also trigger dictation). Restore with reregisterShortcuts. */
+export async function suspendShortcuts(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("suspend_shortcuts");
 }
 
 /** Whether an accelerator (e.g. "Ctrl+Shift+Space") can be registered as a global shortcut. */

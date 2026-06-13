@@ -76,6 +76,7 @@ pub fn run() {
             commands::start_record,
             commands::stop_record,
             commands::reregister_shortcuts,
+            commands::suspend_shortcuts,
             commands::validate_shortcut,
             commands::inject_text,
             commands::begin_injection,

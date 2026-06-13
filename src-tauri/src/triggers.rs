@@ -95,6 +95,21 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
     );
 }
 
+/// Unregister all currently-registered global shortcuts. Used while the user is
+/// capturing a new binding, so pressing a key only rebinds and doesn't also fire
+/// dictation (which previously could start a stuck push-to-talk session).
+pub fn unregister_all(app: &AppHandle) {
+    let gs = app.global_shortcut();
+    let registry = app.state::<ShortcutRegistry>();
+    let Ok(mut map) = registry.0.lock() else {
+        return;
+    };
+    for sc in map.keys() {
+        let _ = gs.unregister(sc.clone());
+    }
+    map.clear();
+}
+
 /// (Re)register global shortcuts for the enabled modes. Unregisterable hotkeys
 /// (modifier-only / Wayland) are skipped with a log — the CLI path covers them.
 pub fn register_from_config(app: &AppHandle, modes: &[ModeBinding]) {

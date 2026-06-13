@@ -3,7 +3,15 @@ import { Mic, Check, Info, Keyboard, RefreshCw, Square } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Kbd, Segmented, Select, SettingRow, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
-import { listAudioDevices, startMicTest, stopMicTest, onAudioLevel, validateShortcut } from "@/lib/api";
+import {
+  listAudioDevices,
+  startMicTest,
+  stopMicTest,
+  onAudioLevel,
+  validateShortcut,
+  suspendShortcuts,
+  reregisterShortcuts,
+} from "@/lib/api";
 import type { AudioDevice, DictationModeId } from "@/lib/types";
 
 /** Map a KeyboardEvent.code to an accelerator key token (null = unsupported). */
@@ -123,6 +131,9 @@ export default function Settings() {
   // Key-capture for rebinding: grab the next combo, validate it, save it.
   useEffect(() => {
     if (!capturing) return;
+    // Suspend global hotkeys during capture so pressing the current binding only
+    // rebinds — it must not also fire dictation (that race left a stuck session).
+    void suspendShortcuts();
     const onKey = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
@@ -140,6 +151,10 @@ export default function Settings() {
       if (e.metaKey) mods.push("Super");
       const accel = [...mods, token].join("+");
       const mode = capturing;
+      // Don't allow the same combo on both modes — keep listening for another.
+      if (useApp.getState().modes.some((m) => m.mode !== mode && m.hotkey === accel)) {
+        return;
+      }
       void validateShortcut(accel)
         .then((ok) => {
           if (ok) updateMode(mode, { hotkey: accel });
@@ -147,7 +162,10 @@ export default function Settings() {
         .finally(() => setCapturing(null));
     };
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      void reregisterShortcuts(); // restore hotkeys when capture ends
+    };
   }, [capturing, updateMode]);
 
   return (

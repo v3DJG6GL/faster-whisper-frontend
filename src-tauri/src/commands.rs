@@ -204,6 +204,13 @@ pub fn stop_record(state: State<RecordState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Suspend all global hotkeys (while the user captures a new binding). Pair with
+/// `reregister_shortcuts` to restore them when capture ends.
+#[tauri::command]
+pub fn suspend_shortcuts(app: AppHandle) {
+    crate::triggers::unregister_all(&app);
+}
+
 /// Re-read config and re-register global hotkeys (call after hotkeys change).
 #[tauri::command]
 pub fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {

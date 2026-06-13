@@ -88,7 +88,16 @@ export default function Home() {
         <div className="flex items-center gap-6 px-8 py-7">
           <button
             type="button"
-            onClick={toggle}
+            onClick={(e) => {
+              // Blur immediately. With "Press Enter after" enabled, stopping via
+              // this button leaves it focused; the autoEnter Return injected on
+              // stop would then land on the focused button (Enter = activate) and
+              // restart dictation. Dropping focus sends that Return to <body> (a
+              // no-op) instead. The hotkey path is unaffected (the target app, not
+              // our window, has focus there).
+              e.currentTarget.blur();
+              toggle();
+            }}
             className={
               "ring-signal grid size-16 shrink-0 place-items-center rounded-full transition-transform hover:scale-105 " +
               (dictating ? "bg-rec text-white" : "bg-accent text-accent-ink")
