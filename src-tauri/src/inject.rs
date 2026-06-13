@@ -51,6 +51,30 @@ pub fn inject(
     Ok(())
 }
 
+/// Put `text` on the clipboard; returns the previous contents when `capture_prev`
+/// (so the caller can restore it after the paste). Used by the Wayland paste path,
+/// which sets the clipboard here and synthesizes Ctrl+V via the portal.
+pub fn set_clipboard(text: &str, capture_prev: bool) -> Result<Option<String>, String> {
+    use arboard::Clipboard;
+    let mut cb = Clipboard::new().map_err(|e| e.to_string())?;
+    let prev = if capture_prev { cb.get_text().ok() } else { None };
+    cb.set_text(text.to_string()).map_err(|e| e.to_string())?;
+    Ok(prev)
+}
+
+/// Restore clipboard text captured by [`set_clipboard`], after a short delay so the
+/// paste has consumed the clipboard first. No-op when `prev` is None.
+pub fn restore_clipboard_later(prev: Option<String>) {
+    if let Some(prev) = prev {
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            if let Ok(mut cb) = arboard::Clipboard::new() {
+                let _ = cb.set_text(prev);
+            }
+        });
+    }
+}
+
 fn paste(enigo: &mut Enigo, text: &str, restore_clipboard: bool) -> Result<(), String> {
     use arboard::Clipboard;
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;

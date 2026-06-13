@@ -268,8 +268,25 @@ pub async fn inject_text(
     restore_clipboard: bool,
 ) -> Result<(), String> {
     tracing::info!("[inject] {} chars via {} (auto_enter={})", text.len(), method, auto_enter);
-    let res = if method == "direct" && crate::inject::is_wayland() {
-        crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter).await
+    let res = if crate::inject::is_wayland() {
+        if method == "direct" {
+            crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter).await
+        } else {
+            // Paste on Wayland: set the clipboard here, then synthesize Ctrl+V via
+            // the portal. enigo's XTEST Ctrl+V is unreliable on KDE Wayland — a
+            // synthesized modifier + remapped keycode makes apps fire the wrong
+            // shortcut (e.g. opening editor tabs) instead of pasting.
+            let clip = text.clone();
+            let prev = tokio::task::spawn_blocking(move || {
+                crate::inject::set_clipboard(&clip, restore_clipboard)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+            let r = crate::wayland_inject::paste(&app, typer.inner(), auto_enter).await;
+            crate::inject::restore_clipboard_later(prev);
+            r
+        }
     } else {
         tokio::task::spawn_blocking(move || {
             crate::inject::inject(&text, &method, auto_enter, restore_clipboard)

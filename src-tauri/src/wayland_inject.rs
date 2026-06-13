@@ -19,7 +19,8 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 /// One typing request handed to the persistent typer task: type `text`, then an
 /// optional Enter; `reply` carries the result back to the awaiting command.
 pub struct Job {
-    text: String,
+    text: String, // characters to type (empty for a paste chord)
+    paste: bool,  // true → synthesize Ctrl+V instead of typing `text`
     auto_enter: bool,
     reply: oneshot::Sender<Result<(), String>>,
 }
@@ -50,7 +51,9 @@ mod imp {
     const EVDEV_OFFSET: u32 = 8; // xkb keycode = evdev code + 8
     const KEY_TAB: i32 = 15;
     const KEY_ENTER: i32 = 28;
+    const KEY_LEFTCTRL: i32 = 29;
     const KEY_LEFTSHIFT: i32 = 42;
+    const KEY_V: i32 = 47;
     const KEY_RIGHTALT: i32 = 100; // AltGr / ISO_Level3_Shift
 
     #[derive(Clone, Copy)]
@@ -159,12 +162,34 @@ mod imp {
         }
     }
 
-    /// Queue `text` for the persistent typer, starting the task (one consent
-    /// dialog) on first use, and await its completion.
+    /// Type `text` character-by-character (layout-correct keycodes).
     pub async fn type_text(
         app: &AppHandle,
         typer: &WaylandTyper,
         text: &str,
+        auto_enter: bool,
+    ) -> Result<(), String> {
+        submit(app, typer, text.to_string(), false, auto_enter).await
+    }
+
+    /// Synthesize Ctrl+V on the shared session (the caller has already set the
+    /// clipboard). Raw keycodes via the portal — reliable on Wayland, where enigo's
+    /// XTEST Ctrl+V mis-fires into the wrong shortcut (e.g. opening editor tabs).
+    pub async fn paste(
+        app: &AppHandle,
+        typer: &WaylandTyper,
+        auto_enter: bool,
+    ) -> Result<(), String> {
+        submit(app, typer, String::new(), true, auto_enter).await
+    }
+
+    /// Queue a job for the persistent typer, starting the task (one consent dialog)
+    /// on first use, and await its completion.
+    async fn submit(
+        app: &AppHandle,
+        typer: &WaylandTyper,
+        text: String,
+        paste: bool,
         auto_enter: bool,
     ) -> Result<(), String> {
         let tx = {
@@ -179,7 +204,7 @@ mod imp {
             guard.as_ref().unwrap().clone()
         };
         let (reply, reply_rx) = oneshot::channel();
-        tx.send(Job { text: text.to_string(), auto_enter, reply })
+        tx.send(Job { text, paste, auto_enter, reply })
             .await
             .map_err(|_| "wayland typer unavailable".to_string())?;
         reply_rx
@@ -238,6 +263,23 @@ mod imp {
             // Inline the per-job typing (so the borrowed Session type never needs
             // to be named) and collect the result for the awaiting caller.
             let res: Result<(), String> = async {
+                if job.paste {
+                    // Ctrl+V as raw keycodes (layout-independent).
+                    kc!(KEY_LEFTCTRL, KeyState::Pressed);
+                    tokio::time::sleep(Duration::from_millis(6)).await;
+                    kc!(KEY_V, KeyState::Pressed);
+                    tokio::time::sleep(Duration::from_millis(4)).await;
+                    kc!(KEY_V, KeyState::Released);
+                    tokio::time::sleep(Duration::from_millis(6)).await;
+                    kc!(KEY_LEFTCTRL, KeyState::Released);
+                    if job.auto_enter {
+                        tokio::time::sleep(Duration::from_millis(6)).await;
+                        kc!(KEY_ENTER, KeyState::Pressed);
+                        kc!(KEY_ENTER, KeyState::Released);
+                    }
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                    return Ok(());
+                }
                 for c in job.text.chars() {
                     let Some(spec) = key_spec_for(c, &charmap) else {
                         continue; // char not reachable on this layout — skip
@@ -287,13 +329,22 @@ mod imp {
 }
 
 #[cfg(target_os = "linux")]
-pub use imp::type_text;
+pub use imp::{paste, type_text};
 
 #[cfg(not(target_os = "linux"))]
 pub async fn type_text(
     _app: &tauri::AppHandle,
     _typer: &WaylandTyper,
     _text: &str,
+    _auto_enter: bool,
+) -> Result<(), String> {
+    Err("Wayland text injection is only available on Linux".into())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn paste(
+    _app: &tauri::AppHandle,
+    _typer: &WaylandTyper,
     _auto_enter: bool,
 ) -> Result<(), String> {
     Err("Wayland text injection is only available on Linux".into())
