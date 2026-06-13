@@ -249,33 +249,53 @@ mod imp {
         }
         tracing::info!("[wayland-inject] persistent portal session ready");
 
-        // `kc!` sends a keycode press/release on the shared session.
-        macro_rules! kc {
-            ($code:expr, $st:expr) => {
-                proxy
-                    .notify_keyboard_keycode(&session, $code, $st, Default::default())
-                    .await
-                    .map_err(|e| e.to_string())?
-            };
-        }
-
         while let Some(job) = rx.recv().await {
-            // Inline the per-job typing (so the borrowed Session type never needs
-            // to be named) and collect the result for the awaiting caller.
+            // Every keycode we press is recorded here so we can GUARANTEE a matching
+            // release even if a portal call fails mid-chord. Without this, a failure
+            // after `Ctrl↓`/`Shift↓` leaves that modifier logically DOWN system-wide
+            // and wedges the desktop (clicks/drag/selection break) until a VT switch.
+            let mut held: Vec<i32> = Vec::new();
+
+            // `press!`/`release!` mirror the shared session and keep `held` in sync.
+            // Both use `?`, so a failure bails out of the inner block — after which
+            // the cleanup below releases whatever is still held.
             let res: Result<(), String> = async {
+                macro_rules! press {
+                    ($code:expr) => {{
+                        let code: i32 = $code;
+                        proxy
+                            .notify_keyboard_keycode(&session, code, KeyState::Pressed, Default::default())
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        held.push(code);
+                    }};
+                }
+                macro_rules! release {
+                    ($code:expr) => {{
+                        let code: i32 = $code;
+                        proxy
+                            .notify_keyboard_keycode(&session, code, KeyState::Released, Default::default())
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        if let Some(i) = held.iter().rposition(|&c| c == code) {
+                            held.remove(i);
+                        }
+                    }};
+                }
+
                 if job.paste {
                     // Ctrl+V as raw keycodes (layout-independent).
-                    kc!(KEY_LEFTCTRL, KeyState::Pressed);
+                    press!(KEY_LEFTCTRL);
                     tokio::time::sleep(Duration::from_millis(6)).await;
-                    kc!(KEY_V, KeyState::Pressed);
+                    press!(KEY_V);
                     tokio::time::sleep(Duration::from_millis(4)).await;
-                    kc!(KEY_V, KeyState::Released);
+                    release!(KEY_V);
                     tokio::time::sleep(Duration::from_millis(6)).await;
-                    kc!(KEY_LEFTCTRL, KeyState::Released);
+                    release!(KEY_LEFTCTRL);
                     if job.auto_enter {
                         tokio::time::sleep(Duration::from_millis(6)).await;
-                        kc!(KEY_ENTER, KeyState::Pressed);
-                        kc!(KEY_ENTER, KeyState::Released);
+                        press!(KEY_ENTER);
+                        release!(KEY_ENTER);
                     }
                     tokio::time::sleep(Duration::from_millis(40)).await;
                     return Ok(());
@@ -285,35 +305,44 @@ mod imp {
                         continue; // char not reachable on this layout — skip
                     };
                     if spec.shift {
-                        kc!(KEY_LEFTSHIFT, KeyState::Pressed);
+                        press!(KEY_LEFTSHIFT);
                         tokio::time::sleep(Duration::from_millis(4)).await;
                     }
                     if spec.altgr {
-                        kc!(KEY_RIGHTALT, KeyState::Pressed);
+                        press!(KEY_RIGHTALT);
                         tokio::time::sleep(Duration::from_millis(4)).await;
                     }
-                    kc!(spec.keycode, KeyState::Pressed);
+                    press!(spec.keycode);
                     tokio::time::sleep(Duration::from_millis(4)).await;
-                    kc!(spec.keycode, KeyState::Released);
+                    release!(spec.keycode);
                     if spec.altgr {
                         tokio::time::sleep(Duration::from_millis(4)).await;
-                        kc!(KEY_RIGHTALT, KeyState::Released);
+                        release!(KEY_RIGHTALT);
                     }
                     if spec.shift {
                         tokio::time::sleep(Duration::from_millis(4)).await;
-                        kc!(KEY_LEFTSHIFT, KeyState::Released);
+                        release!(KEY_LEFTSHIFT);
                     }
                     tokio::time::sleep(Duration::from_millis(6)).await;
                 }
                 if job.auto_enter {
-                    kc!(KEY_ENTER, KeyState::Pressed);
-                    kc!(KEY_ENTER, KeyState::Released);
+                    press!(KEY_ENTER);
+                    release!(KEY_ENTER);
                 }
                 // Let KWin process the queued events before the caller proceeds.
                 tokio::time::sleep(Duration::from_millis(40)).await;
                 Ok(())
             }
             .await;
+
+            // GUARANTEED cleanup: release anything still held (an error bailed out
+            // mid-chord). Best-effort — release in reverse press order, ignoring
+            // errors since we're already reporting the real failure.
+            for code in held.iter().rev() {
+                let _ = proxy
+                    .notify_keyboard_keycode(&session, *code, KeyState::Released, Default::default())
+                    .await;
+            }
 
             let failed = res.is_err();
             let _ = job.reply.send(res);
