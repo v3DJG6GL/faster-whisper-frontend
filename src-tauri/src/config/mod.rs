@@ -1,8 +1,9 @@
-//! Persisted configuration: Model Profiles, per-mode bindings, and settings.
+//! Persisted configuration: Backends, dictation Profiles, and settings.
 //!
 //! Mirrors the TypeScript model in `src/lib/types.ts` (serde `camelCase`). The
 //! config itself is stored as JSON in the OS app-config dir; raw API keys are
-//! never written here — they live in the OS secret store (see [`keys`]).
+//! never written here — they live in the OS secret store, keyed by Backend id
+//! (see [`keys`]).
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -58,16 +59,20 @@ pub enum ThemeName {
     Light,
 }
 
+/// How a Profile's chord behaves. First-class, decoupled from the Profile's id
+/// (the old `DictationModeId = hold|handsfree` fused identity with behavior).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum DictationModeId {
+pub enum ActivationType {
     Hold,
-    Handsfree,
+    Latch,
 }
 
+/// A faster-whisper backend connection (server + model + decode defaults). The
+/// API key is never stored here — it lives in the OS keyring keyed by [`Backend::id`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ModelProfile {
+pub struct Backend {
     pub id: String,
     pub name: String,
     pub server_url: String,
@@ -77,19 +82,39 @@ pub struct ModelProfile {
     pub language: String,
     pub prompt: String,
     pub response_format: ResponseFormat,
+    /// Phase-B placeholder: per-Backend decode-param defaults. Skipped when None
+    /// so Phase-A configs round-trip byte-stable and the frontend need not send it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_overrides: Option<serde_json::Value>,
 }
 
+/// A user-defined dictation setup: an activation type + chord, a target [`Backend`],
+/// and optional per-Profile language/prompt overrides (empty/None = inherit Backend).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ModeBinding {
-    pub mode: DictationModeId,
+pub struct Profile {
+    /// Stable opaque id, carried verbatim in the `trigger` payload.
+    pub id: String,
+    /// Human label shown in the UI; Rust never interprets it.
+    pub name: String,
+    pub activation: ActivationType,
     pub enabled: bool,
     /// The chord as an ordered list of `KeyboardEvent.code`s (carries left/right
     /// side + AltGr, for the evdev backend). Accepts a legacy accelerator string
     /// ("Ctrl+B") on load and migrates it in place — so old configs don't reset.
     #[serde(deserialize_with = "de_hotkey")]
     pub hotkey: Vec<String>,
-    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub backend_id: Option<String>,
+    /// Override the Backend's language; None/empty = inherit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    /// Override the Backend's prompt; None/empty = inherit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// Phase-B placeholder: per-Profile decode-param overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_overrides: Option<serde_json::Value>,
 }
 
 /// Canonical rank so a stored chord is order-independent: modifiers (by type then
@@ -264,6 +289,11 @@ pub struct RecordingSettings {
 pub struct AppSettings {
     pub theme: ThemeName,
     pub microphone_id: Option<String>,
+    /// Which Profile the Home "click to dictate" button targets (None = first
+    /// enabled). Pure storage; the frontend resolves it. `#[serde(default)]` so
+    /// older configs load.
+    #[serde(default)]
+    pub home_profile_id: Option<String>,
     pub general: GeneralSettings,
     pub recording: RecordingSettings,
 }
@@ -272,8 +302,11 @@ pub struct AppSettings {
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub settings: AppSettings,
-    pub profiles: Vec<ModelProfile>,
-    pub modes: Vec<ModeBinding>,
+    pub backends: Vec<Backend>,
+    pub profiles: Vec<Profile>,
+    /// Schema version (absent/legacy ⇒ 1; current ⇒ 2). Orders future migrations.
+    #[serde(default)]
+    pub version: Option<u32>,
 }
 
 impl Default for Config {
@@ -282,6 +315,7 @@ impl Default for Config {
             settings: AppSettings {
                 theme: ThemeName::Dark,
                 microphone_id: None,
+                home_profile_id: None,
                 general: GeneralSettings {
                     open_at_login: false,
                     start_minimized: false,
@@ -299,7 +333,7 @@ impl Default for Config {
                     realtime_preview: true,
                 },
             },
-            profiles: vec![ModelProfile {
+            backends: vec![Backend {
                 id: "default".into(),
                 name: "Local server".into(),
                 server_url: "http://localhost:8000".into(),
@@ -309,21 +343,33 @@ impl Default for Config {
                 language: "auto".into(),
                 prompt: String::new(),
                 response_format: ResponseFormat::VerboseJson,
+                decode_overrides: None,
             }],
-            modes: vec![
-                ModeBinding {
-                    mode: DictationModeId::Hold,
+            profiles: vec![
+                Profile {
+                    id: "hold".into(),
+                    name: "Push-to-talk".into(),
+                    activation: ActivationType::Hold,
                     enabled: true,
                     hotkey: vec!["ControlLeft".into(), "ShiftLeft".into()],
-                    profile_id: Some("default".into()),
+                    backend_id: Some("default".into()),
+                    language: None,
+                    prompt: None,
+                    decode_overrides: None,
                 },
-                ModeBinding {
-                    mode: DictationModeId::Handsfree,
+                Profile {
+                    id: "handsfree".into(),
+                    name: "Latch".into(),
+                    activation: ActivationType::Latch,
                     enabled: true,
                     hotkey: vec!["ControlLeft".into(), "KeyH".into()],
-                    profile_id: Some("default".into()),
+                    backend_id: Some("default".into()),
+                    language: None,
+                    prompt: None,
+                    decode_overrides: None,
                 },
             ],
+            version: Some(2),
         }
     }
 }
@@ -332,15 +378,95 @@ fn config_path(dir: &Path) -> PathBuf {
     dir.join("config.json")
 }
 
-/// Load config from `<dir>/config.json`, falling back to defaults if missing or invalid.
+// ── Legacy (pre-v2) config migration ────────────────────────────────────────
+// Pre-v2 configs stored `profiles: ModelProfile[]` (= today's Backend) and
+// `modes: ModeBinding[]` with a fused `mode: "hold"|"handsfree"`. The fields are
+// the ONLY signal of intent, so we parse them explicitly (a plain serde default
+// would silently drop them and reset the user's bindings). The mapping is
+// deterministic — seed ids equal the legacy mode strings — so re-migration is a
+// no-op.
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum LegacyModeId {
+    Hold,
+    Handsfree,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyModeBinding {
+    mode: LegacyModeId,
+    enabled: bool,
+    #[serde(deserialize_with = "de_hotkey")]
+    hotkey: Vec<String>,
+    #[serde(default)]
+    profile_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyConfig {
+    settings: AppSettings,
+    // Old `ModelProfile` is field-compatible with `Backend` (decode_overrides defaults).
+    profiles: Vec<Backend>,
+    modes: Vec<LegacyModeBinding>,
+}
+
+fn migrate_legacy(text: &str) -> Option<Config> {
+    let legacy: LegacyConfig = serde_json::from_str(text).ok()?;
+    let profiles = legacy
+        .modes
+        .into_iter()
+        .map(|m| {
+            let (id, name, activation) = match m.mode {
+                LegacyModeId::Hold => ("hold", "Push-to-talk", ActivationType::Hold),
+                LegacyModeId::Handsfree => ("handsfree", "Latch", ActivationType::Latch),
+            };
+            Profile {
+                id: id.into(),
+                name: name.into(),
+                activation,
+                enabled: m.enabled,
+                hotkey: m.hotkey,
+                backend_id: m.profile_id,
+                language: None,
+                prompt: None,
+                decode_overrides: None,
+            }
+        })
+        .collect();
+    Some(Config {
+        settings: legacy.settings,
+        backends: legacy.profiles,
+        profiles,
+        version: Some(2),
+    })
+}
+
+/// Load config from `<dir>/config.json`, falling back to defaults if missing or
+/// invalid. A legacy (pre-v2) config is migrated losslessly and re-saved so the
+/// next load takes the fast path.
 pub fn load(dir: &Path) -> Config {
     let path = config_path(dir);
-    match std::fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
-            tracing::warn!("config parse failed ({e}); using defaults");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Config::default();
+    };
+    // Fast path: already the current (v2) shape.
+    if let Ok(cfg) = serde_json::from_str::<Config>(&text) {
+        return cfg;
+    }
+    // Migration path: a legacy `profiles`/`modes` config (no `backends`).
+    match migrate_legacy(&text) {
+        Some(cfg) => {
+            tracing::info!("[config] migrated legacy backends/profiles → v2");
+            let _ = save(dir, &cfg);
+            cfg
+        }
+        None => {
+            tracing::warn!("config parse failed; using defaults");
             Config::default()
-        }),
-        Err(_) => Config::default(),
+        }
     }
 }
 
@@ -355,26 +481,28 @@ pub fn save(dir: &Path, config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Secret-store helpers: API keys are keyed by profile id, never written to disk in cleartext.
+/// Secret-store helpers: API keys are keyed by Backend id, never written to disk
+/// in cleartext. (The id values are stable across the v2 migration, so existing
+/// keyring entries keep resolving.)
 pub mod keys {
     use super::KEYRING_SERVICE;
 
-    fn entry(profile_id: &str) -> keyring::Result<keyring::Entry> {
-        keyring::Entry::new(KEYRING_SERVICE, profile_id)
+    fn entry(backend_id: &str) -> keyring::Result<keyring::Entry> {
+        keyring::Entry::new(KEYRING_SERVICE, backend_id)
     }
 
-    pub fn set(profile_id: &str, secret: &str) -> anyhow::Result<()> {
-        entry(profile_id)?.set_password(secret)?;
+    pub fn set(backend_id: &str, secret: &str) -> anyhow::Result<()> {
+        entry(backend_id)?.set_password(secret)?;
         Ok(())
     }
 
     #[allow(dead_code)] // read path is wired in M1 (backend connectivity)
-    pub fn get(profile_id: &str) -> Option<String> {
-        entry(profile_id).ok()?.get_password().ok()
+    pub fn get(backend_id: &str) -> Option<String> {
+        entry(backend_id).ok()?.get_password().ok()
     }
 
-    pub fn delete(profile_id: &str) -> anyhow::Result<()> {
-        match entry(profile_id)?.delete_credential() {
+    pub fn delete(backend_id: &str) -> anyhow::Result<()> {
+        match entry(backend_id)?.delete_credential() {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e.into()),
