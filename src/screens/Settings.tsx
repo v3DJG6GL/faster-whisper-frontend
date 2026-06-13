@@ -112,8 +112,12 @@ export default function Settings() {
   const [evdevBusy, setEvdevBusy] = useState(false);
 
   useEffect(() => {
-    if (tab === "Permissions") void evdevStatus().then(setEvdev);
+    void evdevStatus().then(setEvdev);
   }, [tab]);
+
+  // When the evdev backend owns the modes, it can bind modifier-only / AltGr /
+  // left-right chords the plugin can't — so capture validates differently.
+  const evdevActive = !!(s.general.evdevEnabled && evdev?.permitted);
 
   const runEvdevSetup = () => {
     setEvdevBusy(true);
@@ -140,6 +144,31 @@ export default function Settings() {
     // rebinds — it must not also fire dictation (that race left a stuck session).
     void suspendShortcuts();
     const pressed = new Set<string>();
+    let peak: string[] = []; // largest modifier-only set held (for evdev chords)
+    let done = false;
+    const finalize = (codes: string[]) => {
+      const mode = capturing;
+      if (useApp.getState().modes.some((m) => m.mode !== mode && sameCodes(m.hotkey, codes))) {
+        setCaptureWarn("Already bound to the other mode");
+        done = false;
+        return;
+      }
+      if (evdevActive) {
+        // evdev owns the modes — it can bind modifier-only / AltGr / left-right.
+        updateMode(mode, { hotkey: codes });
+        setCapturing(null);
+      } else {
+        void validateCodes(codes).then((ok) => {
+          if (ok) {
+            updateMode(mode, { hotkey: codes });
+            setCapturing(null);
+          } else {
+            setCaptureWarn("Can't register that — add a letter/digit, or enable the evdev backend (Permissions) for modifier-only / AltGr");
+            done = false;
+          }
+        });
+      }
+    };
     const onKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
@@ -149,32 +178,33 @@ export default function Settings() {
       }
       if (MODIFIER_CODES.has(e.code)) {
         pressed.add(e.code);
-        setHeldCodes(canonicalizeCodes([...pressed]));
+        const cur = canonicalizeCodes([...pressed]);
+        if (cur.length > peak.length) peak = cur;
+        setHeldCodes(cur);
         return; // still building the chord
       }
-      if (!codeToToken(e.code)) {
+      if (!codeToToken(e.code) && !evdevActive) {
         setCaptureWarn("That key can't be a global shortcut — try another");
         return; // keep listening
       }
-      const codes = canonicalizeCodes([...pressed, e.code]);
-      const mode = capturing;
-      if (useApp.getState().modes.some((m) => m.mode !== mode && sameCodes(m.hotkey, codes))) {
-        setCaptureWarn("Already bound to the other mode");
-        return;
-      }
-      void validateCodes(codes).then((ok) => {
-        if (ok) {
-          updateMode(mode, { hotkey: codes });
-          setCapturing(null);
-        } else {
-          setCaptureWarn("Can't register that — add a modifier (AltGr / left-right need the evdev backend)");
-        }
-      });
+      done = true;
+      finalize(canonicalizeCodes([...pressed, e.code]));
     };
     const onKeyUp = (e: KeyboardEvent) => {
       e.preventDefault();
       pressed.delete(e.code);
       setHeldCodes(canonicalizeCodes([...pressed]));
+      // Modifier-only chord (e.g. Ctrl+Shift): no real key was pressed and every
+      // key has been released — finalize the peak set. Only the evdev backend can
+      // honour these; on the plugin path, nudge the user instead.
+      if (!done && pressed.size === 0 && peak.length > 0) {
+        if (evdevActive) {
+          done = true;
+          finalize(peak);
+        } else {
+          setCaptureWarn("Modifier-only chords need the evdev backend (Permissions)");
+        }
+      }
     };
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
@@ -183,7 +213,7 @@ export default function Settings() {
       window.removeEventListener("keyup", onKeyUp, true);
       void reregisterShortcuts(); // restore hotkeys when capture ends
     };
-  }, [capturing, updateMode]);
+  }, [capturing, updateMode, evdevActive]);
 
   return (
     <div className="mx-auto flex max-w-[880px] gap-8 px-10 py-12">
