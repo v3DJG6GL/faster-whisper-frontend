@@ -50,6 +50,7 @@ export default function Home() {
   const micId = useApp((s) => s.settings.microphoneId);
   const homeProfileId = useApp((s) => s.settings.homeProfileId);
   const updateSettings = useApp((s) => s.updateSettings);
+  const setDictation = useApp((s) => s.setDictation);
 
   const enabled = profiles.filter((p) => p.enabled);
   // The hero button has no held chord (you click it), so it always dictates in latch
@@ -69,6 +70,9 @@ export default function Home() {
       return;
     }
     if (!headerBackend) return;
+    // Tell the overlay chip which Profile is dictating (the hotkey path does this in
+    // dictate(); the button bypasses it). null when only a backend is targeted.
+    setDictation({ activeProfile: target?.id ?? null });
     // startLive resolves effective language / prompt / decode (target over backend);
     // target may be undefined → the backend's own defaults are used.
     void startLive(headerBackend, micId, "latch", target);
