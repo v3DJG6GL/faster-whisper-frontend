@@ -8,6 +8,7 @@ import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { validateCodes, suspendShortcuts, reregisterShortcuts } from "@/lib/api";
 import { MODIFIER_CODES, codeToToken, canonicalizeCodes, codesToLabels } from "@/lib/keys";
 import { conflictsByProfile, findChordConflict } from "@/lib/conflicts";
+import { deriveChipTag } from "@/lib/profileTag";
 import type { Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
@@ -167,6 +168,8 @@ function Editor({
     onSave({
       ...p,
       name: p.name.trim() || "Untitled profile",
+      // Empty = derive the chip tag from the name → store as undefined (omitted).
+      tag: p.tag?.trim() ? p.tag.trim() : undefined,
       // Empty override = inherit from the Backend → store as undefined (omitted).
       language: p.language?.trim() ? p.language : undefined,
       prompt: p.prompt?.trim() ? p.prompt : undefined,
@@ -183,6 +186,14 @@ function Editor({
       <div className="mt-5 grid grid-cols-2 gap-4">
         <Labeled label="Name">
           <TextInput value={p.name} onChange={(e) => set({ name: e.target.value })} placeholder="Email — German" />
+        </Labeled>
+        <Labeled label="Chip tag">
+          <TextInput
+            value={p.tag ?? ""}
+            onChange={(e) => set({ tag: e.target.value })}
+            placeholder={deriveChipTag(p.name) || "From name"}
+            maxLength={16}
+          />
         </Labeled>
         <Labeled label="Activation">
           <Segmented
@@ -332,6 +343,11 @@ function ProfileRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-[14px] font-semibold text-text">{p.name}</span>
+            {p.tag?.trim() && (
+              <span className="rounded-md bg-accent-soft px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider text-accent">
+                {p.tag.trim()}
+              </span>
+            )}
             <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider text-dim">
               {meta.label}
             </span>

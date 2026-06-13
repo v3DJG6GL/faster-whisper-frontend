@@ -216,9 +216,18 @@ export default function Settings() {
             <SettingRow
               title="Live transcript in overlay"
               desc="Show words appear in the chip as you speak (streaming backends only)."
-              last
             >
               <Toggle checked={s.recording.realtimePreview} onChange={(v) => updateRecording({ realtimePreview: v })} />
+            </SettingRow>
+            <SettingRow
+              title="Show active profile on overlay"
+              desc="Label the chip with the running profile's tag; hover it to reveal language and mode."
+              last
+            >
+              <Toggle
+                checked={s.recording.showProfileOnOverlay}
+                onChange={(v) => updateRecording({ showProfileOnOverlay: v })}
+              />
             </SettingRow>
           </Card>
         )}
