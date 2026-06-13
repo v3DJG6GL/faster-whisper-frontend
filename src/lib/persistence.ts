@@ -9,16 +9,26 @@ import { conflicts } from "./conflicts";
 export async function initConfig(): Promise<void> {
   if (!isTauri) return;
 
+  // Arm auto-save ONLY after the initial load resolves. The store boots with seeded
+  // defaults ("Local server" + two default profiles); persisting before (or instead
+  // of) a successful load — e.g. a change landing during the load window — would
+  // overwrite the real on-disk config with those defaults. (In dev, editing store.ts
+  // hot-reloads it back to defaults; this guard plus the post-load subscribe keep the
+  // saved config safe, but you still must restart the app to see your config again.)
+  let hydrated = false;
   try {
     const cfg = await loadConfig();
     if (cfg) useApp.getState().hydrate(cfg);
   } catch (e) {
     console.error("loadConfig failed", e);
+  } finally {
+    hydrated = true;
   }
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pendingBindingChange = false;
   useApp.subscribe((state, prev) => {
+    if (!hydrated) return;
     if (
       state.settings === prev.settings &&
       state.backends === prev.backends &&
