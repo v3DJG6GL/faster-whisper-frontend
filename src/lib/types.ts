@@ -5,27 +5,43 @@
 export type EndpointKind = "stream" | "batch";
 export type ResponseFormat = "json" | "verbose_json";
 
+/**
+ * Phase-B placeholder: per-field decode-param overrides. Every field optional;
+ * absent = "inherit from server". Lives on both Backend (defaults) and Profile
+ * (override). Phase B narrows this shape.
+ */
+export interface DecodeOverrides {
+  [key: string]: unknown;
+}
+
 /** A configured connection to a faster-whisper / OpenAI-compatible server. */
-export interface ModelProfile {
+export interface Backend {
   id: string;
   name: string;
   serverUrl: string; // http(s)://host:port (ws/wss derived for streaming)
-  hasApiKey: boolean; // key itself is in the OS keyring, keyed by profile id
+  hasApiKey: boolean; // key itself is in the OS keyring, keyed by Backend id
   model: string; // e.g. "large-v3", "whisper-1", or an HF repo id
-  endpoint: EndpointKind; // streaming WS vs batch multipart  (per-profile, ← 3.7)
-  language: string; // "auto" | ISO 639-1 (per-profile, ← 3.5)
-  prompt: string; // optional initial_prompt / vocabulary biasing
+  endpoint: EndpointKind; // streaming WS vs batch multipart
+  language: string; // "auto" | ISO 639-1 (default; a Profile may override)
+  prompt: string; // optional initial_prompt / vocabulary biasing (default; overridable)
   responseFormat: ResponseFormat;
+  decodeOverrides?: DecodeOverrides; // Phase-B: per-Backend decode defaults
 }
 
-export type DictationModeId = "hold" | "handsfree";
+/** How a Profile is activated — first-class, decoupled from its identity. */
+export type ActivationKind = "hold" | "latch";
 
-/** Hotkey + profile assignment for one dictation mode. */
-export interface ModeBinding {
-  mode: DictationModeId;
+/** A user-defined dictation setup: activation + chord + a target Backend + overrides. */
+export interface Profile {
+  id: string; // stable, opaque (crypto.randomUUID); survives renames/rebinds
+  name: string; // user-facing label, e.g. "Email — German"
+  activation: ActivationKind;
   enabled: boolean;
   hotkey: string[]; // ordered KeyboardEvent.code list, e.g. ["ControlLeft","KeyB"]
-  profileId: string | null; // ← per-mode profile
+  backendId: string | null; // references a Backend
+  language?: string; // override Backend.language; empty/undefined = inherit
+  prompt?: string; // override Backend.prompt; empty/undefined = inherit
+  decodeOverrides?: DecodeOverrides; // Phase-B: per-Profile decode overrides
 }
 
 export type InsertMethod = "paste" | "direct";
@@ -55,6 +71,7 @@ export interface RecordingSettings {
 export interface AppSettings {
   theme: ThemeName;
   microphoneId: string | null;
+  homeProfileId?: string | null; // which Profile the Home button targets (null = first enabled)
   general: GeneralSettings;
   recording: RecordingSettings;
 }
@@ -90,8 +107,9 @@ export interface ConnectionInfo {
 /** The persisted config blob (mirrors the Rust `Config`). */
 export interface Config {
   settings: AppSettings;
-  profiles: ModelProfile[];
-  modes: ModeBinding[];
+  backends: Backend[];
+  profiles: Profile[];
+  version?: number; // schema version (absent/legacy ⇒ 1; current ⇒ 2)
 }
 
 /** Result of a batch transcription. */

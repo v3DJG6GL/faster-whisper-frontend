@@ -17,19 +17,19 @@ export async function saveConfig(config: Config): Promise<void> {
   await invoke("save_config", { config });
 }
 
-export async function setProfileKey(profileId: string, key: string): Promise<void> {
+export async function setBackendKey(backendId: string, key: string): Promise<void> {
   if (!isTauri) return;
-  await invoke("set_profile_key", { profileId, key });
+  await invoke("set_backend_key", { backendId, key });
 }
 
-export async function deleteProfileKey(profileId: string): Promise<void> {
+export async function deleteBackendKey(backendId: string): Promise<void> {
   if (!isTauri) return;
-  await invoke("delete_profile_key", { profileId });
+  await invoke("delete_backend_key", { backendId });
 }
 
 export async function testConnection(args: {
   serverUrl: string;
-  profileId?: string | null;
+  backendId?: string | null;
   apiKey?: string | null;
 }): Promise<ConnectionInfo> {
   if (!isTauri) {
@@ -37,14 +37,14 @@ export async function testConnection(args: {
   }
   return invoke<ConnectionInfo>("test_connection", {
     serverUrl: args.serverUrl,
-    profileId: args.profileId ?? null,
+    backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
   });
 }
 
 export async function transcribeFile(args: {
   serverUrl: string;
-  profileId?: string | null;
+  backendId?: string | null;
   apiKey?: string | null;
   model: string;
   language: string;
@@ -54,7 +54,7 @@ export async function transcribeFile(args: {
   if (!isTauri) throw new Error("Transcription requires the desktop app.");
   return invoke<BatchResult>("transcribe_file", {
     serverUrl: args.serverUrl,
-    profileId: args.profileId ?? null,
+    backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
     model: args.model,
     language: args.language,
@@ -87,7 +87,7 @@ export async function onAudioLevel(cb: (level: number) => void): Promise<() => v
 
 export async function startStream(args: {
   serverUrl: string;
-  profileId?: string | null;
+  backendId?: string | null;
   apiKey?: string | null;
   model: string;
   language: string;
@@ -100,7 +100,7 @@ export async function startStream(args: {
   if (!isTauri) return;
   await invoke("start_stream", {
     serverUrl: args.serverUrl,
-    profileId: args.profileId ?? null,
+    backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
     model: args.model,
     language: args.language,
@@ -119,7 +119,7 @@ export async function stopStream(): Promise<void> {
 
 export async function startRecord(args: {
   serverUrl: string;
-  profileId?: string | null;
+  backendId?: string | null;
   apiKey?: string | null;
   model: string;
   language: string;
@@ -131,7 +131,7 @@ export async function startRecord(args: {
   if (!isTauri) return;
   await invoke("start_record", {
     serverUrl: args.serverUrl,
-    profileId: args.profileId ?? null,
+    backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
     model: args.model,
     language: args.language,
@@ -244,7 +244,7 @@ export async function playCue(kind: "start" | "stop" | "error"): Promise<void> {
 }
 
 export interface TriggerEvent {
-  mode: "hold" | "handsfree";
+  profileId: string; // the fired Profile's id (resolved to a Backend by the controller)
   action: "start" | "stop" | "toggle";
 }
 

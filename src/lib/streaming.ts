@@ -6,8 +6,8 @@
 //   • "off"  — never insert.
 //   • "stop" — insert the whole transcript once, when dictation stops (uses the
 //              chosen Insertion-method: clipboard paste or direct typing).
-//   • "live" — insert each phrase AS YOU FINISH IT (streaming profiles only, and
-//              only in HANDSFREE/latch mode — see below).
+//   • "live" — insert each phrase AS YOU FINISH IT (streaming backends only, and
+//              only when the Profile's activation is latch — never hold; see below).
 //
 // Live insert is NOT possible in HOLD/push-to-talk mode: the activation chord is
 // physically held for the entire dictation, so the compositor folds that held
@@ -32,7 +32,7 @@ import {
   beginInjection,
   endInjection,
 } from "./api";
-import type { DictationModeId, ModelProfile } from "./types";
+import type { ActivationKind, Backend } from "./types";
 
 let wired = false;
 let activeEndpoint: "stream" | "batch" | null = null;
@@ -52,7 +52,7 @@ interface InsertCfg {
   method: "paste" | "direct";
   autoEnter: boolean;
   restoreClipboard: boolean;
-  live: boolean; // timing === "live", a streaming profile, AND handsfree (never hold)
+  live: boolean; // timing === "live", a streaming backend, AND latch activation (never hold)
 }
 let insertCfg: InsertCfg | null = null;
 // Serialise every injection op so backspaces/types never interleave or race.
@@ -185,9 +185,10 @@ async function ensureListeners(): Promise<void> {
 }
 
 export async function startLive(
-  profile: ModelProfile,
+  backend: Backend,
   deviceId: string | null,
-  mode: DictationModeId,
+  activation: ActivationKind,
+  overrides: { language: string; prompt: string },
 ): Promise<void> {
   await ensureListeners();
   const setDictation = useApp.getState().setDictation;
@@ -202,7 +203,7 @@ export async function startLive(
     restoreClipboard: g.restoreClipboard,
     // Hold/PTT holds the chord the whole time → live injection collides with the
     // held modifier. Fall back to the single insert-on-release (the "stop" path).
-    live: g.insertTiming === "live" && profile.endpoint === "stream" && mode !== "hold",
+    live: g.insertTiming === "live" && backend.endpoint === "stream" && activation !== "hold",
   };
   committedDoc = "";
   injectedText = "";
@@ -210,7 +211,7 @@ export async function startLive(
   injectChain = Promise.resolve();
 
   setDictation({ status: "listening", partial: "", level: 0, dictationError: null });
-  activeEndpoint = profile.endpoint;
+  activeEndpoint = backend.endpoint;
 
   // Live paste: snapshot the clipboard once so we can restore it on stop (we skip
   // per-segment restore to avoid churn while pasting each phrase).
@@ -223,25 +224,25 @@ export async function startLive(
   }
 
   try {
-    if (profile.endpoint === "batch") {
+    if (backend.endpoint === "batch") {
       await startRecord({
-        serverUrl: profile.serverUrl,
-        profileId: profile.id,
-        model: profile.model,
-        language: profile.language,
-        prompt: profile.prompt,
+        serverUrl: backend.serverUrl,
+        backendId: backend.id,
+        model: backend.model,
+        language: overrides.language,
+        prompt: overrides.prompt,
         deviceId,
         save: rec.saveRecordings,
         muteSystem: rec.muteSystemAudio,
       });
     } else {
       await startStream({
-        serverUrl: profile.serverUrl,
-        profileId: profile.id,
-        model: profile.model,
-        language: profile.language,
-        prompt: profile.prompt,
-        responseFormat: profile.responseFormat,
+        serverUrl: backend.serverUrl,
+        backendId: backend.id,
+        model: backend.model,
+        language: overrides.language,
+        prompt: overrides.prompt,
+        responseFormat: backend.responseFormat,
         deviceId,
         save: rec.saveRecordings,
         muteSystem: rec.muteSystemAudio,

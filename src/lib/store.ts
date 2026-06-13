@@ -1,22 +1,25 @@
 import { create } from "zustand";
 import type {
   AppSettings,
+  Backend,
   Config,
   ConnectionInfo,
   DictationStatus,
-  ModelProfile,
-  ModeBinding,
+  Profile,
   ThemeName,
 } from "./types";
 
 /**
- * Frontend store. For M0 this holds seeded defaults in memory; subsequent
- * milestones wire load/save through Tauri commands (config persisted as JSON in
- * the app config dir, API keys in the OS keyring). Keep mutations here so the
- * persistence layer can subscribe in one place.
+ * Frontend store. Holds seeded defaults in memory; the persistence layer wires
+ * load/save through Tauri commands (config persisted as JSON in the app config
+ * dir, API keys in the OS keyring). Keep mutations here so persistence can
+ * subscribe in one place.
+ *
+ * A Backend is a server connection (URL + model + decode defaults). A Profile is
+ * a dictation setup (activation + chord + a target Backend + optional overrides).
  */
 
-const DEFAULT_PROFILE: ModelProfile = {
+const DEFAULT_BACKEND: Backend = {
   id: "default",
   name: "Local server",
   serverUrl: "http://localhost:8000",
@@ -31,6 +34,7 @@ const DEFAULT_PROFILE: ModelProfile = {
 const DEFAULT_SETTINGS: AppSettings = {
   theme: "dark",
   microphoneId: null,
+  homeProfileId: null,
   general: {
     openAtLogin: false,
     startMinimized: false,
@@ -49,35 +53,79 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
 };
 
-const DEFAULT_MODES: ModeBinding[] = [
-  { mode: "hold", enabled: true, hotkey: ["ControlLeft", "ShiftLeft"], profileId: "default" },
-  { mode: "handsfree", enabled: true, hotkey: ["ControlLeft", "KeyH"], profileId: "default" },
+// Seed ids match the legacy mode strings so migration is idempotent (see Rust load()).
+const DEFAULT_PROFILES: Profile[] = [
+  { id: "hold", name: "Push-to-talk", activation: "hold", enabled: true, hotkey: ["ControlLeft", "ShiftLeft"], backendId: "default" },
+  { id: "handsfree", name: "Latch", activation: "latch", enabled: true, hotkey: ["ControlLeft", "KeyH"], backendId: "default" },
 ];
+
+/**
+ * Normalize a loaded config to the v2 shape. The Rust `load()` already migrates,
+ * but this guards the no-Rust `pnpm dev` path and any version skew during dev.
+ */
+function migrateConfig(raw: unknown): Config {
+  const c = raw as Record<string, unknown> | null;
+  if (!c || typeof c !== "object") {
+    return { settings: DEFAULT_SETTINGS, backends: [DEFAULT_BACKEND], profiles: DEFAULT_PROFILES };
+  }
+  // Already v2 (has `backends`).
+  if (Array.isArray((c as { backends?: unknown }).backends)) {
+    return {
+      settings: (c.settings as AppSettings) ?? DEFAULT_SETTINGS,
+      backends: (c.backends as Backend[]) ?? [DEFAULT_BACKEND],
+      profiles: Array.isArray(c.profiles) ? (c.profiles as Profile[]) : [],
+      version: c.version as number | undefined,
+    };
+  }
+  // Legacy v1: `profiles` were Backends; `modes` were ModeBindings.
+  const backends = Array.isArray(c.profiles) ? (c.profiles as Backend[]) : [DEFAULT_BACKEND];
+  const modes = Array.isArray((c as { modes?: unknown }).modes)
+    ? ((c as { modes: Record<string, unknown>[] }).modes)
+    : [];
+  const profiles: Profile[] = modes.length
+    ? modes.map((m) => {
+        const isHold = m.mode === "hold";
+        return {
+          id: isHold ? "hold" : "handsfree",
+          name: isHold ? "Push-to-talk" : "Latch",
+          activation: isHold ? "hold" : "latch",
+          enabled: !!m.enabled,
+          hotkey: Array.isArray(m.hotkey) ? (m.hotkey as string[]) : [],
+          backendId: (m.profileId as string | null) ?? null,
+        };
+      })
+    : DEFAULT_PROFILES;
+  return { settings: (c.settings as AppSettings) ?? DEFAULT_SETTINGS, backends, profiles, version: 2 };
+}
 
 interface AppState {
   settings: AppSettings;
-  profiles: ModelProfile[];
-  modes: ModeBinding[];
+  backends: Backend[];
+  profiles: Profile[];
 
   // live dictation runtime (driven by Rust events)
   status: DictationStatus;
   level: number; // 0..1 audio RMS for the visualizer
   partial: string; // live partial transcript for the chip preview
-  activeMode: ModeBinding["mode"] | null;
+  activeProfile: string | null; // id of the Profile currently dictating
   dictationError: string | null;
 
-  connections: Record<string, ConnectionInfo | undefined>;
+  connections: Record<string, ConnectionInfo | undefined>; // keyed by Backend id
 
   setTheme: (t: ThemeName) => void;
   updateSettings: (patch: Partial<AppSettings>) => void;
   updateGeneral: (patch: Partial<AppSettings["general"]>) => void;
   updateRecording: (patch: Partial<AppSettings["recording"]>) => void;
 
-  upsertProfile: (p: ModelProfile) => void;
-  removeProfile: (id: string) => void;
-  updateMode: (mode: ModeBinding["mode"], patch: Partial<ModeBinding>) => void;
+  upsertBackend: (b: Backend) => void;
+  removeBackend: (id: string) => void;
 
-  setConnection: (profileId: string, info: ConnectionInfo) => void;
+  upsertProfile: (p: Profile) => void;
+  updateProfile: (id: string, patch: Partial<Profile>) => void;
+  removeProfile: (id: string) => void;
+  duplicateProfile: (id: string) => void;
+
+  setConnection: (backendId: string, info: ConnectionInfo) => void;
 
   /** Update live dictation runtime (status / level / partial transcript). */
   setDictation: (
@@ -85,24 +133,24 @@ interface AppState {
       status: DictationStatus;
       level: number;
       partial: string;
-      activeMode: ModeBinding["mode"] | null;
+      activeProfile: string | null;
       dictationError: string | null;
     }>,
   ) => void;
 
-  /** Replace settings/profiles/modes from the persisted config (on startup). */
+  /** Replace settings/backends/profiles from the persisted config (on startup). */
   hydrate: (cfg: Config) => void;
 }
 
 export const useApp = create<AppState>((set) => ({
   settings: DEFAULT_SETTINGS,
-  profiles: [DEFAULT_PROFILE],
-  modes: DEFAULT_MODES,
+  backends: [DEFAULT_BACKEND],
+  profiles: DEFAULT_PROFILES,
 
   status: "idle",
   level: 0,
   partial: "",
-  activeMode: null,
+  activeProfile: null,
   dictationError: null,
 
   connections: {},
@@ -117,6 +165,20 @@ export const useApp = create<AppState>((set) => ({
   updateRecording: (patch) =>
     set((s) => ({ settings: { ...s.settings, recording: { ...s.settings.recording, ...patch } } })),
 
+  upsertBackend: (b) =>
+    set((s) => {
+      const i = s.backends.findIndex((x) => x.id === b.id);
+      const backends = [...s.backends];
+      if (i >= 0) backends[i] = b;
+      else backends.push(b);
+      return { backends };
+    }),
+  removeBackend: (id) =>
+    set((s) => ({
+      backends: s.backends.filter((b) => b.id !== id),
+      profiles: s.profiles.map((p) => (p.backendId === id ? { ...p, backendId: null } : p)),
+    })),
+
   upsertProfile: (p) =>
     set((s) => {
       const i = s.profiles.findIndex((x) => x.id === p.id);
@@ -125,19 +187,28 @@ export const useApp = create<AppState>((set) => ({
       else profiles.push(p);
       return { profiles };
     }),
-  removeProfile: (id) =>
-    set((s) => ({
-      profiles: s.profiles.filter((p) => p.id !== id),
-      modes: s.modes.map((m) => (m.profileId === id ? { ...m, profileId: null } : m)),
-    })),
-  updateMode: (mode, patch) =>
-    set((s) => ({ modes: s.modes.map((m) => (m.mode === mode ? { ...m, ...patch } : m)) })),
+  updateProfile: (id, patch) =>
+    set((s) => ({ profiles: s.profiles.map((p) => (p.id === id ? { ...p, ...patch } : p)) })),
+  removeProfile: (id) => set((s) => ({ profiles: s.profiles.filter((p) => p.id !== id) })),
+  duplicateProfile: (id) =>
+    set((s) => {
+      const i = s.profiles.findIndex((p) => p.id === id);
+      if (i < 0) return {};
+      const src = s.profiles[i];
+      // Clear the chord on the copy — a duplicate must never inherit the same one.
+      const copy: Profile = { ...src, id: crypto.randomUUID(), name: `${src.name} copy`, hotkey: [] };
+      const profiles = [...s.profiles];
+      profiles.splice(i + 1, 0, copy);
+      return { profiles };
+    }),
 
-  setConnection: (profileId, info) =>
-    set((s) => ({ connections: { ...s.connections, [profileId]: info } })),
+  setConnection: (backendId, info) =>
+    set((s) => ({ connections: { ...s.connections, [backendId]: info } })),
 
   setDictation: (patch) => set(patch),
 
-  hydrate: (cfg) =>
-    set({ settings: cfg.settings, profiles: cfg.profiles, modes: cfg.modes }),
+  hydrate: (cfg) => {
+    const c = migrateConfig(cfg);
+    set({ settings: c.settings, backends: c.backends, profiles: c.profiles });
+  },
 }));
