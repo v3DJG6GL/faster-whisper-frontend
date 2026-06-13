@@ -217,6 +217,34 @@ pub fn validate_shortcut(accelerator: String) -> bool {
     tauri_plugin_global_shortcut::Shortcut::from_str(&accelerator).is_ok()
 }
 
+/// Snapshot of the clipboard taken before a live (per-segment) paste dictation, so
+/// the user's original clipboard is restored once at the end rather than after
+/// every segment (which would race + churn the clipboard manager).
+#[derive(Default)]
+pub struct ClipboardSnapshot(pub std::sync::Mutex<Option<String>>);
+
+/// Snapshot the current clipboard before a live paste-injection session.
+#[tauri::command]
+pub fn begin_injection(snap: State<ClipboardSnapshot>) {
+    let text = arboard::Clipboard::new()
+        .ok()
+        .and_then(|mut c| c.get_text().ok());
+    if let Ok(mut g) = snap.0.lock() {
+        *g = Some(text.unwrap_or_default());
+    }
+}
+
+/// Restore the clipboard snapshot taken by `begin_injection` (end of a live session).
+#[tauri::command]
+pub fn end_injection(snap: State<ClipboardSnapshot>) {
+    let prev = snap.0.lock().ok().and_then(|mut g| g.take());
+    if let Some(prev) = prev {
+        if let Ok(mut c) = arboard::Clipboard::new() {
+            let _ = c.set_text(prev);
+        }
+    }
+}
+
 /// Insert text into the focused field of the active app (paste or direct typing).
 /// Direct typing on Wayland routes through the RemoteDesktop portal; everything
 /// else uses enigo (clipboard paste, or direct on X11/Windows).

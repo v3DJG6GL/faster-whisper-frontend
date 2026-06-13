@@ -29,13 +29,15 @@ export interface ModeBinding {
 }
 
 export type InsertMethod = "paste" | "direct";
+/** When the transcription is inserted: never / once on stop / live as you speak. */
+export type InsertTiming = "off" | "stop" | "live";
 export type IndicatorPosition = "top" | "bottom" | "off";
 export type ThemeName = "dark" | "light";
 
 export interface GeneralSettings {
   openAtLogin: boolean;
   startMinimized: boolean;
-  autoPaste: boolean;
+  insertTiming: InsertTiming;
   insertMethod: InsertMethod;
   autoEnter: boolean;
   restoreClipboard: boolean;

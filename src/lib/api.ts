@@ -157,6 +157,18 @@ export async function validateShortcut(accelerator: string): Promise<boolean> {
   return invoke<boolean>("validate_shortcut", { accelerator });
 }
 
+/** Snapshot the clipboard before a live paste-injection session. */
+export async function beginInjection(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("begin_injection");
+}
+
+/** Restore the clipboard snapshot taken by beginInjection (end of a live session). */
+export async function endInjection(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("end_injection");
+}
+
 /** Insert text into the focused field of the active app. */
 export async function injectText(args: {
   text: string;

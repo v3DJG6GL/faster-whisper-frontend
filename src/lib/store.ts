@@ -34,7 +34,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   general: {
     openAtLogin: false,
     startMinimized: false,
-    autoPaste: true,
+    insertTiming: "live",
     insertMethod: "paste",
     autoEnter: false,
     restoreClipboard: true,

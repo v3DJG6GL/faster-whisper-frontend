@@ -179,8 +179,19 @@ export default function Settings() {
             <SettingRow title="Start minimized to tray" desc="Start hidden; reach it from the system tray.">
               <Toggle checked={s.general.startMinimized} onChange={(v) => updateGeneral({ startMinimized: v })} />
             </SettingRow>
-            <SettingRow title="Insert automatically" desc="Place the transcription into the focused field as soon as it’s ready.">
-              <Toggle checked={s.general.autoPaste} onChange={(v) => updateGeneral({ autoPaste: v })} />
+            <SettingRow
+              title="Auto-insert"
+              desc="When to place the transcription into the focused field. “Live” inserts each finished phrase as you speak (streaming profiles; batch inserts on stop)."
+            >
+              <Segmented
+                value={s.general.insertTiming}
+                onChange={(v) => updateGeneral({ insertTiming: v })}
+                options={[
+                  { value: "off", label: "Off" },
+                  { value: "stop", label: "When I stop" },
+                  { value: "live", label: "Live" },
+                ]}
+              />
             </SettingRow>
             <SettingRow
               title="Insertion method"

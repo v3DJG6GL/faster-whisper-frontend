@@ -40,6 +40,7 @@ pub fn run() {
         .manage(session::RecordState::default())
         .manage(triggers::ShortcutRegistry::default())
         .manage(wayland_inject::WaylandTokenState::default())
+        .manage(commands::ClipboardSnapshot::default())
         .setup(|app| {
             use tauri::Manager;
             tray::create(app)?;
@@ -77,6 +78,8 @@ pub fn run() {
             commands::reregister_shortcuts,
             commands::validate_shortcut,
             commands::inject_text,
+            commands::begin_injection,
+            commands::end_injection,
             overlay::show_overlay,
             overlay::hide_overlay,
             sound::play_cue,

@@ -30,6 +30,19 @@ pub enum InsertMethod {
     Direct,
 }
 
+/// When to insert the transcription into the focused field.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum InsertTiming {
+    Off,
+    Stop,
+    Live,
+}
+
+fn default_insert_timing() -> InsertTiming {
+    InsertTiming::Live
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum IndicatorPosition {
@@ -80,7 +93,10 @@ pub struct ModeBinding {
 pub struct GeneralSettings {
     pub open_at_login: bool,
     pub start_minimized: bool,
-    pub auto_paste: bool,
+    /// When to auto-insert the transcription (off / on stop / live). `#[serde(default)]`
+    /// so configs predating this field (which had `autoPaste`) load without resetting.
+    #[serde(default = "default_insert_timing")]
+    pub insert_timing: InsertTiming,
     pub insert_method: InsertMethod,
     pub auto_enter: bool,
     pub restore_clipboard: bool,
@@ -122,7 +138,7 @@ impl Default for Config {
                 general: GeneralSettings {
                     open_at_login: false,
                     start_minimized: false,
-                    auto_paste: true,
+                    insert_timing: InsertTiming::Live,
                     insert_method: InsertMethod::Paste,
                     auto_enter: false,
                     restore_clipboard: true,
