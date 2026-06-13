@@ -164,6 +164,21 @@ mod imp {
         let mut held: HashSet<u16> = HashSet::new();
         let mut hold_active = false;
         let mut latch_armed = false;
+
+        // Most-specific chord wins. If one chord's keys are a strict subset of the
+        // other's (e.g. PTT = Alt, Latch = Ctrl+Alt), the SHORTER chord must not fire
+        // while the LONGER one is fully held — otherwise pressing Ctrl+Alt also fires
+        // the bare-Alt PTT and the two collide (the reported "Ctrl+Alt can't activate
+        // latch"). The chords are fixed for the life of this loop, so resolve the
+        // strict-subset relation once up front.
+        let (hold_shadowed_by_latch, latch_shadowed_by_hold) = match (&hold, &latch) {
+            (Some((h, _)), Some((l, _))) => (
+                h.len() < l.len() && h.iter().all(|k| l.contains(k)),
+                l.len() < h.len() && l.iter().all(|k| h.contains(k)),
+            ),
+            _ => (false, false),
+        };
+
         loop {
             let ev = match stream.next_event().await {
                 Ok(e) => e,
@@ -181,22 +196,28 @@ mod imp {
                 }
                 _ => continue, // 2 = autorepeat
             }
-            if let Some((keys, _)) = &hold {
-                let all = keys.iter().all(|k| held.contains(&k.code()));
-                if all && !hold_active {
+
+            let down = |keys: &[Key]| keys.iter().all(|k| held.contains(&k.code()));
+            let hold_down = hold.as_ref().map_or(false, |(k, _)| down(k));
+            let latch_down = latch.as_ref().map_or(false, |(k, _)| down(k));
+            // Suppress a chord while a strict-superset chord is also fully held.
+            let hold_on = hold_down && !(hold_shadowed_by_latch && latch_down);
+            let latch_on = latch_down && !(latch_shadowed_by_hold && hold_down);
+
+            if hold.is_some() {
+                if hold_on && !hold_active {
                     hold_active = true;
                     emit(&app, "hold", "start");
-                } else if !all && hold_active {
+                } else if !hold_on && hold_active {
                     hold_active = false;
                     emit(&app, "hold", "stop");
                 }
             }
-            if let Some((keys, _)) = &latch {
-                let all = keys.iter().all(|k| held.contains(&k.code()));
-                if all && !latch_armed {
+            if latch.is_some() {
+                if latch_on && !latch_armed {
                     latch_armed = true;
                     emit(&app, "handsfree", "toggle");
-                } else if !all {
+                } else if !latch_on {
                     latch_armed = false;
                 }
             }
