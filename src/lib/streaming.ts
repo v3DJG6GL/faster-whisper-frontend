@@ -6,7 +6,14 @@
 //   • "off"  — never insert.
 //   • "stop" — insert the whole transcript once, when dictation stops (uses the
 //              chosen Insertion-method: clipboard paste or direct typing).
-//   • "live" — insert each phrase AS YOU FINISH IT (streaming profiles only).
+//   • "live" — insert each phrase AS YOU FINISH IT (streaming profiles only, and
+//              only in HANDSFREE/latch mode — see below).
+//
+// Live insert is NOT possible in HOLD/push-to-talk mode: the activation chord is
+// physically held for the entire dictation, so the compositor folds that held
+// modifier into every injected keystroke (Alt → the app's menu-mnemonic mode eats
+// them, Ctrl → letters become shortcuts, Super → KWin global shortcuts). No chord
+// avoids this, so hold mode always falls back to a single insert on release.
 //
 // Live insert is APPEND-ONLY: on each `final` we type only the new suffix of the
 // whole document (committed + tail) beyond what we've already typed — we never
@@ -25,7 +32,7 @@ import {
   beginInjection,
   endInjection,
 } from "./api";
-import type { ModelProfile } from "./types";
+import type { DictationModeId, ModelProfile } from "./types";
 
 let wired = false;
 let activeEndpoint: "stream" | "batch" | null = null;
@@ -45,7 +52,7 @@ interface InsertCfg {
   method: "paste" | "direct";
   autoEnter: boolean;
   restoreClipboard: boolean;
-  live: boolean; // timing === "live" AND a streaming profile
+  live: boolean; // timing === "live", a streaming profile, AND handsfree (never hold)
 }
 let insertCfg: InsertCfg | null = null;
 // Serialise every injection op so backspaces/types never interleave or race.
@@ -177,7 +184,11 @@ async function ensureListeners(): Promise<void> {
   });
 }
 
-export async function startLive(profile: ModelProfile, deviceId: string | null): Promise<void> {
+export async function startLive(
+  profile: ModelProfile,
+  deviceId: string | null,
+  mode: DictationModeId,
+): Promise<void> {
   await ensureListeners();
   const setDictation = useApp.getState().setDictation;
   const s = useApp.getState().settings;
@@ -189,7 +200,9 @@ export async function startLive(profile: ModelProfile, deviceId: string | null):
     method: g.insertMethod,
     autoEnter: g.autoEnter,
     restoreClipboard: g.restoreClipboard,
-    live: g.insertTiming === "live" && profile.endpoint === "stream",
+    // Hold/PTT holds the chord the whole time → live injection collides with the
+    // held modifier. Fall back to the single insert-on-release (the "stop" path).
+    live: g.insertTiming === "live" && profile.endpoint === "stream" && mode !== "hold",
   };
   committedDoc = "";
   injectedText = "";

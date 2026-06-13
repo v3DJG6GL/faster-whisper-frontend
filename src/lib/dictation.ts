@@ -23,7 +23,7 @@ export function dictate(modeId: DictationModeId, action: TriggerAction): void {
 
   const start = () => {
     s.setDictation({ activeMode: modeId });
-    void startLive(profile, micId);
+    void startLive(profile, micId, modeId);
   };
 
   if (action === "stop") {

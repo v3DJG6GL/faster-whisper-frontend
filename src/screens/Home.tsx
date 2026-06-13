@@ -49,7 +49,9 @@ export default function Home() {
   const dictating = status === "listening" || status === "transcribing";
   const toggle = () => {
     if (dictating) void stopLive();
-    else if (active) void startLive(active, micId);
+    // The Home button is a click toggle — no key is held while you speak, so live
+    // type-as-you-speak is safe here (treat it as handsfree, not hold).
+    else if (active) void startLive(active, micId, "handsfree");
   };
 
   return (
