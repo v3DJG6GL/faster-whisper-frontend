@@ -65,7 +65,42 @@ export function prettyToken(token: string): string {
   return token; // letters, digits, F-keys
 }
 
-/** Split an accelerator ("Ctrl+Numpad0") into prettified display tokens. */
-export function accelToLabels(accel: string): string[] {
-  return accel.split("+").map(prettyToken);
+// Modifier `event.code` → display label. Right-side modifiers and AltGr are shown
+// distinctly (they're only honoured by the evdev backend; the plugin collapses them).
+const MOD_LABELS: Record<string, string> = {
+  ControlLeft: "Ctrl", ControlRight: "R-Ctrl",
+  ShiftLeft: "Shift", ShiftRight: "R-Shift",
+  AltLeft: "Alt", AltRight: "AltGr",
+  MetaLeft: "Super", MetaRight: "R-Super",
+};
+
+/** Display label for one binding `event.code` (modifier or key). */
+export function codeToLabel(code: string): string {
+  if (MOD_LABELS[code]) return MOD_LABELS[code];
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3); // KeyH → H
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5); // Digit1 → 1
+  return prettyToken(code); // Numpad0 → Num 0, ArrowUp → ↑, Backspace → ⌫, F1 …
+}
+
+/** Display labels for a chord's code list (for `<kbd>` chips). */
+export function codesToLabels(codes: string[]): string[] {
+  return codes.map(codeToLabel);
+}
+
+const CODE_RANK: Record<string, number> = {
+  ControlLeft: 0, ControlRight: 1, AltLeft: 2, AltRight: 3,
+  ShiftLeft: 4, ShiftRight: 5, MetaLeft: 6, MetaRight: 7,
+};
+
+/** Canonical order (modifiers by type+side, key last) + de-duped, so a stored
+ *  chord is independent of press order and comparable by value. */
+export function canonicalizeCodes(codes: string[]): string[] {
+  return Array.from(new Set(codes)).sort(
+    (a, b) => (CODE_RANK[a] ?? 100) - (CODE_RANK[b] ?? 100),
+  );
+}
+
+/** Value-equality for two canonical code lists. */
+export function sameCodes(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
 }

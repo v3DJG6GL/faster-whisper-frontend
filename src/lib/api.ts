@@ -164,6 +164,13 @@ export async function validateShortcut(accelerator: string): Promise<boolean> {
   return invoke<boolean>("validate_shortcut", { accelerator });
 }
 
+/** Whether a code-list chord (["ControlLeft","KeyH"]) can be registered via the
+ *  global-shortcut plugin. Modifier-only / AltGr chords return false (evdev-only). */
+export async function validateCodes(codes: string[]): Promise<boolean> {
+  if (!isTauri) return true;
+  return invoke<boolean>("validate_codes", { codes });
+}
+
 /** Snapshot the clipboard before a live paste-injection session. */
 export async function beginInjection(): Promise<void> {
   if (!isTauri) return;

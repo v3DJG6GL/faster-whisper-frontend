@@ -9,11 +9,11 @@ import {
   startMicTest,
   stopMicTest,
   onAudioLevel,
-  validateShortcut,
+  validateCodes,
   suspendShortcuts,
   reregisterShortcuts,
 } from "@/lib/api";
-import { codeToToken, isModifierKey } from "@/lib/keys";
+import { codeToToken, MODIFIER_CODES, canonicalizeCodes, sameCodes, codesToLabels } from "@/lib/keys";
 import type { AudioDevice, DictationModeId } from "@/lib/types";
 
 const TABS = ["General", "Audio", "Recording", "Shortcuts", "Permissions"] as const;
@@ -102,28 +102,22 @@ export default function Settings() {
   const profiles = useApp((st) => st.profiles);
   const updateMode = useApp((st) => st.updateMode);
   const [capturing, setCapturing] = useState<DictationModeId | null>(null);
-  const [heldMods, setHeldMods] = useState<string[]>([]); // live modifier preview
+  const [heldCodes, setHeldCodes] = useState<string[]>([]); // live chord preview
   const [captureWarn, setCaptureWarn] = useState<string | null>(null);
 
-  // Key-capture for rebinding: show modifiers live as they're held, then finalize
-  // on the first real key — validate it, and warn (don't silently drop) on reject.
+  // Key-capture for rebinding: track held modifier codes (per side) live, then
+  // finalize on the first real key — validate it, warn (don't silently drop) on
+  // reject. Bindings are stored as event.code lists (carrying side + AltGr).
   useEffect(() => {
     if (!capturing) {
-      setHeldMods([]);
+      setHeldCodes([]);
       setCaptureWarn(null);
       return;
     }
     // Suspend global hotkeys during capture so pressing the current binding only
     // rebinds — it must not also fire dictation (that race left a stuck session).
     void suspendShortcuts();
-    const modsOf = (e: KeyboardEvent): string[] => {
-      const m: string[] = [];
-      if (e.ctrlKey) m.push("Ctrl");
-      if (e.altKey) m.push("Alt");
-      if (e.shiftKey) m.push("Shift");
-      if (e.metaKey) m.push("Super");
-      return m;
-    };
+    const pressed = new Set<string>();
     const onKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
@@ -131,31 +125,34 @@ export default function Settings() {
         setCapturing(null);
         return;
       }
-      setHeldMods(modsOf(e));
-      if (isModifierKey(e.key)) return; // still building the chord
-      const token = codeToToken(e.code);
-      if (!token) {
+      if (MODIFIER_CODES.has(e.code)) {
+        pressed.add(e.code);
+        setHeldCodes(canonicalizeCodes([...pressed]));
+        return; // still building the chord
+      }
+      if (!codeToToken(e.code)) {
         setCaptureWarn("That key can't be a global shortcut — try another");
         return; // keep listening
       }
-      const accel = [...modsOf(e), token].join("+");
+      const codes = canonicalizeCodes([...pressed, e.code]);
       const mode = capturing;
-      if (useApp.getState().modes.some((m) => m.mode !== mode && m.hotkey === accel)) {
+      if (useApp.getState().modes.some((m) => m.mode !== mode && sameCodes(m.hotkey, codes))) {
         setCaptureWarn("Already bound to the other mode");
         return;
       }
-      void validateShortcut(accel).then((ok) => {
+      void validateCodes(codes).then((ok) => {
         if (ok) {
-          updateMode(mode, { hotkey: accel });
+          updateMode(mode, { hotkey: codes });
           setCapturing(null);
         } else {
-          setCaptureWarn("That combination can't be registered as a global shortcut");
+          setCaptureWarn("Can't register that — add a modifier (AltGr / left-right need the evdev backend)");
         }
       });
     };
     const onKeyUp = (e: KeyboardEvent) => {
       e.preventDefault();
-      setHeldMods(modsOf(e));
+      pressed.delete(e.code);
+      setHeldCodes(canonicalizeCodes([...pressed]));
     };
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
@@ -296,13 +293,13 @@ export default function Settings() {
                       <div className="flex items-center gap-2 rounded-lg border border-accent/60 bg-accent-soft/40 px-3 py-1.5 ring-2 ring-accent/25">
                         <span className="size-2 animate-pulse rounded-full bg-accent" />
                         <span className="inline-flex items-center gap-1">
-                          {heldMods.map((k, i) => (
+                          {codesToLabels(heldCodes).map((k, i) => (
                             <span key={i} className="inline-flex items-center gap-1">
                               {i > 0 && <span className="text-faint">+</span>}
                               <Kbd>{k}</Kbd>
                             </span>
                           ))}
-                          {heldMods.length > 0 && <span className="text-faint">+</span>}
+                          {heldCodes.length > 0 && <span className="text-faint">+</span>}
                           <Kbd>…</Kbd>
                         </span>
                         <span className={"text-[12px] " + (captureWarn ? "text-rec" : "text-dim")}>
@@ -310,7 +307,7 @@ export default function Settings() {
                         </span>
                       </div>
                     ) : (
-                      <HotkeyChips hotkey={m.hotkey} />
+                      <HotkeyChips codes={m.hotkey} />
                     )}
                     <Button
                       variant="ghost"

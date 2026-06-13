@@ -227,6 +227,16 @@ pub fn validate_shortcut(accelerator: String) -> bool {
     tauri_plugin_global_shortcut::Shortcut::from_str(&accelerator).is_ok()
 }
 
+/// Whether a code-list chord can be registered via the global-shortcut plugin.
+/// Modifier-only / AltGr chords return false — those need the evdev backend.
+#[tauri::command]
+pub fn validate_codes(codes: Vec<String>) -> bool {
+    use std::str::FromStr;
+    crate::config::codes_to_accelerator(&codes)
+        .map(|a| tauri_plugin_global_shortcut::Shortcut::from_str(&a).is_ok())
+        .unwrap_or(false)
+}
+
 /// Snapshot of the clipboard taken before a live (per-segment) paste dictation, so
 /// the user's original clipboard is restored once at the end rather than after
 /// every segment (which would race + churn the clipboard manager).

@@ -24,7 +24,7 @@ export type DictationModeId = "hold" | "handsfree";
 export interface ModeBinding {
   mode: DictationModeId;
   enabled: boolean;
-  hotkey: string; // human-readable accelerator, e.g. "Ctrl+Shift"
+  hotkey: string[]; // ordered KeyboardEvent.code list, e.g. ["ControlLeft","KeyB"]
   profileId: string | null; // ← per-mode profile
 }
 

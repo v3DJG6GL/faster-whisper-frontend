@@ -127,19 +127,27 @@ pub fn register_from_config(app: &AppHandle, modes: &[ModeBinding]) {
         if !m.enabled {
             continue;
         }
-        let shortcut = match Shortcut::from_str(&m.hotkey) {
-            Ok(s) => s,
-            Err(_) => {
-                tracing::warn!(
-                    "[hotkey] '{}' is not a registerable global shortcut (modifier-only / invalid); bind a desktop shortcut to `app --toggle` instead",
+        // Code list → plugin accelerator (None = modifier-only / AltGr → evdev/CLI only).
+        let accel = match crate::config::codes_to_accelerator(&m.hotkey) {
+            Some(a) => a,
+            None => {
+                tracing::info!(
+                    "[hotkey] {:?} isn't a global-shortcut chord (modifier-only / AltGr) — use a desktop shortcut → `app --toggle`, or the evdev backend",
                     m.hotkey
                 );
                 continue;
             }
         };
+        let shortcut = match Shortcut::from_str(&accel) {
+            Ok(s) => s,
+            Err(_) => {
+                tracing::warn!("[hotkey] '{accel}' is not a registerable global shortcut");
+                continue;
+            }
+        };
         match gs.register(shortcut.clone()) {
             Ok(()) => {
-                tracing::info!("[hotkey] registered '{}' → {}", m.hotkey, mode_id_str(m.mode));
+                tracing::info!("[hotkey] registered '{accel}' → {}", mode_id_str(m.mode));
                 map.insert(
                     shortcut,
                     ShortcutTarget {
@@ -148,10 +156,7 @@ pub fn register_from_config(app: &AppHandle, modes: &[ModeBinding]) {
                     },
                 );
             }
-            Err(e) => tracing::warn!(
-                "[hotkey] could not register '{}' (Windows/X11 only): {e}",
-                m.hotkey
-            ),
+            Err(e) => tracing::warn!("[hotkey] could not register '{accel}' (Windows/X11 only): {e}"),
         }
     }
 }

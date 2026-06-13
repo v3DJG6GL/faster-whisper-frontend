@@ -49,8 +49,8 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const DEFAULT_MODES: ModeBinding[] = [
-  { mode: "hold", enabled: true, hotkey: "Ctrl+Shift", profileId: "default" },
-  { mode: "handsfree", enabled: true, hotkey: "Ctrl+H", profileId: "default" },
+  { mode: "hold", enabled: true, hotkey: ["ControlLeft", "ShiftLeft"], profileId: "default" },
+  { mode: "handsfree", enabled: true, hotkey: ["ControlLeft", "KeyH"], profileId: "default" },
 ];
 
 interface AppState {

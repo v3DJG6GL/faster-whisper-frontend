@@ -25,7 +25,7 @@ function ModeCard({ mode, icon: Icon, title, hint }: { mode: ModeBinding; icon: 
         <Toggle checked={mode.enabled} onChange={(v) => updateMode(mode.mode, { enabled: v })} />
       </div>
       <div className="mt-5 flex items-center justify-between">
-        <HotkeyChips hotkey={mode.hotkey} />
+        <HotkeyChips codes={mode.hotkey} />
         <div className="text-right">
           <div className="font-mono text-[11px] uppercase tracking-label text-faint">{profile?.endpoint ?? "—"}</div>
           <div className="text-[12.5px] text-dim">{profile?.name ?? "No profile"}</div>
@@ -96,13 +96,13 @@ export default function Home() {
           <div className="min-w-0 flex-1 space-y-1">
             {hold.enabled && (
               <div className="flex items-center gap-2 text-[15px] text-text">
-                <span className="text-dim">Hold</span> <HotkeyChips hotkey={hold.hotkey} />
+                <span className="text-dim">Hold</span> <HotkeyChips codes={hold.hotkey} />
                 <span className="text-dim">to talk</span>
               </div>
             )}
             {handsfree.enabled && (
               <div className="flex items-center gap-2 text-[15px] text-text">
-                <span className="text-dim">Tap</span> <HotkeyChips hotkey={handsfree.hotkey} />
+                <span className="text-dim">Tap</span> <HotkeyChips codes={handsfree.hotkey} />
                 <span className="text-dim">to latch hands-free</span>
               </div>
             )}

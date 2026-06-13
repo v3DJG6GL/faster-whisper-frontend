@@ -1,10 +1,10 @@
 import { Kbd } from "@/components/ui";
-import { accelToLabels } from "@/lib/keys";
+import { codesToLabels } from "@/lib/keys";
 
-/** Render an accelerator string ("Ctrl+Shift+Numpad0") as `<kbd>` chips with
- *  human-friendly labels (↑, ⌫, Num 0, …). */
-export function HotkeyChips({ hotkey }: { hotkey: string }) {
-  const labels = hotkey ? accelToLabels(hotkey) : [];
+/** Render a chord's `event.code` list (["ControlLeft","Numpad0"]) as `<kbd>` chips
+ *  with human-friendly labels (↑, ⌫, Num 0, AltGr, R-Shift, …). */
+export function HotkeyChips({ codes }: { codes: string[] }) {
+  const labels = codes && codes.length ? codesToLabels(codes) : [];
   if (labels.length === 0) {
     return <span className="text-[12.5px] text-faint">Not set</span>;
   }
