@@ -1,34 +1,39 @@
 import { Mic, Radio, Hand, Square } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Card, SectionLabel, StatusDot, Toggle } from "@/components/ui";
+import { Card, SectionLabel, Select, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { startLive, stopLive } from "@/lib/streaming";
-import type { ModeBinding } from "@/lib/types";
+import type { Backend, Profile } from "@/lib/types";
 
-function ModeCard({ mode, icon: Icon, title, hint }: { mode: ModeBinding; icon: typeof Mic; title: string; hint: string }) {
-  const profiles = useApp((s) => s.profiles);
-  const updateMode = useApp((s) => s.updateMode);
-  const profile = profiles.find((p) => p.id === mode.profileId);
+const GLYPH = { hold: Mic, latch: Hand } as const;
+
+function ProfileCard({ p }: { p: Profile }) {
+  const backends = useApp((s) => s.backends);
+  const updateProfile = useApp((s) => s.updateProfile);
+  const backend = backends.find((b) => b.id === p.backendId);
+  const Glyph = GLYPH[p.activation];
   return (
     <Card className="p-5">
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <div className="grid size-9 place-items-center rounded-xl bg-accent-soft text-accent">
-            <Icon className="size-[18px]" />
+            <Glyph className="size-[18px]" />
           </div>
           <div>
-            <div className="text-[14px] font-semibold text-text">{title}</div>
-            <div className="text-[12px] text-dim">{hint}</div>
+            <div className="text-[14px] font-semibold text-text">{p.name}</div>
+            <div className="text-[12px] text-dim">
+              {p.activation === "hold" ? "Hold the hotkey while you speak" : "Tap once to start, tap again to stop"}
+            </div>
           </div>
         </div>
-        <Toggle checked={mode.enabled} onChange={(v) => updateMode(mode.mode, { enabled: v })} />
+        <Toggle checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
       </div>
       <div className="mt-5 flex items-center justify-between">
-        <HotkeyChips codes={mode.hotkey} />
+        <HotkeyChips codes={p.hotkey} />
         <div className="text-right">
-          <div className="font-mono text-[11px] uppercase tracking-label text-faint">{profile?.endpoint ?? "—"}</div>
-          <div className="text-[12.5px] text-dim">{profile?.name ?? "No profile"}</div>
+          <div className="font-mono text-[11px] uppercase tracking-label text-faint">{backend?.endpoint ?? "—"}</div>
+          <div className="text-[12.5px] text-dim">{backend?.name ?? "No backend"}</div>
         </div>
       </div>
     </Card>
@@ -36,22 +41,37 @@ function ModeCard({ mode, icon: Icon, title, hint }: { mode: ModeBinding; icon: 
 }
 
 export default function Home() {
-  const modes = useApp((s) => s.modes);
   const profiles = useApp((s) => s.profiles);
+  const backends = useApp((s) => s.backends);
   const level = useApp((s) => s.level);
   const status = useApp((s) => s.status);
   const partial = useApp((s) => s.partial);
   const dictationError = useApp((s) => s.dictationError);
   const micId = useApp((s) => s.settings.microphoneId);
-  const hold = modes.find((m) => m.mode === "hold")!;
-  const handsfree = modes.find((m) => m.mode === "handsfree")!;
-  const active = profiles.find((p) => p.id === hold.profileId) ?? profiles[0];
+  const homeProfileId = useApp((s) => s.settings.homeProfileId);
+  const updateSettings = useApp((s) => s.updateSettings);
+
+  const enabled = profiles.filter((p) => p.enabled);
+  // The hero button has no held chord (you click it), so it always dictates in latch
+  // style. It targets the profile picked below — falling back to the first enabled
+  // latch profile, then any enabled — and uses that profile's backend + overrides.
+  const target =
+    enabled.find((p) => p.id === homeProfileId) ??
+    enabled.find((p) => p.activation === "latch") ??
+    enabled[0];
+  const headerBackend: Backend | undefined =
+    backends.find((b) => b.id === target?.backendId) ?? backends[0];
+
   const dictating = status === "listening" || status === "transcribing";
   const toggle = () => {
-    if (dictating) void stopLive();
-    // The Home button is a click toggle — no key is held while you speak, so live
-    // type-as-you-speak is safe here (treat it as handsfree, not hold).
-    else if (active) void startLive(active, micId, "handsfree");
+    if (dictating) {
+      void stopLive();
+      return;
+    }
+    if (!headerBackend) return;
+    const language = target?.language?.trim() ? target.language : headerBackend.language;
+    const prompt = target?.prompt?.trim() ? target.prompt : headerBackend.prompt;
+    void startLive(headerBackend, micId, "latch", { language, prompt });
   };
 
   return (
@@ -63,12 +83,14 @@ export default function Home() {
             Speak into any field.
           </h1>
           <p className="mt-3 max-w-md text-[14px] text-dim">
-            Push-to-talk or latch it on. Audio streams to your own faster-whisper server and the text appears wherever your cursor is.
+            Push-to-talk or latch it on. Audio streams to your own faster-whisper backend and the text appears wherever your cursor is.
           </p>
         </div>
         <div className="flex items-center gap-2 rounded-pill border border-line bg-surface/70 px-3 py-1.5">
           <StatusDot tone="ok" />
-          <span className="font-mono text-[11px] text-dim">{active?.serverUrl.replace(/^https?:\/\//, "") ?? "no server"}</span>
+          <span className="font-mono text-[11px] text-dim">
+            {headerBackend?.serverUrl.replace(/^https?:\/\//, "") ?? "no backend"}
+          </span>
         </div>
       </div>
 
@@ -96,20 +118,28 @@ export default function Home() {
             {dictating ? <Square className="size-6" /> : <Mic className="size-7" />}
           </button>
           <div className="min-w-0 flex-1 space-y-1">
-            {hold.enabled && (
-              <div className="flex items-center gap-2 text-[15px] text-text">
-                <span className="text-dim">Hold</span> <HotkeyChips codes={hold.hotkey} />
-                <span className="text-dim">to talk</span>
-              </div>
+            {enabled.length > 0 ? (
+              enabled.slice(0, 4).map((p) => (
+                <div key={p.id} className="flex items-center gap-2 text-[15px] text-text">
+                  <span className="text-dim">{p.activation === "hold" ? "Hold" : "Tap"}</span>
+                  <HotkeyChips codes={p.hotkey} />
+                  <span className="text-dim">{p.activation === "hold" ? "to talk" : "to latch"}</span>
+                  <span className="truncate text-[12.5px] text-faint">· {p.name}</span>
+                </div>
+              ))
+            ) : (
+              <div className="text-[15px] text-dim">Enable a profile below to begin.</div>
             )}
-            {handsfree.enabled && (
-              <div className="flex items-center gap-2 text-[15px] text-text">
-                <span className="text-dim">Tap</span> <HotkeyChips codes={handsfree.hotkey} />
-                <span className="text-dim">to latch hands-free</span>
+            {enabled.length > 0 && (
+              <div className="flex items-center gap-2 pt-1 text-[12.5px] text-dim">
+                <span className="shrink-0">The button dictates with</span>
+                <Select
+                  value={target?.id ?? ""}
+                  onChange={(v) => updateSettings({ homeProfileId: v })}
+                  options={enabled.map((p) => ({ value: p.id, label: p.name }))}
+                  className="w-40"
+                />
               </div>
-            )}
-            {!hold.enabled && !handsfree.enabled && (
-              <div className="text-[15px] text-dim">Enable a dictation mode below to begin.</div>
             )}
             <div className="pt-0.5 text-[12.5px] text-faint">
               The transcript appears wherever your cursor is.
@@ -118,9 +148,9 @@ export default function Home() {
           <Waveform level={level} active={status !== "idle"} bars={28} variant="bars" className="h-12 w-48" />
         </div>
         <div className="grid grid-cols-3 border-t border-line font-mono text-[12px]">
-          <Readout label="model" value={active?.model ?? "—"} />
-          <Readout label="endpoint" value={active?.endpoint ?? "—"} accent />
-          <Readout label="language" value={active?.language ?? "auto"} last />
+          <Readout label="model" value={headerBackend?.model ?? "—"} />
+          <Readout label="endpoint" value={headerBackend?.endpoint ?? "—"} accent />
+          <Readout label="language" value={headerBackend?.language ?? "auto"} last />
         </div>
       </Card>
 
@@ -147,15 +177,22 @@ export default function Home() {
         </Card>
       )}
 
-      <SectionLabel className="mb-3 mt-10">Dictation modes</SectionLabel>
-      <div className="grid grid-cols-2 gap-4">
-        <ModeCard mode={hold} icon={Mic} title="Push-to-talk" hint="Hold the hotkey while you speak" />
-        <ModeCard mode={handsfree} icon={Hand} title="Latch" hint="Tap once to start, tap again to stop" />
-      </div>
+      <SectionLabel className="mb-3 mt-10">Profiles</SectionLabel>
+      {profiles.length === 0 ? (
+        <Card className="p-6 text-[13.5px] text-dim">
+          No profiles yet — add one on the Profiles screen.
+        </Card>
+      ) : (
+        <div className="grid grid-cols-2 gap-4">
+          {profiles.map((p) => (
+            <ProfileCard key={p.id} p={p} />
+          ))}
+        </div>
+      )}
 
       <div className="mt-4 flex items-center gap-2 px-1 text-[12px] text-faint">
         <Radio className="size-3.5" />
-        Streaming profiles show a live transcript in the chip while you speak.
+        Streaming backends show a live transcript in the chip while you speak.
       </div>
     </div>
   );
