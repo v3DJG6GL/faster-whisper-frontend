@@ -11,7 +11,14 @@ interface ChipState {
   dictationError: string;
   position: "top" | "bottom" | "off";
   theme: ThemeName;
+  // Active-Profile indicator (optional; absent when the feature is off / no Profile).
+  profileTag?: string;
+  language?: string;
+  mode?: "stream" | "batch";
 }
+
+// Hold a hover this long before the chip reveals the language/mode detail line.
+const HOVER_REVEAL_MS = 1000;
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -83,7 +90,7 @@ export default function Overlay() {
       t += 0.05;
       const level = Math.max(0, Math.min(1, 0.45 + 0.4 * Math.sin(t * 3) + (Math.random() - 0.5) * 0.25));
       const chars = Math.min(sample.length, Math.floor((t * 6) % (sample.length + 30)));
-      setState({ status: "listening", level, partial: sample.slice(0, chars), dictationError: "", position: "top", theme: "dark" });
+      setState({ status: "listening", level, partial: sample.slice(0, chars), dictationError: "", position: "top", theme: "dark", profileTag: "SWISS-DE", language: "de-CH", mode: "stream" });
       raf.current = requestAnimationFrame(tick);
     };
     raf.current = requestAnimationFrame(tick);
@@ -121,6 +128,22 @@ export default function Overlay() {
     state.status === "injecting" ||
     state.status === "error" ||
     (state.status === "listening" && speaking);
+
+  // Hover-to-reveal: holding the cursor over the chip for ≥1s expands it to show
+  // the language + stream/batch detail beside the tag. (Under Tauri this only fires
+  // once the chip's input region is shaped — see overlay.rs / setChipHitRegion;
+  // in the browser preview there's no click-through, so it works directly.)
+  const [hoverReveal, setHoverReveal] = useState(false);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onPointerEnter = () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setHoverReveal(true), HOVER_REVEAL_MS);
+  };
+  const onPointerLeave = () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setHoverReveal(false);
+  };
+  const detail = [state.language, state.mode].filter(Boolean).join(" · ");
 
   // After sitting armed-but-silent for a while, fade the chip down so it's
   // unobtrusive; any speech / state change snaps it back to full opacity.
@@ -172,7 +195,9 @@ export default function Overlay() {
       >
         <motion.div
           layout
-          layoutDependency={expanded}
+          layoutDependency={`${expanded}|${hoverReveal}|${state.profileTag ?? ""}`}
+          onPointerEnter={onPointerEnter}
+          onPointerLeave={onPointerLeave}
           style={{ borderRadius: 9999 }}
           animate={{ opacity: dimmed ? 0.4 : 1 }}
           transition={{ layout: MORPH, opacity: { duration: 0.7 } }}
@@ -181,7 +206,8 @@ export default function Overlay() {
             // widening when you speak). Constant height so the dot's vertical centre
             // never shifts — only the width morphs (the chip grows out of the dot).
             "flex h-[46px] items-center overflow-hidden border border-line bg-panel/95 shadow-[0_10px_40px_-8px_rgba(0,0,0,0.55)]",
-            expanded ? "gap-3 px-5" : "px-[17px]",
+            expanded ? "px-5" : "px-[17px]",
+            state.profileTag ? "gap-2.5" : expanded ? "gap-3" : "",
           )}
         >
           {/* The persistent status dot — the seed the pill grows out of. */}
@@ -197,6 +223,19 @@ export default function Overlay() {
             )}
           />
 
+          {/* Persistent active-Profile tag; hover (≥1s) reveals language · mode. */}
+          {state.profileTag && (
+            <motion.div
+              layout
+              className="flex shrink-0 items-center font-mono text-[11px] leading-none tracking-[0.12em]"
+            >
+              <span className="max-w-[140px] truncate uppercase text-accent/85">{state.profileTag}</span>
+              {hoverReveal && detail && (
+                <span className="ml-1.5 whitespace-nowrap normal-case text-faint">· {detail}</span>
+              )}
+            </motion.div>
+          )}
+
           <AnimatePresence initial={false}>
             {expanded && (
               <motion.div
@@ -207,6 +246,7 @@ export default function Overlay() {
                 transition={{ duration: 0.2, delay: 0.05 }}
                 className="flex items-center gap-3"
               >
+                {state.profileTag && <span className="h-4 w-px shrink-0 bg-line" aria-hidden />}
                 {state.status === "error" ? (
                   <div className="max-w-[520px] truncate font-mono text-[12.5px] text-rec">
                     <span aria-hidden className="mr-1.5">
