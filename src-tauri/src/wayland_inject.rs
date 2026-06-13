@@ -7,18 +7,32 @@
 //! character on it, and inject those **keycodes** via `NotifyKeyboardKeycode`. The
 //! focused app interprets the keycode with the same layout, so every character —
 //! `!`, `y`/`z`, AltGr symbols — comes out right, on any layout (CH-de, FR, US, …).
-//! A persisted `restore_token` skips the consent dialog after the first grant.
+//!
+//! The portal session is opened **once** and reused for the whole app run by a
+//! dedicated typer task: creating a fresh session per dictated segment makes KDE
+//! re-prompt ("Konsole is asking … Control input devices") on every utterance,
+//! because a restore_token can't be relied on (in `tauri dev` the binary has no
+//! stable app-id). One session ⇒ at most one consent dialog per run.
 
-use tauri::AppHandle;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, oneshot, Mutex};
 
-/// In-memory cache of the portal restore-token (mirrored to disk).
+/// One typing request handed to the persistent typer task: type `text`, then an
+/// optional Enter; `reply` carries the result back to the awaiting command.
+pub struct Job {
+    text: String,
+    auto_enter: bool,
+    reply: oneshot::Sender<Result<(), String>>,
+}
+
+/// Sender to the persistent RemoteDesktop typer task (started lazily on the first
+/// direct-typing injection). Reusing one portal session across utterances is what
+/// stops KDE from re-prompting for "Control input devices" on every segment.
 #[derive(Default)]
-pub struct WaylandTokenState(pub Mutex<Option<String>>);
+pub struct WaylandTyper(pub Mutex<Option<mpsc::Sender<Job>>>);
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use super::WaylandTokenState;
+    use super::{Job, WaylandTyper};
     use ashpd::desktop::{
         remote_desktop::{DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions},
         PersistMode,
@@ -29,11 +43,11 @@ mod imp {
     use std::process::Command;
     use std::time::Duration;
     use tauri::{AppHandle, Manager};
+    use tokio::sync::{mpsc, oneshot};
     use xkbcommon::xkb;
 
     // evdev key codes (Linux input-event-codes), which the portal expects.
     const EVDEV_OFFSET: u32 = 8; // xkb keycode = evdev code + 8
-    const KEY_BACKSPACE: i32 = 14;
     const KEY_TAB: i32 = 15;
     const KEY_ENTER: i32 = 28;
     const KEY_LEFTSHIFT: i32 = 42;
@@ -145,30 +159,52 @@ mod imp {
         }
     }
 
-    pub async fn type_keys(
+    /// Queue `text` for the persistent typer, starting the task (one consent
+    /// dialog) on first use, and await its completion.
+    pub async fn type_text(
         app: &AppHandle,
-        state: &WaylandTokenState,
-        backspaces: usize,
+        typer: &WaylandTyper,
         text: &str,
         auto_enter: bool,
     ) -> Result<(), String> {
-        let charmap = build_charmap().ok_or("could not build a keymap for the active layout")?;
-
-        // Seed the in-memory token from disk on first use.
-        {
-            let mut guard = state.0.lock().await;
-            if guard.is_none() {
-                *guard = load_token(app);
+        let tx = {
+            let mut guard = typer.0.lock().await;
+            let alive = matches!(guard.as_ref(), Some(tx) if !tx.is_closed());
+            if !alive {
+                let (tx, rx) = mpsc::channel::<Job>(16);
+                let app2 = app.clone();
+                tauri::async_runtime::spawn(async move { run_session(app2, rx).await });
+                *guard = Some(tx);
             }
+            guard.as_ref().unwrap().clone()
+        };
+        let (reply, reply_rx) = oneshot::channel();
+        tx.send(Job { text: text.to_string(), auto_enter, reply })
+            .await
+            .map_err(|_| "wayland typer unavailable".to_string())?;
+        reply_rx
+            .await
+            .map_err(|_| "wayland typer dropped the job".to_string())?
+    }
+
+    async fn run_session(app: AppHandle, rx: mpsc::Receiver<Job>) {
+        if let Err(e) = session_loop(&app, rx).await {
+            tracing::warn!("[wayland-inject] portal session closed: {e}");
         }
-        let token = state.0.lock().await.clone();
+    }
+
+    /// Own one RemoteDesktop session for the task's lifetime and serve typing jobs
+    /// on it. Returns (ending the task) when the channel closes or the session
+    /// dies — `type_text` then restarts it on the next request.
+    async fn session_loop(app: &AppHandle, mut rx: mpsc::Receiver<Job>) -> Result<(), String> {
+        let charmap = build_charmap().ok_or("could not build a keymap for the active layout")?;
+        let token = load_token(app);
 
         let proxy = RemoteDesktop::new().await.map_err(|e| e.to_string())?;
         let session = proxy
             .create_session(Default::default())
             .await
             .map_err(|e| e.to_string())?;
-
         let opts = SelectDevicesOptions::default()
             .set_devices(BitFlags::from(DeviceType::Keyboard))
             .set_persist_mode(PersistMode::ExplicitlyRevoked)
@@ -177,112 +213,88 @@ mod imp {
             .select_devices(&session, opts)
             .await
             .map_err(|e| e.to_string())?;
-
         let selected = proxy
             .start(&session, None, Default::default())
             .await
             .map_err(|e| e.to_string())?
             .response()
             .map_err(|e| e.to_string())?;
-
         if let Some(new_token) = selected.restore_token() {
             save_token(app, new_token);
-            *state.0.lock().await = Some(new_token.to_string());
         }
+        tracing::info!("[wayland-inject] persistent portal session ready");
 
-        // Inject one key event at a time. `kc!` sends a keycode press/release.
+        // `kc!` sends a keycode press/release on the shared session.
         macro_rules! kc {
-            ($code:expr, $state:expr) => {
+            ($code:expr, $st:expr) => {
                 proxy
-                    .notify_keyboard_keycode(&session, $code, $state, Default::default())
+                    .notify_keyboard_keycode(&session, $code, $st, Default::default())
                     .await
                     .map_err(|e| e.to_string())?
             };
         }
 
-        // Live diff-correct: delete the revised suffix before retyping it.
-        for _ in 0..backspaces {
-            kc!(KEY_BACKSPACE, KeyState::Pressed);
-            tokio::time::sleep(Duration::from_millis(3)).await;
-            kc!(KEY_BACKSPACE, KeyState::Released);
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        while let Some(job) = rx.recv().await {
+            // Inline the per-job typing (so the borrowed Session type never needs
+            // to be named) and collect the result for the awaiting caller.
+            let res: Result<(), String> = async {
+                for c in job.text.chars() {
+                    let Some(spec) = key_spec_for(c, &charmap) else {
+                        continue; // char not reachable on this layout — skip
+                    };
+                    if spec.shift {
+                        kc!(KEY_LEFTSHIFT, KeyState::Pressed);
+                        tokio::time::sleep(Duration::from_millis(4)).await;
+                    }
+                    if spec.altgr {
+                        kc!(KEY_RIGHTALT, KeyState::Pressed);
+                        tokio::time::sleep(Duration::from_millis(4)).await;
+                    }
+                    kc!(spec.keycode, KeyState::Pressed);
+                    tokio::time::sleep(Duration::from_millis(4)).await;
+                    kc!(spec.keycode, KeyState::Released);
+                    if spec.altgr {
+                        tokio::time::sleep(Duration::from_millis(4)).await;
+                        kc!(KEY_RIGHTALT, KeyState::Released);
+                    }
+                    if spec.shift {
+                        tokio::time::sleep(Duration::from_millis(4)).await;
+                        kc!(KEY_LEFTSHIFT, KeyState::Released);
+                    }
+                    tokio::time::sleep(Duration::from_millis(6)).await;
+                }
+                if job.auto_enter {
+                    kc!(KEY_ENTER, KeyState::Pressed);
+                    kc!(KEY_ENTER, KeyState::Released);
+                }
+                // Let KWin process the queued events before the caller proceeds.
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                Ok(())
+            }
+            .await;
 
-        for c in text.chars() {
-            let Some(spec) = key_spec_for(c, &charmap) else {
-                continue; // char not reachable on this layout — skip
-            };
-            if spec.shift {
-                kc!(KEY_LEFTSHIFT, KeyState::Pressed);
-                tokio::time::sleep(Duration::from_millis(4)).await;
+            let failed = res.is_err();
+            let _ = job.reply.send(res);
+            if failed {
+                // A keycode error means the session is gone (revoked / compositor
+                // closed it). End the task so the next request re-creates it
+                // (one fresh prompt) instead of failing every later segment.
+                return Err("keycode injection failed (session likely revoked)".into());
             }
-            if spec.altgr {
-                kc!(KEY_RIGHTALT, KeyState::Pressed);
-                tokio::time::sleep(Duration::from_millis(4)).await;
-            }
-            kc!(spec.keycode, KeyState::Pressed);
-            tokio::time::sleep(Duration::from_millis(4)).await;
-            kc!(spec.keycode, KeyState::Released);
-            if spec.altgr {
-                tokio::time::sleep(Duration::from_millis(4)).await;
-                kc!(KEY_RIGHTALT, KeyState::Released);
-            }
-            if spec.shift {
-                tokio::time::sleep(Duration::from_millis(4)).await;
-                kc!(KEY_LEFTSHIFT, KeyState::Released);
-            }
-            tokio::time::sleep(Duration::from_millis(6)).await;
         }
-
-        if auto_enter {
-            kc!(KEY_ENTER, KeyState::Pressed);
-            kc!(KEY_ENTER, KeyState::Released);
-        }
-
-        // Keep the session alive briefly so KWin processes the queued events
-        // before we drop it (dropping closes the session immediately).
-        tokio::time::sleep(Duration::from_millis(120)).await;
         Ok(())
     }
 }
 
 #[cfg(target_os = "linux")]
-pub async fn type_text(
-    app: &AppHandle,
-    state: &WaylandTokenState,
-    text: &str,
-    auto_enter: bool,
-) -> Result<(), String> {
-    imp::type_keys(app, state, 0, text, auto_enter).await
-}
-
-/// Live diff-correct: delete `backspaces` characters, then type `text`.
-#[cfg(target_os = "linux")]
-pub async fn type_diff(
-    app: &AppHandle,
-    state: &WaylandTokenState,
-    backspaces: usize,
-    text: &str,
-) -> Result<(), String> {
-    imp::type_keys(app, state, backspaces, text, false).await
-}
+pub use imp::type_text;
 
 #[cfg(not(target_os = "linux"))]
 pub async fn type_text(
-    _app: &AppHandle,
-    _state: &WaylandTokenState,
+    _app: &tauri::AppHandle,
+    _typer: &WaylandTyper,
     _text: &str,
     _auto_enter: bool,
-) -> Result<(), String> {
-    Err("Wayland text injection is only available on Linux".into())
-}
-
-#[cfg(not(target_os = "linux"))]
-pub async fn type_diff(
-    _app: &AppHandle,
-    _state: &WaylandTokenState,
-    _backspaces: usize,
-    _text: &str,
 ) -> Result<(), String> {
     Err("Wayland text injection is only available on Linux".into())
 }

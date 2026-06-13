@@ -4,7 +4,7 @@ use crate::audio::{self, AudioDevice, AudioState};
 use crate::config::{self, Config};
 use crate::session::{self, RecordParams, RecordState, StartParams, StreamState};
 use crate::transport;
-use crate::wayland_inject::WaylandTokenState;
+use crate::wayland_inject::WaylandTyper;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
 
@@ -261,7 +261,7 @@ pub fn end_injection(snap: State<ClipboardSnapshot>) {
 #[tauri::command]
 pub async fn inject_text(
     app: AppHandle,
-    wl: State<'_, WaylandTokenState>,
+    typer: State<'_, WaylandTyper>,
     text: String,
     method: String,
     auto_enter: bool,
@@ -269,7 +269,7 @@ pub async fn inject_text(
 ) -> Result<(), String> {
     tracing::info!("[inject] {} chars via {} (auto_enter={})", text.len(), method, auto_enter);
     let res = if method == "direct" && crate::inject::is_wayland() {
-        crate::wayland_inject::type_text(&app, wl.inner(), &text, auto_enter).await
+        crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter).await
     } else {
         tokio::task::spawn_blocking(move || {
             crate::inject::inject(&text, &method, auto_enter, restore_clipboard)
@@ -279,29 +279,6 @@ pub async fn inject_text(
     };
     if let Err(ref e) = res {
         tracing::warn!("[inject] FAILED: {e}");
-    }
-    res
-}
-
-/// Live streaming injection: delete `backspaces` chars, then type `text`. Always
-/// keystrokes (Wayland portal / enigo) so backspacing the revised suffix works —
-/// clipboard paste can't backspace.
-#[tauri::command]
-pub async fn inject_live(
-    app: AppHandle,
-    wl: State<'_, WaylandTokenState>,
-    backspaces: u32,
-    text: String,
-) -> Result<(), String> {
-    let res = if crate::inject::is_wayland() {
-        crate::wayland_inject::type_diff(&app, wl.inner(), backspaces as usize, &text).await
-    } else {
-        tokio::task::spawn_blocking(move || crate::inject::type_diff(backspaces, &text))
-            .await
-            .map_err(|e| e.to_string())?
-    };
-    if let Err(ref e) = res {
-        tracing::warn!("[inject-live] FAILED: {e}");
     }
     res
 }

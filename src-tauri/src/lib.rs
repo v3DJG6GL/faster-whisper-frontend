@@ -39,7 +39,7 @@ pub fn run() {
         .manage(session::StreamState::default())
         .manage(session::RecordState::default())
         .manage(triggers::ShortcutRegistry::default())
-        .manage(wayland_inject::WaylandTokenState::default())
+        .manage(wayland_inject::WaylandTyper::default())
         .manage(commands::ClipboardSnapshot::default())
         .setup(|app| {
             use tauri::Manager;
@@ -81,7 +81,6 @@ pub fn run() {
             commands::inject_text,
             commands::begin_injection,
             commands::end_injection,
-            commands::inject_live,
             overlay::show_overlay,
             overlay::hide_overlay,
             sound::play_cue,
