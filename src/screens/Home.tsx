@@ -97,23 +97,23 @@ export default function Home() {
           >
             {dictating ? <Square className="size-6" /> : <Mic className="size-7" />}
           </button>
-          <div className="min-w-0 flex-1">
-            <div className="text-[15px] leading-relaxed text-text">
-              {hold.enabled && (
-                <>
-                  Hold <HotkeyChips hotkey={hold.hotkey} /> to talk.{" "}
-                </>
-              )}
-              {handsfree.enabled && (
-                <>
-                  Tap <HotkeyChips hotkey={handsfree.hotkey} /> to latch hands-free.
-                </>
-              )}
-              {!hold.enabled && !handsfree.enabled && (
-                <span className="text-dim">Enable a dictation mode below to begin.</span>
-              )}
-            </div>
-            <div className="mt-1.5 text-[12.5px] text-dim">
+          <div className="min-w-0 flex-1 space-y-1">
+            {hold.enabled && (
+              <div className="flex items-center gap-2 text-[15px] text-text">
+                <span className="text-dim">Hold</span> <HotkeyChips hotkey={hold.hotkey} />
+                <span className="text-dim">to talk</span>
+              </div>
+            )}
+            {handsfree.enabled && (
+              <div className="flex items-center gap-2 text-[15px] text-text">
+                <span className="text-dim">Tap</span> <HotkeyChips hotkey={handsfree.hotkey} />
+                <span className="text-dim">to latch hands-free</span>
+              </div>
+            )}
+            {!hold.enabled && !handsfree.enabled && (
+              <div className="text-[15px] text-dim">Enable a dictation mode below to begin.</div>
+            )}
+            <div className="pt-0.5 text-[12.5px] text-faint">
               The transcript appears wherever your cursor is.
             </div>
           </div>
