@@ -69,9 +69,9 @@ export default function Home() {
       return;
     }
     if (!headerBackend) return;
-    const language = target?.language?.trim() ? target.language : headerBackend.language;
-    const prompt = target?.prompt?.trim() ? target.prompt : headerBackend.prompt;
-    void startLive(headerBackend, micId, "latch", { language, prompt });
+    // startLive resolves effective language / prompt / decode (target over backend);
+    // target may be undefined → the backend's own defaults are used.
+    void startLive(headerBackend, micId, "latch", target);
   };
 
   return (

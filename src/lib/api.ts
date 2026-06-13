@@ -2,7 +2,7 @@
 // browser (`pnpm dev`) — outside Tauri the calls no-op or return safe defaults.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { AudioDevice, BatchResult, Config, ConnectionInfo } from "./types";
+import type { AudioDevice, BatchResult, Config, ConnectionInfo, DecodeOverrides } from "./types";
 
 export const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -49,6 +49,7 @@ export async function transcribeFile(args: {
   model: string;
   language: string;
   prompt: string;
+  decodeOverrides?: DecodeOverrides | null;
   filePath: string;
 }): Promise<BatchResult> {
   if (!isTauri) throw new Error("Transcription requires the desktop app.");
@@ -59,6 +60,7 @@ export async function transcribeFile(args: {
     model: args.model,
     language: args.language,
     prompt: args.prompt,
+    decodeOverrides: args.decodeOverrides ?? null,
     filePath: args.filePath,
   });
 }
@@ -93,6 +95,7 @@ export async function startStream(args: {
   language: string;
   prompt: string;
   responseFormat: string;
+  decodeOverrides?: DecodeOverrides | null;
   deviceId?: string | null;
   save?: boolean;
   muteSystem?: boolean;
@@ -106,6 +109,7 @@ export async function startStream(args: {
     language: args.language,
     prompt: args.prompt,
     responseFormat: args.responseFormat,
+    decodeOverrides: args.decodeOverrides ?? null,
     deviceId: args.deviceId ?? null,
     save: args.save ?? false,
     muteSystem: args.muteSystem ?? false,
@@ -124,6 +128,7 @@ export async function startRecord(args: {
   model: string;
   language: string;
   prompt: string;
+  decodeOverrides?: DecodeOverrides | null;
   deviceId?: string | null;
   save?: boolean;
   muteSystem?: boolean;
@@ -136,6 +141,7 @@ export async function startRecord(args: {
     model: args.model,
     language: args.language,
     prompt: args.prompt,
+    decodeOverrides: args.decodeOverrides ?? null,
     deviceId: args.deviceId ?? null,
     save: args.save ?? false,
     muteSystem: args.muteSystem ?? false,

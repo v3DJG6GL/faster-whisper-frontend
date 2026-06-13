@@ -43,6 +43,7 @@ export default function Transcribe() {
         model: backend.model,
         language,
         prompt: backend.prompt,
+        decodeOverrides: backend.decodeOverrides,
         filePath,
       });
       setResult(res);

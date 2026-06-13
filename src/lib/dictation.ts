@@ -20,13 +20,12 @@ export function dictate(profileId: string, action: TriggerAction): void {
   const backend = s.backends.find((b) => b.id === profile.backendId) ?? s.backends[0];
   if (!backend) return;
   const micId = s.settings.microphoneId;
-  // Per-Profile override wins when set; empty/undefined inherits the Backend default.
-  const language = profile.language?.trim() ? profile.language : backend.language;
-  const prompt = profile.prompt?.trim() ? profile.prompt : backend.prompt;
 
   const start = () => {
     s.setDictation({ activeProfile: profileId });
-    void startLive(backend, micId, profile.activation, { language, prompt });
+    // startLive resolves the effective language / prompt / decode overrides
+    // (the Profile's set fields win over the Backend's defaults).
+    void startLive(backend, micId, profile.activation, profile);
   };
 
   if (action === "stop") {

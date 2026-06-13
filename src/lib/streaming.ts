@@ -32,7 +32,7 @@ import {
   beginInjection,
   endInjection,
 } from "./api";
-import type { ActivationKind, Backend } from "./types";
+import type { ActivationKind, Backend, DecodeOverrides } from "./types";
 
 let wired = false;
 let activeEndpoint: "stream" | "batch" | null = null;
@@ -184,17 +184,39 @@ async function ensureListeners(): Promise<void> {
   });
 }
 
+/** Merge a Backend's decode defaults with a Profile's overrides (profile wins per
+ *  field). Unset values (undefined/null/empty string = "inherit") are dropped, so a
+ *  field only reaches the server when explicitly set. Returns undefined when nothing
+ *  is set — the wire then carries no decode_overrides at all. */
+function mergeDecodeOverrides(
+  base?: DecodeOverrides,
+  over?: DecodeOverrides,
+): DecodeOverrides | undefined {
+  const out: Record<string, unknown> = {};
+  for (const src of [base, over]) {
+    if (!src) continue;
+    for (const [k, v] of Object.entries(src)) {
+      if (v !== undefined && v !== null && v !== "") out[k] = v;
+    }
+  }
+  return Object.keys(out).length ? (out as DecodeOverrides) : undefined;
+}
+
 export async function startLive(
   backend: Backend,
   deviceId: string | null,
   activation: ActivationKind,
-  overrides: { language: string; prompt: string },
+  pov?: { language?: string; prompt?: string; decodeOverrides?: DecodeOverrides },
 ): Promise<void> {
   await ensureListeners();
   const setDictation = useApp.getState().setDictation;
   const s = useApp.getState().settings;
   const g = s.general;
   const rec = s.recording;
+  // Effective values: a set per-Profile override wins; else inherit the Backend.
+  const language = pov?.language?.trim() ? pov.language : backend.language;
+  const prompt = pov?.prompt?.trim() ? pov.prompt : backend.prompt;
+  const decodeOverrides = mergeDecodeOverrides(backend.decodeOverrides, pov?.decodeOverrides);
 
   insertCfg = {
     timing: g.insertTiming,
@@ -229,8 +251,9 @@ export async function startLive(
         serverUrl: backend.serverUrl,
         backendId: backend.id,
         model: backend.model,
-        language: overrides.language,
-        prompt: overrides.prompt,
+        language,
+        prompt,
+        decodeOverrides,
         deviceId,
         save: rec.saveRecordings,
         muteSystem: rec.muteSystemAudio,
@@ -240,8 +263,9 @@ export async function startLive(
         serverUrl: backend.serverUrl,
         backendId: backend.id,
         model: backend.model,
-        language: overrides.language,
-        prompt: overrides.prompt,
+        language,
+        prompt,
+        decodeOverrides,
         responseFormat: backend.responseFormat,
         deviceId,
         save: rec.saveRecordings,
