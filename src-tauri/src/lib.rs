@@ -88,6 +88,7 @@ pub fn run() {
             commands::end_injection,
             overlay::show_overlay,
             overlay::hide_overlay,
+            overlay::set_chip_hit_region,
             sound::play_cue,
             tray::set_tray_state,
         ])

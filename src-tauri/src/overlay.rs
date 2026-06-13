@@ -104,6 +104,70 @@ pub fn hide_overlay(app: AppHandle) {
     }
 }
 
+/// Shape the chip window's *input* region to a single rectangle = the visible chip
+/// bounds (in the window's logical px, as measured by the webview). Only that
+/// rectangle captures the cursor; the rest of the big transparent strip stays
+/// click-through. This is what lets the chip be *hovered* (to reveal the active
+/// Profile's language/mode) without the window swallowing clicks meant for apps
+/// beneath it.
+///
+/// Linux/GDK only. On any failure — or other platforms — it falls back to full
+/// click-through (`set_ignore_cursor_events(true)`), i.e. today's behavior: the
+/// persistent tag still shows, only hover-reveal is unavailable. Never panics.
+#[tauri::command]
+pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64) {
+    let Some(win) = app.get_webview_window("overlay") else {
+        return;
+    };
+    #[cfg(target_os = "linux")]
+    {
+        let applied = apply_hit_region(&win, x, y, w, h).is_some();
+        tracing::debug!("[overlay] hit_region x={x:.0} y={y:.0} w={w:.0} h={h:.0} applied={applied}");
+        // If not applied, the GdkWindow isn't realized yet — a later retry will get
+        // it. We must NOT fall back to `set_ignore_cursor_events` here: on an
+        // unrealized window tao does `window().unwrap()` and ABORTS the whole app
+        // (the same hazard `show_overlay` documents). The window was already made
+        // click-through at show time, so doing nothing is safe.
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (&win, x, y, w, h);
+    }
+}
+
+/// Apply a rectangular GDK input region to the overlay's underlying window. GDK
+/// input regions live in the window's *logical* coordinate space (GDK applies
+/// HiDPI scaling itself), so the webview's CSS-px `getBoundingClientRect` maps
+/// straight through. A small pad makes the hit area forgiving at the chip edges.
+#[cfg(target_os = "linux")]
+fn apply_hit_region(win: &WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> Option<()> {
+    // `.window()` is a GtkWidget method (WidgetExt); `input_shape_combine_region`
+    // is an inherent method on gdk::Window, so no gdk trait import is needed.
+    use gtk::prelude::WidgetExt;
+
+    let gtk_win = match win.gtk_window() {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::warn!("[overlay] gtk_window() failed: {e}");
+            return None;
+        }
+    };
+    let Some(gdk_win) = WidgetExt::window(&gtk_win) else {
+        tracing::warn!("[overlay] no GdkWindow yet (window not realized?)");
+        return None;
+    };
+    let pad = 10.0;
+    let rect = gtk::cairo::RectangleInt::new(
+        (x - pad).floor() as i32,
+        (y - pad).floor() as i32,
+        (w + 2.0 * pad).ceil() as i32,
+        (h + 2.0 * pad).ceil() as i32,
+    );
+    let region = gtk::cairo::Region::create_rectangle(&rect);
+    gdk_win.input_shape_combine_region(&region, 0, 0);
+    Some(())
+}
+
 /// KDE-specific overlay placement via a KWin window rule. On native Wayland a
 /// client can't position its own window or force "keep above"; KWin ignores both.
 /// The portable fix on KDE is a *window rule*, which KWin applies compositor-side.
