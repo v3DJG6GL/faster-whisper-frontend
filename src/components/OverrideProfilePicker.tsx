@@ -4,11 +4,15 @@ import { listOverrideProfiles } from "@/lib/api";
 import type { ServerKind } from "@/lib/serverKind";
 
 // Picks a server-side override-profile name to reference per request. Only the
-// full faster-whisper-backend exposes profiles, so it self-gates to "full" and
-// shows a hint otherwise. When the server returns names we render a dropdown
-// (with an inherit/none option + the current value if the server doesn't list
-// it); when it returns none (endpoint absent / gated off / unreachable) we fall
-// back to a free-text input so a name can still be entered.
+// full faster-whisper-backend exposes profiles, so on a server KNOWN to be
+// conventional ("standard") we show a hint and no input. Otherwise — "full" OR
+// "unknown" (untested, or detection unavailable) — we honour the serverKind
+// contract ("unknown ⇒ assume full; never gate a knob we can't prove is
+// unsupported") and try a best-effort names fetch: a dropdown when the server
+// returns names (the Rust command backfills the API key from the keychain via
+// backendId), else a free-text input so a name can always be entered. This is
+// what keeps the picker usable in the Profiles editor, which has no connection
+// test of its own (the in-memory connection map is empty on a fresh launch).
 export function OverrideProfilePicker({
   serverUrl,
   backendId,
@@ -29,7 +33,7 @@ export function OverrideProfilePicker({
   const [names, setNames] = useState<string[]>([]);
 
   useEffect(() => {
-    if (serverKind !== "full") return;
+    if (serverKind === "standard") return; // conventional servers have no such endpoint
     let cancelled = false;
     void listOverrideProfiles({ serverUrl, backendId, apiKey }).then((n) => {
       if (!cancelled) setNames(n);
@@ -39,11 +43,11 @@ export function OverrideProfilePicker({
     };
   }, [serverUrl, backendId, apiKey, serverKind]);
 
-  if (serverKind !== "full") {
+  if (serverKind === "standard") {
     return (
       <p className="text-[12px] leading-snug text-faint">
-        References a server-side override-profile (full faster-whisper backend only). Test the
-        connection to detect.
+        A conventional Whisper server doesn’t support override-profiles — this is a
+        faster-whisper-backend feature.
       </p>
     );
   }
