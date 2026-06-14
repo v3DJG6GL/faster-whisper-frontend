@@ -2,7 +2,7 @@ import { useState } from "react";
 import { RotateCcw, Info } from "lucide-react";
 import { Segmented, TextInput, SectionLabel } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import type { DecodeOverrides } from "@/lib/types";
+import type { DecodeOverrides, InheritedValues } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
 
 // Decode-param editor shared by the Backend (defaults) and Profile (override)
@@ -62,21 +62,28 @@ export function DecodeFields({
   onChange,
   inherited,
   serverKind,
+  canCustomize,
 }: {
   value: DecodeOverrides;
   onChange: (v: DecodeOverrides) => void;
-  /** Baseline this editor overrides (e.g. a Backend's defaults under a Profile);
-   *  shown as a per-field "inherits …" annotation. Backend editor: omit. */
-  inherited?: DecodeOverrides;
+  /** Baseline this editor overrides (Backend defaults and/or a selected server
+   *  override-profile's values), ghosted into each control's placeholder/state
+   *  so you can see what a blank field will inherit. */
+  inherited?: InheritedValues;
   /** When "standard", a conventional Whisper server: disable everything the
    *  faster-whisper backend adds (keep only temperature). */
   serverKind?: ServerKind;
+  /** Per-identity capability: when false, this caller may not send any custom
+   *  decode params — the whole editor is disabled behind one banner. undefined
+   *  ("unknown") = permitted (never gate a knob we can't prove is disabled). */
+  canCustomize?: boolean;
 }) {
   const [showAdvanced, setShowAdvanced] = useState(
     FIELDS.some((f) => f.section !== "primary" && value[f.key] !== undefined),
   );
+  const blocked = canCustomize === false; // capability gate: all params disabled
   const standard = serverKind === "standard";
-  const isGated = (f: Field) => standard && f.key !== "temperature";
+  const isGated = (f: Field) => blocked || (standard && f.key !== "temperature");
 
   const setField = (key: keyof DecodeOverrides, v: number | boolean | string | undefined) => {
     const next: DecodeOverrides = { ...value };
@@ -100,15 +107,17 @@ export function DecodeFields({
   const renderControl = (f: Field) => {
     const cur = value[f.key];
     const gated = isGated(f);
+    const inh = fmtInherited(f); // inherited value as a short string, or undefined
     if (f.kind === "bool") {
       const v = cur === true ? "on" : cur === false ? "off" : "inherit";
+      // Ghost the inherited state on the "Inherit" segment, e.g. "Inherit (on)".
       return (
         <Segmented
           value={v}
           disabled={gated}
           onChange={(nv) => setField(f.key, nv === "inherit" ? undefined : nv === "on")}
           options={[
-            { value: "inherit", label: "Inherit" },
+            { value: "inherit", label: inh ? `Inherit (${inh})` : "Inherit" },
             { value: "on", label: "On" },
             { value: "off", label: "Off" },
           ]}
@@ -116,6 +125,7 @@ export function DecodeFields({
       );
     }
     if (f.kind === "number") {
+      // Ghost the inherited value into the placeholder when not overridden.
       return (
         <TextInput
           type="number"
@@ -124,7 +134,7 @@ export function DecodeFields({
           max={f.max}
           step={f.step}
           value={cur === undefined ? "" : String(cur)}
-          placeholder={`inherit · ${f.hint}`}
+          placeholder={inh ? `${inh} · ${f.hint}` : `inherit · ${f.hint}`}
           onChange={(e) => {
             const s = e.target.value;
             if (s === "") return setField(f.key, undefined);
@@ -138,7 +148,7 @@ export function DecodeFields({
       <TextInput
         disabled={gated}
         value={cur === undefined ? "" : String(cur)}
-        placeholder={f.hint ? `inherit — ${f.hint}` : "inherit"}
+        placeholder={inh ?? (f.hint ? `inherit — ${f.hint}` : "inherit")}
         onChange={(e) => setField(f.key, e.target.value === "" ? undefined : e.target.value)}
       />
     );
@@ -146,13 +156,13 @@ export function DecodeFields({
 
   const fieldCell = (f: Field) => {
     const overridden = value[f.key] !== undefined;
-    const inh = fmtInherited(f);
+    // The inherited value is ghosted into the control itself (placeholder /
+    // "Inherit (on)" segment) by renderControl, so no separate label is needed.
     return (
       <div key={f.key} className={cn(f.wide && "col-span-2")}>
         <div className="mb-1.5 flex items-center gap-1.5">
           {overridden && <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />}
           <label className="text-[12px] font-medium text-dim">{f.label}</label>
-          {!overridden && inh && <span className="text-[11px] text-faint">· inherits {inh}</span>}
           {overridden && !isGated(f) && (
             <button
               type="button"
@@ -175,7 +185,15 @@ export function DecodeFields({
 
   return (
     <div>
-      {standard && (
+      {blocked ? (
+        <div className="mb-3 flex items-start gap-2 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-dim">
+          <Info className="mt-0.5 size-3.5 shrink-0 text-faint" />
+          <div>
+            Custom transcription parameters are <span className="text-text">disabled</span> for this
+            connection by the server admin. Values below are read-only.
+          </div>
+        </div>
+      ) : standard ? (
         <div className="mb-3 flex items-start gap-2 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-dim">
           <Info className="mt-0.5 size-3.5 shrink-0 text-faint" />
           <div>
@@ -183,7 +201,7 @@ export function DecodeFields({
             honoured. The rest are faster-whisper-specific and are disabled here.
           </div>
         </div>
-      )}
+      ) : null}
 
       {grid(FIELDS.filter((f) => f.section === "primary"))}
 
