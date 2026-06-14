@@ -27,6 +27,11 @@ pub struct ConnectionInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
     pub models: Vec<ServerModel>,
+    /// The server's per-process `boot_id` from `/v1/models` (non-standard). Present
+    /// ⇒ the full faster-whisper-backend; absent ⇒ a conventional Whisper server.
+    /// The UI uses this to gate server-specific override knobs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boot_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

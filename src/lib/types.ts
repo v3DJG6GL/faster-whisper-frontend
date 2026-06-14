@@ -123,6 +123,9 @@ export interface ConnectionInfo {
   openMode: boolean;
   username?: string;
   models: ServerModel[];
+  /** Server's per-process `boot_id` (non-standard, faster-whisper-backend only).
+   *  Present ⇒ full backend; absent ⇒ conventional Whisper server. */
+  bootId?: string;
   error?: string;
 }
 

@@ -15,6 +15,11 @@ struct WhoAmI {
 struct ModelsResp {
     #[serde(default)]
     data: Vec<ModelObj>,
+    /// Non-standard per-process marker emitted by faster-whisper-backend. Its mere
+    /// presence is our signal that this is the full backend (vs a conventional
+    /// OpenAI-compatible Whisper server, which never sends it).
+    #[serde(default)]
+    boot_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -49,6 +54,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     open_mode,
                     username,
                     models: vec![],
+                    boot_id: None,
                     error: Some("Unauthorized — an API key is required or the key is invalid.".into()),
                 };
             }
@@ -58,6 +64,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     open_mode,
                     username,
                     models: vec![],
+                    boot_id: None,
                     error: Some(format!("Server returned HTTP {}.", status.as_u16())),
                 };
             }
@@ -71,6 +78,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                         .into_iter()
                         .map(|m| ServerModel { id: m.id, loaded: m.loaded })
                         .collect(),
+                    boot_id: parsed.boot_id,
                     error: None,
                 },
                 Err(e) => ConnectionInfo {
@@ -78,6 +86,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     open_mode,
                     username,
                     models: vec![],
+                    boot_id: None,
                     error: Some(format!("Unexpected /v1/models response: {e}")),
                 },
             }
@@ -87,6 +96,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
             open_mode,
             username,
             models: vec![],
+            boot_id: None,
             error: Some(friendly_err(&e)),
         },
     }
