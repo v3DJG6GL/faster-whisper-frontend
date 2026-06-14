@@ -1,4 +1,4 @@
-import { Mic, Radio, Hand, Square, Pencil } from "lucide-react";
+import { Mic, Radio, Hand, Square, Pencil, AlertTriangle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
 import { Button, Card, SectionLabel, Select, StatusDot, Toggle } from "@/components/ui";
@@ -59,6 +59,7 @@ export default function Home() {
   const status = useApp((s) => s.status);
   const partial = useApp((s) => s.partial);
   const dictationError = useApp((s) => s.dictationError);
+  const overridesIgnored = useApp((s) => s.overridesIgnored);
   const micId = useApp((s) => s.settings.microphoneId);
   const homeProfileId = useApp((s) => s.settings.homeProfileId);
   const updateSettings = useApp((s) => s.updateSettings);
@@ -206,6 +207,17 @@ export default function Home() {
             </div>
           )}
         </Card>
+      )}
+
+      {overridesIgnored.length > 0 && (
+        <div className="mt-3 flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <div>
+            Server ignored {overridesIgnored.length} override
+            {overridesIgnored.length === 1 ? "" : "s"} (locked by the server admin):{" "}
+            <span className="font-mono text-[12px]">{overridesIgnored.join(", ")}</span>.
+          </div>
+        </div>
       )}
 
       <SectionLabel className="mb-3 mt-10">Profiles</SectionLabel>

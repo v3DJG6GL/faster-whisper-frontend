@@ -256,6 +256,13 @@ async function ensureListeners(): Promise<void> {
     console.error("stream error:", e.payload);
     setDictation({ status: "error", dictationError: e.payload, level: 0 });
   });
+
+  // The server refused one or more decode overrides because the field is
+  // admin-locked (reported in the stream `ready` frame). Non-blocking FYI;
+  // cleared at the start of the next dictation.
+  await listen<string[]>("stream://overrides-ignored", (e) => {
+    setDictation({ overridesIgnored: e.payload });
+  });
 }
 
 /** Merge a Backend's decode defaults with a Profile's overrides (profile wins per
@@ -307,7 +314,7 @@ export async function startLive(
   injectChain = Promise.resolve();
   clearStuckWatchdog(); // fresh session — drop any leftover backstop
 
-  setDictation({ status: "listening", partial: "", level: 0, dictationError: null });
+  setDictation({ status: "listening", partial: "", level: 0, dictationError: null, overridesIgnored: [] });
   activeEndpoint = backend.endpoint;
 
   // Live paste: snapshot the clipboard once so we can restore it on stop (we skip

@@ -17,7 +17,9 @@ use tokio_tungstenite::tungstenite::Message;
 
 /// Events surfaced from the stream (the session maps these to Tauri events).
 pub enum StreamEvent {
-    Ready,
+    /// Handshake accepted. `overrides_ignored` lists client decode overrides the
+    /// server refused because the field is admin-locked (empty otherwise).
+    Ready { overrides_ignored: Vec<String> },
     Partial { committed: String, pending: String },
     Final { committed: String, tail: String, last: bool },
     /// Long-silence hard break: the server reset its document. The client should
@@ -252,7 +254,9 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
     };
     match v.get("type").and_then(|t| t.as_str()) {
         Some("ready") => {
-            on_event(StreamEvent::Ready);
+            on_event(StreamEvent::Ready {
+                overrides_ignored: str_vec_field(&v, "overrides_ignored"),
+            });
             false
         }
         Some("partial") => {
@@ -288,4 +292,11 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
 
 fn str_field(v: &serde_json::Value, key: &str) -> String {
     v.get(key).and_then(|x| x.as_str()).unwrap_or("").to_string()
+}
+
+fn str_vec_field(v: &serde_json::Value, key: &str) -> Vec<String> {
+    v.get(key)
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+        .unwrap_or_default()
 }

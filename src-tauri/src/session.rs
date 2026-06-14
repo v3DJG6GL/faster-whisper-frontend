@@ -126,8 +126,11 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
 
     let appc = app.clone();
     let on_event = move |ev: StreamEvent| match ev {
-        StreamEvent::Ready => {
+        StreamEvent::Ready { overrides_ignored } => {
             let _ = appc.emit("stream://status", "ready");
+            if !overrides_ignored.is_empty() {
+                let _ = appc.emit("stream://overrides-ignored", overrides_ignored);
+            }
         }
         StreamEvent::Partial { committed, pending } => {
             let _ = appc.emit("stream://partial", PartialPayload { committed, pending });

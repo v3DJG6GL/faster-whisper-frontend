@@ -110,6 +110,8 @@ interface AppState {
   partial: string; // live partial transcript for the chip preview
   activeProfile: string | null; // id of the Profile currently dictating
   dictationError: string | null;
+  /** Decode overrides the server refused (admin-locked) for the active stream. */
+  overridesIgnored: string[];
 
   connections: Record<string, ConnectionInfo | undefined>; // keyed by Backend id
 
@@ -137,6 +139,7 @@ interface AppState {
       partial: string;
       activeProfile: string | null;
       dictationError: string | null;
+      overridesIgnored: string[];
     }>,
   ) => void;
 
@@ -154,6 +157,7 @@ export const useApp = create<AppState>((set) => ({
   partial: "",
   activeProfile: null,
   dictationError: null,
+  overridesIgnored: [],
 
   connections: {},
 
