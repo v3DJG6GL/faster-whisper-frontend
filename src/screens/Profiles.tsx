@@ -12,6 +12,7 @@ import { MODIFIER_CODES, codeToToken, canonicalizeCodes, codesToLabels } from "@
 import { conflictsByProfile, findChordConflict } from "@/lib/conflicts";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
+import { useOverrideContext } from "@/lib/useOverrideContext";
 import type { Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
@@ -160,6 +161,17 @@ function Editor({
   const serverKind = backend
     ? effectiveServerKind(backend, p.backendId ? connections[p.backendId] : undefined)
     : "unknown";
+  // The effective override-profile (Profile over Backend) and the caller's
+  // capabilities, so the decode editor ghosts the profile's resolved values
+  // (under the backend defaults) and gates on what this connection allows.
+  const effectiveProfile = p.overrideProfile?.trim() ? p.overrideProfile : backend?.overrideProfile;
+  const { caps, resolved } = useOverrideContext({
+    serverUrl: backend?.serverUrl ?? "",
+    backendId: backend?.id ?? null,
+    profileName: effectiveProfile,
+    serverKind,
+  });
+  const inheritedDecode = { ...resolved, ...backend?.decodeOverrides };
 
   const { heldCodes, warn } = useHotkeyCapture({
     capturing,
@@ -299,8 +311,9 @@ function Editor({
             <DecodeFields
               value={p.decodeOverrides ?? {}}
               onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
-              inherited={backend?.decodeOverrides}
+              inherited={inheritedDecode}
               serverKind={serverKind}
+              canCustomize={caps?.can_request_decode_overrides}
             />
           </div>
           {backend && (
@@ -312,6 +325,7 @@ function Editor({
                 serverUrl={backend.serverUrl}
                 backendId={backend.id}
                 serverKind={serverKind}
+                canRequest={caps?.can_request_override_profile}
                 value={p.overrideProfile ?? ""}
                 inheritLabel="(inherit backend)"
                 onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}

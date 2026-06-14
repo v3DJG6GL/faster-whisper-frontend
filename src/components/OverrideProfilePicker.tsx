@@ -18,6 +18,7 @@ export function OverrideProfilePicker({
   backendId,
   apiKey = null,
   serverKind,
+  canRequest,
   value,
   inheritLabel,
   onChange,
@@ -26,14 +27,18 @@ export function OverrideProfilePicker({
   backendId: string;
   apiKey?: string | null;
   serverKind: ServerKind;
+  /** Per-identity capability: when false, this caller may not request override-
+   *  profiles — show a disabled hint. undefined ("unknown") = permitted. */
+  canRequest?: boolean;
   value: string; // "" = none / inherit
   inheritLabel: string;
   onChange: (v: string) => void;
 }) {
   const [names, setNames] = useState<string[]>([]);
+  const blocked = canRequest === false;
 
   useEffect(() => {
-    if (serverKind === "standard") return; // conventional servers have no such endpoint
+    if (serverKind === "standard" || blocked) return; // no endpoint / not permitted
     let cancelled = false;
     void listOverrideProfiles({ serverUrl, backendId, apiKey }).then((n) => {
       if (!cancelled) setNames(n);
@@ -41,13 +46,21 @@ export function OverrideProfilePicker({
     return () => {
       cancelled = true;
     };
-  }, [serverUrl, backendId, apiKey, serverKind]);
+  }, [serverUrl, backendId, apiKey, serverKind, blocked]);
 
   if (serverKind === "standard") {
     return (
       <p className="text-[12px] leading-snug text-faint">
         A conventional Whisper server doesn’t support override-profiles — this is a
         faster-whisper-backend feature.
+      </p>
+    );
+  }
+
+  if (blocked) {
+    return (
+      <p className="text-[12px] leading-snug text-faint">
+        Requesting override-profiles is disabled for this connection by the server admin.
       </p>
     );
   }

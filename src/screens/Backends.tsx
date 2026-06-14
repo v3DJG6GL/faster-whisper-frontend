@@ -8,6 +8,7 @@ import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
+import { useOverrideContext } from "@/lib/useOverrideContext";
 import { cn } from "@/lib/cn";
 
 function blankBackend(): Backend {
@@ -68,6 +69,15 @@ function Editor({
   // classification (a manual override wins). `kind` gates the decode-override editor.
   const detected = classifyConnection(result);
   const kind = effectiveServerKind(b, result);
+  // Caller capabilities + the selected override-profile's resolved values, for
+  // gating the decode editor and ghosting its inherited defaults.
+  const { caps, resolved } = useOverrideContext({
+    serverUrl: b.serverUrl,
+    backendId: b.id,
+    apiKey: key || null,
+    profileName: b.overrideProfile,
+    serverKind: kind,
+  });
 
   const runTest = async () => {
     setTesting(true);
@@ -226,7 +236,9 @@ function Editor({
             <DecodeFields
               value={b.decodeOverrides ?? {}}
               onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
+              inherited={resolved}
               serverKind={kind}
+              canCustomize={caps?.can_request_decode_overrides}
             />
           </div>
         )}
@@ -238,6 +250,7 @@ function Editor({
           backendId={b.id}
           apiKey={key || null}
           serverKind={kind}
+          canRequest={caps?.can_request_override_profile}
           value={b.overrideProfile ?? ""}
           inheritLabel="(none)"
           onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
