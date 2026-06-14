@@ -31,6 +31,7 @@ import {
   injectText,
   beginInjection,
   endInjection,
+  reregisterShortcuts,
 } from "./api";
 import type { ActivationKind, Backend, DecodeOverrides } from "./types";
 
@@ -78,6 +79,34 @@ function settleToIdleAfterInjection(startedAt: number): void {
       }
     }, wait);
   });
+}
+
+// Backstop for a wedged "finalizing…": stopLive() sets "transcribing" and then waits
+// for the stream's terminal `closed`. If the socket died silently (suspend, dropped
+// link) that event may never arrive, leaving the chip stuck. After this long with no
+// resolution we force a clean idle. Streaming only — a batch transcription can take a
+// while legitimately (bounded by the HTTP client's own 120 s timeout), and the Rust
+// drain deadline (~6 s) normally resolves a live stream well before this fires.
+const STUCK_FINALIZE_MS = 12_000;
+let stuckTimer: ReturnType<typeof setTimeout> | null = null;
+function clearStuckWatchdog(): void {
+  if (stuckTimer !== null) {
+    clearTimeout(stuckTimer);
+    stuckTimer = null;
+  }
+}
+function armStuckWatchdog(): void {
+  clearStuckWatchdog();
+  if (activeEndpoint !== "stream") return;
+  stuckTimer = setTimeout(() => {
+    stuckTimer = null;
+    if (useApp.getState().status === "transcribing") {
+      console.warn(
+        `[dictation] no stream close within ${STUCK_FINALIZE_MS}ms — forcing idle (connection lost?)`,
+      );
+      void cancelLive();
+    }
+  }, STUCK_FINALIZE_MS);
 }
 
 function commonPrefixLen(a: string, b: string): number {
@@ -159,6 +188,7 @@ async function ensureListeners(): Promise<void> {
     if (e.payload === "ready") {
       setDictation({ status: "listening", dictationError: null });
     } else if (e.payload === "closed") {
+      clearStuckWatchdog(); // the stream resolved on its own
       // Don't clobber an error — `error` is followed immediately by `closed`.
       const st = useApp.getState();
       if (st.status === "error") {
@@ -222,6 +252,7 @@ async function ensureListeners(): Promise<void> {
   });
 
   await listen<string>("stream://error", (e) => {
+    clearStuckWatchdog();
     console.error("stream error:", e.payload);
     setDictation({ status: "error", dictationError: e.payload, level: 0 });
   });
@@ -274,6 +305,7 @@ export async function startLive(
   injectedText = "";
   bankedDoc = "";
   injectChain = Promise.resolve();
+  clearStuckWatchdog(); // fresh session — drop any leftover backstop
 
   setDictation({ status: "listening", partial: "", level: 0, dictationError: null });
   activeEndpoint = backend.endpoint;
@@ -326,6 +358,41 @@ export async function stopLive(): Promise<void> {
   // `closed` event then moves us "transcribing" → "injecting" (while the text is
   // written out) → "idle" — so the chip shows progress the whole way through.
   useApp.getState().setDictation({ status: "transcribing" });
+  // Guard against a `closed` that never comes (socket died mid-finalize).
+  armStuckWatchdog();
   if (activeEndpoint === "batch") await stopRecord();
   else await stopStream();
+}
+
+/** Hard-reset dictation to idle immediately: abort the in-flight session, drop the
+ *  pending transcript, and return the UI to idle. This is the escape hatch for a
+ *  wedged "finalizing…"/"inserting…" — where the stream died (suspend / dropped link)
+ *  and the normal stop path is waiting on an event that will never arrive. Also
+ *  re-applies the hotkey bindings, since a suspend can leave a hold-to-talk chord
+ *  stuck "down" in the evdev backend (a dropped key-release) — so the one action
+ *  recovers both the recording state AND the shortcuts. */
+export async function cancelLive(): Promise<void> {
+  clearStuckWatchdog();
+  committedDoc = "";
+  injectedText = "";
+  bankedDoc = "";
+  insertCfg = null;
+  injectChain = Promise.resolve();
+  useApp
+    .getState()
+    .setDictation({ status: "idle", partial: "", level: 0, dictationError: null });
+  const endpoint = activeEndpoint;
+  activeEndpoint = null;
+  try {
+    if (endpoint === "batch") await stopRecord();
+    else await stopStream();
+  } catch (e) {
+    console.error("cancelLive: stop failed:", e);
+  }
+  // Clear any stuck hardware-hotkey state (re-enumerates keyboards → fresh held-set).
+  try {
+    await reregisterShortcuts();
+  } catch (e) {
+    console.error("cancelLive: reregister shortcuts failed:", e);
+  }
 }
