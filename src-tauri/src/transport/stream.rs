@@ -59,6 +59,13 @@ fn text_msg(s: String) -> Message {
     Message::Text(s.into())
 }
 
+/// A parsed server message handed from the dedicated read task to the main loop,
+/// or a signal that the socket closed / reached its terminal frame.
+enum FromReader {
+    Event(StreamEvent),
+    Closed,
+}
+
 /// Drive the stream until stopped or the socket closes. `on_event` is called for
 /// every server message; a terminal `Closed` (and an `Error` on failure) is
 /// ALWAYS emitted on every exit path so the UI can never get stuck. Every socket
@@ -177,6 +184,49 @@ pub async fn run<F>(
     // bail rather than park on the OS TCP retransmit timeout.
     const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
+    // Drive the read half in a DEDICATED task. tokio-tungstenite only answers the
+    // server's keepalive PINGs (with a PONG) while the read half is polled; in the
+    // old single-`select!` loop a blocked/slow `write.send().await` (a full or
+    // half-open socket buffer) starved that poll, so the server stopped hearing
+    // PONGs and closed the connection with `1011 keepalive ping timeout`. A separate
+    // reader keeps PONGs flowing whenever the link is alive, independent of the write
+    // side. It forwards parsed messages over `evt_rx` and signals `Closed` when the
+    // socket ends or the terminal frame arrives.
+    let (evt_tx, mut evt_rx) = mpsc::unbounded_channel::<FromReader>();
+    let reader = tokio::spawn(async move {
+        loop {
+            match read.next().await {
+                Some(Ok(Message::Text(t))) => {
+                    // Forward each parsed event; stop on the terminal frame.
+                    let terminal =
+                        emit_message(t.as_str(), &|e| {
+                            let _ = evt_tx.send(FromReader::Event(e));
+                        });
+                    if terminal {
+                        break;
+                    }
+                }
+                Some(Ok(Message::Close(_))) | None => break,
+                // Ping/Pong/Binary: ignored here. The PONG to a server PING is queued
+                // by tungstenite and flushed by this very read poll — that's the point.
+                Some(Ok(_)) => {}
+                Some(Err(e)) => {
+                    let _ = evt_tx.send(FromReader::Event(StreamEvent::Error(e.to_string())));
+                    break;
+                }
+            }
+        }
+        let _ = evt_tx.send(FromReader::Closed);
+    });
+
+    // Client-initiated keepalive: a little outbound traffic on a regular cadence so a
+    // half-open link is noticed promptly (the bounded send times out) even during a
+    // silent stretch, and intermediaries keep the connection warm. The server's PINGs
+    // are answered by the reader task above.
+    const KEEPALIVE: Duration = Duration::from_secs(10);
+    let mut keepalive = tokio::time::interval(KEEPALIVE);
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     while !draining {
         tokio::select! {
             res = stop_rx.changed() => {
@@ -212,12 +262,23 @@ pub async fn run<F>(
                     None => { draining = true; break; } // capture ended
                 }
             }
-            msg = read.next() => {
-                match msg {
-                    Some(Ok(Message::Text(t))) => { emit_message(t.as_str(), &on_event); }
-                    Some(Ok(Message::Close(_))) | None => break,
-                    Some(Ok(_)) => {}
-                    Some(Err(e)) => { on_event(StreamEvent::Error(e.to_string())); break; }
+            from = evt_rx.recv() => {
+                match from {
+                    Some(FromReader::Event(e)) => on_event(e),
+                    // Server closed the socket (or the read errored, already surfaced
+                    // above) — stop now; not draining, so fall through to Closed.
+                    Some(FromReader::Closed) | None => break,
+                }
+            }
+            _ = keepalive.tick() => {
+                if tokio::time::timeout(SEND_TIMEOUT, write.send(Message::Ping(Vec::<u8>::new().into())))
+                    .await
+                    .is_err()
+                {
+                    on_event(StreamEvent::Error(
+                        "stream connection lost (keepalive timed out)".into(),
+                    ));
+                    break;
                 }
             }
         }
@@ -225,24 +286,28 @@ pub async fn run<F>(
 
     if draining {
         // Finalize the current utterance and ask the server to close, then read the
-        // remaining finals so the last words aren't lost. The WHOLE block is bounded
-        // by one deadline: the flush/stop writes are inside it too, so a half-open
-        // socket (suspend / dropped link) can't park them indefinitely — we always
-        // fall through to the terminal `Closed` below within a few seconds.
+        // remaining finals (delivered by the reader task) so the last words aren't
+        // lost. The WHOLE block is bounded by one deadline: the flush/stop writes are
+        // inside it too, so a half-open socket (suspend / dropped link) can't park
+        // them indefinitely — we always fall through to the terminal `Closed` below
+        // within a few seconds.
         const DRAIN_DEADLINE: Duration = Duration::from_secs(6);
         let _ = tokio::time::timeout(DRAIN_DEADLINE, async {
             let _ = write.send(text_msg(json!({"type":"flush"}).to_string())).await;
             let _ = write.send(text_msg(json!({"type":"stop"}).to_string())).await;
-            while let Some(Ok(msg)) = read.next().await {
-                if let Message::Text(t) = msg {
-                    if emit_message(t.as_str(), &on_event) {
-                        break;
-                    }
+            while let Some(from) = evt_rx.recv().await {
+                match from {
+                    FromReader::Event(e) => on_event(e),
+                    FromReader::Closed => break,
                 }
             }
         })
         .await;
     }
+
+    // We own the write half; the reader owns the read half. Once draining is done,
+    // drop the reader so it can't linger after we return.
+    reader.abort();
 
     if let Some(dir) = &params.save_dir {
         // Skip empties (e.g. a quick tap that connected then drained without audio).
