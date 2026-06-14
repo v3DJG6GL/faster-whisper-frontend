@@ -58,7 +58,11 @@ fn text_msg(s: String) -> Message {
 
 /// Drive the stream until stopped or the socket closes. `on_event` is called for
 /// every server message; a terminal `Closed` (and an `Error` on failure) is
-/// ALWAYS emitted on every exit path so the UI can never get stuck.
+/// ALWAYS emitted on every exit path so the UI can never get stuck. Every socket
+/// read/write is bounded (connect + send + drain deadlines) so a dead or half-open
+/// connection — e.g. the network dropped or the machine suspended mid-stream —
+/// resolves to `Closed` within seconds instead of parking on the kernel's TCP
+/// retransmit timeout (minutes), which would wedge the UI at "finalizing…".
 pub async fn run<F>(
     params: StreamParams,
     mut pcm_rx: mpsc::UnboundedReceiver<Vec<f32>>,
@@ -159,6 +163,11 @@ pub async fn run<F>(
     let saving = params.save_dir.is_some();
     let mut saved: Vec<u8> = Vec::new();
 
+    // A single audio frame should send in well under a second; if a send can't make
+    // progress for this long the link is dead/half-open (suspend, network loss) —
+    // bail rather than park on the OS TCP retransmit timeout.
+    const SEND_TIMEOUT: Duration = Duration::from_secs(5);
+
     while !draining {
         tokio::select! {
             res = stop_rx.changed() => {
@@ -172,8 +181,22 @@ pub async fn run<F>(
                             if saving {
                                 saved.extend_from_slice(&bytes);
                             }
-                            if write.send(Message::Binary(bytes.into())).await.is_err() {
-                                break;
+                            match tokio::time::timeout(
+                                SEND_TIMEOUT,
+                                write.send(Message::Binary(bytes.into())),
+                            )
+                            .await
+                            {
+                                Ok(Ok(())) => {}
+                                Ok(Err(_)) => break, // socket closed/errored → finish + Closed
+                                Err(_) => {
+                                    // Stalled send → the connection is gone. Surface it and
+                                    // close so the UI returns to idle instead of hanging.
+                                    on_event(StreamEvent::Error(
+                                        "stream connection lost (send timed out)".into(),
+                                    ));
+                                    break;
+                                }
                             }
                         }
                     }
@@ -193,10 +216,14 @@ pub async fn run<F>(
 
     if draining {
         // Finalize the current utterance and ask the server to close, then read the
-        // remaining finals (bounded) so the last words aren't lost.
-        let _ = write.send(text_msg(json!({"type":"flush"}).to_string())).await;
-        let _ = write.send(text_msg(json!({"type":"stop"}).to_string())).await;
-        let _ = tokio::time::timeout(Duration::from_secs(5), async {
+        // remaining finals so the last words aren't lost. The WHOLE block is bounded
+        // by one deadline: the flush/stop writes are inside it too, so a half-open
+        // socket (suspend / dropped link) can't park them indefinitely — we always
+        // fall through to the terminal `Closed` below within a few seconds.
+        const DRAIN_DEADLINE: Duration = Duration::from_secs(6);
+        let _ = tokio::time::timeout(DRAIN_DEADLINE, async {
+            let _ = write.send(text_msg(json!({"type":"flush"}).to_string())).await;
+            let _ = write.send(text_msg(json!({"type":"stop"}).to_string())).await;
             while let Some(Ok(msg)) = read.next().await {
                 if let Message::Text(t) = msg {
                     if emit_message(t.as_str(), &on_event) {
