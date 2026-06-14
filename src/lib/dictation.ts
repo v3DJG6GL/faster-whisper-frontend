@@ -4,13 +4,24 @@
 // affordances.
 
 import { useApp } from "./store";
-import { startLive, stopLive } from "./streaming";
+import { startLive, stopLive, cancelLive } from "./streaming";
 
 export type TriggerAction = "start" | "stop" | "toggle";
 
-function isActive(): boolean {
+// "Busy" = any non-idle state. A new session must not start over one; a stop/toggle
+// while busy ends it.
+function isBusy(): boolean {
   const s = useApp.getState().status;
-  return s === "listening" || s === "transcribing";
+  return s === "listening" || s === "transcribing" || s === "injecting";
+}
+
+// Graceful stop while still capturing ("listening"); a hard reset for the wedge-prone
+// post-speech states ("finalizing…"/"inserting…"), so a hotkey can recover a stuck
+// session the same way the in-app button does.
+function stopOrCancel(): void {
+  const s = useApp.getState().status;
+  if (s === "listening") void stopLive();
+  else if (s === "transcribing" || s === "injecting") void cancelLive();
 }
 
 export function dictate(profileId: string, action: TriggerAction): void {
@@ -29,11 +40,11 @@ export function dictate(profileId: string, action: TriggerAction): void {
   };
 
   if (action === "stop") {
-    if (isActive()) void stopLive();
+    stopOrCancel();
   } else if (action === "start") {
-    if (!isActive()) start();
+    if (!isBusy()) start();
   } else {
-    if (isActive()) void stopLive();
+    if (isBusy()) stopOrCancel();
     else start();
   }
 }

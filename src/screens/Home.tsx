@@ -4,7 +4,7 @@ import { useApp } from "@/lib/store";
 import { Button, Card, SectionLabel, Select, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
-import { startLive, stopLive } from "@/lib/streaming";
+import { startLive, stopLive, cancelLive } from "@/lib/streaming";
 import type { Backend, Profile } from "@/lib/types";
 
 const GLYPH = { hold: Mic, latch: Hand } as const;
@@ -75,12 +75,21 @@ export default function Home() {
   const headerBackend: Backend | undefined =
     backends.find((b) => b.id === target?.backendId) ?? backends[0];
 
-  const dictating = status === "listening" || status === "transcribing";
+  // "Busy" = any non-idle state; the hero button is a stop/cancel while busy. We keep
+  // a graceful stop for "listening" (deliver the last words) but force a hard reset
+  // for the post-speech states — so a wedged "finalizing…"/"inserting…" (e.g. the
+  // stream died on suspend) is recoverable with the same button instead of dead.
+  const busy = status === "listening" || status === "transcribing" || status === "injecting";
   const toggle = () => {
-    if (dictating) {
+    if (status === "listening") {
       void stopLive();
       return;
     }
+    if (status === "transcribing" || status === "injecting") {
+      void cancelLive(); // force a clean idle (and reset any stuck hotkeys)
+      return;
+    }
+    // idle or error → start fresh (startLive clears any prior error).
     if (!headerBackend) return;
     // Tell the overlay chip which Profile is dictating (the hotkey path does this in
     // dictate(); the button bypasses it). null when only a backend is targeted.
@@ -127,11 +136,17 @@ export default function Home() {
             }}
             className={
               "ring-signal grid size-16 shrink-0 place-items-center rounded-full transition-transform hover:scale-105 " +
-              (dictating ? "bg-rec text-white" : "bg-accent text-accent-ink")
+              (busy ? "bg-rec text-white" : "bg-accent text-accent-ink")
             }
-            title={dictating ? "Stop dictation" : "Start a live dictation"}
+            title={
+              status === "listening"
+                ? "Stop dictation"
+                : busy
+                  ? "Cancel (force stop)"
+                  : "Start a live dictation"
+            }
           >
-            {dictating ? <Square className="size-6" /> : <Mic className="size-7" />}
+            {busy ? <Square className="size-6" /> : <Mic className="size-7" />}
           </button>
           <div className="min-w-0 flex-1 space-y-1">
             {enabled.length > 0 ? (
@@ -170,12 +185,12 @@ export default function Home() {
         </div>
       </Card>
 
-      {(dictating || partial || status === "error") && (
+      {(busy || partial || status === "error") && (
         <Card className="mt-4 p-5">
           <div className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-label text-faint">
             <Waveform
               level={level}
-              active={dictating}
+              active={busy}
               bars={5}
               variant="dots"
               tone={status === "transcribing" ? "accent" : status === "error" ? "dim" : "rec"}
