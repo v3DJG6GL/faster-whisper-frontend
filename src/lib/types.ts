@@ -135,6 +135,31 @@ export interface ConnectionInfo {
   error?: string;
 }
 
+/** The caller's effective request-override capabilities (GET /v1/me, full
+ *  backend only). snake_case mirrors the backend contract (like DecodeOverrides).
+ *  A null fetch result ⇒ "unknown": the UI assumes permitted, never gates a knob
+ *  it can't prove is disabled. */
+export interface Capabilities {
+  can_request_override_profile: boolean;
+  can_request_decode_overrides: boolean;
+  /** ["*"] = unrestricted (free choice); explicit names = restricted; [] = none. */
+  allowed_override_profiles: string[];
+}
+
+/** A baseline shown (ghosted) under the decode editor: backend defaults and/or a
+ *  selected override-profile's resolved values. Loosely typed because the server
+ *  may send `temperature` as a string (a ladder); display-only. A DecodeOverrides
+ *  is assignable to it, so backend defaults merge in cleanly. */
+export type InheritedValues = Partial<Record<keyof DecodeOverrides, number | string | boolean>>;
+
+/** One server override-profile's decode-relevant values + locked client keys
+ *  (GET /v1/override-profiles/{name}) — shown as inherited defaults in the editor. */
+export interface ResolvedOverrideProfile {
+  name: string;
+  values: InheritedValues;
+  locked: string[];
+}
+
 /** The persisted config blob (mirrors the Rust `Config`). */
 export interface Config {
   settings: AppSettings;

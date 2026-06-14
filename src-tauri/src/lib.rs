@@ -74,6 +74,8 @@ pub fn run() {
             commands::test_connection,
             commands::transcribe_file,
             commands::list_override_profiles,
+            commands::get_capabilities, // P11: GET /v1/me capabilities
+            commands::get_override_profile, // P11: GET /v1/override-profiles/{name}
             commands::list_audio_devices,
             commands::start_mic_test,
             commands::stop_mic_test,

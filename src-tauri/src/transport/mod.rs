@@ -4,7 +4,7 @@
 //! `batch` does the multipart `POST /v1/audio/transcriptions`. The streaming
 //! WebSocket client lands in M3.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub mod batch;
@@ -34,6 +34,36 @@ pub struct ConnectionInfo {
     pub boot_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+// P11: capability + resolved-profile transport types (see commands/discovery).
+/// The caller's effective request-override capabilities, from `GET /v1/me`.
+/// snake_case (not camelCase) deliberately — it mirrors the backend contract
+/// 1:1, like the `decode_overrides` keys, so it passes straight through both
+/// the wire (deserialize) and the IPC boundary (serialize) with no remapping.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Capabilities {
+    #[serde(default)]
+    pub can_request_override_profile: bool,
+    #[serde(default)]
+    pub can_request_decode_overrides: bool,
+    /// `["*"]` = unrestricted (free choice from the names endpoint); else the
+    /// explicit allowed names; `[]` = none.
+    #[serde(default)]
+    pub allowed_override_profiles: Vec<String>,
+}
+
+/// A single override-profile's decode-relevant values + locked client keys,
+/// from `GET /v1/override-profiles/{name}` — for previewing inherited defaults.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResolvedOverrideProfile {
+    pub name: String,
+    /// `{client_decode_key: value}` (e.g. `{"beam_size": 8}`); `temperature`
+    /// may arrive as a string (the server stores it as a ladder).
+    #[serde(default)]
+    pub values: serde_json::Value,
+    #[serde(default)]
+    pub locked: Vec<String>,
 }
 
 /// Trim a trailing slash so we can join `/v1/...` paths cleanly.

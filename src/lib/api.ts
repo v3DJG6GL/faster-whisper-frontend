@@ -2,7 +2,15 @@
 // browser (`pnpm dev`) — outside Tauri the calls no-op or return safe defaults.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { AudioDevice, BatchResult, Config, ConnectionInfo, DecodeOverrides } from "./types";
+import type {
+  AudioDevice,
+  BatchResult,
+  Capabilities,
+  Config,
+  ConnectionInfo,
+  DecodeOverrides,
+  ResolvedOverrideProfile,
+} from "./types";
 
 export const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -79,6 +87,40 @@ export async function listOverrideProfiles(args: {
     serverUrl: args.serverUrl,
     backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
+  });
+}
+
+/** The caller's effective request-override capabilities (full backend only).
+ *  Best-effort: null outside Tauri or on any error (endpoint absent / standard
+ *  server / unreachable) — callers treat null as "unknown ⇒ assume permitted". */
+export async function getCapabilities(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+}): Promise<Capabilities | null> {
+  if (!isTauri) return null;
+  return invoke<Capabilities | null>("get_capabilities", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+  });
+}
+
+/** One override-profile's decode values + locked client keys, for previewing
+ *  inherited defaults. Best-effort: null outside Tauri or on any error (incl.
+ *  404 when the caller may not request that profile). */
+export async function getOverrideProfile(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  name: string;
+}): Promise<ResolvedOverrideProfile | null> {
+  if (!isTauri) return null;
+  return invoke<ResolvedOverrideProfile | null>("get_override_profile", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    name: args.name,
   });
 }
 

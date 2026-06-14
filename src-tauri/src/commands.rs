@@ -116,6 +116,31 @@ pub async fn list_override_profiles(
     transport::discovery::list_override_profiles(&server_url, key.as_deref()).await
 }
 
+/// The caller's effective request-override capabilities (`GET /v1/me`). Best-
+/// effort — returns null on any error so the UI can treat it as "unknown".
+#[tauri::command]
+pub async fn get_capabilities(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+) -> Option<transport::Capabilities> {
+    let key = resolve_key(api_key, backend_id);
+    transport::discovery::get_capabilities(&server_url, key.as_deref()).await
+}
+
+/// One override-profile's decode values + locked client keys, for previewing
+/// inherited defaults when a profile is selected. Best-effort — null on error.
+#[tauri::command]
+pub async fn get_override_profile(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    name: String,
+) -> Option<transport::ResolvedOverrideProfile> {
+    let key = resolve_key(api_key, backend_id);
+    transport::discovery::get_override_profile(&server_url, &name, key.as_deref()).await
+}
+
 #[tauri::command]
 pub fn list_audio_devices() -> Vec<AudioDevice> {
     audio::device::list_input_devices()
