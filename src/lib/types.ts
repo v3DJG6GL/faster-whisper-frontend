@@ -50,6 +50,7 @@ export interface Backend {
   responseFormat: ResponseFormat;
   decodeOverrides?: DecodeOverrides; // Phase-B: per-Backend decode defaults
   kind?: BackendKind; // full vs standard server; absent/"auto" = infer from the connection test
+  overrideProfile?: string; // name of a server-side override-profile to reference (full backend only)
 }
 
 /** How a Profile is activated — first-class, decoupled from its identity. */
@@ -67,6 +68,7 @@ export interface Profile {
   language?: string; // override Backend.language; empty/undefined = inherit
   prompt?: string; // override Backend.prompt; empty/undefined = inherit
   decodeOverrides?: DecodeOverrides; // Phase-B: per-Profile decode overrides
+  overrideProfile?: string; // override Backend.overrideProfile; empty/undefined = inherit
 }
 
 export type InsertMethod = "paste" | "direct";

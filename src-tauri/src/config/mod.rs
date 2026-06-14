@@ -106,6 +106,10 @@ pub struct Backend {
     /// existing configs round-trip byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<BackendKind>,
+    /// Name of a server-side override-profile this backend references per request
+    /// (faster-whisper-backend only). None/empty = none. Skipped when None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub override_profile: Option<String>,
 }
 
 /// A user-defined dictation setup: an activation type + chord, a target [`Backend`],
@@ -138,6 +142,9 @@ pub struct Profile {
     /// Phase-B placeholder: per-Profile decode-param overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_overrides: Option<serde_json::Value>,
+    /// Override the Backend's server override-profile reference; None/empty = inherit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub override_profile: Option<String>,
 }
 
 /// Canonical rank so a stored chord is order-independent: modifiers (by type then
@@ -373,6 +380,7 @@ impl Default for Config {
                 response_format: ResponseFormat::VerboseJson,
                 decode_overrides: None,
                 kind: None,
+                override_profile: None,
             }],
             profiles: vec![
                 Profile {
@@ -386,6 +394,7 @@ impl Default for Config {
                     language: None,
                     prompt: None,
                     decode_overrides: None,
+                    override_profile: None,
                 },
                 Profile {
                     id: "handsfree".into(),
@@ -398,6 +407,7 @@ impl Default for Config {
                     language: None,
                     prompt: None,
                     decode_overrides: None,
+                    override_profile: None,
                 },
             ],
             version: Some(2),
@@ -465,6 +475,7 @@ fn migrate_legacy(text: &str) -> Option<Config> {
                 language: None,
                 prompt: None,
                 decode_overrides: None,
+                override_profile: None,
             }
         })
         .collect();
