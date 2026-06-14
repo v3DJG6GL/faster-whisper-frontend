@@ -291,7 +291,8 @@ export async function injectText(args: {
   });
 }
 
-/** Show + position the dictation chip overlay at the given screen edge. */
+/** Show + position the dictation chip overlay at the given screen edge. The window is
+ *  anchored flush against that edge; the resting inset and edge-peek are pure CSS (Overlay.tsx). */
 export async function showOverlay(position: "top" | "bottom"): Promise<void> {
   if (!isTauri) return;
   await invoke("show_overlay", { position });
@@ -343,6 +344,37 @@ export async function onSystemResumed(cb: () => void): Promise<() => void> {
   if (!isTauri) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
   return listen("system://resumed", () => cb());
+}
+
+/** Show + focus the main window and ask its router to navigate to a screen. Used by
+ *  the overlay chip's quick-launch (a separate window that can't drive the router). */
+export async function showMainAtScreen(screen: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("show_main_at_screen", { screen });
+}
+
+/** Emit a dictation action from the overlay window for the main window to run
+ *  (see runOverlayAction in dictation.ts). */
+export async function emitOverlayAction(kind: string): Promise<void> {
+  if (!isTauri) return;
+  const { emit } = await import("@tauri-apps/api/event");
+  await emit("overlay://action", { kind });
+}
+
+/** Subscribe (in the main window) to dictation actions emitted by the overlay chip.
+ *  Returns an unlisten fn. */
+export async function onOverlayAction(cb: (kind: string) => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<{ kind: string }>("overlay://action", (e) => cb(e.payload.kind));
+}
+
+/** Subscribe (in the main window) to navigate requests from show_main_at_screen.
+ *  Returns an unlisten fn. */
+export async function onAppNavigate(cb: (screen: string) => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<string>("app://navigate", (e) => cb(e.payload));
 }
 
 /** Native "open file" dialog → absolute path (or null if cancelled / not in Tauri). */

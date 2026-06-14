@@ -1,17 +1,41 @@
 import { useEffect } from "react";
-import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
 import { useApp } from "@/lib/store";
 import { initConfig } from "@/lib/persistence";
 import { initOverlayController } from "@/lib/overlay";
-import { onTrigger, onSystemResumed } from "@/lib/api";
-import { dictate } from "@/lib/dictation";
+import { onTrigger, onSystemResumed, onOverlayAction, onAppNavigate } from "@/lib/api";
+import { dictate, runOverlayAction } from "@/lib/dictation";
 import { cancelLive } from "@/lib/streaming";
+import { SCREEN_PATH } from "@/lib/screens";
 import Home from "@/screens/Home";
 import Transcribe from "@/screens/Transcribe";
 import Profiles from "@/screens/Profiles";
 import Backends from "@/screens/Backends";
 import Settings from "@/screens/Settings";
+
+// Bridges overlay → main-window navigation: the chip calls show_main_at_screen, which
+// focuses this window and emits `app://navigate`; here (inside the router) we turn
+// that into a route change. Must live within <HashRouter> to use useNavigate.
+function NavigationBridge() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void onAppNavigate((screen) => {
+      const path = SCREEN_PATH[screen as keyof typeof SCREEN_PATH];
+      if (path) navigate(path);
+    }).then((u) => {
+      if (cancelled) u();
+      else unlisten = u;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [navigate]);
+  return null;
+}
 
 export default function App() {
   const theme = useApp((s) => s.settings.theme);
@@ -30,6 +54,21 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     void onTrigger((e) => dictate(e.profileId, e.action)).then((u) => {
+      if (cancelled) u();
+      else unlisten = u;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Dictation actions requested from the overlay chip's quick-launch (a separate
+  // window) arrive as `overlay://action` events — run them here (same StrictMode guard).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void onOverlayAction((kind) => runOverlayAction(kind)).then((u) => {
       if (cancelled) u();
       else unlisten = u;
     });
@@ -63,6 +102,7 @@ export default function App() {
 
   return (
     <HashRouter>
+      <NavigationBridge />
       <div className="relative z-10 flex h-screen overflow-hidden">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

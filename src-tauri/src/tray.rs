@@ -4,7 +4,7 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    App, AppHandle, Manager,
+    App, AppHandle, Emitter, Manager,
 };
 
 /// Stable id so the tray can be looked up later to reflect dictation state.
@@ -37,6 +37,17 @@ fn show_main(app: &AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+/// Show + focus the main window and ask its router to navigate to `screen`. Used by
+/// the overlay chip's quick-launch (a separate window that can't drive the main
+/// window's router directly). The main window listens for `app://navigate` (App.tsx).
+#[tauri::command]
+pub fn show_main_at_screen(app: AppHandle, screen: String) {
+    show_main(&app);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("app://navigate", screen);
     }
 }
 

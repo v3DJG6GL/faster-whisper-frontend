@@ -1,15 +1,9 @@
 import { NavLink } from "react-router-dom";
-import { Home, AudioLines, Server, Command, Settings as SettingsIcon, Moon, Sun } from "lucide-react";
+import { Settings as SettingsIcon, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
+import { SCREENS } from "@/lib/screens";
 import { StatusDot } from "./ui";
-
-const NAV = [
-  { to: "/", label: "Home", icon: Home, end: true },
-  { to: "/transcribe", label: "Transcribe", icon: AudioLines, end: false },
-  { to: "/profiles", label: "Profiles", icon: Command, end: false },
-  { to: "/backends", label: "Backends", icon: Server, end: false },
-];
 
 function BrandMark() {
   // A forward-leaning level meter — "signal in motion". Distinct amber identity.
@@ -46,10 +40,10 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-0.5 px-3">
-        {NAV.map(({ to, label, icon: Icon, end }) => (
+        {SCREENS.filter((s) => s.id !== "settings").map(({ path, label, icon: Icon, end }) => (
           <NavLink
-            key={to}
-            to={to}
+            key={path}
+            to={path}
             end={end}
             className={({ isActive }) =>
               cn(

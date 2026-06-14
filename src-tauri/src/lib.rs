@@ -97,6 +97,7 @@ pub fn run() {
             overlay::set_chip_hit_region,
             sound::play_cue,
             tray::set_tray_state,
+            tray::show_main_at_screen,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -5,6 +5,7 @@
 
 import { useApp } from "./store";
 import { startLive, stopLive, cancelLive } from "./streaming";
+import type { Profile } from "./types";
 
 export type TriggerAction = "start" | "stop" | "toggle";
 
@@ -46,5 +47,58 @@ export function dictate(profileId: string, action: TriggerAction): void {
   } else {
     if (isBusy()) stopOrCancel();
     else start();
+  }
+}
+
+/** The Profile the Home button + the overlay quick-launch target: the configured
+ *  home Profile, else the first enabled latch Profile, else any enabled one. */
+export function homeTargetProfile(
+  profiles: Profile[],
+  homeProfileId?: string | null,
+): Profile | undefined {
+  const enabled = profiles.filter((p) => p.enabled);
+  return (
+    enabled.find((p) => p.id === homeProfileId) ??
+    enabled.find((p) => p.activation === "latch") ??
+    enabled[0]
+  );
+}
+
+/** Run a dictation action requested from the overlay chip. The chip is a separate
+ *  window, so the request arrives via the `overlay://action` event (see api.ts /
+ *  App.tsx). Mirrors the Home hero button's latch-toggle semantics. */
+export function runOverlayAction(kind: string): void {
+  if (kind === "cancel-dictation") {
+    void cancelLive();
+    return;
+  }
+  const s = useApp.getState();
+  if (kind === "toggle-dictation") {
+    if (s.status === "listening") {
+      void stopLive();
+      return;
+    }
+    if (s.status === "transcribing" || s.status === "injecting") {
+      void cancelLive(); // force a clean idle (recover a wedged session)
+      return;
+    }
+    const target = homeTargetProfile(s.profiles, s.settings.homeProfileId);
+    const backend = s.backends.find((b) => b.id === target?.backendId) ?? s.backends[0];
+    if (!backend) return;
+    s.setDictation({ activeProfile: target?.id ?? null });
+    void startLive(backend, s.settings.microphoneId, "latch", target);
+    return;
+  }
+  if (kind === "cycle-active-profile") {
+    // Only meaningful when idle/standby — never reshuffle a running session.
+    if (s.status !== "idle") return;
+    const enabled = s.profiles.filter((p) => p.enabled);
+    if (enabled.length === 0) return;
+    const cur = homeTargetProfile(s.profiles, s.settings.homeProfileId);
+    const i = enabled.findIndex((p) => p.id === cur?.id);
+    const next = enabled[(i + 1) % enabled.length];
+    s.updateSettings({ homeProfileId: next.id }); // persists; standby tag + next toggle follow
+    s.setDictation({ activeProfile: next.id });
+    return;
   }
 }

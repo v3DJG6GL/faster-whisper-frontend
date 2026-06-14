@@ -5,6 +5,7 @@ import { Button, Card, SectionLabel, Select, StatusDot, Toggle } from "@/compone
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { startLive, stopLive, cancelLive } from "@/lib/streaming";
+import { homeTargetProfile } from "@/lib/dictation";
 import type { Backend, Profile } from "@/lib/types";
 
 const GLYPH = { hold: Mic, latch: Hand } as const;
@@ -69,10 +70,7 @@ export default function Home() {
   // The hero button has no held chord (you click it), so it always dictates in latch
   // style. It targets the profile picked below — falling back to the first enabled
   // latch profile, then any enabled — and uses that profile's backend + overrides.
-  const target =
-    enabled.find((p) => p.id === homeProfileId) ??
-    enabled.find((p) => p.activation === "latch") ??
-    enabled[0];
+  const target = homeTargetProfile(profiles, homeProfileId);
   const headerBackend: Backend | undefined =
     backends.find((b) => b.id === target?.backendId) ?? backends[0];
 
