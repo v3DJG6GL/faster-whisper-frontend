@@ -6,6 +6,7 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
+import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
 import { cn } from "@/lib/cn";
 
 function blankBackend(): Backend {
@@ -62,6 +63,10 @@ function Editor({
     () => !!initial.decodeOverrides && Object.keys(initial.decodeOverrides).length > 0,
   );
   const set = (patch: Partial<Backend>) => setB((x) => ({ ...x, ...patch }));
+  // `detected` = what the last connection test inferred; `kind` = the effective
+  // classification (a manual override wins). `kind` gates the decode-override editor.
+  const detected = classifyConnection(result);
+  const kind = effectiveServerKind(b, result);
 
   const runTest = async () => {
     setTesting(true);
@@ -120,7 +125,48 @@ function Editor({
             ]}
           />
         </Labeled>
+        <Labeled label="Server type">
+          <Segmented
+            value={b.kind ?? "auto"}
+            onChange={(v) => set({ kind: v === "auto" ? undefined : v })}
+            options={[
+              { value: "auto", label: "Auto" },
+              { value: "full", label: "Full" },
+              { value: "standard", label: "Standard" },
+            ]}
+          />
+        </Labeled>
+        <Labeled label="Detected">
+          <div className="flex h-10 items-center gap-2 text-[12.5px]">
+            {detected === "unknown" ? (
+              <span className="text-faint">Test the connection to detect</span>
+            ) : detected === "full" ? (
+              <>
+                <StatusDot tone="ok" />
+                <span className="text-dim">
+                  faster-whisper <span className="text-faint">· boot id</span>
+                </span>
+              </>
+            ) : (
+              <>
+                <StatusDot tone="warn" />
+                <span className="text-dim">Standard Whisper server</span>
+              </>
+            )}
+            {b.kind && b.kind !== "auto" && <span className="text-faint">· manual</span>}
+          </div>
+        </Labeled>
       </div>
+
+      {kind === "standard" && b.endpoint === "stream" && (
+        <div className="mt-3 flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <div>
+            A standard Whisper server has no streaming endpoint — switch Endpoint to{" "}
+            <span className="font-medium">Batch</span>.
+          </div>
+        </div>
+      )}
 
       {result?.ok && result.models.length > 0 && (
         <div className="mt-4">

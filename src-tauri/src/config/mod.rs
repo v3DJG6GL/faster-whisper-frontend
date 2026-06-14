@@ -17,6 +17,17 @@ pub enum EndpointKind {
     Batch,
 }
 
+/// How to treat a backend's capabilities. `Auto` (or absent) = infer from the
+/// connection test (`/v1/models` boot_id); `Full` / `Standard` are manual
+/// overrides. Gates which decode overrides the editor offers.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BackendKind {
+    Auto,
+    Full,
+    Standard,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseFormat {
@@ -90,6 +101,11 @@ pub struct Backend {
     /// so Phase-A configs round-trip byte-stable and the frontend need not send it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_overrides: Option<serde_json::Value>,
+    /// Manual full-vs-standard classification. None/Auto ⇒ infer from the
+    /// connection test; Full/Standard override detection. Skipped when None so
+    /// existing configs round-trip byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<BackendKind>,
 }
 
 /// A user-defined dictation setup: an activation type + chord, a target [`Backend`],
@@ -356,6 +372,7 @@ impl Default for Config {
                 prompt: String::new(),
                 response_format: ResponseFormat::VerboseJson,
                 decode_overrides: None,
+                kind: None,
             }],
             profiles: vec![
                 Profile {

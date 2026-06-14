@@ -4,6 +4,9 @@
 
 export type EndpointKind = "stream" | "batch";
 export type ResponseFormat = "json" | "verbose_json";
+/** Full faster-whisper-backend vs a conventional Whisper server. "auto" (or
+ *  absent) infers from the connection test; "full"/"standard" are manual. */
+export type BackendKind = "auto" | "full" | "standard";
 
 /**
  * Per-field decode-param overrides. Every field optional; absent/empty = "inherit
@@ -46,6 +49,7 @@ export interface Backend {
   prompt: string; // optional initial_prompt / vocabulary biasing (default; overridable)
   responseFormat: ResponseFormat;
   decodeOverrides?: DecodeOverrides; // Phase-B: per-Backend decode defaults
+  kind?: BackendKind; // full vs standard server; absent/"auto" = infer from the connection test
 }
 
 /** How a Profile is activated — first-class, decoupled from its identity. */
