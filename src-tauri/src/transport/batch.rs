@@ -14,6 +14,10 @@ pub struct BatchResult {
     pub language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
+    /// Client decode overrides the server refused because the field is
+    /// admin-locked (verbose_json only). Empty ⇒ omitted to the frontend.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub overrides_ignored: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -23,6 +27,8 @@ struct VerboseJson {
     language: Option<String>,
     #[serde(default)]
     duration: Option<f64>,
+    #[serde(default)]
+    overrides_ignored: Vec<String>,
 }
 
 fn mime_for(path: &Path) -> &'static str {
@@ -128,5 +134,6 @@ async fn post(
         text: parsed.text,
         language: parsed.language,
         duration: parsed.duration,
+        overrides_ignored: parsed.overrides_ignored,
     })
 }

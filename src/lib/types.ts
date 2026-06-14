@@ -146,4 +146,6 @@ export interface BatchResult {
   text: string;
   language?: string;
   duration?: number;
+  /** Decode overrides the server refused because the field is admin-locked. */
+  overridesIgnored?: string[];
 }

@@ -152,6 +152,17 @@ export default function Transcribe() {
           <div className="select-text whitespace-pre-wrap text-[14px] leading-relaxed text-text">{result.text}</div>
         </Card>
       )}
+
+      {result?.overridesIgnored && result.overridesIgnored.length > 0 && (
+        <div className="mt-3 flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <div>
+            The server ignored {result.overridesIgnored.length} override
+            {result.overridesIgnored.length === 1 ? "" : "s"} (locked by the server admin):{" "}
+            <span className="font-mono text-[12px]">{result.overridesIgnored.join(", ")}</span>.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
