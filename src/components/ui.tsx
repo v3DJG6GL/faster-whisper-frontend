@@ -67,23 +67,32 @@ export function Segmented<T extends string>({
   value,
   onChange,
   options,
+  disabled,
 }: {
   value: T;
   onChange: (v: T) => void;
   options: { value: T; label: string }[];
+  disabled?: boolean;
 }) {
   return (
-    <div className="inline-flex rounded-pill border border-line bg-surface-2 p-[3px]">
+    <div
+      className={cn(
+        "inline-flex rounded-pill border border-line bg-surface-2 p-[3px]",
+        disabled && "opacity-40",
+      )}
+    >
       {options.map((o) => {
         const active = o.value === value;
         return (
           <button
             key={o.value}
             type="button"
+            disabled={disabled}
             onClick={() => onChange(o.value)}
             className={cn(
               "ring-signal rounded-pill px-3.5 py-1 text-[13px] font-medium transition-colors",
               active ? "bg-accent text-accent-ink" : "text-dim hover:text-text",
+              disabled && "cursor-not-allowed hover:text-dim",
             )}
           >
             {o.label}

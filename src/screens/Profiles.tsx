@@ -10,6 +10,7 @@ import { validateCodes, suspendShortcuts, reregisterShortcuts } from "@/lib/api"
 import { MODIFIER_CODES, codeToToken, canonicalizeCodes, codesToLabels } from "@/lib/keys";
 import { conflictsByProfile, findChordConflict } from "@/lib/conflicts";
 import { deriveChipTag } from "@/lib/profileTag";
+import { effectiveServerKind } from "@/lib/serverKind";
 import type { Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
@@ -143,6 +144,7 @@ function Editor({
   onCancel: () => void;
 }) {
   const backends = useApp((s) => s.backends);
+  const connections = useApp((s) => s.connections);
   const evdevActive = useApp((s) => s.settings.general.evdevEnabled);
   const [p, setP] = useState<Profile>(initial);
   const [capturing, setCapturing] = useState(false);
@@ -151,6 +153,12 @@ function Editor({
       (initial.decodeOverrides && Object.keys(initial.decodeOverrides).length)),
   );
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
+  // Resolve the target backend so the decode editor can show its defaults as the
+  // inherited baseline and gate to the backend's detected capability.
+  const backend = backends.find((b) => b.id === p.backendId);
+  const serverKind = backend
+    ? effectiveServerKind(backend, p.backendId ? connections[p.backendId] : undefined)
+    : "unknown";
 
   const { heldCodes, warn } = useHotkeyCapture({
     capturing,
@@ -289,6 +297,8 @@ function Editor({
             <DecodeFields
               value={p.decodeOverrides ?? {}}
               onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
+              inherited={backend?.decodeOverrides}
+              serverKind={serverKind}
             />
           </div>
         </>

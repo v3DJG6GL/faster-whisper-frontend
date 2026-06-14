@@ -225,6 +225,7 @@ function Editor({
             <DecodeFields
               value={b.decodeOverrides ?? {}}
               onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
+              serverKind={kind}
             />
           </div>
         )}

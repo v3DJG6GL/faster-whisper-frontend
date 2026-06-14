@@ -1,62 +1,82 @@
 import { useState } from "react";
-import { Segmented, TextInput } from "@/components/ui";
+import { RotateCcw, Info } from "lucide-react";
+import { Segmented, TextInput, SectionLabel } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { DecodeOverrides } from "@/lib/types";
+import type { ServerKind } from "@/lib/serverKind";
 
 // Decode-param editor shared by the Backend (defaults) and Profile (override)
-// editors. Every field is OPTIONAL: an empty input means "inherit" (the server
-// falls back to its per-model config). Booleans are tri-state (Inherit/On/Off)
-// because an unset boolean must stay distinct from an explicit false. The backend
-// clamps every value, so the ranges shown here are guidance, not hard gates.
+// editors. Every field is OPTIONAL: empty = "inherit" (backend default ?? the
+// server's per-model config). Booleans are tri-state (Inherit/On/Off) because an
+// unset boolean must stay distinct from an explicit false. The backend clamps
+// every value, so the ranges shown here are guidance, not hard gates.
+//
+// Only the per-request `decode_overrides` keys the backend actually honours live
+// here (the full server-managed set — streaming, output wrappers, language
+// detection — is reached via a named server override-profile, not per field).
+// Layout: ~5 primary fields, then one "Advanced" disclosure with labeled groups.
 
-type NumField = {
-  key: keyof DecodeOverrides;
-  label: string;
-  kind: "number";
-  hint: string;
-  min?: number;
-  max?: number;
-  step?: number;
-  advanced?: boolean;
-};
-type BoolField = { key: keyof DecodeOverrides; label: string; kind: "bool"; advanced?: boolean };
-type TextField = { key: keyof DecodeOverrides; label: string; kind: "text"; hint: string; advanced?: boolean };
+type Section = "primary" | "vad" | "thresholds" | "sampling" | "vocab";
+type Base = { key: keyof DecodeOverrides; label: string; section: Section; wide?: boolean };
+type NumField = Base & { kind: "number"; hint: string; min?: number; max?: number; step?: number };
+type BoolField = Base & { kind: "bool" };
+type TextField = Base & { kind: "text"; hint: string };
 type Field = NumField | BoolField | TextField;
 
+const SECTIONS: { id: Exclude<Section, "primary">; title: string }[] = [
+  { id: "vad", title: "Voice activity (VAD)" },
+  { id: "thresholds", title: "Recognition thresholds" },
+  { id: "sampling", title: "Beam & sampling" },
+  { id: "vocab", title: "Vocabulary & punctuation" },
+];
+
 const FIELDS: Field[] = [
-  // ── curated (always visible) ──
-  { key: "beam_size", label: "Beam size", kind: "number", hint: "inherit · 1–20", min: 1, max: 20, step: 1 },
-  { key: "temperature", label: "Temperature", kind: "number", hint: "inherit · 0–1", min: 0, max: 1, step: 0.1 },
-  { key: "condition_on_previous_text", label: "Condition on previous text", kind: "bool" },
-  { key: "vad_filter", label: "Voice-activity filter", kind: "bool" },
-  { key: "vad_threshold", label: "VAD threshold", kind: "number", hint: "inherit · 0–1", min: 0, max: 1, step: 0.05 },
-  { key: "no_speech_threshold", label: "No-speech threshold", kind: "number", hint: "inherit · 0–1", min: 0, max: 1, step: 0.05 },
-  { key: "hotwords", label: "Hotwords", kind: "text", hint: "inherit — bias terms" },
-  { key: "prepend_punctuations", label: "Prepend punctuation", kind: "text", hint: "inherit" },
-  { key: "append_punctuations", label: "Append punctuation", kind: "text", hint: "inherit" },
-  // ── advanced (behind disclosure) ──
-  { key: "best_of", label: "Best of", kind: "number", hint: "inherit · 1–20", min: 1, max: 20, step: 1, advanced: true },
-  { key: "vad_min_silence_duration_ms", label: "VAD min silence (ms)", kind: "number", hint: "inherit · 0–10000", min: 0, max: 10000, step: 50, advanced: true },
-  { key: "vad_speech_pad_ms", label: "VAD speech pad (ms)", kind: "number", hint: "inherit · 0–2000", min: 0, max: 2000, step: 10, advanced: true },
-  { key: "log_prob_threshold", label: "Log-prob threshold", kind: "number", hint: "inherit · -10–0", min: -10, max: 0, step: 0.5, advanced: true },
-  { key: "compression_ratio_threshold", label: "Compression-ratio threshold", kind: "number", hint: "inherit · 0–10", min: 0, max: 10, step: 0.1, advanced: true },
-  { key: "suppress_tokens", label: "Suppress tokens", kind: "text", hint: "inherit — comma-separated ids", advanced: true },
-  { key: "patience", label: "Patience", kind: "number", hint: "inherit · 0.5–5", min: 0.5, max: 5, step: 0.1, advanced: true },
-  { key: "length_penalty", label: "Length penalty", kind: "number", hint: "inherit · 0.1–5", min: 0.1, max: 5, step: 0.1, advanced: true },
-  { key: "repetition_penalty", label: "Repetition penalty", kind: "number", hint: "inherit · 0.5–5", min: 0.5, max: 5, step: 0.1, advanced: true },
-  { key: "no_repeat_ngram_size", label: "No-repeat n-gram", kind: "number", hint: "inherit · 0–10", min: 0, max: 10, step: 1, advanced: true },
+  // ── primary (always visible) ──
+  { key: "beam_size", label: "Beam size", section: "primary", kind: "number", hint: "1–20", min: 1, max: 20, step: 1 },
+  { key: "temperature", label: "Temperature", section: "primary", kind: "number", hint: "0–1", min: 0, max: 1, step: 0.1 },
+  { key: "condition_on_previous_text", label: "Condition on previous text", section: "primary", kind: "bool" },
+  { key: "vad_filter", label: "Voice-activity filter", section: "primary", kind: "bool" },
+  { key: "hotwords", label: "Hotwords", section: "primary", kind: "text", hint: "bias terms", wide: true },
+  // ── Voice activity (VAD) ──
+  { key: "vad_threshold", label: "VAD threshold", section: "vad", kind: "number", hint: "0–1", min: 0, max: 1, step: 0.05 },
+  { key: "vad_min_silence_duration_ms", label: "VAD min silence (ms)", section: "vad", kind: "number", hint: "0–10000", min: 0, max: 10000, step: 50 },
+  { key: "vad_speech_pad_ms", label: "VAD speech pad (ms)", section: "vad", kind: "number", hint: "0–2000", min: 0, max: 2000, step: 10 },
+  // ── Recognition thresholds ──
+  { key: "best_of", label: "Best of", section: "thresholds", kind: "number", hint: "1–20", min: 1, max: 20, step: 1 },
+  { key: "no_speech_threshold", label: "No-speech threshold", section: "thresholds", kind: "number", hint: "0–1", min: 0, max: 1, step: 0.05 },
+  { key: "log_prob_threshold", label: "Log-prob threshold", section: "thresholds", kind: "number", hint: "-10–0", min: -10, max: 0, step: 0.5 },
+  { key: "compression_ratio_threshold", label: "Compression-ratio threshold", section: "thresholds", kind: "number", hint: "0–10", min: 0, max: 10, step: 0.1 },
+  // ── Beam & sampling ──
+  { key: "patience", label: "Patience", section: "sampling", kind: "number", hint: "0.5–5", min: 0.5, max: 5, step: 0.1 },
+  { key: "length_penalty", label: "Length penalty", section: "sampling", kind: "number", hint: "0.1–5", min: 0.1, max: 5, step: 0.1 },
+  { key: "repetition_penalty", label: "Repetition penalty", section: "sampling", kind: "number", hint: "0.5–5", min: 0.5, max: 5, step: 0.1 },
+  { key: "no_repeat_ngram_size", label: "No-repeat n-gram", section: "sampling", kind: "number", hint: "0–10", min: 0, max: 10, step: 1 },
+  // ── Vocabulary & punctuation ──
+  { key: "prepend_punctuations", label: "Prepend punctuation", section: "vocab", kind: "text", hint: "" },
+  { key: "append_punctuations", label: "Append punctuation", section: "vocab", kind: "text", hint: "" },
+  { key: "suppress_tokens", label: "Suppress tokens", section: "vocab", kind: "text", hint: "comma-separated ids", wide: true },
 ];
 
 export function DecodeFields({
   value,
   onChange,
+  inherited,
+  serverKind,
 }: {
   value: DecodeOverrides;
   onChange: (v: DecodeOverrides) => void;
+  /** Baseline this editor overrides (e.g. a Backend's defaults under a Profile);
+   *  shown as a per-field "inherits …" annotation. Backend editor: omit. */
+  inherited?: DecodeOverrides;
+  /** When "standard", a conventional Whisper server: disable everything the
+   *  faster-whisper backend adds (keep only temperature). */
+  serverKind?: ServerKind;
 }) {
   const [showAdvanced, setShowAdvanced] = useState(
-    FIELDS.some((f) => f.advanced && value[f.key] !== undefined),
+    FIELDS.some((f) => f.section !== "primary" && value[f.key] !== undefined),
   );
+  const standard = serverKind === "standard";
+  const isGated = (f: Field) => standard && f.key !== "temperature";
 
   const setField = (key: keyof DecodeOverrides, v: number | boolean | string | undefined) => {
     const next: DecodeOverrides = { ...value };
@@ -65,13 +85,27 @@ export function DecodeFields({
     onChange(next);
   };
 
-  const renderField = (f: Field) => {
+  // The inherited (baseline) value as a short string, or undefined if none.
+  const fmtInherited = (f: Field): string | undefined => {
+    const iv = inherited?.[f.key];
+    if (iv === undefined || iv === null || iv === "") return undefined;
+    if (f.kind === "bool") return iv ? "on" : "off";
+    return String(iv);
+  };
+
+  // NB: renderControl / fieldCell / grid are plain functions called inline, NOT
+  // nested components. Rendering them as <Component/> gives a fresh identity on
+  // every keystroke, remounting the focused <input> so it loses focus after one
+  // character. Calling them as functions reconciles the inputs in place.
+  const renderControl = (f: Field) => {
     const cur = value[f.key];
+    const gated = isGated(f);
     if (f.kind === "bool") {
       const v = cur === true ? "on" : cur === false ? "off" : "inherit";
       return (
         <Segmented
           value={v}
+          disabled={gated}
           onChange={(nv) => setField(f.key, nv === "inherit" ? undefined : nv === "on")}
           options={[
             { value: "inherit", label: "Inherit" },
@@ -85,11 +119,12 @@ export function DecodeFields({
       return (
         <TextInput
           type="number"
+          disabled={gated}
           min={f.min}
           max={f.max}
           step={f.step}
           value={cur === undefined ? "" : String(cur)}
-          placeholder={f.hint}
+          placeholder={`inherit · ${f.hint}`}
           onChange={(e) => {
             const s = e.target.value;
             if (s === "") return setField(f.key, undefined);
@@ -101,31 +136,57 @@ export function DecodeFields({
     }
     return (
       <TextInput
+        disabled={gated}
         value={cur === undefined ? "" : String(cur)}
-        placeholder={f.hint}
+        placeholder={f.hint ? `inherit — ${f.hint}` : "inherit"}
         onChange={(e) => setField(f.key, e.target.value === "" ? undefined : e.target.value)}
       />
     );
   };
 
-  // NB: this is a plain render helper, NOT a nested component. Rendering it as
-  // <FieldGrid/> would give it a fresh identity on every keystroke, so React
-  // would remount the subtree and the focused <input> would lose focus after a
-  // single character. Calling it as a function reconciles the inputs in place.
-  const fieldGrid = (fields: Field[]) => (
-    <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-      {fields.map((f) => (
-        <div key={f.key}>
-          <label className="mb-1.5 block text-[12px] font-medium text-dim">{f.label}</label>
-          {renderField(f)}
+  const fieldCell = (f: Field) => {
+    const overridden = value[f.key] !== undefined;
+    const inh = fmtInherited(f);
+    return (
+      <div key={f.key} className={cn(f.wide && "col-span-2")}>
+        <div className="mb-1.5 flex items-center gap-1.5">
+          {overridden && <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />}
+          <label className="text-[12px] font-medium text-dim">{f.label}</label>
+          {!overridden && inh && <span className="text-[11px] text-faint">· inherits {inh}</span>}
+          {overridden && !isGated(f) && (
+            <button
+              type="button"
+              onClick={() => setField(f.key, undefined)}
+              title="Reset to inherited"
+              className="ring-signal ml-auto inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
+            >
+              <RotateCcw className="size-3" /> reset
+            </button>
+          )}
         </div>
-      ))}
-    </div>
+        {renderControl(f)}
+      </div>
+    );
+  };
+
+  const grid = (fields: Field[]) => (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-3">{fields.map(fieldCell)}</div>
   );
 
   return (
     <div>
-      {fieldGrid(FIELDS.filter((f) => !f.advanced))}
+      {standard && (
+        <div className="mb-3 flex items-start gap-2 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-dim">
+          <Info className="mt-0.5 size-3.5 shrink-0 text-faint" />
+          <div>
+            This looks like a standard Whisper server — only <span className="text-text">Temperature</span> is
+            honoured. The rest are faster-whisper-specific and are disabled here.
+          </div>
+        </div>
+      )}
+
+      {grid(FIELDS.filter((f) => f.section === "primary"))}
+
       <button
         type="button"
         onClick={() => setShowAdvanced((v) => !v)}
@@ -134,7 +195,17 @@ export function DecodeFields({
         <span className={cn("transition-transform", showAdvanced && "rotate-90")}>›</span>
         Advanced decode params
       </button>
-      {showAdvanced && <div className="mt-3">{fieldGrid(FIELDS.filter((f) => f.advanced))}</div>}
+
+      {showAdvanced && (
+        <div className="mt-4 space-y-5">
+          {SECTIONS.map((s) => (
+            <div key={s.id}>
+              <SectionLabel className="mb-2.5">{s.title}</SectionLabel>
+              {grid(FIELDS.filter((f) => f.section === s.id))}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
