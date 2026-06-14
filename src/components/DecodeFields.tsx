@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RotateCcw, Info } from "lucide-react";
+import { RotateCcw, Info, Eraser } from "lucide-react";
 import { Segmented, TextInput, SectionLabel } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { DecodeOverrides, InheritedValues } from "@/lib/types";
@@ -167,16 +167,31 @@ export function DecodeFields({
         <div className="mb-1.5 flex items-center gap-1.5">
           {overridden && <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />}
           <label className="text-[12px] font-medium text-dim">{f.label}</label>
-          {overridden && !isGated(f) && (
-            <button
-              type="button"
-              onClick={() => setField(f.key, undefined)}
-              title="Reset to inherited"
-              className="ring-signal ml-auto inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
-            >
-              <RotateCcw className="size-3" /> reset
-            </button>
-          )}
+          <div className="ml-auto flex items-center gap-2">
+            {/* Text fields can be CLEARED to an explicit empty override (suppress the
+                inherited value) — the discoverable alternative to deleting the text.
+                Hidden once already cleared. Numbers/bools clear via empty/Inherit. */}
+            {f.kind === "text" && value[f.key] !== "" && !isGated(f) && (
+              <button
+                type="button"
+                onClick={() => setField(f.key, "")}
+                title="Override with empty (suppress the inherited value)"
+                className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
+              >
+                <Eraser className="size-3" /> clear
+              </button>
+            )}
+            {overridden && !isGated(f) && (
+              <button
+                type="button"
+                onClick={() => setField(f.key, undefined)}
+                title="Reset to inherited"
+                className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
+              >
+                <RotateCcw className="size-3" /> reset
+              </button>
+            )}
+          </div>
         </div>
         {renderControl(f)}
       </div>

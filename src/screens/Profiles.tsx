@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Plus, Mic, Hand, Pencil, Copy, Trash2, Keyboard, AlertTriangle, Info, Server, RotateCcw } from "lucide-react";
+import { Plus, Mic, Hand, Pencil, Copy, Trash2, Keyboard, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Kbd, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
@@ -307,16 +307,28 @@ function Editor({
                   <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
                 )}
                 <label className="text-[12px] font-medium text-dim">Vocabulary / prompt</label>
-                {promptOverridden && (
-                  <button
-                    type="button"
-                    onClick={() => set({ prompt: undefined })}
-                    title="Reset to inherited"
-                    className="ring-signal ml-auto inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
-                  >
-                    <RotateCcw className="size-3" /> reset
-                  </button>
-                )}
+                <div className="ml-auto flex items-center gap-2">
+                  {p.prompt !== "" && (
+                    <button
+                      type="button"
+                      onClick={() => set({ prompt: "" })}
+                      title="Override with empty (suppress the inherited prompt)"
+                      className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
+                    >
+                      <Eraser className="size-3" /> clear
+                    </button>
+                  )}
+                  {promptOverridden && (
+                    <button
+                      type="button"
+                      onClick={() => set({ prompt: undefined })}
+                      title="Reset to inherited"
+                      className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
+                    >
+                      <RotateCcw className="size-3" /> reset
+                    </button>
+                  )}
+                </div>
               </div>
               <textarea
                 value={p.prompt ?? ""}
