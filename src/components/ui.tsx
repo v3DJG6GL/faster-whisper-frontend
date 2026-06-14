@@ -1,4 +1,5 @@
-import { type ReactNode, type InputHTMLAttributes, forwardRef } from "react";
+import { type ReactNode, type InputHTMLAttributes, forwardRef, useEffect, useRef, useState } from "react";
+import { Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 /* ── Card ─────────────────────────────────────────────────────────────── */
@@ -153,6 +154,182 @@ export function Select<T extends string>({
       >
         <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
+    </div>
+  );
+}
+
+/* ── Stepper (numeric spinner) ────────────────────────────────────────── */
+/** A −/+ numeric field for granular timeout-style settings. The value is typeable
+ *  (clamped to [min,max] on blur/Enter; decimals allowed when `decimals` > 0) and
+ *  steppable via the buttons (press-and-hold to repeat) or the Arrow keys. `zeroLabel`
+ *  shows a word in place of 0 (e.g. "Never" / "Instant"). */
+export function Stepper({
+  value,
+  onChange,
+  min = 0,
+  max = Number.MAX_SAFE_INTEGER,
+  step = 1,
+  decimals = 0,
+  unit,
+  zeroLabel,
+  ariaLabel,
+  disabled,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  decimals?: number;
+  unit?: string;
+  zeroLabel?: string;
+  ariaLabel?: string;
+  disabled?: boolean;
+}) {
+  const [text, setText] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+  // Refs so the press-and-hold repeat always steps from the LATEST value / handler — a
+  // setInterval closure would otherwise capture a stale value and only ever move one step.
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const delayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const repeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const pow = 10 ** decimals;
+  const round = (n: number) => Math.round(n * pow) / pow;
+  const clamp = (n: number) => Math.min(max, Math.max(min, n));
+
+  function stopRepeat() {
+    if (delayRef.current) clearTimeout(delayRef.current);
+    if (repeatRef.current) clearInterval(repeatRef.current);
+    delayRef.current = null;
+    repeatRef.current = null;
+  }
+  const stepBy = (d: number) => {
+    const next = round(clamp(valueRef.current + d));
+    if (next === valueRef.current) {
+      stopRepeat(); // hit a bound — stop repeating
+      return;
+    }
+    onChangeRef.current(next);
+  };
+  // Press-and-hold: one step immediately, then repeat after a short delay (held mouse/touch).
+  const press = (d: number) => {
+    stepBy(d);
+    stopRepeat();
+    delayRef.current = setTimeout(() => {
+      repeatRef.current = setInterval(() => stepBy(d), 70);
+    }, 380);
+  };
+
+  // Resync when the value changes from outside (a −/+ press, a reset) — but never mid-typing:
+  // we only commit on blur/Enter, so `value` stays put while you type and the field is stable.
+  useEffect(() => {
+    if (!focused) setText(String(value));
+  }, [value, focused]);
+  useEffect(() => stopRepeat, []); // stop any running repeat on unmount
+
+  const commit = () => {
+    const n = decimals > 0 ? parseFloat(text) : parseInt(text, 10);
+    const next = Number.isFinite(n) ? round(clamp(n)) : value;
+    onChange(next);
+    setText(String(next));
+  };
+  // Keep only digits — and, when decimals are allowed, a single leading dot.
+  const filter = (raw: string) => {
+    if (decimals <= 0) return raw.replace(/[^0-9]/g, "");
+    const v = raw.replace(/[^0-9.]/g, "");
+    const i = v.indexOf(".");
+    return i === -1 ? v : v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, "");
+  };
+
+  const showZero = !focused && zeroLabel != null && value === 0;
+  const btn =
+    "ring-signal grid h-full w-9 shrink-0 place-items-center text-dim transition-colors hover:bg-line/40 hover:text-text disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-dim";
+
+  return (
+    <div
+      className={cn(
+        "inline-flex h-10 items-stretch overflow-hidden rounded-xl border border-line bg-surface-2 transition-colors focus-within:border-faint",
+        disabled && "pointer-events-none opacity-40",
+      )}
+    >
+      <button
+        type="button"
+        aria-label={`Decrease${ariaLabel ? ` ${ariaLabel}` : ""}`}
+        disabled={disabled || value <= min}
+        onPointerDown={(e) => {
+          if (e.button === 0) press(-step);
+        }}
+        onPointerUp={stopRepeat}
+        onPointerLeave={stopRepeat}
+        onPointerCancel={stopRepeat}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            stepBy(-step);
+          }
+        }}
+        className={btn}
+      >
+        <Minus className="size-4" />
+      </button>
+      <div className="flex items-center justify-center gap-1 border-x border-line px-2">
+        <input
+          value={showZero ? zeroLabel : text}
+          inputMode={decimals > 0 ? "decimal" : "numeric"}
+          aria-label={ariaLabel}
+          disabled={disabled}
+          onFocus={(e) => {
+            setFocused(true);
+            setText(String(value));
+            const el = e.currentTarget;
+            requestAnimationFrame(() => el.select());
+          }}
+          onChange={(e) => setText(filter(e.target.value))}
+          onBlur={() => {
+            setFocused(false);
+            commit();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              stepBy(step);
+            } else if (e.key === "ArrowDown") {
+              e.preventDefault();
+              stepBy(-step);
+            }
+          }}
+          className={cn(
+            "w-16 bg-transparent text-center text-[13px] leading-none tabular-nums text-text outline-none",
+            showZero && "text-dim",
+          )}
+        />
+        {!showZero && unit && <span className="shrink-0 text-[12px] leading-none text-faint">{unit}</span>}
+      </div>
+      <button
+        type="button"
+        aria-label={`Increase${ariaLabel ? ` ${ariaLabel}` : ""}`}
+        disabled={disabled || value >= max}
+        onPointerDown={(e) => {
+          if (e.button === 0) press(step);
+        }}
+        onPointerUp={stopRepeat}
+        onPointerLeave={stopRepeat}
+        onPointerCancel={stopRepeat}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            stepBy(step);
+          }
+        }}
+        className={btn}
+      >
+        <Plus className="size-4" />
+      </button>
     </div>
   );
 }

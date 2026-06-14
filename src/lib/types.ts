@@ -77,6 +77,19 @@ export type InsertTiming = "off" | "stop" | "live";
 export type IndicatorPosition = "top" | "bottom" | "off";
 export type ThemeName = "dark" | "light";
 
+/** A navigable app screen, referenced by the sidebar, the overlay quick-launch,
+ *  and cross-window navigation (kept in sync with the router in App.tsx). */
+export type OverlayScreen = "home" | "transcribe" | "profiles" | "backends" | "settings";
+/** A dictation action the overlay quick-launch can trigger (beyond screen nav). */
+export type OverlayActionKind = "toggle-dictation" | "cycle-active-profile";
+/** One quick-launch chip button: a screen nav target or a dictation action. A flat
+ *  tagged shape so it round-trips through serde as opaque JSON (like DecodeOverrides). */
+export interface OverlayQuickAction {
+  id: string; // stable key for reorder/remove (crypto.randomUUID)
+  kind: "screen" | "action";
+  target: OverlayScreen | OverlayActionKind;
+}
+
 export interface GeneralSettings {
   openAtLogin: boolean;
   startMinimized: boolean;
@@ -94,6 +107,12 @@ export interface RecordingSettings {
   muteSystemAudio: boolean;
   realtimePreview: boolean;
   showProfileOnOverlay: boolean; // show the active Profile's tag on the chip
+  persistentDock: boolean; // keep the chip on screen (a standby dot) even when dictation is off
+  overlayPeek: boolean; // after sitting idle, slide the chip to the screen edge (hover to restore)
+  peekTimeoutSec: number; // idle seconds before the chip peeks to the edge
+  dimAfterSec: number; // idle seconds before the chip fades to a dim opacity (0 = never)
+  hoverRevealMs: number; // hover-intent delay before the chip reveals detail + quick-launch
+  quickLaunch: OverlayQuickAction[]; // chip quick-launch buttons (screens + dictation actions)
 }
 
 export interface AppSettings {

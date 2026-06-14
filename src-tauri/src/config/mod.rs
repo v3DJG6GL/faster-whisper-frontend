@@ -59,6 +59,18 @@ fn default_true() -> bool {
     true
 }
 
+fn default_peek_timeout() -> f64 {
+    30.0
+}
+
+fn default_dim_after() -> f64 {
+    10.0
+}
+
+fn default_hover_reveal() -> u32 {
+    1000
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum IndicatorPosition {
@@ -316,6 +328,26 @@ pub struct RecordingSettings {
     /// so older configs load (and default the feature on).
     #[serde(default = "default_true")]
     pub show_profile_on_overlay: bool,
+    /// Keep the chip on screen (a standby dot) even when dictation is off.
+    #[serde(default)]
+    pub persistent_dock: bool,
+    /// After sitting idle, slide the chip to the screen edge (hover to restore).
+    #[serde(default)]
+    pub overlay_peek: bool,
+    /// Idle seconds before the chip peeks to the edge (fractional allowed).
+    #[serde(default = "default_peek_timeout")]
+    pub peek_timeout_sec: f64,
+    /// Idle seconds before the chip fades to a dim opacity (0 = never; fractional allowed).
+    /// Applies to an armed-but-silent session AND a docked standby dot.
+    #[serde(default = "default_dim_after")]
+    pub dim_after_sec: f64,
+    /// Hover-intent delay (ms) before the chip reveals detail + quick-launch buttons.
+    #[serde(default = "default_hover_reveal")]
+    pub hover_reveal_ms: u32,
+    /// Chip quick-launch buttons. Frontend-owned opaque JSON (like decode_overrides);
+    /// Rust never interprets it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quick_launch: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -366,6 +398,12 @@ impl Default for Config {
                     mute_system_audio: false,
                     realtime_preview: true,
                     show_profile_on_overlay: true,
+                    persistent_dock: false,
+                    overlay_peek: false,
+                    peek_timeout_sec: 30.0,
+                    dim_after_sec: 10.0,
+                    hover_reveal_ms: 1000,
+                    quick_launch: Vec::new(),
                 },
             },
             backends: vec![Backend {

@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-import { Mic, Check, RefreshCw, Square } from "lucide-react";
+import { Mic, Check, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Segmented, Select, SettingRow, StatusDot, Toggle } from "@/components/ui";
+import { Button, Card, Segmented, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
+import { SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screens";
 import {
   listAudioDevices,
   startMicTest,
@@ -12,7 +13,7 @@ import {
   evdevSetup,
   type EvdevStatus,
 } from "@/lib/api";
-import type { AudioDevice } from "@/lib/types";
+import type { AudioDevice, OverlayQuickAction } from "@/lib/types";
 
 const TABS = ["General", "Audio", "Recording", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
@@ -88,6 +89,102 @@ function AudioTab() {
         </div>
       </SettingRow>
     </Card>
+  );
+}
+
+const QUICK_LAUNCH_MAX = 6;
+
+/** Editor for the overlay chip's quick-launch buttons: an ordered list of screens +
+ *  dictation actions the user can add/reorder/remove (capped to fit the chip). */
+function QuickLaunchEditor({
+  items,
+  onChange,
+}: {
+  items: OverlayQuickAction[];
+  onChange: (v: OverlayQuickAction[]) => void;
+}) {
+  const [pick, setPick] = useState("");
+  const used = new Set(items.map((e) => `${e.kind}:${e.target}`));
+  const addable = [
+    ...SCREENS.map((s) => ({ value: `screen:${s.id}`, label: `Screen · ${s.label}` })),
+    ...OVERLAY_ACTIONS.map((a) => ({ value: `action:${a.id}`, label: `Action · ${a.label}` })),
+  ].filter((o) => !used.has(o.value));
+
+  const move = (i: number, d: -1 | 1) => {
+    const j = i + d;
+    if (j < 0 || j >= items.length) return;
+    const next = items.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  const add = () => {
+    if (!pick) return;
+    const [kind, target] = pick.split(":");
+    onChange([
+      ...items,
+      {
+        id: crypto.randomUUID(),
+        kind: kind as "screen" | "action",
+        target: target as OverlayQuickAction["target"],
+      },
+    ]);
+    setPick("");
+  };
+
+  return (
+    <div className="flex w-full flex-col gap-2">
+      {items.length === 0 && (
+        <div className="text-[12.5px] text-faint">No buttons yet — add screens or dictation actions below.</div>
+      )}
+      {items.map((e, i) => {
+        const { label, icon: Icon } = quickLaunchMeta(e);
+        return (
+          <div
+            key={e.id}
+            className="flex items-center gap-2.5 rounded-xl border border-line bg-surface-2/40 px-3 py-2"
+          >
+            <Icon className="size-4 shrink-0 text-faint" />
+            <span className="text-[13px] text-text">{label}</span>
+            <span className="font-mono text-[10px] uppercase tracking-label text-faint">{e.kind}</span>
+            <div className="ml-auto flex items-center gap-1">
+              <Button variant="ghost" size="sm" title="Move up" onClick={() => move(i, -1)} disabled={i === 0}>
+                <ArrowUp className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                title="Move down"
+                onClick={() => move(i, 1)}
+                disabled={i === items.length - 1}
+              >
+                <ArrowDown className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                title="Remove"
+                onClick={() => onChange(items.filter((x) => x.id !== e.id))}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+      {items.length < QUICK_LAUNCH_MAX && addable.length > 0 && (
+        <div className="flex items-center gap-2">
+          <Select
+            className="flex-1"
+            value={pick}
+            onChange={setPick}
+            options={[{ value: "", label: "Add a button…" }, ...addable]}
+          />
+          <Button size="sm" onClick={add} disabled={!pick}>
+            <Plus className="size-3.5" /> Add
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -221,13 +318,91 @@ export default function Settings() {
             <SettingRow
               title="Show active profile on overlay"
               desc="Label the chip with the running profile's tag; hover it to reveal language and mode."
-              last
             >
               <Toggle
                 checked={s.recording.showProfileOnOverlay}
                 onChange={(v) => updateRecording({ showProfileOnOverlay: v })}
               />
             </SettingRow>
+            <SettingRow
+              title="Keep chip docked"
+              desc="Keep the chip on screen as a small standby dot when you're not dictating, instead of hiding it."
+            >
+              <Toggle
+                checked={s.recording.persistentDock}
+                disabled={s.recording.indicatorPosition === "off"}
+                onChange={(v) => updateRecording({ persistentDock: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              title="Auto-hide to edge"
+              desc="After sitting idle, slide the chip up to the screen edge so it stops covering things; hover the sliver to bring it back."
+            >
+              <Toggle
+                checked={s.recording.overlayPeek}
+                disabled={s.recording.indicatorPosition === "off"}
+                onChange={(v) => updateRecording({ overlayPeek: v })}
+              />
+            </SettingRow>
+            {s.recording.overlayPeek && s.recording.indicatorPosition !== "off" && (
+              <SettingRow title="Hide after" desc="How long the chip sits idle before it slides to the edge.">
+                <Stepper
+                  ariaLabel="hide after"
+                  value={s.recording.peekTimeoutSec}
+                  onChange={(v) => updateRecording({ peekTimeoutSec: v })}
+                  min={1}
+                  max={600}
+                  step={0.5}
+                  decimals={1}
+                  unit="s"
+                />
+              </SettingRow>
+            )}
+            {s.recording.indicatorPosition !== "off" && (
+              <SettingRow
+                title="Dim after"
+                desc="How long the chip sits idle before it fades to a dim, unobtrusive opacity (a docked standby dot dims too). Set to Never to keep it full opacity."
+              >
+                <Stepper
+                  ariaLabel="dim after"
+                  value={s.recording.dimAfterSec}
+                  onChange={(v) => updateRecording({ dimAfterSec: v })}
+                  min={0}
+                  max={600}
+                  step={0.5}
+                  decimals={1}
+                  unit="s"
+                  zeroLabel="Never"
+                />
+              </SettingRow>
+            )}
+            {s.recording.indicatorPosition !== "off" && (
+              <SettingRow
+                title="Hover reveal delay"
+                desc="How long you hover the chip before it expands to show language / mode and the quick-launch buttons."
+              >
+                <Stepper
+                  ariaLabel="hover reveal delay"
+                  value={s.recording.hoverRevealMs}
+                  onChange={(v) => updateRecording({ hoverRevealMs: v })}
+                  min={0}
+                  max={3000}
+                  step={50}
+                  unit="ms"
+                  zeroLabel="Instant"
+                />
+              </SettingRow>
+            )}
+            <div className="py-4">
+              <div className="text-[14px] font-medium text-text">Quick-launch buttons</div>
+              <div className="mb-3 mt-0.5 text-[12.5px] leading-snug text-dim">
+                Icon buttons shown on the idle chip when you hover it — jump to a screen or run a dictation action.
+              </div>
+              <QuickLaunchEditor
+                items={s.recording.quickLaunch ?? []}
+                onChange={(v) => updateRecording({ quickLaunch: v })}
+              />
+            </div>
           </Card>
         )}
 

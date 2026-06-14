@@ -51,6 +51,12 @@ const DEFAULT_SETTINGS: AppSettings = {
     muteSystemAudio: false,
     realtimePreview: true,
     showProfileOnOverlay: true,
+    persistentDock: false,
+    overlayPeek: false,
+    peekTimeoutSec: 30,
+    dimAfterSec: 10,
+    hoverRevealMs: 1000,
+    quickLaunch: [],
   },
 };
 
@@ -59,6 +65,20 @@ const DEFAULT_PROFILES: Profile[] = [
   { id: "hold", name: "Push-to-talk", activation: "hold", enabled: true, hotkey: ["ControlLeft", "ShiftLeft"], backendId: "default" },
   { id: "handsfree", name: "Latch", activation: "latch", enabled: true, hotkey: ["ControlLeft", "KeyH"], backendId: "default" },
 ];
+
+/** Deep-merge loaded settings over the defaults so a config written by an older version
+ *  — or with fields omitted by the backend's skip-empty serialization (e.g. an empty
+ *  `recording.quickLaunch`) — still gets every field. Without this, a missing field is
+ *  `undefined` at runtime and crashes code that assumes the typed shape. */
+function withSettingsDefaults(raw: unknown): AppSettings {
+  const s = (raw ?? {}) as Partial<AppSettings>;
+  return {
+    ...DEFAULT_SETTINGS,
+    ...s,
+    general: { ...DEFAULT_SETTINGS.general, ...(s.general ?? {}) },
+    recording: { ...DEFAULT_SETTINGS.recording, ...(s.recording ?? {}) },
+  };
+}
 
 /**
  * Normalize a loaded config to the v2 shape. The Rust `load()` already migrates,
@@ -72,7 +92,7 @@ function migrateConfig(raw: unknown): Config {
   // Already v2 (has `backends`).
   if (Array.isArray((c as { backends?: unknown }).backends)) {
     return {
-      settings: (c.settings as AppSettings) ?? DEFAULT_SETTINGS,
+      settings: withSettingsDefaults(c.settings),
       backends: (c.backends as Backend[]) ?? [DEFAULT_BACKEND],
       profiles: Array.isArray(c.profiles) ? (c.profiles as Profile[]) : [],
       version: c.version as number | undefined,
@@ -96,7 +116,7 @@ function migrateConfig(raw: unknown): Config {
         };
       })
     : DEFAULT_PROFILES;
-  return { settings: (c.settings as AppSettings) ?? DEFAULT_SETTINGS, backends, profiles, version: 2 };
+  return { settings: withSettingsDefaults(c.settings), backends, profiles, version: 2 };
 }
 
 interface AppState {
