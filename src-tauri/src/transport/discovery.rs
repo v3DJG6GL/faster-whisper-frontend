@@ -111,3 +111,25 @@ fn friendly_err(e: &reqwest::Error) -> String {
         e.to_string()
     }
 }
+
+#[derive(Deserialize)]
+struct OverrideProfilesResp {
+    #[serde(default)]
+    profiles: Vec<String>,
+}
+
+/// Names of the server-side override-profiles a client may reference (the full
+/// faster-whisper-backend's `GET /v1/override-profiles`). Best-effort: any error
+/// (endpoint absent, unauthorized, unreachable, feature gated off) → empty list,
+/// so the picker falls back to free-text entry.
+pub async fn list_override_profiles(server_url: &str, api_key: Option<&str>) -> Vec<String> {
+    let base = base_url(server_url);
+    match with_auth(client().get(format!("{base}/v1/override-profiles")), api_key).send().await {
+        Ok(resp) if resp.status().is_success() => resp
+            .json::<OverrideProfilesResp>()
+            .await
+            .map(|r| r.profiles)
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}

@@ -104,6 +104,18 @@ pub async fn transcribe_file(
     .map_err(|e| e.to_string())
 }
 
+/// List the server's selectable override-profile names (for the per-Backend /
+/// per-Profile picker). Best-effort — returns [] on any error.
+#[tauri::command]
+pub async fn list_override_profiles(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+) -> Vec<String> {
+    let key = resolve_key(api_key, backend_id);
+    transport::discovery::list_override_profiles(&server_url, key.as_deref()).await
+}
+
 #[tauri::command]
 pub fn list_audio_devices() -> Vec<AudioDevice> {
     audio::device::list_input_devices()

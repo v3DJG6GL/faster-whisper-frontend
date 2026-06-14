@@ -73,6 +73,7 @@ pub fn run() {
             commands::app_version,
             commands::test_connection,
             commands::transcribe_file,
+            commands::list_override_profiles,
             commands::list_audio_devices,
             commands::start_mic_test,
             commands::stop_mic_test,

@@ -3,6 +3,7 @@ import { Plus, Server, Pencil, Copy, Trash2, Plug, Loader2, Check, AlertTriangle
 import { useApp } from "@/lib/store";
 import { Button, Card, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
+import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
@@ -230,6 +231,18 @@ function Editor({
           </div>
         )}
       </div>
+
+      <Labeled label="Server override profile" className="mt-5">
+        <OverrideProfilePicker
+          serverUrl={b.serverUrl}
+          backendId={b.id}
+          apiKey={key || null}
+          serverKind={kind}
+          value={b.overrideProfile ?? ""}
+          inheritLabel="(none)"
+          onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
+        />
+      </Labeled>
 
       {result && <ConnResult info={result} />}
 

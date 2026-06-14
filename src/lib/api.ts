@@ -67,6 +67,21 @@ export async function transcribeFile(args: {
   });
 }
 
+/** Names of server-side override-profiles a client may reference (full backend
+ *  only). Best-effort: returns [] outside Tauri or on any error. */
+export async function listOverrideProfiles(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+}): Promise<string[]> {
+  if (!isTauri) return [];
+  return invoke<string[]>("list_override_profiles", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+  });
+}
+
 export async function listAudioDevices(): Promise<AudioDevice[]> {
   if (!isTauri) return [];
   return invoke<AudioDevice[]>("list_audio_devices");

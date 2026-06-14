@@ -5,6 +5,7 @@ import { useApp } from "@/lib/store";
 import { Button, Card, Kbd, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { DecodeFields } from "@/components/DecodeFields";
+import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { validateCodes, suspendShortcuts, reregisterShortcuts } from "@/lib/api";
 import { MODIFIER_CODES, codeToToken, canonicalizeCodes, codesToLabels } from "@/lib/keys";
@@ -149,7 +150,7 @@ function Editor({
   const [p, setP] = useState<Profile>(initial);
   const [capturing, setCapturing] = useState(false);
   const [showOverrides, setShowOverrides] = useState(
-    !!(initial.language || initial.prompt ||
+    !!(initial.language || initial.prompt || initial.overrideProfile ||
       (initial.decodeOverrides && Object.keys(initial.decodeOverrides).length)),
   );
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
@@ -182,6 +183,7 @@ function Editor({
       // Empty override = inherit from the Backend → store as undefined (omitted).
       language: p.language?.trim() ? p.language : undefined,
       prompt: p.prompt?.trim() ? p.prompt : undefined,
+      overrideProfile: p.overrideProfile?.trim() ? p.overrideProfile.trim() : undefined,
     });
 
   return (
@@ -263,7 +265,7 @@ function Editor({
       >
         <span className={cn("transition-transform", showOverrides && "rotate-90")}>›</span>
         Overrides{" "}
-        {p.language || p.prompt || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) ? (
+        {p.language || p.prompt || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) ? (
           <span className="text-accent">· set</span>
         ) : (
           <span className="text-faint">· inherit backend</span>
@@ -301,6 +303,21 @@ function Editor({
               serverKind={serverKind}
             />
           </div>
+          {backend && (
+            <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
+              <div className="mb-3 text-[12px] font-medium text-dim">
+                Server override profile <span className="text-faint">· empty inherits the backend</span>
+              </div>
+              <OverrideProfilePicker
+                serverUrl={backend.serverUrl}
+                backendId={backend.id}
+                serverKind={serverKind}
+                value={p.overrideProfile ?? ""}
+                inheritLabel="(inherit backend)"
+                onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
+              />
+            </div>
+          )}
         </>
       )}
 
