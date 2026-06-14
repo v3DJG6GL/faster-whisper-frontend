@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence, MotionConfig } from "motion/react";
+import { Check, X } from "lucide-react";
 import { Waveform } from "@/components/Waveform";
-import { setChipHitRegion } from "@/lib/api";
+import { setChipHitRegion, emitOverlayAction, showMainAtScreen } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import type { DictationStatus, ThemeName } from "@/lib/types";
+import { quickLaunchMeta } from "@/lib/screens";
+import type { DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
 
 interface ChipState {
   status: DictationStatus;
@@ -16,10 +18,14 @@ interface ChipState {
   profileTag?: string;
   language?: string;
   mode?: "stream" | "batch";
+  // Overlay-chip behaviour, forwarded from settings via dictation://update.
+  persistentDock: boolean;
+  overlayPeek: boolean;
+  peekTimeoutSec: number;
+  dimAfterSec: number;
+  hoverRevealMs: number;
+  quickLaunch: OverlayQuickAction[];
 }
-
-// Hold a hover this long before the chip reveals the language/mode detail line.
-const HOVER_REVEAL_MS = 1000;
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -47,6 +53,22 @@ const COLLAPSE_LINGER_MS = 2000;
 // perceive any residual edge re-raster.
 const MORPH = { type: "tween", duration: 0.2, ease: [0.22, 1, 0.36, 1] } as const;
 
+// Deep-idle edge-peek: after the chip sits undisturbed for the user's peekTimeoutSec, it
+// slides (in CSS) so only the status dot's outer half hugs the screen edge; any activity
+// restores it. After a hover, hold off re-peeking this long so a hover-restore (which slides
+// the chip away from the edge, out from under the cursor) can't immediately re-peek.
+const PEEK_HOVER_GRACE_MS = 6000;
+
+// Edge-peek geometry — pure CSS. The overlay window is anchored FLUSH against the screen edge
+// (overlay.rs), so the webview's own edge IS the screen edge. At rest the chip is inset
+// EDGE_MARGIN from it; tucked, it slides by PEEK_TUCK so the status dot's centre lands on the
+// edge — only the dot's outer half stays on-screen, the rest clipped by the viewport (the
+// reliable "half-dot at the border" a Wayland window-move can't give us). PEEK_TUCK = the
+// container pad (pt-2/pb-2 = 8px) + half the 42px pill = the dot centre's offset from the
+// chip's leading edge.
+const EDGE_MARGIN = 28;
+const PEEK_TUCK = 29;
+
 /**
  * The dictation chip — a frameless, transparent, always-on-top window painted by
  * Rust at the top-center of the screen, fed `dictation://update` (status, level,
@@ -63,6 +85,12 @@ export default function Overlay() {
     dictationError: "",
     position: "top",
     theme: "dark",
+    persistentDock: false,
+    overlayPeek: false,
+    peekTimeoutSec: 30,
+    dimAfterSec: 10,
+    hoverRevealMs: 1000,
+    quickLaunch: [],
   });
 
   // Live updates from the Rust core when running under Tauri.
@@ -80,6 +108,12 @@ export default function Overlay() {
             dictationError: e.payload.dictationError ?? "",
             position: e.payload.position ?? "top",
             theme,
+            persistentDock: e.payload.persistentDock ?? false,
+            overlayPeek: e.payload.overlayPeek ?? false,
+            peekTimeoutSec: e.payload.peekTimeoutSec ?? 30,
+            dimAfterSec: e.payload.dimAfterSec ?? 10,
+            hoverRevealMs: e.payload.hoverRevealMs ?? 1000,
+            quickLaunch: e.payload.quickLaunch ?? [],
           });
         }),
       )
@@ -100,7 +134,27 @@ export default function Overlay() {
       t += 0.05;
       const level = Math.max(0, Math.min(1, 0.45 + 0.4 * Math.sin(t * 3) + (Math.random() - 0.5) * 0.25));
       const chars = Math.min(sample.length, Math.floor((t * 6) % (sample.length + 30)));
-      setState({ status: "listening", level, partial: sample.slice(0, chars), dictationError: "", position: "top", theme: "dark", profileTag: "SWISS-DE", language: "de-CH", mode: "stream" });
+      setState({
+        status: "listening",
+        level,
+        partial: sample.slice(0, chars),
+        dictationError: "",
+        position: "top",
+        theme: "dark",
+        profileTag: "SWISS-DE",
+        language: "de-CH",
+        mode: "stream",
+        persistentDock: true,
+        overlayPeek: false,
+        peekTimeoutSec: 30,
+        dimAfterSec: 10,
+        hoverRevealMs: 1000,
+        quickLaunch: [
+          { id: "d1", kind: "screen", target: "profiles" },
+          { id: "d2", kind: "screen", target: "backends" },
+          { id: "d3", kind: "action", target: "toggle-dictation" },
+        ],
+      });
       raf.current = requestAnimationFrame(tick);
     };
     raf.current = requestAnimationFrame(tick);
@@ -158,10 +212,17 @@ export default function Overlay() {
   const [hoverReveal, setHoverReveal] = useState(false);
   const [hovering, setHovering] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // After any hover, hold off the deep-idle peek for a grace period (anti-oscillation).
+  const peekGraceUntil = useRef(0);
+  // Deep-idle edge-peek: true when the chip has tucked to the screen edge (driven below).
+  const [peeked, setPeeked] = useState(false);
   const onPointerEnter = () => {
     setHovering(true);
+    peekGraceUntil.current = performance.now() + PEEK_HOVER_GRACE_MS;
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    hoverTimer.current = setTimeout(() => setHoverReveal(true), HOVER_REVEAL_MS);
+    // Hover-intent dwell: wait the configured delay before revealing — so a fly-over
+    // doesn't expand the chip, and the reveal (detail + quick-launch) happens in ONE step.
+    hoverTimer.current = setTimeout(() => setHoverReveal(true), state.hoverRevealMs);
   };
   const onPointerLeave = () => {
     setHovering(false);
@@ -188,23 +249,28 @@ export default function Overlay() {
   // the width animations settling (`onAnimationComplete`/`onExitComplete` below) plus
   // a few retries when a session starts or the chip moves (the overlay window
   // realizes its GdkWindow asynchronously on show).
+  // The chip is interactive (hoverable / clickable) whenever it's on screen: during a
+  // session, or — with the dock on — in standby too. Outside Tauri the calls no-op.
+  const interactive = state.status !== "idle" || (state.persistentDock && state.position !== "off");
   useEffect(() => {
-    if (state.status === "idle") return;
+    if (!interactive) return;
     const ids = [0, 160, 420, 850].map((ms) => setTimeout(reportBounds, ms));
     return () => ids.forEach(clearTimeout);
-  }, [reportBounds, state.status, state.position]);
+  }, [reportBounds, interactive, state.position, peeked]);
 
-  // After sitting armed-but-silent for a while, fade the chip down so it's
-  // unobtrusive; any speech / state change snaps it back to full opacity.
+  // After sitting calm for `dimAfterSec`, fade the chip down so it's unobtrusive; any
+  // speech / hover / state change snaps it back to full opacity. Applies to BOTH calm
+  // resting states — an armed-but-silent session AND a docked standby dot — so the dock
+  // dims when dictation is off too. 0 = never dim. (The amber/colour cue persists at 0.4,
+  // so a live mic is still signalled.)
   const [dimmed, setDimmed] = useState(false);
   useEffect(() => {
     setDimmed(false);
-    // Don't fade while the cursor is on the chip — hovering should keep it fully
-    // legible (and the reveal detail un-dimmed).
-    if (expanded || hovering || state.status !== "listening") return;
-    const t = setTimeout(() => setDimmed(true), 10000);
+    const restingCalm = (state.status === "listening" && !speaking) || state.status === "idle";
+    if (expanded || hovering || !restingCalm || state.dimAfterSec <= 0) return;
+    const t = setTimeout(() => setDimmed(true), state.dimAfterSec * 1000);
     return () => clearTimeout(t);
-  }, [expanded, hovering, state.status]);
+  }, [expanded, hovering, state.status, speaking, state.dimAfterSec]);
 
   // Keep the newest words in view: pin the preview to its right edge.
   const textRef = useRef<HTMLDivElement>(null);
@@ -221,26 +287,134 @@ export default function Overlay() {
   // shows a self-driven processing motion (sweeping bars + a quicker pulsing dot)
   // rather than the frozen-looking bars it used to.
   const processing = state.status === "transcribing" || state.status === "injecting";
+  const standby = state.status === "idle"; // only ever visible when persistentDock is on
+
+  // One-shot "✓ done" flash when a session completes (finishing → idle) — but NOT when
+  // it was cancelled (the ✕ / a hotkey-cancel sets `cancelling`). A single play that
+  // stops reads as "finished", distinct from the looping processing motion.
+  const prevStatus = useRef(state.status);
+  const cancelling = useRef(false);
+  const [justDone, setJustDone] = useState(false);
+  useEffect(() => {
+    const prev = prevStatus.current;
+    prevStatus.current = state.status;
+    if ((prev === "transcribing" || prev === "injecting") && state.status === "idle") {
+      if (cancelling.current) {
+        cancelling.current = false;
+        return;
+      }
+      setJustDone(true);
+      const t = setTimeout(() => setJustDone(false), 750);
+      return () => clearTimeout(t);
+    }
+  }, [state.status]);
 
   const label =
     state.status === "transcribing"
-      ? "transcribing…"
+      ? "finalizing…"
       : state.status === "injecting"
         ? "inserting…"
         : "listening";
 
   // Status dot color (NEVER red while listening) via theme tokens + a soft glow.
+  // Finishing drains amber → neutral; OFF/standby is a hollow ring (distinct color).
   const dotColorClass =
-    state.status === "error" ? "bg-rec" : speaking ? "bg-live" : "bg-accent";
+    state.status === "error"
+      ? "bg-rec"
+      : speaking
+        ? "bg-live"
+        : processing
+          ? "bg-dim"
+          : peeked
+            ? // Tucked at the edge: a SOLID dot so its visible half reads clearly (a hollow
+              // standby ring would all but vanish at half-size). Neutral idle, amber armed.
+              standby
+              ? "bg-dim"
+              : "bg-accent"
+            : standby
+              ? "border border-faint bg-transparent"
+              : "bg-accent";
   const dotGlow =
     state.status === "error"
       ? "0 0 10px rgba(255,92,70,0.5)"
       : speaking
         ? "0 0 12px rgba(54,208,122,0.5)"
-        : !expanded
-          ? "0 0 12px rgba(255,158,44,0.55)" // calm breathing ember
-          : "0 0 8px rgba(255,158,44,0.4)";
+        : processing
+          ? "0 0 8px rgba(168,159,147,0.35)" // finishing: faint neutral
+          : peeked
+            ? standby
+              ? "0 0 10px rgba(168,159,147,0.5)" // tucked idle: soft neutral halo
+              : "0 0 12px rgba(255,158,44,0.6)" // tucked armed: amber halo
+            : standby
+              ? "none"
+              : !expanded
+                ? "0 0 12px rgba(255,158,44,0.55)" // calm breathing ember
+                : "0 0 8px rgba(255,158,44,0.4)";
   const barTone = speaking ? "live" : "accent";
+
+  // Deep-idle edge-peek driver: after the chip sits undisturbed for peekTimeoutSec, tuck it to
+  // the edge; ANY activity — a status change (e.g. dictation starting), speech, finishing, a
+  // hover, or disabling the feature — pops it back and re-arms the timer. The window never
+  // moves (it's anchored flush at the edge, overlay.rs), so the tuck is a pure CSS transform:
+  // it animates reliably and can't desync with an OS window-move. The hit-region effect above
+  // re-reports the chip's bounds whenever `peeked` flips, so the tucked sliver stays hoverable.
+  const lastPeekStatus = useRef(state.status);
+  useEffect(() => {
+    const statusChanged = lastPeekStatus.current !== state.status;
+    lastPeekStatus.current = state.status;
+    // Only an undisturbed armed-but-silent session, or a persistent standby dock, ever peeks.
+    const blocked =
+      !state.overlayPeek ||
+      state.position === "off" ||
+      hovering ||
+      speaking ||
+      processing ||
+      expanded ||
+      state.status === "error";
+    const eligible = !blocked && (standby || state.status === "listening");
+    if (!eligible) {
+      setPeeked(false);
+      return;
+    }
+    // Fresh activity (a status change such as a session starting) pops it back, then re-arms.
+    if (statusChanged) setPeeked(false);
+    // Honour the user's inactivity timeout uniformly; a recent hover extends it (grace).
+    const wait = Math.max(state.peekTimeoutSec * 1000, peekGraceUntil.current - performance.now());
+    const t = setTimeout(() => setPeeked(true), wait);
+    return () => clearTimeout(t);
+  }, [
+    state.overlayPeek,
+    state.position,
+    state.status,
+    state.peekTimeoutSec,
+    hovering,
+    speaking,
+    processing,
+    expanded,
+    standby,
+  ]);
+
+  // Quick-launch: icon buttons shown when hovering the idle/standby chip (never while
+  // peeked, speaking, finishing, or in error). Screen entries focus + navigate the main
+  // window; action entries run a dictation action (routed through the main window).
+  const hasQuickLaunch = state.quickLaunch.length > 0;
+  const restingIdle = (state.status === "listening" && !speaking) || standby;
+  // Gate quick-launch on the SAME delayed hover-intent as the language/mode detail (not raw
+  // `hovering`), so the chip reveals everything in one step after the dwell — never expanding
+  // abruptly under the cursor right as you reach for a button.
+  const showQuickLaunch = restingIdle && hoverReveal && !peeked && hasQuickLaunch;
+  const runQuickLaunch = (e: OverlayQuickAction) => {
+    if (e.kind === "screen") void showMainAtScreen(e.target);
+    else void emitOverlayAction(e.target);
+  };
+
+  // Edge-peek slide offset (CSS translateY). The window is anchored flush at the screen edge
+  // (overlay.rs); at rest the chip is inset EDGE_MARGIN from it, and tucking slides it so the
+  // status dot's centre lands on the edge — only the dot's outer half stays on-screen (the
+  // rest is clipped by the viewport edge). Mirrored for the bottom edge.
+  const restY = state.position === "bottom" ? -EDGE_MARGIN : EDGE_MARGIN;
+  const tuckY = state.position === "bottom" ? PEEK_TUCK : -PEEK_TUCK;
+  const slideY = peeked ? tuckY : restY;
 
   return (
     <MotionConfig reducedMotion="user">
@@ -255,8 +429,11 @@ export default function Overlay() {
           onPointerEnter={onPointerEnter}
           onPointerLeave={onPointerLeave}
           style={{ borderRadius: 9999 }}
-          animate={{ opacity: dimmed ? 0.4 : 1 }}
-          transition={{ opacity: { duration: 0.7 } }}
+          // Vertical slide for the edge-peek (translateY — NOT scale, so the mono text never
+          // re-rasterizes). reducedMotion="user" turns this into an instant set. Full opacity
+          // when tucked so the lone half-dot stays crisp at the border.
+          animate={{ opacity: peeked ? 1 : dimmed ? 0.4 : 1, y: slideY }}
+          transition={{ opacity: { duration: 0.7 }, y: { duration: 0.5, ease: [0.4, 0, 0.2, 1] } }}
           // Width-driven morph — NOT Motion `layout`/FLIP. Children animate their WIDTH
           // (0 ↔ auto) and the content-sized pill reflows around them. Reflow is crisp:
           // no transform-scale (which re-rasterized/shimmered the small mono text), no
@@ -264,22 +441,41 @@ export default function Overlay() {
           // no GPU layer (whose churn flickered after a few hovers). The pill stays
           // centred via the parent's justify-center, so the dot/tag translate (never
           // scale) as it grows.
-          className="inline-flex h-[42px] items-center overflow-hidden border border-line bg-panel/95 px-3.5 shadow-[0_10px_40px_-8px_rgba(0,0,0,0.55)]"
+          className={cn(
+            "inline-flex h-[42px] items-center overflow-hidden border px-3.5 transition-colors duration-300",
+            // Tucked: drop the pill chrome so ONLY the bare dot peeks below the border.
+            peeked
+              ? "border-transparent bg-transparent shadow-none"
+              : "border-line bg-panel/95 shadow-[0_10px_40px_-8px_rgba(0,0,0,0.55)]",
+          )}
         >
-          {/* The persistent status dot — the seed the pill grows out of. */}
-          <span
-            style={{ boxShadow: dotGlow }}
-            className={cn(
-              "size-2.5 shrink-0 rounded-full transition-colors duration-300",
-              dotColorClass,
-              !expanded && "animate-chip-breathe",
-              processing && "animate-chip-think",
-            )}
-          />
+          {/* The persistent status dot — the seed the pill grows out of. A one-shot ✓
+              replaces it the instant a session completes (a single play, not a loop). */}
+          {justDone ? (
+            <motion.span
+              key="done"
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={MORPH}
+              className="flex shrink-0 text-live"
+            >
+              <Check className="size-4" strokeWidth={3} />
+            </motion.span>
+          ) : (
+            <span
+              style={{ boxShadow: dotGlow }}
+              className={cn(
+                "size-2.5 shrink-0 rounded-full transition-colors duration-300",
+                dotColorClass,
+                !expanded && !standby && !showQuickLaunch && !peeked && "animate-chip-breathe",
+                processing && "animate-chip-think",
+              )}
+            />
+          )}
 
           {/* Persistent active-Profile tag; hover (≥1s) reveals "· language · mode",
               which animates its WIDTH open (clipped) so the text never scales. */}
-          {state.profileTag && (
+          {state.profileTag && !peeked && (
             <div className="ml-2 flex shrink-0 items-center font-mono text-[11px] leading-none tracking-[0.12em]">
               <span className="max-w-[140px] truncate uppercase text-accent/85">{state.profileTag}</span>
               <AnimatePresence>
@@ -304,7 +500,7 @@ export default function Overlay() {
               clipping a natural-width (w-max) inner row so the content is revealed —
               never squished or scaled. Clean grow AND shrink, no empty-pill frame. */}
           <AnimatePresence onExitComplete={reportBounds}>
-            {expanded && (
+            {(expanded || showQuickLaunch) && !peeked && (
               <motion.div
                 key="body"
                 initial={{ width: 0, opacity: 0 }}
@@ -316,7 +512,25 @@ export default function Overlay() {
               >
                 <div className="flex w-max items-center gap-3 pl-3">
                   {state.profileTag && <span className="h-4 w-px shrink-0 bg-line" aria-hidden />}
-                  {state.status === "error" ? (
+                  {showQuickLaunch ? (
+                    <div className="flex items-center gap-2">
+                      {state.quickLaunch.map((e) => {
+                        const { label, icon: Icon } = quickLaunchMeta(e);
+                        return (
+                          <button
+                            key={e.id}
+                            type="button"
+                            title={label}
+                            aria-label={label}
+                            onClick={() => runQuickLaunch(e)}
+                            className="ring-signal grid size-8 shrink-0 place-items-center rounded-lg text-faint transition-colors hover:bg-surface-2 hover:text-text"
+                          >
+                            <Icon className="size-4" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : state.status === "error" ? (
                     <div className="max-w-[520px] truncate font-mono text-[12.5px] text-rec">
                       <span aria-hidden className="mr-1.5">
                         ⚠
@@ -344,7 +558,11 @@ export default function Overlay() {
                             <div
                               ref={textRef}
                               dir="auto"
-                              className="overflow-hidden whitespace-nowrap font-mono text-[12.5px] text-text"
+                              className={cn(
+                                "overflow-hidden whitespace-nowrap font-mono text-[12.5px]",
+                                // While finishing, the text is captured (not live) — dim it.
+                                processing ? "text-dim" : "text-text",
+                              )}
                             >
                               {state.partial}
                             </div>
@@ -361,6 +579,23 @@ export default function Overlay() {
                           </div>
                         )}
                       </div>
+                      {/* Cancel the in-flight finalize/insert. The chip can't call
+                          cancelLive() directly (separate window), so route it through the
+                          main window via an action event. */}
+                      {processing && (
+                        <button
+                          type="button"
+                          title="Cancel"
+                          aria-label="Cancel dictation"
+                          onClick={() => {
+                            cancelling.current = true;
+                            void emitOverlayAction("cancel-dictation");
+                          }}
+                          className="ring-signal grid size-8 shrink-0 place-items-center rounded-full text-faint transition-colors hover:text-text"
+                        >
+                          <X className="size-4" />
+                        </button>
+                      )}
                     </>
                   )}
                 </div>

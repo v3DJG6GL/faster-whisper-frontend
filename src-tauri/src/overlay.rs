@@ -24,15 +24,19 @@ use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow};
 /// Logical size declared for the `overlay` window in tauri.conf.json.
 const CHIP_W: f64 = 680.0;
 const CHIP_H: f64 = 132.0;
-/// Gap from the screen edge, in logical pixels.
-const MARGIN: f64 = 28.0;
 /// A unique, stable window title the KDE rule matches on. Invisible to the user:
 /// the chip has no decorations and is hidden from the taskbar/switcher.
 #[cfg(target_os = "linux")]
 const CHIP_TITLE: &str = "fwf-dictation-chip";
 
-/// Position the chip horizontally centred at the top (or bottom) of the monitor
-/// it currently lives on. A no-op on native Wayland (the compositor decides).
+/// Position the chip horizontally centred and FLUSH against the chosen screen edge ("top" |
+/// "bottom") of the monitor it currently lives on. The window's own edge then IS the screen
+/// edge, so the webview can CSS-slide the chip between its resting inset and the edge-peek
+/// tuck — where only the status dot's outer half stays on-screen (the rest is clipped by the
+/// viewport). The window itself never moves for the peek: a Wayland window-move can't be
+/// tweened, and KWin silently DROPS an off-output/negative forced position (so the old
+/// "raise the window off the border" trick never actually applied). A no-op on native
+/// Wayland (the compositor decides).
 fn position(win: &WebviewWindow, edge: &str) {
     let monitor = match win.current_monitor() {
         Ok(Some(m)) => Some(m),
@@ -45,18 +49,19 @@ fn position(win: &WebviewWindow, edge: &str) {
     let m_size = monitor.size();
     let chip_w = (CHIP_W * scale) as i32;
     let chip_h = (CHIP_H * scale) as i32;
-    let margin = (MARGIN * scale) as i32;
 
     let x = m_pos.x + (m_size.width as i32 - chip_w) / 2;
     let y = if edge == "bottom" {
-        m_pos.y + m_size.height as i32 - chip_h - margin * 2
+        m_pos.y + m_size.height as i32 - chip_h
     } else {
-        m_pos.y + margin
+        m_pos.y
     };
     let _ = win.set_position(PhysicalPosition::new(x, y));
 }
 
-/// Show the chip at the requested edge ("top" | "bottom"), without focusing it.
+/// Show the chip at the requested edge ("top" | "bottom"), without focusing it. The window is
+/// anchored flush against that edge; the resting inset and the edge-peek tuck are pure CSS
+/// inside the webview (see Overlay.tsx).
 #[tauri::command]
 pub fn show_overlay(app: AppHandle, position: String) {
     let Some(win) = app.get_webview_window("overlay") else {
@@ -79,7 +84,7 @@ pub fn show_overlay(app: AppHandle, position: String) {
         // queued command (text injection included). Do it on a detached thread; the
         // window is already shown, the rule only nudges it into position afterwards.
         std::thread::spawn(move || {
-            kwin::place_chip(kwin::chip_position(&position, CHIP_W, CHIP_H, MARGIN));
+            kwin::place_chip(kwin::chip_position(&position, CHIP_W, CHIP_H));
         });
         return;
     }
@@ -87,6 +92,13 @@ pub fn show_overlay(app: AppHandle, position: String) {
     let _ = win.show();
     ignore_cursor(&win);
 }
+
+// The edge-peek never moves the window. The window is anchored FLUSH against the screen edge
+// (an on-output position KWin honours) and the chip slides between its resting inset and the
+// dot-only tuck purely in CSS, clipped by the viewport edge (see Overlay.tsx). Two earlier
+// approaches failed: moving the window for the peek teleported (Wayland can't tween a move),
+// and raising the window off the border to fake the overflow was silently DROPPED by KWin
+// (it discards a forced position whose top-left is outside every output).
 
 /// Make the (display-only) chip click-through so the big mostly-transparent window
 /// never swallows clicks meant for the app beneath. MUST be called only AFTER
@@ -250,17 +262,20 @@ mod kwin {
         None
     }
 
-    /// Top-left logical position to pin the chip at, on the active output.
-    pub fn chip_position(edge: &str, w: f64, h: f64, margin: f64) -> Option<(i32, i32)> {
+    /// Top-left logical position to pin the chip at, on the active output — flush against the
+    /// chosen edge. The top-left stays ON the output, which KWin honours: it silently DROPS a
+    /// forced position whose top-left falls outside every output (so a negative/off-border
+    /// anchor never applies). The resting inset and the edge-peek tuck are pure CSS in the
+    /// webview (see Overlay.tsx), so the window itself never moves for the peek.
+    pub fn chip_position(edge: &str, w: f64, h: f64) -> Option<(i32, i32)> {
         let (ox, oy, ow, oh) = active_output_geometry()?;
         let cw = w as i32;
         let ch = h as i32;
-        let m = margin as i32;
         let x = ox + ((ow - cw) / 2).max(0);
         let y = if edge == "bottom" {
-            oy + (oh - ch - m * 2).max(0)
+            oy + (oh - ch).max(0)
         } else {
-            oy + m
+            oy
         };
         Some((x, y))
     }

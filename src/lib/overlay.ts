@@ -10,6 +10,7 @@
 import { useApp } from "./store";
 import { isTauri, showOverlay, hideOverlay, setTrayState, playCue } from "./api";
 import { chipTagFor } from "./profileTag";
+import { homeTargetProfile } from "./dictation";
 import type { DictationStatus } from "./types";
 
 const ACTIVE: DictationStatus[] = ["listening", "transcribing", "injecting"];
@@ -17,6 +18,9 @@ const ACTIVE: DictationStatus[] = ["listening", "transcribing", "injecting"];
 let started = false;
 let visible = false;
 let hideTimer: ReturnType<typeof setTimeout> | undefined;
+// The edge the window was last placed at, so we only re-place (move the OS window) when it
+// actually changes — the edge-peek itself is a pure CSS transform inside the chip.
+let shownPos: "top" | "bottom" | undefined;
 
 export async function initOverlayController(): Promise<void> {
   if (!isTauri || started) return;
@@ -39,17 +43,21 @@ export async function initOverlayController(): Promise<void> {
       // stream-vs-batch mode). Resolved here because the overlay webview can't read
       // this store. Omitted entirely when the feature is off or no Profile is active.
       let chip: { profileTag?: string; language?: string; mode?: "stream" | "batch" } = {};
-      if (rec.showProfileOnOverlay && state.activeProfile) {
-        const profile = state.profiles.find((p) => p.id === state.activeProfile);
-        if (profile) {
-          const backend = state.backends.find((b) => b.id === profile.backendId) ?? state.backends[0];
-          chip = {
-            profileTag: chipTagFor(profile),
-            // Effective language: a set per-Profile override wins; else the Backend's.
-            language: profile.language?.trim() ? profile.language : backend?.language,
-            mode: backend?.endpoint,
-          };
-        }
+      // The Profile to label the chip with: the one dictating, or — for a persistent
+      // idle dock — the home target it would launch (so standby previews that Profile).
+      const chipProfile = state.activeProfile
+        ? state.profiles.find((p) => p.id === state.activeProfile)
+        : rec.persistentDock
+          ? homeTargetProfile(state.profiles, state.settings.homeProfileId)
+          : undefined;
+      if (rec.showProfileOnOverlay && chipProfile) {
+        const backend = state.backends.find((b) => b.id === chipProfile.backendId) ?? state.backends[0];
+        chip = {
+          profileTag: chipTagFor(chipProfile),
+          // Effective language: a set per-Profile override wins; else the Backend's.
+          language: chipProfile.language?.trim() ? chipProfile.language : backend?.language,
+          mode: backend?.endpoint,
+        };
       }
       void emit("dictation://update", {
         status: state.status,
@@ -61,6 +69,13 @@ export async function initOverlayController(): Promise<void> {
         position: rec.indicatorPosition,
         // So the chip can follow the app's dark/light theme.
         theme: state.settings.theme,
+        // Overlay-chip behaviour (persistent dock / edge-peek / quick-launch).
+        persistentDock: rec.persistentDock ?? false,
+        overlayPeek: rec.overlayPeek ?? false,
+        peekTimeoutSec: rec.peekTimeoutSec ?? 30,
+        dimAfterSec: rec.dimAfterSec ?? 10,
+        hoverRevealMs: rec.hoverRevealMs ?? 1000,
+        quickLaunch: rec.quickLaunch ?? [],
         ...chip,
       });
     }
@@ -77,24 +92,33 @@ export async function initOverlayController(): Promise<void> {
     }
 
     const pos = state.settings.recording.indicatorPosition;
+    const persistent = state.settings.recording.persistentDock && pos !== "off";
     const active = ACTIVE.includes(state.status);
+    const prevActive = ACTIVE.includes(prev.status);
 
-    if (active && pos !== "off") {
-      if (!visible) {
-        visible = true;
-        clearTimeout(hideTimer);
+    // Shown while a session is active, OR always (as a standby dot) when the dock is on.
+    if (pos !== "off" && (active || persistent)) {
+      clearTimeout(hideTimer);
+      // (Re)place the window on first show, on session start, or when the edge changes. The
+      // window is anchored flush against that edge and never moves again for the peek — the
+      // edge-peek tuck is a pure CSS transform in the chip (Overlay.tsx), so it animates
+      // reliably and can't desync with an OS window-move (which Wayland applies instantly).
+      if (!visible || (active && !prevActive) || pos !== shownPos) {
         void showOverlay(pos);
+        shownPos = pos;
       }
+      visible = true;
       return;
     }
 
-    // Inactive, or the overlay is disabled — hide it (with a linger so the final
-    // transcript / error stays readable; immediately if it was turned off).
+    // Inactive (and no persistent dock), or the overlay is disabled — hide it (with a
+    // linger so the final transcript / error stays readable; immediately if turned off).
     if (visible) {
       clearTimeout(hideTimer);
       const delay = pos === "off" ? 0 : state.status === "error" ? 2400 : 1800;
       hideTimer = setTimeout(() => {
         visible = false;
+        shownPos = undefined; // force a re-place (and re-anchor) on the next show
         void hideOverlay();
       }, delay);
     }
