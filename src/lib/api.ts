@@ -271,6 +271,14 @@ export async function onTrigger(cb: (e: TriggerEvent) => void): Promise<() => vo
   return listen<TriggerEvent>("trigger", (e) => cb(e.payload));
 }
 
+/** Subscribe to system resume-from-suspend (emitted by the Rust suspend watcher).
+ *  Returns an unlisten fn. */
+export async function onSystemResumed(cb: () => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen("system://resumed", () => cb());
+}
+
 /** Native "open file" dialog → absolute path (or null if cancelled / not in Tauri). */
 export async function pickAudioFile(): Promise<string | null> {
   if (!isTauri) return null;

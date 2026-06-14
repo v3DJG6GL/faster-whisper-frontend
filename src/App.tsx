@@ -4,8 +4,9 @@ import { Sidebar } from "@/components/Sidebar";
 import { useApp } from "@/lib/store";
 import { initConfig } from "@/lib/persistence";
 import { initOverlayController } from "@/lib/overlay";
-import { onTrigger } from "@/lib/api";
+import { onTrigger, onSystemResumed } from "@/lib/api";
 import { dictate } from "@/lib/dictation";
+import { cancelLive } from "@/lib/streaming";
 import Home from "@/screens/Home";
 import Transcribe from "@/screens/Transcribe";
 import Profiles from "@/screens/Profiles";
@@ -29,6 +30,24 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     void onTrigger((e) => dictate(e.profileId, e.action)).then((u) => {
+      if (cancelled) u();
+      else unlisten = u;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // After the machine resumes from suspend, the mic/WebSocket of any in-flight
+  // dictation is dead — reset it so the chip doesn't hang at "finalizing…". (Rust has
+  // already rebuilt the hotkey backend by the time this fires.)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void onSystemResumed(() => {
+      if (useApp.getState().status !== "idle") void cancelLive();
+    }).then((u) => {
       if (cancelled) u();
       else unlisten = u;
     });

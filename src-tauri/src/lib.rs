@@ -52,6 +52,9 @@ pub fn run() {
                 .map(|dir| config::load(&dir))
                 .unwrap_or_default();
             commands::apply_bindings(app.handle());
+            // Recover hotkeys + any in-flight dictation after the machine wakes from
+            // suspend (a dropped key-release / dead WebSocket would otherwise wedge us).
+            commands::spawn_suspend_watch(app.handle().clone());
             // Keep the OS autostart entry in sync with the saved preference.
             commands::sync_autostart(app.handle(), cfg.settings.general.open_at_login);
             // Start hidden to the tray if requested (reachable via the tray menu).

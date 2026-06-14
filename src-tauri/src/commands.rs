@@ -6,7 +6,7 @@ use crate::session::{self, RecordParams, RecordState, StartParams, StreamState};
 use crate::transport;
 use crate::wayland_inject::WaylandTyper;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
@@ -253,6 +253,42 @@ pub fn apply_bindings(app: &AppHandle) {
 pub fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
     apply_bindings(&app);
     Ok(())
+}
+
+/// Detect a system suspend/resume by watching the wall clock for a large gap: a
+/// dedicated thread ticks every couple of seconds; if far more time elapsed between
+/// ticks than it slept, the machine was asleep in between. Suspend is hostile to both
+/// long-lived listeners — it can drop the key-release that ends a hold-to-talk chord
+/// (leaving the evdev backend stuck "down"), or re-enumerate the keyboards (killing
+/// the reader tasks), and it silently kills the dictation WebSocket. On resume we
+/// rebuild the hotkey backend (fresh held-state, freshly enumerated devices) and tell
+/// the UI to drop any in-flight session so the chip can't hang at "finalizing…".
+pub fn spawn_suspend_watch(app: AppHandle) {
+    use std::time::{Duration, SystemTime};
+    // Wall clock, NOT Instant: CLOCK_MONOTONIC pauses across suspend on Linux, so it
+    // would never show the gap. SystemTime keeps advancing while the machine sleeps.
+    const TICK: Duration = Duration::from_secs(2);
+    // A gap this far beyond TICK means a real sleep, not scheduler jitter / NTP step.
+    const GAP: Duration = Duration::from_secs(8);
+    let _ = std::thread::Builder::new()
+        .name("suspend-watch".into())
+        .spawn(move || {
+            let mut last = SystemTime::now();
+            loop {
+                std::thread::sleep(TICK);
+                let now = SystemTime::now();
+                let elapsed = now.duration_since(last).unwrap_or(Duration::ZERO);
+                last = now;
+                if elapsed > GAP {
+                    tracing::info!(
+                        "[suspend] resume detected (~{}s gap); rebuilding hotkeys + clearing dictation",
+                        elapsed.as_secs()
+                    );
+                    apply_bindings(&app);
+                    let _ = app.emit("system://resumed", ());
+                }
+            }
+        });
 }
 
 #[derive(serde::Serialize)]
