@@ -20,10 +20,17 @@ export function useOverrideContext(args: {
   apiKey?: string | null;
   profileName?: string; // the effective override-profile name to preview
   serverKind: ServerKind;
-}): { caps: Capabilities | null; resolved: InheritedValues | undefined } {
+}): {
+  caps: Capabilities | null;
+  resolved: InheritedValues | undefined;
+  /** The selected override-profile's own DEFAULT_PROMPT (ghosted as the inherited
+   *  "Vocabulary / prompt"); undefined when none/standard/unreachable. */
+  resolvedPrompt: string | undefined;
+} {
   const { serverUrl, backendId, apiKey, profileName, serverKind } = args;
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const [resolved, setResolved] = useState<InheritedValues | undefined>(undefined);
+  const [resolvedPrompt, setResolvedPrompt] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (serverKind === "standard") {
@@ -43,16 +50,20 @@ export function useOverrideContext(args: {
     const name = profileName?.trim();
     if (!name || serverKind === "standard") {
       setResolved(undefined);
+      setResolvedPrompt(undefined);
       return;
     }
     let cancelled = false;
     void getOverrideProfile({ serverUrl, backendId, apiKey, name }).then((r) => {
-      if (!cancelled) setResolved(r?.values);
+      if (!cancelled) {
+        setResolved(r?.values);
+        setResolvedPrompt(r?.prompt);
+      }
     });
     return () => {
       cancelled = true;
     };
   }, [serverUrl, backendId, apiKey, profileName, serverKind]);
 
-  return { caps, resolved };
+  return { caps, resolved, resolvedPrompt };
 }

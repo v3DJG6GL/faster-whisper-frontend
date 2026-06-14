@@ -34,7 +34,9 @@ pub struct StreamParams {
     pub model: String,
     pub language: String, // "" / "auto" → omit (server auto-detects)
     pub response_format: String, // "json" | "verbose_json"
-    pub prompt: String, // profile "Vocabulary / prompt" → initial_prompt ("" → server default)
+    // None = omit the field (inherit DEFAULT_PROMPT); Some("") = explicit clear
+    // (send no initial_prompt); Some(v) = use v.
+    pub prompt: Option<String>,
     pub decode_overrides: Option<serde_json::Value>, // opaque JSON object → handshake "decode_overrides"
     pub override_profile: Option<String>, // server override-profile name → handshake "override_profile"
     pub api_key: Option<String>,
@@ -149,10 +151,13 @@ pub async fn run<F>(
         "model": params.model,
         "language": lang,
         "response_format": params.response_format,
-        // Empty string = let the server fall back to its DEFAULT_PROMPT (then None).
-        "prompt": params.prompt,
         "audio": { "format": "pcm_s16le", "sample_rate": 16000 }
     });
+    // prompt sentinel: omit the field entirely → server inherits DEFAULT_PROMPT;
+    // send it (incl. "") → server uses it verbatim, where "" CLEARS the prompt.
+    if let Some(p) = &params.prompt {
+        config["prompt"] = json!(p);
+    }
     // Forward per-request decode overrides as a nested object (only when non-empty).
     if let Some(v) = &params.decode_overrides {
         if v.as_object().map_or(false, |m| !m.is_empty()) {
@@ -179,10 +184,12 @@ pub async fn run<F>(
     let saving = params.save_dir.is_some();
     let mut saved: Vec<u8> = Vec::new();
 
-    // A single audio frame should send in well under a second; if a send can't make
-    // progress for this long the link is dead/half-open (suspend, network loss) —
-    // bail rather than park on the OS TCP retransmit timeout.
-    const SEND_TIMEOUT: Duration = Duration::from_secs(5);
+    // Bound on a single WS send. The server now decodes off its receive loop (it no
+    // longer freezes mid-utterance), so a stalled send means a genuinely dead/half-
+    // open link (suspend, network loss) — but keep this generous so a brief server
+    // hiccup doesn't kill an otherwise-recoverable session and discard buffered audio.
+    // A truly dead link is still caught promptly by the client keepalive PING below.
+    const SEND_TIMEOUT: Duration = Duration::from_secs(20);
 
     // Drive the read half in a DEDICATED task. tokio-tungstenite only answers the
     // server's keepalive PINGs (with a PONG) while the read half is polled; in the

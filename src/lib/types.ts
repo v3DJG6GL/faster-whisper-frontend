@@ -158,6 +158,10 @@ export interface ResolvedOverrideProfile {
   name: string;
   values: InheritedValues;
   locked: string[];
+  /** The profile's own DEFAULT_PROMPT (NOT a decode key, so absent from `values`)
+   *  — shown as the inherited "Vocabulary / prompt". Undefined when none. */
+  prompt?: string;
+  prompt_locked?: boolean;
 }
 
 /** The persisted config blob (mirrors the Rust `Config`). */

@@ -42,7 +42,8 @@ export default function Transcribe() {
         backendId: backend.id,
         model: backend.model,
         language,
-        prompt: backend.prompt,
+        // Empty backend prompt = inherit the server DEFAULT_PROMPT → omit the field.
+        prompt: backend.prompt || undefined,
         decodeOverrides: backend.decodeOverrides,
         overrideProfile: backend.overrideProfile,
         filePath,

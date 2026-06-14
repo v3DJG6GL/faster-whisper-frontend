@@ -255,6 +255,15 @@ async function ensureListeners(): Promise<void> {
     clearStuckWatchdog();
     console.error("stream error:", e.payload);
     setDictation({ status: "error", dictationError: e.payload, level: 0 });
+    // Tear down the Rust capture session so the mic closes and system audio
+    // un-mutes immediately — the dead WS task doesn't drop it, so without this the
+    // mic light + speaker mute linger until the next dictation. The visible error
+    // status is preserved (the subsequent `closed` keeps it; we don't reset to idle).
+    const endpoint = activeEndpoint;
+    activeEndpoint = null;
+    void (endpoint === "batch" ? stopRecord() : stopStream()).catch((err) =>
+      console.error("stream error teardown failed:", err),
+    );
   });
 
   // The server refused one or more decode overrides because the field is
@@ -296,7 +305,12 @@ export async function startLive(
   const rec = s.recording;
   // Effective values: a set per-Profile override wins; else inherit the Backend.
   const language = pov?.language?.trim() ? pov.language : backend.language;
-  const prompt = pov?.prompt?.trim() ? pov.prompt : backend.prompt;
+  // prompt is a 3-state sentinel sent to the backend: undefined → omit (inherit the
+  // server DEFAULT_PROMPT); "" → explicit clear (no initial_prompt); value → use it.
+  // A profile that set its prompt (incl. an explicit "" clear) wins; else the
+  // backend's prompt; an empty backend prompt means inherit, so omit.
+  const prompt =
+    pov?.prompt !== undefined ? pov.prompt : backend.prompt !== "" ? backend.prompt : undefined;
   const decodeOverrides = mergeDecodeOverrides(backend.decodeOverrides, pov?.decodeOverrides);
   // A set per-Profile override-profile name wins; else inherit the Backend's.
   const overrideProfile = pov?.overrideProfile?.trim() ? pov.overrideProfile : backend.overrideProfile;

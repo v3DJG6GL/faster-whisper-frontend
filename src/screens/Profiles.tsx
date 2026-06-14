@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Plus, Mic, Hand, Pencil, Copy, Trash2, Keyboard, AlertTriangle, Info, Server } from "lucide-react";
+import { Plus, Mic, Hand, Pencil, Copy, Trash2, Keyboard, AlertTriangle, Info, Server, RotateCcw } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Kbd, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
@@ -165,13 +165,17 @@ function Editor({
   // capabilities, so the decode editor ghosts the profile's resolved values
   // (under the backend defaults) and gates on what this connection allows.
   const effectiveProfile = p.overrideProfile?.trim() ? p.overrideProfile : backend?.overrideProfile;
-  const { caps, resolved } = useOverrideContext({
+  const { caps, resolved, resolvedPrompt } = useOverrideContext({
     serverUrl: backend?.serverUrl ?? "",
     backendId: backend?.id ?? null,
     profileName: effectiveProfile,
     serverKind,
   });
   const inheritedDecode = { ...resolved, ...backend?.decodeOverrides };
+  // The "Vocabulary / prompt" this profile inherits when it sets none: the backend's
+  // own prompt, else the selected server override-profile's DEFAULT_PROMPT.
+  const inheritedPrompt = (backend?.prompt || resolvedPrompt) ?? "";
+  const promptOverridden = p.prompt !== undefined; // "" = explicit clear, value = set
 
   const { heldCodes, warn } = useHotkeyCapture({
     capturing,
@@ -194,7 +198,10 @@ function Editor({
       tag: p.tag?.trim() ? p.tag.trim() : undefined,
       // Empty override = inherit from the Backend → store as undefined (omitted).
       language: p.language?.trim() ? p.language : undefined,
-      prompt: p.prompt?.trim() ? p.prompt : undefined,
+      // prompt is tri-state: undefined = inherit, "" = explicit clear (suppress the
+      // inherited prompt), value = override. Preserve "" — do NOT prune it to
+      // undefined, or "clear" would silently become "inherit".
+      prompt: p.prompt,
       overrideProfile: p.overrideProfile?.trim() ? p.overrideProfile.trim() : undefined,
     });
 
@@ -294,15 +301,37 @@ function Editor({
                 options={[{ value: "", label: "Inherit from backend" }, ...LANGUAGES]}
               />
             </Labeled>
-            <Labeled label="Vocabulary / prompt">
+            <div>
+              <div className="mb-2 flex items-center gap-1.5">
+                {promptOverridden && (
+                  <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+                )}
+                <label className="text-[12px] font-medium text-dim">Vocabulary / prompt</label>
+                {promptOverridden && (
+                  <button
+                    type="button"
+                    onClick={() => set({ prompt: undefined })}
+                    title="Reset to inherited"
+                    className="ring-signal ml-auto inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
+                  >
+                    <RotateCcw className="size-3" /> reset
+                  </button>
+                )}
+              </div>
               <textarea
                 value={p.prompt ?? ""}
                 onChange={(e) => set({ prompt: e.target.value })}
                 rows={2}
-                placeholder="Inherit from backend"
+                // Tri-state: empty an existing value → "" (clear, suppresses the
+                // inherited prompt); reset → undefined (inherit, ghosts the baseline).
+                placeholder={
+                  p.prompt === ""
+                    ? "(cleared — no prompt sent)"
+                    : inheritedPrompt || "Inherit from backend"
+                }
                 className="ring-signal w-full resize-none rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[13px] text-text placeholder:text-faint"
               />
-            </Labeled>
+            </div>
           </div>
           <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
             <div className="mb-3 text-[12px] font-medium text-dim">

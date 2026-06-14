@@ -71,7 +71,7 @@ function Editor({
   const kind = effectiveServerKind(b, result);
   // Caller capabilities + the selected override-profile's resolved values, for
   // gating the decode editor and ghosting its inherited defaults.
-  const { caps, resolved } = useOverrideContext({
+  const { caps, resolved, resolvedPrompt } = useOverrideContext({
     serverUrl: b.serverUrl,
     backendId: b.id,
     apiKey: key || null,
@@ -208,7 +208,9 @@ function Editor({
           value={b.prompt}
           onChange={(e) => set({ prompt: e.target.value })}
           rows={2}
-          placeholder="Bias terms — names, jargon…"
+          // Ghost the selected server override-profile's DEFAULT_PROMPT as the
+          // inherited baseline; empty here means "inherit the server prompt".
+          placeholder={resolvedPrompt || "Bias terms — names, jargon…"}
           className="ring-signal w-full resize-none rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[13px] text-text placeholder:text-faint"
         />
       </Labeled>

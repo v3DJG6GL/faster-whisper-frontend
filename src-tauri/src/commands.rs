@@ -84,7 +84,9 @@ pub async fn transcribe_file(
     api_key: Option<String>,
     model: String,
     language: String,
-    prompt: String,
+    // None (field omitted) = inherit the server DEFAULT_PROMPT; Some("") = explicit
+    // clear (send no prompt); Some(v) = use v. See transport::batch::post.
+    prompt: Option<String>,
     decode_overrides: Option<serde_json::Value>,
     override_profile: Option<String>,
     file_path: String,
@@ -95,7 +97,7 @@ pub async fn transcribe_file(
         key.as_deref(),
         &model,
         &language,
-        &prompt,
+        prompt.as_deref(),
         decode_overrides.as_ref(),
         override_profile.as_deref(),
         &file_path,
@@ -174,7 +176,8 @@ pub fn start_stream(
     model: String,
     language: String,
     response_format: String,
-    prompt: String,
+    // None = inherit DEFAULT_PROMPT; Some("") = explicit clear; Some(v) = use v.
+    prompt: Option<String>,
     decode_overrides: Option<serde_json::Value>,
     override_profile: Option<String>,
     device_id: Option<String>,
@@ -223,7 +226,8 @@ pub fn start_record(
     api_key: Option<String>,
     model: String,
     language: String,
-    prompt: String,
+    // None = inherit DEFAULT_PROMPT; Some("") = explicit clear; Some(v) = use v.
+    prompt: Option<String>,
     decode_overrides: Option<serde_json::Value>,
     override_profile: Option<String>,
     device_id: Option<String>,

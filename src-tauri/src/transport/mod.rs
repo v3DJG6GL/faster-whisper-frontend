@@ -64,6 +64,13 @@ pub struct ResolvedOverrideProfile {
     pub values: serde_json::Value,
     #[serde(default)]
     pub locked: Vec<String>,
+    /// The profile's own DEFAULT_PROMPT, exposed separately (it is NOT a client
+    /// decode key, so it never appears in `values`) so the editor can ghost it as
+    /// the inherited "Vocabulary / prompt". `null` when the profile sets none.
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub prompt_locked: bool,
 }
 
 /// Trim a trailing slash so we can join `/v1/...` paths cleanly.

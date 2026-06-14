@@ -29,7 +29,8 @@ pub struct StartParams {
     pub model: String,
     pub language: String,
     pub response_format: String,
-    pub prompt: String,
+    /// None = inherit DEFAULT_PROMPT; Some("") = explicit clear; Some(v) = use v.
+    pub prompt: Option<String>,
     /// Per-request decode overrides (opaque JSON object) forwarded to the backend.
     pub decode_overrides: Option<serde_json::Value>,
     /// Server override-profile name forwarded to the backend (None/empty = none).
@@ -334,7 +335,8 @@ pub struct RecordParams {
     pub api_key: Option<String>,
     pub model: String,
     pub language: String,
-    pub prompt: String,
+    /// None = inherit DEFAULT_PROMPT; Some("") = explicit clear; Some(v) = use v.
+    pub prompt: Option<String>,
     /// Per-request decode overrides (opaque JSON object) forwarded to the backend.
     pub decode_overrides: Option<serde_json::Value>,
     /// Server override-profile name forwarded to the backend (None/empty = none).
@@ -431,7 +433,7 @@ async fn transcribe_recording(app: AppHandle, params: RecordParams, pcm: Vec<u8>
         params.api_key.as_deref(),
         &params.model,
         &params.language,
-        &params.prompt,
+        params.prompt.as_deref(),
         params.decode_overrides.as_ref(),
         params.override_profile.as_deref(),
         wav,

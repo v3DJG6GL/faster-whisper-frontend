@@ -148,8 +148,12 @@ export function DecodeFields({
       <TextInput
         disabled={gated}
         value={cur === undefined ? "" : String(cur)}
-        placeholder={inh ?? (f.hint ? `inherit — ${f.hint}` : "inherit")}
-        onChange={(e) => setField(f.key, e.target.value === "" ? undefined : e.target.value)}
+        // An explicit empty string is a real override ("clear this — send empty",
+        // distinct from inherit), so DON'T coerce "" → undefined here: store the raw
+        // value and reach inherit only via the reset button. The accent dot marks the
+        // explicit-empty override; a distinct placeholder keeps it from reading as inherit.
+        placeholder={cur === "" ? "(cleared — overrides inherited)" : (inh ?? (f.hint ? `inherit — ${f.hint}` : "inherit"))}
+        onChange={(e) => setField(f.key, e.target.value)}
       />
     );
   };

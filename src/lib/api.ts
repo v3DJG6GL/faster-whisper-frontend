@@ -56,7 +56,8 @@ export async function transcribeFile(args: {
   apiKey?: string | null;
   model: string;
   language: string;
-  prompt: string;
+  // undefined/null = omit (inherit DEFAULT_PROMPT); "" = explicit clear; value = use.
+  prompt?: string | null;
   decodeOverrides?: DecodeOverrides | null;
   overrideProfile?: string | null;
   filePath: string;
@@ -68,7 +69,7 @@ export async function transcribeFile(args: {
     apiKey: args.apiKey ?? null,
     model: args.model,
     language: args.language,
-    prompt: args.prompt,
+    prompt: args.prompt ?? null,
     decodeOverrides: args.decodeOverrides ?? null,
     overrideProfile: args.overrideProfile ?? null,
     filePath: args.filePath,
@@ -152,7 +153,8 @@ export async function startStream(args: {
   apiKey?: string | null;
   model: string;
   language: string;
-  prompt: string;
+  // undefined/null = omit (inherit DEFAULT_PROMPT); "" = explicit clear; value = use.
+  prompt?: string | null;
   responseFormat: string;
   decodeOverrides?: DecodeOverrides | null;
   overrideProfile?: string | null;
@@ -167,7 +169,7 @@ export async function startStream(args: {
     apiKey: args.apiKey ?? null,
     model: args.model,
     language: args.language,
-    prompt: args.prompt,
+    prompt: args.prompt ?? null,
     responseFormat: args.responseFormat,
     decodeOverrides: args.decodeOverrides ?? null,
     overrideProfile: args.overrideProfile ?? null,
@@ -188,7 +190,8 @@ export async function startRecord(args: {
   apiKey?: string | null;
   model: string;
   language: string;
-  prompt: string;
+  // undefined/null = omit (inherit DEFAULT_PROMPT); "" = explicit clear; value = use.
+  prompt?: string | null;
   decodeOverrides?: DecodeOverrides | null;
   overrideProfile?: string | null;
   deviceId?: string | null;
@@ -202,7 +205,7 @@ export async function startRecord(args: {
     apiKey: args.apiKey ?? null,
     model: args.model,
     language: args.language,
-    prompt: args.prompt,
+    prompt: args.prompt ?? null,
     decodeOverrides: args.decodeOverrides ?? null,
     overrideProfile: args.overrideProfile ?? null,
     deviceId: args.deviceId ?? null,

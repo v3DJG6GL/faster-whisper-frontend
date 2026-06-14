@@ -54,7 +54,7 @@ pub async fn transcribe(
     api_key: Option<&str>,
     model: &str,
     language: &str,
-    prompt: &str,
+    prompt: Option<&str>,
     overrides: Option<&serde_json::Value>,
     override_profile: Option<&str>,
     file_path: &str,
@@ -76,7 +76,7 @@ pub async fn transcribe_wav_bytes(
     api_key: Option<&str>,
     model: &str,
     language: &str,
-    prompt: &str,
+    prompt: Option<&str>,
     overrides: Option<&serde_json::Value>,
     override_profile: Option<&str>,
     wav: Vec<u8>,
@@ -90,7 +90,7 @@ async fn post(
     api_key: Option<&str>,
     model: &str,
     language: &str,
-    prompt: &str,
+    prompt: Option<&str>,
     overrides: Option<&serde_json::Value>,
     override_profile: Option<&str>,
     file_part: Part,
@@ -103,8 +103,11 @@ async fn post(
     if !language.is_empty() && language != "auto" {
         form = form.text("language", language.to_string());
     }
-    if !prompt.is_empty() {
-        form = form.text("prompt", prompt.to_string());
+    // prompt sentinel: None → omit the field (server inherits DEFAULT_PROMPT);
+    // Some (incl. "") → send it, where "" CLEARS the prompt (reqwest transmits an
+    // empty text part; the server reads the raw form to keep "" distinct from absent).
+    if let Some(p) = prompt {
+        form = form.text("prompt", p.to_string());
     }
     // Per-request decode overrides as a JSON Form field (only when non-empty).
     if let Some(v) = overrides {
