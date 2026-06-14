@@ -287,7 +287,7 @@ export async function startLive(
   backend: Backend,
   deviceId: string | null,
   activation: ActivationKind,
-  pov?: { language?: string; prompt?: string; decodeOverrides?: DecodeOverrides },
+  pov?: { language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; overrideProfile?: string },
 ): Promise<void> {
   await ensureListeners();
   const setDictation = useApp.getState().setDictation;
@@ -298,6 +298,8 @@ export async function startLive(
   const language = pov?.language?.trim() ? pov.language : backend.language;
   const prompt = pov?.prompt?.trim() ? pov.prompt : backend.prompt;
   const decodeOverrides = mergeDecodeOverrides(backend.decodeOverrides, pov?.decodeOverrides);
+  // A set per-Profile override-profile name wins; else inherit the Backend's.
+  const overrideProfile = pov?.overrideProfile?.trim() ? pov.overrideProfile : backend.overrideProfile;
 
   insertCfg = {
     timing: g.insertTiming,
@@ -336,6 +338,7 @@ export async function startLive(
         language,
         prompt,
         decodeOverrides,
+        overrideProfile,
         deviceId,
         save: rec.saveRecordings,
         muteSystem: rec.muteSystemAudio,
@@ -348,6 +351,7 @@ export async function startLive(
         language,
         prompt,
         decodeOverrides,
+        overrideProfile,
         responseFormat: backend.responseFormat,
         deviceId,
         save: rec.saveRecordings,

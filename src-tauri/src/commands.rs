@@ -86,6 +86,7 @@ pub async fn transcribe_file(
     language: String,
     prompt: String,
     decode_overrides: Option<serde_json::Value>,
+    override_profile: Option<String>,
     file_path: String,
 ) -> Result<transport::batch::BatchResult, String> {
     let key = resolve_key(api_key, backend_id);
@@ -96,6 +97,7 @@ pub async fn transcribe_file(
         &language,
         &prompt,
         decode_overrides.as_ref(),
+        override_profile.as_deref(),
         &file_path,
     )
     .await
@@ -137,6 +139,7 @@ pub fn start_stream(
     response_format: String,
     prompt: String,
     decode_overrides: Option<serde_json::Value>,
+    override_profile: Option<String>,
     device_id: Option<String>,
     save: bool,
     mute_system: bool,
@@ -155,6 +158,7 @@ pub fn start_stream(
             response_format,
             prompt,
             decode_overrides,
+            override_profile,
             device_id,
             save_dir,
             mute_system,
@@ -184,6 +188,7 @@ pub fn start_record(
     language: String,
     prompt: String,
     decode_overrides: Option<serde_json::Value>,
+    override_profile: Option<String>,
     device_id: Option<String>,
     save: bool,
     mute_system: bool,
@@ -201,6 +206,7 @@ pub fn start_record(
             language,
             prompt,
             decode_overrides,
+            override_profile,
             device_id,
             save_dir,
             mute_system,

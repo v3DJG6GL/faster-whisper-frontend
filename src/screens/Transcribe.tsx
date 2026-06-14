@@ -44,6 +44,7 @@ export default function Transcribe() {
         language,
         prompt: backend.prompt,
         decodeOverrides: backend.decodeOverrides,
+        overrideProfile: backend.overrideProfile,
         filePath,
       });
       setResult(res);

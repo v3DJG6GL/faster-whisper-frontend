@@ -50,6 +50,7 @@ export async function transcribeFile(args: {
   language: string;
   prompt: string;
   decodeOverrides?: DecodeOverrides | null;
+  overrideProfile?: string | null;
   filePath: string;
 }): Promise<BatchResult> {
   if (!isTauri) throw new Error("Transcription requires the desktop app.");
@@ -61,6 +62,7 @@ export async function transcribeFile(args: {
     language: args.language,
     prompt: args.prompt,
     decodeOverrides: args.decodeOverrides ?? null,
+    overrideProfile: args.overrideProfile ?? null,
     filePath: args.filePath,
   });
 }
@@ -96,6 +98,7 @@ export async function startStream(args: {
   prompt: string;
   responseFormat: string;
   decodeOverrides?: DecodeOverrides | null;
+  overrideProfile?: string | null;
   deviceId?: string | null;
   save?: boolean;
   muteSystem?: boolean;
@@ -110,6 +113,7 @@ export async function startStream(args: {
     prompt: args.prompt,
     responseFormat: args.responseFormat,
     decodeOverrides: args.decodeOverrides ?? null,
+    overrideProfile: args.overrideProfile ?? null,
     deviceId: args.deviceId ?? null,
     save: args.save ?? false,
     muteSystem: args.muteSystem ?? false,
@@ -129,6 +133,7 @@ export async function startRecord(args: {
   language: string;
   prompt: string;
   decodeOverrides?: DecodeOverrides | null;
+  overrideProfile?: string | null;
   deviceId?: string | null;
   save?: boolean;
   muteSystem?: boolean;
@@ -142,6 +147,7 @@ export async function startRecord(args: {
     language: args.language,
     prompt: args.prompt,
     decodeOverrides: args.decodeOverrides ?? null,
+    overrideProfile: args.overrideProfile ?? null,
     deviceId: args.deviceId ?? null,
     save: args.save ?? false,
     muteSystem: args.muteSystem ?? false,

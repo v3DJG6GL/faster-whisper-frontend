@@ -36,6 +36,7 @@ pub struct StreamParams {
     pub response_format: String, // "json" | "verbose_json"
     pub prompt: String, // profile "Vocabulary / prompt" → initial_prompt ("" → server default)
     pub decode_overrides: Option<serde_json::Value>, // opaque JSON object → handshake "decode_overrides"
+    pub override_profile: Option<String>, // server override-profile name → handshake "override_profile"
     pub api_key: Option<String>,
     pub in_rate: u32,
     pub save_dir: Option<PathBuf>, // Some → save the streamed 16 kHz audio as .wav
@@ -149,6 +150,12 @@ pub async fn run<F>(
     if let Some(v) = &params.decode_overrides {
         if v.as_object().map_or(false, |m| !m.is_empty()) {
             config["decode_overrides"] = v.clone();
+        }
+    }
+    // Forward the server override-profile name (only when non-empty).
+    if let Some(p) = &params.override_profile {
+        if !p.is_empty() {
+            config["override_profile"] = json!(p);
         }
     }
     if let Err(e) = write.send(text_msg(config.to_string())).await {
