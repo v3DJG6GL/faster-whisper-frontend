@@ -396,15 +396,17 @@ export function SettingRow({
   desc,
   children,
   last,
+  disabled,
 }: {
   title: string;
   desc?: string;
   children: ReactNode;
   last?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <div className={cn("flex items-center gap-6 py-4", !last && "border-b border-line")}>
-      <div className="min-w-0 flex-1">
+      <div className={cn("min-w-0 flex-1 transition-opacity", disabled && "opacity-50")}>
         <div className="text-[14px] font-medium text-text">{title}</div>
         {desc && <div className="mt-0.5 text-[12.5px] leading-snug text-dim">{desc}</div>}
       </div>

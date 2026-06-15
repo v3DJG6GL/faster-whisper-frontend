@@ -329,6 +329,7 @@ export default function Settings() {
             <SettingRow
               title="Keep chip docked"
               desc="Keep the chip on screen as a small standby dot when you're not dictating, instead of hiding it."
+              disabled={s.recording.indicatorPosition === "off"}
             >
               <Toggle
                 checked={s.recording.persistentDock}
@@ -340,7 +341,8 @@ export default function Settings() {
             <SectionLabel className="mb-1 mt-7">Auto-hide</SectionLabel>
             <SettingRow
               title="Auto-hide to edge"
-              desc="After sitting idle, slide the chip up to the screen edge so it stops covering things; hover the sliver to bring it back."
+              desc="After sitting idle, hide the chip against the screen edge so it stops covering things — hover the edge dot to bring it back."
+              disabled={s.recording.indicatorPosition === "off"}
             >
               <Toggle
                 checked={s.recording.overlayPeek}
@@ -348,51 +350,54 @@ export default function Settings() {
                 onChange={(v) => updateRecording({ overlayPeek: v })}
               />
             </SettingRow>
-            {s.recording.overlayPeek && s.recording.indicatorPosition !== "off" && (
-              <SettingRow title="Hide after" desc="How long the chip sits idle before it slides to the edge.">
-                <Stepper
-                  ariaLabel="hide after"
-                  value={s.recording.peekTimeoutSec}
-                  onChange={(v) => updateRecording({ peekTimeoutSec: v })}
-                  min={1}
-                  max={600}
-                  step={0.5}
-                  decimals={1}
-                  unit="s"
-                />
-              </SettingRow>
-            )}
-            {s.recording.overlayPeek && s.recording.indicatorPosition !== "off" && (
-              <SettingRow
-                title="Stay minimized while dictating"
-                desc="Keep the chip tucked to the edge as a small dot even while you dictate, instead of popping out — it just changes colour and gently pulses while you speak. Hover the dot to reveal the transcript."
-              >
-                <Toggle
-                  checked={s.recording.peekWhileActive}
-                  onChange={(v) => updateRecording({ peekWhileActive: v })}
-                />
-              </SettingRow>
-            )}
+            <SettingRow
+              title="Hide after"
+              desc="How long the chip sits idle before it hides against the edge."
+              disabled={!s.recording.overlayPeek || s.recording.indicatorPosition === "off"}
+            >
+              <Stepper
+                ariaLabel="hide after"
+                value={s.recording.peekTimeoutSec}
+                onChange={(v) => updateRecording({ peekTimeoutSec: v })}
+                min={1}
+                max={600}
+                step={0.5}
+                decimals={1}
+                unit="s"
+                disabled={!s.recording.overlayPeek || s.recording.indicatorPosition === "off"}
+              />
+            </SettingRow>
+            <SettingRow
+              title="Stay hidden while dictating"
+              desc="Keep the chip hidden against the edge as a small dot even while you dictate, instead of popping out — it just changes colour and gently pulses while you speak. Hover the edge dot to reveal the transcript."
+              disabled={!s.recording.overlayPeek || s.recording.indicatorPosition === "off"}
+            >
+              <Toggle
+                checked={s.recording.peekWhileActive}
+                disabled={!s.recording.overlayPeek || s.recording.indicatorPosition === "off"}
+                onChange={(v) => updateRecording({ peekWhileActive: v })}
+              />
+            </SettingRow>
 
             <SectionLabel className="mb-1 mt-7">Appearance</SectionLabel>
-            {s.recording.indicatorPosition !== "off" && (
-              <SettingRow
-                title="Dim after"
-                desc="How long the chip sits idle before it fades to a dim, unobtrusive opacity (a docked standby dot dims too). Set to Never to keep it full opacity."
-              >
-                <Stepper
-                  ariaLabel="dim after"
-                  value={s.recording.dimAfterSec}
-                  onChange={(v) => updateRecording({ dimAfterSec: v })}
-                  min={0}
-                  max={600}
-                  step={0.5}
-                  decimals={1}
-                  unit="s"
-                  zeroLabel="Never"
-                />
-              </SettingRow>
-            )}
+            <SettingRow
+              title="Dim after"
+              desc="How long the chip sits idle before it fades to a dim, unobtrusive opacity (a docked standby dot dims too). Set to Never to keep it full opacity."
+              disabled={s.recording.indicatorPosition === "off"}
+            >
+              <Stepper
+                ariaLabel="dim after"
+                value={s.recording.dimAfterSec}
+                onChange={(v) => updateRecording({ dimAfterSec: v })}
+                min={0}
+                max={600}
+                step={0.5}
+                decimals={1}
+                unit="s"
+                zeroLabel="Never"
+                disabled={s.recording.indicatorPosition === "off"}
+              />
+            </SettingRow>
             <SettingRow
               title="Live transcript"
               desc="Show words appear in the chip as you speak (streaming backends only)."
@@ -410,23 +415,23 @@ export default function Settings() {
             </SettingRow>
 
             <SectionLabel className="mb-1 mt-7">Interaction</SectionLabel>
-            {s.recording.indicatorPosition !== "off" && (
-              <SettingRow
-                title="Hover reveal delay"
-                desc="How long you hover the chip before it expands to show language / mode and the quick-launch buttons."
-              >
-                <Stepper
-                  ariaLabel="hover reveal delay"
-                  value={s.recording.hoverRevealMs}
-                  onChange={(v) => updateRecording({ hoverRevealMs: v })}
-                  min={0}
-                  max={3000}
-                  step={50}
-                  unit="ms"
-                  zeroLabel="Instant"
-                />
-              </SettingRow>
-            )}
+            <SettingRow
+              title="Hover reveal delay"
+              desc="How long you hover the chip before it expands to show language / mode and the quick-launch buttons."
+              disabled={s.recording.indicatorPosition === "off"}
+            >
+              <Stepper
+                ariaLabel="hover reveal delay"
+                value={s.recording.hoverRevealMs}
+                onChange={(v) => updateRecording({ hoverRevealMs: v })}
+                min={0}
+                max={3000}
+                step={50}
+                unit="ms"
+                zeroLabel="Instant"
+                disabled={s.recording.indicatorPosition === "off"}
+              />
+            </SettingRow>
             <div className="py-4">
               <div className="text-[14px] font-medium text-text">Quick-launch buttons</div>
               <div className="mb-3 mt-0.5 text-[12.5px] leading-snug text-dim">

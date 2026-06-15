@@ -70,9 +70,9 @@ const PEEK_HOVER_GRACE_MS = 6000;
 const EDGE_MARGIN = 28;
 const PEEK_TUCK = 29;
 
-// "Stay minimized while dictating" (peekWhileActive): once a session is live, tuck the dot
+// "Stay hidden while dictating" (peekWhileActive): once a session is live, tuck the dot
 // back to the edge after this short settle rather than waiting the full peekTimeoutSec — the
-// chip is meant to stay minimized, so it shouldn't sit expanded for half a minute first.
+// chip is meant to stay hidden, so it shouldn't sit expanded for half a minute first.
 const PEEK_ACTIVE_SETTLE_MS = 700;
 
 /**
@@ -419,7 +419,7 @@ export default function Overlay() {
   // it animates reliably and can't desync with an OS window-move. The hit-region effect above
   // re-reports the chip's bounds whenever `peeked` flips, so the tucked sliver stays hoverable.
   //
-  // "Stay minimized while dictating" (peekWhileActive) flips this: active states no longer pop
+  // "Stay hidden while dictating" (peekWhileActive) flips this: active states no longer pop
   // it out, and status flips no longer bounce it — the dot stays tucked through the whole
   // session, conveying state via colour + pulse only. Hover and errors still override (so you
   // can always read the transcript / see a failure); completion settles back without popping.
