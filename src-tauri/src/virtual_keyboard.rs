@@ -298,4 +298,53 @@ mod imp {
         }
         Ok((mfd, data.len() as u32))
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{build_keymap, keysym_name};
+        use xkbcommon::xkb;
+
+        // The virtual-keyboard path only runs on compositors that advertise the
+        // protocol (wlroots: sway/Hyprland) — never on the dev machine (KWin), so the
+        // generated keymap is otherwise untested. Verify it (a) compiles in the SAME
+        // library the compositor uses, and (b) types each character verbatim even with
+        // Caps Lock locked — i.e. the FWF_LOCKPROOF key type really suppresses the
+        // capitalization transform. A regression here would silently type nothing (or
+        // wrong case) for wlroots users.
+        #[test]
+        fn generated_keymap_compiles_and_is_caps_immune() {
+            let chars = ['a', 'A', 'z', 'Q', '1', '!', 'ä', 'Ä', 'ß'];
+            let mut unique: Vec<String> = Vec::new();
+            for &c in &chars {
+                let n = keysym_name(c).expect("printable char");
+                if !unique.contains(&n) {
+                    unique.push(n);
+                }
+            }
+            let km_str = build_keymap(&unique);
+
+            let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let keymap = xkb::Keymap::new_from_string(
+                &ctx,
+                km_str,
+                xkb::KEYMAP_FORMAT_TEXT_V1,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+            .expect("generated keymap must compile in libxkbcommon");
+
+            let caps = keymap.mod_get_index(xkb::MOD_NAME_CAPS);
+            for &c in &chars {
+                let idx = unique.iter().position(|n| *n == keysym_name(c).unwrap()).unwrap();
+                let kc = xkb::Keycode::new((idx + 8) as u32);
+                for caps_on in [false, true] {
+                    let mut state = xkb::State::new(&keymap);
+                    if caps_on {
+                        state.update_mask(0, 0, 1 << caps, 0, 0, 0);
+                    }
+                    let got = state.key_get_utf8(kc);
+                    assert_eq!(got, c.to_string(), "char {c:?} (caps_on={caps_on}) typed as {got:?}");
+                }
+            }
+        }
+    }
 }
