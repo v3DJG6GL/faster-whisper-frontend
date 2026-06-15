@@ -431,12 +431,16 @@ export default function Overlay() {
       state.status === "listening" || state.status === "transcribing" || state.status === "injecting";
     const keepMin = state.overlayPeek && state.peekWhileActive && state.position !== "off";
     // Only an undisturbed armed-but-silent session, or a persistent standby dock, ever peeks —
-    // unless keep-minimized is on, where any active state stays tucked too. Hover always restores
-    // (peek-on-demand) and an error always pops out so its message is readable.
+    // unless keep-minimized is on, where any active state stays tucked too. A tucked chip
+    // un-tucks on hover via `hoverReveal` (the dwell-delayed hover-intent flag), NOT raw
+    // `hovering` — so restoring it waits the SAME delay as the body/detail reveal. Keying it on
+    // `hovering` made a tucked ("hidden") chip pop out the instant the cursor grazed it while a
+    // resting ("minimized") dot correctly waited out hoverRevealMs; the two felt inconsistent and
+    // a fly-over flicked the pill open. An error always pops out so its message is readable.
     const blocked =
       !state.overlayPeek ||
       state.position === "off" ||
-      hovering ||
+      hoverReveal ||
       state.status === "error" ||
       (!keepMin && (speaking || processing || expanded));
     const eligible = !blocked && (standby || (keepMin ? activeStatus : state.status === "listening"));
@@ -461,6 +465,7 @@ export default function Overlay() {
     state.status,
     state.peekTimeoutSec,
     hovering,
+    hoverReveal,
     speaking,
     processing,
     expanded,
