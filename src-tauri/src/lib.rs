@@ -2,6 +2,7 @@ mod audio;
 mod commands;
 mod config;
 mod evdev_hotkeys;
+mod held_keys;
 mod inject;
 mod overlay;
 mod session;
@@ -43,6 +44,7 @@ pub fn run() {
         .manage(wayland_inject::WaylandTyper::default())
         .manage(commands::ClipboardSnapshot::default())
         .manage(evdev_hotkeys::EvdevState::default())
+        .manage(held_keys::HeldKeys::default())
         .setup(|app| {
             use tauri::Manager;
             tray::create(app)?;

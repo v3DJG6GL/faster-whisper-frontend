@@ -427,6 +427,25 @@ pub async fn inject_text(
     restore_clipboard: bool,
 ) -> Result<(), String> {
     tracing::info!("[inject] {} chars via {} (auto_enter={})", text.len(), method, auto_enter);
+    // Wait briefly for the trigger chord's shortcut modifiers (Ctrl/Alt/Meta) to be
+    // physically released before typing — otherwise the injected keys fold into the
+    // still-held modifier and fire shortcuts in the focused app (worst with a latch
+    // stop, which triggers on the second chord press with every key still down). Only
+    // the evdev backend can observe physical release on Wayland; when it isn't running
+    // the held set is empty so this is a no-op. Capped so we never drop the text.
+    {
+        let held = app.state::<crate::held_keys::HeldKeys>().inner().clone();
+        if held.any_held(&crate::held_keys::SHORTCUT_MOD_CODES) {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            while held.any_held(&crate::held_keys::SHORTCUT_MOD_CODES) {
+                if std::time::Instant::now() >= deadline {
+                    tracing::warn!("[inject] trigger modifiers still held after 500ms — injecting anyway");
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+            }
+        }
+    }
     let res = if crate::inject::is_wayland() {
         if method == "direct" {
             crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter).await

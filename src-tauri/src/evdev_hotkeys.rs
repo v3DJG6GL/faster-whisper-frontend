@@ -60,7 +60,7 @@ mod imp {
     use evdev::{Device, EventType, Key};
     use std::collections::HashSet;
     use std::sync::Arc;
-    use tauri::{AppHandle, Emitter};
+    use tauri::{AppHandle, Emitter, Manager};
 
     /// One enabled Profile's chord, ready for matching.
     #[derive(Clone)]
@@ -159,6 +159,9 @@ mod imp {
 
     pub fn start(app: &AppHandle, state: &EvdevState, profiles: &[Profile]) {
         stop(state);
+        // Fresh start: drop any held-key counts left over from a previous run so the
+        // inject-gate can't wait on a phantom modifier.
+        app.state::<crate::held_keys::HeldKeys>().clear();
         let chords = chords_from(profiles);
         if chords.is_empty() {
             tracing::info!("[evdev] no mappable chords; not starting");
@@ -222,6 +225,9 @@ mod imp {
         chords: Arc<Vec<ChordDesc>>,
         supersets: Arc<Vec<Vec<usize>>>,
     ) {
+        // Mirror physical key state into the shared signal `inject_text` reads, so we
+        // never type into a still-held trigger modifier (see crate::held_keys).
+        let held_keys = app.state::<crate::held_keys::HeldKeys>().inner().clone();
         let mut held: HashSet<u16> = HashSet::new();
         // Per-chord state — hold: currently emitting; latch: armed (rising-edge
         // debounce, so one press = one toggle).
@@ -243,9 +249,11 @@ mod imp {
             match ev.value() {
                 1 => {
                     held.insert(ev.code());
+                    held_keys.set(ev.code(), true);
                 }
                 0 => {
                     held.remove(&ev.code());
+                    held_keys.set(ev.code(), false);
                 }
                 _ => continue, // 2 = autorepeat
             }
@@ -280,6 +288,11 @@ mod imp {
                     }
                 }
             }
+        }
+        // The device stream ended (unplugged / read error) while keys were still
+        // held — drop our contribution so a stale modifier can't wedge the gate.
+        for &code in &held {
+            held_keys.set(code, false);
         }
     }
 
