@@ -421,6 +421,7 @@ pub fn end_injection(snap: State<ClipboardSnapshot>) {
 pub async fn inject_text(
     app: AppHandle,
     typer: State<'_, WaylandTyper>,
+    vkbd: State<'_, crate::virtual_keyboard::VirtualKeyboard>,
     text: String,
     method: String,
     auto_enter: bool,
@@ -448,7 +449,16 @@ pub async fn inject_text(
     }
     let res = if crate::inject::is_wayland() {
         if method == "direct" {
-            crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter).await
+            // Prefer the virtual keyboard (Caps Lock-/layout-correct typing). Fall back
+            // to the portal keycode path when the protocol is unavailable (e.g. GNOME)
+            // or a job fails.
+            match crate::virtual_keyboard::type_text(vkbd.inner(), &text, auto_enter).await {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    tracing::warn!("[inject] virtual keyboard unavailable ({e}); using portal");
+                    crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter).await
+                }
+            }
         } else {
             // Paste on Wayland: set the clipboard here, then synthesize Ctrl+V via
             // the portal. enigo's XTEST Ctrl+V is unreliable on KDE Wayland — a

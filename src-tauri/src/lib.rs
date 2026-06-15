@@ -10,6 +10,7 @@ mod sound;
 mod transport;
 mod tray;
 mod triggers;
+mod virtual_keyboard;
 mod wayland_inject;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -45,6 +46,7 @@ pub fn run() {
         .manage(commands::ClipboardSnapshot::default())
         .manage(evdev_hotkeys::EvdevState::default())
         .manage(held_keys::HeldKeys::default())
+        .manage(virtual_keyboard::VirtualKeyboard::default())
         .setup(|app| {
             use tauri::Manager;
             tray::create(app)?;

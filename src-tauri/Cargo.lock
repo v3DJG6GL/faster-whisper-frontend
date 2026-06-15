@@ -1273,6 +1273,7 @@ dependencies = [
  "futures-util",
  "gtk",
  "keyring",
+ "memfd",
  "parking_lot",
  "reqwest 0.12.28",
  "rodio",
@@ -1292,6 +1293,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wayland-client",
+ "wayland-protocols-misc",
  "xkbcommon",
 ]
 
@@ -2497,6 +2500,15 @@ name = "memchr"
 version = "2.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
+
+[[package]]
+name = "memfd"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad38eb12aea514a0466ea40a80fd8cc83637065948eb4a426e4aa46261175227"
+dependencies = [
+ "rustix",
+]
 
 [[package]]
 name = "memmap2"
@@ -5686,6 +5698,19 @@ dependencies = [
  "bitflags 2.13.0",
  "wayland-backend",
  "wayland-client",
+ "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-protocols-misc"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e9567599ef23e09b8dad6e429e5738d4509dfc46b3b21f32841a304d16b29c8"
+dependencies = [
+ "bitflags 2.13.0",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 

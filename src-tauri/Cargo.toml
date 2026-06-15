@@ -81,6 +81,15 @@ evdev = { version = "0.12", features = ["tokio"] }
 # `cairo` re-exports so the ABI matches.
 gtk = "0.18"
 
+# Native-Wayland virtual keyboard (zwp_virtual_keyboard_v1) for layout-/Caps-Lock-
+# independent direct typing on KWin/wlroots: we upload our own one-shot keymap so the
+# typed text is exactly the transcript regardless of the active layout or Caps Lock.
+# Absent on GNOME → falls back to the portal path (wayland_inject.rs). `memfd` carries
+# the keymap fd to the compositor.
+wayland-client = "0.31"
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+memfd = "0.6"
+
 # NOTE: `time` is pinned to 0.3.47 in Cargo.lock. time 0.3.48 introduced a trait
 # impl that collides (E0119) with `cookie` 0.18.1 (a transitive Tauri dep). Do not
 # `cargo update -p time` past 0.3.47 until Tauri bumps `cookie`.
