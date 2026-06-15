@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { Mic, Radio, Hand, Square, Pencil, AlertTriangle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
@@ -10,6 +12,11 @@ import { homeTargetProfile } from "@/lib/dictation";
 import type { Backend, Profile } from "@/lib/types";
 
 const GLYPH = { hold: Mic, latch: Hand } as const;
+
+// After dictation ends, keep the live-transcript card on screen this long so you can
+// read the final result, then it animates out. An empty/cancelled session lingers the
+// same amount, for consistent behaviour.
+const TRANSCRIPT_LINGER_MS = 4000;
 
 function ProfileCard({ p }: { p: Profile }) {
   const backends = useApp((s) => s.backends);
@@ -97,6 +104,23 @@ export default function Home() {
           : "bg-surface-2 text-dim";
   const waveTone = vis.tone === "faint" ? "dim" : vis.tone;
   const waveProcessing = status === "transcribing" || status === "injecting";
+
+  // The live-transcript card is shown while a session is live (or on error), then
+  // LINGERS briefly after it ends so the final transcript stays readable, before it
+  // animates out. Tied to the session — not a stale `partial` — so it behaves the same
+  // whether or not you actually said anything. While lingering at idle the header reads
+  // "done" rather than the resting "off".
+  const cardActive = busy || status === "error";
+  const cardLabel = cardActive ? vis.label : "done";
+  const [cardVisible, setCardVisible] = useState(false);
+  useEffect(() => {
+    if (cardActive) {
+      setCardVisible(true);
+      return;
+    }
+    const t = setTimeout(() => setCardVisible(false), TRANSCRIPT_LINGER_MS);
+    return () => clearTimeout(t);
+  }, [cardActive]);
   const toggle = () => {
     if (status === "listening") {
       void stopLive();
@@ -210,33 +234,43 @@ export default function Home() {
         </div>
       </Card>
 
-      {/* Tie the live-transcript card to the session itself (not to a lingering
-          `partial`): otherwise it stayed visible indefinitely after you dictated
-          words — labelled "ready" — while an empty session hid it at once. Now it
-          consistently appears while busy/error and disappears when dictation ends. */}
-      {(busy || status === "error") && (
-        <Card className="mt-4 p-5">
-          <div className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-label text-faint">
-            <Waveform
-              level={level}
-              active={status === "listening"}
-              processing={waveProcessing}
-              bars={5}
-              variant="dots"
-              tone={waveTone}
-              className="h-4 w-10"
-            />
-            {vis.label}
-          </div>
-          {status === "error" && dictationError ? (
-            <div className="select-text text-[13.5px] leading-relaxed text-rec">{dictationError}</div>
-          ) : (
-            <div className="min-h-6 select-text whitespace-pre-wrap text-[15px] leading-relaxed text-text">
-              {partial || <span className="text-faint">…</span>}
-            </div>
-          )}
-        </Card>
-      )}
+      {/* Live-transcript card: visible while busy/error, then lingers for a few
+          seconds after the session ends (so the final transcript stays readable) and
+          animates in/out by collapsing its height + fading. */}
+      <AnimatePresence initial={false}>
+        {cardVisible && (
+          <motion.div
+            key="transcript"
+            initial={{ opacity: 0, height: 0, marginTop: 0 }}
+            animate={{ opacity: 1, height: "auto", marginTop: 16 }}
+            exit={{ opacity: 0, height: 0, marginTop: 0 }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <Card className="p-5">
+              <div className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-label text-faint">
+                <Waveform
+                  level={level}
+                  active={status === "listening"}
+                  processing={waveProcessing}
+                  bars={5}
+                  variant="dots"
+                  tone={waveTone}
+                  className="h-4 w-10"
+                />
+                {cardLabel}
+              </div>
+              {status === "error" && dictationError ? (
+                <div className="select-text text-[13.5px] leading-relaxed text-rec">{dictationError}</div>
+              ) : (
+                <div className="min-h-6 select-text whitespace-pre-wrap text-[15px] leading-relaxed text-text">
+                  {partial || <span className="text-faint">…</span>}
+                </div>
+              )}
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {overridesIgnored.length > 0 && (
         <div className="mt-3 flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">

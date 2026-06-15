@@ -52,6 +52,6 @@ export function dictationVisual(status: DictationStatus, speaking: boolean): Dic
         : { state: "armed", tone: "accent", label: "listening", pulse: true, filled: true };
     case "idle":
     default:
-      return { state: "off", tone: "faint", label: "ready", pulse: false, filled: false };
+      return { state: "off", tone: "faint", label: "off", pulse: false, filled: false };
   }
 }
