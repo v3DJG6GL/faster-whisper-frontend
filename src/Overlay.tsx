@@ -22,6 +22,7 @@ interface ChipState {
   persistentDock: boolean;
   overlayPeek: boolean;
   peekTimeoutSec: number;
+  peekWhileActive: boolean;
   dimAfterSec: number;
   hoverRevealMs: number;
   quickLaunch: OverlayQuickAction[];
@@ -69,6 +70,11 @@ const PEEK_HOVER_GRACE_MS = 6000;
 const EDGE_MARGIN = 28;
 const PEEK_TUCK = 29;
 
+// "Stay minimized while dictating" (peekWhileActive): once a session is live, tuck the dot
+// back to the edge after this short settle rather than waiting the full peekTimeoutSec — the
+// chip is meant to stay minimized, so it shouldn't sit expanded for half a minute first.
+const PEEK_ACTIVE_SETTLE_MS = 700;
+
 /**
  * The dictation chip — a frameless, transparent, always-on-top window painted by
  * Rust at the top-center of the screen, fed `dictation://update` (status, level,
@@ -88,6 +94,7 @@ export default function Overlay() {
     persistentDock: false,
     overlayPeek: false,
     peekTimeoutSec: 30,
+    peekWhileActive: false,
     dimAfterSec: 10,
     hoverRevealMs: 1000,
     quickLaunch: [],
@@ -112,6 +119,7 @@ export default function Overlay() {
             persistentDock: e.payload.persistentDock ?? false,
             overlayPeek: e.payload.overlayPeek ?? false,
             peekTimeoutSec: e.payload.peekTimeoutSec ?? 30,
+            peekWhileActive: e.payload.peekWhileActive ?? false,
             dimAfterSec: e.payload.dimAfterSec ?? 10,
             hoverRevealMs: e.payload.hoverRevealMs ?? 1000,
             quickLaunch: e.payload.quickLaunch ?? [],
@@ -154,6 +162,7 @@ export default function Overlay() {
         persistentDock: true,
         overlayPeek: false,
         peekTimeoutSec: 30,
+        peekWhileActive: false,
         dimAfterSec: 10,
         hoverRevealMs: 1000,
         quickLaunch: [
@@ -365,32 +374,45 @@ export default function Overlay() {
   // moves (it's anchored flush at the edge, overlay.rs), so the tuck is a pure CSS transform:
   // it animates reliably and can't desync with an OS window-move. The hit-region effect above
   // re-reports the chip's bounds whenever `peeked` flips, so the tucked sliver stays hoverable.
+  //
+  // "Stay minimized while dictating" (peekWhileActive) flips this: active states no longer pop
+  // it out, and status flips no longer bounce it — the dot stays tucked through the whole
+  // session, conveying state via colour + pulse only. Hover and errors still override (so you
+  // can always read the transcript / see a failure); completion settles back without popping.
   const lastPeekStatus = useRef(state.status);
   useEffect(() => {
     const statusChanged = lastPeekStatus.current !== state.status;
     lastPeekStatus.current = state.status;
-    // Only an undisturbed armed-but-silent session, or a persistent standby dock, ever peeks.
+    const activeStatus =
+      state.status === "listening" || state.status === "transcribing" || state.status === "injecting";
+    const keepMin = state.overlayPeek && state.peekWhileActive && state.position !== "off";
+    // Only an undisturbed armed-but-silent session, or a persistent standby dock, ever peeks —
+    // unless keep-minimized is on, where any active state stays tucked too. Hover always restores
+    // (peek-on-demand) and an error always pops out so its message is readable.
     const blocked =
       !state.overlayPeek ||
       state.position === "off" ||
       hovering ||
-      speaking ||
-      processing ||
-      expanded ||
-      state.status === "error";
-    const eligible = !blocked && (standby || state.status === "listening");
+      state.status === "error" ||
+      (!keepMin && (speaking || processing || expanded));
+    const eligible = !blocked && (standby || (keepMin ? activeStatus : state.status === "listening"));
     if (!eligible) {
       setPeeked(false);
       return;
     }
-    // Fresh activity (a status change such as a session starting) pops it back, then re-arms.
-    if (statusChanged) setPeeked(false);
-    // Honour the user's inactivity timeout uniformly; a recent hover extends it (grace).
-    const wait = Math.max(state.peekTimeoutSec * 1000, peekGraceUntil.current - performance.now());
+    // Normal mode bounces out on fresh activity (a status change) then re-arms; keep-minimized
+    // glues the dot in place across the whole lifecycle (listening → finalizing → done).
+    if (statusChanged && !keepMin) setPeeked(false);
+    // Idle/standby honours the user's full inactivity timeout; a live keep-minimized session
+    // tucks promptly instead. A recent hover extends either via the grace floor.
+    const base =
+      keepMin && activeStatus && !standby ? PEEK_ACTIVE_SETTLE_MS : state.peekTimeoutSec * 1000;
+    const wait = Math.max(base, peekGraceUntil.current - performance.now());
     const t = setTimeout(() => setPeeked(true), wait);
     return () => clearTimeout(t);
   }, [
     state.overlayPeek,
+    state.peekWhileActive,
     state.position,
     state.status,
     state.peekTimeoutSec,
@@ -458,7 +480,7 @@ export default function Overlay() {
         >
           {/* The persistent status dot — the seed the pill grows out of. A one-shot ✓
               replaces it the instant a session completes (a single play, not a loop). */}
-          {justDone ? (
+          {justDone && !peeked ? (
             <motion.span
               key="done"
               initial={{ scale: 0.5, opacity: 0 }}
@@ -474,7 +496,10 @@ export default function Overlay() {
               className={cn(
                 "size-2.5 shrink-0 rounded-full transition-colors duration-300",
                 dotColorClass,
-                !expanded && !standby && !showQuickLaunch && !peeked && "animate-chip-breathe",
+                // Gentle breathing while a calm chip rests, AND while tucked-and-speaking (the
+                // only liveness cue a minimized dot has). Finalizing pulses via chip-think below.
+                ((!expanded && !standby && !showQuickLaunch && !peeked) || (peeked && speaking)) &&
+                  "animate-chip-breathe",
                 processing && "animate-chip-think",
               )}
             />

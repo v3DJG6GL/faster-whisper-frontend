@@ -54,6 +54,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     persistentDock: false,
     overlayPeek: false,
     peekTimeoutSec: 30,
+    peekWhileActive: false,
     dimAfterSec: 10,
     hoverRevealMs: 1000,
     quickLaunch: [],

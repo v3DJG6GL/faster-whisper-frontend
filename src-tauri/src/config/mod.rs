@@ -337,6 +337,10 @@ pub struct RecordingSettings {
     /// Idle seconds before the chip peeks to the edge (fractional allowed).
     #[serde(default = "default_peek_timeout")]
     pub peek_timeout_sec: f64,
+    /// Stay tucked at the edge as a dot even while dictating (color + pulse only),
+    /// instead of popping out into the full pill. Layers on `overlay_peek`.
+    #[serde(default)]
+    pub peek_while_active: bool,
     /// Idle seconds before the chip fades to a dim opacity (0 = never; fractional allowed).
     /// Applies to an armed-but-silent session AND a docked standby dot.
     #[serde(default = "default_dim_after")]
@@ -401,6 +405,7 @@ impl Default for Config {
                     persistent_dock: false,
                     overlay_peek: false,
                     peek_timeout_sec: 30.0,
+                    peek_while_active: false,
                     dim_after_sec: 10.0,
                     hover_reveal_ms: 1000,
                     quick_launch: Vec::new(),

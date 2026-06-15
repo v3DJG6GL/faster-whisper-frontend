@@ -110,6 +110,7 @@ export interface RecordingSettings {
   persistentDock: boolean; // keep the chip on screen (a standby dot) even when dictation is off
   overlayPeek: boolean; // after sitting idle, slide the chip to the screen edge (hover to restore)
   peekTimeoutSec: number; // idle seconds before the chip peeks to the edge
+  peekWhileActive: boolean; // stay tucked at the edge as a dot even while dictating (color + pulse only)
   dimAfterSec: number; // idle seconds before the chip fades to a dim opacity (0 = never)
   hoverRevealMs: number; // hover-intent delay before the chip reveals detail + quick-launch
   quickLaunch: OverlayQuickAction[]; // chip quick-launch buttons (screens + dictation actions)

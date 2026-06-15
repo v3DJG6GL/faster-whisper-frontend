@@ -365,6 +365,17 @@ export default function Settings() {
                 />
               </SettingRow>
             )}
+            {s.recording.overlayPeek && s.recording.indicatorPosition !== "off" && (
+              <SettingRow
+                title="Stay minimized while dictating"
+                desc="Keep the chip tucked to the edge as a small dot even while you dictate, instead of popping out — it just changes colour and gently pulses while you speak. Hover the dot to reveal the transcript."
+              >
+                <Toggle
+                  checked={s.recording.peekWhileActive}
+                  onChange={(v) => updateRecording({ peekWhileActive: v })}
+                />
+              </SettingRow>
+            )}
             {s.recording.indicatorPosition !== "off" && (
               <SettingRow
                 title="Dim after"

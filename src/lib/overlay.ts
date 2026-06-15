@@ -73,6 +73,7 @@ export async function initOverlayController(): Promise<void> {
         persistentDock: rec.persistentDock ?? false,
         overlayPeek: rec.overlayPeek ?? false,
         peekTimeoutSec: rec.peekTimeoutSec ?? 30,
+        peekWhileActive: rec.peekWhileActive ?? false,
         dimAfterSec: rec.dimAfterSec ?? 10,
         hoverRevealMs: rec.hoverRevealMs ?? 1000,
         quickLaunch: rec.quickLaunch ?? [],
