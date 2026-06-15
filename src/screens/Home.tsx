@@ -81,20 +81,21 @@ export default function Home() {
   // for the post-speech states — so a wedged "finalizing…"/"inserting…" (e.g. the
   // stream died on suspend) is recoverable with the same button instead of dead.
   const busy = status === "listening" || status === "transcribing" || status === "injecting";
-  // Shared state→colour mapping (same as the chip + sidebar). The hero button fill
-  // follows the palette during a session — amber armed → green speaking → neutral
-  // finalizing — fixing the old "any busy = red". Idle/error stay amber: the button's
-  // action there is "start (again)", so amber reads as the call-to-action. The
-  // waveforms reuse the same tone (mapping the hollow "off" tone to amber, since a
-  // waveform has no hollow form).
+  // Shared state→colour mapping (same as the chip + sidebar): off=grey, armed=amber,
+  // speaking=green, finalizing=neutral, error=neutral. OFF/idle reads as a recessed
+  // neutral button (press to start) — NOT the old always-amber — and only goes amber
+  // once a session is armed, green while you speak. The waveform has no hollow form,
+  // so its "off" tone maps to grey (dim) rather than amber.
   const vis = dictationVisual(status, speaking);
   const heroFill =
     vis.state === "speaking"
       ? "bg-live text-white"
       : vis.state === "processing"
         ? "bg-dim text-white"
-        : "bg-accent text-accent-ink";
-  const waveTone = vis.tone === "faint" ? "accent" : vis.tone;
+        : vis.state === "armed"
+          ? "bg-accent text-accent-ink"
+          : "bg-surface-2 text-dim";
+  const waveTone = vis.tone === "faint" ? "dim" : vis.tone;
   const waveProcessing = status === "transcribing" || status === "injecting";
   const toggle = () => {
     if (status === "listening") {
@@ -209,7 +210,11 @@ export default function Home() {
         </div>
       </Card>
 
-      {(busy || partial || status === "error") && (
+      {/* Tie the live-transcript card to the session itself (not to a lingering
+          `partial`): otherwise it stayed visible indefinitely after you dictated
+          words — labelled "ready" — while an empty session hid it at once. Now it
+          consistently appears while busy/error and disappears when dictation ends. */}
+      {(busy || status === "error") && (
         <Card className="mt-4 p-5">
           <div className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-label text-faint">
             <Waveform
