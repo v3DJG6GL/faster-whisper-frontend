@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Mic, Check, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Segmented, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
+import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screens";
 import {
@@ -15,7 +15,7 @@ import {
 } from "@/lib/api";
 import type { AudioDevice, OverlayQuickAction } from "@/lib/types";
 
-const TABS = ["General", "Audio", "Recording", "Permissions"] as const;
+const TABS = ["General", "Audio", "Recording", "Chip", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
 
 function AudioTab() {
@@ -299,7 +299,23 @@ export default function Settings() {
 
         {tab === "Recording" && (
           <Card className="px-6">
-            <SettingRow title="Overlay position" desc="Where the dictation chip sits on screen while you talk.">
+            <SettingRow title="Keep audio recordings" desc="Save a .wav of each dictation locally.">
+              <Toggle checked={s.recording.saveRecordings} onChange={(v) => updateRecording({ saveRecordings: v })} />
+            </SettingRow>
+            <SettingRow
+              title="Silence other apps while recording"
+              desc="Mute system audio for the duration of a dictation."
+              last
+            >
+              <Toggle checked={s.recording.muteSystemAudio} onChange={(v) => updateRecording({ muteSystemAudio: v })} />
+            </SettingRow>
+          </Card>
+        )}
+
+        {tab === "Chip" && (
+          <Card className="px-6">
+            <SectionLabel className="mb-1 mt-4">Placement</SectionLabel>
+            <SettingRow title="Position" desc="Where the dictation chip sits on screen while you talk.">
               <Segmented
                 value={s.recording.indicatorPosition}
                 onChange={(v) => updateRecording({ indicatorPosition: v })}
@@ -308,27 +324,6 @@ export default function Settings() {
                   { value: "bottom", label: "Bottom" },
                   { value: "off", label: "Off" },
                 ]}
-              />
-            </SettingRow>
-            <SettingRow title="Keep audio recordings" desc="Save a .wav of each dictation locally.">
-              <Toggle checked={s.recording.saveRecordings} onChange={(v) => updateRecording({ saveRecordings: v })} />
-            </SettingRow>
-            <SettingRow title="Silence other apps while recording" desc="Mute system audio for the duration of a dictation.">
-              <Toggle checked={s.recording.muteSystemAudio} onChange={(v) => updateRecording({ muteSystemAudio: v })} />
-            </SettingRow>
-            <SettingRow
-              title="Live transcript in overlay"
-              desc="Show words appear in the chip as you speak (streaming backends only)."
-            >
-              <Toggle checked={s.recording.realtimePreview} onChange={(v) => updateRecording({ realtimePreview: v })} />
-            </SettingRow>
-            <SettingRow
-              title="Show active profile on overlay"
-              desc="Label the chip with the running profile's tag; hover it to reveal language and mode."
-            >
-              <Toggle
-                checked={s.recording.showProfileOnOverlay}
-                onChange={(v) => updateRecording({ showProfileOnOverlay: v })}
               />
             </SettingRow>
             <SettingRow
@@ -341,6 +336,8 @@ export default function Settings() {
                 onChange={(v) => updateRecording({ persistentDock: v })}
               />
             </SettingRow>
+
+            <SectionLabel className="mb-1 mt-7">Auto-hide</SectionLabel>
             <SettingRow
               title="Auto-hide to edge"
               desc="After sitting idle, slide the chip up to the screen edge so it stops covering things; hover the sliver to bring it back."
@@ -376,6 +373,8 @@ export default function Settings() {
                 />
               </SettingRow>
             )}
+
+            <SectionLabel className="mb-1 mt-7">Appearance</SectionLabel>
             {s.recording.indicatorPosition !== "off" && (
               <SettingRow
                 title="Dim after"
@@ -394,6 +393,23 @@ export default function Settings() {
                 />
               </SettingRow>
             )}
+            <SettingRow
+              title="Live transcript"
+              desc="Show words appear in the chip as you speak (streaming backends only)."
+            >
+              <Toggle checked={s.recording.realtimePreview} onChange={(v) => updateRecording({ realtimePreview: v })} />
+            </SettingRow>
+            <SettingRow
+              title="Show active profile"
+              desc="Label the chip with the running profile's tag; hover it to reveal language and mode."
+            >
+              <Toggle
+                checked={s.recording.showProfileOnOverlay}
+                onChange={(v) => updateRecording({ showProfileOnOverlay: v })}
+              />
+            </SettingRow>
+
+            <SectionLabel className="mb-1 mt-7">Interaction</SectionLabel>
             {s.recording.indicatorPosition !== "off" && (
               <SettingRow
                 title="Hover reveal delay"
