@@ -16,7 +16,7 @@ const GLYPH = { hold: Mic, latch: Hand } as const;
 // After dictation ends, keep the live-transcript card on screen this long so you can
 // read the final result, then it animates out. An empty/cancelled session lingers the
 // same amount, for consistent behaviour.
-const TRANSCRIPT_LINGER_MS = 4000;
+const TRANSCRIPT_LINGER_MS = 10000;
 
 function ProfileCard({ p }: { p: Profile }) {
   const backends = useApp((s) => s.backends);
