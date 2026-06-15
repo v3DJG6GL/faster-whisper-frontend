@@ -162,6 +162,27 @@ mod imp {
         }
     }
 
+    /// Is Caps Lock currently on? Read from the keyboard's `capslock` LED in sysfs —
+    /// works on native Wayland without X, and reflects the compositor's lock state
+    /// (KWin drives the hardware LED). We need it because the portal injects raw
+    /// keycodes that KWin resolves under the LIVE Caps Lock, while our charmap only
+    /// models Shift/AltGr. Best-effort: if no capslock LED is exposed, assume off.
+    fn caps_lock_on() -> bool {
+        let Ok(entries) = std::fs::read_dir("/sys/class/leds") else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().contains("capslock") {
+                if let Ok(v) = std::fs::read_to_string(entry.path().join("brightness")) {
+                    if v.trim().parse::<u32>().map(|n| n > 0).unwrap_or(false) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Type `text` character-by-character (layout-correct keycodes).
     pub async fn type_text(
         app: &AppHandle,
@@ -300,11 +321,18 @@ mod imp {
                     tokio::time::sleep(Duration::from_millis(40)).await;
                     return Ok(());
                 }
+                // KWin interprets each injected keycode under the LIVE Caps Lock, and our
+                // charmap only models Shift/AltGr (not Lock) — so with Caps ON, alphabetic
+                // keys come out inverted-case. Compensate by flipping Shift for Lock-
+                // affected (alphabetic) keys while Caps is on. (zwp_virtual_keyboard would
+                // sidestep this, but KWin doesn't advertise it, so we're on this path.)
+                let caps = caps_lock_on();
                 for c in job.text.chars() {
                     let Some(spec) = key_spec_for(c, &charmap) else {
                         continue; // char not reachable on this layout — skip
                     };
-                    if spec.shift {
+                    let needs_shift = spec.shift ^ (caps && c.is_alphabetic());
+                    if needs_shift {
                         press!(KEY_LEFTSHIFT);
                         tokio::time::sleep(Duration::from_millis(4)).await;
                     }
@@ -319,7 +347,7 @@ mod imp {
                         tokio::time::sleep(Duration::from_millis(4)).await;
                         release!(KEY_RIGHTALT);
                     }
-                    if spec.shift {
+                    if needs_shift {
                         tokio::time::sleep(Duration::from_millis(4)).await;
                         release!(KEY_LEFTSHIFT);
                     }
