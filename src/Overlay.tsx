@@ -232,8 +232,15 @@ export default function Overlay() {
   const peekGraceUntil = useRef(0);
   // Deep-idle edge-peek: true when the chip has tucked to the screen edge (driven below).
   const [peeked, setPeeked] = useState(false);
+  // True while restoring a *tucked* chip via hover — captured at pointer-enter (was it peeked?).
+  // Anchors the restored pill flush to the edge so it stays under the edge-parked cursor through
+  // the un-tuck slide; otherwise the pill slides inward to its rest inset and the cursor (still at
+  // the edge) falls off it, dropping the hover before it can reveal. A non-tucked hover leaves it
+  // false → the pill keeps its normal rest inset (no jump out from under the cursor).
+  const [peekRestoring, setPeekRestoring] = useState(false);
   const onPointerEnter = () => {
     setHovering(true);
+    setPeekRestoring(peeked); // remember whether the chip was tucked when this hover began
     peekGraceUntil.current = performance.now() + PEEK_HOVER_GRACE_MS;
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     // Hover-intent dwell: wait the configured delay before revealing — so a fly-over
@@ -242,6 +249,7 @@ export default function Overlay() {
   };
   const onPointerLeave = () => {
     setHovering(false);
+    setPeekRestoring(false);
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     setHoverReveal(false);
   };
@@ -268,11 +276,17 @@ export default function Overlay() {
   // The chip is interactive (hoverable / clickable) whenever it's on screen: during a
   // session, or — with the dock on — in standby too. Outside Tauri the calls no-op.
   const interactive = state.status !== "idle" || (state.persistentDock && state.position !== "off");
+  // `state.status` MUST be a dependency: show_overlay re-applies set_ignore_cursor_events(true) on
+  // every (re)show — including the standby→session re-center in overlay.ts — which WIPES the input
+  // shape and makes the whole window click-through again. With the dock on, neither `interactive`
+  // nor `peeked` changes on session start, so without `status` the shape was never re-applied and
+  // the chip stayed unhoverable for the entire session. The late 1500ms retry guarantees the final
+  // re-report lands AFTER show_overlay's click-through reset (the early retries can race it).
   useEffect(() => {
     if (!interactive) return;
-    const ids = [0, 160, 420, 850].map((ms) => setTimeout(reportBounds, ms));
+    const ids = [0, 160, 420, 850, 1500].map((ms) => setTimeout(reportBounds, ms));
     return () => ids.forEach(clearTimeout);
-  }, [reportBounds, interactive, state.position, peeked]);
+  }, [reportBounds, interactive, state.status, state.position, peeked]);
 
   // After sitting calm for `dimAfterSec`, fade the chip down so it's unobtrusive; any
   // speech / hover / state change snaps it back to full opacity. Applies to BOTH calm
@@ -443,7 +457,11 @@ export default function Overlay() {
   // rest is clipped by the viewport edge). Mirrored for the bottom edge.
   const restY = state.position === "bottom" ? -EDGE_MARGIN : EDGE_MARGIN;
   const tuckY = state.position === "bottom" ? PEEK_TUCK : -PEEK_TUCK;
-  const slideY = peeked ? tuckY : restY;
+  // Restoring a tucked chip via hover: anchor the pill FLUSH to the edge (not the rest inset) so
+  // it expands right under the edge-parked cursor and the pill's pointer handlers keep the hover
+  // alive through the slide. ±8 cancels the pt-2/pb-2 pad → pill flush at the very edge.
+  const peekRestY = state.position === "bottom" ? 8 : -8;
+  const slideY = peeked ? tuckY : peekRestoring ? peekRestY : restY;
 
   return (
     <MotionConfig reducedMotion="user">

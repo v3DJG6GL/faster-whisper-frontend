@@ -75,6 +75,10 @@ pub fn show_overlay(app: AppHandle, position: String) {
         let _ = win.set_title(CHIP_TITLE);
         let _ = win.show();
         ignore_cursor(&win);
+        // ignore_cursor REPLACED the input shape with an empty one (whole window click-through);
+        // restore the chip's hit region at once so a standby→session re-center doesn't leave the
+        // chip unhoverable. The webview re-reports its exact bounds a beat later.
+        reapply_last_hit_region(&win);
         // Pin the chip top/bottom-centre of the *active* output via a KWin rule.
         // This shells out (qdbus6 / kscreen-doctor / kwriteconfig6 / dbus-send), which
         // can BLOCK: a write to kwinrulesrc can D-Bus-activate a KDE helper (kded6,
@@ -91,6 +95,8 @@ pub fn show_overlay(app: AppHandle, position: String) {
 
     let _ = win.show();
     ignore_cursor(&win);
+    #[cfg(target_os = "linux")]
+    reapply_last_hit_region(&win);
 }
 
 // The edge-peek never moves the window. The window is anchored FLUSH against the screen edge
@@ -133,6 +139,13 @@ pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64) {
     };
     #[cfg(target_os = "linux")]
     {
+        // Remember the latest requested region so a later (re)show can restore it: show_overlay
+        // re-applies set_ignore_cursor_events(true), which REPLACES the input shape with an empty
+        // one (whole window click-through) and would otherwise leave the chip unhoverable until
+        // the webview happens to re-report. See reapply_last_hit_region / show_overlay.
+        if let Ok(mut last) = LAST_HIT_REGION.lock() {
+            *last = Some((x, y, w, h));
+        }
         let applied = apply_hit_region(&win, x, y, w, h).is_some();
         tracing::debug!("[overlay] hit_region x={x:.0} y={y:.0} w={w:.0} h={h:.0} applied={applied}");
         // If not applied, the GdkWindow isn't realized yet — a later retry will get
@@ -144,6 +157,24 @@ pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64) {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (&win, x, y, w, h);
+    }
+}
+
+/// The most recent chip hit region (logical px) requested by the webview, so a (re)show can
+/// restore it the instant `ignore_cursor` wipes the input shape (the webview also re-reports its
+/// exact bounds a beat later). `Mutex::new` is const, so no lazy init is needed.
+#[cfg(target_os = "linux")]
+static LAST_HIT_REGION: std::sync::Mutex<Option<(f64, f64, f64, f64)>> = std::sync::Mutex::new(None);
+
+/// Re-apply the last known chip hit region after a (re)show's `ignore_cursor` reset, so the chip
+/// stays hoverable across a standby→session re-center without waiting on a webview round-trip.
+/// No-op before the webview has ever reported a region (e.g. the very first show).
+#[cfg(target_os = "linux")]
+fn reapply_last_hit_region(win: &WebviewWindow) {
+    if let Ok(last) = LAST_HIT_REGION.lock() {
+        if let Some((x, y, w, h)) = *last {
+            let _ = apply_hit_region(win, x, y, w, h);
+        }
     }
 }
 
