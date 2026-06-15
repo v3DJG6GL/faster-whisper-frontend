@@ -122,7 +122,35 @@ async function ensureListeners(): Promise<void> {
   const { listen } = await import("@tauri-apps/api/event");
   const setDictation = useApp.getState().setDictation;
 
-  await listen<number>("stream://level", (e) => setDictation({ level: e.payload }));
+  // The level meter arrives per audio callback (~50–100 Hz). Pushing every sample
+  // into the store fans out to a cross-window IPC `emit` + a full overlay re-render
+  // on EVERY frame (overlay.ts re-broadcasts on any `level` change) — over a multi-
+  // hour session that churn alone bloated the shared WebKitGTK renderer to multiple
+  // GB. ~30 Hz is indistinguishable for a level meter, so coalesce: fire on the
+  // leading edge, then trail the latest value so the meter still settles to its true
+  // resting level instead of freezing mid-throttle.
+  const LEVEL_MIN_MS = 33;
+  let lastLevelAt = 0;
+  let levelTimer: ReturnType<typeof setTimeout> | undefined;
+  let latestLevel = 0;
+  await listen<number>("stream://level", (e) => {
+    latestLevel = e.payload;
+    const wait = LEVEL_MIN_MS - (performance.now() - lastLevelAt);
+    if (wait <= 0) {
+      if (levelTimer) {
+        clearTimeout(levelTimer);
+        levelTimer = undefined;
+      }
+      lastLevelAt = performance.now();
+      setDictation({ level: latestLevel });
+    } else if (!levelTimer) {
+      levelTimer = setTimeout(() => {
+        levelTimer = undefined;
+        lastLevelAt = performance.now();
+        setDictation({ level: latestLevel });
+      }, wait);
+    }
+  });
 
   await listen<{ committed: string; pending: string }>("stream://partial", (e) => {
     const live = e.payload.committed + e.payload.pending;
@@ -164,7 +192,9 @@ async function ensureListeners(): Promise<void> {
     // the stop-timing single insert), drop our live baseline so the next utterance
     // starts fresh, clear the preview, and optionally type the configured separator.
     const sep = e.payload || "";
-    if (committedDoc) bankedDoc += committedDoc + sep;
+    // Only the "stop"-timing single insert reads this back; live mode types as it
+    // goes, so banking there just grows a string nobody consumes for the session.
+    if (!insertCfg?.live && committedDoc) bankedDoc += committedDoc + sep;
     committedDoc = "";
     injectedText = "";
     setDictation({ partial: "" });

@@ -33,6 +33,12 @@ export function Waveform({
   levelRef.current = level;
   activeRef.current = active;
   processingRef.current = processing;
+  // Re-arms the draw loop after it has parked itself (idle + settled). Set by the
+  // setup effect; called from the [active, processing] and [tone] effects below.
+  const kickRef = useRef<() => void>(() => {});
+  // Recompute the resolved CSS color on the next frame (set when `tone` changes),
+  // instead of polling getComputedStyle on a timer for the whole session.
+  const colorDirtyRef = useRef(true);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -40,17 +46,17 @@ export function Waveform({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Under "reduce motion", freeze to a static silhouette (no wobble, no
-    // amplitude reaction) — the loop keeps running only so tone/active changes
-    // still repaint, but every frame is identical, so there's no perceived motion.
+    // Under "reduce motion", freeze to a static silhouette (no wobble, no amplitude
+    // reaction). Combined with the idle-parking below, the loop settles in a frame
+    // or two and then stops entirely — no perceived motion and no ongoing repaint.
     const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 
     const heights = new Array(bars).fill(0.16);
     const phases = heights.map((_, i) => (i / bars) * Math.PI * 2 + Math.random());
     let t = 0;
     let color = "#ff9e2c";
-    let colorTick = 0;
     let raf = 0;
+    let running = false;
 
     const rr = (x: number, y: number, w: number, h: number, r: number) => {
       const rad = Math.min(r, w / 2, h / 2);
@@ -78,8 +84,10 @@ export function Waveform({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      if (colorTick % 30 === 0) color = getComputedStyle(canvas).color || color;
-      colorTick++;
+      if (colorDirtyRef.current) {
+        color = getComputedStyle(canvas).color || color;
+        colorDirtyRef.current = false;
+      }
       ctx.fillStyle = color;
 
       const isActive = activeRef.current;
@@ -98,6 +106,7 @@ export function Waveform({
       const sweep = ((t * 1.0) % (span * 2));
       const center = (sweep < span ? sweep : span * 2 - sweep) - 1; // bounce -1 … bars
 
+      let maxStep = 0; // largest bar movement this frame → lets the loop detect "settled"
       for (let i = 0; i < bars; i++) {
         // Center-boost: middle bars run taller → the classic VU-meter "smile".
         const edge = mid === 0 ? 0 : Math.abs(i - mid) / mid; // 0 centre … 1 edge
@@ -113,9 +122,13 @@ export function Waveform({
         } else if (isActive) {
           target = Math.max(0.14, Math.min(1, lvl * (0.55 + 0.9 * wobble) * cb));
         } else {
-          target = (0.12 + 0.05 * wobble) * cb;
+          // Static idle silhouette (no wobble) so the bars actually converge and the
+          // loop can park itself, rather than breathing — i.e. repainting — forever.
+          target = 0.14 * cb;
         }
-        heights[i] += reduce ? target - heights[i] : (target - heights[i]) * 0.25;
+        const delta = reduce ? target - heights[i] : (target - heights[i]) * 0.25;
+        heights[i] += delta;
+        if (Math.abs(delta) > maxStep) maxStep = Math.abs(delta);
         const x = (i + 0.5) * slot;
         ctx.globalAlpha = isActive ? 1 : isProcessing ? 0.92 : 0.55;
         if (variant === "dots") {
@@ -129,11 +142,40 @@ export function Waveform({
           ctx.fill();
         }
       }
+      // Keep animating only while there's something to animate — a live level meter
+      // or the processing sweep. Once idle and visually settled, park the loop: a
+      // static silhouette costs the renderer nothing, and leaving a canvas repainting
+      // every frame for hours is exactly what bloated the shared WebKitGTK renderer.
+      const needsAnimation = !reduce && (isActive || isProcessing);
+      if (!needsAnimation && maxStep < 0.001) {
+        running = false;
+        raf = 0;
+        return;
+      }
       raf = requestAnimationFrame(draw);
     };
-    raf = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(raf);
+    const kick = () => {
+      if (running) return;
+      running = true;
+      raf = requestAnimationFrame(draw);
+    };
+    kickRef.current = kick;
+    kick();
+    return () => {
+      running = false;
+      cancelAnimationFrame(raf);
+    };
   }, [bars, variant]);
+
+  // Restart the (self-parking) loop whenever it has something to animate again, or
+  // when the colour must be re-resolved after a tone change.
+  useEffect(() => {
+    kickRef.current();
+  }, [active, processing]);
+  useEffect(() => {
+    colorDirtyRef.current = true;
+    kickRef.current();
+  }, [tone]);
 
   return (
     <canvas

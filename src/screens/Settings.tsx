@@ -39,9 +39,16 @@ function AudioTab() {
     let active = true;
     let unlisten: (() => void) | undefined;
     void (async () => {
-      unlisten = await onAudioLevel((l) => {
+      const un = await onAudioLevel((l) => {
         if (active) setLevel(l);
       });
+      // Torn down mid-await (test toggled off / device switched) → don't leave the
+      // level listener registered for the rest of the session.
+      if (!active) {
+        un();
+        return;
+      }
+      unlisten = un;
       await startMicTest(microphoneId);
     })();
     return () => {

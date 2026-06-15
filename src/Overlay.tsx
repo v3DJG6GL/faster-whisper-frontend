@@ -96,6 +96,7 @@ export default function Overlay() {
   // Live updates from the Rust core when running under Tauri.
   useEffect(() => {
     if (!isTauri) return;
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     import("@tauri-apps/api/event")
       .then(({ listen }) =>
@@ -118,10 +119,16 @@ export default function Overlay() {
         }),
       )
       .then((un) => {
-        unlisten = un;
+        // If the effect was torn down before listen() resolved (StrictMode's
+        // mount→unmount→remount), drop the subscription instead of leaking it.
+        if (cancelled) un();
+        else unlisten = un;
       })
       .catch(() => {});
-    return () => unlisten?.();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   // Standalone demo animation (browser preview only).
