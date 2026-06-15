@@ -428,6 +428,19 @@ pub async fn inject_text(
     restore_clipboard: bool,
 ) -> Result<(), String> {
     tracing::info!("[inject] {} chars via {} (auto_enter={})", text.len(), method, auto_enter);
+    // Never type into our OWN UI: if one of our real windows holds keyboard focus, the
+    // injected keys would fire buttons/shortcuts in the app itself (e.g. dictating while
+    // looking at Home). A Wayland client is always told its own keyboard focus, so this is
+    // reliable on KWin — unlike detecting other apps' focused fields. The click-through
+    // "overlay" chip never holds focus; exclude it. The transcript still shows in the chip.
+    if app
+        .webview_windows()
+        .iter()
+        .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+    {
+        tracing::info!("[inject] skipped: our own window holds focus");
+        return Ok(());
+    }
     // Wait briefly for the trigger chord's shortcut modifiers (Ctrl/Alt/Meta) to be
     // physically released before typing — otherwise the injected keys fold into the
     // still-held modifier and fire shortcuts in the focused app (worst with a latch
