@@ -262,11 +262,26 @@ export default function Overlay() {
   // coordinate space. No-op outside Tauri.
   const chipRef = useRef<HTMLDivElement>(null);
   const reportBounds = useCallback(() => {
+    // While hovering, hold the input region at the FULL window instead of the chip's
+    // live bounds. WebKitGTK turns a GDK leave into a synthesized mouse-move and clears
+    // :hover only by hit-testing it — so if the input region is reshaped (the body's
+    // hover-expand) at the instant the cursor crosses the old boundary, that move lands
+    // outside the new shape, the pointerleave is dropped, and `hovering`/`hoverReveal`
+    // stick true: the chip stays expanded, never dims, never peeks, until the next hover.
+    // A stable boundary STRICTLY LARGER than the grown pill (the whole window) keeps the
+    // cursor inside the shape through the morph, so the eventual leave crosses the fixed
+    // window edge and fires reliably. Reverts to the precise chip rect on leave (so the
+    // strip is click-through again). Growing to full-window happens while the cursor is
+    // safely interior (on the chip), so it never drops a crossing itself.
+    if (hovering) {
+      void setChipHitRegion(0, 0, window.innerWidth, window.innerHeight);
+      return;
+    }
     const el = chipRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
     if (r.width > 0 && r.height > 0) void setChipHitRegion(r.x, r.y, r.width, r.height);
-  }, []);
+  }, [hovering]);
   // Report bounds ONLY at settled moments — never mid-morph. A region that resizes
   // out from under the cursor causes hover enter/leave thrash (chip flickering
   // open/closed, "stuck" open, needing a click to wake). So updates come only from
@@ -287,6 +302,21 @@ export default function Overlay() {
     const ids = [0, 160, 420, 850, 1500].map((ms) => setTimeout(reportBounds, ms));
     return () => ids.forEach(clearTimeout);
   }, [reportBounds, interactive, state.status, state.position, peeked]);
+
+  // Safety net for a lost pointerleave. `hovering`/`hoverReveal` are reset ONLY in
+  // onPointerLeave, so any event that drops the leave strands them true (chip stuck
+  // expanded, never dims, never peeks). The full-window hover region above prevents the
+  // common morph-race; this covers the rarer case where the window hides at session end
+  // (or its input shape is wiped on re-show) while the cursor is over the chip — when the
+  // chip isn't interactive it can't be hovered, so clear the hover state to be sure it
+  // comes back clean rather than stuck.
+  useEffect(() => {
+    if (interactive) return;
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setHovering(false);
+    setHoverReveal(false);
+    setPeekRestoring(false);
+  }, [interactive]);
 
   // After sitting calm for `dimAfterSec`, fade the chip down so it's unobtrusive; any
   // speech / hover / state change snaps it back to full opacity. Applies to BOTH calm
