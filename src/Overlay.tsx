@@ -5,6 +5,8 @@ import { Waveform } from "@/components/Waveform";
 import { setChipHitRegion, emitOverlayAction, showMainAtScreen } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { quickLaunchMeta } from "@/lib/screens";
+import { newSpeakMemo, stepSpeaking } from "@/lib/speaking";
+import { dictationVisual, type DictationTone } from "@/lib/dictationVisual";
 import type { DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
 
 interface ChipState {
@@ -30,13 +32,15 @@ interface ChipState {
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-// Speaking detector (silence ⇄ speech) over the smoothed RMS level. Hysteresis +
-// an asymmetric hold: expand fast when you start talking, collapse only after a
-// short silence, so natural pauses between words don't make the chip flicker.
-// Thresholds are the first thing to tune if it feels too eager/sluggish.
-const SPEAK_HIGH = 0.08; // enter "speaking" above this (smoothed)
-const SPEAK_LOW = 0.04; // candidate for "silent" below this …
-const SILENCE_HOLD_MS = 900; // … but only after staying low this long
+// Maps a dictationVisual() tone token → the chip's dot fill class. The chip layers
+// its own edge-tuck (peeked) / standby-dock presentation on top — see dotColorClass.
+const TONE_BG: Record<DictationTone, string> = {
+  faint: "bg-faint",
+  accent: "bg-accent",
+  live: "bg-live",
+  dim: "bg-dim",
+  rec: "bg-rec",
+};
 
 // After speech stops, the pill stays expanded this long before collapsing back to
 // the dot — so the last words you spoke remain readable instead of vanishing the
@@ -177,29 +181,13 @@ export default function Overlay() {
     return () => cancelAnimationFrame(raf.current);
   }, []);
 
-  // Derive speaking vs silent from the level stream (only while listening).
+  // Derive speaking vs silent from the level stream (only while listening), via the
+  // SHARED detector so the chip agrees with the main-window surfaces (see lib/speaking).
   const [speaking, setSpeaking] = useState(false);
-  const smooth = useRef(0);
-  const belowSince = useRef<number | null>(null);
+  const speakMemo = useRef(newSpeakMemo());
   useEffect(() => {
-    if (state.status !== "listening") {
-      smooth.current = 0;
-      belowSince.current = null;
-      if (speaking) setSpeaking(false);
-      return;
-    }
-    smooth.current = smooth.current * 0.8 + state.level * 0.2;
-    const s = smooth.current;
-    const now = performance.now();
-    if (s > SPEAK_HIGH) {
-      belowSince.current = null;
-      if (!speaking) setSpeaking(true);
-    } else if (s < SPEAK_LOW) {
-      if (belowSince.current == null) belowSince.current = now;
-      if (speaking && now - belowSince.current >= SILENCE_HOLD_MS) setSpeaking(false);
-    } else {
-      belowSince.current = null; // between thresholds → hold current state
-    }
+    const sp = stepSpeaking(speakMemo.current, state.level, state.status === "listening", performance.now());
+    if (sp !== speaking) setSpeaking(sp);
   }, [state.level, state.status, speaking]);
 
   // Collapsed = armed but silent (or idle, when the window is hidden anyway).
@@ -376,30 +364,29 @@ export default function Overlay() {
         ? "inserting…"
         : "listening";
 
-  // Status dot color (NEVER red while listening) via theme tokens + a soft glow.
-  // Finishing drains amber → neutral; OFF/standby is a hollow ring (distinct color).
+  // Status dot colour (NEVER red while listening) via the SHARED dictationVisual()
+  // mapping — so the chip, sidebar dot, Home button + waveforms all agree. The chip
+  // layers its own presentation on top: a tucked (peeked) dot is SOLID so its visible
+  // half reads (a hollow standby ring would all but vanish at half-size), and the
+  // docked standby dot at rest is a hollow ring. Active states (error / speaking /
+  // finishing) keep their tone even while tucked.
+  const vis = dictationVisual(state.status, speaking);
   const dotColorClass =
-    state.status === "error"
-      ? "bg-rec"
-      : speaking
-        ? "bg-live"
-        : processing
+    vis.state === "error" || vis.state === "speaking" || vis.state === "processing"
+      ? TONE_BG[vis.tone]
+      : peeked
+        ? standby
           ? "bg-dim"
-          : peeked
-            ? // Tucked at the edge: a SOLID dot so its visible half reads clearly (a hollow
-              // standby ring would all but vanish at half-size). Neutral idle, amber armed.
-              standby
-              ? "bg-dim"
-              : "bg-accent"
-            : standby
-              ? "border border-faint bg-transparent"
-              : "bg-accent";
+          : "bg-accent"
+        : standby
+          ? "border border-faint bg-transparent"
+          : "bg-accent";
   const dotGlow =
-    state.status === "error"
+    vis.state === "error"
       ? "0 0 10px rgba(255,92,70,0.5)"
-      : speaking
+      : vis.state === "speaking"
         ? "0 0 12px rgba(54,208,122,0.5)"
-        : processing
+        : vis.state === "processing"
           ? "0 0 8px rgba(168,159,147,0.35)" // finishing: faint neutral
           : peeked
             ? standby

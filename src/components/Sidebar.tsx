@@ -3,6 +3,7 @@ import { Settings as SettingsIcon, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
 import { SCREENS } from "@/lib/screens";
+import { dictationVisual } from "@/lib/dictationVisual";
 import { StatusDot } from "./ui";
 
 function BrandMark() {
@@ -24,6 +25,8 @@ export function Sidebar() {
   const theme = useApp((s) => s.settings.theme);
   const setTheme = useApp((s) => s.setTheme);
   const status = useApp((s) => s.status);
+  const speaking = useApp((s) => s.speaking);
+  const vis = dictationVisual(status, speaking);
 
   return (
     <aside className="relative z-10 flex w-[228px] shrink-0 flex-col border-r border-line bg-panel/60">
@@ -67,10 +70,8 @@ export function Sidebar() {
 
       <div className="mt-auto px-3 pb-4">
         <div className="mb-2 flex items-center gap-2 px-3 py-2 text-[12px] text-dim">
-          <StatusDot tone={status === "idle" ? "ok" : status === "error" ? "warn" : "rec"} pulse={status !== "idle"} />
-          <span className="font-mono text-[11px]">
-            {status === "idle" ? "ready" : status}
-          </span>
+          <StatusDot tone={vis.tone} pulse={vis.pulse} filled={vis.filled} title={vis.label} />
+          <span className="font-mono text-[11px]">{vis.label}</span>
         </div>
 
         <div className="flex items-center gap-1 border-t border-line pt-3">

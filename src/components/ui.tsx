@@ -385,9 +385,41 @@ export function Kbd({ children }: { children: ReactNode }) {
 }
 
 /* ── Status dot ───────────────────────────────────────────────────────── */
-export function StatusDot({ tone = "ok", pulse }: { tone?: "ok" | "warn" | "rec" | "idle"; pulse?: boolean }) {
-  const color = tone === "ok" ? "bg-ok" : tone === "warn" ? "bg-warn" : tone === "rec" ? "bg-rec" : "bg-faint";
-  return <span className={cn("inline-block size-2 rounded-full", color, pulse && "animate-rec-pulse")} />;
+const DOT_BG: Record<string, string> = {
+  ok: "bg-ok",
+  warn: "bg-warn",
+  rec: "bg-rec",
+  idle: "bg-faint",
+  faint: "bg-faint",
+  accent: "bg-accent",
+  live: "bg-live",
+  dim: "bg-dim",
+};
+/** A small state dot. The dictation surfaces drive `tone`/`filled`/`pulse` from
+ *  `dictationVisual()` so colour + shape + motion all match the overlay chip; off
+ *  renders HOLLOW (the hue-independent cue). The generic `ok/warn/rec` tones stay
+ *  for non-dictation uses (e.g. the backend-connection dot). */
+export function StatusDot({
+  tone = "ok",
+  pulse,
+  filled = true,
+  title,
+}: {
+  tone?: "ok" | "warn" | "rec" | "idle" | "faint" | "accent" | "live" | "dim";
+  pulse?: boolean;
+  filled?: boolean;
+  title?: string;
+}) {
+  return (
+    <span
+      title={title}
+      className={cn(
+        "inline-block size-2 rounded-full",
+        filled ? DOT_BG[tone] : "border border-faint bg-transparent",
+        pulse && "animate-rec-pulse",
+      )}
+    />
+  );
 }
 
 /* ── Setting row ──────────────────────────────────────────────────────── */

@@ -1,6 +1,7 @@
 import { Mic, Radio, Hand, Square, Pencil, AlertTriangle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
+import { dictationVisual } from "@/lib/dictationVisual";
 import { Button, Card, SectionLabel, Select, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
@@ -58,6 +59,7 @@ export default function Home() {
   const backends = useApp((s) => s.backends);
   const level = useApp((s) => s.level);
   const status = useApp((s) => s.status);
+  const speaking = useApp((s) => s.speaking);
   const partial = useApp((s) => s.partial);
   const dictationError = useApp((s) => s.dictationError);
   const overridesIgnored = useApp((s) => s.overridesIgnored);
@@ -79,6 +81,21 @@ export default function Home() {
   // for the post-speech states — so a wedged "finalizing…"/"inserting…" (e.g. the
   // stream died on suspend) is recoverable with the same button instead of dead.
   const busy = status === "listening" || status === "transcribing" || status === "injecting";
+  // Shared state→colour mapping (same as the chip + sidebar). The hero button fill
+  // follows the palette during a session — amber armed → green speaking → neutral
+  // finalizing — fixing the old "any busy = red". Idle/error stay amber: the button's
+  // action there is "start (again)", so amber reads as the call-to-action. The
+  // waveforms reuse the same tone (mapping the hollow "off" tone to amber, since a
+  // waveform has no hollow form).
+  const vis = dictationVisual(status, speaking);
+  const heroFill =
+    vis.state === "speaking"
+      ? "bg-live text-white"
+      : vis.state === "processing"
+        ? "bg-dim text-white"
+        : "bg-accent text-accent-ink";
+  const waveTone = vis.tone === "faint" ? "accent" : vis.tone;
+  const waveProcessing = status === "transcribing" || status === "injecting";
   const toggle = () => {
     if (status === "listening") {
       void stopLive();
@@ -134,8 +151,8 @@ export default function Home() {
               toggle();
             }}
             className={
-              "ring-signal grid size-16 shrink-0 place-items-center rounded-full transition-transform hover:scale-105 " +
-              (busy ? "bg-rec text-white" : "bg-accent text-accent-ink")
+              "ring-signal grid size-16 shrink-0 place-items-center rounded-full transition-colors transition-transform hover:scale-105 " +
+              heroFill
             }
             title={
               status === "listening"
@@ -175,7 +192,15 @@ export default function Home() {
               The transcript appears wherever your cursor is.
             </div>
           </div>
-          <Waveform level={level} active={status !== "idle"} bars={28} variant="bars" className="h-12 w-48" />
+          <Waveform
+            level={level}
+            active={status === "listening"}
+            processing={waveProcessing}
+            tone={waveTone}
+            bars={28}
+            variant="bars"
+            className="h-12 w-48"
+          />
         </div>
         <div className="grid grid-cols-3 border-t border-line font-mono text-[12px]">
           <Readout label="model" value={headerBackend?.model ?? "—"} />
@@ -189,13 +214,14 @@ export default function Home() {
           <div className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-label text-faint">
             <Waveform
               level={level}
-              active={busy}
+              active={status === "listening"}
+              processing={waveProcessing}
               bars={5}
               variant="dots"
-              tone={status === "transcribing" ? "accent" : status === "error" ? "dim" : "rec"}
+              tone={waveTone}
               className="h-4 w-10"
             />
-            {status === "transcribing" ? "finalizing…" : status === "error" ? "error" : "listening"}
+            {vis.label}
           </div>
           {status === "error" && dictationError ? (
             <div className="select-text text-[13.5px] leading-relaxed text-rec">{dictationError}</div>

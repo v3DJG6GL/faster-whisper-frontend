@@ -8,6 +8,12 @@ import type {
   Profile,
   ThemeName,
 } from "./types";
+import { newSpeakMemo, stepSpeaking } from "./speaking";
+
+// Derives `speaking` (green vs amber) from the RMS level stream centrally, so the
+// main-window surfaces (Home button, sidebar dot, waveforms) all agree with the chip
+// without each re-running the smoothing. One singleton memo: the store is a singleton.
+const speakMemo = newSpeakMemo();
 
 /**
  * Frontend store. Holds seeded defaults in memory; the persistence layer wires
@@ -128,6 +134,7 @@ interface AppState {
   // live dictation runtime (driven by Rust events)
   status: DictationStatus;
   level: number; // 0..1 audio RMS for the visualizer
+  speaking: boolean; // derived from level (smoothed): actively speaking vs armed-silent
   partial: string; // live partial transcript for the chip preview
   activeProfile: string | null; // id of the Profile currently dictating
   dictationError: string | null;
@@ -175,6 +182,7 @@ export const useApp = create<AppState>((set) => ({
 
   status: "idle",
   level: 0,
+  speaking: false,
   partial: "",
   activeProfile: null,
   dictationError: null,
@@ -245,7 +253,17 @@ export const useApp = create<AppState>((set) => ({
   setConnection: (backendId, info) =>
     set((s) => ({ connections: { ...s.connections, [backendId]: info } })),
 
-  setDictation: (patch) => set(patch),
+  setDictation: (patch) =>
+    set((s) => {
+      // Keep the shared `speaking` flag current whenever level/status moves. Computing
+      // it here (not per-component) means subscribers re-render only on a transition,
+      // not on every RMS tick — important for the tiny always-mounted sidebar dot.
+      if (!("level" in patch) && !("status" in patch)) return patch;
+      const status = patch.status ?? s.status;
+      const level = patch.level ?? s.level;
+      const speaking = stepSpeaking(speakMemo, level, status === "listening", performance.now());
+      return speaking === s.speaking ? patch : { ...patch, speaking };
+    }),
 
   hydrate: (cfg) => {
     const c = migrateConfig(cfg);

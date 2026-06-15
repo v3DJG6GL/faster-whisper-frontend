@@ -1,0 +1,57 @@
+import type { DictationStatus } from "./types";
+
+/**
+ * THE single source of truth mapping dictation state → colour / shape / label,
+ * shared by every surface (overlay chip, sidebar status dot, Home hero button, the
+ * waveforms). Before this, each surface hard-coded its own map and they disagreed
+ * (the sidebar even inverted it — idle=green, active=red).
+ *
+ * It mirrors the overlay chip's long-standing palette, which is the design intent:
+ *   • green  (live)   — actively speaking
+ *   • amber  (accent) — armed but silent ("ready to speak"; the OS mic-in-use cue)
+ *   • neutral (dim)   — finalizing / inserting (machine working)
+ *   • red    (rec)    — error
+ *   • grey   (faint)  — off / idle, rendered HOLLOW
+ *
+ * `speaking` comes from stepSpeaking() (see ./speaking) and only matters while the
+ * status is "listening". State is also conveyed by SHAPE (filled vs hollow) and
+ * MOTION (pulse), never by hue alone — red/green is the most colour-blind-confused
+ * pair (WCAG 1.4.1).
+ *
+ * NOTE: keep this in sync with the chip's own dot logic in Overlay.tsx — the chip
+ * derives its resting colours from `state` below, layering only its edge-tuck /
+ * standby-dock presentation on top.
+ */
+export type DictationVisualState = "off" | "armed" | "speaking" | "processing" | "error";
+
+/** Colour-token key — maps 1:1 to an `app.css` --c-* token / Tailwind `bg-*`/`text-*` utility. */
+export type DictationTone = "faint" | "accent" | "live" | "dim" | "rec";
+
+export interface DictationVisual {
+  state: DictationVisualState;
+  tone: DictationTone;
+  /** Short status word for a label / tooltip. */
+  label: string;
+  /** Should the indicator animate (pulse/breathe)? True for every live state, false when off. */
+  pulse: boolean;
+  /** Filled (solid) vs hollow (outline). Off is the only hollow state — the hue-independent cue. */
+  filled: boolean;
+}
+
+export function dictationVisual(status: DictationStatus, speaking: boolean): DictationVisual {
+  switch (status) {
+    case "error":
+      return { state: "error", tone: "rec", label: "error", pulse: true, filled: true };
+    case "transcribing":
+      return { state: "processing", tone: "dim", label: "finalizing…", pulse: true, filled: true };
+    case "injecting":
+      return { state: "processing", tone: "dim", label: "inserting…", pulse: true, filled: true };
+    case "listening":
+      return speaking
+        ? { state: "speaking", tone: "live", label: "listening", pulse: true, filled: true }
+        : { state: "armed", tone: "accent", label: "listening", pulse: true, filled: true };
+    case "idle":
+    default:
+      return { state: "off", tone: "faint", label: "ready", pulse: false, filled: false };
+  }
+}
