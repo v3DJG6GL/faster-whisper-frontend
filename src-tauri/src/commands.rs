@@ -453,7 +453,10 @@ pub async fn inject_text(
             // to the portal keycode path when the protocol is unavailable (e.g. GNOME)
             // or a job fails.
             match crate::virtual_keyboard::type_text(vkbd.inner(), &text, auto_enter).await {
-                Ok(()) => Ok(()),
+                Ok(()) => {
+                    tracing::info!("[inject] typed via virtual keyboard");
+                    Ok(())
+                }
                 Err(e) => {
                     tracing::warn!("[inject] virtual keyboard unavailable ({e}); using portal");
                     crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter).await

@@ -5,10 +5,10 @@
 //! resolves under the LIVE seat state — so a locked Caps Lock inverts letter case,
 //! and characters not reachable on the active layout don't type at all. Here we
 //! instead UPLOAD OUR OWN one-shot keymap in which every needed character is its own
-//! keycode bound directly to its keysym on a single (unshifted) level. The compositor
-//! then types exactly those characters regardless of Caps Lock, the active layout, or
-//! even a physically-held Shift (single-level keys ignore modifiers). No portal
-//! consent dialog either.
+//! keycode bound directly to its keysym, on a single level whose key type CONSUMES
+//! Shift+Lock. The compositor then types exactly those characters regardless of Caps
+//! Lock, the active layout, or even a physically-held Shift. No portal consent dialog
+//! either.
 //!
 //! GNOME does not implement this protocol; `type_text` returns Err there (and on any
 //! failure), so `inject_text` falls back to the portal path.
@@ -206,7 +206,9 @@ mod imp {
             self.queue.roundtrip(&mut self.state).map_err(|e| e.to_string())?;
             drop(mfd);
 
-            // Zero our own modifier state (single-level keys ignore modifiers anyway).
+            // Zero our own modifier state. Belt-and-suspenders: on wlroots this clears any
+            // Caps the seat adopted from us; on KWin the seat keeps the physical Caps, so
+            // the real Caps-immunity comes from the keymap's Lock-consuming key type.
             self.vk.modifiers(0, 0, 0, 0);
 
             for name in &order {
@@ -238,9 +240,11 @@ mod imp {
         }
     }
 
-    /// A minimal XKB keymap: each symbol on its own keycode, single level. Pulls the
-    /// system's complete types/compat (present on any KWin/wlroots desktop) so each
-    /// single-symbol key is inferred ONE_LEVEL — immune to Shift/Caps Lock.
+    /// A minimal XKB keymap: each symbol on its own keycode at a single level, with a
+    /// custom key type that CONSUMES Shift+Lock so the symbol is produced verbatim under
+    /// a held Shift or a locked Caps. (A bare single-symbol key would infer ONE_LEVEL,
+    /// which avoids level-shifting but does NOT consume Lock — libxkbcommon would still
+    /// upper-case letters while Caps is on; see the type comment below.)
     fn build_keymap(unique: &[String]) -> String {
         let max_kc = 8 + unique.len() - 1; // unique is non-empty here
         let mut s = String::new();
@@ -253,12 +257,28 @@ mod imp {
             s.push_str(&format!("<K{kc}> = {kc};\n"));
         }
         s.push_str("};\n");
-        s.push_str("xkb_types \"(unnamed)\" { include \"complete\" };\n");
+        // Custom 1-level key type that CONSUMES Shift+Lock (every combo → Level1). A bare
+        // single-symbol key infers ONE_LEVEL, whose modifier mask is empty, so Lock (Caps)
+        // is never "consumed" — and libxkbcommon then upper-cases the keysym whenever the
+        // compositor reports Caps as effective-active. KWin keeps the seat's physical Caps
+        // regardless of our modifiers(0,0,0,0), so without consuming Lock here, lowercase
+        // letters would type as uppercase while Caps Lock is on.
+        s.push_str("xkb_types \"(unnamed)\" {\n");
+        s.push_str("    include \"complete\"\n");
+        s.push_str("    type \"FWF_LOCKPROOF\" {\n");
+        s.push_str("        modifiers = Shift+Lock;\n");
+        s.push_str("        map[None] = Level1;\n");
+        s.push_str("        map[Shift] = Level1;\n");
+        s.push_str("        map[Lock] = Level1;\n");
+        s.push_str("        map[Shift+Lock] = Level1;\n");
+        s.push_str("        level_name[Level1] = \"Any\";\n");
+        s.push_str("    };\n");
+        s.push_str("};\n");
         s.push_str("xkb_compatibility \"(unnamed)\" { include \"complete\" };\n");
         s.push_str("xkb_symbols \"(unnamed)\" {\n");
         for (i, name) in unique.iter().enumerate() {
             let kc = 8 + i;
-            s.push_str(&format!("key <K{kc}> {{ [ {name} ] }};\n"));
+            s.push_str(&format!("key <K{kc}> {{ type=\"FWF_LOCKPROOF\", [ {name} ] }};\n"));
         }
         s.push_str("};\n");
         s.push_str("};\n");
