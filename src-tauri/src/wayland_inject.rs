@@ -19,8 +19,9 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 /// One typing request handed to the persistent typer task: type `text`, then an
 /// optional Enter; `reply` carries the result back to the awaiting command.
 pub struct Job {
-    text: String, // characters to type (empty for a paste chord)
-    paste: bool,  // true → synthesize Ctrl+V instead of typing `text`
+    text: String,    // characters to type (empty for a paste chord)
+    paste: bool,     // true → synthesize the paste chord instead of typing `text`
+    chord: Vec<i32>, // evdev keycodes (modifiers first, main key last) for a paste job
     auto_enter: bool,
     reply: oneshot::Sender<Result<(), String>>,
 }
@@ -190,7 +191,7 @@ mod imp {
         text: &str,
         auto_enter: bool,
     ) -> Result<(), String> {
-        submit(app, typer, text.to_string(), false, auto_enter).await
+        submit(app, typer, text.to_string(), false, Vec::new(), auto_enter).await
     }
 
     /// Synthesize Ctrl+V on the shared session (the caller has already set the
@@ -199,9 +200,53 @@ mod imp {
     pub async fn paste(
         app: &AppHandle,
         typer: &WaylandTyper,
+        chord_codes: Vec<String>,
         auto_enter: bool,
     ) -> Result<(), String> {
-        submit(app, typer, String::new(), true, auto_enter).await
+        submit(app, typer, String::new(), true, chord_to_keycodes(&chord_codes), auto_enter).await
+    }
+
+    fn is_modifier_code(code: &str) -> bool {
+        matches!(
+            code,
+            "ControlLeft" | "ControlRight" | "ShiftLeft" | "ShiftRight"
+                | "AltLeft" | "AltRight" | "MetaLeft" | "MetaRight" | "OSLeft" | "OSRight"
+        )
+    }
+    fn code_to_keycode(code: &str) -> Option<i32> {
+        Some(match code {
+            "ControlLeft" => KEY_LEFTCTRL,
+            "ControlRight" => 97,
+            "ShiftLeft" => KEY_LEFTSHIFT,
+            "ShiftRight" => 54,
+            "AltLeft" => 56,
+            "AltRight" => KEY_RIGHTALT,
+            "MetaLeft" | "OSLeft" => 125,
+            "MetaRight" | "OSRight" => 126,
+            "KeyV" => KEY_V,
+            "Insert" => 110,
+            _ => return None,
+        })
+    }
+    /// Map a KeyboardEvent.code chord (e.g. ["ControlLeft","ShiftLeft","KeyV"]) to evdev
+    /// keycodes, modifiers first and the main key last. Falls back to Ctrl+V when no main
+    /// key maps, so paste never silently no-ops.
+    fn chord_to_keycodes(codes: &[String]) -> Vec<i32> {
+        let (mut mods, mut keys) = (Vec::new(), Vec::new());
+        for c in codes {
+            if let Some(kc) = code_to_keycode(c) {
+                if is_modifier_code(c) {
+                    mods.push(kc)
+                } else {
+                    keys.push(kc)
+                }
+            }
+        }
+        if keys.is_empty() {
+            return vec![KEY_LEFTCTRL, KEY_V];
+        }
+        mods.extend(keys);
+        mods
     }
 
     /// Queue a job for the persistent typer, starting the task (one consent dialog)
@@ -211,6 +256,7 @@ mod imp {
         typer: &WaylandTyper,
         text: String,
         paste: bool,
+        chord: Vec<i32>,
         auto_enter: bool,
     ) -> Result<(), String> {
         let tx = {
@@ -225,7 +271,7 @@ mod imp {
             guard.as_ref().unwrap().clone()
         };
         let (reply, reply_rx) = oneshot::channel();
-        tx.send(Job { text, paste, auto_enter, reply })
+        tx.send(Job { text, paste, chord, auto_enter, reply })
             .await
             .map_err(|_| "wayland typer unavailable".to_string())?;
         reply_rx
@@ -305,14 +351,17 @@ mod imp {
                 }
 
                 if job.paste {
-                    // Ctrl+V as raw keycodes (layout-independent).
-                    press!(KEY_LEFTCTRL);
-                    tokio::time::sleep(Duration::from_millis(6)).await;
-                    press!(KEY_V);
-                    tokio::time::sleep(Duration::from_millis(4)).await;
-                    release!(KEY_V);
-                    tokio::time::sleep(Duration::from_millis(6)).await;
-                    release!(KEY_LEFTCTRL);
+                    // The configured paste chord as raw keycodes (modifiers first, main
+                    // key last), layout-independent. Press in order, release in reverse.
+                    let n = job.chord.len();
+                    for (i, &code) in job.chord.iter().enumerate() {
+                        press!(code);
+                        tokio::time::sleep(Duration::from_millis(if i + 1 == n { 4 } else { 6 })).await;
+                    }
+                    for &code in job.chord.iter().rev() {
+                        tokio::time::sleep(Duration::from_millis(6)).await;
+                        release!(code);
+                    }
                     if job.auto_enter {
                         tokio::time::sleep(Duration::from_millis(6)).await;
                         press!(KEY_ENTER);
@@ -402,6 +451,7 @@ pub async fn type_text(
 pub async fn paste(
     _app: &tauri::AppHandle,
     _typer: &WaylandTyper,
+    _chord_codes: Vec<String>,
     _auto_enter: bool,
 ) -> Result<(), String> {
     Err("Wayland text injection is only available on Linux".into())

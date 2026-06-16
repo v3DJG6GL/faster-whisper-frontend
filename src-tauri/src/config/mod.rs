@@ -40,6 +40,8 @@ pub enum ResponseFormat {
 pub enum InsertMethod {
     Paste,
     Direct,
+    /// Copy to the clipboard only — inject no keystrokes (the user pastes manually).
+    Clipboard,
 }
 
 /// When to insert the transcription into the focused field.
@@ -53,6 +55,12 @@ pub enum InsertTiming {
 
 fn default_insert_timing() -> InsertTiming {
     InsertTiming::Live
+}
+
+/// Paste chord for the "clipboard paste" method (KeyboardEvent.code list). Ctrl+V by
+/// default; terminals (Konsole, kitty, …) need Ctrl+Shift+V.
+fn default_paste_shortcut() -> Vec<String> {
+    vec!["ControlLeft".into(), "KeyV".into()]
 }
 
 fn default_true() -> bool {
@@ -308,6 +316,10 @@ pub struct GeneralSettings {
     #[serde(default = "default_insert_timing")]
     pub insert_timing: InsertTiming,
     pub insert_method: InsertMethod,
+    /// Chord for the "clipboard paste" method (KeyboardEvent.code list). `#[serde(default)]`
+    /// so configs predating this field load with the Ctrl+V default.
+    #[serde(default = "default_paste_shortcut")]
+    pub paste_shortcut: Vec<String>,
     pub auto_enter: bool,
     pub restore_clipboard: bool,
     pub sound_effects: bool,
@@ -315,6 +327,11 @@ pub struct GeneralSettings {
     /// left/right + AltGr on Wayland. `#[serde(default)]` so older configs load.
     #[serde(default)]
     pub evdev_enabled: bool,
+    /// Opt-in: AT-SPI "deep field detection" — skip typing when the focused element
+    /// isn't a text field (covers browsers/Electron via an a11y flag + active poke).
+    /// `#[serde(default)]` (false) so older configs load unchanged.
+    #[serde(default)]
+    pub deep_field_detection: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -374,6 +391,11 @@ pub struct Config {
     pub settings: AppSettings,
     pub backends: Vec<Backend>,
     pub profiles: Vec<Profile>,
+    /// Per-application injection rules (block/allow + method / paste-shortcut overrides).
+    /// Frontend-owned opaque JSON like `quick_launch` — Rust stores + round-trips but
+    /// never interprets it. `#[serde(default, skip…)]` so older configs load.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub app_rules: Vec<serde_json::Value>,
     /// Schema version (absent/legacy ⇒ 1; current ⇒ 2). Orders future migrations.
     #[serde(default)]
     pub version: Option<u32>,
@@ -391,10 +413,12 @@ impl Default for Config {
                     start_minimized: false,
                     insert_timing: InsertTiming::Live,
                     insert_method: InsertMethod::Paste,
+                    paste_shortcut: default_paste_shortcut(),
                     auto_enter: false,
                     restore_clipboard: true,
                     sound_effects: true,
                     evdev_enabled: false,
+                    deep_field_detection: false,
                 },
                 recording: RecordingSettings {
                     indicator_position: IndicatorPosition::Top,
@@ -453,6 +477,7 @@ impl Default for Config {
                     override_profile: None,
                 },
             ],
+            app_rules: Vec::new(),
             version: Some(2),
         }
     }
@@ -526,6 +551,7 @@ fn migrate_legacy(text: &str) -> Option<Config> {
         settings: legacy.settings,
         backends: legacy.profiles,
         profiles,
+        app_rules: Vec::new(),
         version: Some(2),
     })
 }

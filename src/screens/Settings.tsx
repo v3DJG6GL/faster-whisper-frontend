@@ -11,9 +11,11 @@ import {
   onAudioLevel,
   evdevStatus,
   evdevSetup,
+  setDeepFieldDetection,
   type EvdevStatus,
 } from "@/lib/api";
 import type { AudioDevice, OverlayQuickAction } from "@/lib/types";
+import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
 
 const TABS = ["General", "Audio", "Recording", "Chip", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
@@ -268,7 +270,7 @@ export default function Settings() {
               desc={
                 s.general.insertTiming === "live"
                   ? "Applies to “When I stop”. Live always types (keystrokes) — it has to backspace-correct revised words, which the clipboard can’t do."
-                  : "Clipboard paste is the most reliable. Direct typing never touches the clipboard, but can struggle with some keyboard layouts."
+                  : "Clipboard paste is the most reliable. Direct typing never touches the clipboard but can struggle with some layouts. Clipboard only copies the text without typing — you paste it yourself."
               }
             >
               <Segmented
@@ -277,7 +279,31 @@ export default function Settings() {
                 options={[
                   { value: "paste", label: "Clipboard paste" },
                   { value: "direct", label: "Direct typing" },
+                  { value: "clipboard", label: "Clipboard only" },
                 ]}
+              />
+            </SettingRow>
+            <SettingRow
+              title="Paste shortcut"
+              desc="The keys sent for “Clipboard paste”. Terminals (Konsole, kitty…) need Ctrl + Shift + V."
+              disabled={s.general.insertMethod !== "paste"}
+            >
+              <Select
+                value={pasteKey(s.general.pasteShortcut)}
+                onChange={(v) => updateGeneral({ pasteShortcut: pasteCodes(v) })}
+                options={PASTE_PRESETS.map((p) => ({ value: p.value, label: p.label }))}
+              />
+            </SettingRow>
+            <SettingRow
+              title="Deep field detection"
+              desc="Skip typing when the focused element isn’t a text field — the transcript goes to the clipboard instead. Uses accessibility to cover most apps including browsers and Electron (may raise their memory use); games and the desktop are never blocked."
+            >
+              <Toggle
+                checked={s.general.deepFieldDetection}
+                onChange={(v) => {
+                  updateGeneral({ deepFieldDetection: v });
+                  void setDeepFieldDetection(v);
+                }}
               />
             </SettingRow>
             <SettingRow title="Press Enter after" desc="Send a Return key once the text is inserted.">

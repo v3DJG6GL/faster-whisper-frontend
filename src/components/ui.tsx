@@ -126,19 +126,23 @@ export function Select<T extends string>({
   onChange,
   options,
   className,
+  disabled,
 }: {
   value: T;
   onChange: (v: T) => void;
   options: { value: T; label: string }[];
   className?: string;
+  disabled?: boolean;
 }) {
   return (
     <div className={cn("relative", className)}>
       <select
         value={value}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.value as T)}
         className={cn(
           "ring-signal h-10 w-full appearance-none rounded-xl border border-line bg-surface-2 pl-3.5 pr-9 text-[13px] text-text",
+          disabled && "cursor-not-allowed opacity-40",
         )}
       >
         {options.map((o) => (

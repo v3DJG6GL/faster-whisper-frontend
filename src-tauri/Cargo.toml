@@ -90,6 +90,15 @@ wayland-client = "0.31"
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
 memfd = "0.6"
 
+# Focused-app + field-editability detection via AT-SPI (the accessibility bus). Powers
+# per-app rules, the chip's target readout, and the opt-in "deep field detection" guard.
+# org_kde_plasma_window_management is privileged/blacklisted for normal clients on KWin,
+# so AT-SPI is the portable path: app identity from get_application().name(), editability
+# from the EDITABLE state. `tokio` switches zbus to our async reactor; `zbus` re-exports
+# zbus so we can flip the org.a11y.Status flag. Apps not on the a11y bus → editable=None
+# → callers degrade to typing (the guard is positive-only).
+atspi = { version = "0.30", features = ["tokio", "zbus"] }
+
 # NOTE: `time` is pinned to 0.3.47 in Cargo.lock. time 0.3.48 introduced a trait
 # impl that collides (E0119) with `cookie` 0.18.1 (a transitive Tauri dep). Do not
 # `cargo update -p time` past 0.3.47 until Tauri bumps `cookie`.

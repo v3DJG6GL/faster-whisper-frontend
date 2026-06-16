@@ -30,6 +30,7 @@ pub fn inject(
     method: &str,
     auto_enter: bool,
     restore_clipboard: bool,
+    paste_shortcut: &[String],
 ) -> Result<(), String> {
     if text.is_empty() && !auto_enter {
         return Ok(());
@@ -39,7 +40,7 @@ pub fn inject(
     if !text.is_empty() {
         match method {
             "direct" => enigo.text(text).map_err(|e| e.to_string())?,
-            _ => paste(&mut enigo, text, restore_clipboard)?,
+            _ => paste(&mut enigo, text, restore_clipboard, paste_shortcut)?,
         }
     }
 
@@ -62,20 +63,51 @@ pub fn set_clipboard(text: &str, capture_prev: bool) -> Result<Option<String>, S
     Ok(prev)
 }
 
-/// Restore clipboard text captured by [`set_clipboard`], after a short delay so the
-/// paste has consumed the clipboard first. No-op when `prev` is None.
+/// Hold `text` on the clipboard as a LIVE owner, blocking the calling thread until the
+/// selection is replaced. On Wayland a selection only persists while its source app stays
+/// alive to serve it (arboard's `set().wait()`), so this is needed BOTH for clipboard-only
+/// insertion AND for restoring the user's previous clipboard after a paste — a plain
+/// `set_text` that returns and drops doesn't stick on Wayland (the "clipboard never
+/// restored" bug). Always run this on a detached thread.
+fn serve_clipboard_blocking(text: String) {
+    #[cfg(target_os = "linux")]
+    {
+        use arboard::SetExtLinux;
+        if let Ok(mut cb) = arboard::Clipboard::new() {
+            // Blocks here serving the selection until another app replaces it — that's what
+            // keeps the text on the clipboard after a plain set would return + drop it.
+            let _ = cb.set().wait().text(text);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        if let Ok(mut cb) = arboard::Clipboard::new() {
+            let _ = cb.set_text(text);
+        }
+    }
+}
+
+/// Put `text` on the clipboard and KEEP it there for the user to paste later. Used by the
+/// clipboard-only insert method, where (unlike paste) nothing consumes the clipboard
+/// immediately, so it must persist via a live owner.
+pub fn set_clipboard_persistent(text: &str) {
+    let text = text.to_string();
+    std::thread::spawn(move || serve_clipboard_blocking(text));
+}
+
+/// Restore clipboard text captured by [`set_clipboard`], after a short delay so the paste
+/// has consumed the clipboard first. No-op when `prev` is None. Restores via a LIVE owner
+/// (not a plain set_text) so the restored value actually persists on Wayland.
 pub fn restore_clipboard_later(prev: Option<String>) {
     if let Some(prev) = prev {
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(400));
-            if let Ok(mut cb) = arboard::Clipboard::new() {
-                let _ = cb.set_text(prev);
-            }
+            serve_clipboard_blocking(prev);
         });
     }
 }
 
-fn paste(enigo: &mut Enigo, text: &str, restore_clipboard: bool) -> Result<(), String> {
+fn paste(enigo: &mut Enigo, text: &str, restore_clipboard: bool, chord: &[String]) -> Result<(), String> {
     use arboard::Clipboard;
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     let previous = if restore_clipboard {
@@ -86,34 +118,58 @@ fn paste(enigo: &mut Enigo, text: &str, restore_clipboard: bool) -> Result<(), S
     clipboard.set_text(text.to_string()).map_err(|e| e.to_string())?;
     // Let the new clipboard owner settle before pasting.
     std::thread::sleep(Duration::from_millis(60));
-    paste_keystroke(enigo)?;
+    paste_keystroke(enigo, chord)?;
 
-    if let Some(previous) = previous {
-        // Restore after the paste has consumed the clipboard.
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(350));
-            if let Ok(mut cb) = Clipboard::new() {
-                let _ = cb.set_text(previous);
-            }
-        });
-    }
+    // Restore after the paste has consumed the clipboard — via a live owner (same path as the
+    // Wayland branch) so it actually persists; a plain set_text that drops doesn't stick on
+    // Wayland and is harmless on X11. No-op when restore is off (`previous` is None).
+    restore_clipboard_later(previous);
     Ok(())
 }
 
-fn paste_keystroke(enigo: &mut Enigo) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    let modifier = Key::Meta;
-    #[cfg(not(target_os = "macos"))]
-    let modifier = Key::Control;
+/// Map a KeyboardEvent.code to an enigo key + whether it's a modifier. "Control" maps to
+/// Cmd on macOS so the default paste chord stays correct there.
+fn code_to_enigo(code: &str) -> Option<(Key, bool)> {
+    let ctrl = if cfg!(target_os = "macos") { Key::Meta } else { Key::Control };
+    Some(match code {
+        "ControlLeft" | "ControlRight" => (ctrl, true),
+        "ShiftLeft" | "ShiftRight" => (Key::Shift, true),
+        "AltLeft" | "AltRight" => (Key::Alt, true),
+        "MetaLeft" | "MetaRight" | "OSLeft" | "OSRight" => (Key::Meta, true),
+        "Insert" => (Key::Insert, false),
+        c if c.len() == 4 && c.starts_with("Key") => {
+            (Key::Unicode(c.as_bytes()[3].to_ascii_lowercase() as char), false)
+        }
+        _ => return None,
+    })
+}
 
-    // Settle delays: without them the modifier can arrive after the 'v', so the
-    // target sees a literal "v" instead of a paste (an XTEST timing race).
-    enigo.key(modifier, Direction::Press).map_err(|e| e.to_string())?;
+fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
+    let (mut mods, mut main) = (Vec::new(), None);
+    for code in chord {
+        if let Some((k, is_mod)) = code_to_enigo(code) {
+            if is_mod {
+                mods.push(k);
+            } else {
+                main = Some(k);
+            }
+        }
+    }
+    // Fall back to Ctrl/Cmd+V if the chord didn't map to a usable main key.
+    let main = main.unwrap_or(Key::Unicode('v'));
+    if mods.is_empty() {
+        mods.push(if cfg!(target_os = "macos") { Key::Meta } else { Key::Control });
+    }
+    // Settle delays: without them a modifier can arrive after the key, so the target
+    // sees a literal character instead of a paste (an XTEST timing race).
+    for m in &mods {
+        enigo.key(*m, Direction::Press).map_err(|e| e.to_string())?;
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    enigo.key(main, Direction::Click).map_err(|e| e.to_string())?;
     std::thread::sleep(Duration::from_millis(30));
-    enigo
-        .key(Key::Unicode('v'), Direction::Click)
-        .map_err(|e| e.to_string())?;
-    std::thread::sleep(Duration::from_millis(30));
-    enigo.key(modifier, Direction::Release).map_err(|e| e.to_string())?;
+    for m in mods.iter().rev() {
+        enigo.key(*m, Direction::Release).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }

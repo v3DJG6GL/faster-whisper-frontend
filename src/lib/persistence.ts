@@ -32,7 +32,8 @@ export async function initConfig(): Promise<void> {
     if (
       state.settings === prev.settings &&
       state.backends === prev.backends &&
-      state.profiles === prev.profiles
+      state.profiles === prev.profiles &&
+      state.appRules === prev.appRules
     ) {
       return;
     }
@@ -54,7 +55,7 @@ export async function initConfig(): Promise<void> {
       if (conflicts(s.profiles).length > 0) return;
       const reReg = pendingBindingChange;
       pendingBindingChange = false;
-      saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles })
+      saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules })
         .then(() => (reReg ? reregisterShortcuts() : undefined))
         .catch((e) => console.error("saveConfig failed", e));
     }, 400);

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  AppRule,
   AppSettings,
   Backend,
   Config,
@@ -46,10 +47,12 @@ const DEFAULT_SETTINGS: AppSettings = {
     startMinimized: false,
     insertTiming: "live",
     insertMethod: "paste",
+    pasteShortcut: ["ControlLeft", "KeyV"],
     autoEnter: false,
     restoreClipboard: true,
     soundEffects: true,
     evdevEnabled: false,
+    deepFieldDetection: false,
   },
   recording: {
     indicatorPosition: "top",
@@ -102,6 +105,7 @@ function migrateConfig(raw: unknown): Config {
       settings: withSettingsDefaults(c.settings),
       backends: (c.backends as Backend[]) ?? [DEFAULT_BACKEND],
       profiles: Array.isArray(c.profiles) ? (c.profiles as Profile[]) : [],
+      appRules: Array.isArray((c as { appRules?: unknown }).appRules) ? (c.appRules as AppRule[]) : [],
       version: c.version as number | undefined,
     };
   }
@@ -130,6 +134,7 @@ interface AppState {
   settings: AppSettings;
   backends: Backend[];
   profiles: Profile[];
+  appRules: AppRule[];
 
   // live dictation runtime (driven by Rust events)
   status: DictationStatus;
@@ -157,6 +162,9 @@ interface AppState {
   removeProfile: (id: string) => void;
   duplicateProfile: (id: string) => void;
 
+  upsertAppRule: (r: AppRule) => void;
+  removeAppRule: (id: string) => void;
+
   setConnection: (backendId: string, info: ConnectionInfo) => void;
 
   /** Update live dictation runtime (status / level / partial transcript). */
@@ -179,6 +187,7 @@ export const useApp = create<AppState>((set) => ({
   settings: DEFAULT_SETTINGS,
   backends: [DEFAULT_BACKEND],
   profiles: DEFAULT_PROFILES,
+  appRules: [],
 
   status: "idle",
   level: 0,
@@ -250,6 +259,16 @@ export const useApp = create<AppState>((set) => ({
       return { profiles };
     }),
 
+  upsertAppRule: (r) =>
+    set((s) => {
+      const i = s.appRules.findIndex((x) => x.id === r.id);
+      const appRules = [...s.appRules];
+      if (i >= 0) appRules[i] = r;
+      else appRules.push(r);
+      return { appRules };
+    }),
+  removeAppRule: (id) => set((s) => ({ appRules: s.appRules.filter((r) => r.id !== id) })),
+
   setConnection: (backendId, info) =>
     set((s) => ({ connections: { ...s.connections, [backendId]: info } })),
 
@@ -267,6 +286,6 @@ export const useApp = create<AppState>((set) => ({
 
   hydrate: (cfg) => {
     const c = migrateConfig(cfg);
-    set({ settings: c.settings, backends: c.backends, profiles: c.profiles });
+    set({ settings: c.settings, backends: c.backends, profiles: c.profiles, appRules: c.appRules ?? [] });
   },
 }));

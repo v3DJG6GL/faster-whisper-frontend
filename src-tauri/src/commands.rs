@@ -408,10 +408,48 @@ pub fn begin_injection(snap: State<ClipboardSnapshot>) {
 pub fn end_injection(snap: State<ClipboardSnapshot>) {
     let prev = snap.0.lock().ok().and_then(|mut g| g.take());
     if let Some(prev) = prev {
-        if let Ok(mut c) = arboard::Clipboard::new() {
-            let _ = c.set_text(prev);
-        }
+        // Persist on Wayland: a plain set_text that drops immediately doesn't stick, which
+        // is why the clipboard was "never restored". Serve it from a live owner — and after a
+        // short delay, so the last phrase's in-flight Ctrl+V consumes the transcript BEFORE we
+        // swap the original back (else the final phrase can paste the original instead).
+        crate::inject::restore_clipboard_later(Some(prev));
     }
+}
+
+/// Restore the `begin_injection` snapshot WITHOUT consuming it, so the user's original
+/// clipboard can be put back after EACH pasted phrase in an ongoing latch session (the
+/// snapshot stays for the next phrase to restore again). Served from a live owner so it
+/// persists on Wayland; no-op when no snapshot was taken (restore off / non-paste session).
+#[tauri::command]
+pub fn restore_clipboard_snapshot(snap: State<ClipboardSnapshot>) {
+    let prev = snap.0.lock().ok().and_then(|g| g.clone());
+    if let Some(prev) = prev {
+        crate::inject::set_clipboard_persistent(&prev);
+    }
+}
+
+/// The focused application's id + title + (when deep detection is on) whether its focused
+/// element is editable. Via AT-SPI; `None` when nothing is known yet (no a11y bridge / cold
+/// listener). Used to resolve per-app rules, the chip readout, and the field guard.
+#[tauri::command]
+pub async fn get_focused_app(
+    guard: State<'_, crate::atspi_guard::AtspiGuard>,
+) -> Result<Option<crate::atspi_guard::FocusedApp>, String> {
+    let app = crate::atspi_guard::focused_app(guard.inner()).await;
+    tracing::info!("[focused-app] {app:?}");
+    Ok(app)
+}
+
+/// Toggle the opt-in AT-SPI "deep field detection" (a11y flag + Chromium/Electron poke),
+/// which lets the focused-element editability read correctly for browser/Electron apps.
+#[tauri::command]
+pub fn set_deep_field_detection(
+    guard: State<'_, crate::atspi_guard::AtspiGuard>,
+    enabled: bool,
+) -> Result<(), String> {
+    tracing::info!("[atspi] deep field detection = {enabled}");
+    crate::atspi_guard::set_deep(guard.inner(), enabled);
+    Ok(())
 }
 
 /// Insert text into the focused field of the active app (paste or direct typing).
@@ -426,8 +464,18 @@ pub async fn inject_text(
     method: String,
     auto_enter: bool,
     restore_clipboard: bool,
+    paste_shortcut: Vec<String>,
 ) -> Result<(), String> {
     tracing::info!("[inject] {} chars via {} (auto_enter={})", text.len(), method, auto_enter);
+    // Clipboard-only: put the text on the clipboard and inject NO keystrokes, so it can't
+    // fire actions in the wrong window — the user pastes it themselves. No own-window guard
+    // / modifier gate needed since nothing is typed.
+    if method == "clipboard" {
+        if !text.is_empty() {
+            crate::inject::set_clipboard_persistent(&text);
+        }
+        return Ok(());
+    }
     // Never type into our OWN UI: if one of our real windows holds keyboard focus, the
     // injected keys would fire buttons/shortcuts in the app itself (e.g. dictating while
     // looking at Home). A Wayland client is always told its own keyboard focus, so this is
@@ -461,7 +509,12 @@ pub async fn inject_text(
         }
     }
     let res = if crate::inject::is_wayland() {
-        if method == "direct" {
+        if text.is_empty() && auto_enter {
+            // Auto-enter with no text (the per-phrase / tail Enter): press Enter WITHOUT
+            // touching the clipboard. The paste path would set_clipboard("") and clobber it;
+            // route the bare Enter through the portal type path instead.
+            crate::wayland_inject::type_text(&app, typer.inner(), "", true).await
+        } else if method == "direct" {
             // Prefer the virtual keyboard (Caps Lock-/layout-correct typing). Fall back
             // to the portal keycode path when the protocol is unavailable (e.g. GNOME)
             // or a job fails.
@@ -481,19 +534,20 @@ pub async fn inject_text(
             // synthesized modifier + remapped keycode makes apps fire the wrong
             // shortcut (e.g. opening editor tabs) instead of pasting.
             let clip = text.clone();
-            let prev = tokio::task::spawn_blocking(move || {
+            let set_res = tokio::task::spawn_blocking(move || {
                 crate::inject::set_clipboard(&clip, restore_clipboard)
             })
             .await
-            .map_err(|e| e.to_string())??;
+            .map_err(|e| e.to_string())?;
+            let prev = set_res?;
             tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-            let r = crate::wayland_inject::paste(&app, typer.inner(), auto_enter).await;
+            let r = crate::wayland_inject::paste(&app, typer.inner(), paste_shortcut, auto_enter).await;
             crate::inject::restore_clipboard_later(prev);
             r
         }
     } else {
         tokio::task::spawn_blocking(move || {
-            crate::inject::inject(&text, &method, auto_enter, restore_clipboard)
+            crate::inject::inject(&text, &method, auto_enter, restore_clipboard, &paste_shortcut)
         })
         .await
         .map_err(|e| e.to_string())?

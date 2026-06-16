@@ -1,3 +1,4 @@
+mod atspi_guard;
 mod audio;
 mod commands;
 mod config;
@@ -47,6 +48,7 @@ pub fn run() {
         .manage(evdev_hotkeys::EvdevState::default())
         .manage(held_keys::HeldKeys::default())
         .manage(virtual_keyboard::VirtualKeyboard::default())
+        .manage(atspi_guard::AtspiGuard::default())
         .setup(|app| {
             use tauri::Manager;
             tray::create(app)?;
@@ -56,6 +58,14 @@ pub fn run() {
                 .map(|dir| config::load(&dir))
                 .unwrap_or_default();
             commands::apply_bindings(app.handle());
+            // Warm the AT-SPI focus listener now so the focused-app cache is populated by
+            // the time the user dictates (per-app rules + the chip target readout), and
+            // apply the saved "deep field detection" preference.
+            {
+                let guard = app.state::<atspi_guard::AtspiGuard>();
+                atspi_guard::start(&guard);
+                atspi_guard::set_deep(&guard, cfg.settings.general.deep_field_detection);
+            }
             // Recover hotkeys + any in-flight dictation after the machine wakes from
             // suspend (a dropped key-release / dead WebSocket would otherwise wedge us).
             commands::spawn_suspend_watch(app.handle().clone());
@@ -96,6 +106,9 @@ pub fn run() {
             commands::inject_text,
             commands::begin_injection,
             commands::end_injection,
+            commands::restore_clipboard_snapshot,
+            commands::get_focused_app,
+            commands::set_deep_field_detection,
             overlay::show_overlay,
             overlay::hide_overlay,
             overlay::set_chip_hit_region,

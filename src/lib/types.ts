@@ -71,7 +71,27 @@ export interface Profile {
   overrideProfile?: string; // override Backend.overrideProfile; empty/undefined = inherit
 }
 
-export type InsertMethod = "paste" | "direct";
+/** A per-application injection rule, keyed by the focused window's app_id. Overrides are
+ *  inherit-by-default: a null/undefined field falls back to the global setting. */
+export interface AppRule {
+  id: string; // stable key (crypto.randomUUID)
+  appId: string; // matches the focused window's app_id (case-insensitive)
+  name?: string; // friendly label; defaults to appId
+  block: boolean; // never inject into this app
+  insertMethod?: InsertMethod | null; // override global; null/undefined = inherit
+  pasteShortcut?: string[] | null; // override global; null/undefined = inherit
+}
+
+/** The focused app as reported by AT-SPI: its id/title plus — when "deep field detection"
+ *  is on — whether the focused element is an editable text field. `editable` is
+ *  null/undefined when unknown (app not on the a11y bus, or detection off) → type anyway. */
+export interface FocusedApp {
+  appId: string;
+  title: string;
+  editable?: boolean | null;
+}
+
+export type InsertMethod = "paste" | "direct" | "clipboard";
 /** When the transcription is inserted: never / once on stop / live as you speak. */
 export type InsertTiming = "off" | "stop" | "live";
 export type IndicatorPosition = "top" | "bottom" | "off";
@@ -79,7 +99,7 @@ export type ThemeName = "dark" | "light";
 
 /** A navigable app screen, referenced by the sidebar, the overlay quick-launch,
  *  and cross-window navigation (kept in sync with the router in App.tsx). */
-export type OverlayScreen = "home" | "transcribe" | "profiles" | "backends" | "settings";
+export type OverlayScreen = "home" | "transcribe" | "profiles" | "backends" | "app-rules" | "settings";
 /** A dictation action the overlay quick-launch can trigger (beyond screen nav). */
 export type OverlayActionKind = "toggle-dictation" | "cycle-active-profile";
 /** One quick-launch chip button: a screen nav target or a dictation action. A flat
@@ -95,10 +115,15 @@ export interface GeneralSettings {
   startMinimized: boolean;
   insertTiming: InsertTiming;
   insertMethod: InsertMethod;
+  /** Chord sent for the "clipboard paste" method (KeyboardEvent.code list); default Ctrl+V. */
+  pasteShortcut: string[];
   autoEnter: boolean;
   restoreClipboard: boolean;
   soundEffects: boolean;
   evdevEnabled: boolean; // opt-in evdev backend (reliable hold / L-R / AltGr on Wayland)
+  /** Opt-in AT-SPI "deep field detection": skip typing when the focused element isn't a
+   *  text field (covers browsers/Electron via an a11y flag + active poke). Default off. */
+  deepFieldDetection: boolean;
 }
 
 export interface RecordingSettings {
@@ -189,6 +214,7 @@ export interface Config {
   settings: AppSettings;
   backends: Backend[];
   profiles: Profile[];
+  appRules?: AppRule[]; // per-application injection rules (P16)
   version?: number; // schema version (absent/legacy ⇒ 1; current ⇒ 2)
 }
 

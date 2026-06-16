@@ -9,6 +9,7 @@ import type {
   Config,
   ConnectionInfo,
   DecodeOverrides,
+  FocusedApp,
   ResolvedOverrideProfile,
 } from "./types";
 
@@ -275,12 +276,21 @@ export async function endInjection(): Promise<void> {
   await invoke("end_injection");
 }
 
+/** Put the beginInjection snapshot back on the clipboard WITHOUT consuming it, so the user's
+ *  original clipboard is restored after each pasted phrase (the snapshot persists for the next
+ *  phrase). No-op when no snapshot was taken. */
+export async function restoreClipboardSnapshot(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("restore_clipboard_snapshot");
+}
+
 /** Insert text into the focused field of the active app. */
 export async function injectText(args: {
   text: string;
-  method: "paste" | "direct";
+  method: "paste" | "direct" | "clipboard";
   autoEnter: boolean;
   restoreClipboard: boolean;
+  pasteShortcut: string[];
 }): Promise<void> {
   if (!isTauri) return;
   await invoke("inject_text", {
@@ -288,7 +298,21 @@ export async function injectText(args: {
     method: args.method,
     autoEnter: args.autoEnter,
     restoreClipboard: args.restoreClipboard,
+    pasteShortcut: args.pasteShortcut,
   });
+}
+
+/** The focused app's id + title + (when deep detection is on) editability, via AT-SPI.
+ *  null when nothing is known yet (no a11y bridge / cold listener). */
+export async function getFocusedApp(): Promise<FocusedApp | null> {
+  if (!isTauri) return null;
+  return (await invoke<FocusedApp | null>("get_focused_app")) ?? null;
+}
+
+/** Toggle the opt-in AT-SPI "deep field detection" (a11y flag + Chromium/Electron poke). */
+export async function setDeepFieldDetection(enabled: boolean): Promise<void> {
+  if (!isTauri) return;
+  await invoke("set_deep_field_detection", { enabled });
 }
 
 /** Show + position the dictation chip overlay at the given screen edge. The window is
