@@ -36,6 +36,8 @@ export async function initOverlayController(): Promise<void> {
       state.partial !== prev.partial ||
       state.dictationError !== prev.dictationError ||
       state.activeProfile !== prev.activeProfile || // switching Profiles mid-session
+      state.targetApp !== prev.targetApp || // injection target (chip "→ app" readout)
+      state.targetSkip !== prev.targetSkip ||
       state.settings !== prev.settings // theme / position / preview / show-profile toggles
     ) {
       const rec = state.settings.recording;
@@ -59,6 +61,9 @@ export async function initOverlayController(): Promise<void> {
           mode: backend?.endpoint,
         };
       }
+      // P16/D: the app being injected into (+ why, if it's coerced to clipboard), gated by the
+      // setting and sent only while a session is active so the standby dock shows no stale target.
+      const tgt = rec.showTargetOnOverlay && ACTIVE.includes(state.status) ? state.targetApp : null;
       void emit("dictation://update", {
         status: state.status,
         level: state.level,
@@ -77,6 +82,11 @@ export async function initOverlayController(): Promise<void> {
         dimAfterSec: rec.dimAfterSec ?? 10,
         hoverRevealMs: rec.hoverRevealMs ?? 1000,
         quickLaunch: rec.quickLaunch ?? [],
+        // The injection target app title + a skip reason ("blocked" / "notEditable") for the
+        // warn-tinted hint. Empty when the feature's off, no app is known, or the session's idle.
+        targetTitle: tgt?.title ?? "",
+        targetSkip: tgt ? (state.targetSkip ?? "") : "",
+        targetOnlySpeaking: rec.showTargetOnlySpeaking,
         ...chip,
       });
     }

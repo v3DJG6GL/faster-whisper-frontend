@@ -132,6 +132,8 @@ export interface RecordingSettings {
   muteSystemAudio: boolean;
   realtimePreview: boolean;
   showProfileOnOverlay: boolean; // show the active Profile's tag on the chip
+  showTargetOnOverlay: boolean; // show the injection target (→ app) + a warn hint when not typable
+  showTargetOnlySpeaking: boolean; // only show the target while actively dictating (chip expanded)
   persistentDock: boolean; // keep the chip on screen (a standby dot) even when dictation is off
   overlayPeek: boolean; // after sitting idle, slide the chip to the screen edge (hover to restore)
   peekTimeoutSec: number; // idle seconds before the chip peeks to the edge

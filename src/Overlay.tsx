@@ -20,6 +20,11 @@ interface ChipState {
   profileTag?: string;
   language?: string;
   mode?: "stream" | "batch";
+  // P16/D: the app dictation is typing into (→ readout) + why it's coerced to clipboard
+  // ("blocked" by a per-app rule / "notEditable" by deep detection). Empty = nothing to show.
+  targetTitle?: string;
+  targetSkip?: "blocked" | "notEditable" | "";
+  targetOnlySpeaking?: boolean; // hide the target unless the chip is expanded (actively dictating)
   // Overlay-chip behaviour, forwarded from settings via dictation://update.
   persistentDock: boolean;
   overlayPeek: boolean;
@@ -127,6 +132,9 @@ export default function Overlay() {
             dimAfterSec: e.payload.dimAfterSec ?? 10,
             hoverRevealMs: e.payload.hoverRevealMs ?? 1000,
             quickLaunch: e.payload.quickLaunch ?? [],
+            targetTitle: e.payload.targetTitle ?? "",
+            targetSkip: e.payload.targetSkip ?? "",
+            targetOnlySpeaking: e.payload.targetOnlySpeaking ?? false,
           });
         }),
       )
@@ -163,6 +171,9 @@ export default function Overlay() {
         profileTag: "SWISS-DE",
         language: "de-CH",
         mode: "stream",
+        targetTitle: "Kate",
+        targetSkip: "",
+        targetOnlySpeaking: false,
         persistentDock: true,
         overlayPeek: false,
         peekTimeoutSec: 30,
@@ -242,6 +253,12 @@ export default function Overlay() {
     setHoverReveal(false);
   };
   const detail = [state.language, state.mode].filter(Boolean).join(" · ");
+  // P16/D target readout: overlay.ts only sends `targetTitle` while a session is active AND the
+  // "Show injection target" setting is on, so its presence alone gates the chip's "→ app" segment.
+  // A `targetSkip` reason means injection was coerced to the clipboard → tint the readout warn.
+  const showTarget = !!state.targetTitle && (!state.targetOnlySpeaking || expanded);
+  const targetWarn = !!state.targetSkip;
+  const skipLabel = state.targetSkip === "blocked" ? "blocked" : "not a text field";
 
   // Report the chip's on-screen bounds to Rust, which shapes the overlay window's
   // input region to just that rectangle — so only the chip captures the cursor and
@@ -545,26 +562,43 @@ export default function Overlay() {
             />
           )}
 
-          {/* Persistent active-Profile tag; hover (≥1s) reveals "· language · mode",
-              which animates its WIDTH open (clipped) so the text never scales. */}
-          {state.profileTag && !peeked && (
-            <div className="ml-2 flex shrink-0 items-center font-mono text-[11px] leading-none tracking-[0.12em]">
-              <span className="max-w-[140px] truncate uppercase text-accent/85">{state.profileTag}</span>
-              <AnimatePresence>
-                {hoverReveal && detail && (
-                  <motion.span
-                    key="detail"
-                    initial={{ width: 0, opacity: 0 }}
-                    animate={{ width: "auto", opacity: 1 }}
-                    exit={{ width: 0, opacity: 0 }}
-                    transition={MORPH}
-                    onAnimationComplete={reportBounds}
-                    className="inline-block overflow-hidden align-middle"
-                  >
-                    <span className="whitespace-nowrap pl-1.5 normal-case text-faint">· {detail}</span>
-                  </motion.span>
-                )}
-              </AnimatePresence>
+          {/* Identity row: the active-Profile tag (hover ≥1s reveals "· language · mode", which
+              animates its WIDTH open so the text never scales) and/or the P16/D injection-target
+              readout ("→ App", warn-tinted with a reason when coerced to the clipboard). */}
+          {(state.profileTag || showTarget) && !peeked && (
+            <div className="ml-2 flex shrink-0 items-center gap-2 font-mono text-[11px] leading-none tracking-[0.12em]">
+              {state.profileTag && (
+                <div className="flex items-center">
+                  <span className="max-w-[140px] truncate uppercase text-accent/85">{state.profileTag}</span>
+                  <AnimatePresence>
+                    {hoverReveal && detail && (
+                      <motion.span
+                        key="detail"
+                        initial={{ width: 0, opacity: 0 }}
+                        animate={{ width: "auto", opacity: 1 }}
+                        exit={{ width: 0, opacity: 0 }}
+                        transition={MORPH}
+                        onAnimationComplete={reportBounds}
+                        className="inline-block overflow-hidden align-middle"
+                      >
+                        <span className="whitespace-nowrap pl-1.5 normal-case text-faint">· {detail}</span>
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
+              {showTarget && (
+                <span
+                  className={cn(
+                    "flex items-center gap-1 normal-case",
+                    targetWarn ? "text-warn" : "text-dim",
+                  )}
+                >
+                  <span aria-hidden>→</span>
+                  <span className="max-w-[130px] truncate">{state.targetTitle}</span>
+                  {targetWarn && <span className="whitespace-nowrap">· {skipLabel}</span>}
+                </span>
+              )}
             </div>
           )}
 
@@ -583,7 +617,7 @@ export default function Overlay() {
                 className="overflow-hidden"
               >
                 <div className="flex w-max items-center gap-3 pl-3">
-                  {state.profileTag && <span className="h-4 w-px shrink-0 bg-line" aria-hidden />}
+                  {(state.profileTag || showTarget) && <span className="h-4 w-px shrink-0 bg-line" aria-hidden />}
                   {showQuickLaunch ? (
                     <div className="flex items-center gap-2">
                       {state.quickLaunch.map((e) => {

@@ -439,6 +439,26 @@ export default function Settings() {
                 onChange={(v) => updateRecording({ showProfileOnOverlay: v })}
               />
             </SettingRow>
+            <SettingRow
+              title="Show injection target"
+              desc="Show which app dictation is typing into (→ app) on the chip, and warn when it isn't a text field."
+            >
+              <Toggle
+                checked={s.recording.showTargetOnOverlay}
+                onChange={(v) => updateRecording({ showTargetOnOverlay: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              title="Only while speaking"
+              desc="Show the injection target only while you're actively dictating — hide it when armed but silent, so it doesn't flicker as you move between windows."
+              disabled={!s.recording.showTargetOnOverlay}
+            >
+              <Toggle
+                checked={s.recording.showTargetOnlySpeaking}
+                onChange={(v) => updateRecording({ showTargetOnlySpeaking: v })}
+                disabled={!s.recording.showTargetOnOverlay}
+              />
+            </SettingRow>
 
             <SectionLabel className="mb-1 mt-7">Interaction</SectionLabel>
             <SettingRow

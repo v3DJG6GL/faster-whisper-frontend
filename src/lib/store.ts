@@ -6,6 +6,7 @@ import type {
   Config,
   ConnectionInfo,
   DictationStatus,
+  FocusedApp,
   Profile,
   ThemeName,
 } from "./types";
@@ -60,6 +61,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     muteSystemAudio: false,
     realtimePreview: true,
     showProfileOnOverlay: true,
+    showTargetOnOverlay: true,
+    showTargetOnlySpeaking: false,
     persistentDock: false,
     overlayPeek: false,
     peekTimeoutSec: 30,
@@ -145,6 +148,11 @@ interface AppState {
   dictationError: string | null;
   /** Decode overrides the server refused (admin-locked) for the active stream. */
   overridesIgnored: string[];
+  /** The app the active session is injecting into — drives the chip's "→ app" readout. */
+  targetApp: FocusedApp | null;
+  /** Why injection into the target is skipped (coerced to clipboard): a per-app `block` rule, or
+   *  the deep-detection guard finding the focused element isn't a text field. null = typing. */
+  targetSkip: "blocked" | "notEditable" | null;
 
   connections: Record<string, ConnectionInfo | undefined>; // keyed by Backend id
 
@@ -176,6 +184,8 @@ interface AppState {
       activeProfile: string | null;
       dictationError: string | null;
       overridesIgnored: string[];
+      targetApp: FocusedApp | null;
+      targetSkip: "blocked" | "notEditable" | null;
     }>,
   ) => void;
 
@@ -196,6 +206,8 @@ export const useApp = create<AppState>((set) => ({
   activeProfile: null,
   dictationError: null,
   overridesIgnored: [],
+  targetApp: null,
+  targetSkip: null,
 
   connections: {},
 

@@ -161,7 +161,40 @@ async function resolveTarget(): Promise<{ method: InsertCfg["method"]; pasteShor
   const method: InsertCfg["method"] =
     rule?.block || notEditable ? "clipboard" : rule?.insertMethod ?? g.insertMethod;
   const pasteShortcut = rule?.pasteShortcut ?? g.pasteShortcut;
+  // Keep the chip's "→ app" readout + skip hint live as focus moves mid-session: this resolves
+  // the CURRENT window on every call, so it's the chip's source of truth — not the frozen
+  // start-of-session value.
+  publishTarget(targetApp ?? null, rule?.block ? "blocked" : notEditable ? "notEditable" : null);
   return { method, pasteShortcut };
+}
+
+/** Push the resolved injection target into the store (deduped) so the chip's "→ app" readout +
+ *  skip hint reflect the CURRENT focus. getFocusedApp returns a fresh object each call, so compare
+ *  by value to avoid churning a cross-window emit + chip re-render on every poll tick. */
+function publishTarget(app: FocusedApp | null, skip: "blocked" | "notEditable" | null): void {
+  const cur = useApp.getState();
+  const sameApp =
+    (cur.targetApp?.appId ?? null) === (app?.appId ?? null) &&
+    (cur.targetApp?.title ?? null) === (app?.title ?? null);
+  if (sameApp && cur.targetSkip === skip) return;
+  cur.setDictation({ targetApp: app, targetSkip: skip });
+}
+
+// Poll the focused app while a session is active so the chip tracks window/field switches even
+// when you pause between phrases (each injection ALSO re-resolves via resolveTarget). Cheap — a
+// cached AT-SPI read — and deduped by publishTarget, so a steady focus never emits/re-renders.
+let targetPollTimer: ReturnType<typeof setInterval> | null = null;
+const TARGET_POLL_MS = 700;
+function startTargetPoll(): void {
+  stopTargetPoll();
+  void resolveTarget(); // resolve once immediately, then keep it fresh
+  targetPollTimer = setInterval(() => void resolveTarget(), TARGET_POLL_MS);
+}
+function stopTargetPoll(): void {
+  if (targetPollTimer) {
+    clearInterval(targetPollTimer);
+    targetPollTimer = null;
+  }
 }
 
 // Hold the "injecting" state at least this long, so the writing-out phase is actually
@@ -363,6 +396,7 @@ async function ensureListeners(): Promise<void> {
       setDictation({ status: "listening", dictationError: null });
     } else if (e.payload === "closed") {
       clearStuckWatchdog(); // the stream resolved on its own
+      stopTargetPoll(); // session ending — stop tracking focus for the chip
       // Stop the pending phrase-end Enter from firing after the session closes; the stop tail
       // below decides the final phrase's Enter. Keep `phraseDirty` for that decision.
       if (phraseEndTimer) {
@@ -437,6 +471,7 @@ async function ensureListeners(): Promise<void> {
 
   await listen<string>("stream://error", (e) => {
     clearStuckWatchdog();
+    stopTargetPoll();
     console.error("stream error:", e.payload);
     setDictation({ status: "error", dictationError: e.payload, level: 0 });
     // Tear down the Rust capture session so the mic closes and system audio
@@ -542,8 +577,20 @@ export async function startLive(
   injectChain = Promise.resolve();
   clearStuckWatchdog(); // fresh session — drop any leftover backstop
 
-  setDictation({ status: "listening", partial: "", level: 0, dictationError: null, overridesIgnored: [] });
+  // P16/D: surface the injection target + why (if at all) it's coerced to clipboard, for the
+  // chip's "→ app" readout. blocked (per-app rule) takes precedence over the deep-detect guard.
+  const targetSkip = insertCfg.blocked ? "blocked" : insertCfg.notEditable ? "notEditable" : null;
+  setDictation({
+    status: "listening",
+    partial: "",
+    level: 0,
+    dictationError: null,
+    overridesIgnored: [],
+    targetApp: insertCfg.targetApp,
+    targetSkip,
+  });
   activeEndpoint = backend.endpoint;
+  startTargetPoll(); // keep the chip's target readout live as focus moves during the session
 
   // Live paste: snapshot the clipboard ONCE here, then restore the original from it after each
   // pasted phrase (driven by the phrase-end quiet timer) — so an ongoing latch session, which
@@ -613,6 +660,7 @@ export async function stopLive(): Promise<void> {
  *  recovers both the recording state AND the shortcuts. */
 export async function cancelLive(): Promise<void> {
   clearStuckWatchdog();
+  stopTargetPoll();
   committedDoc = "";
   injectedText = "";
   bankedDoc = "";
@@ -625,7 +673,7 @@ export async function cancelLive(): Promise<void> {
   injectChain = Promise.resolve();
   useApp
     .getState()
-    .setDictation({ status: "idle", partial: "", level: 0, dictationError: null });
+    .setDictation({ status: "idle", partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null });
   const endpoint = activeEndpoint;
   activeEndpoint = null;
   try {

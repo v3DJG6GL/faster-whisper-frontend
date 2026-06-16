@@ -345,6 +345,14 @@ pub struct RecordingSettings {
     /// so older configs load (and default the feature on).
     #[serde(default = "default_true")]
     pub show_profile_on_overlay: bool,
+    /// Show the injection target app (→ AppName) on the chip, plus a warn hint when the focused
+    /// element isn't a typable text field. `#[serde(default = …)]` so older configs default on.
+    #[serde(default = "default_true")]
+    pub show_target_on_overlay: bool,
+    /// Only show the injection target while actively dictating (the chip is expanded), hiding it
+    /// when armed but silent — so it doesn't flicker as focus moves between phrases. Default off.
+    #[serde(default)]
+    pub show_target_only_speaking: bool,
     /// Keep the chip on screen (a standby dot) even when dictation is off.
     #[serde(default)]
     pub persistent_dock: bool,
@@ -426,6 +434,8 @@ impl Default for Config {
                     mute_system_audio: false,
                     realtime_preview: true,
                     show_profile_on_overlay: true,
+                    show_target_on_overlay: true,
+                    show_target_only_speaking: false,
                     persistent_dock: false,
                     overlay_peek: false,
                     peek_timeout_sec: 30.0,
