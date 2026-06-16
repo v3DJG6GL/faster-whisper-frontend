@@ -426,6 +426,36 @@ export function StatusDot({
   );
 }
 
+/* ── Stack (vertical rhythm) ──────────────────────────────────────────── */
+// Spacing between stacked siblings is a CONTAINER responsibility, not a per-
+// element one (margin is a property of the *relationship* between two elements).
+// A Stack owns the vertical gap so its children stay margin-free; `gap` (not
+// `space-y`) avoids margin-collapse + first/last-child leaks and self-heals when
+// children are added/removed/reordered. Pick from a deliberate inner-≤-outer
+// scale (bigger gaps for bigger/outer groups). Opt-in per container — NOT a
+// global default — so existing tuned screens are unaffected.
+const STACK_GAP = {
+  1: "gap-1", //  4px — label ↔ control
+  2: "gap-2", //  8px — rows / fields in a tight group
+  3: "gap-3", // 12px — items in a list / sections in a block
+  4: "gap-4", // 16px — blocks within a panel
+  5: "gap-5", // 20px
+  6: "gap-6", // 24px — major sections of a screen
+  8: "gap-8", // 32px — page regions
+} as const;
+
+export function Stack({
+  gap = 3,
+  className,
+  children,
+}: {
+  gap?: keyof typeof STACK_GAP;
+  className?: string;
+  children: ReactNode;
+}) {
+  return <div className={cn("flex flex-col", STACK_GAP[gap], className)}>{children}</div>;
+}
+
 /* ── Setting row ──────────────────────────────────────────────────────── */
 export function SettingRow({
   title,

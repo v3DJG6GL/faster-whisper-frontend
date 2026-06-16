@@ -15,7 +15,7 @@ import {
   ArrowUp, ArrowDown, AlertTriangle, Check,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Toggle, TextInput } from "@/components/ui";
+import { Button, Card, Stack, Toggle, TextInput } from "@/components/ui";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { getPipelineRules, savePipelineRules } from "@/lib/api";
 import type {
@@ -209,9 +209,9 @@ function RuleCard({
 
       {/* expandable body */}
       {expanded && (
-        <div className="border-t border-line bg-surface-2/20 px-5 py-5">
+        <Stack gap={4} className="border-t border-line bg-surface-2/20 px-5 py-5">
           {locked && (
-            <div className="mb-3 flex items-start gap-2 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-dim">
+            <div className="flex items-start gap-2 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-dim">
               <Lock className="mt-0.5 size-3.5 shrink-0 text-faint" />
               <span>Locked by the server admin — read-only. Ask an admin to change it on the server.</span>
             </div>
@@ -219,7 +219,7 @@ function RuleCard({
 
           {/* regex-list: ordered find→replace entries — numbered card-rows with a left rail */}
           {rule.type === "regex-list" && (
-            <div className="space-y-3">
+            <Stack gap={3}>
               <p className="text-[12px] leading-snug text-faint">
                 Ordered find→replace list — entries run top to bottom. An empty replacement deletes the match.
               </p>
@@ -252,7 +252,7 @@ function RuleCard({
                       )}
                     </div>
                     {/* body */}
-                    <div className="min-w-0 flex-1 space-y-2.5 p-4">
+                    <Stack gap={3} className="min-w-0 flex-1 p-4">
                       {/* row 1: label · note toggle · delete */}
                       <div className="flex items-center gap-2">
                         <input
@@ -284,7 +284,7 @@ function RuleCard({
                         )}
                       </div>
                       {/* find / → repl rows (inline mono gutter labels) */}
-                      <div className="space-y-2">
+                      <Stack gap={2}>
                         <div className="flex items-center gap-3">
                           <span className="w-12 shrink-0 text-right font-mono text-[11px] text-faint">find</span>
                           <TextInput value={row.pattern} disabled={!bodyEditable} spellCheck={false}
@@ -297,7 +297,7 @@ function RuleCard({
                             placeholder="(empty = delete match)" className={cn(monoInput, "min-w-0 flex-1")}
                             onChange={(ev) => setRow({ replacement: ev.target.value })} />
                         </div>
-                      </div>
+                      </Stack>
                       {/* note — collapsible, toggled by the row-1 button */}
                       {noteShown && (
                         <div className="flex items-start gap-3">
@@ -308,7 +308,7 @@ function RuleCard({
                             className="ring-signal min-w-0 flex-1 rounded-xl border border-line bg-surface-2 px-3 py-2 text-[12px] leading-relaxed text-text placeholder:italic placeholder:text-faint disabled:opacity-50" />
                         </div>
                       )}
-                    </div>
+                    </Stack>
                   </div>
                 );
               })}
@@ -320,12 +320,12 @@ function RuleCard({
               {(edit.entries?.length ?? 0) === 0 && !bodyEditable && (
                 <div className="text-[12.5px] text-faint">No entries.</div>
               )}
-            </div>
+            </Stack>
           )}
 
           {/* callback:map: spoken phrase → symbol — HORIZONTAL rows (key beside value) */}
           {rule.type === "callback:map" && (
-            <div className="space-y-2">
+            <Stack gap={2}>
               <p className="text-[12px] leading-snug text-faint">
                 Say the phrase on the left; the symbol on the right is inserted in its place.
               </p>
@@ -365,12 +365,12 @@ function RuleCard({
                   <Plus className="size-3.5" /> Add mapping
                 </Button>
               )}
-            </div>
+            </Stack>
           )}
 
           {/* lowercase-wordlist: a regex + a word list */}
           {rule.type === "callback:lowercase-wordlist" && (
-            <div className="space-y-3">
+            <Stack gap={3}>
               <div>
                 <FieldLabel>Match (regex)</FieldLabel>
                 <TextInput
@@ -392,7 +392,7 @@ function RuleCard({
                   className="ring-signal w-full rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 font-mono text-[12.5px] leading-relaxed text-text placeholder:text-faint disabled:opacity-50"
                 />
               </div>
-            </div>
+            </Stack>
           )}
 
           {/* dedup / upper: a single regex */}
@@ -410,7 +410,7 @@ function RuleCard({
           )}
 
           {/* read-only context + per-rule reset */}
-          <div className="mt-4 flex items-end justify-between gap-3 border-t border-line pt-3">
+          <div className="flex items-end justify-between gap-3 border-t border-line pt-3">
             <div className="min-w-0 space-y-1">
               <div className="font-mono text-[10.5px] text-faint">{rule.name}</div>
               {rule.note && <div className="text-[12px] italic leading-snug text-dim">{rule.note}</div>}
@@ -421,7 +421,7 @@ function RuleCard({
               </Button>
             )}
           </div>
-        </div>
+        </Stack>
       )}
     </Card>
   );
@@ -553,8 +553,8 @@ export default function Dictionary() {
   }
 
   return (
-    <div className="mx-auto max-w-[820px] px-10 py-12">
-      <header className="mb-7 flex items-start justify-between gap-4">
+    <Stack gap={6} className="mx-auto max-w-[820px] px-10 py-12">
+      <header className="flex items-start justify-between gap-4">
         <div>
           <div className="font-mono text-[11px] uppercase tracking-label text-accent">Server rules</div>
           <h1 className="mt-2 flex items-center gap-2.5 font-display text-[30px] font-bold tracking-tight text-text">
@@ -574,7 +574,7 @@ export default function Dictionary() {
 
       {/* Backend picker (only when there's a choice) + role readout */}
       {candidates.length > 0 && (
-        <div className="mb-6 flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {candidates.length > 1 &&
             candidates.map((b) => {
               const active = b.id === selectedId;
@@ -620,7 +620,7 @@ export default function Dictionary() {
           body="An admin hasn't shared any editable rules with your account yet. Ask them to expose rules (and tag them for you) on the server."
         />
       ) : (
-        <div className="space-y-3">
+        <Stack gap={4}>
           {/* result banner */}
           {result && <SaveBanner result={result} onReload={() => backend && load(backend)} />}
 
@@ -659,9 +659,9 @@ export default function Dictionary() {
               onReset={() => resetRule(r.name)}
             />
           ))}
-        </div>
+        </Stack>
       )}
-    </div>
+    </Stack>
   );
 }
 
