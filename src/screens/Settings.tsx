@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Mic, Check, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus } from "lucide-react";
+import { Mic, Check, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus, FolderOpen } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
@@ -12,6 +12,9 @@ import {
   evdevStatus,
   evdevSetup,
   setDeepFieldDetection,
+  openRecordingsDir,
+  recordingsDirPath,
+  pickRecordingsDir,
   type EvdevStatus,
 } from "@/lib/api";
 import type { AudioDevice, OverlayQuickAction } from "@/lib/types";
@@ -210,6 +213,23 @@ export default function Settings() {
     void evdevStatus().then(setEvdev);
   }, [tab]);
 
+  // Recordings folder: resolve the active path for display (custom or default), and
+  // re-resolve whenever the custom selection changes.
+  const customRecDir = s.recording.recordingsDir;
+  const [recDirDisplay, setRecDirDisplay] = useState<string | null>(null);
+  useEffect(() => {
+    void recordingsDirPath(customRecDir).then(setRecDirDisplay);
+  }, [customRecDir]);
+  const openRecDir = () =>
+    void openRecordingsDir(customRecDir).catch((e) => console.error("open recordings dir:", e));
+  const changeRecDir = () =>
+    void pickRecordingsDir()
+      .then((picked) => {
+        if (picked) updateRecording({ recordingsDir: picked });
+      })
+      .catch((e) => console.error("pick recordings dir:", e));
+  const resetRecDir = () => updateRecording({ recordingsDir: null });
+
   const runEvdevSetup = () => {
     setEvdevBusy(true);
     setEvdevMsg(null);
@@ -329,11 +349,76 @@ export default function Settings() {
               <Toggle checked={s.recording.saveRecordings} onChange={(v) => updateRecording({ saveRecordings: v })} />
             </SettingRow>
             <SettingRow
+              title="Trim silence"
+              desc="Save only the parts you actually spoke (the same speech detection that drives the chip), so a long hands-free session doesn't store hours of silence."
+              disabled={!s.recording.saveRecordings}
+            >
+              <Toggle
+                checked={s.recording.trimSilence}
+                disabled={!s.recording.saveRecordings}
+                onChange={(v) => updateRecording({ trimSilence: v })}
+              />
+            </SettingRow>
+            {/* Recordings folder: where saved .wav files live, plus open / relocate / reset. Its own
+                block (a mono path readout + an action row) rather than a SettingRow — the path is the
+                point, and three actions don't fit a row's trailing slot. */}
+            <div className="border-b border-line py-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-[14px] font-medium text-text">Recordings folder</div>
+                  <div className="mt-0.5 text-[12.5px] leading-snug text-dim">
+                    {customRecDir ? "A custom folder." : "The default app folder."} Saved files stay until you remove
+                    them.
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button size="sm" onClick={openRecDir} title="Open in your file manager">
+                    <FolderOpen size={14} strokeWidth={2} />
+                    Open
+                  </Button>
+                  <Button size="sm" onClick={changeRecDir}>
+                    Change…
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={resetRecDir}
+                    disabled={!customRecDir}
+                    title="Revert to the default location"
+                  >
+                    Reset
+                  </Button>
+                </div>
+              </div>
+              <div
+                title={recDirDisplay ?? undefined}
+                className="mt-3 truncate rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-[11.5px] text-dim"
+              >
+                {recDirDisplay ?? "resolving…"}
+              </div>
+            </div>
+            <SettingRow
               title="Silence other apps while recording"
               desc="Mute system audio for the duration of a dictation."
-              last
             >
               <Toggle checked={s.recording.muteSystemAudio} onChange={(v) => updateRecording({ muteSystemAudio: v })} />
+            </SettingRow>
+            <SettingRow
+              title="Auto-stop hands-free after silence"
+              desc="End a hands-free (latch) session after this long with no speech, so it can't run for hours. Set to Never to keep it open until you stop it yourself."
+              last
+            >
+              <Stepper
+                ariaLabel="auto-stop hands-free after silence"
+                value={s.recording.latchAutoStopMin}
+                onChange={(v) => updateRecording({ latchAutoStopMin: v })}
+                min={0}
+                max={120}
+                step={1}
+                decimals={0}
+                unit="min"
+                zeroLabel="Never"
+              />
             </SettingRow>
           </Card>
         )}

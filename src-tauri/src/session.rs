@@ -37,6 +37,7 @@ pub struct StartParams {
     pub override_profile: Option<String>,
     pub device_id: Option<String>,
     pub save_dir: Option<PathBuf>,
+    pub trim_silence: bool,
     pub mute_system: bool,
 }
 
@@ -126,6 +127,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         api_key: p.api_key,
         in_rate,
         save_dir: p.save_dir,
+        trim_silence: p.trim_silence,
     };
 
     let appc = app.clone();

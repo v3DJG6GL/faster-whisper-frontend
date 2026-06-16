@@ -132,7 +132,10 @@ export interface GeneralSettings {
 export interface RecordingSettings {
   indicatorPosition: IndicatorPosition;
   saveRecordings: boolean;
+  recordingsDir: string | null; // user-chosen folder for saved .wav files; null = default app-data location
+  trimSilence: boolean; // when saving: keep only spoken spans (drop silence) in the .wav
   muteSystemAudio: boolean;
+  latchAutoStopMin: number; // auto-stop a hands-free (latch) session after N min of silence (0 = never)
   realtimePreview: boolean;
   showProfileOnOverlay: boolean; // show the active Profile's tag on the chip
   showTargetOnOverlay: boolean; // show the injection target (→ app) + a warn hint when not typable

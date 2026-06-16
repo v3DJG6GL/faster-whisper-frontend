@@ -228,6 +228,8 @@ export async function startStream(args: {
   overrideProfile?: string | null;
   deviceId?: string | null;
   save?: boolean;
+  recordingsDir?: string | null;
+  trimSilence?: boolean;
   muteSystem?: boolean;
 }): Promise<void> {
   if (!isTauri) return;
@@ -243,6 +245,8 @@ export async function startStream(args: {
     overrideProfile: args.overrideProfile ?? null,
     deviceId: args.deviceId ?? null,
     save: args.save ?? false,
+    recordingsDir: args.recordingsDir ?? null,
+    trimSilence: args.trimSilence ?? true,
     muteSystem: args.muteSystem ?? false,
   });
 }
@@ -264,6 +268,7 @@ export async function startRecord(args: {
   overrideProfile?: string | null;
   deviceId?: string | null;
   save?: boolean;
+  recordingsDir?: string | null;
   muteSystem?: boolean;
 }): Promise<void> {
   if (!isTauri) return;
@@ -278,6 +283,7 @@ export async function startRecord(args: {
     overrideProfile: args.overrideProfile ?? null,
     deviceId: args.deviceId ?? null,
     save: args.save ?? false,
+    recordingsDir: args.recordingsDir ?? null,
     muteSystem: args.muteSystem ?? false,
   });
 }
@@ -491,4 +497,26 @@ export async function pickAudioFile(): Promise<string | null> {
     ],
   });
   return typeof selected === "string" ? selected : null;
+}
+
+/** Native "choose folder" dialog → absolute path (or null if cancelled / not in Tauri).
+ *  Used to pick a custom recordings folder. */
+export async function pickRecordingsDir(): Promise<string | null> {
+  if (!isTauri) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({ directory: true, multiple: false });
+  return typeof selected === "string" ? selected : null;
+}
+
+/** The active recordings folder for display (the user's custom folder, or the default
+ *  under the app data dir; a leading $HOME is shown as ~). Pass the current custom value. */
+export async function recordingsDirPath(custom: string | null): Promise<string | null> {
+  if (!isTauri) return null;
+  return await invoke<string | null>("recordings_dir_path", { custom });
+}
+
+/** Open the active recordings folder in the system file manager (created if absent). */
+export async function openRecordingsDir(custom: string | null): Promise<void> {
+  if (!isTauri) return;
+  await invoke("open_recordings_dir", { custom });
 }

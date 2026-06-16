@@ -79,6 +79,10 @@ fn default_hover_reveal() -> u32 {
     1000
 }
 
+fn default_latch_auto_stop() -> f64 {
+    5.0
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum IndicatorPosition {
@@ -339,7 +343,20 @@ pub struct GeneralSettings {
 pub struct RecordingSettings {
     pub indicator_position: IndicatorPosition,
     pub save_recordings: bool,
+    /// User-chosen folder for saved `.wav` recordings; None/empty = the default under
+    /// the app data dir. `#[serde(default, skip…)]` so older configs load and configs
+    /// that never set it round-trip byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recordings_dir: Option<String>,
+    /// When saving: keep only the spoken spans (drop silence) in the .wav, so a long latch
+    /// session doesn't store hours of quiet. `#[serde(default)]` (true) so older configs load.
+    #[serde(default = "default_true")]
+    pub trim_silence: bool,
     pub mute_system_audio: bool,
+    /// Auto-stop a hands-free (latch) session after this many minutes of continuous silence
+    /// (0 = never). Prevents multi-hour runaway sessions and frees the mic/connection.
+    #[serde(default = "default_latch_auto_stop")]
+    pub latch_auto_stop_min: f64,
     pub realtime_preview: bool,
     /// Show the active Profile's tag on the overlay chip. `#[serde(default = …)]`
     /// so older configs load (and default the feature on).
@@ -431,7 +448,10 @@ impl Default for Config {
                 recording: RecordingSettings {
                     indicator_position: IndicatorPosition::Top,
                     save_recordings: false,
+                    recordings_dir: None,
+                    trim_silence: true,
                     mute_system_audio: false,
+                    latch_auto_stop_min: 5.0,
                     realtime_preview: true,
                     show_profile_on_overlay: true,
                     show_target_on_overlay: true,

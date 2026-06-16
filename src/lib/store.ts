@@ -58,7 +58,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   recording: {
     indicatorPosition: "top",
     saveRecordings: false,
+    recordingsDir: null,
+    trimSilence: true,
     muteSystemAudio: false,
+    latchAutoStopMin: 5,
     realtimePreview: true,
     showProfileOnOverlay: true,
     showTargetOnOverlay: true,

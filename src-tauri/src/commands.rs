@@ -12,9 +12,44 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
 }
 
-/// Folder where saved dictation `.wav` files go (when "Keep recordings" is on).
-fn recordings_dir(app: &AppHandle) -> Option<PathBuf> {
+/// Folder where saved dictation `.wav` files go (when "Keep recordings" is on). A
+/// non-empty `custom` (the user's chosen folder, from Settings) wins; otherwise the
+/// default lives under the app data dir. None only if neither can be resolved.
+fn resolve_recordings_dir(app: &AppHandle, custom: Option<String>) -> Option<PathBuf> {
+    if let Some(c) = custom {
+        let c = c.trim();
+        if !c.is_empty() {
+            return Some(PathBuf::from(c));
+        }
+    }
     app.path().app_data_dir().ok().map(|d| d.join("recordings"))
+}
+
+/// Absolute path of the active recordings folder (custom or default), for display in
+/// Settings — a leading `$HOME` is collapsed to `~`. None if it can't be resolved.
+#[tauri::command]
+pub fn recordings_dir_path(app: AppHandle, custom: Option<String>) -> Option<String> {
+    let dir = resolve_recordings_dir(&app, custom)?;
+    if let Ok(home) = app.path().home_dir() {
+        if let Ok(rest) = dir.strip_prefix(&home) {
+            return Some(format!("~/{}", rest.display()));
+        }
+    }
+    Some(dir.to_string_lossy().into_owned())
+}
+
+/// Open the active recordings folder (custom or default) in the system file manager.
+/// Creates it first so the button works before the first recording — or right after the
+/// user picks a new, not-yet-used folder.
+#[tauri::command]
+pub fn open_recordings_dir(app: AppHandle, custom: Option<String>) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir =
+        resolve_recordings_dir(&app, custom).ok_or("could not resolve a recordings folder")?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create the folder: {e}"))?;
+    app.opener()
+        .open_path(dir.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 /// Resolve an API key: an explicit (just-typed) key wins; otherwise look it up in
@@ -225,10 +260,16 @@ pub fn start_stream(
     override_profile: Option<String>,
     device_id: Option<String>,
     save: bool,
+    recordings_dir: Option<String>,
+    trim_silence: bool,
     mute_system: bool,
 ) -> Result<(), String> {
     let key = resolve_key(api_key, backend_id);
-    let save_dir = if save { recordings_dir(&app) } else { None };
+    let save_dir = if save {
+        resolve_recordings_dir(&app, recordings_dir)
+    } else {
+        None
+    };
     let mut guard = state.0.lock().map_err(|_| "stream state poisoned")?;
     *guard = None; // stop any previous session first (Drop joins capture, drains WS)
     let sess = session::start(
@@ -244,6 +285,7 @@ pub fn start_stream(
             override_profile,
             device_id,
             save_dir,
+            trim_silence,
             mute_system,
         },
     )?;
@@ -275,10 +317,15 @@ pub fn start_record(
     override_profile: Option<String>,
     device_id: Option<String>,
     save: bool,
+    recordings_dir: Option<String>,
     mute_system: bool,
 ) -> Result<(), String> {
     let key = resolve_key(api_key, backend_id);
-    let save_dir = if save { recordings_dir(&app) } else { None };
+    let save_dir = if save {
+        resolve_recordings_dir(&app, recordings_dir)
+    } else {
+        None
+    };
     let mut guard = state.0.lock().map_err(|_| "record state poisoned")?;
     *guard = None;
     let sess = session::start_record(
