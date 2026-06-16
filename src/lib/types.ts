@@ -298,6 +298,15 @@ export interface PipelineSaveResult {
   detail?: string;
 }
 
+/** GET /v1/recent-words body: recently-transcribed word/phrase suggestions for
+ *  the spoken-symbol (callback:map) key field, scoped to the caller's user.
+ *  `max` echoes the backend cap (QUICK_CONFIG_WORD_SUGGESTIONS_MAX). Best-effort
+ *  on the client — an empty list means no suggestions (old server / no history). */
+export interface RecentWords {
+  words: string[];
+  max?: number;
+}
+
 /** The persisted config blob (mirrors the Rust `Config`). */
 export interface Config {
   settings: AppSettings;

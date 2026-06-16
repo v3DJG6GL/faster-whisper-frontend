@@ -191,3 +191,29 @@ pub async fn save_pipeline_rules(
         },
     }
 }
+
+/// GET /v1/recent-words body — recently-transcribed word/phrase suggestions for
+/// the spoken-symbol (callback:map) key field, scoped to the caller's user.
+/// `max` echoes the backend cap (QUICK_CONFIG_WORD_SUGGESTIONS_MAX).
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct RecentWords {
+    #[serde(default)]
+    pub words: Vec<String>,
+    #[serde(default)]
+    pub max: Option<i64>,
+}
+
+/// GET /v1/recent-words — BEST-EFFORT. Suggestions are an enhancement, not a
+/// feature the editor depends on, so any failure (unreachable, an old/standard
+/// server's 404, a parse error) collapses to an empty list instead of surfacing
+/// an error. The bearer (resolved upstream) scopes the words to the user.
+pub async fn get_recent_words(server_url: &str, api_key: Option<&str>) -> RecentWords {
+    let base = base_url(server_url);
+    let url = format!("{base}/v1/recent-words");
+    match with_auth(client().get(url), api_key).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            resp.json::<RecentWords>().await.unwrap_or_default()
+        }
+        _ => RecentWords::default(),
+    }
+}

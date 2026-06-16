@@ -12,6 +12,7 @@ import type {
   FocusedApp,
   PipelineFetch,
   PipelineSaveResult,
+  RecentWords,
   ResolvedOverrideProfile,
 } from "./types";
 
@@ -139,6 +140,23 @@ export async function getPipelineRules(args: {
 }): Promise<PipelineFetch> {
   if (!isTauri) return { ok: false, status: 0, error: "Not running in the desktop app." };
   return invoke<PipelineFetch>("get_pipeline_rules", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+  });
+}
+
+/** P18: recently-transcribed word/phrase suggestions for the Dictionary's
+ *  spoken-symbol key field (GET /v1/recent-words), scoped to the Backend's API
+ *  key via the keyring. Best-effort: `{ words: [] }` outside Tauri or on any
+ *  error (old/standard server, no history) — the field just becomes a plain input. */
+export async function getRecentWords(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+}): Promise<RecentWords> {
+  if (!isTauri) return { words: [] };
+  return invoke<RecentWords>("get_recent_words", {
     serverUrl: args.serverUrl,
     backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,

@@ -172,6 +172,20 @@ pub async fn save_pipeline_rules(
     transport::pipeline::save_pipeline_rules(&server_url, key.as_deref(), patch).await
 }
 
+/// P18: recently-transcribed word/phrase suggestions for the Dictionary's
+/// spoken-symbol key field (`GET /v1/recent-words`). Best-effort — returns an
+/// empty list on any failure (old/standard server, unreachable) so the editor
+/// degrades to a plain input.
+#[tauri::command]
+pub async fn get_recent_words(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+) -> transport::pipeline::RecentWords {
+    let key = resolve_key(api_key, backend_id);
+    transport::pipeline::get_recent_words(&server_url, key.as_deref()).await
+}
+
 #[tauri::command]
 pub fn list_audio_devices() -> Vec<AudioDevice> {
     audio::device::list_input_devices()
