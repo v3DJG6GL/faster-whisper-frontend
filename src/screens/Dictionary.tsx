@@ -63,7 +63,10 @@ function toEdit(rule: PipelineRule): EditState {
       }));
       break;
     case "callback:map":
-      e.pairs = Object.entries(rule.map ?? {}).map(([k, v]) => ({ id: mkId(), k, v }));
+      // Newest first (desc by the server-stamped map_meta); unstamped → oldest.
+      e.pairs = Object.entries(rule.map ?? {})
+        .map(([k, v]) => ({ id: mkId(), k, v }))
+        .sort((a, b) => (rule.map_meta?.[b.k] ?? 0) - (rule.map_meta?.[a.k] ?? 0));
       break;
     case "callback:lowercase-wordlist":
       e.pattern = rule.pattern ?? "";
@@ -96,7 +99,11 @@ function emitBody(type: RuleType, e: EditState): Record<string, unknown> {
         const k = p.k.trim();
         if (k) map[k] = p.v;
       }
-      return { map };
+      // Canonical (key-sorted) so reordering pairs for display (newest-first)
+      // is never mistaken for an edit in the dirty diff.
+      const sorted: Record<string, string> = {};
+      for (const k of Object.keys(map).sort()) sorted[k] = map[k];
+      return { map: sorted };
     }
     case "callback:lowercase-wordlist":
       return {
@@ -149,13 +156,14 @@ const monoInput = "font-mono text-[12.5px]";
 
 /* ── one rule (stable, module-scope component) ─────────────────────────── */
 function RuleCard({
-  rule, edit, base, editable, expanded, onToggleExpand, onPatch, onReset,
+  rule, edit, base, editable, expanded, mapCollapseAfter, onToggleExpand, onPatch, onReset,
 }: {
   rule: PipelineRule;
   edit: EditState;
   base: EditState;
   editable: string[];
   expanded: boolean;
+  mapCollapseAfter: number;
   onToggleExpand: () => void;
   onPatch: (updater: (e: EditState) => EditState) => void;
   onReset: () => void;
@@ -168,11 +176,20 @@ function RuleCard({
   // Per-entry note show/hide override. Default is open iff the entry already has
   // a note; a single toggle both reveals AND hides it (content is preserved).
   const [noteShow, setNoteShow] = useState<Map<number, boolean>>(() => new Map());
+  const [mapShowAll, setMapShowAll] = useState(false);
 
   const setEntries = (fn: (rows: EntryRow[]) => EntryRow[]) =>
     onPatch((e) => ({ ...e, entries: fn(e.entries ?? []) }));
   const setPairs = (fn: (rows: MapRow[]) => MapRow[]) =>
     onPatch((e) => ({ ...e, pairs: fn(e.pairs ?? []) }));
+
+  // cb:map: show the newest N (mapCollapseAfter); collapse the rest behind a toggle.
+  const mapPairs = edit.pairs ?? [];
+  const mapHidden =
+    rule.type === "callback:map" && mapCollapseAfter > 0 && mapPairs.length > mapCollapseAfter
+      ? mapPairs.length - mapCollapseAfter
+      : 0;
+  const mapShown = mapHidden > 0 && !mapShowAll ? mapPairs.slice(0, mapCollapseAfter) : mapPairs;
 
   return (
     <Card className={cn("overflow-hidden transition-colors", dirty && "border-line-strong")}>
@@ -337,7 +354,7 @@ function RuleCard({
                 <span className="w-24 shrink-0 text-right">Added</span>
                 {bodyEditable && <span className="w-7 shrink-0" aria-hidden />}
               </div>
-              {(edit.pairs ?? []).map((row) => {
+              {mapShown.map((row) => {
                 const ts = rule.map_meta?.[row.k];
                 return (
                   <div key={row.id} className="flex items-center gap-3 rounded-lg border border-line bg-surface-2/40 px-2.5 py-2">
@@ -360,8 +377,16 @@ function RuleCard({
                   </div>
                 );
               })}
+              {mapHidden > 0 && (
+                <button type="button" onClick={() => setMapShowAll((v) => !v)}
+                  className="ring-signal self-start rounded-md font-mono text-[11.5px] text-dim hover:text-text">
+                  {mapShowAll
+                    ? `▾ Hide ${mapHidden} older`
+                    : `▸ Show ${mapHidden} older mapping${mapHidden === 1 ? "" : "s"}`}
+                </button>
+              )}
               {bodyEditable && (
-                <Button variant="ghost" size="sm" onClick={() => setPairs((rows) => [...rows, { id: mkId(), k: "", v: "" }])}>
+                <Button variant="ghost" size="sm" onClick={() => setPairs((rows) => [{ id: mkId(), k: "", v: "" }, ...rows])}>
                   <Plus className="size-3.5" /> Add mapping
                 </Button>
               )}
@@ -648,6 +673,7 @@ export default function Dictionary() {
               base={base[r.name]}
               editable={editableFor(r)}
               expanded={expanded.has(r.name)}
+              mapCollapseAfter={fetchRes?.state?.map_collapse_after ?? 15}
               onToggleExpand={() =>
                 setExpanded((prev) => {
                   const next = new Set(prev);

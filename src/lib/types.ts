@@ -262,6 +262,10 @@ export interface PipelineRulesState {
   rules: PipelineRule[];
   role: "admin" | "user";
   editable_fields: Record<string, string[]>;
+  /** Backend-configured # of NEWEST callback:map entries to show before
+   *  collapsing the rest behind a "show older" toggle
+   *  (QUICK_CONFIG_MAP_COLLAPSE_AFTER; 0 = show all). */
+  map_collapse_after?: number;
 }
 
 /** GET outcome from the Rust command. `status` lets the UI branch: 0 =
