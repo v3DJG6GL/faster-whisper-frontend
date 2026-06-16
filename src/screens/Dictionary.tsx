@@ -165,8 +165,9 @@ function RuleCard({
   const bodyEditable = editable.some((f) => f !== "enabled");
   const dirty = Object.keys(buildPatch(rule.type, edit, base, editable)).length > 0;
   const colorDot = rule.color ? COLOR_DOT[rule.color] : undefined;
-  // Which entries have their (collapsible) note field revealed.
-  const [noteOpen, setNoteOpen] = useState<Set<number>>(() => new Set());
+  // Per-entry note show/hide override. Default is open iff the entry already has
+  // a note; a single toggle both reveals AND hides it (content is preserved).
+  const [noteShow, setNoteShow] = useState<Map<number, boolean>>(() => new Map());
 
   const setEntries = (fn: (rows: EntryRow[]) => EntryRow[]) =>
     onPatch((e) => ({ ...e, entries: fn(e.entries ?? []) }));
@@ -208,7 +209,7 @@ function RuleCard({
 
       {/* expandable body */}
       {expanded && (
-        <div className="border-t border-line bg-surface-2/30 px-4 py-4">
+        <div className="border-t border-line bg-surface-2/20 px-5 py-5">
           {locked && (
             <div className="mb-3 flex items-start gap-2 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-dim">
               <Lock className="mt-0.5 size-3.5 shrink-0 text-faint" />
@@ -216,82 +217,98 @@ function RuleCard({
             </div>
           )}
 
-          {/* regex-list: ordered find→replace entries — numbered, distinct cards */}
+          {/* regex-list: ordered find→replace entries — numbered card-rows with a left rail */}
           {rule.type === "regex-list" && (
             <div className="space-y-3">
-              <p className="text-[12px] text-faint">
+              <p className="text-[12px] leading-snug text-faint">
                 Ordered find→replace list — entries run top to bottom. An empty replacement deletes the match.
               </p>
               {(edit.entries ?? []).map((row, i) => {
-                const noteShown = noteOpen.has(row.id) || !!(row.note && row.note.length);
+                const hasNote = !!(row.note && row.note.length);
+                const noteShown = noteShow.has(row.id) ? !!noteShow.get(row.id) : hasNote;
+                const last = i === (edit.entries?.length ?? 0) - 1;
                 const setRow = (patch: Partial<EntryRow>) =>
                   setEntries((rows) => rows.map((r) => (r.id === row.id ? { ...r, ...patch } : r)));
                 return (
-                  <div key={row.id} className="rounded-xl border border-line-strong bg-surface-2/50 p-3">
-                    {/* header: number · label · controls */}
-                    <div className="mb-2.5 flex items-center gap-2.5">
-                      <span className="grid size-5 shrink-0 place-items-center rounded-full bg-accent-soft font-mono text-[10.5px] font-semibold text-accent">
+                  <div key={row.id} className="flex overflow-hidden rounded-xl border border-line-strong bg-surface/50">
+                    {/* rail: order badge + reorder (far-left; arrows are keyboard-accessible) */}
+                    <div className="flex shrink-0 flex-col items-center gap-2 border-r border-line bg-surface-2/50 px-2 py-3">
+                      <span className="grid size-5 place-items-center rounded-full bg-accent-soft font-mono text-[10.5px] font-semibold text-accent">
                         {i + 1}
                       </span>
-                      <input
-                        value={row.label ?? ""}
-                        disabled={!bodyEditable}
-                        placeholder="label (optional)"
-                        spellCheck={false}
-                        onChange={(ev) => setRow({ label: ev.target.value })}
-                        className="ring-signal min-w-0 flex-1 rounded-md bg-transparent px-1.5 py-1 text-[12.5px] font-medium text-text placeholder:font-normal placeholder:italic placeholder:text-faint focus:bg-surface-2 disabled:opacity-50"
-                      />
                       {bodyEditable && (
-                        <div className="flex shrink-0 items-center gap-0.5">
+                        <>
                           <button type="button" title="Move up" disabled={i === 0}
                             onClick={() => setEntries((rows) => swap(rows, i, i - 1))}
                             className="ring-signal grid size-6 place-items-center rounded-md text-faint hover:text-text disabled:opacity-30">
                             <ArrowUp className="size-3.5" />
                           </button>
-                          <button type="button" title="Move down" disabled={i === (edit.entries?.length ?? 0) - 1}
+                          <button type="button" title="Move down" disabled={last}
                             onClick={() => setEntries((rows) => swap(rows, i, i + 1))}
                             className="ring-signal grid size-6 place-items-center rounded-md text-faint hover:text-text disabled:opacity-30">
                             <ArrowDown className="size-3.5" />
                           </button>
-                          <button type="button" title="Remove entry"
-                            onClick={() => setEntries((rows) => rows.filter((r) => r.id !== row.id))}
-                            className="ring-signal grid size-6 place-items-center rounded-md text-faint hover:text-rec">
-                            <Trash2 className="size-3.5" />
-                          </button>
+                        </>
+                      )}
+                    </div>
+                    {/* body */}
+                    <div className="min-w-0 flex-1 space-y-2.5 p-4">
+                      {/* row 1: label · note toggle · delete */}
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={row.label ?? ""}
+                          disabled={!bodyEditable}
+                          placeholder="label (optional)"
+                          spellCheck={false}
+                          onChange={(ev) => setRow({ label: ev.target.value })}
+                          className="ring-signal min-w-0 flex-1 rounded-md bg-transparent px-1.5 py-1 text-[12.5px] font-medium text-text placeholder:font-normal placeholder:italic placeholder:text-faint focus:bg-surface-2 disabled:opacity-50"
+                        />
+                        {bodyEditable && (
+                          <>
+                            <button type="button" aria-expanded={noteShown} title={noteShown ? "Hide note" : "Add a note"}
+                              onClick={() => setNoteShow((m) => new Map(m).set(row.id, !noteShown))}
+                              className={cn(
+                                "ring-signal inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11.5px] transition-colors",
+                                hasNote ? "text-accent" : "text-faint hover:text-dim",
+                              )}>
+                              <ChevronRight className={cn("size-3 transition-transform", noteShown && "rotate-90")} />
+                              note
+                              {hasNote && <span className="size-1 rounded-full bg-current" aria-hidden />}
+                            </button>
+                            <button type="button" title="Remove entry"
+                              onClick={() => setEntries((rows) => rows.filter((r) => r.id !== row.id))}
+                              className="ring-signal grid size-7 shrink-0 place-items-center rounded-md text-faint hover:text-rec">
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      {/* find / → repl rows (inline mono gutter labels) */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-3">
+                          <span className="w-12 shrink-0 text-right font-mono text-[11px] text-faint">find</span>
+                          <TextInput value={row.pattern} disabled={!bodyEditable} spellCheck={false}
+                            placeholder="regex pattern (required)" className={cn(monoInput, "min-w-0 flex-1")}
+                            onChange={(ev) => setRow({ pattern: ev.target.value })} />
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="w-12 shrink-0 text-right font-mono text-[11px] text-faint">→ repl</span>
+                          <TextInput value={row.replacement} disabled={!bodyEditable} spellCheck={false}
+                            placeholder="(empty = delete match)" className={cn(monoInput, "min-w-0 flex-1")}
+                            onChange={(ev) => setRow({ replacement: ev.target.value })} />
+                        </div>
+                      </div>
+                      {/* note — collapsible, toggled by the row-1 button */}
+                      {noteShown && (
+                        <div className="flex items-start gap-3">
+                          <span className="w-12 shrink-0 pt-2 text-right font-mono text-[11px] text-faint">note</span>
+                          <textarea value={row.note ?? ""} disabled={!bodyEditable} rows={2} autoFocus={!hasNote}
+                            placeholder="note (optional)"
+                            onChange={(ev) => setRow({ note: ev.target.value })}
+                            className="ring-signal min-w-0 flex-1 rounded-xl border border-line bg-surface-2 px-3 py-2 text-[12px] leading-relaxed text-text placeholder:italic placeholder:text-faint disabled:opacity-50" />
                         </div>
                       )}
                     </div>
-                    {/* compact inline-labelled find / repl rows */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-2.5">
-                        <span className="w-12 shrink-0 text-right font-mono text-[11px] text-faint">find</span>
-                        <TextInput value={row.pattern} disabled={!bodyEditable} spellCheck={false}
-                          placeholder="regex pattern (required)" className={monoInput}
-                          onChange={(ev) => setRow({ pattern: ev.target.value })} />
-                      </div>
-                      <div className="flex items-center gap-2.5">
-                        <span className="w-12 shrink-0 text-right font-mono text-[11px] text-faint">→ repl</span>
-                        <TextInput value={row.replacement} disabled={!bodyEditable} spellCheck={false}
-                          placeholder="(empty = delete match)" className={monoInput}
-                          onChange={(ev) => setRow({ replacement: ev.target.value })} />
-                      </div>
-                    </div>
-                    {/* collapsible note */}
-                    {!noteShown && bodyEditable && (
-                      <button type="button" onClick={() => setNoteOpen((s) => new Set(s).add(row.id))}
-                        className="ring-signal mt-2 ml-[3.625rem] inline-flex items-center gap-1 rounded-md text-[11.5px] text-faint hover:text-dim">
-                        <Plus className="size-3" /> note
-                      </button>
-                    )}
-                    {noteShown && (
-                      <div className="mt-2 flex items-start gap-2.5">
-                        <span className="w-12 shrink-0 pt-2 text-right font-mono text-[11px] text-faint">note</span>
-                        <textarea value={row.note ?? ""} disabled={!bodyEditable} rows={2}
-                          placeholder="note (optional)"
-                          onChange={(ev) => setRow({ note: ev.target.value })}
-                          className="ring-signal w-full rounded-xl border border-line bg-surface-2 px-3 py-2 text-[12px] leading-relaxed text-text placeholder:italic placeholder:text-faint disabled:opacity-50" />
-                      </div>
-                    )}
                   </div>
                 );
               })}
@@ -306,40 +323,40 @@ function RuleCard({
             </div>
           )}
 
-          {/* callback:map: spoken phrase → symbol, with the server's added-date */}
+          {/* callback:map: spoken phrase → symbol — HORIZONTAL rows (key beside value) */}
           {rule.type === "callback:map" && (
-            <div className="space-y-1.5">
-              <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2.5 px-2 text-[11px] font-medium text-faint">
-                <span>When you say</span>
-                <span aria-hidden>→</span>
-                <span>Insert</span>
-                <span className="flex w-24 justify-end">added</span>
+            <div className="space-y-2">
+              <p className="text-[12px] leading-snug text-faint">
+                Say the phrase on the left; the symbol on the right is inserted in its place.
+              </p>
+              {/* column header */}
+              <div className="flex items-center gap-3 px-2.5 font-mono text-[10.5px] uppercase tracking-wider text-faint">
+                <span className="min-w-0 flex-1">When you say</span>
+                <span className="w-4 shrink-0" aria-hidden />
+                <span className="min-w-0 flex-1">Insert</span>
+                <span className="w-24 shrink-0 text-right">Added</span>
+                {bodyEditable && <span className="w-7 shrink-0" aria-hidden />}
               </div>
               {(edit.pairs ?? []).map((row) => {
                 const ts = rule.map_meta?.[row.k];
                 return (
-                  <div key={row.id} className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2.5 rounded-lg border border-line bg-surface-2/30 px-2 py-1.5">
-                    <TextInput value={row.k} disabled={!bodyEditable} placeholder="comma"
+                  <div key={row.id} className="flex items-center gap-3 rounded-lg border border-line bg-surface-2/40 px-2.5 py-2">
+                    <TextInput value={row.k} disabled={!bodyEditable} placeholder="comma" className="min-w-0 flex-1"
                       onChange={(ev) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, k: ev.target.value } : r)))} />
-                    <span className="text-faint" aria-hidden>→</span>
-                    <TextInput value={row.v} disabled={!bodyEditable} spellCheck={false} placeholder="," className={monoInput}
+                    <span className="w-4 shrink-0 text-center text-faint" aria-hidden>→</span>
+                    <TextInput value={row.v} disabled={!bodyEditable} spellCheck={false} placeholder="," className={cn(monoInput, "min-w-0 flex-1")}
                       onChange={(ev) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, v: ev.target.value } : r)))} />
-                    <div className="flex w-24 items-center justify-end gap-1">
-                      {ts ? (
-                        <span className="text-[10.5px] text-faint" title={new Date(ts * 1000).toLocaleString()}>
-                          {new Date(ts * 1000).toLocaleDateString()}
-                        </span>
-                      ) : (
-                        <span className="text-[10.5px] text-faint/50">new</span>
-                      )}
-                      {bodyEditable && (
-                        <button type="button" title="Remove"
-                          onClick={() => setPairs((rows) => rows.filter((r) => r.id !== row.id))}
-                          className="ring-signal grid size-7 place-items-center rounded-md text-faint hover:text-rec">
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      )}
-                    </div>
+                    <span className="w-24 shrink-0 truncate text-right text-[10.5px] text-faint"
+                      title={ts ? new Date(ts * 1000).toLocaleString() : undefined}>
+                      {ts ? new Date(ts * 1000).toLocaleDateString() : <span className="text-faint/50">new</span>}
+                    </span>
+                    {bodyEditable && (
+                      <button type="button" title="Remove mapping"
+                        onClick={() => setPairs((rows) => rows.filter((r) => r.id !== row.id))}
+                        className="ring-signal grid size-7 shrink-0 place-items-center rounded-md text-faint hover:text-rec">
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    )}
                   </div>
                 );
               })}
