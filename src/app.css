@@ -219,6 +219,23 @@ textarea {
     padding 0.22s cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
+/* Dictionary recent-word combobox popover: a quick, restrained entrance
+   (fade + tiny rise + scale) — refined, not flashy. */
+@keyframes combobox-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-combobox-pop {
+  animation: combobox-pop 0.12s ease-out;
+  transform-origin: top;
+}
+
 /* Honor the OS "reduce motion" setting: drop looping/scaling motion, keep state
    legible via static opacity/color. The Waveform canvas (a JS RAF) freezes to a
    static readout in its own component when this is set. */
@@ -226,6 +243,7 @@ textarea {
   .animate-chip-in,
   .animate-chip-breathe,
   .animate-chip-think,
+  .animate-combobox-pop,
   .animate-rec-pulse {
     animation: none !important;
   }

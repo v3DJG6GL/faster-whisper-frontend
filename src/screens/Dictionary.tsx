@@ -9,15 +9,16 @@
 // module-scope <RuleCard> (keyed by slug) — never a component redefined per
 // render — so editing never remounts an input (cf. DecodeFields focus-loss caveat).
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   BookA, Loader2, RefreshCw, Plus, Trash2, Lock, RotateCcw, ChevronRight,
   ArrowUp, ArrowDown, AlertTriangle, Check,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Stack, Toggle, TextInput } from "@/components/ui";
+import { Combobox } from "@/components/Combobox";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { getPipelineRules, savePipelineRules } from "@/lib/api";
+import { getPipelineRules, getRecentWords, savePipelineRules } from "@/lib/api";
 import type {
   Backend, PipelineFetch, PipelineRule, PipelineSaveResult, RuleType,
 } from "@/lib/types";
@@ -156,7 +157,8 @@ const monoInput = "font-mono text-[12.5px]";
 
 /* ── one rule (stable, module-scope component) ─────────────────────────── */
 function RuleCard({
-  rule, edit, base, editable, expanded, mapCollapseAfter, onToggleExpand, onPatch, onReset,
+  rule, edit, base, editable, expanded, mapCollapseAfter, recentWords, recentMax,
+  onToggleExpand, onPatch, onReset,
 }: {
   rule: PipelineRule;
   edit: EditState;
@@ -164,6 +166,8 @@ function RuleCard({
   editable: string[];
   expanded: boolean;
   mapCollapseAfter: number;
+  recentWords: string[];
+  recentMax?: number;
   onToggleExpand: () => void;
   onPatch: (updater: (e: EditState) => EditState) => void;
   onReset: () => void;
@@ -177,11 +181,26 @@ function RuleCard({
   // a note; a single toggle both reveals AND hides it (content is preserved).
   const [noteShow, setNoteShow] = useState<Map<number, boolean>>(() => new Map());
   const [mapShowAll, setMapShowAll] = useState(false);
+  // The just-added cb:map row — auto-focus its key so suggestions open at once.
+  const [justAddedId, setJustAddedId] = useState<number | null>(null);
 
   const setEntries = (fn: (rows: EntryRow[]) => EntryRow[]) =>
     onPatch((e) => ({ ...e, entries: fn(e.entries ?? []) }));
   const setPairs = (fn: (rows: MapRow[]) => MapRow[]) =>
     onPatch((e) => ({ ...e, pairs: fn(e.pairs ?? []) }));
+
+  // cb:map recent-word suggestions: the fetched pool minus keys already mapped
+  // in THIS rule (case-insensitive), so we never re-suggest an existing mapping.
+  // Picking a suggestion fills the key, then jumps focus to its value field.
+  const valueRefs = useRef<Map<number, HTMLInputElement | null>>(new Map());
+  const usedKeys = useMemo(
+    () => new Set((edit.pairs ?? []).map((p) => p.k.trim().toLowerCase()).filter(Boolean)),
+    [edit.pairs],
+  );
+  const keySuggestions = useMemo(
+    () => recentWords.filter((w) => !usedKeys.has(w.toLowerCase())),
+    [recentWords, usedKeys],
+  );
 
   // cb:map: show the newest N (mapCollapseAfter); collapse the rest behind a toggle.
   const mapPairs = edit.pairs ?? [];
@@ -356,7 +375,11 @@ function RuleCard({
               </div>
               {/* Add is at the TOP — new mappings prepend (newest-first). */}
               {bodyEditable && (
-                <Button variant="ghost" size="sm" onClick={() => setPairs((rows) => [{ id: mkId(), k: "", v: "" }, ...rows])}>
+                <Button variant="ghost" size="sm" onClick={() => {
+                  const id = mkId();
+                  setPairs((rows) => [{ id, k: "", v: "" }, ...rows]);
+                  setJustAddedId(id);
+                }}>
                   <Plus className="size-3.5" /> Add mapping
                 </Button>
               )}
@@ -364,10 +387,23 @@ function RuleCard({
                 const ts = rule.map_meta?.[row.k];
                 return (
                   <div key={row.id} className="flex items-center gap-3 rounded-lg border border-line bg-surface-2/40 px-2.5 py-2">
-                    <TextInput value={row.k} disabled={!bodyEditable} placeholder="comma" className="min-w-0 flex-1"
-                      onChange={(ev) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, k: ev.target.value } : r)))} />
+                    <Combobox
+                      value={row.k}
+                      disabled={!bodyEditable}
+                      placeholder="comma"
+                      className="min-w-0 flex-1"
+                      autoFocus={row.id === justAddedId}
+                      suggestions={keySuggestions}
+                      footerMax={recentMax}
+                      onChange={(v) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, k: v } : r)))}
+                      onSelect={(word) => {
+                        setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, k: word } : r)));
+                        valueRefs.current.get(row.id)?.focus();
+                      }}
+                    />
                     <span className="w-4 shrink-0 text-center text-faint" aria-hidden>→</span>
-                    <TextInput value={row.v} disabled={!bodyEditable} spellCheck={false} placeholder="," className={cn(monoInput, "min-w-0 flex-1")}
+                    <TextInput ref={(el) => { valueRefs.current.set(row.id, el); }}
+                      value={row.v} disabled={!bodyEditable} spellCheck={false} placeholder="," className={cn(monoInput, "min-w-0 flex-1")}
                       onChange={(ev) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, v: ev.target.value } : r)))} />
                     <span className="w-44 shrink-0 whitespace-nowrap text-right font-mono text-[10.5px] text-faint"
                       title={ts ? absWhen(ts) : undefined}>
@@ -513,6 +549,9 @@ export default function Dictionary() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<PipelineSaveResult | null>(null);
+  // Recent-word suggestion pool for cb:map keys (best-effort; [] on old servers).
+  const [recentWords, setRecentWords] = useState<string[]>([]);
+  const [recentMax, setRecentMax] = useState<number | undefined>(undefined);
 
   const editableFields: Record<string, string[]> = fetchRes?.state?.editable_fields ?? {};
   const editableFor = useCallback(
@@ -530,6 +569,10 @@ export default function Dictionary() {
     const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
     setEdits(fresh);
     setBase(JSON.parse(JSON.stringify(fresh)));
+    getRecentWords({ serverUrl: b.serverUrl, backendId: b.id }).then((rw) => {
+      setRecentWords(rw.words ?? []);
+      setRecentMax(rw.max ?? undefined);
+    });
     setExpanded(new Set());
     setLoading(false);
   }, []);
@@ -538,6 +581,8 @@ export default function Dictionary() {
     if (!backend) {
       setFetchRes(null);
       setRules([]);
+      setRecentWords([]);
+      setRecentMax(undefined);
       return;
     }
     let cancelled = false;
@@ -553,6 +598,11 @@ export default function Dictionary() {
       setBase(JSON.parse(JSON.stringify(fresh)));
       setExpanded(new Set());
       setLoading(false);
+    });
+    getRecentWords({ serverUrl: backend.serverUrl, backendId: backend.id }).then((rw) => {
+      if (cancelled) return;
+      setRecentWords(rw.words ?? []);
+      setRecentMax(rw.max ?? undefined);
     });
     return () => {
       cancelled = true;
@@ -698,6 +748,8 @@ export default function Dictionary() {
               editable={editableFor(r)}
               expanded={expanded.has(r.name)}
               mapCollapseAfter={fetchRes?.state?.map_collapse_after ?? 15}
+              recentWords={recentWords}
+              recentMax={recentMax}
               onToggleExpand={() =>
                 setExpanded((prev) => {
                   const next = new Set(prev);
