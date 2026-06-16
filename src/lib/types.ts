@@ -89,6 +89,9 @@ export interface FocusedApp {
   appId: string;
   title: string;
   editable?: boolean | null;
+  /** True when this is OUR OWN focused window — the chip shows "→ this app" and dictation
+   *  won't type here (the Rust injection guard skips our own windows). */
+  isSelf?: boolean;
 }
 
 export type InsertMethod = "paste" | "direct" | "clipboard";

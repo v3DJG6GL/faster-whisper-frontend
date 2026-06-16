@@ -1,8 +1,8 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Plus, AppWindow, Ban, Crosshair, Pencil, Trash2 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
-import { getFocusedApp } from "@/lib/api";
+import { getFocusedOtherApp } from "@/lib/api";
 import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
 import type { AppRule, InsertMethod } from "@/lib/types";
 import { cn } from "@/lib/cn";
@@ -44,6 +44,9 @@ function Editor({
   const [r, setR] = useState<AppRule>(initial);
   const [capturing, setCapturing] = useState(false);
   const [captureMsg, setCaptureMsg] = useState<string | null>(null);
+  // The label we last auto-filled from "Use current", so a later capture can refresh the label
+  // unless the user hand-typed a custom one (then we leave it). See captureCurrent.
+  const lastAutoName = useRef<string | undefined>(undefined);
   const set = (patch: Partial<AppRule>) => setR((x) => ({ ...x, ...patch }));
 
   // Fill appId (and a label) from the currently-focused window — exercises the KWin
@@ -52,9 +55,19 @@ function Editor({
     setCapturing(true);
     setCaptureMsg(null);
     try {
-      const app = await getFocusedApp();
+      const app = await getFocusedOtherApp();
       if (app?.appId) {
-        set({ appId: app.appId, name: r.name?.trim() ? r.name : app.title || app.appId });
+        const autoLabel = app.title || app.appId;
+        // Update the label too, but keep a hand-typed custom one. We tell them apart by remembering
+        // what we last auto-filled: if the current label is blank or still equals that, it's ours to
+        // refresh; otherwise the user typed it, so leave it. Lets a second "Use current" on a
+        // different app update BOTH the id and the label.
+        setR((x) => ({
+          ...x,
+          appId: app.appId,
+          name: !x.name?.trim() || x.name === lastAutoName.current ? autoLabel : x.name,
+        }));
+        lastAutoName.current = autoLabel;
       } else {
         setCaptureMsg("Couldn’t detect a focused app (needs KWin/Plasma). Type the id manually.");
       }

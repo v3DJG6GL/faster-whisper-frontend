@@ -153,6 +153,12 @@ interface AppState {
   /** Why injection into the target is skipped (coerced to clipboard): a per-app `block` rule, or
    *  the deep-detection guard finding the focused element isn't a text field. null = typing. */
   targetSkip: "blocked" | "notEditable" | null;
+  /** One-shot signal that a phrase just landed — drives the chip's per-phrase pulse. `seq`
+   *  bumps each time so identical consecutive kinds still retrigger the animation. */
+  lastInsert: { kind: "typed" | "clipboard"; seq: number } | null;
+  /** Truthful end-of-session insert result, set WITH the idle transition — drives the chip's
+   *  done marker (✓ typed / clipboard glyph / nothing). null = no session finished yet. */
+  sessionOutcome: "typed" | "clipboard" | "none" | null;
 
   connections: Record<string, ConnectionInfo | undefined>; // keyed by Backend id
 
@@ -186,6 +192,8 @@ interface AppState {
       overridesIgnored: string[];
       targetApp: FocusedApp | null;
       targetSkip: "blocked" | "notEditable" | null;
+      lastInsert: { kind: "typed" | "clipboard"; seq: number } | null;
+      sessionOutcome: "typed" | "clipboard" | "none" | null;
     }>,
   ) => void;
 
@@ -208,6 +216,8 @@ export const useApp = create<AppState>((set) => ({
   overridesIgnored: [],
   targetApp: null,
   targetSkip: null,
+  lastInsert: null,
+  sessionOutcome: null,
 
   connections: {},
 

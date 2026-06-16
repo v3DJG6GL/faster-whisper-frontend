@@ -38,6 +38,8 @@ export async function initOverlayController(): Promise<void> {
       state.activeProfile !== prev.activeProfile || // switching Profiles mid-session
       state.targetApp !== prev.targetApp || // injection target (chip "→ app" readout)
       state.targetSkip !== prev.targetSkip ||
+      state.lastInsert !== prev.lastInsert || // per-phrase "inserted" pulse trigger
+      state.sessionOutcome !== prev.sessionOutcome || // end-of-session done marker
       state.settings !== prev.settings // theme / position / preview / show-profile toggles
     ) {
       const rec = state.settings.recording;
@@ -87,6 +89,10 @@ export async function initOverlayController(): Promise<void> {
         targetTitle: tgt?.title ?? "",
         targetSkip: tgt ? (state.targetSkip ?? "") : "",
         targetOnlySpeaking: rec.showTargetOnlySpeaking,
+        // P19: per-phrase "inserted" pulse + truthful end-of-session done marker. Sent
+        // UNGATED by ACTIVE — the done marker must reach the chip on the idle transition.
+        lastInsert: state.lastInsert,
+        sessionOutcome: state.sessionOutcome,
         ...chip,
       });
     }

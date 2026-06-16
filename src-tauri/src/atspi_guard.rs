@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// The focused application + (when known) whether its focused element is editable.
-/// Serialised camelCase for the frontend (`{ appId, title, editable }`).
+/// Serialised camelCase for the frontend (`{ appId, title, editable, isSelf }`).
 #[derive(Clone, Debug, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FocusedApp {
@@ -32,6 +32,10 @@ pub struct FocusedApp {
     /// `Some(true)` editable text field · `Some(false)` definitely not · `None` unknown
     /// (no a11y tree, asleep, or no focus event yet) — callers must treat `None` as "type".
     pub editable: Option<bool>,
+    /// True when this represents OUR OWN focused window (set by `get_focused_app` via the
+    /// reliable Tauri webview-focus check). The chip shows "→ this app" and dictation never
+    /// types here — the injection guard skips our own windows.
+    pub is_self: bool,
 }
 
 #[derive(Default)]
@@ -62,23 +66,30 @@ impl Default for AtspiGuard {
     }
 }
 
-/// Apps that must never be treated as a dictation target, so their focus events don't
-/// clobber the real one (`last_other`): our own window, plus the KDE desktop shell /
-/// compositor / session bits. plasmashell in particular fires focus events for its panels,
-/// taskbar and widgets — e.g. when you click the taskbar to switch windows — which would
-/// otherwise overwrite the app you actually came from.
-fn is_noise(app_id: &str) -> bool {
+/// Our own windows, by the WebKitGTK a11y app name. Used to keep `last_other` pointing at the
+/// app the user came from (for the AppRules "use current" capture). The AUTHORITATIVE "our
+/// window is focused right now" signal is the Tauri webview-focus check in `get_focused_app`;
+/// this string match is only a best-effort fallback for the snapshot bookkeeping.
+fn is_self(app_id: &str) -> bool {
     let a = app_id.to_lowercase();
-    // our own window
-    a.contains("faster-whisper")
-        || a.contains("faster_whisper")
-        || a.contains("informethic")
-        // KDE shell / compositor / session — never a target, but they emit focus events
-        || a == "plasmashell"
-        || a.contains("plasma-desktop")
-        || a.starts_with("kwin")
-        || a == "ksmserver"
-        || a == "krunner"
+    a.contains("faster-whisper") || a.contains("faster_whisper") || a.contains("informethic")
+}
+
+/// Apps that must never be treated as a dictation target, so their focus events don't clobber
+/// the real one (`last_other`): our own window, the compositor / session-manager (kwin,
+/// ksmserver), AND plasmashell / plasma-desktop. plasmashell is the desktop SHELL — its panels,
+/// taskbar, system tray and widgets emit focus events CONSTANTLY (hovering/clicking a panel,
+/// notifications, etc.), which would otherwise show as "→ plasmashell" while you actually have a
+/// real window focused. We lose its Kickoff launcher search as a target by this, but the
+/// spurious-detection noise far outweighs that — and KRunner covers launcher dictation.
+/// NOTE: `krunner` is deliberately NOT noise — it's a separate, on-demand search popup, focused
+/// only when you actively open it, so it's a legitimate (and quiet) dictation target.
+fn is_noise(app_id: &str) -> bool {
+    if is_self(app_id) {
+        return true;
+    }
+    let a = app_id.to_lowercase();
+    a.starts_with("kwin") || a == "ksmserver" || a == "plasmashell" || a.contains("plasma-desktop")
 }
 
 /// Start the focus listener once (idempotent). Spawns on Tauri's async runtime so it can
@@ -330,6 +341,7 @@ mod imp {
             title: app_id.clone(),
             app_id,
             editable,
+            is_self: false,
         };
         let mut snap = snapshot.lock();
         if new_is_noise {

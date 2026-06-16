@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion, AnimatePresence, MotionConfig } from "motion/react";
-import { Check, X } from "lucide-react";
+import { X } from "lucide-react";
 import { Waveform } from "@/components/Waveform";
 import { setChipHitRegion, emitOverlayAction, showMainAtScreen } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -25,6 +25,10 @@ interface ChipState {
   targetTitle?: string;
   targetSkip?: "blocked" | "notEditable" | "";
   targetOnlySpeaking?: boolean; // hide the target unless the chip is expanded (actively dictating)
+  // P19: per-phrase "inserted" pulse trigger (seq bumps on each landed phrase) + the truthful
+  // end-of-session done marker (✓ typed / clipboard glyph / nothing).
+  lastInsert?: { kind: "typed" | "clipboard"; seq: number } | null;
+  sessionOutcome?: "typed" | "clipboard" | "none" | null;
   // Overlay-chip behaviour, forwarded from settings via dictation://update.
   persistentDock: boolean;
   overlayPeek: boolean;
@@ -135,6 +139,8 @@ export default function Overlay() {
             targetTitle: e.payload.targetTitle ?? "",
             targetSkip: e.payload.targetSkip ?? "",
             targetOnlySpeaking: e.payload.targetOnlySpeaking ?? false,
+            lastInsert: e.payload.lastInsert ?? null,
+            sessionOutcome: e.payload.sessionOutcome ?? null,
           });
         }),
       )
@@ -337,14 +343,25 @@ export default function Overlay() {
     return () => clearTimeout(t);
   }, [expanded, hovering, state.status, speaking, state.dimAfterSec]);
 
-  // Keep the newest words in view: pin the preview to its right edge.
+  // The NEWEST words are pinned to the RIGHT purely by LAYOUT — a flex justify-end row with a
+  // non-shrinking text child (see the transcript markup below) — so there's NO scrollLeft math to
+  // race. Measuring scrollWidth on fast-updating text on WebKitGTK ran short and left the newest
+  // words clipped (the bug); letting the flexbox keep the child's end at the container's right edge
+  // is timing-independent. This effect only drives the cosmetic left-fade: show it when the text
+  // actually overflows its box (the span is wider than the clip).
   const textRef = useRef<HTMLDivElement>(null);
   const [faded, setFaded] = useState(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = textRef.current;
     if (!el) return;
-    el.scrollLeft = el.scrollWidth;
-    setFaded(el.scrollWidth - el.clientWidth > 2);
+    const measure = () => {
+      const span = el.firstElementChild as HTMLElement | null;
+      setFaded(!!span && span.offsetWidth - el.clientWidth > 2);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [state.partial, expanded]);
 
   // Post-speech "working" phase: the server is finalizing the transcript and/or it's
@@ -354,25 +371,47 @@ export default function Overlay() {
   const processing = state.status === "transcribing" || state.status === "injecting";
   const standby = state.status === "idle"; // only ever visible when persistentDock is on
 
-  // One-shot "✓ done" flash when a session completes (finishing → idle) — but NOT when
-  // it was cancelled (the ✕ / a hotkey-cancel sets `cancelling`). A single play that
-  // stops reads as "finished", distinct from the looping processing motion.
-  const prevStatus = useRef(state.status);
-  const cancelling = useRef(false);
-  const [justDone, setJustDone] = useState(false);
+  // Insert feedback is ONE thing: a colour-coded pulse of the status dot — green when text was
+  // typed/pasted into the field, amber when it was copied to the clipboard. No distinct glyphs.
+  // Two edge-triggers drive the same `pulse` state:
+  //   • per-phrase (live mode): `lastInsert.seq` bumps as each phrase lands → a brief pulse.
+  //   • end-of-session (ALL modes): `sessionOutcome` flips null→typed/clipboard exactly once → a
+  //     slightly longer confirming pulse. This is the ONLY feedback HOLD/PTT, "stop"-timing and
+  //     batch modes get (they emit no per-phrase pulses), so it must stay.
+  // "none"/cancel and the fresh-session null reset clear any lingering pulse.
+  const lastOutcome = useRef(state.sessionOutcome);
+  const [pulse, setPulse] = useState<"typed" | "clipboard" | null>(null);
+  const pulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Per-phrase pulse: keyed on the monotonic `seq` so identical consecutive kinds retrigger.
+  const lastSeq = useRef<number | undefined>(state.lastInsert?.seq);
   useEffect(() => {
-    const prev = prevStatus.current;
-    prevStatus.current = state.status;
-    if ((prev === "transcribing" || prev === "injecting") && state.status === "idle") {
-      if (cancelling.current) {
-        cancelling.current = false;
-        return;
-      }
-      setJustDone(true);
-      const t = setTimeout(() => setJustDone(false), 750);
-      return () => clearTimeout(t);
+    const li = state.lastInsert;
+    if (!li || li.seq === lastSeq.current) return;
+    lastSeq.current = li.seq;
+    setPulse(li.kind);
+    if (pulseTimer.current) clearTimeout(pulseTimer.current);
+    pulseTimer.current = setTimeout(() => setPulse(null), 600);
+  }, [state.lastInsert]);
+
+  // End-of-session confirming pulse, edge-triggered on `sessionOutcome` (a dedicated value, so the
+  // finalize drain's status churn can never drop it). Held a touch longer than a per-phrase tick so
+  // it reads as the "done" beat.
+  useEffect(() => {
+    const prev = lastOutcome.current;
+    const o = state.sessionOutcome;
+    lastOutcome.current = o;
+    if (o === prev) return;
+    if (o === "typed" || o === "clipboard") {
+      setPulse(o);
+      if (pulseTimer.current) clearTimeout(pulseTimer.current);
+      pulseTimer.current = setTimeout(() => setPulse(null), 1100);
+    } else {
+      // null (fresh session) or "none" (cancelled / nothing landed) → clear any lingering pulse.
+      if (pulseTimer.current) clearTimeout(pulseTimer.current);
+      setPulse(null);
     }
-  }, [state.status]);
+  }, [state.sessionOutcome]);
 
   const label =
     state.status === "transcribing"
@@ -510,6 +549,11 @@ export default function Overlay() {
           state.position === "bottom" ? "items-end pb-2" : "items-start pt-2",
         )}
       >
+        {/* Screen-reader announcement of the insert outcome — present empty up-front so AT
+            speaks the change; non-urgent → polite. */}
+        <span role="status" aria-live="polite" className="sr-only">
+          {pulse === "typed" ? "Inserted" : pulse === "clipboard" ? "Copied to clipboard" : ""}
+        </span>
         <motion.div
           ref={chipRef}
           onPointerEnter={onPointerEnter}
@@ -528,39 +572,41 @@ export default function Overlay() {
           // centred via the parent's justify-center, so the dot/tag translate (never
           // scale) as it grows.
           className={cn(
-            "inline-flex h-[42px] items-center overflow-hidden border px-3.5 transition-colors duration-300",
+            // max-w caps the pill to the fixed 680px overlay WINDOW (100vw here) so it can never
+            // grow past the window edge — otherwise the centred, content-sized pill overflows and
+            // the window edge clips the right-most (newest) transcript words. The transcript below
+            // is the flex element that shrinks to make the pill fit (min-w-0 chain → its own
+            // justify-end clip box then drops the OLDEST off the left instead).
+            "inline-flex h-[42px] max-w-[calc(100vw-24px)] items-center overflow-hidden border px-3.5 transition-colors duration-300",
             // Tucked: drop the pill chrome so ONLY the bare dot peeks below the border.
             peeked
               ? "border-transparent bg-transparent shadow-none"
               : "border-line bg-panel/95 shadow-[0_10px_40px_-8px_rgba(0,0,0,0.55)]",
           )}
         >
-          {/* The persistent status dot — the seed the pill grows out of. A one-shot ✓
-              replaces it the instant a session completes (a single play, not a loop). */}
-          {justDone && !peeked ? (
-            <motion.span
-              key="done"
-              initial={{ scale: 0.5, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={MORPH}
-              className="flex shrink-0 text-live"
-            >
-              <Check className="size-4" strokeWidth={3} />
-            </motion.span>
-          ) : (
-            <span
-              style={{ boxShadow: dotGlow }}
-              className={cn(
-                "size-2.5 shrink-0 rounded-full transition-colors duration-300",
-                dotColorClass,
-                // Gentle breathing while a calm chip rests, AND while tucked-and-speaking (the
-                // only liveness cue a minimized dot has). Finalizing pulses via chip-think below.
+          {/* The persistent status dot — the seed the pill grows out of, and the SOLE insert-feedback
+              element: a colour-coded pulse — green when text was typed/pasted, amber when copied to
+              the clipboard — both per phrase and as the end-of-session confirmation. No distinct
+              icons. The rest of the time it shows the steady status fill / breathing. */}
+          <span
+            style={{ boxShadow: dotGlow }}
+            className={cn(
+              "size-2.5 shrink-0 rounded-full transition-colors duration-300",
+              // A landed phrase / session end flashes the dot: green = typed, amber = clipboard.
+              pulse === "typed"
+                ? "animate-insert-pulse bg-live"
+                : pulse === "clipboard"
+                  ? "animate-insert-pulse-warn bg-warn"
+                  : dotColorClass,
+              // Gentle breathing while a calm chip rests, AND while tucked-and-speaking (the
+              // only liveness cue a minimized dot has). Finalizing pulses via chip-think below.
+              // Suppressed while a pulse plays so the two don't fight.
+              !pulse &&
                 ((!expanded && !standby && !showQuickLaunch && !peeked) || (peeked && speaking)) &&
-                  "animate-chip-breathe",
-                processing && "animate-chip-think",
-              )}
-            />
-          )}
+                "animate-chip-breathe",
+              !pulse && processing && "animate-chip-think",
+            )}
+          />
 
           {/* Identity row: the active-Profile tag (hover ≥1s reveals "· language · mode", which
               animates its WIDTH open so the text never scales) and/or the P16/D injection-target
@@ -591,12 +637,29 @@ export default function Overlay() {
                 <span
                   className={cn(
                     "flex items-center gap-1 normal-case",
-                    targetWarn ? "text-warn" : "text-dim",
+                    state.targetSkip === "blocked"
+                      ? "text-rec"
+                      : state.targetSkip === "notEditable"
+                        ? "text-warn"
+                        : "text-dim",
                   )}
                 >
                   <span aria-hidden>→</span>
-                  <span className="max-w-[130px] truncate">{state.targetTitle}</span>
-                  {targetWarn && <span className="whitespace-nowrap">· {skipLabel}</span>}
+                  {/* The skip state lives on the app NAME itself — struck-through when blocked,
+                      italic when it isn't a text field — so the chip stays compact. The full word
+                      ("blocked" / "not a text field") returns when the chip is expanded, and the
+                      title + the sr-only status node keep it accessible while collapsed. */}
+                  <span
+                    className={cn(
+                      "max-w-[130px] truncate",
+                      state.targetSkip === "blocked" && "line-through",
+                      state.targetSkip === "notEditable" && "italic",
+                    )}
+                    title={targetWarn ? skipLabel : undefined}
+                  >
+                    {state.targetTitle}
+                  </span>
+                  {targetWarn && expanded && <span className="whitespace-nowrap">· {skipLabel}</span>}
                 </span>
               )}
             </div>
@@ -614,9 +677,12 @@ export default function Overlay() {
                 exit={{ width: 0, opacity: 0 }}
                 transition={MORPH}
                 onAnimationComplete={reportBounds}
-                className="overflow-hidden"
+                className="min-w-0 overflow-hidden"
               >
-                <div className="flex w-max items-center gap-3 pl-3">
+                {/* min-w-0 (not w-max): the row must be allowed to shrink under the pill's
+                    width cap so its flexible child (the transcript) yields space — a w-max
+                    (max-content) row stays full width and pushes the pill past the window. */}
+                <div className="flex min-w-0 items-center gap-3 pl-3">
                   {(state.profileTag || showTarget) && <span className="h-4 w-px shrink-0 bg-line" aria-hidden />}
                   {showQuickLaunch ? (
                     <div className="flex items-center gap-2">
@@ -637,7 +703,7 @@ export default function Overlay() {
                       })}
                     </div>
                   ) : state.status === "error" ? (
-                    <div className="max-w-[520px] truncate font-mono text-[12.5px] text-rec">
+                    <div className="min-w-0 truncate font-mono text-[12.5px] text-rec">
                       <span aria-hidden className="mr-1.5">
                         ⚠
                       </span>
@@ -654,23 +720,35 @@ export default function Overlay() {
                         tone={barTone}
                         className="h-6 w-[92px] shrink-0"
                       />
-                      <div className="min-w-0 max-w-[470px]">
+                      {/* min-w-0 + default flex-shrink: this transcript box is the ONE flexible
+                          cell in the row, so it absorbs all the negative space when the pill hits
+                          its width cap — shrinking below the text's width so the clip box inside
+                          can pin the newest words right and drop the oldest off the left. Short
+                          text keeps its natural width (sits next to the waveform). */}
+                      <div className="min-w-0">
                         {state.partial ? (
                           // Left-edge fade via a STATIC overlay rather than a CSS mask:
                           // the transcript text/scroll changes several times a second,
                           // and re-evaluating a mask-image each time flickers on
                           // WebKitGTK. The overlay never repaints with the text.
                           <div className="relative">
+                            {/* Pin the NEWEST words to the RIGHT via flex justify-end (no JS scroll
+                                math): the text child doesn't shrink, so once it's wider than the box
+                                its END stays at the right edge and the OLDEST words overflow + clip
+                                off the left. Robust on WebKitGTK, where measuring scrollWidth on
+                                fast-updating text raced and left the newest words clipped. */}
                             <div
                               ref={textRef}
                               dir="auto"
                               className={cn(
-                                "overflow-hidden whitespace-nowrap font-mono text-[12.5px]",
+                                "flex justify-end overflow-hidden",
                                 // While finishing, the text is captured (not live) — dim it.
                                 processing ? "text-dim" : "text-text",
                               )}
                             >
-                              {state.partial}
+                              <span className="shrink-0 whitespace-nowrap font-mono text-[12.5px]">
+                                {state.partial}
+                              </span>
                             </div>
                             {faded && (
                               <div
@@ -693,10 +771,7 @@ export default function Overlay() {
                           type="button"
                           title="Cancel"
                           aria-label="Cancel dictation"
-                          onClick={() => {
-                            cancelling.current = true;
-                            void emitOverlayAction("cancel-dictation");
-                          }}
+                          onClick={() => void emitOverlayAction("cancel-dictation")}
                           className="ring-signal grid size-8 shrink-0 place-items-center rounded-full text-faint transition-colors hover:text-text"
                         >
                           <X className="size-4" />

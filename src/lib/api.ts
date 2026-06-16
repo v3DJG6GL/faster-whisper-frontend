@@ -376,6 +376,14 @@ export async function getFocusedApp(): Promise<FocusedApp | null> {
   return (await invoke<FocusedApp | null>("get_focused_app")) ?? null;
 }
 
+/** Like getFocusedApp but skips the own-window self short-circuit — returns the previously
+ *  focused OTHER app. For the App-rules "Use current" button, which is always clicked while
+ *  our own window holds focus (so getFocusedApp would always report "this app"). */
+export async function getFocusedOtherApp(): Promise<FocusedApp | null> {
+  if (!isTauri) return null;
+  return (await invoke<FocusedApp | null>("get_focused_other_app")) ?? null;
+}
+
 /** Toggle the opt-in AT-SPI "deep field detection" (a11y flag + Chromium/Electron poke). */
 export async function setDeepFieldDetection(enabled: boolean): Promise<void> {
   if (!isTauri) return;
