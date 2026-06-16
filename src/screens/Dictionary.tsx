@@ -1,0 +1,717 @@
+// "Dictionary" — view + edit the backend's post-processing (pipeline) rules the
+// caller is permitted to (GET/PATCH /v1/pipeline-rules). This is LIVE server
+// state, not local config: pick a Backend, fetch its rules, edit the bodies your
+// account may change, push the diff back. Mirrors the server's /quick-config
+// gating — the client only exposes `enabled` + the per-type body (editable_fields);
+// name/label/tags/colour/lock are read-only context (admin-only on the web).
+//
+// Rendering note: per-rule fields are plain controlled inputs inside the stable,
+// module-scope <RuleCard> (keyed by slug) — never a component redefined per
+// render — so editing never remounts an input (cf. DecodeFields focus-loss caveat).
+
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  BookA, Loader2, RefreshCw, Plus, Trash2, Lock, RotateCcw, ChevronRight,
+  ArrowUp, ArrowDown, AlertTriangle, Check,
+} from "lucide-react";
+import { useApp } from "@/lib/store";
+import { Button, Card, Toggle, TextInput } from "@/components/ui";
+import { effectiveServerKind } from "@/lib/serverKind";
+import { getPipelineRules, savePipelineRules } from "@/lib/api";
+import type {
+  Backend, PipelineFetch, PipelineRule, PipelineSaveResult, RuleType,
+} from "@/lib/types";
+import { cn } from "@/lib/cn";
+
+/* ── friendly, on-voice labels for the wire rule types ─────────────────── */
+const TYPE_LABEL: Record<RuleType, string> = {
+  "regex-list": "Find & replace",
+  "callback:map": "Spoken symbols",
+  "callback:lowercase-wordlist": "Lowercase words",
+  "callback:dedup": "De-duplicate",
+  "callback:upper": "Capitalize",
+  terminal: "Trim",
+};
+
+// Admin rule-card colours → nearest Signal token (read-only cosmetic dot).
+const COLOR_DOT: Record<string, string> = {
+  red: "bg-rec", amber: "bg-warn", green: "bg-ok", teal: "bg-live",
+  blue: "bg-accent", purple: "bg-accent", pink: "bg-accent",
+};
+
+/* ── editor-friendly working copy of a rule's editable body ────────────── */
+let _rowId = 1;
+const mkId = () => _rowId++;
+
+type EntryRow = { id: number; pattern: string; replacement: string; label?: string; note?: string };
+type MapRow = { id: number; k: string; v: string };
+interface EditState {
+  enabled: boolean;
+  entries?: EntryRow[]; // regex-list
+  pairs?: MapRow[]; // callback:map
+  pattern?: string; // dedup / upper / lowercase-wordlist
+  words?: string; // lowercase-wordlist (textarea, one per line)
+}
+
+function toEdit(rule: PipelineRule): EditState {
+  const e: EditState = { enabled: rule.enabled };
+  switch (rule.type) {
+    case "regex-list":
+      e.entries = (rule.entries ?? []).map((en) => ({
+        id: mkId(), pattern: en.pattern ?? "", replacement: en.replacement ?? "",
+        label: en.label, note: en.note,
+      }));
+      break;
+    case "callback:map":
+      e.pairs = Object.entries(rule.map ?? {}).map(([k, v]) => ({ id: mkId(), k, v }));
+      break;
+    case "callback:lowercase-wordlist":
+      e.pattern = rule.pattern ?? "";
+      e.words = (rule.wordlist ?? []).join("\n");
+      break;
+    case "callback:dedup":
+    case "callback:upper":
+      e.pattern = rule.pattern ?? "";
+      break;
+  }
+  return e;
+}
+
+/** The body fields a patch would carry for this rule type, in canonical form
+ *  (used both for the save payload and for dirty-comparison via JSON equality). */
+function emitBody(type: RuleType, e: EditState): Record<string, unknown> {
+  switch (type) {
+    case "regex-list":
+      return {
+        entries: (e.entries ?? []).map((r) => {
+          const o: Record<string, unknown> = { pattern: r.pattern, replacement: r.replacement };
+          if (r.label) o.label = r.label;
+          if (r.note) o.note = r.note;
+          return o;
+        }),
+      };
+    case "callback:map": {
+      const map: Record<string, string> = {};
+      for (const p of e.pairs ?? []) {
+        const k = p.k.trim();
+        if (k) map[k] = p.v;
+      }
+      return { map };
+    }
+    case "callback:lowercase-wordlist":
+      return {
+        pattern: e.pattern ?? "",
+        wordlist: (e.words ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean),
+      };
+    case "callback:dedup":
+    case "callback:upper":
+      return { pattern: e.pattern ?? "" };
+    default:
+      return {};
+  }
+}
+
+/** Build the minimal patch (changed allow-listed fields only) for one rule.
+ *  Empty object ⇒ unchanged. Locked rules pass `editable = []` ⇒ never dirty. */
+function buildPatch(type: RuleType, edit: EditState, base: EditState, editable: string[]): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  if (editable.includes("enabled") && edit.enabled !== base.enabled) patch.enabled = edit.enabled;
+  const bodyFields = editable.filter((f) => f !== "enabled");
+  if (bodyFields.length) {
+    const cur = emitBody(type, edit);
+    const old = emitBody(type, base);
+    if (JSON.stringify(cur) !== JSON.stringify(old)) {
+      for (const f of bodyFields) if (f in cur) patch[f] = cur[f];
+    }
+  }
+  return patch;
+}
+
+/* ── small shared bits ─────────────────────────────────────────────────── */
+function Badge({ children, tone }: { children: ReactNode; tone?: "accent" | "dim" | "warn" }) {
+  return (
+    <span
+      className={cn(
+        "rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider",
+        tone === "accent" ? "bg-accent-soft text-accent" : tone === "warn" ? "bg-warn/10 text-warn" : "bg-surface-2 text-dim",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function FieldLabel({ children }: { children: ReactNode }) {
+  return <label className="mb-1.5 block text-[11.5px] font-medium text-dim">{children}</label>;
+}
+
+const monoInput = "font-mono text-[12.5px]";
+
+/* ── one rule (stable, module-scope component) ─────────────────────────── */
+function RuleCard({
+  rule, edit, base, editable, expanded, onToggleExpand, onPatch, onReset,
+}: {
+  rule: PipelineRule;
+  edit: EditState;
+  base: EditState;
+  editable: string[];
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onPatch: (updater: (e: EditState) => EditState) => void;
+  onReset: () => void;
+}) {
+  const locked = !!rule.locked;
+  const canEnable = editable.includes("enabled");
+  const bodyEditable = editable.some((f) => f !== "enabled");
+  const dirty = Object.keys(buildPatch(rule.type, edit, base, editable)).length > 0;
+  const colorDot = rule.color ? COLOR_DOT[rule.color] : undefined;
+
+  const setEntries = (fn: (rows: EntryRow[]) => EntryRow[]) =>
+    onPatch((e) => ({ ...e, entries: fn(e.entries ?? []) }));
+  const setPairs = (fn: (rows: MapRow[]) => MapRow[]) =>
+    onPatch((e) => ({ ...e, pairs: fn(e.pairs ?? []) }));
+
+  return (
+    <Card className={cn("overflow-hidden transition-colors", dirty && "border-line-strong")}>
+      {/* header row */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          aria-expanded={expanded}
+          className="ring-signal flex min-w-0 flex-1 items-center gap-2.5 text-left"
+        >
+          <ChevronRight className={cn("size-4 shrink-0 text-faint transition-transform", expanded && "rotate-90")} />
+          {colorDot && <span className={cn("size-2 shrink-0 rounded-full", colorDot)} aria-hidden />}
+          <span className="truncate text-[14px] font-medium text-text">{rule.label}</span>
+          {dirty && <span className="size-1.5 shrink-0 rounded-full bg-accent" title="Unsaved changes" aria-hidden />}
+          <Badge>{TYPE_LABEL[rule.type] ?? rule.type}</Badge>
+          {locked && (
+            <span className="inline-flex items-center gap-1 text-faint" title="Locked by the server admin — read-only">
+              <Lock className="size-3" />
+            </span>
+          )}
+        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {(rule.tags ?? []).slice(0, 3).map((t) => (
+            <Badge key={t} tone="dim">{t}</Badge>
+          ))}
+        </div>
+        <Toggle
+          checked={edit.enabled}
+          disabled={!canEnable}
+          onChange={(v) => onPatch((e) => ({ ...e, enabled: v }))}
+        />
+      </div>
+
+      {/* expandable body */}
+      {expanded && (
+        <div className="border-t border-line bg-surface-2/30 px-4 py-4">
+          {locked && (
+            <div className="mb-3 flex items-start gap-2 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-dim">
+              <Lock className="mt-0.5 size-3.5 shrink-0 text-faint" />
+              <span>Locked by the server admin — read-only. Ask an admin to change it on the server.</span>
+            </div>
+          )}
+
+          {/* regex-list: ordered find→replace entries */}
+          {rule.type === "regex-list" && (
+            <div className="space-y-2">
+              {(edit.entries ?? []).map((row, i) => (
+                <div key={row.id} className="rounded-xl border border-line bg-surface-2/40 p-2.5">
+                  <div className="flex items-start gap-2">
+                    <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div>
+                        <FieldLabel>Match (regex)</FieldLabel>
+                        <TextInput
+                          value={row.pattern}
+                          disabled={!bodyEditable}
+                          spellCheck={false}
+                          className={monoInput}
+                          onChange={(ev) => setEntries((rows) => rows.map((r) => (r.id === row.id ? { ...r, pattern: ev.target.value } : r)))}
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel>Replace with</FieldLabel>
+                        <TextInput
+                          value={row.replacement}
+                          disabled={!bodyEditable}
+                          spellCheck={false}
+                          placeholder="(delete)"
+                          className={monoInput}
+                          onChange={(ev) => setEntries((rows) => rows.map((r) => (r.id === row.id ? { ...r, replacement: ev.target.value } : r)))}
+                        />
+                      </div>
+                    </div>
+                    {bodyEditable && (
+                      <div className="flex shrink-0 flex-col gap-1 pt-6">
+                        <button type="button" title="Move up" disabled={i === 0}
+                          onClick={() => setEntries((rows) => swap(rows, i, i - 1))}
+                          className="ring-signal grid size-6 place-items-center rounded-md text-faint hover:text-text disabled:opacity-30">
+                          <ArrowUp className="size-3.5" />
+                        </button>
+                        <button type="button" title="Move down" disabled={i === (edit.entries?.length ?? 0) - 1}
+                          onClick={() => setEntries((rows) => swap(rows, i, i + 1))}
+                          className="ring-signal grid size-6 place-items-center rounded-md text-faint hover:text-text disabled:opacity-30">
+                          <ArrowDown className="size-3.5" />
+                        </button>
+                        <button type="button" title="Remove entry"
+                          onClick={() => setEntries((rows) => rows.filter((r) => r.id !== row.id))}
+                          className="ring-signal grid size-6 place-items-center rounded-md text-faint hover:text-rec">
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {row.label && <div className="mt-1.5 font-mono text-[10.5px] text-faint">{row.label}</div>}
+                </div>
+              ))}
+              {bodyEditable && (
+                <Button variant="ghost" size="sm" onClick={() => setEntries((rows) => [...rows, { id: mkId(), pattern: "", replacement: "" }])}>
+                  <Plus className="size-3.5" /> Add entry
+                </Button>
+              )}
+              {(edit.entries?.length ?? 0) === 0 && !bodyEditable && (
+                <div className="text-[12.5px] text-faint">No entries.</div>
+              )}
+            </div>
+          )}
+
+          {/* callback:map: spoken phrase → symbol */}
+          {rule.type === "callback:map" && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2">
+                <span className="text-[11.5px] font-medium text-dim">When you say</span>
+                <span />
+                <span className="text-[11.5px] font-medium text-dim">Insert</span>
+                <span />
+              </div>
+              {(edit.pairs ?? []).map((row) => (
+                <div key={row.id} className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2">
+                  <TextInput
+                    value={row.k}
+                    disabled={!bodyEditable}
+                    placeholder="comma"
+                    onChange={(ev) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, k: ev.target.value } : r)))}
+                  />
+                  <span className="text-faint" aria-hidden>→</span>
+                  <TextInput
+                    value={row.v}
+                    disabled={!bodyEditable}
+                    spellCheck={false}
+                    placeholder=","
+                    className={monoInput}
+                    onChange={(ev) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, v: ev.target.value } : r)))}
+                  />
+                  {bodyEditable ? (
+                    <button type="button" title="Remove"
+                      onClick={() => setPairs((rows) => rows.filter((r) => r.id !== row.id))}
+                      className="ring-signal grid size-8 place-items-center rounded-md text-faint hover:text-rec">
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  ) : <span />}
+                </div>
+              ))}
+              {bodyEditable && (
+                <Button variant="ghost" size="sm" onClick={() => setPairs((rows) => [...rows, { id: mkId(), k: "", v: "" }])}>
+                  <Plus className="size-3.5" /> Add mapping
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/* lowercase-wordlist: a regex + a word list */}
+          {rule.type === "callback:lowercase-wordlist" && (
+            <div className="space-y-3">
+              <div>
+                <FieldLabel>Match (regex)</FieldLabel>
+                <TextInput
+                  value={edit.pattern ?? ""}
+                  disabled={!bodyEditable}
+                  spellCheck={false}
+                  className={monoInput}
+                  onChange={(ev) => onPatch((e) => ({ ...e, pattern: ev.target.value }))}
+                />
+              </div>
+              <div>
+                <FieldLabel>Word list — one per line ({wordCount(edit.words)})</FieldLabel>
+                <textarea
+                  value={edit.words ?? ""}
+                  disabled={!bodyEditable}
+                  spellCheck={false}
+                  rows={6}
+                  onChange={(ev) => onPatch((e) => ({ ...e, words: ev.target.value }))}
+                  className="ring-signal w-full rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 font-mono text-[12.5px] leading-relaxed text-text placeholder:text-faint disabled:opacity-50"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* dedup / upper: a single regex */}
+          {(rule.type === "callback:dedup" || rule.type === "callback:upper") && (
+            <div>
+              <FieldLabel>Match (regex)</FieldLabel>
+              <TextInput
+                value={edit.pattern ?? ""}
+                disabled={!bodyEditable}
+                spellCheck={false}
+                className={monoInput}
+                onChange={(ev) => onPatch((e) => ({ ...e, pattern: ev.target.value }))}
+              />
+            </div>
+          )}
+
+          {/* read-only context + per-rule reset */}
+          <div className="mt-4 flex items-end justify-between gap-3 border-t border-line pt-3">
+            <div className="min-w-0 space-y-1">
+              <div className="font-mono text-[10.5px] text-faint">{rule.name}</div>
+              {rule.note && <div className="text-[12px] italic leading-snug text-dim">{rule.note}</div>}
+            </div>
+            {dirty && (
+              <Button variant="ghost" size="sm" onClick={onReset} title="Discard this rule's changes">
+                <RotateCcw className="size-3.5" /> Reset
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function swap<T>(arr: T[], i: number, j: number): T[] {
+  if (j < 0 || j >= arr.length) return arr;
+  const next = arr.slice();
+  [next[i], next[j]] = [next[j], next[i]];
+  return next;
+}
+function wordCount(words?: string): number {
+  return (words ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean).length;
+}
+
+/* ── screen ────────────────────────────────────────────────────────────── */
+export default function Dictionary() {
+  const backends = useApp((s) => s.backends);
+  const connections = useApp((s) => s.connections);
+
+  // Candidate Backends: full faster-whisper servers (and untested ones — we can't
+  // prove "standard", so we let the fetch decide). Standard servers are excluded.
+  const candidates = useMemo(
+    () => backends.filter((b) => effectiveServerKind(b, connections[b.id]) !== "standard"),
+    [backends, connections],
+  );
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  useEffect(() => {
+    if (selectedId && candidates.some((c) => c.id === selectedId)) return;
+    setSelectedId(candidates[0]?.id ?? null);
+  }, [candidates, selectedId]);
+  const backend = candidates.find((b) => b.id === selectedId) ?? null;
+
+  const [loading, setLoading] = useState(false);
+  const [fetchRes, setFetchRes] = useState<PipelineFetch | null>(null);
+  const [rules, setRules] = useState<PipelineRule[]>([]);
+  const [edits, setEdits] = useState<Record<string, EditState>>({});
+  const [base, setBase] = useState<Record<string, EditState>>({});
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<PipelineSaveResult | null>(null);
+
+  const editableFields: Record<string, string[]> = fetchRes?.state?.editable_fields ?? {};
+  const editableFor = useCallback(
+    (r: PipelineRule) => (r.locked ? [] : editableFields[r.type] ?? []),
+    [editableFields],
+  );
+
+  const load = useCallback(async (b: Backend) => {
+    setLoading(true);
+    setResult(null);
+    const res = await getPipelineRules({ serverUrl: b.serverUrl, backendId: b.id });
+    setFetchRes(res);
+    const list = res.ok ? res.state?.rules ?? [] : [];
+    setRules(list);
+    const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
+    setEdits(fresh);
+    setBase(JSON.parse(JSON.stringify(fresh)));
+    setExpanded(new Set());
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!backend) {
+      setFetchRes(null);
+      setRules([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setResult(null);
+    getPipelineRules({ serverUrl: backend.serverUrl, backendId: backend.id }).then((res) => {
+      if (cancelled) return;
+      setFetchRes(res);
+      const list = res.ok ? res.state?.rules ?? [] : [];
+      setRules(list);
+      const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
+      setEdits(fresh);
+      setBase(JSON.parse(JSON.stringify(fresh)));
+      setExpanded(new Set());
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [backend?.id, backend?.serverUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const dirty = useMemo(() => {
+    return rules.filter((r) => {
+      const e = edits[r.name];
+      const b = base[r.name];
+      return e && b && Object.keys(buildPatch(r.type, e, b, editableFor(r))).length > 0;
+    });
+  }, [rules, edits, base, editableFor]);
+
+  const role = fetchRes?.state?.role;
+
+  async function save() {
+    if (!backend || dirty.length === 0) return;
+    const rules_patch: Record<string, Record<string, unknown>> = {};
+    const fingerprints: Record<string, string> = {};
+    for (const r of dirty) {
+      rules_patch[r.name] = buildPatch(r.type, edits[r.name], base[r.name], editableFor(r));
+      if (r._fp) fingerprints[r.name] = r._fp;
+    }
+    setSaving(true);
+    const res = await savePipelineRules({
+      serverUrl: backend.serverUrl,
+      backendId: backend.id,
+      patch: { rules_patch, fingerprints },
+    });
+    setSaving(false);
+    // On success, re-sync to server truth (fresh fingerprints; conflicted edits
+    // are replaced by the server's version) BEFORE showing the banner — load()
+    // clears `result`, so set it afterwards. On 422 keep edits so the user can fix.
+    if (res.ok) await load(backend);
+    setResult(res);
+  }
+
+  function patchEdit(slug: string, updater: (e: EditState) => EditState) {
+    setEdits((prev) => ({ ...prev, [slug]: updater(prev[slug]) }));
+  }
+  function resetRule(slug: string) {
+    setEdits((prev) => ({ ...prev, [slug]: JSON.parse(JSON.stringify(base[slug])) }));
+  }
+  function discardAll() {
+    setEdits(JSON.parse(JSON.stringify(base)));
+  }
+
+  return (
+    <div className="mx-auto max-w-[820px] px-10 py-12">
+      <header className="mb-7 flex items-start justify-between gap-4">
+        <div>
+          <div className="font-mono text-[11px] uppercase tracking-label text-accent">Server rules</div>
+          <h1 className="mt-2 flex items-center gap-2.5 font-display text-[30px] font-bold tracking-tight text-text">
+            <BookA className="size-7 text-accent" /> Dictionary
+          </h1>
+          <p className="mt-2 max-w-md text-[13.5px] text-dim">
+            Text rules your server applies to every transcription — replacements, spoken symbols,
+            punctuation tidy-up. Edit the ones your account is allowed to change.
+          </p>
+        </div>
+        {backend && (
+          <Button variant="ghost" size="sm" onClick={() => load(backend)} disabled={loading} title="Reload from server">
+            <RefreshCw className={cn("size-4", loading && "animate-spin")} /> Refresh
+          </Button>
+        )}
+      </header>
+
+      {/* Backend picker (only when there's a choice) + role readout */}
+      {candidates.length > 0 && (
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          {candidates.length > 1 &&
+            candidates.map((b) => {
+              const active = b.id === selectedId;
+              return (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => setSelectedId(b.id)}
+                  className={cn(
+                    "ring-signal rounded-pill border px-3.5 py-1.5 text-[12.5px] font-medium transition-colors",
+                    active
+                      ? "border-accent bg-accent-soft text-accent"
+                      : "border-line bg-surface-2 text-dim hover:text-text",
+                  )}
+                >
+                  {b.name}
+                </button>
+              );
+            })}
+          {backend && fetchRes?.ok && role && (
+            <span className="ml-auto text-[12px] text-faint">
+              Editing as <span className="text-dim">{role}</span>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* States */}
+      {candidates.length === 0 ? (
+        <EmptyCard
+          title="No compatible server"
+          body="The Dictionary needs a faster-whisper backend (one that reports a boot id). Add or test a server on the Backends screen."
+        />
+      ) : loading ? (
+        <div className="flex items-center gap-2 py-16 text-[13px] text-dim">
+          <Loader2 className="size-4 animate-spin" /> Loading rules…
+        </div>
+      ) : fetchRes && !fetchRes.ok ? (
+        <FetchError fetch={fetchRes} backendName={backend?.name ?? "the server"} onRetry={() => backend && load(backend)} />
+      ) : rules.length === 0 ? (
+        <EmptyCard
+          title="No rules to manage"
+          body="An admin hasn't shared any editable rules with your account yet. Ask them to expose rules (and tag them for you) on the server."
+        />
+      ) : (
+        <div className="space-y-3">
+          {/* result banner */}
+          {result && <SaveBanner result={result} onReload={() => backend && load(backend)} />}
+
+          {/* unsaved-changes bar */}
+          {dirty.length > 0 && (
+            <div className="sticky top-0 z-10 -mx-2 flex items-center gap-3 rounded-xl border border-line-strong bg-panel/95 px-4 py-2.5 backdrop-blur-sm">
+              <span className="size-1.5 rounded-full bg-accent" aria-hidden />
+              <span className="text-[13px] text-text">
+                {dirty.length} unsaved {dirty.length === 1 ? "change" : "changes"}
+              </span>
+              <div className="ml-auto flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={discardAll} disabled={saving}>Discard</Button>
+                <Button variant="accent" size="sm" onClick={save} disabled={saving}>
+                  {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Save changes
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {rules.map((r) => (
+            <RuleCard
+              key={r.name}
+              rule={r}
+              edit={edits[r.name]}
+              base={base[r.name]}
+              editable={editableFor(r)}
+              expanded={expanded.has(r.name)}
+              onToggleExpand={() =>
+                setExpanded((prev) => {
+                  const next = new Set(prev);
+                  next.has(r.name) ? next.delete(r.name) : next.add(r.name);
+                  return next;
+                })
+              }
+              onPatch={(updater) => patchEdit(r.name, updater)}
+              onReset={() => resetRule(r.name)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── state cards ───────────────────────────────────────────────────────── */
+function EmptyCard({ title, body }: { title: string; body: string }) {
+  return (
+    <Card className="px-6 py-10 text-center">
+      <BookA className="mx-auto mb-3 size-7 text-faint" />
+      <div className="text-[15px] font-medium text-text">{title}</div>
+      <p className="mx-auto mt-1.5 max-w-sm text-[13px] text-dim">{body}</p>
+    </Card>
+  );
+}
+
+function FetchError({ fetch, backendName, onRetry }: { fetch: PipelineFetch; backendName: string; onRetry: () => void }) {
+  const { title, body } = describeFetchError(fetch, backendName);
+  return (
+    <Card className="px-6 py-9 text-center">
+      <AlertTriangle className="mx-auto mb-3 size-6 text-warn" />
+      <div className="text-[15px] font-medium text-text">{title}</div>
+      <p className="mx-auto mt-1.5 max-w-md text-[13px] text-dim">{body}</p>
+      {(fetch.status === 0 || fetch.status >= 500) && (
+        <Button variant="default" size="sm" className="mx-auto mt-4" onClick={onRetry}>
+          <RefreshCw className="size-3.5" /> Retry
+        </Button>
+      )}
+    </Card>
+  );
+}
+
+function describeFetchError(fetch: PipelineFetch, name: string): { title: string; body: string } {
+  switch (fetch.status) {
+    case 0:
+      return { title: `Couldn't reach ${name}`, body: fetch.error ?? "The server is unreachable. Check it's running and the URL is correct on the Backends screen." };
+    case 401:
+      return { title: "This server needs a valid API key", body: "Set or fix the API key for this Backend on the Backends screen, then refresh." };
+    case 403:
+      return { title: "Your account can't manage this dictionary", body: "An admin hasn't granted your key access to the rules editor. Ask them to enable it for your account." };
+    case 404:
+      return { title: "This server doesn't support editable rules", body: "It's either a standard Whisper server or an older faster-whisper-backend. Update the server to manage its dictionary here." };
+    default:
+      return { title: `Server error (HTTP ${fetch.status})`, body: fetch.error ?? "The server returned an unexpected error." };
+  }
+}
+
+function SaveBanner({ result, onReload }: { result: PipelineSaveResult; onReload: () => void }) {
+  // Validation failure — keep the user's edits so they can fix them.
+  if (result.status === 422 && result.errors?.length) {
+    return (
+      <div className="rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <div>
+            <div className="font-medium">The server rejected the changes</div>
+            <ul className="mt-1 space-y-0.5 text-warn/90">
+              {result.errors.slice(0, 6).map((e, i) => (
+                <li key={i}>
+                  {e.loc ? <span className="font-mono text-[11px] opacity-80">{e.loc}: </span> : null}
+                  {e.msg}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1 text-warn/80">A rule the admin set may already be invalid — only the listed issues block saving.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (!result.ok) {
+    return (
+      <div className="flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+        <span>{result.detail || "Couldn't save the changes."}</span>
+      </div>
+    );
+  }
+  const conflicts = result.conflicts?.length ?? 0;
+  return (
+    <div className="space-y-2">
+      {result.saved.length > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-ok/30 bg-ok/5 px-3.5 py-2.5 text-[12.5px] text-ok">
+          <Check className="mt-0.5 size-4 shrink-0" />
+          <span>
+            Saved {result.saved.length} {result.saved.length === 1 ? "rule" : "rules"}.
+            {result.requires_restart ? " Some changes need a server restart to take effect." : ""}
+          </span>
+        </div>
+      )}
+      {conflicts > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <span>
+            {conflicts} {conflicts === 1 ? "rule" : "rules"} changed on the server and {conflicts === 1 ? "was" : "were"} not saved.
+            The latest version has been reloaded.{" "}
+            <button type="button" className="ring-signal underline hover:text-text" onClick={onReload}>Reload again</button>
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -99,7 +99,7 @@ export type ThemeName = "dark" | "light";
 
 /** A navigable app screen, referenced by the sidebar, the overlay quick-launch,
  *  and cross-window navigation (kept in sync with the router in App.tsx). */
-export type OverlayScreen = "home" | "transcribe" | "profiles" | "backends" | "app-rules" | "settings";
+export type OverlayScreen = "home" | "transcribe" | "profiles" | "backends" | "dictionary" | "app-rules" | "settings";
 /** A dictation action the overlay quick-launch can trigger (beyond screen nav). */
 export type OverlayActionKind = "toggle-dictation" | "cycle-active-profile";
 /** One quick-launch chip button: a screen nav target or a dictation action. A flat
@@ -209,6 +209,89 @@ export interface ResolvedOverrideProfile {
    *  — shown as the inherited "Vocabulary / prompt". Undefined when none. */
   prompt?: string;
   prompt_locked?: boolean;
+}
+
+// --- P17: pipeline ("Dictionary") rules — LIVE server state, not persisted ---
+// Fetched per-Backend from GET /v1/pipeline-rules, edited, PATCHed back. Wire
+// shape is snake_case (passes through Rust as opaque JSON, typed only here).
+
+export type RuleType =
+  | "regex-list"
+  | "callback:map"
+  | "callback:lowercase-wordlist"
+  | "callback:dedup"
+  | "callback:upper"
+  | "terminal";
+
+/** One find→replace row inside a `regex-list` rule's `entries`. */
+export interface RegexListEntry {
+  pattern: string;
+  replacement?: string;
+  label?: string;
+  note?: string;
+}
+
+/** A single post-processing rule. Common fields are shared; the editable body
+ *  depends on `type`. The client may edit only `enabled` + the per-type body
+ *  (see `PipelineRulesState.editable_fields`); everything else is read-only
+ *  context (name/label/tags/colour/locked/exposed are admin-only on the web). */
+export interface PipelineRule {
+  name: string; // slug (read-only)
+  label: string; // display name (read-only)
+  type: RuleType;
+  enabled: boolean;
+  locked?: boolean;
+  seeded?: boolean;
+  exposed?: boolean;
+  tags?: string[];
+  note?: string;
+  color?: string;
+  /** Per-rule fingerprint for optimistic concurrency — echo back on PATCH. */
+  _fp?: string;
+  // Editable bodies — only the one matching `type` is present:
+  entries?: RegexListEntry[]; // regex-list
+  map?: Record<string, string>; // callback:map (spoken → symbol)
+  map_meta?: Record<string, number>; // callback:map — SERVER-OWNED, never sent
+  pattern?: string; // callback:dedup / callback:upper / lowercase-wordlist
+  wordlist?: string[]; // callback:lowercase-wordlist
+}
+
+/** GET /v1/pipeline-rules body: the rules the caller may view+edit, their role,
+ *  and the per-type editable-field allow-list (so the client need not hardcode it). */
+export interface PipelineRulesState {
+  rules: PipelineRule[];
+  role: "admin" | "user";
+  editable_fields: Record<string, string[]>;
+}
+
+/** GET outcome from the Rust command. `status` lets the UI branch: 0 =
+ *  unreachable, 200 = ok (state present), 401/403 = gated, 404 = standard/old
+ *  server (no such endpoint). */
+export interface PipelineFetch {
+  ok: boolean;
+  status: number;
+  state?: PipelineRulesState;
+  error?: string;
+}
+
+/** A reported edit conflict — the rule changed on the server since load.
+ *  `current_fp` is the server's fingerprint now (null if the rule vanished). */
+export interface RuleConflict {
+  slug: string;
+  current_fp: string | null;
+}
+
+/** PATCH outcome. `ok` ⇒ HTTP 2xx (then inspect conflicts/requires_restart).
+ *  `errors` is the 422 validation list; `detail` a 400/403/500 message or a
+ *  transport error (status 0). */
+export interface PipelineSaveResult {
+  ok: boolean;
+  status: number;
+  saved: string[];
+  conflicts: RuleConflict[];
+  requires_restart: boolean;
+  errors?: { loc?: string; msg?: string }[];
+  detail?: string;
 }
 
 /** The persisted config blob (mirrors the Rust `Config`). */

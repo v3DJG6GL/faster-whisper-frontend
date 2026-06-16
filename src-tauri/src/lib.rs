@@ -90,6 +90,8 @@ pub fn run() {
             commands::list_override_profiles,
             commands::get_capabilities, // P11: GET /v1/me capabilities
             commands::get_override_profile, // P11: GET /v1/override-profiles/{name}
+            commands::get_pipeline_rules, // P17: GET /v1/pipeline-rules
+            commands::save_pipeline_rules, // P17: PATCH /v1/pipeline-rules
             commands::list_audio_devices,
             commands::start_mic_test,
             commands::stop_mic_test,

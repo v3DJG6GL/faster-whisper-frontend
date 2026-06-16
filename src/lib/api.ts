@@ -10,6 +10,8 @@ import type {
   ConnectionInfo,
   DecodeOverrides,
   FocusedApp,
+  PipelineFetch,
+  PipelineSaveResult,
   ResolvedOverrideProfile,
 } from "./types";
 
@@ -123,6 +125,53 @@ export async function getOverrideProfile(args: {
     backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
     name: args.name,
+  });
+}
+
+/** P17: the post-processing ("Dictionary") rules the caller may view + edit
+ *  (GET /v1/pipeline-rules). Returns a structured result with the HTTP status so
+ *  the screen can branch (0 = unreachable, 200 = ok, 401/403 = gated, 404 =
+ *  standard/old server). Outside Tauri → an unreachable result. */
+export async function getPipelineRules(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+}): Promise<PipelineFetch> {
+  if (!isTauri) return { ok: false, status: 0, error: "Not running in the desktop app." };
+  return invoke<PipelineFetch>("get_pipeline_rules", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+  });
+}
+
+/** P17: apply a per-rule patch (PATCH /v1/pipeline-rules). `patch` is the
+ *  {rules_patch, fingerprints} object built from the user's edits. Returns
+ *  saved / conflicts / requires_restart, plus 422 `errors` or a 400/403/500
+ *  `detail`. */
+export async function savePipelineRules(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  patch: {
+    rules_patch: Record<string, Record<string, unknown>>;
+    fingerprints?: Record<string, string>;
+  };
+}): Promise<PipelineSaveResult> {
+  if (!isTauri)
+    return {
+      ok: false,
+      status: 0,
+      saved: [],
+      conflicts: [],
+      requires_restart: false,
+      detail: "Not running in the desktop app.",
+    };
+  return invoke<PipelineSaveResult>("save_pipeline_rules", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    patch: args.patch,
   });
 }
 

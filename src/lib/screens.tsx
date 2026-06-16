@@ -3,7 +3,7 @@
 // quick-launch row, the Settings quick-launch editor, and the cross-window
 // navigation bridge (App.tsx). Keep `id`s in sync with the router paths in App.tsx.
 
-import { Home, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindow } from "lucide-react";
+import { Home, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindow, BookA } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { OverlayScreen, OverlayActionKind, OverlayQuickAction } from "./types";
 
@@ -20,6 +20,7 @@ export const SCREENS: ScreenDef[] = [
   { id: "transcribe", label: "Transcribe", path: "/transcribe", icon: AudioLines },
   { id: "profiles", label: "Profiles", path: "/profiles", icon: Command },
   { id: "backends", label: "Backends", path: "/backends", icon: Server },
+  { id: "dictionary", label: "Dictionary", path: "/dictionary", icon: BookA },
   { id: "app-rules", label: "App rules", path: "/app-rules", icon: AppWindow },
   { id: "settings", label: "Settings", path: "/settings", icon: Settings },
 ];

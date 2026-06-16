@@ -9,6 +9,7 @@ use std::time::Duration;
 
 pub mod batch;
 pub mod discovery;
+pub mod pipeline;
 pub mod stream;
 
 #[derive(Debug, Serialize)]

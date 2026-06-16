@@ -143,6 +143,35 @@ pub async fn get_override_profile(
     transport::discovery::get_override_profile(&server_url, &name, key.as_deref()).await
 }
 
+/// P17: the post-processing (pipeline) rules the caller may view + edit
+/// (`GET /v1/pipeline-rules`) — for the Dictionary screen. Structured result so
+/// the UI can distinguish standard-server (404) / unauthorized (401) / no-access
+/// (403) / parse errors from a real rule list.
+#[tauri::command]
+pub async fn get_pipeline_rules(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+) -> transport::pipeline::PipelineFetch {
+    let key = resolve_key(api_key, backend_id);
+    transport::pipeline::get_pipeline_rules(&server_url, key.as_deref()).await
+}
+
+/// P17: apply a per-rule patch (`PATCH /v1/pipeline-rules`). `patch` is the
+/// `{rules_patch, fingerprints}` object the client builds from its edits.
+/// Structured result carries saved / conflicts / requires_restart, plus 422
+/// `errors` or a 400/403/500 `detail`.
+#[tauri::command]
+pub async fn save_pipeline_rules(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    patch: serde_json::Value,
+) -> transport::pipeline::PipelineSave {
+    let key = resolve_key(api_key, backend_id);
+    transport::pipeline::save_pipeline_rules(&server_url, key.as_deref(), patch).await
+}
+
 #[tauri::command]
 pub fn list_audio_devices() -> Vec<AudioDevice> {
     audio::device::list_input_devices()
