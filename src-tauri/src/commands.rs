@@ -491,13 +491,26 @@ pub struct ClipboardSnapshot(pub std::sync::Mutex<Option<String>>);
 
 /// Snapshot the current clipboard before a live paste-injection session.
 #[tauri::command]
-pub fn begin_injection(snap: State<ClipboardSnapshot>) {
-    let text = arboard::Clipboard::new()
-        .ok()
-        .and_then(|mut c| c.get_text().ok());
-    if let Ok(mut g) = snap.0.lock() {
-        *g = Some(text.unwrap_or_default());
+pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), String> {
+    // Read the clipboard OFF the GTK main thread, time-bounded. This is now called PER PHRASE, and a
+    // SYNC command runs on the UI thread — arboard's get_text is a blocking Wayland round-trip, so on
+    // the UI thread it freezes the whole app (and reading a dead/slow clipboard owner — e.g. right
+    // after the previous owner process exited — can hang indefinitely). On timeout/empty we KEEP the
+    // prior snapshot: that path means we still hold the clipboard ourselves (the user copied nothing
+    // new), so the existing snapshot already has their value.
+    let read = tokio::task::spawn_blocking(|| {
+        arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())
+    });
+    match tokio::time::timeout(std::time::Duration::from_millis(400), read).await {
+        Ok(Ok(Some(text))) => {
+            tracing::info!("[clip] begin_injection: snapshot {} chars", text.len());
+            if let Ok(mut g) = snap.0.lock() {
+                *g = Some(text);
+            }
+        }
+        _ => tracing::info!("[clip] begin_injection: clipboard read empty/timeout — keeping prior snapshot"),
     }
+    Ok(())
 }
 
 /// Restore the clipboard snapshot taken by `begin_injection` (end of a live session).
@@ -505,6 +518,7 @@ pub fn begin_injection(snap: State<ClipboardSnapshot>) {
 pub fn end_injection(snap: State<ClipboardSnapshot>) {
     let prev = snap.0.lock().ok().and_then(|mut g| g.take());
     if let Some(prev) = prev {
+        tracing::info!("[clip] end_injection: restore {} chars (delayed)", prev.len());
         // Persist on Wayland: a plain set_text that drops immediately doesn't stick, which
         // is why the clipboard was "never restored". Serve it from a live owner — and after a
         // short delay, so the last phrase's in-flight Ctrl+V consumes the transcript BEFORE we
@@ -521,20 +535,53 @@ pub fn end_injection(snap: State<ClipboardSnapshot>) {
 pub fn restore_clipboard_snapshot(snap: State<ClipboardSnapshot>) {
     let prev = snap.0.lock().ok().and_then(|g| g.clone());
     if let Some(prev) = prev {
+        tracing::info!("[clip] restore_clipboard_snapshot: {} chars", prev.len());
         crate::inject::set_clipboard_persistent(&prev);
     }
 }
 
 /// The focused application's id + title + (when deep detection is on) whether its focused
 /// element is editable. Via AT-SPI; `None` when nothing is known yet (no a11y bridge / cold
-/// listener). Used to resolve per-app rules, the chip readout, and the field guard.
+/// listener). Used to resolve per-app rules, the chip readout, and the field guard. When one
+/// of OUR OWN windows holds focus, returns a synthetic `is_self` "this app" target so the chip
+/// reads "→ this app" rather than the stale previously-focused app AT-SPI would report.
 #[tauri::command]
 pub async fn get_focused_app(
+    app: AppHandle,
     guard: State<'_, crate::atspi_guard::AtspiGuard>,
 ) -> Result<Option<crate::atspi_guard::FocusedApp>, String> {
-    let app = crate::atspi_guard::focused_app(guard.inner()).await;
-    tracing::info!("[focused-app] {app:?}");
-    Ok(app)
+    // Authoritative own-window check (same as inject_text's guard): a Wayland client always
+    // knows its own keyboard focus. Dictation won't type into our own UI, so surface that
+    // truthfully instead of letting AT-SPI report whatever was focused before us. The
+    // click-through "overlay" chip never holds focus; exclude it.
+    if app
+        .webview_windows()
+        .iter()
+        .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+    {
+        return Ok(Some(crate::atspi_guard::FocusedApp {
+            app_id: "self".into(),
+            title: "this app".into(),
+            editable: Some(false),
+            is_self: true,
+        }));
+    }
+    let focused = crate::atspi_guard::focused_app(guard.inner()).await;
+    tracing::info!("[focused-app] {focused:?}");
+    Ok(focused)
+}
+
+/// Like `get_focused_app` but WITHOUT the own-window self short-circuit: returns the
+/// previously-focused OTHER application (`last_other` when our own window is up front). The
+/// App-rules "Use current" button calls this — it's always clicked while our own Settings
+/// window holds focus, so the self-aware `get_focused_app` would always report "this app".
+#[tauri::command]
+pub async fn get_focused_other_app(
+    guard: State<'_, crate::atspi_guard::AtspiGuard>,
+) -> Result<Option<crate::atspi_guard::FocusedApp>, String> {
+    let focused = crate::atspi_guard::focused_app(guard.inner()).await;
+    tracing::info!("[focused-other-app] {focused:?}");
+    Ok(focused)
 }
 
 /// Toggle the opt-in AT-SPI "deep field detection" (a11y flag + Chromium/Electron poke),

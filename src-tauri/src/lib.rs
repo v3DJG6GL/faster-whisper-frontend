@@ -129,6 +129,7 @@ pub fn run() {
             commands::end_injection,
             commands::restore_clipboard_snapshot,
             commands::get_focused_app,
+            commands::get_focused_other_app,
             commands::set_deep_field_detection,
             overlay::show_overlay,
             overlay::hide_overlay,

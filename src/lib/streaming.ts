@@ -22,6 +22,7 @@
 // baseline so the next utterance starts fresh, and optionally type a separator.
 
 import { useApp } from "./store";
+import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
 import {
   isTauri,
   startStream,
@@ -34,10 +35,23 @@ import {
   restoreClipboardSnapshot,
   getFocusedApp,
   reregisterShortcuts,
+  writeRecordingTranscript,
 } from "./api";
 import type { ActivationKind, Backend, DecodeOverrides, FocusedApp } from "./types";
 
 let wired = false;
+
+// Auto-stop a hands-free (latch) session after a configured stretch of continuous silence (0 = off).
+// Reuses the SAME speaking detector as the chip (lib/speaking), so "silence" means exactly what the
+// chip shows as not-green; fires the normal stop (which drains the last phrase). Armed per session in
+// startLive, disarmed on any stop/cancel.
+let autoStopMemo: SpeakMemo = newSpeakMemo();
+let autoStopMs = 0;
+let lastSpokeAt = 0;
+
+// Path of the .wav saved for THIS session (from `stream://recording-saved`), so the closed handler
+// can label it with the full transcript (sibling .txt). Reset each session; null = nothing saved.
+let lastSavedRecordingPath: string | null = null;
 let activeEndpoint: "stream" | "batch" | null = null;
 // The whole post-processed document through the last `final` (committed + tail),
 // for the chip/Home preview. Partials carry only the current utterance, so we
@@ -49,6 +63,16 @@ let injectedText = "";
 // Documents completed before a hard break, accumulated for the "stop"-timing single
 // insert. Live mode types as it goes, so it doesn't read this back.
 let bankedDoc = "";
+// The finished hard-break "paragraphs" (pause-delimited documents) this session, for the saved
+// transcript sidecar — joined with newlines so it reads cleanly regardless of the server's (often
+// empty) typed between-document separator. NOT used for injection. Reset each session.
+let sessionDocs: string[] = [];
+// Clipboard-only phrase boundary. committedDoc grows across phrases until the backend's long-silence
+// hard break — which can be many seconds away, far too late to feel like "just my last phrase". So we
+// detect the phrase boundary client-side: `clipBaseline` is the committedDoc text already copied as
+// PRIOR phrases; the current clipboard phrase is committedDoc beyond it. Advanced by the phrase-end
+// quiet timer (you paused → start fresh), reset at each hard break + session start.
+let clipBaseline = "";
 // Insertion config captured at dictation start.
 interface InsertCfg {
   timing: "off" | "stop" | "live";
@@ -62,9 +86,23 @@ interface InsertCfg {
   notEditable: boolean; // deep detection: focused element isn't a text field → coerced to clipboard-only
 }
 let insertCfg: InsertCfg | null = null;
-// Whether we snapshotted the clipboard at session start (live paste), so the close handler
-// knows to restore it. Tracked separately because the insert method is now re-resolved per
-// injection (it can change as you switch windows) rather than frozen at dictation start.
+// P19: per-phrase insert feedback. `sessionTyped`/`sessionClipboard` accumulate what actually
+// happened this session, so the chip's end-of-session done marker is truthful; `insertSeq`
+// bumps on every landed phrase so the chip re-triggers its calm green "inserted" pulse.
+let sessionTyped = false;
+let sessionClipboard = false;
+let insertSeq = 0;
+function signalInsert(kind: "typed" | "clipboard"): void {
+  useApp.getState().setDictation({ lastInsert: { kind, seq: ++insertSeq } });
+}
+/** The truthful end-of-session outcome from what landed this session — typed wins over
+ *  clipboard wins over nothing. */
+function endOutcome(): "typed" | "clipboard" | "none" {
+  return sessionTyped ? "typed" : sessionClipboard ? "clipboard" : "none";
+}
+// Whether we've taken at least one clipboard snapshot this session (live paste) — set the first
+// time a phrase is actually pasted (the snapshot is re-taken PER PHRASE, just before each paste),
+// so the close handler knows it owes a final restore + snapshot-clear.
 let beganInjection = false;
 // "Press Enter after" in live mode fires per PHRASE, detected client-side: when speech goes
 // quiet for PHRASE_END_QUIET_MS (finals/partials stop) we treat the phrase as finished and
@@ -95,8 +133,8 @@ function enqueueAutoEnter(): void {
   });
 }
 
-/** Enqueue a clipboard restore (live paste): put the user's ORIGINAL clipboard back from the
- *  once-captured snapshot, without consuming it (so the next phrase's paste + restore repeats).
+/** Enqueue a clipboard restore (live paste): put the user's clipboard back from the most-recent
+ *  per-phrase snapshot, without consuming it (so the next phrase's paste + restore repeats).
  *  No-op in Rust when we never snapshotted. */
 function enqueueRestoreSnapshot(): void {
   enqueueInject(async () => {
@@ -109,12 +147,13 @@ function enqueueRestoreSnapshot(): void {
 }
 
 /** (Re)arm the phrase-end quiet timer — the single "you paused, the phrase is done" signal that
- *  drives BOTH per-phrase actions: the auto-Enter and the clipboard restore. Called on every
- *  partial/final while live, so ongoing speech keeps deferring them; once speech stops for
- *  PHRASE_END_QUIET_MS the phrase is done. The backend hard-break boundary (~20s) is a backstop. */
+ *  drives the per-phrase actions: auto-Enter, clipboard restore, AND advancing the clipboard-only
+ *  phrase baseline. Called on every partial/final while live, so ongoing speech keeps deferring
+ *  them; once speech stops for PHRASE_END_QUIET_MS the phrase is done. The backend hard-break
+ *  boundary (~20s) is a backstop. Armed for ANY live session (not just Enter/restore) so the
+ *  clipboard-only baseline still advances on a pause. */
 function bumpPhraseEnd(): void {
   if (!insertCfg?.live) return;
-  if (!(insertCfg.autoEnter || insertCfg.restoreClipboard)) return;
   if (phraseEndTimer) clearTimeout(phraseEndTimer);
   phraseEndTimer = setTimeout(() => {
     phraseEndTimer = null;
@@ -130,6 +169,9 @@ function bumpPhraseEnd(): void {
       clipDirty = false;
       enqueueRestoreSnapshot();
     }
+    // You paused → end the current clipboard-only phrase, so the next utterance copies fresh and
+    // "Clipboard only" holds just your latest phrase instead of the whole hard-break window.
+    clipBaseline = committedDoc;
   }, PHRASE_END_QUIET_MS);
 }
 
@@ -141,6 +183,7 @@ function clearPhraseEnd(): void {
   }
   phraseDirty = false;
   clipDirty = false;
+  clipBaseline = "";
 }
 
 /** Resolve the CURRENT injection target (focused app → per-app rule) into the method +
@@ -148,16 +191,27 @@ function clearPhraseEnd(): void {
  *  per-app rules follow window switches mid-session: a latched/live dictation that moves
  *  from Konsole to another app picks up each window's own rule instead of being frozen to
  *  whatever was focused when dictation began. Mirrors the resolution in startLive. */
-async function resolveTarget(): Promise<{ method: InsertCfg["method"]; pasteShortcut: string[] }> {
+async function resolveTarget(): Promise<{ method: InsertCfg["method"]; pasteShortcut: string[]; isSelf: boolean }> {
   const g = useApp.getState().settings.general;
   const appRules = useApp.getState().appRules;
   const targetApp = await getFocusedApp();
+  // Our own window is focused → dictation won't type here (the Rust injection guard skips it).
+  // Show it as "→ this app" (neutral, no warn hint) and don't match an app rule / field guard.
+  if (targetApp?.isSelf) {
+    publishTarget(targetApp, null);
+    return { method: g.insertMethod, pasteShortcut: g.pasteShortcut, isSelf: true };
+  }
   const rule = targetApp
     ? appRules.find((r) => r.appId.toLowerCase() === targetApp.appId.toLowerCase())
     : undefined;
-  // Opt-in deep detection: a definitely-non-editable focused element (and no rule forcing
-  // typing here) → clipboard-only. Positive-only: only editable===false skips.
-  const notEditable = !!(g.deepFieldDetection && !rule?.block && targetApp?.editable === false);
+  // Opt-in deep detection: a definitely-non-editable focused element → clipboard-only.
+  // Positive-only: only editable===false skips. BUT an explicit per-app insert method means the
+  // user already decided how to inject here, so deep detection must not second-guess it — e.g. a
+  // "konsole → paste" rule: a terminal isn't an editable AT-SPI field (no Role::Terminal on the
+  // focused element), yet the user told us to paste there. Only coerce when no rule forces a method.
+  const notEditable = !!(
+    g.deepFieldDetection && !rule?.block && !rule?.insertMethod && targetApp?.editable === false
+  );
   const method: InsertCfg["method"] =
     rule?.block || notEditable ? "clipboard" : rule?.insertMethod ?? g.insertMethod;
   const pasteShortcut = rule?.pasteShortcut ?? g.pasteShortcut;
@@ -165,7 +219,7 @@ async function resolveTarget(): Promise<{ method: InsertCfg["method"]; pasteShor
   // the CURRENT window on every call, so it's the chip's source of truth — not the frozen
   // start-of-session value.
   publishTarget(targetApp ?? null, rule?.block ? "blocked" : notEditable ? "notEditable" : null);
-  return { method, pasteShortcut };
+  return { method, pasteShortcut, isSelf: false };
 }
 
 /** Push the resolved injection target into the store (deduped) so the chip's "→ app" readout +
@@ -210,7 +264,7 @@ function settleToIdleAfterInjection(startedAt: number): void {
     const wait = Math.max(0, MIN_INJECT_VISIBLE_MS - (performance.now() - startedAt));
     setTimeout(() => {
       if (useApp.getState().status === "injecting") {
-        useApp.getState().setDictation({ status: "idle" });
+        useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome() });
       }
     }, wait);
   });
@@ -270,6 +324,19 @@ async function ensureListeners(): Promise<void> {
   let latestLevel = 0;
   await listen<number>("stream://level", (e) => {
     latestLevel = e.payload;
+    // Latch auto-stop (when armed): track silence via the shared speaking detector and end the
+    // session after the configured quiet stretch. Fires once, then disarms itself.
+    if (autoStopMs > 0) {
+      const tNow = performance.now();
+      const listening = useApp.getState().status === "listening";
+      if (stepSpeaking(autoStopMemo, latestLevel, listening, tNow)) {
+        lastSpokeAt = tNow;
+      } else if (listening && tNow - lastSpokeAt >= autoStopMs) {
+        autoStopMs = 0;
+        console.info("[dictation] latch auto-stop: silence threshold reached");
+        void stopLive();
+      }
+    }
     const wait = LEVEL_MIN_MS - (performance.now() - lastLevelAt);
     if (wait <= 0) {
       if (levelTimer) {
@@ -291,8 +358,9 @@ async function ensureListeners(): Promise<void> {
     const live = e.payload.committed + e.payload.pending;
     const sep = committedDoc && live && !/\s$/.test(committedDoc) ? " " : "";
     setDictation({ status: "listening", partial: committedDoc + sep + live });
-    // Still speaking → push the per-phrase Enter + clipboard restore back until you pause.
-    if (phraseDirty || clipDirty) bumpPhraseEnd();
+    // Still speaking → keep deferring the per-phrase actions (Enter / clipboard restore / clipboard
+    // phrase boundary) until you actually pause. Armed for any live session.
+    if (insertCfg?.live) bumpPhraseEnd();
   });
 
   await listen<{ committed: string; tail: string; last: boolean }>("stream://final", (e) => {
@@ -309,12 +377,13 @@ async function ensureListeners(): Promise<void> {
       // Compute both candidate payloads synchronously (so the append baseline stays in
       // event order), then pick + inject inside the queue after resolving the CURRENT
       // window's rule — so the method/paste-shortcut follow window switches per segment.
-      //   • clipboard → the FULL transcript-so-far (set_clipboard_persistent replaces the
-      //     prior owner); bankedDoc carries pre-boundary utterances so it accumulates.
+      //   • clipboard → just the CURRENT hard-break window (committedDoc) — everything since your
+      //     last pause; set_clipboard_persistent replaces the prior owner. It resets each boundary,
+      //     so the clipboard never accumulates the whole session.
       //   • typed (paste/direct), append-only → only the new suffix beyond what we've typed.
       //     Strip the document's leading whitespace (Whisper prefixes a space) so the first
       //     phrase has none; inner/inter-phrase spacing is preserved. Never backspace/revise.
-      const fullDoc = (bankedDoc + committedDoc).trim();
+      const phraseClip = committedDoc.slice(commonPrefixLen(clipBaseline, committedDoc)).trim();
       const target = committedDoc.replace(/^\s+/, "");
       const c = commonPrefixLen(injectedText, target);
       const toType = target.slice(c);
@@ -322,12 +391,41 @@ async function ensureListeners(): Promise<void> {
       enqueueInject(async () => {
         const t = await resolveTarget();
         if (t.method === "clipboard") {
-          await injectText({ text: fullDoc, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+          // Clipboard-only: copy just the current hard-break window (everything since your last
+          // pause) — never the whole session — so the clipboard doesn't pile up. Each copy flashes
+          // the chip's clipboard glyph PER PHRASE (mirroring the typed green pulse) so a latch
+          // session shows confirmation continuously, not only the end-of-session glyph. Skip our
+          // own window (the injection guard copies nothing there → would be a false confirmation).
+          if (phraseClip.length > 0) {
+            await injectText({ text: phraseClip, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+            if (!t.isSelf) {
+              sessionClipboard = true;
+              signalInsert("clipboard");
+            }
+          }
         } else if (toType.length > 0) {
+          // Snapshot the user's CURRENT clipboard right before this paste overwrites it — per phrase,
+          // not once at session start — and only when we don't already hold it (clipDirty false), so
+          // we never capture our own transcript. Fixes mid-session copies lost to a stale start-time
+          // snapshot, and sessions that start in a clipboard-coerced window then move to a paste one.
+          if (t.method === "paste" && insertCfg?.restoreClipboard && !clipDirty) {
+            try {
+              await beginInjection();
+              beganInjection = true;
+            } catch (e) {
+              console.error("beginInjection failed:", e);
+            }
+          }
           await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
           // A real paste just clobbered the user's clipboard with the transcript → it owes a
           // restore at phrase end. Direct typing never touches the clipboard, so don't.
           if (t.method === "paste") clipDirty = true;
+          // A phrase just landed in the field → calm green "inserted" pulse. Skip our own window
+          // (the injection guard types nothing there, so it would be a false confirmation).
+          if (!t.isSelf) {
+            sessionTyped = true;
+            signalInsert("typed");
+          }
         }
       });
       // A phrase's text just landed AND the document actually GREW (`toType` is empty for a
@@ -348,11 +446,13 @@ async function ensureListeners(): Promise<void> {
     // the stop-timing single insert), drop our live baseline so the next utterance
     // starts fresh, clear the preview, and optionally type the configured separator.
     const sep = e.payload || "";
-    // Always bank the finished document: the "stop" single insert reads it back, and so
-    // does clipboard-only live (full transcript on the clipboard). It's cheap, and typed
-    // live ignores it (it resets committedDoc/injectedText below and appends from there).
+    // Always bank the finished document for the "stop"-timing single insert (it reads bankedDoc
+    // back). Typed live ignores it (resets committedDoc/injectedText below and appends from there),
+    // and clipboard-only now ignores it too (it copies just the current window per phrase).
     if (committedDoc) bankedDoc += committedDoc + sep;
+    if (committedDoc.trim()) sessionDocs.push(committedDoc.trim()); // archive: one line per paragraph
     committedDoc = "";
+    clipBaseline = "";
     injectedText = "";
     setDictation({ partial: "" });
     // A hard break = a finished phrase. In live mode, emit (into the window focused NOW)
@@ -391,6 +491,12 @@ async function ensureListeners(): Promise<void> {
     clipDirty = false;
   });
 
+  // A streamed recording was just saved (emitted right before "closed"): remember its path so the
+  // closed handler can label it with the session transcript.
+  await listen<string>("stream://recording-saved", (e) => {
+    lastSavedRecordingPath = e.payload;
+  });
+
   await listen<string>("stream://status", (e) => {
     if (e.payload === "ready") {
       setDictation({ status: "listening", dictationError: null });
@@ -416,9 +522,22 @@ async function ensureListeners(): Promise<void> {
       // return to idle once the queue drains (see settleToIdleAfterInjection).
       setDictation({ level: 0 });
 
+      // If a recording was saved this session, label it with the full transcript (sibling .txt) so
+      // the recordings folder is searchable. Independent of insert timing/method; best-effort.
+      if (lastSavedRecordingPath) {
+        // One line per hard-break paragraph so the saved transcript reads cleanly (the server's
+        // typed between-document separator is often empty). Independent of what was injected.
+        const docs = sessionDocs.slice();
+        const lastDoc = committedDoc.trim();
+        if (lastDoc) docs.push(lastDoc);
+        const transcript = docs.join("\n");
+        if (transcript) void writeRecordingTranscript(lastSavedRecordingPath, transcript);
+        lastSavedRecordingPath = null;
+      }
+
       const cfg = insertCfg;
       if (!cfg || cfg.timing === "off") {
-        setDictation({ status: "idle" });
+        setDictation({ status: "idle", sessionOutcome: endOutcome() });
         return;
       }
 
@@ -437,7 +556,17 @@ async function ensureListeners(): Promise<void> {
         clipDirty = false; // end_injection below does the final restore + clears the snapshot
         const hasTail = enterTail || beganInjection;
         if (!hasTail) {
-          setDictation({ status: "idle" });
+          // No visible write-out tail (clipboard-only, direct typing, or nothing landed): skip the
+          // "injecting" flash, but still drain the queue before reading the outcome — otherwise the
+          // done marker resolves to "none" before sessionTyped/sessionClipboard is set and the
+          // glyph/✓ never shows. If a late paste set beganInjection after this sync check, honor its
+          // final clipboard restore too (can't double-fire: the injecting branch handles the rest).
+          void injectChain.then(() => {
+            if (beganInjection) void endInjection();
+            if (useApp.getState().status === "transcribing") {
+              useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome() });
+            }
+          });
           return;
         }
         setDictation({ status: "injecting" });
@@ -450,7 +579,7 @@ async function ensureListeners(): Promise<void> {
         // bankedDoc holds any documents finalized before a hard break this session.
         const text = (bankedDoc + committedDoc).trim();
         if (!text) {
-          setDictation({ status: "idle" });
+          setDictation({ status: "idle", sessionOutcome: endOutcome() });
           return;
         }
         setDictation({ status: "injecting" });
@@ -463,6 +592,12 @@ async function ensureListeners(): Promise<void> {
             restoreClipboard: cfg.restoreClipboard,
             pasteShortcut: t.pasteShortcut,
           });
+          // Single end-of-session insert — record the outcome for the done marker (no separate
+          // per-phrase pulse; this IS the whole session).
+          if (!t.isSelf) {
+            if (t.method === "clipboard") sessionClipboard = true;
+            else sessionTyped = true;
+          }
         });
         settleToIdleAfterInjection(startedAt);
       }
@@ -473,7 +608,7 @@ async function ensureListeners(): Promise<void> {
     clearStuckWatchdog();
     stopTargetPoll();
     console.error("stream error:", e.payload);
-    setDictation({ status: "error", dictationError: e.payload, level: 0 });
+    flashError(e.payload);
     // Tear down the Rust capture session so the mic closes and system audio
     // un-mutes immediately — the dead WS task doesn't drop it, so without this the
     // mic light + speaker mute linger until the next dictation. The visible error
@@ -511,6 +646,26 @@ function mergeDecodeOverrides(
   return Object.keys(out).length ? (out as DecodeOverrides) : undefined;
 }
 
+/** How long a dictation error lingers on the chip before it auto-clears back to idle. Without
+ *  this a transient failure (server unreachable, refused start) sticks forever — most visibly
+ *  with the persistent dock on, where the chip never hides on its own (overlay.ts keeps it shown
+ *  while the dock is enabled, so its error hide-timer never runs). */
+const ERROR_LINGER_MS = 4000;
+let errorClearTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
+ *  Guarded: if a new session starts first (status leaves "error"), the pending clear is a no-op. */
+function flashError(message: string): void {
+  useApp.getState().setDictation({ status: "error", dictationError: message, level: 0 });
+  if (errorClearTimer) clearTimeout(errorClearTimer);
+  errorClearTimer = setTimeout(() => {
+    errorClearTimer = null;
+    if (useApp.getState().status === "error") {
+      useApp.getState().setDictation({ status: "idle", dictationError: null });
+    }
+  }, ERROR_LINGER_MS);
+}
+
 export async function startLive(
   backend: Backend,
   deviceId: string | null,
@@ -522,6 +677,12 @@ export async function startLive(
   const s = useApp.getState().settings;
   const g = s.general;
   const rec = s.recording;
+  // Arm latch auto-stop (0 = off): end a hands-free session after N min of continuous silence.
+  // Hold/push-to-talk ends on key-release, so this is latch-only. Disarmed by stopLive/cancelLive.
+  autoStopMemo = newSpeakMemo();
+  lastSpokeAt = performance.now();
+  autoStopMs = activation !== "hold" && rec.latchAutoStopMin > 0 ? rec.latchAutoStopMin * 60_000 : 0;
+  lastSavedRecordingPath = null; // set by the stream://recording-saved listener if a file is saved
   // Effective values: a set per-Profile override wins; else inherit the Backend.
   const language = pov?.language?.trim() ? pov.language : backend.language;
   // prompt is a 3-state sentinel sent to the backend: undefined → omit (inherit the
@@ -543,9 +704,11 @@ export async function startLive(
     : undefined;
   // Opt-in deep field detection: if the focused element definitively isn't editable — and
   // no rule forces typing here — don't type into it. Positive-only: editable===false is the
-  // ONLY skip; null/undefined (unknown / app not on the a11y bus) still types.
+  // ONLY skip; null/undefined (unknown / app not on the a11y bus) still types. An explicit
+  // per-app insert method (rule.insertMethod) opts out — the user already decided how to inject
+  // here, so deep detection must not override it (e.g. "konsole → paste"; see resolveTarget).
   const notEditable =
-    g.deepFieldDetection && !rule?.block && targetApp?.editable === false;
+    !!g.deepFieldDetection && !rule?.block && !rule?.insertMethod && targetApp?.editable === false;
   // A blocked app OR a non-editable target is coerced to clipboard-only: nothing is typed
   // there, but the text isn't lost — it lands on the clipboard for the user to paste.
   const method: InsertCfg["method"] =
@@ -572,7 +735,10 @@ export async function startLive(
   committedDoc = "";
   injectedText = "";
   bankedDoc = "";
+  sessionDocs = [];
   beganInjection = false;
+  sessionTyped = false;
+  sessionClipboard = false;
   clearPhraseEnd();
   injectChain = Promise.resolve();
   clearStuckWatchdog(); // fresh session — drop any leftover backstop
@@ -588,22 +754,17 @@ export async function startLive(
     overridesIgnored: [],
     targetApp: insertCfg.targetApp,
     targetSkip,
+    // Clear any prior session's done marker / pulse so the fresh session starts clean.
+    lastInsert: null,
+    sessionOutcome: null,
   });
   activeEndpoint = backend.endpoint;
   startTargetPoll(); // keep the chip's target readout live as focus moves during the session
 
-  // Live paste: snapshot the clipboard ONCE here, then restore the original from it after each
-  // pasted phrase (driven by the phrase-end quiet timer) — so an ongoing latch session, which
-  // never reaches the stop-time restore, still hands the user's clipboard back between phrases.
-  // Keyed off the start method; if focus later moves to a non-paste window we still restore.
-  if (insertCfg.live && insertCfg.method === "paste" && insertCfg.restoreClipboard) {
-    try {
-      await beginInjection();
-      beganInjection = true;
-    } catch (e) {
-      console.error("beginInjection failed:", e);
-    }
-  }
+  // The clipboard snapshot for "restore after" is taken PER PHRASE now, just before each paste
+  // (see the live `final` handler) — not once here — so it tracks what you actually had on the
+  // clipboard at each phrase, and a session that starts in a non-paste window still restores once
+  // it pastes. beginInjection is no longer called at session start.
 
   try {
     if (backend.endpoint === "batch") {
@@ -617,6 +778,7 @@ export async function startLive(
         overrideProfile,
         deviceId,
         save: rec.saveRecordings,
+        recordingsDir: rec.recordingsDir,
         muteSystem: rec.muteSystemAudio,
       });
     } else {
@@ -631,16 +793,19 @@ export async function startLive(
         responseFormat: backend.responseFormat,
         deviceId,
         save: rec.saveRecordings,
+        recordingsDir: rec.recordingsDir,
+        trimSilence: rec.trimSilence,
         muteSystem: rec.muteSystemAudio,
       });
     }
   } catch (e) {
     console.error("start dictation failed:", e);
-    setDictation({ status: "error", dictationError: String(e) });
+    flashError(String(e));
   }
 }
 
 export async function stopLive(): Promise<void> {
+  autoStopMs = 0; // disarm latch auto-stop — we're stopping now
   // Streaming: server flushes + drains. Batch: transcription runs now. Either way the
   // `closed` event then moves us "transcribing" → "injecting" (while the text is
   // written out) → "idle" — so the chip shows progress the whole way through.
@@ -659,11 +824,13 @@ export async function stopLive(): Promise<void> {
  *  stuck "down" in the evdev backend (a dropped key-release) — so the one action
  *  recovers both the recording state AND the shortcuts. */
 export async function cancelLive(): Promise<void> {
+  autoStopMs = 0; // disarm latch auto-stop
   clearStuckWatchdog();
   stopTargetPoll();
   committedDoc = "";
   injectedText = "";
   bankedDoc = "";
+  sessionDocs = [];
   // If we snapshotted the clipboard for live paste, give the user's original back and clear the
   // snapshot so it can't leak into the next session (end_injection restores + consumes it).
   if (beganInjection) void endInjection();
@@ -673,7 +840,8 @@ export async function cancelLive(): Promise<void> {
   injectChain = Promise.resolve();
   useApp
     .getState()
-    .setDictation({ status: "idle", partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null });
+    // Cancelled → no done marker (outcome "none"); clear any pending per-phrase pulse.
+    .setDictation({ status: "idle", partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", lastInsert: null });
   const endpoint = activeEndpoint;
   activeEndpoint = null;
   try {
