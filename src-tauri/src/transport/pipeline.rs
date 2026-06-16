@@ -22,6 +22,11 @@ pub struct PipelineRulesState {
     pub role: String,
     #[serde(default)]
     pub editable_fields: serde_json::Value,
+    /// Backend's QUICK_CONFIG_MAP_COLLAPSE_AFTER (newest cb:map entries shown
+    /// before collapsing). MUST be declared here or serde drops it on the
+    /// pass-through and the webview never sees it.
+    #[serde(default)]
+    pub map_collapse_after: Option<i64>,
 }
 
 /// GET outcome. `ok` ⇒ `state` is present; otherwise `status` + `error` say why

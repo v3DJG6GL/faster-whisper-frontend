@@ -351,9 +351,15 @@ function RuleCard({
                 <span className="min-w-0 flex-1">When you say</span>
                 <span className="w-4 shrink-0" aria-hidden />
                 <span className="min-w-0 flex-1">Insert</span>
-                <span className="w-24 shrink-0 text-right">Added</span>
+                <span className="w-44 shrink-0 text-right">Added</span>
                 {bodyEditable && <span className="w-7 shrink-0" aria-hidden />}
               </div>
+              {/* Add is at the TOP — new mappings prepend (newest-first). */}
+              {bodyEditable && (
+                <Button variant="ghost" size="sm" onClick={() => setPairs((rows) => [{ id: mkId(), k: "", v: "" }, ...rows])}>
+                  <Plus className="size-3.5" /> Add mapping
+                </Button>
+              )}
               {mapShown.map((row) => {
                 const ts = rule.map_meta?.[row.k];
                 return (
@@ -363,9 +369,9 @@ function RuleCard({
                     <span className="w-4 shrink-0 text-center text-faint" aria-hidden>→</span>
                     <TextInput value={row.v} disabled={!bodyEditable} spellCheck={false} placeholder="," className={cn(monoInput, "min-w-0 flex-1")}
                       onChange={(ev) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, v: ev.target.value } : r)))} />
-                    <span className="w-24 shrink-0 truncate text-right text-[10.5px] text-faint"
-                      title={ts ? new Date(ts * 1000).toLocaleString() : undefined}>
-                      {ts ? new Date(ts * 1000).toLocaleDateString() : <span className="text-faint/50">new</span>}
+                    <span className="w-44 shrink-0 whitespace-nowrap text-right font-mono text-[10.5px] text-faint"
+                      title={ts ? absWhen(ts) : undefined}>
+                      {fmtWhen(ts)}
                     </span>
                     {bodyEditable && (
                       <button type="button" title="Remove mapping"
@@ -384,11 +390,6 @@ function RuleCard({
                     ? `▾ Hide ${mapHidden} older`
                     : `▸ Show ${mapHidden} older mapping${mapHidden === 1 ? "" : "s"}`}
                 </button>
-              )}
-              {bodyEditable && (
-                <Button variant="ghost" size="sm" onClick={() => setPairs((rows) => [{ id: mkId(), k: "", v: "" }, ...rows])}>
-                  <Plus className="size-3.5" /> Add mapping
-                </Button>
               )}
             </Stack>
           )}
@@ -450,6 +451,29 @@ function RuleCard({
       )}
     </Card>
   );
+}
+
+// Timestamp formatting — mirrors the backend's TIME_HELPERS_JS so the map
+// "Added" column reads identically: "YYYY.MM.DD | HH:MM:SS | <relative>".
+function relWhen(ts?: number): string {
+  if (!ts) return "";
+  const sec = Math.max(0, Date.now() / 1000 - ts);
+  if (sec < 5) return "just now";
+  if (sec < 60) return `${Math.floor(sec)}s ago`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  return "";
+}
+function absWhen(ts?: number): string {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} | ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function fmtWhen(ts?: number): string {
+  if (!ts) return "—";
+  const r = relWhen(ts);
+  return r ? `${absWhen(ts)} | ${r}` : absWhen(ts);
 }
 
 function swap<T>(arr: T[], i: number, j: number): T[] {
