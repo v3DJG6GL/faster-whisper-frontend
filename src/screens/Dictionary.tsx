@@ -573,7 +573,10 @@ export default function Dictionary() {
       setRecentWords(rw.words ?? []);
       setRecentMax(rw.max ?? undefined);
     });
-    setExpanded(new Set());
+    // Keep whichever rule cards are open across a save-triggered reload (and the conflict
+    // auto-reload) — both go through load(). A rule that vanished server-side drops out.
+    // Switching Backend resets expansion separately (the load-on-change effect below).
+    setExpanded((prev) => new Set([...prev].filter((name) => list.some((r) => r.name === name))));
     setLoading(false);
   }, []);
 
