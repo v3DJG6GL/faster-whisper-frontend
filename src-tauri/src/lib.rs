@@ -102,6 +102,7 @@ pub fn run() {
             commands::stop_record,
             commands::recordings_dir_path, // saved-recordings folder (display path)
             commands::open_recordings_dir, // open the saved-recordings folder
+            commands::write_recording_transcript, // label a saved .wav with its transcript (.txt sidecar)
             commands::reregister_shortcuts,
             commands::suspend_shortcuts,
             commands::validate_shortcut,

@@ -154,6 +154,9 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             tracing::info!("[stream] boundary (hard break)");
             let _ = appc.emit("stream://boundary", separator);
         }
+        StreamEvent::RecordingSaved(path) => {
+            let _ = appc.emit("stream://recording-saved", path);
+        }
         StreamEvent::Error(m) => {
             let _ = appc.emit("stream://error", m);
         }
@@ -426,9 +429,10 @@ async fn transcribe_recording(app: AppHandle, params: RecordParams, pcm: Vec<u8>
         let _ = app.emit("stream://status", "closed");
         return;
     }
-    if let Some(dir) = &params.save_dir {
-        crate::audio::save_recording(dir, &pcm, 16_000);
-    }
+    let saved_path = params
+        .save_dir
+        .as_ref()
+        .and_then(|dir| crate::audio::save_recording(dir, &pcm, 16_000));
     let wav = crate::audio::wav_from_pcm16(&pcm, 16_000);
     match batch::transcribe_wav_bytes(
         &params.server_url,
@@ -443,6 +447,10 @@ async fn transcribe_recording(app: AppHandle, params: RecordParams, pcm: Vec<u8>
     .await
     {
         Ok(res) => {
+            // Label the saved recording with its transcript (sibling .txt), same as streaming.
+            if let Some(p) = &saved_path {
+                crate::audio::save_transcript_sidecar(p, &res.text);
+            }
             let _ = app.emit(
                 "stream://final",
                 FinalPayload {

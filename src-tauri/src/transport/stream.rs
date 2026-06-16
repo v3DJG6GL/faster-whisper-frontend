@@ -25,6 +25,9 @@ pub enum StreamEvent {
     /// Long-silence hard break: the server reset its document. The client should
     /// reset its injection baseline and optionally type `separator` between docs.
     Boundary { separator: String },
+    /// The streamed audio was saved to this `.wav` path — emitted just before `Closed` so the
+    /// client can write a transcript sidecar next to it. Absent when nothing was saved.
+    RecordingSaved(String),
     Error(String),
     Closed,
 }
@@ -374,9 +377,12 @@ pub async fn run<F>(
     reader.abort();
 
     if let Some(dir) = &params.save_dir {
-        // Skip empties (e.g. a quick tap that connected then drained without audio).
+        // Skip empties (a quick tap that drained without audio, or a session the silence-trim
+        // reduced to nothing). Emit the saved path so the client can label it with the transcript.
         if !saved.is_empty() {
-            crate::audio::save_recording(dir, &saved, 16_000);
+            if let Some(path) = crate::audio::save_recording(dir, &saved, 16_000) {
+                on_event(StreamEvent::RecordingSaved(path.to_string_lossy().into_owned()));
+            }
         }
     }
     on_event(StreamEvent::Closed);

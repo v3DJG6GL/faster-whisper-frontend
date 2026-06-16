@@ -3,9 +3,8 @@
 //! lands in M3, where it is actually consumed.
 
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod capture;
 pub mod device;
@@ -49,24 +48,49 @@ pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32) -> Vec<u8> {
     wav
 }
 
-/// Save mono s16le PCM as a timestamped `.wav` under `dir` (best-effort: logs and
-/// returns on any I/O error rather than failing the dictation).
-pub fn save_recording(dir: &Path, pcm: &[u8], sample_rate: u32) {
+/// Save mono s16le PCM as a timestamped `.wav` under `dir`; returns the saved path on
+/// success (so the caller can write a transcript sidecar next to it). Best-effort: logs
+/// and returns None on any I/O error rather than failing the dictation.
+pub fn save_recording(dir: &Path, pcm: &[u8], sample_rate: u32) -> Option<PathBuf> {
     if pcm.is_empty() {
-        return;
+        return None;
     }
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
     if let Err(e) = std::fs::create_dir_all(dir) {
         tracing::warn!("[record] could not create recordings dir: {e}");
+        return None;
+    }
+    // Human-readable, sortable local timestamp (e.g. dictation-2026-06-16_22-47-35.wav). A counter
+    // suffix guards the rare case of two recordings within the same second (never overwrite).
+    let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let mut path = dir.join(format!("dictation-{stamp}.wav"));
+    let mut n = 2;
+    while path.exists() {
+        path = dir.join(format!("dictation-{stamp}-{n}.wav"));
+        n += 1;
+    }
+    match std::fs::write(&path, wav_from_pcm16(pcm, sample_rate)) {
+        Ok(()) => {
+            tracing::info!("[record] saved {}", path.display());
+            Some(path)
+        }
+        Err(e) => {
+            tracing::warn!("[record] could not save recording: {e}");
+            None
+        }
+    }
+}
+
+/// Write the dictation transcript next to its `.wav` as a sibling `.txt` (same stem), so the
+/// recordings folder is browsable/searchable. Best-effort: logs and returns on any error.
+pub fn save_transcript_sidecar(wav_path: &Path, text: &str) {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
         return;
     }
-    let path = dir.join(format!("dictation-{ts}.wav"));
-    if let Err(e) = std::fs::write(&path, wav_from_pcm16(pcm, sample_rate)) {
-        tracing::warn!("[record] could not save recording: {e}");
+    let txt_path = wav_path.with_extension("txt");
+    if let Err(e) = std::fs::write(&txt_path, format!("{trimmed}\n")) {
+        tracing::warn!("[record] could not write transcript sidecar: {e}");
     } else {
-        tracing::info!("[record] saved {}", path.display());
+        tracing::info!("[record] transcript saved {}", txt_path.display());
     }
 }

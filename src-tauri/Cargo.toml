@@ -52,6 +52,9 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", 
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 
+# Human-readable local timestamps for saved-recording filenames (already in the lock tree).
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
 # Errors / logging
 anyhow = "1"
 thiserror = "2"

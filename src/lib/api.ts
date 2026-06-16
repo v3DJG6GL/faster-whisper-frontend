@@ -520,3 +520,14 @@ export async function openRecordingsDir(custom: string | null): Promise<void> {
   if (!isTauri) return;
   await invoke("open_recordings_dir", { custom });
 }
+
+/** Label a saved recording with its transcript — writes a sibling .txt next to the .wav.
+ *  Best-effort: swallows errors (labeling must never disrupt dictation). */
+export async function writeRecordingTranscript(wavPath: string, text: string): Promise<void> {
+  if (!isTauri) return;
+  try {
+    await invoke("write_recording_transcript", { wavPath, text });
+  } catch (e) {
+    console.error("write recording transcript:", e);
+  }
+}
