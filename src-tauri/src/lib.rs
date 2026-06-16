@@ -49,6 +49,21 @@ pub fn run() {
         .manage(held_keys::HeldKeys::default())
         .manage(virtual_keyboard::VirtualKeyboard::default())
         .manage(atspi_guard::AtspiGuard::default())
+        // Close-to-tray for the MAIN window. Its webview hosts the dictation state machine and the
+        // trigger/chip action listeners; destroying it mid-session would leave the Rust audio
+        // stream running with NOTHING able to stop it (both the global shortcut and the chip route
+        // their stop/cancel through this webview), stranding the dictation until a force-quit. So
+        // we intercept the close, keep the window (and its listeners) alive, and just hide it —
+        // reachable again via the tray "Show window"; truly quit via the tray "Quit". Other windows
+        // (the overlay chip) are left to close normally.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             use tauri::Manager;
             tray::create(app)?;
