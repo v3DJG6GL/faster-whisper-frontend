@@ -655,7 +655,7 @@ export default function Overlay() {
             <div className="ml-2 flex shrink-0 items-center gap-2 font-mono text-[11px] leading-none tracking-[0.12em]">
               {state.profileTag && (
                 <div className="flex items-center">
-                  <span className="max-w-[140px] truncate uppercase text-accent/85">{state.profileTag}</span>
+                  <span className="max-w-[140px] truncate uppercase text-dim">{state.profileTag}</span>
                   <AnimatePresence>
                     {hoverReveal && detail && (
                       <motion.span
