@@ -46,6 +46,11 @@ struct Snapshot {
     /// focuses our window when clicked) and dictation both report the app the user came
     /// from, not the frontend itself.
     last_other: Option<FocusedApp>,
+    /// The app whose window is foregrounded, tracked from `window:activate` / `window:deactivate`.
+    /// Element focus is accepted only from this app (or when it's `None` — the moment after a
+    /// switch, incl. into an Electron app that never emits `window:activate`). This is what stops
+    /// a background Electron app's stray focus from hijacking detection (the "chromium ghost").
+    active_app: Option<String>,
 }
 
 /// Managed state: the lazily-started a11y listener + the deep-detection switch.
@@ -147,7 +152,7 @@ mod imp {
     use atspi::connection::{set_session_accessibility, AccessibilityConnection};
     use atspi::events::focus::FocusEvent;
     use atspi::events::object::StateChangedEvent;
-    use atspi::events::window::ActivateEvent;
+    use atspi::events::window::{ActivateEvent, DeactivateEvent};
     use atspi::events::{Event, FocusEvents, ObjectEvents, WindowEvents};
     use atspi::object_ref::ObjectRefOwned;
     use atspi::proxy::accessible::{AccessibleProxy, ObjectRefExt};
@@ -196,6 +201,11 @@ mod imp {
         conn.register_event::<ActivateEvent>()
             .await
             .map_err(|e| format!("register window-activate: {e}"))?;
+        // Deactivation clears the foreground mark — essential so that switching INTO an Electron
+        // app (which never emits window:activate) is accepted instead of rejected as a ghost.
+        conn.register_event::<DeactivateEvent>()
+            .await
+            .map_err(|e| format!("register window-deactivate: {e}"))?;
         // Owned clone of the underlying bus for proxy calls — keeps off the event
         // stream's borrow of `conn`.
         let bus = conn.connection().clone();
@@ -216,8 +226,18 @@ mod imp {
         // only records the newest focus and nudges the resolver; a slow app can stall just
         // that one task (bounded), never freezing detection of other apps — the resolver
         // always grabs the CURRENT focus, not a backlog of stale events.
-        let pending: Arc<parking_lot::Mutex<Option<(ObjectRefOwned, bool)>>> =
-            Arc::new(parking_lot::Mutex::new(None));
+        // Three coalescing slots — latest window:activate, window:deactivate, and element focus.
+        // Each is its OWN slot so a burst can't drop the activate/deactivate that drive foreground
+        // tracking (the bug a single shared slot caused). Resolved OFF the event loop (a11y
+        // round-trips run on the target app's UI thread). Processed per cycle in the order
+        // activate → deactivate → focus so the foreground mark is right before focus is gated.
+        let pending: Arc<
+            parking_lot::Mutex<(
+                Option<ObjectRefOwned>,
+                Option<ObjectRefOwned>,
+                Option<ObjectRefOwned>,
+            )>,
+        > = Arc::new(parking_lot::Mutex::new((None, None, None)));
         let notify = Arc::new(tokio::sync::Notify::new());
         let resolver = {
             let pending = pending.clone();
@@ -228,17 +248,46 @@ mod imp {
             tauri::async_runtime::spawn(async move {
                 loop {
                     notify.notified().await;
-                    // Coalesce: take only the most recent focus; bursts in between are stale.
-                    let Some((item, read_editable)) = pending.lock().take() else { continue };
-                    match tokio::time::timeout(
-                        std::time::Duration::from_millis(1000),
-                        resolve_focus(item, &bus, deep.load(Ordering::Relaxed), read_editable),
-                    )
-                    .await
-                    {
-                        Ok(Some((app_id, editable))) => update_snapshot(&snapshot, app_id, editable),
-                        Ok(None) => {}
-                        Err(_) => {} // resolve timed out (busy app) — skip; the next event re-tries
+                    let (act, deact, foc) = {
+                        let mut p = pending.lock();
+                        (p.0.take(), p.1.take(), p.2.take())
+                    };
+                    let deep = deep.load(Ordering::Relaxed);
+                    // window:activate → mark this app foreground. Only a genuine activation reports
+                    // STATE_ACTIVE; a background app's stray activate reports false → ignore it.
+                    if let Some(item) = act {
+                        if let Ok(Some((app_id, _, active))) = tokio::time::timeout(
+                            std::time::Duration::from_millis(1000),
+                            resolve_focus(item, &bus, deep, false, true),
+                        )
+                        .await
+                        {
+                            if active != Some(false) {
+                                note_activate(&snapshot, app_id);
+                            }
+                        }
+                    }
+                    // window:deactivate → if it's the app we had marked foreground, clear the mark.
+                    if let Some(item) = deact {
+                        if let Ok(Some((app_id, _, _))) = tokio::time::timeout(
+                            std::time::Duration::from_millis(1000),
+                            resolve_focus(item, &bus, deep, false, false),
+                        )
+                        .await
+                        {
+                            note_deactivate(&snapshot, &app_id);
+                        }
+                    }
+                    // element focus → accept only from the foreground app (or when none is marked).
+                    if let Some(item) = foc {
+                        if let Ok(Some((app_id, editable, _))) = tokio::time::timeout(
+                            std::time::Duration::from_millis(1000),
+                            resolve_focus(item, &bus, deep, true, false),
+                        )
+                        .await
+                        {
+                            note_focus(&snapshot, app_id, editable);
+                        }
                     }
                 }
             })
@@ -254,17 +303,38 @@ mod imp {
                     // (Alt-Tab / clicking another window) carries the frame, so we skip
                     // editability there — but it's ESSENTIAL: without it, switching windows
                     // without changing the focused element wouldn't update detection.
-                    let (item, read_editable) = match ev {
-                        Event::Object(ObjectEvents::StateChanged(e))
-                            if e.state == State::Focused && e.enabled => (e.item, true),
-                        Event::Focus(FocusEvents::Focus(e)) => (e.item, true),
-                        Event::Window(WindowEvents::Activate(e)) => (e.item, false),
-                        _ => continue,
+                    // Route the event to its slot: element focus (carries a real field),
+                    // window:activate (marks foreground), window:deactivate (clears it). Separate
+                    // slots so a burst can't coalesce away the activate/deactivate.
+                    let routed = {
+                        let mut p = pending.lock();
+                        match ev {
+                            Event::Object(ObjectEvents::StateChanged(e))
+                                if e.state == State::Focused && e.enabled =>
+                            {
+                                p.2 = Some(e.item);
+                                true
+                            }
+                            Event::Focus(FocusEvents::Focus(e)) => {
+                                p.2 = Some(e.item);
+                                true
+                            }
+                            Event::Window(WindowEvents::Activate(e)) => {
+                                p.0 = Some(e.item);
+                                true
+                            }
+                            Event::Window(WindowEvents::Deactivate(e)) => {
+                                p.1 = Some(e.item);
+                                true
+                            }
+                            _ => false,
+                        }
                     };
-                    // Hand the newest focus to the resolver (replacing any not-yet-resolved
-                    // one) and nudge it. This never blocks on the a11y round-trips themselves.
-                    *pending.lock() = Some((item, read_editable));
-                    notify.notify_one();
+                    // Nudge the resolver only if we actually stored an event. Never blocks on the
+                    // a11y round-trips themselves.
+                    if routed {
+                        notify.notify_one();
+                    }
                 }
                 _ = ticker.tick() => {
                     // Deep detection only adds the poke now (accessibility is enabled at
@@ -283,15 +353,18 @@ mod imp {
         result
     }
 
-    /// Read a focus/window-activate source's app id (+ editability for element focus) off the
-    /// a11y bus. Pure I/O — the caller bounds it with a timeout and does the sync snapshot
-    /// update. Returns `None` if it can't resolve (proxy error / empty name).
+    /// Read a source's app id, editability (element focus), and whether its window is ACTIVE
+    /// (window:activate). Pure I/O — the caller bounds it with a timeout. Returns `None` if it
+    /// can't resolve (proxy error / empty name). `read_editable` reads the element's role/state
+    /// (focus events); `read_active` reads the frame's STATE_ACTIVE (window:activate, to reject a
+    /// background app's stray activate). Both off for window:deactivate (app id is enough).
     async fn resolve_focus(
         item: ObjectRefOwned,
         bus: &zbus::Connection,
         deep: bool,
         read_editable: bool,
-    ) -> Option<(String, Option<bool>)> {
+        read_active: bool,
+    ) -> Option<(String, Option<bool>, Option<bool>)> {
         let acc = item.as_accessible_proxy(bus).await.ok()?;
         let editable = if read_editable {
             if deep {
@@ -306,8 +379,11 @@ mod imp {
                 _ => acc.get_state().await.ok().map(|s| s.contains(State::Editable)),
             }
         } else {
-            // Window activation reports the frame, not a field → editability unknown. None →
-            // the positive-only guard types anyway (safe default) until an element is focused.
+            None
+        };
+        let active = if read_active {
+            acc.get_state().await.ok().map(|s| s.contains(State::Active))
+        } else {
             None
         };
         let app_id = acc
@@ -323,19 +399,47 @@ mod imp {
         if app_id.is_empty() {
             return None;
         }
-        Some((app_id, editable))
+        Some((app_id, editable, active))
     }
 
-    /// Fold a resolved focus into the cached snapshot. `current` always tracks the latest
-    /// focused app. `last_other` captures the app focused immediately BEFORE our own window —
-    /// so "use current" / dictation triggered from our UI reports the app you came from, not
-    /// us. Crucially `last_other` is set only at the transition INTO our window, so it can't
-    /// get stuck on a stale app (the previous bug). Sync; holds the lock only briefly.
-    fn update_snapshot(
+    /// A genuine `window:activate`: mark `app_id` foreground and fold it into the snapshot.
+    fn note_activate(snapshot: &parking_lot::Mutex<super::Snapshot>, app_id: String) {
+        let mut snap = snapshot.lock();
+        snap.active_app = Some(app_id.clone());
+        set_current(&mut snap, app_id, None);
+    }
+
+    /// A `window:deactivate`: if it's the app currently marked foreground, clear the mark — so the
+    /// next element focus (incl. switching INTO an Electron app, which never emits window:activate)
+    /// is accepted rather than rejected as a background ghost.
+    fn note_deactivate(snapshot: &parking_lot::Mutex<super::Snapshot>, app_id: &str) {
+        let mut snap = snapshot.lock();
+        if snap.active_app.as_deref() == Some(app_id) {
+            snap.active_app = None;
+        }
+    }
+
+    /// An element focus. Accept ONLY from the foreground app, or when none is marked foreground
+    /// (the moment right after a switch). A background app's stray focus while a DIFFERENT app is
+    /// foreground is rejected — that's the "chromium ghost" gate.
+    fn note_focus(
         snapshot: &parking_lot::Mutex<super::Snapshot>,
         app_id: String,
         editable: Option<bool>,
     ) {
+        let mut snap = snapshot.lock();
+        if let Some(active) = snap.active_app.as_deref() {
+            if active != app_id.as_str() {
+                return;
+            }
+        }
+        set_current(&mut snap, app_id, editable);
+    }
+
+    /// Fold a focused app into the snapshot. `current` tracks the latest; `last_other` captures the
+    /// app focused immediately BEFORE our own window (set only at that transition, so it can't get
+    /// stuck on a stale app). Sync; the caller holds the lock.
+    fn set_current(snap: &mut super::Snapshot, app_id: String, editable: Option<bool>) {
         let new_is_noise = super::is_noise(&app_id);
         let fa = super::FocusedApp {
             title: app_id.clone(),
@@ -343,10 +447,7 @@ mod imp {
             editable,
             is_self: false,
         };
-        let mut snap = snapshot.lock();
         if new_is_noise {
-            // Switching TO our own window (or the shell): remember what was focused just
-            // before, so callers can report the real target rather than us.
             if let Some(prev) = snap.current.take() {
                 if !super::is_noise(&prev.app_id) {
                     snap.last_other = Some(prev);
