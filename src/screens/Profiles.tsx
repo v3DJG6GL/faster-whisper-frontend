@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Plus, Mic, Hand, Pencil, Copy, Trash2, Keyboard, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
 import { useApp } from "@/lib/store";
@@ -7,9 +7,9 @@ import { HotkeyChips } from "@/components/HotkeyChips";
 import { DecodeFields } from "@/components/DecodeFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
-import { validateCodes, suspendShortcuts, reregisterShortcuts } from "@/lib/api";
-import { MODIFIER_CODES, codeToToken, canonicalizeCodes, codesToLabels } from "@/lib/keys";
-import { conflictsByProfile, findChordConflict } from "@/lib/conflicts";
+import { codesToLabels } from "@/lib/keys";
+import { conflictsByProfile } from "@/lib/conflicts";
+import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -34,105 +34,8 @@ function Labeled({ label, children, className }: { label: string; children: Reac
   );
 }
 
-/**
- * Hotkey-capture for the profile editor. Tracks held modifiers live; finalizes on
- * the first real key (or, with evdev, on release of a modifier-only chord). Warns
- * (never silently drops) on a clash with another profile or a non-registerable
- * chord. Suspends global hotkeys for the duration so a press only rebinds.
- */
-function useHotkeyCapture(opts: {
-  capturing: boolean;
-  evdevActive: boolean;
-  others: Profile[];
-  onCommit: (codes: string[]) => void;
-  onCancel: () => void;
-}): { heldCodes: string[]; warn: string | null } {
-  const { capturing, evdevActive } = opts;
-  const [heldCodes, setHeldCodes] = useState<string[]>([]);
-  const [warn, setWarn] = useState<string | null>(null);
-  // Keep the latest callbacks/others without retriggering the capture effect
-  // (which would re-add listeners + re-suspend hotkeys on every render).
-  const ref = useRef(opts);
-  ref.current = opts;
-
-  useEffect(() => {
-    if (!capturing) {
-      setHeldCodes([]);
-      setWarn(null);
-      return;
-    }
-    void suspendShortcuts();
-    const pressed = new Set<string>();
-    let peak: string[] = [];
-    let done = false;
-    const finalize = (codes: string[]) => {
-      const clash = findChordConflict(codes, ref.current.others);
-      if (clash) {
-        setWarn(
-          clash.kind === "duplicate"
-            ? `Same shortcut as “${clash.name}”`
-            : `Overlaps “${clash.name}” — one chord shadows the other`,
-        );
-        done = false;
-        return;
-      }
-      if (evdevActive) {
-        ref.current.onCommit(codes);
-      } else {
-        void validateCodes(codes).then((ok) => {
-          if (ok) ref.current.onCommit(codes);
-          else {
-            setWarn("Can’t register that — add a letter/digit, or enable evdev (Settings → Permissions) for modifier-only / AltGr");
-            done = false;
-          }
-        });
-      }
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === "Escape") {
-        ref.current.onCancel();
-        return;
-      }
-      if (MODIFIER_CODES.has(e.code)) {
-        pressed.add(e.code);
-        const cur = canonicalizeCodes([...pressed]);
-        if (cur.length > peak.length) peak = cur;
-        setHeldCodes(cur);
-        return;
-      }
-      if (!codeToToken(e.code) && !evdevActive) {
-        setWarn("That key can’t be a global shortcut — try another");
-        return;
-      }
-      done = true;
-      finalize(canonicalizeCodes([...pressed, e.code]));
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      e.preventDefault();
-      pressed.delete(e.code);
-      setHeldCodes(canonicalizeCodes([...pressed]));
-      if (!done && pressed.size === 0 && peak.length > 0) {
-        if (evdevActive) {
-          done = true;
-          finalize(peak);
-        } else {
-          setWarn("Modifier-only chords need the evdev backend (Settings → Permissions)");
-        }
-      }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    window.addEventListener("keyup", onKeyUp, true);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-      window.removeEventListener("keyup", onKeyUp, true);
-      void reregisterShortcuts();
-    };
-  }, [capturing, evdevActive]);
-
-  return { heldCodes, warn };
-}
+// useHotkeyCapture moved to src/lib/useHotkeyCapture.ts (shared with the Settings
+// "quick-add shortcut" row).
 
 function Editor({
   initial,
