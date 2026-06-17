@@ -501,6 +501,11 @@ mod imp {
                 return super::SelRead::Empty;
             }
             match text.get_text(start, end).await {
+                // Rich text (Thunderbird/Joplin links, images, formatting anchors) comes back with
+                // U+FFFC object-replacement chars in place of the words. That's not usable plain
+                // text → report Unavailable so the caller falls back to PRIMARY, which holds the
+                // actual rendered selection.
+                Ok(s) if s.contains('\u{fffc}') => super::SelRead::Unavailable,
                 Ok(s) => super::SelRead::Text(s),
                 Err(_) => super::SelRead::Unavailable,
             }
