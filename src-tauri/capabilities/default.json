@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Core capabilities for the main app window and the dictation chip overlay",
-  "windows": ["main", "overlay"],
+  "description": "Core capabilities for the main app window, the dictation chip overlay, and the quick-add window",
+  "windows": ["main", "overlay", "quickadd"],
   "permissions": [
     "core:default",
     "core:event:default",

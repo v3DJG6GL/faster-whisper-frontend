@@ -409,6 +409,18 @@ export async function hideOverlay(): Promise<void> {
   await invoke("hide_overlay");
 }
 
+/** Show + focus the quick-add word-mapping window (summoned by the chip button / shortcut). */
+export async function showQuickAdd(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("show_quick_add");
+}
+
+/** Hide the quick-add word-mapping window (Esc / done). */
+export async function hideQuickAdd(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("hide_quick_add");
+}
+
 /**
  * Shape the overlay window's mouse input region to just the visible chip (logical
  * px, relative to the window's top-left), so the chip becomes hoverable while the

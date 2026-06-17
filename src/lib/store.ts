@@ -43,6 +43,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: "dark",
   microphoneId: null,
   homeProfileId: null,
+  quickAddList: null,
   general: {
     openAtLogin: false,
     startMinimized: false,

@@ -396,6 +396,16 @@ pub struct RecordingSettings {
     pub quick_launch: Vec<serde_json::Value>,
 }
 
+/// Which "Spoken symbols" (callback:map) list the quick-add window targets: the
+/// Backend it lives on + the rule slug. Designated on the Dictionary screen; pure
+/// storage (the rules themselves are live server state, fetched per-Backend).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickAddTarget {
+    pub backend_id: String,
+    pub slug: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -406,6 +416,11 @@ pub struct AppSettings {
     /// older configs load.
     #[serde(default)]
     pub home_profile_id: Option<String>,
+    /// The pinned quick-add word-mapping list (Backend id + callback:map rule slug)
+    /// the QuickAdd window targets. None = not chosen yet. `#[serde(default, skip…)]`
+    /// so older configs load and an unset value round-trips byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quick_add_list: Option<QuickAddTarget>,
     pub general: GeneralSettings,
     pub recording: RecordingSettings,
 }
@@ -433,6 +448,7 @@ impl Default for Config {
                 theme: ThemeName::Dark,
                 microphone_id: None,
                 home_profile_id: None,
+                quick_add_list: None,
                 general: GeneralSettings {
                     open_at_login: false,
                     start_minimized: false,

@@ -35,6 +35,19 @@
         "focus": false,
         "shadow": false,
         "visible": false
+      },
+      {
+        "label": "quickadd",
+        "title": "Quick add",
+        "width": 600,
+        "height": 480,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": true,
+        "visible": false
       }
     ],
     "security": {

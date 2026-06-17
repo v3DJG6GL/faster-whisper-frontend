@@ -6,6 +6,7 @@ mod evdev_hotkeys;
 mod held_keys;
 mod inject;
 mod overlay;
+mod quickadd;
 mod session;
 mod sound;
 mod transport;
@@ -58,7 +59,9 @@ pub fn run() {
         // (the overlay chip) are left to close normally.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" {
+                // main: keep the dictation state machine + listeners alive (see above).
+                // quickadd: keep it prewarmed so the next summon is instant.
+                if matches!(window.label(), "main" | "quickadd") {
                     api.prevent_close();
                     let _ = window.hide();
                 }
@@ -134,6 +137,8 @@ pub fn run() {
             overlay::show_overlay,
             overlay::hide_overlay,
             overlay::set_chip_hit_region,
+            quickadd::show_quick_add,
+            quickadd::hide_quick_add,
             sound::play_cue,
             tray::set_tray_state,
             tray::show_main_at_screen,
