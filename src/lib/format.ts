@@ -35,3 +35,35 @@ export function fmtDurationAxis(seconds: number): string {
   if (s < 3600) return `${Math.round(s / 60)}m`;
   return `${(s / 3600).toFixed(1).replace(/\.0$/, "")}h`;
 }
+
+// ── usage-chart dates ──────────────────────────────────────────────────────
+// The series carries `day` = days-since-epoch (server-local calendar day). We
+// format with timeZone:"UTC" so the rendered date matches that integer exactly,
+// independent of the viewer's offset (avoids an off-by-one near midnight).
+const DAY_MS = 86_400_000;
+const _tickDay = new Intl.DateTimeFormat("de-CH", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
+const _tickMonth = new Intl.DateTimeFormat("de-CH", { month: "short", timeZone: "UTC" });
+const _full = new Intl.DateTimeFormat("de-CH", { weekday: "short", day: "numeric", month: "long", timeZone: "UTC" });
+
+/** days-since-epoch → a Date at UTC midnight of that calendar day. */
+export function dayToDate(day: number): Date {
+  return new Date(day * DAY_MS);
+}
+
+/** Axis tick label: `12.06.` (day+month), or a short month name (`Juni`) when
+ *  `month` is set — used on wide windows so labels don't crowd. */
+export function fmtDateTick(day: number, month = false): string {
+  return (month ? _tickMonth : _tickDay).format(dayToDate(day));
+}
+
+/** Tooltip header: `Fr., 12. Juni`. */
+export function fmtDateFull(day: number): string {
+  return _full.format(dayToDate(day));
+}
+
+/** The client's LOCAL day-since-epoch — matches the backend's server-local
+ *  `epoch_day_for` for whole-hour timezone offsets (e.g. CET), so it anchors the
+ *  chart's right edge ("today") to the same day numbering the series uses. */
+export function localTodayDay(): number {
+  return Math.floor((Date.now() - new Date().getTimezoneOffset() * 60_000) / DAY_MS);
+}
