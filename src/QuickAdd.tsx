@@ -1,6 +1,6 @@
 // The quick-add word-mapping window (Tauri window label `quickadd`) — a minimal,
 // focusable, always-on-top view for adding spoken→symbol mappings to ONE pinned
-// "Spoken symbols" (callback:map) rule with the fewest clicks. Summoned by the
+// "Word mappings" (callback:map) rule with the fewest clicks. Summoned by the
 // chip quick-launch button or a global shortcut; the "When you say" field is
 // auto-focused with a recent-transcribed-words dropdown (arrow-key pick).
 //
@@ -60,7 +60,7 @@ function SaveStatus({ state, onRetry }: { state: SaveState; onRetry: () => void 
 export default function QuickAdd() {
   const [phase, setPhase] = useState<Phase>("loading");
   const [fetchErr, setFetchErr] = useState<PipelineFetch | null>(null);
-  const [label, setLabel] = useState("Spoken symbols");
+  const [label, setLabel] = useState("Word mappings");
   const [color, setColor] = useState<string | undefined>(undefined);
   const [rows, setRows] = useState<MapRow[]>([]);
   const [recent, setRecent] = useState<string[]>([]);
@@ -105,7 +105,7 @@ export default function QuickAdd() {
       setPhase("error");
       return;
     }
-    setLabel(rule.label || "Spoken symbols");
+    setLabel(rule.label || "Word mappings");
     setColor(rule.color);
     setRows(mapRowsFromRule(rule));
     setSaveState("idle");
@@ -228,7 +228,7 @@ export default function QuickAdd() {
             <BookA className="size-7 text-faint" />
             <div className="text-[14px] font-medium text-text">No quick-add list chosen</div>
             <p className="max-w-xs text-[12.5px] text-dim">
-              Open the Dictionary and pin a “Spoken symbols” list as your quick-add target.
+              Open the Dictionary and pin a word-mapping list as your quick-add target.
             </p>
             <Button
               variant="default"

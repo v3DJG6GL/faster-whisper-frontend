@@ -28,7 +28,7 @@ import { cn } from "@/lib/cn";
 /* ── friendly, on-voice labels for the wire rule types ─────────────────── */
 const TYPE_LABEL: Record<RuleType, string> = {
   "regex-list": "Find & replace",
-  "callback:map": "Spoken symbols",
+  "callback:map": "Word mappings",
   "callback:lowercase-wordlist": "Lowercase words",
   "callback:dedup": "De-duplicate",
   "callback:upper": "Capitalize",
@@ -668,7 +668,7 @@ export default function Dictionary() {
             <BookA className="size-7 text-accent" /> Dictionary
           </h1>
           <p className="mt-2 max-w-md text-[13.5px] text-dim">
-            Text rules your server applies to every transcription — replacements, spoken symbols,
+            Text rules your server applies to every transcription — replacements, word mappings,
             punctuation tidy-up. Edit the ones your account is allowed to change.
           </p>
         </div>

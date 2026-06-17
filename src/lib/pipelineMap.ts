@@ -1,4 +1,4 @@
-// Shared helpers for editing a `callback:map` ("Spoken symbols") pipeline rule —
+// Shared helpers for editing a `callback:map` ("Word mappings") pipeline rule —
 // used by both the full Dictionary screen and the minimal QuickAdd window so the
 // newest-first ordering and the canonical (key-sorted) PATCH body stay identical.
 

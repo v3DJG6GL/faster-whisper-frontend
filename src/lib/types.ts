@@ -151,7 +151,7 @@ export interface RecordingSettings {
   quickLaunch: OverlayQuickAction[]; // chip quick-launch buttons (screens + dictation actions)
 }
 
-/** Which "Spoken symbols" (callback:map) list the quick-add window targets:
+/** Which "Word mappings" (callback:map) list the quick-add window targets:
  *  the Backend it lives on + the rule slug. Designated on the Dictionary screen. */
 export interface QuickAddTarget {
   backendId: string;
@@ -162,7 +162,7 @@ export interface AppSettings {
   theme: ThemeName;
   microphoneId: string | null;
   homeProfileId?: string | null; // which Profile the Home button targets (null = first enabled)
-  quickAddList?: QuickAddTarget | null; // pinned "Spoken symbols" list the QuickAdd window targets
+  quickAddList?: QuickAddTarget | null; // pinned "Word mappings" list the QuickAdd window targets
   general: GeneralSettings;
   recording: RecordingSettings;
 }
