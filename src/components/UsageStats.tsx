@@ -399,7 +399,7 @@ export function HomeUsageStrip({ backend }: { backend: Backend | undefined }) {
   const { stats, dense } = useDenseStats(backend);
   if (!stats) return null;
   return (
-    <section className="mb-10">
+    <section className="mt-8">
       <div className="mb-3 flex items-center justify-between gap-3">
         <SectionLabel className="!m-0">Usage</SectionLabel>
         <Link
