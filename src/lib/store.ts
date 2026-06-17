@@ -146,6 +146,10 @@ interface AppState {
 
   // live dictation runtime (driven by Rust events)
   status: DictationStatus;
+  /** Mic is opening but not yet delivering real audio (e.g. a Bluetooth headset
+   *  switching into its mic profile takes ~1–2s). While true the chip shows
+   *  "warming up…" and the start cue is held until real audio actually flows. */
+  warming: boolean;
   level: number; // 0..1 audio RMS for the visualizer
   speaking: boolean; // derived from level (smoothed): actively speaking vs armed-silent
   partial: string; // live partial transcript for the chip preview
@@ -190,6 +194,7 @@ interface AppState {
   setDictation: (
     patch: Partial<{
       status: DictationStatus;
+      warming: boolean;
       level: number;
       partial: string;
       activeProfile: string | null;
@@ -213,6 +218,7 @@ export const useApp = create<AppState>((set) => ({
   appRules: [],
 
   status: "idle",
+  warming: false,
   level: 0,
   speaking: false,
   partial: "",

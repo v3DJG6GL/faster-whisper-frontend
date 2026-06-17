@@ -38,7 +38,17 @@ export interface DictationVisual {
   filled: boolean;
 }
 
-export function dictationVisual(status: DictationStatus, speaking: boolean): DictationVisual {
+export function dictationVisual(
+  status: DictationStatus,
+  speaking: boolean,
+  warming = false,
+): DictationVisual {
+  // Mic opening but not yet delivering audio (e.g. a Bluetooth headset switching into
+  // its mic profile). Read as neutral "working" — NOT the amber "ready to speak" — so
+  // the user doesn't start talking before the mic is actually capturing.
+  if (warming && status === "listening") {
+    return { state: "processing", tone: "dim", label: "warming up…", pulse: true, filled: true };
+  }
   switch (status) {
     case "error":
       return { state: "error", tone: "rec", label: "error", pulse: true, filled: true };

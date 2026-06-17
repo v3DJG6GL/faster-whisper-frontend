@@ -32,6 +32,7 @@ export async function initOverlayController(): Promise<void> {
     // Forward the live chip state whenever the relevant fields change.
     if (
       state.status !== prev.status ||
+      state.warming !== prev.warming || // mic warm-up gate (chip "warming up…")
       state.level !== prev.level ||
       state.partial !== prev.partial ||
       state.dictationError !== prev.dictationError ||
@@ -68,6 +69,7 @@ export async function initOverlayController(): Promise<void> {
       const tgt = rec.showTargetOnOverlay && ACTIVE.includes(state.status) ? state.targetApp : null;
       void emit("dictation://update", {
         status: state.status,
+        warming: state.warming, // mic opening but not yet capturing → chip shows "warming up…"
         level: state.level,
         // "Live transcript in overlay" off → show the status label, not words.
         partial: rec.realtimePreview ? state.partial : "",
@@ -102,10 +104,21 @@ export async function initOverlayController(): Promise<void> {
     if (state.status !== prev.status) {
       void setTrayState(state.status);
       if (state.settings.general.soundEffects) {
-        if (state.status === "listening" && prev.status !== "listening") void playCue("start");
-        else if (state.status === "transcribing" && prev.status === "listening") void playCue("stop");
+        if (state.status === "transcribing" && prev.status === "listening") void playCue("stop");
         else if (state.status === "error") void playCue("error");
       }
+    }
+    // The "start" cue fires when the mic actually goes LIVE — i.e. the warm-up gate
+    // clears while still listening — NOT when listening is first armed. On a cold
+    // Bluetooth mic that's ~1–2s later, so the "go" lines up with real capture and the
+    // user doesn't speak into a dead mic.
+    if (
+      state.settings.general.soundEffects &&
+      state.status === "listening" &&
+      prev.warming &&
+      !state.warming
+    ) {
+      void playCue("start");
     }
 
     const pos = state.settings.recording.indicatorPosition;

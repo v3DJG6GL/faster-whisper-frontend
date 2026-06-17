@@ -27,12 +27,18 @@ import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 const TABS = ["General", "Audio", "Recording", "Chip", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
 
+// Smoothed level above the digital-silence floor ⇒ the mic is actually capturing (a
+// cold/Bluetooth mic can be open but silent for ~1–2s first). Mirrors streaming.ts.
+const MIC_LIVE_LEVEL = 0.012;
+
 function AudioTab() {
   const microphoneId = useApp((s) => s.settings.microphoneId);
   const updateSettings = useApp((s) => s.updateSettings);
   const [devices, setDevices] = useState<AudioDevice[]>([]);
   const [testing, setTesting] = useState(false);
   const [level, setLevel] = useState(0);
+  // Mic is open but not yet delivering real audio (cold/Bluetooth warm-up) → show "warming up…".
+  const [micWarming, setMicWarming] = useState(false);
   // True once a stopped test captured something worth replaying (enables Replay).
   const [hasClip, setHasClip] = useState(false);
   // Whether a replay is currently sounding — drives the button label and guards
@@ -54,9 +60,15 @@ function AudioTab() {
     if (!testing) return;
     let active = true;
     let unlisten: (() => void) | undefined;
+    // Show "warming up…" until real audio flows (a cold/Bluetooth mic is silent for
+    // ~1–2s first), with a safety timeout so it never hangs on a silent device.
+    setMicWarming(true);
+    const warmTimer = window.setTimeout(() => setMicWarming(false), 2500);
     void (async () => {
       const un = await onAudioLevel((l) => {
-        if (active) setLevel(l);
+        if (!active) return;
+        setLevel(l);
+        if (l > MIC_LIVE_LEVEL) setMicWarming(false);
       });
       // Torn down mid-await (test toggled off / device switched) → don't leave the
       // level listener registered for the rest of the session.
@@ -69,9 +81,11 @@ function AudioTab() {
     })();
     return () => {
       active = false;
+      clearTimeout(warmTimer);
       unlisten?.();
       void stopMicTest();
       setLevel(0);
+      setMicWarming(false);
     };
   }, [testing, microphoneId]);
 
@@ -158,7 +172,16 @@ function AudioTab() {
         last
       >
         <div className="flex items-center gap-3">
-          <Waveform level={level} active={testing} bars={16} tone={testing ? "accent" : "dim"} className="h-7 w-28" />
+          <Waveform
+            level={level}
+            active={testing}
+            bars={16}
+            tone={testing && !micWarming ? "accent" : "dim"}
+            className="h-7 w-28"
+          />
+          {testing && micWarming && (
+            <span className="animate-pulse font-mono text-[11px] text-faint">warming up…</span>
+          )}
           <div className="flex items-center gap-2">
             <Button variant={testing ? "danger" : "default"} size="sm" onClick={() => void onToggle()}>
               {testing ? (

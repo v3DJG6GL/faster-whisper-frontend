@@ -53,6 +53,21 @@ let lastSpokeAt = 0;
 // can label it with the full transcript (sibling .txt). Reset each session; null = nothing saved.
 let lastSavedRecordingPath: string | null = null;
 let activeEndpoint: "stream" | "batch" | null = null;
+
+// Mic warm-up gate: a cold mic can be open but deliver SILENCE for ~1–2s before real
+// audio flows (classic for a Bluetooth headset switching into its HFP/mic profile).
+// We hold the chip in "warming up…" (and defer the start cue) until the level meter
+// shows real audio — the smoothed level sits at ~0 during the silent warm-up and rises
+// the instant the mic is actually capturing. A safety timeout clears it regardless.
+const MIC_LIVE_LEVEL = 0.012; // smoothed level above the digital-silence floor ⇒ mic live
+const MIC_WARM_TIMEOUT_MS = 2500;
+let warmTimer: ReturnType<typeof setTimeout> | null = null;
+function clearWarmTimer(): void {
+  if (warmTimer) {
+    clearTimeout(warmTimer);
+    warmTimer = null;
+  }
+}
 // The whole post-processed document through the last `final` (committed + tail),
 // for the chip/Home preview. Partials carry only the current utterance, so we
 // prepend this to keep earlier lines visible while the next sentence is spoken.
@@ -324,6 +339,12 @@ async function ensureListeners(): Promise<void> {
   let latestLevel = 0;
   await listen<number>("stream://level", (e) => {
     latestLevel = e.payload;
+    // First real audio after a cold open → the mic is live; drop the warm-up gate so
+    // the chip flips to "listening" and the start cue fires (see startLive).
+    if (latestLevel > MIC_LIVE_LEVEL && useApp.getState().warming) {
+      clearWarmTimer();
+      setDictation({ warming: false });
+    }
     // Latch auto-stop (when armed): track silence via the shared speaking detector and end the
     // session after the configured quiet stretch. Fires once, then disarms itself.
     if (autoStopMs > 0) {
@@ -499,7 +520,10 @@ async function ensureListeners(): Promise<void> {
 
   await listen<string>("stream://status", (e) => {
     if (e.payload === "ready") {
-      setDictation({ status: "listening", dictationError: null });
+      // Server is ready ⇒ audio is reaching it, so the mic is definitely live: drop any
+      // lingering warm-up gate (belt-and-suspenders alongside the level-based clear).
+      clearWarmTimer();
+      setDictation({ status: "listening", warming: false, dictationError: null });
     } else if (e.payload === "closed") {
       clearStuckWatchdog(); // the stream resolved on its own
       stopTargetPoll(); // session ending — stop tracking focus for the chip
@@ -748,6 +772,8 @@ export async function startLive(
   const targetSkip = insertCfg.blocked ? "blocked" : insertCfg.notEditable ? "notEditable" : null;
   setDictation({
     status: "listening",
+    // Gate: hold "warming up…" + the start cue until real audio flows (cold/Bluetooth mic).
+    warming: true,
     partial: "",
     level: 0,
     dictationError: null,
@@ -758,6 +784,14 @@ export async function startLive(
     lastInsert: null,
     sessionOutcome: null,
   });
+  // Safety net: if no real audio is ever detected (e.g. a silent/odd device), stop
+  // "warming up…" after a bounded wait rather than hang. The level handler clears it
+  // sooner the moment the mic actually starts capturing.
+  clearWarmTimer();
+  warmTimer = setTimeout(() => {
+    warmTimer = null;
+    useApp.getState().setDictation({ warming: false });
+  }, MIC_WARM_TIMEOUT_MS);
   activeEndpoint = backend.endpoint;
   startTargetPoll(); // keep the chip's target readout live as focus moves during the session
 
@@ -799,6 +833,7 @@ export async function startLive(
       });
     }
   } catch (e) {
+    clearWarmTimer();
     console.error("start dictation failed:", e);
     flashError(String(e));
   }
@@ -806,6 +841,7 @@ export async function startLive(
 
 export async function stopLive(): Promise<void> {
   autoStopMs = 0; // disarm latch auto-stop — we're stopping now
+  clearWarmTimer(); // drop the warm-up fallback if we stop before the mic went live
   // Streaming: server flushes + drains. Batch: transcription runs now. Either way the
   // `closed` event then moves us "transcribing" → "injecting" (while the text is
   // written out) → "idle" — so the chip shows progress the whole way through.
@@ -825,6 +861,7 @@ export async function stopLive(): Promise<void> {
  *  recovers both the recording state AND the shortcuts. */
 export async function cancelLive(): Promise<void> {
   autoStopMs = 0; // disarm latch auto-stop
+  clearWarmTimer();
   clearStuckWatchdog();
   stopTargetPoll();
   committedDoc = "";

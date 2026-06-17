@@ -66,6 +66,7 @@ export default function Home() {
   const backends = useApp((s) => s.backends);
   const level = useApp((s) => s.level);
   const status = useApp((s) => s.status);
+  const warming = useApp((s) => s.warming);
   const speaking = useApp((s) => s.speaking);
   const partial = useApp((s) => s.partial);
   const dictationError = useApp((s) => s.dictationError);
@@ -93,7 +94,7 @@ export default function Home() {
   // neutral button (press to start) — NOT the old always-amber — and only goes amber
   // once a session is armed, green while you speak. The waveform has no hollow form,
   // so its "off" tone maps to grey (dim) rather than amber.
-  const vis = dictationVisual(status, speaking);
+  const vis = dictationVisual(status, speaking, warming);
   const heroFill =
     vis.state === "speaking"
       ? "bg-live text-white"

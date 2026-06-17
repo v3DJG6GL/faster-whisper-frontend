@@ -11,6 +11,8 @@ import type { DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types
 
 interface ChipState {
   status: DictationStatus;
+  // Mic opening but not yet capturing (e.g. Bluetooth profile switch) → show "warming up…".
+  warming?: boolean;
   level: number;
   partial: string;
   dictationError: string;
@@ -126,6 +128,7 @@ export default function Overlay() {
           document.documentElement.dataset.theme = theme;
           setState({
             ...e.payload,
+            warming: e.payload.warming ?? false,
             dictationError: e.payload.dictationError ?? "",
             position: e.payload.position ?? "top",
             theme,
@@ -413,8 +416,9 @@ export default function Overlay() {
     }
   }, [state.sessionOutcome]);
 
-  const label =
-    state.status === "transcribing"
+  const label = state.warming
+    ? "warming up…"
+    : state.status === "transcribing"
       ? "finalizing…"
       : state.status === "injecting"
         ? "inserting…"
@@ -426,7 +430,7 @@ export default function Overlay() {
   // half reads (a hollow standby ring would all but vanish at half-size), and the
   // docked standby dot at rest is a hollow ring. Active states (error / speaking /
   // finishing) keep their tone even while tucked.
-  const vis = dictationVisual(state.status, speaking);
+  const vis = dictationVisual(state.status, speaking, state.warming);
   const dotColorClass =
     vis.state === "error" || vis.state === "speaking" || vis.state === "processing"
       ? TONE_BG[vis.tone]
@@ -453,7 +457,7 @@ export default function Overlay() {
               : !expanded
                 ? "0 0 12px rgba(255,158,44,0.55)" // calm breathing ember
                 : "0 0 8px rgba(255,158,44,0.4)";
-  const barTone = speaking ? "live" : "accent";
+  const barTone = state.warming ? "dim" : speaking ? "live" : "accent";
 
   // Deep-idle edge-peek driver: after the chip sits undisturbed for peekTimeoutSec, tuck it to
   // the edge; ANY activity — a status change (e.g. dictation starting), speech, finishing, a

@@ -25,8 +25,9 @@ export function Sidebar() {
   const theme = useApp((s) => s.settings.theme);
   const setTheme = useApp((s) => s.setTheme);
   const status = useApp((s) => s.status);
+  const warming = useApp((s) => s.warming);
   const speaking = useApp((s) => s.speaking);
-  const vis = dictationVisual(status, speaking);
+  const vis = dictationVisual(status, speaking, warming);
 
   return (
     <aside className="relative z-10 flex w-[228px] shrink-0 flex-col border-r border-line bg-panel/60">
