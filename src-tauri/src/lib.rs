@@ -138,6 +138,7 @@ pub fn run() {
             commands::get_focused_other_app,
             commands::set_deep_field_detection,
             commands::get_quickadd_seed,
+            commands::get_focused_selection,
             overlay::show_overlay,
             overlay::hide_overlay,
             overlay::set_chip_hit_region,

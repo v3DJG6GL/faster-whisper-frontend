@@ -646,27 +646,54 @@ pub async fn get_focused_other_app(
 }
 
 /// Read the user's current text selection from the SOURCE app to pre-fill Quick-Add's "When you
-/// say" field on summon, or `None` to leave it empty (and show the recent-words dropdown). Reads
-/// the focus-independent PRIMARY selection (the "highlight" buffer) OFF the UI thread and
-/// time-bounded — the source app may be slow/unresponsive, and a sync clipboard read on the UI
-/// thread would freeze the app (same hazard as `begin_injection`). The text is sanitised to a
-/// single short line. (An AT-SPI "nothing selected" check is layered on top in a follow-up, so a
-/// STALE highlight isn't seeded when nothing is actually selected.)
+/// say" field on summon, or `None` to leave it empty (and show the recent-words dropdown).
+///
+/// Order: ask accessibility (AT-SPI) FIRST — it can authoritatively report "nothing is selected",
+/// so we never seed a STALE highlight when the user summoned with no selection. Only when it can't
+/// tell (no Text interface — terminals, some Electron) do we fall back to the focus-independent
+/// PRIMARY "highlight" buffer (read OFF the UI thread + time-bounded, same hazard as
+/// `begin_injection`). The text is sanitised to a single short line either way.
 #[tauri::command]
-pub async fn get_quickadd_seed() -> Result<Option<String>, String> {
-    let read = tokio::task::spawn_blocking(crate::inject::read_primary_selection);
-    let raw = match tokio::time::timeout(std::time::Duration::from_millis(400), read).await {
-        Ok(Ok(Some(s))) => s,
-        _ => return Ok(None),
-    };
-    let seed = sanitize_seed(&raw);
-    // Log lengths only, never the selected contents.
-    tracing::info!(
-        "[quickadd-seed] read {} chars -> seed {} chars",
-        raw.len(),
-        seed.as_deref().map_or(0, str::len)
-    );
-    Ok(seed)
+pub async fn get_quickadd_seed(
+    guard: State<'_, crate::atspi_guard::AtspiGuard>,
+) -> Result<Option<String>, String> {
+    use crate::atspi_guard::SelRead;
+    match crate::atspi_guard::focused_selection(guard.inner()).await {
+        SelRead::Text(s) => {
+            let seed = sanitize_seed(&s);
+            tracing::info!("[quickadd-seed] atspi selection {} chars -> seed {} chars", s.len(), seed.as_deref().map_or(0, str::len));
+            Ok(seed)
+        }
+        SelRead::Empty => {
+            tracing::info!("[quickadd-seed] atspi: nothing selected -> no seed");
+            Ok(None)
+        }
+        SelRead::Unavailable => {
+            let read = tokio::task::spawn_blocking(crate::inject::read_primary_selection);
+            let raw = match tokio::time::timeout(std::time::Duration::from_millis(400), read).await {
+                Ok(Ok(Some(s))) => s,
+                _ => return Ok(None),
+            };
+            let seed = sanitize_seed(&raw);
+            tracing::info!("[quickadd-seed] primary fallback {} chars -> seed {} chars", raw.len(), seed.as_deref().map_or(0, str::len));
+            Ok(seed)
+        }
+    }
+}
+
+/// Read the focused element's CURRENT text selection (AT-SPI only, no PRIMARY fallback): the
+/// selected text, or `None` when nothing is selected / it can't be read. The correct-on-close
+/// guard calls this AFTER Quick-Add hides (focus back on the source app) to confirm the SAME word
+/// is still highlighted before replacing it — PRIMARY would be stale, so it is deliberately excluded.
+#[tauri::command]
+pub async fn get_focused_selection(
+    guard: State<'_, crate::atspi_guard::AtspiGuard>,
+) -> Result<Option<String>, String> {
+    use crate::atspi_guard::SelRead;
+    Ok(match crate::atspi_guard::focused_selection(guard.inner()).await {
+        SelRead::Text(s) => Some(s),
+        SelRead::Empty | SelRead::Unavailable => None,
+    })
 }
 
 /// Turn a raw selection into a usable mapping KEY, or reject it. Multi-WORD selections are kept

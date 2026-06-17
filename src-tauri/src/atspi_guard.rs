@@ -38,6 +38,16 @@ pub struct FocusedApp {
     pub is_self: bool,
 }
 
+/// Result of reading the focused element's text selection (for the Quick-Add seed + the
+/// correct-on-close). `Text` = a real, non-empty selection; `Empty` = authoritatively nothing
+/// selected (so we never seed a stale highlight); `Unavailable` = no Text interface / proxy error
+/// (terminals, canvases, asleep trees) → the caller falls back (e.g. to the PRIMARY selection).
+pub enum SelRead {
+    Text(String),
+    Empty,
+    Unavailable,
+}
+
 #[derive(Default)]
 struct Snapshot {
     /// The most recently focused accessible (may be our own window).
@@ -51,6 +61,14 @@ struct Snapshot {
     /// switch, incl. into an Electron app that never emits `window:activate`). This is what stops
     /// a background Electron app's stray focus from hijacking detection (the "chromium ghost").
     active_app: Option<String>,
+    /// The focused TEXT element behind `current` / `last_other`, retained so a lazy command can
+    /// read its current selection via the AT-SPI Text interface WITHOUT walking the tree — the
+    /// per-event tree walk is what froze apps. Moved current→last_other in lockstep with the
+    /// FocusedApp above. Linux-only (the type comes from the `atspi` crate).
+    #[cfg(target_os = "linux")]
+    current_el: Option<atspi::object_ref::ObjectRefOwned>,
+    #[cfg(target_os = "linux")]
+    last_other_el: Option<atspi::object_ref::ObjectRefOwned>,
 }
 
 /// Managed state: the lazily-started a11y listener + the deep-detection switch.
@@ -147,6 +165,35 @@ pub async fn focused_app(g: &AtspiGuard) -> Option<FocusedApp> {
     result
 }
 
+/// Read the CURRENT text selection of the focused element of the same non-self app `focused_app`
+/// reports. Lazy + time-bounded; this is a one-shot query to a single RETAINED element ref, never
+/// a per-event tree walk (which froze apps). Used to seed Quick-Add from the live selection and to
+/// confirm, on close, that the same text is still selected before correcting it.
+pub async fn focused_selection(g: &AtspiGuard) -> SelRead {
+    start(g);
+    #[cfg(target_os = "linux")]
+    {
+        // Pick the element ref for the SAME app focused_app() would report (current if not noise,
+        // else last_other), so the seed/correction targets the app the user came from — not us.
+        let el = {
+            let snap = g.snapshot.lock();
+            match &snap.current {
+                Some(c) if !is_noise(&c.app_id) => snap.current_el.clone(),
+                _ => snap.last_other_el.clone(),
+            }
+        };
+        match el {
+            Some(el) => imp::read_selection(el).await,
+            None => SelRead::Unavailable,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = g;
+        SelRead::Unavailable
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod imp {
     use atspi::connection::{set_session_accessibility, AccessibilityConnection};
@@ -156,6 +203,7 @@ mod imp {
     use atspi::events::{Event, FocusEvents, ObjectEvents, WindowEvents};
     use atspi::object_ref::ObjectRefOwned;
     use atspi::proxy::accessible::{AccessibleProxy, ObjectRefExt};
+    use atspi::proxy::text::TextProxy;
     use atspi::zbus;
     use atspi::{Role, State};
     use futures_util::StreamExt;
@@ -258,7 +306,7 @@ mod imp {
                     if let Some(item) = act {
                         if let Ok(Some((app_id, _, active))) = tokio::time::timeout(
                             std::time::Duration::from_millis(1000),
-                            resolve_focus(item, &bus, deep, false, true),
+                            resolve_focus(&item, &bus, deep, false, true),
                         )
                         .await
                         {
@@ -271,7 +319,7 @@ mod imp {
                     if let Some(item) = deact {
                         if let Ok(Some((app_id, _, _))) = tokio::time::timeout(
                             std::time::Duration::from_millis(1000),
-                            resolve_focus(item, &bus, deep, false, false),
+                            resolve_focus(&item, &bus, deep, false, false),
                         )
                         .await
                         {
@@ -282,11 +330,13 @@ mod imp {
                     if let Some(item) = foc {
                         if let Ok(Some((app_id, editable, _))) = tokio::time::timeout(
                             std::time::Duration::from_millis(1000),
-                            resolve_focus(item, &bus, deep, true, false),
+                            resolve_focus(&item, &bus, deep, true, false),
                         )
                         .await
                         {
-                            note_focus(&snapshot, app_id, editable);
+                            // Hand the element ref to the snapshot so a later command can read its
+                            // selection (Quick-Add seed + correct-on-close) without a tree walk.
+                            note_focus(&snapshot, app_id, editable, item);
                         }
                     }
                 }
@@ -359,7 +409,7 @@ mod imp {
     /// (focus events); `read_active` reads the frame's STATE_ACTIVE (window:activate, to reject a
     /// background app's stray activate). Both off for window:deactivate (app id is enough).
     async fn resolve_focus(
-        item: ObjectRefOwned,
+        item: &ObjectRefOwned,
         bus: &zbus::Connection,
         deep: bool,
         read_editable: bool,
@@ -402,11 +452,71 @@ mod imp {
         Some((app_id, editable, active))
     }
 
-    /// A genuine `window:activate`: mark `app_id` foreground and fold it into the snapshot.
+    /// Read the current text selection of a RETAINED element via its AT-SPI Text interface, on a
+    /// fresh short-lived connection (a lazy one-shot from a command, never the event loop). The
+    /// whole read is time-bounded so an unresponsive app can't hang the caller. Distinguishes a
+    /// genuinely-empty selection (`Empty`) from "no Text interface / proxy error" (`Unavailable`).
+    pub(super) async fn read_selection(el: ObjectRefOwned) -> super::SelRead {
+        let conn = match AccessibilityConnection::new().await {
+            Ok(c) => c,
+            Err(_) => return super::SelRead::Unavailable,
+        };
+        let bus = conn.connection().clone();
+        let read = async move {
+            // Build a Text proxy for the element from its (bus name, path) — same construction as
+            // `as_accessible_proxy`, but for the Text interface.
+            let Some(name) = el.name() else {
+                return super::SelRead::Unavailable;
+            };
+            let dest: zbus::names::BusName = name.clone().into();
+            let builder = match TextProxy::builder(&bus).destination(dest) {
+                Ok(b) => b,
+                Err(_) => return super::SelRead::Unavailable,
+            };
+            let builder = match builder.path(el.path().clone()) {
+                Ok(b) => b,
+                Err(_) => return super::SelRead::Unavailable,
+            };
+            let text = match builder
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .build()
+                .await
+            {
+                Ok(t) => t,
+                Err(_) => return super::SelRead::Unavailable,
+            };
+            // No Text interface (terminals, canvases) → GetNSelections errors → can't tell.
+            let n = match text.get_n_selections().await {
+                Ok(n) => n,
+                Err(_) => return super::SelRead::Unavailable,
+            };
+            if n <= 0 {
+                return super::SelRead::Empty;
+            }
+            let (start, end) = match text.get_selection(0).await {
+                Ok(v) => v,
+                Err(_) => return super::SelRead::Unavailable,
+            };
+            if end <= start {
+                return super::SelRead::Empty;
+            }
+            match text.get_text(start, end).await {
+                Ok(s) => super::SelRead::Text(s),
+                Err(_) => super::SelRead::Unavailable,
+            }
+        };
+        match tokio::time::timeout(std::time::Duration::from_millis(800), read).await {
+            Ok(r) => r,
+            Err(_) => super::SelRead::Unavailable,
+        }
+    }
+
+    /// A genuine `window:activate`: mark `app_id` foreground and fold it into the snapshot. The
+    /// element is the window FRAME (not a text field), so no selection source is stored here.
     fn note_activate(snapshot: &parking_lot::Mutex<super::Snapshot>, app_id: String) {
         let mut snap = snapshot.lock();
         snap.active_app = Some(app_id.clone());
-        set_current(&mut snap, app_id, None);
+        set_current(&mut snap, app_id, None, None);
     }
 
     /// A `window:deactivate`: if it's the app currently marked foreground, clear the mark — so the
@@ -426,6 +536,7 @@ mod imp {
         snapshot: &parking_lot::Mutex<super::Snapshot>,
         app_id: String,
         editable: Option<bool>,
+        element: ObjectRefOwned,
     ) {
         let mut snap = snapshot.lock();
         if let Some(active) = snap.active_app.as_deref() {
@@ -433,13 +544,18 @@ mod imp {
                 return;
             }
         }
-        set_current(&mut snap, app_id, editable);
+        set_current(&mut snap, app_id, editable, Some(element));
     }
 
     /// Fold a focused app into the snapshot. `current` tracks the latest; `last_other` captures the
     /// app focused immediately BEFORE our own window (set only at that transition, so it can't get
     /// stuck on a stale app). Sync; the caller holds the lock.
-    fn set_current(snap: &mut super::Snapshot, app_id: String, editable: Option<bool>) {
+    fn set_current(
+        snap: &mut super::Snapshot,
+        app_id: String,
+        editable: Option<bool>,
+        element: Option<ObjectRefOwned>,
+    ) {
         let new_is_noise = super::is_noise(&app_id);
         let fa = super::FocusedApp {
             title: app_id.clone(),
@@ -451,10 +567,14 @@ mod imp {
             if let Some(prev) = snap.current.take() {
                 if !super::is_noise(&prev.app_id) {
                     snap.last_other = Some(prev);
+                    // Carry the real app's element ref over in lockstep, so the selection source
+                    // survives our own window (or the shell) taking focus on summon.
+                    snap.last_other_el = snap.current_el.take();
                 }
             }
         }
         snap.current = Some(fa);
+        snap.current_el = element;
     }
 
     /// Poke every application's top of tree (bounded depth/breadth) so Chromium/Electron
