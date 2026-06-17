@@ -195,15 +195,22 @@ export default function QuickAdd() {
     void hideQuickAdd();
   }, [flushSave]);
 
+  // Esc closes the window from anywhere in it — not only when a text field is focused.
+  // (Clicking empty space moves focus to <body>, an ancestor of the React root, so a
+  // keydown there never bubbled through the root div's handler.) The Combobox stops
+  // Esc while its dropdown is open, so the first Esc there only closes the dropdown.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeNow();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [closeNow]);
+
   const dot = color ? COLOR_DOT[color] ?? "bg-live" : "bg-live";
 
   return (
-    <div
-      onKeyDown={(e) => {
-        if (e.key === "Escape") closeNow();
-      }}
-      className="flex h-screen w-screen bg-transparent p-3"
-    >
+    <div className="flex h-screen w-screen bg-transparent p-3">
       <div className="flex min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8),0_0_60px_-26px_rgba(255,158,44,0.22)]">
         {/* header */}
         <div className="flex items-center gap-2.5 border-b border-line px-4 py-3">
