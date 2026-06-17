@@ -109,6 +109,8 @@ export type InsertMethod = "paste" | "direct" | "clipboard";
 export type InsertTiming = "off" | "stop" | "live";
 export type IndicatorPosition = "top" | "bottom" | "off";
 export type ThemeName = "dark" | "light";
+/** Which usage figure the chip's optional readout shows (today's value). */
+export type OverlayStatsMetric = "words" | "audio" | "both";
 
 /** A navigable app screen, referenced by the sidebar, the overlay quick-launch,
  *  and cross-window navigation (kept in sync with the router in App.tsx). */
@@ -150,6 +152,8 @@ export interface RecordingSettings {
   latchAutoStopMin: number; // auto-stop a hands-free (latch) session after N min of silence (0 = never)
   realtimePreview: boolean;
   showProfileOnOverlay: boolean; // show the active Profile's tag on the chip
+  showStatsOnOverlay: boolean; // show a tiny usage readout on the chip (off by default)
+  overlayStatsMetric: OverlayStatsMetric; // which usage figure the chip shows
   showTargetOnOverlay: boolean; // show the injection target (→ app) + a warn hint when not typable
   showTargetOnlySpeaking: boolean; // only show the target while actively dictating (chip expanded)
   persistentDock: boolean; // keep the chip on screen (a standby dot) even when dictation is off

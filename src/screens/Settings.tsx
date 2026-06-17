@@ -685,6 +685,31 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
+              title="Show usage on chip"
+              desc="Add a tiny usage readout (today's totals) to the chip. Needs the faster-whisper-backend; hidden on a standard server."
+            >
+              <Toggle
+                checked={s.recording.showStatsOnOverlay}
+                onChange={(v) => updateRecording({ showStatsOnOverlay: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              title="Chip metric"
+              desc="Which usage figure the chip shows."
+              disabled={!s.recording.showStatsOnOverlay}
+            >
+              <Select
+                value={s.recording.overlayStatsMetric}
+                onChange={(v) => updateRecording({ overlayStatsMetric: v })}
+                options={[
+                  { value: "words", label: "Words today" },
+                  { value: "audio", label: "Minutes today" },
+                  { value: "both", label: "Words + minutes" },
+                ]}
+                disabled={!s.recording.showStatsOnOverlay}
+              />
+            </SettingRow>
+            <SettingRow
               title="Show injection target"
               desc="Show which app dictation is typing into (→ app) on the chip, and warn when it isn't a text field."
             >

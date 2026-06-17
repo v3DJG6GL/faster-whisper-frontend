@@ -67,6 +67,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     latchAutoStopMin: 5,
     realtimePreview: true,
     showProfileOnOverlay: true,
+    showStatsOnOverlay: false,
+    overlayStatsMetric: "words",
     showTargetOnOverlay: true,
     showTargetOnlySpeaking: false,
     persistentDock: false,

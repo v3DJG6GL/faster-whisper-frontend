@@ -22,6 +22,9 @@ interface ChipState {
   profileTag?: string;
   language?: string;
   mode?: "stream" | "batch";
+  // P28: a tiny preformatted usage readout (e.g. "1.2k words"), absent unless the
+  // chip-stats setting is on and the backend supports it. Neutral grey — never amber.
+  statsLine?: string;
   // P16/D: the app dictation is typing into (→ readout) + why it's coerced to clipboard
   // ("blocked" by a per-app rule / "notEditable" by deep detection). Empty = nothing to show.
   targetTitle?: string;
@@ -651,7 +654,7 @@ export default function Overlay() {
           {/* Identity row: the active-Profile tag (hover ≥1s reveals "· language · mode", which
               animates its WIDTH open so the text never scales) and/or the P16/D injection-target
               readout ("→ App", warn-tinted with a reason when coerced to the clipboard). */}
-          {(state.profileTag || showTarget) && !peeked && (
+          {(state.profileTag || state.statsLine || showTarget) && !peeked && (
             <div className="ml-2 flex shrink-0 items-center gap-2 font-mono text-[11px] leading-none tracking-[0.12em]">
               {state.profileTag && (
                 <div className="flex items-center">
@@ -672,6 +675,13 @@ export default function Overlay() {
                     )}
                   </AnimatePresence>
                 </div>
+              )}
+              {/* P28: ambient usage readout — neutral grey (never amber, so it can't
+                  read as the armed-state signal), normal-case for legible figures. */}
+              {state.statsLine && (
+                <span className="whitespace-nowrap normal-case tabular-nums text-dim">
+                  {state.statsLine}
+                </span>
               )}
               {showTarget && (
                 <span

@@ -11,7 +11,18 @@ import { useApp } from "./store";
 import { isTauri, showOverlay, hideOverlay, setTrayState, playCue } from "./api";
 import { chipTagFor } from "./profileTag";
 import { homeTargetProfile } from "./dictation";
-import type { DictationStatus } from "./types";
+import { activeStatsBackend } from "./usage";
+import { fmtCompact, fmtDuration } from "./format";
+import type { DictationStatus, OverlayStatsMetric, UsageStats } from "./types";
+
+/** Build the chip's tiny usage readout (today's value) for the chosen metric. */
+function chipStatsLine(u: UsageStats, metric: OverlayStatsMetric): string {
+  const words = `${fmtCompact(u.today.words)} words`;
+  const mins = `${fmtDuration(u.today.audio_s)} today`;
+  if (metric === "audio") return mins;
+  if (metric === "both") return `${fmtCompact(u.today.words)}w · ${fmtDuration(u.today.audio_s)}`;
+  return words;
+}
 
 const ACTIVE: DictationStatus[] = ["listening", "transcribing", "injecting"];
 
@@ -41,6 +52,7 @@ export async function initOverlayController(): Promise<void> {
       state.targetSkip !== prev.targetSkip ||
       state.lastInsert !== prev.lastInsert || // per-phrase "inserted" pulse trigger
       state.sessionOutcome !== prev.sessionOutcome || // end-of-session done marker
+      state.usage !== prev.usage || // P28: refreshed usage stats → update the chip readout
       state.settings !== prev.settings // theme / position / preview / show-profile toggles
     ) {
       const rec = state.settings.recording;
@@ -63,6 +75,15 @@ export async function initOverlayController(): Promise<void> {
           language: chipProfile.language?.trim() ? chipProfile.language : backend?.language,
           mode: backend?.endpoint,
         };
+      }
+      // P28: a tiny usage readout (today's words/minutes) for the chip, gated by the
+      // setting. Scoped to the same backend the stats controller tracks; omitted when
+      // off or the backend has no usage yet (standard/old server, not fetched).
+      let statsLine: string | undefined;
+      if (rec.showStatsOnOverlay) {
+        const sb = activeStatsBackend(state);
+        const u = sb ? state.usage[sb.id] : null;
+        if (u) statsLine = chipStatsLine(u, rec.overlayStatsMetric);
       }
       // P16/D: the app being injected into (+ why, if it's coerced to clipboard), gated by the
       // setting and sent only while a session is active so the standby dock shows no stale target.
@@ -95,6 +116,7 @@ export async function initOverlayController(): Promise<void> {
         // UNGATED by ACTIVE — the done marker must reach the chip on the idle transition.
         lastInsert: state.lastInsert,
         sessionOutcome: state.sessionOutcome,
+        statsLine: statsLine ?? "",
         ...chip,
       });
     }
