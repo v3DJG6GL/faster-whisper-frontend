@@ -169,8 +169,8 @@ export default function QuickAdd() {
   );
 
   const addMapping = useCallback(() => {
-    const k = find.trim();
-    if (!k) return;
+    if (!find.trim()) return; // ignore a blank/whitespace-only spoken phrase
+    const k = find; // keep the key VERBATIM — leading/trailing spaces are meaningful (see pipelineMap)
     const v = insert;
     mutate((rs) => [{ id: nextRowId(), k, v }, ...rs]);
     setFind("");

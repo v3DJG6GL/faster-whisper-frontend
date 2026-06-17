@@ -21,14 +21,20 @@ export function mapRowsFromRule(rule: PipelineRule): MapRow[] {
     .sort((a, b) => (rule.map_meta?.[b.k] ?? 0) - (rule.map_meta?.[a.k] ?? 0));
 }
 
-/** Editor rows → the canonical `{ map }` body sent on PATCH. Trims keys, drops
- *  empties, and key-sorts the result so reordering rows for display (newest-first)
- *  is never mistaken for an edit in a dirty diff. */
+/** Editor rows → the canonical `{ map }` body sent on PATCH. Keeps each key
+ *  VERBATIM, drops only unfilled rows, and key-sorts the result so reordering
+ *  rows for display (newest-first) is never mistaken for an edit in a dirty diff.
+ *
+ *  Leading/trailing whitespace in a key is MEANINGFUL and must be preserved — the
+ *  backend accepts it (the cb:map key pattern includes a space) and matches it
+ *  literally at dictation time (`\b(re.escape(key))\b`), so " quote" and "quote "
+ *  are distinct mappings. Trimming here collapsed them to one entry AND made a
+ *  whitespace-only edit invisible to the dirty diff (no Save offered). We only
+ *  skip rows the user never filled in (blank/whitespace-only key). */
 export function mapBodyFromRows(rows: MapRow[]): { map: Record<string, string> } {
   const map: Record<string, string> = {};
   for (const r of rows) {
-    const k = r.k.trim();
-    if (k) map[k] = r.v;
+    if (r.k.trim()) map[r.k] = r.v;
   }
   const sorted: Record<string, string> = {};
   for (const k of Object.keys(map).sort()) sorted[k] = map[k];
