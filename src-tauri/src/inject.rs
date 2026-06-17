@@ -52,6 +52,26 @@ pub fn inject(
     Ok(())
 }
 
+/// Read the focus-independent PRIMARY selection (the Linux "highlight to select" buffer) as
+/// plain text, or `None` if it's empty / unavailable. Seeds Quick-Add from whatever the user
+/// has highlighted in the SOURCE app: PRIMARY is separate from the normal copy/paste clipboard
+/// and isn't tied to window focus, so it still reads the source app's highlight after OUR
+/// window has taken focus. BLOCKING (a Wayland round-trip to the selection's owner) — always
+/// call from a time-bounded `spawn_blocking`, never on the UI thread (same freeze hazard as
+/// `begin_injection`'s clipboard read).
+pub fn read_primary_selection() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        use arboard::{Clipboard, GetExtLinux, LinuxClipboardKind};
+        let mut cb = Clipboard::new().ok()?;
+        cb.get().clipboard(LinuxClipboardKind::Primary).text().ok()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
 /// Put `text` on the clipboard; returns the previous contents when `capture_prev`
 /// (so the caller can restore it after the paste). Used by the Wayland paste path,
 /// which sets the clipboard here and synthesizes Ctrl+V via the portal.

@@ -14,7 +14,7 @@
 // Re-fetching on each summon re-syncs any out-of-band edits — adequate for a
 // single-user quick-capture surface (the Dictionary screen keeps explicit-save).
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from "lucide-react";
 import { Button, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
@@ -22,6 +22,7 @@ import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows } from "@/lib/
 import { ruleDotColor } from "@/lib/ruleColor";
 import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
+  getQuickAddSeed,
 } from "@/lib/api";
 import type { PipelineFetch } from "@/lib/types";
 
@@ -69,6 +70,10 @@ export default function QuickAdd() {
   // summon (the first add), no right after "add another" (it stays out of the way
   // until you type / ArrowDown / click).
   const [openOnSummon, setOpenOnSummon] = useState(true);
+  // When summoned with text selected, we seed "When you say" and then move the cursor to
+  // "Insert" (the word's captured). Gates the focus-Insert layout effect below, which overrides
+  // the Combobox's autoFocus once the capture row has (re)mounted; reset on "add another".
+  const [focusInsert, setFocusInsert] = useState(false);
 
   const target = useRef<Target | null>(null);
   const rowsRef = useRef<MapRow[]>([]);
@@ -119,17 +124,34 @@ export default function QuickAdd() {
     void refresh();
   }, [refresh]);
 
-  // Each summon: re-sync, clear the add row, and re-focus the find field.
+  // Each summon: re-sync + reset the add row instantly, then seed "When you say" from the
+  // source app's current selection. The reset doesn't wait on the (off-thread, time-bounded)
+  // selection read, so the window is responsive at once; the seed then swoops in if there is one.
   useEffect(() => {
     let un: (() => void) | undefined;
     import("@tauri-apps/api/event")
       .then(({ listen }) =>
-        listen("quickadd://shown", () => {
+        listen("quickadd://shown", async () => {
+          // Instant empty-capture reset — focus the find field quietly (no dropdown yet).
           setFind("");
           setInsert("");
-          setOpenOnSummon(true);
+          setOpenOnSummon(false);
+          setFocusInsert(false);
           setShowSeq((s) => s + 1);
           void refresh();
+          // Seed from whatever the user highlighted in the source app. Got a word → fill it and
+          // drop the cursor straight in "Insert" (it's captured). Nothing usable → fall back to
+          // the old behaviour: open the recent-words dropdown on the (already-focused) find field.
+          const seed = await getQuickAddSeed();
+          if (seed) {
+            setFind(seed);
+            setOpenOnSummon(false);
+            setFocusInsert(true);
+            setShowSeq((s) => s + 1);
+          } else {
+            setOpenOnSummon(true);
+            setShowSeq((s) => s + 1);
+          }
         }),
       )
       .then((f) => {
@@ -137,6 +159,15 @@ export default function QuickAdd() {
       });
     return () => un?.();
   }, [refresh]);
+
+  // After a summon, land the cursor in "Insert" when we seeded a selection (the word's already
+  // captured). This overrides the Combobox's autoFocus, running AFTER it in the same commit
+  // (a child mounts before the parent layout effect), so there's no focus flicker. Crucially it
+  // also re-runs on the phase→"ok" transition: refresh() flips the capture row to "loading" and
+  // back on every summon, which unmounts/remounts the fields and would otherwise strand focus.
+  useLayoutEffect(() => {
+    if (phase === "ok" && focusInsert) insertRef.current?.focus();
+  }, [showSeq, focusInsert, phase]);
 
   // ── autosave: whole-map PATCH, no fingerprint (backend = last-writer-wins) ──
   const flushSave = useCallback(async () => {
@@ -176,6 +207,7 @@ export default function QuickAdd() {
     setFind("");
     setInsert("");
     setOpenOnSummon(false); // refocus the find field, but keep its dropdown out of the way
+    setFocusInsert(false); // after "add another" the find field gets focus (capture the next word)
     setShowSeq((s) => s + 1); // remount Combobox → re-focus find for the next add
   }, [find, insert, mutate]);
 

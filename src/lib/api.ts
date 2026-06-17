@@ -438,6 +438,18 @@ export async function hideQuickAdd(): Promise<void> {
   await invoke("hide_quick_add");
 }
 
+/** Read the user's current text selection from the source app to pre-fill Quick-Add's
+ *  "When you say" field on summon. null when nothing usable is selected (leave it empty +
+ *  show the recent-words dropdown). Best-effort: any error → null. */
+export async function getQuickAddSeed(): Promise<string | null> {
+  if (!isTauri) return null;
+  try {
+    return (await invoke<string | null>("get_quickadd_seed")) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Shape the overlay window's mouse input region to just the visible chip (logical
  * px, relative to the window's top-left), so the chip becomes hoverable while the

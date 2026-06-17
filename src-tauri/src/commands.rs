@@ -645,6 +645,45 @@ pub async fn get_focused_other_app(
     Ok(focused)
 }
 
+/// Read the user's current text selection from the SOURCE app to pre-fill Quick-Add's "When you
+/// say" field on summon, or `None` to leave it empty (and show the recent-words dropdown). Reads
+/// the focus-independent PRIMARY selection (the "highlight" buffer) OFF the UI thread and
+/// time-bounded — the source app may be slow/unresponsive, and a sync clipboard read on the UI
+/// thread would freeze the app (same hazard as `begin_injection`). The text is sanitised to a
+/// single short line. (An AT-SPI "nothing selected" check is layered on top in a follow-up, so a
+/// STALE highlight isn't seeded when nothing is actually selected.)
+#[tauri::command]
+pub async fn get_quickadd_seed() -> Result<Option<String>, String> {
+    let read = tokio::task::spawn_blocking(crate::inject::read_primary_selection);
+    let raw = match tokio::time::timeout(std::time::Duration::from_millis(400), read).await {
+        Ok(Ok(Some(s))) => s,
+        _ => return Ok(None),
+    };
+    let seed = sanitize_seed(&raw);
+    // Log lengths only, never the selected contents.
+    tracing::info!(
+        "[quickadd-seed] read {} chars -> seed {} chars",
+        raw.len(),
+        seed.as_deref().map_or(0, str::len)
+    );
+    Ok(seed)
+}
+
+/// Turn a raw selection into a usable mapping KEY, or reject it. Multi-WORD selections are kept
+/// verbatim (one key); a multi-LINE selection, an empty/whitespace-only one, or anything longer
+/// than a plausible phrase is rejected — a paragraph isn't a spoken symbol. Edges are trimmed (a
+/// trailing newline from a to-end-of-line highlight just falls away); an INTERIOR newline rejects.
+fn sanitize_seed(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty() || s.contains('\n') || s.contains('\r') {
+        return None;
+    }
+    if s.chars().count() > 100 {
+        return None;
+    }
+    Some(s.to_string())
+}
+
 /// Toggle the opt-in AT-SPI "deep field detection" (a11y flag + Chromium/Electron poke),
 /// which lets the focused-element editability read correctly for browser/Electron apps.
 #[tauri::command]
