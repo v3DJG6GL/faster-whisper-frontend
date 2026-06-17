@@ -414,9 +414,10 @@ export default function Settings() {
             >
               <Toggle checked={s.general.restoreClipboard} onChange={(v) => updateGeneral({ restoreClipboard: v })} />
             </SettingRow>
-            <SettingRow title="Sound cues" desc="A short tone when dictation starts and stops." last>
+            <SettingRow title="Sound cues" desc="A short tone when dictation starts and stops.">
               <Toggle checked={s.general.soundEffects} onChange={(v) => updateGeneral({ soundEffects: v })} />
             </SettingRow>
+            <QuickAddShortcutRow evdevActive={evdevActive} />
           </Card>
         )}
 
@@ -652,7 +653,6 @@ export default function Settings() {
                 onChange={(v) => updateRecording({ quickLaunch: v })}
               />
             </div>
-            <QuickAddShortcutRow evdevActive={evdevActive} />
           </Card>
         )}
 
