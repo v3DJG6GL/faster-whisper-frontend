@@ -53,6 +53,7 @@ function Highlight({ text, query }: { text: string; query: string }): ReactNode 
 
 export function Combobox({
   value, onChange, onSelect, suggestions, disabled, placeholder, className, footerMax, autoFocus,
+  openOnFocus = true,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -68,6 +69,10 @@ export function Combobox({
   footerMax?: number;
   /** Focus on mount (e.g. a freshly-added row) so suggestions appear at once. */
   autoFocus?: boolean;
+  /** Whether *gaining* focus opens the dropdown. Default true. Pass false to focus
+   *  the field quietly (e.g. after "add another") — typing, ArrowDown or a click
+   *  still open it; only the implicit focus-open is suppressed. */
+  openOnFocus?: boolean;
 }) {
   const baseId = useId();
   const listId = `${baseId}-list`;
@@ -159,7 +164,10 @@ export function Combobox({
         aria-autocomplete="list"
         aria-activedescendant={showPopover && active >= 0 ? optId(active) : undefined}
         onChange={(e) => { onChange(e.target.value); setOpen(true); setActive(-1); }}
-        onFocus={() => { if (!disabled) setOpen(true); }}
+        onFocus={() => { if (!disabled && openOnFocus) setOpen(true); }}
+        // A click in an already-focused field (e.g. after Esc closed the popover)
+        // doesn't refire onFocus — reopen explicitly so the user can get it back.
+        onClick={() => { if (!disabled) setOpen(true); }}
         onBlur={() => { setOpen(false); setActive(-1); }}
         onKeyDown={onKeyDown}
       />

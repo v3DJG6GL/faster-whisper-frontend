@@ -71,6 +71,10 @@ export default function QuickAdd() {
   // Bumped on each summon (and after each add) to remount the Combobox so its
   // `autoFocus` re-fires — focusing the find field for the next entry.
   const [showSeq, setShowSeq] = useState(0);
+  // Should the refocused field auto-open its recent-words dropdown? Yes on a fresh
+  // summon (the first add), no right after "add another" (it stays out of the way
+  // until you type / ArrowDown / click).
+  const [openOnSummon, setOpenOnSummon] = useState(true);
 
   const target = useRef<Target | null>(null);
   const rowsRef = useRef<MapRow[]>([]);
@@ -129,6 +133,7 @@ export default function QuickAdd() {
         listen("quickadd://shown", () => {
           setFind("");
           setInsert("");
+          setOpenOnSummon(true);
           setShowSeq((s) => s + 1);
           void refresh();
         }),
@@ -176,6 +181,7 @@ export default function QuickAdd() {
     mutate((rs) => [{ id: nextRowId(), k, v }, ...rs]);
     setFind("");
     setInsert("");
+    setOpenOnSummon(false); // refocus the find field, but keep its dropdown out of the way
     setShowSeq((s) => s + 1); // remount Combobox → re-focus find for the next add
   }, [find, insert, mutate]);
 
@@ -273,6 +279,7 @@ export default function QuickAdd() {
                     key={showSeq}
                     value={find}
                     autoFocus
+                    openOnFocus={openOnSummon}
                     suggestions={suggestions}
                     footerMax={recentMax}
                     placeholder="say a word…"
