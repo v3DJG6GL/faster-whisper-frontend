@@ -55,6 +55,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     soundEffects: true,
     evdevEnabled: false,
     deepFieldDetection: false,
+    quickAddHotkey: [],
   },
   recording: {
     indicatorPosition: "top",

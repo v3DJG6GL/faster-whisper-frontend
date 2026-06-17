@@ -336,6 +336,11 @@ pub struct GeneralSettings {
     /// `#[serde(default)]` (false) so older configs load unchanged.
     #[serde(default)]
     pub deep_field_detection: bool,
+    /// Global chord (KeyboardEvent.code list) that opens the quick-add window. Empty =
+    /// unset. `#[serde(default)]` so older configs load. Registered via the same paths
+    /// as Profile hotkeys (evdev / plugin / the `--quick-add` CLI flag).
+    #[serde(default)]
+    pub quick_add_hotkey: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -460,6 +465,7 @@ impl Default for Config {
                     sound_effects: true,
                     evdev_enabled: false,
                     deep_field_detection: false,
+                    quick_add_hotkey: Vec::new(),
                 },
                 recording: RecordingSettings {
                     indicator_position: IndicatorPosition::Top,

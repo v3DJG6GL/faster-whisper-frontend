@@ -46,7 +46,7 @@ pub fn permitted() -> bool {
     false
 }
 #[cfg(not(target_os = "linux"))]
-pub fn start(_app: &tauri::AppHandle, _state: &EvdevState, _profiles: &[crate::config::Profile]) {}
+pub fn start(_app: &tauri::AppHandle, _state: &EvdevState, _profiles: &[crate::config::Profile], _quick_add_hotkey: &[String]) {}
 #[cfg(not(target_os = "linux"))]
 pub async fn setup() -> Result<String, String> {
     Err("The evdev backend is Linux-only.".into())
@@ -62,11 +62,18 @@ mod imp {
     use std::sync::Arc;
     use tauri::{AppHandle, Emitter, Manager};
 
-    /// One enabled Profile's chord, ready for matching.
+    /// What a matched chord does — drive dictation for a Profile, or open the
+    /// quick-add window.
+    #[derive(Clone)]
+    enum ChordAction {
+        Dictate { profile_id: String, activation: ActivationType },
+        OpenQuickAdd,
+    }
+
+    /// One enabled chord, ready for matching.
     #[derive(Clone)]
     struct ChordDesc {
-        profile_id: String,
-        activation: ActivationType,
+        action: ChordAction,
         keys: Vec<Key>,
     }
 
@@ -102,10 +109,10 @@ mod imp {
         }
     }
 
-    /// Build chord descriptors for every enabled Profile whose hotkey maps cleanly.
-    /// Equal chords are de-duped (first by config order wins) so one keypress can't
-    /// fire two Profiles. Disabled / unmappable / empty chords are skipped.
-    fn chords_from(profiles: &[Profile]) -> Vec<ChordDesc> {
+    /// Build chord descriptors for every enabled Profile whose hotkey maps cleanly,
+    /// plus the quick-add window chord. Equal chords are de-duped (first by config
+    /// order wins) so one keypress can't fire two actions. Unmappable / empty skipped.
+    fn chords_from(profiles: &[Profile], quick_add_hotkey: &[String]) -> Vec<ChordDesc> {
         let mut out: Vec<ChordDesc> = Vec::new();
         for p in profiles.iter().filter(|p| p.enabled) {
             let Some(keys) = codes_to_keys(&p.hotkey) else {
@@ -126,10 +133,23 @@ mod imp {
                 continue;
             }
             out.push(ChordDesc {
-                profile_id: p.id.clone(),
-                activation: p.activation,
+                action: ChordAction::Dictate { profile_id: p.id.clone(), activation: p.activation },
                 keys,
             });
+        }
+        // The quick-add window shortcut (not a Profile) — matched alongside the chords.
+        if let Some(keys) = codes_to_keys(quick_add_hotkey) {
+            if !keys.is_empty() {
+                let codes: HashSet<u16> = keys.iter().map(|k| k.code()).collect();
+                let dup = out.iter().any(|c| {
+                    c.keys.len() == keys.len() && c.keys.iter().all(|k| codes.contains(&k.code()))
+                });
+                if dup {
+                    tracing::warn!("[evdev] the quick-add shortcut duplicates a profile chord; ignoring");
+                } else {
+                    out.push(ChordDesc { action: ChordAction::OpenQuickAdd, keys });
+                }
+            }
         }
         out
     }
@@ -157,12 +177,12 @@ mod imp {
         out
     }
 
-    pub fn start(app: &AppHandle, state: &EvdevState, profiles: &[Profile]) {
+    pub fn start(app: &AppHandle, state: &EvdevState, profiles: &[Profile], quick_add_hotkey: &[String]) {
         stop(state);
         // Fresh start: drop any held-key counts left over from a previous run so the
         // inject-gate can't wait on a phantom modifier.
         app.state::<crate::held_keys::HeldKeys>().clear();
-        let chords = chords_from(profiles);
+        let chords = chords_from(profiles, quick_add_hotkey);
         if chords.is_empty() {
             tracing::info!("[evdev] no mappable chords; not starting");
             return;
@@ -268,20 +288,31 @@ mod imp {
             for i in 0..chords.len() {
                 // Active iff fully held AND no strict-superset chord is also fully held.
                 let on = fully[i] && !supersets[i].iter().any(|&j| fully[j]);
-                match chords[i].activation {
-                    ActivationType::Hold => {
-                        if on && !active[i] {
-                            active[i] = true;
-                            emit(&app, &chords[i].profile_id, "start");
-                        } else if !on && active[i] {
-                            active[i] = false;
-                            emit(&app, &chords[i].profile_id, "stop");
+                match &chords[i].action {
+                    ChordAction::Dictate { profile_id, activation } => match activation {
+                        ActivationType::Hold => {
+                            if on && !active[i] {
+                                active[i] = true;
+                                emit(&app, profile_id, "start");
+                            } else if !on && active[i] {
+                                active[i] = false;
+                                emit(&app, profile_id, "stop");
+                            }
                         }
-                    }
-                    ActivationType::Latch => {
+                        ActivationType::Latch => {
+                            if on && !active[i] {
+                                active[i] = true;
+                                emit(&app, profile_id, "toggle");
+                            } else if !on {
+                                active[i] = false;
+                            }
+                        }
+                    },
+                    ChordAction::OpenQuickAdd => {
+                        // Rising-edge (like latch): open once per chord press.
                         if on && !active[i] {
                             active[i] = true;
-                            emit(&app, &chords[i].profile_id, "toggle");
+                            crate::quickadd::show(&app);
                         } else if !on {
                             active[i] = false;
                         }

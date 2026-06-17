@@ -42,7 +42,8 @@ export async function initConfig(): Promise<void> {
     // the save resolves, so the Rust side reads the just-persisted config (no race).
     if (
       state.profiles !== prev.profiles ||
-      state.settings.general.evdevEnabled !== prev.settings.general.evdevEnabled
+      state.settings.general.evdevEnabled !== prev.settings.general.evdevEnabled ||
+      state.settings.general.quickAddHotkey !== prev.settings.general.quickAddHotkey
     ) {
       pendingBindingChange = true;
     }

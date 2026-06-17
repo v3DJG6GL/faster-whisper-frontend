@@ -127,6 +127,8 @@ export interface GeneralSettings {
   /** Opt-in AT-SPI "deep field detection": skip typing when the focused element isn't a
    *  text field (covers browsers/Electron via an a11y flag + active poke). Default off. */
   deepFieldDetection: boolean;
+  /** Global chord (KeyboardEvent.code list) that opens the quick-add window; [] = unset. */
+  quickAddHotkey: string[];
 }
 
 export interface RecordingSettings {

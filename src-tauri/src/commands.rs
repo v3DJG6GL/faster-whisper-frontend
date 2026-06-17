@@ -382,13 +382,14 @@ pub fn apply_bindings(app: &AppHandle) {
     let Ok(dir) = config_dir(app) else { return };
     let cfg = config::load(&dir);
     let state = app.state::<crate::evdev_hotkeys::EvdevState>();
+    let quick_add = &cfg.settings.general.quick_add_hotkey;
     if cfg.settings.general.evdev_enabled && crate::evdev_hotkeys::permitted() {
         crate::triggers::unregister_all(app);
-        crate::evdev_hotkeys::start(app, &state, &cfg.profiles);
+        crate::evdev_hotkeys::start(app, &state, &cfg.profiles, quick_add);
         tracing::info!("[bindings] evdev backend active (plugin silenced)");
     } else {
         crate::evdev_hotkeys::stop(&state);
-        crate::triggers::register_from_config(app, &cfg.profiles);
+        crate::triggers::register_from_config(app, &cfg.profiles, quick_add);
     }
 }
 

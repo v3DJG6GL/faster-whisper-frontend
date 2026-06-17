@@ -38,23 +38,32 @@ fn center(win: &WebviewWindow) {
 /// Show + focus the quick-add window and signal the webview to (re)focus its
 /// field and refresh the list. Safe to call repeatedly (each summon re-centers).
 pub fn show(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("quickadd") else {
-        return;
-    };
-    center(&win);
-    let _ = win.set_always_on_top(true);
-    let _ = win.show();
-    let _ = win.unminimize();
-    let _ = win.set_focus();
-    let _ = app.emit("quickadd://shown", ());
+    // Callable from any context — the chip command (main thread), the global-shortcut
+    // handler, the single-instance CLI callback, or an evdev reader task — so hop to the
+    // main thread for the GTK window ops.
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(win) = handle.get_webview_window("quickadd") else {
+            return;
+        };
+        center(&win);
+        let _ = win.set_always_on_top(true);
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+        let _ = handle.emit("quickadd://shown", ());
+    });
 }
 
 /// Hide the quick-add window. It stays alive (prewarmed) for the next summon —
 /// the close-to-hide guard in `lib.rs` keeps it from being destroyed.
 pub fn hide(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("quickadd") {
-        let _ = win.hide();
-    }
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = handle.get_webview_window("quickadd") {
+            let _ = win.hide();
+        }
+    });
 }
 
 /// Open (or re-focus) the quick-add window — invoked by the chip quick-launch

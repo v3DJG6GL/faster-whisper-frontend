@@ -85,6 +85,10 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
                 emit_for_activation(app, ActivationType::Latch, "toggle");
                 i += 1;
             }
+            "--quick-add" => {
+                crate::quickadd::show(app);
+                i += 1;
+            }
             _ => i += 1,
         }
     }
@@ -103,9 +107,9 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
 // path (a DE shortcut → `app --toggle`). The GlobalShortcuts portal is M7.
 
 #[derive(Clone)]
-struct ShortcutTarget {
-    profile_id: String,
-    activation: ActivationType,
+enum ShortcutTarget {
+    Dictate { profile_id: String, activation: ActivationType },
+    OpenQuickAdd,
 }
 
 #[derive(Default)]
@@ -123,13 +127,22 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
     let Some(t) = target else {
         return;
     };
-    let action = match (t.activation, event.state()) {
-        (ActivationType::Hold, ShortcutState::Pressed) => "start",
-        (ActivationType::Hold, ShortcutState::Released) => "stop",
-        (ActivationType::Latch, ShortcutState::Pressed) => "toggle",
-        _ => return,
-    };
-    emit_trigger(app, t.profile_id.clone(), action);
+    match t {
+        ShortcutTarget::Dictate { profile_id, activation } => {
+            let action = match (activation, event.state()) {
+                (ActivationType::Hold, ShortcutState::Pressed) => "start",
+                (ActivationType::Hold, ShortcutState::Released) => "stop",
+                (ActivationType::Latch, ShortcutState::Pressed) => "toggle",
+                _ => return,
+            };
+            emit_trigger(app, profile_id, action);
+        }
+        ShortcutTarget::OpenQuickAdd => {
+            if event.state() == ShortcutState::Pressed {
+                crate::quickadd::show(app);
+            }
+        }
+    }
 }
 
 /// Unregister all currently-registered global shortcuts. Used while the user is
@@ -149,7 +162,7 @@ pub fn unregister_all(app: &AppHandle) {
 
 /// (Re)register global shortcuts for the enabled Profiles. Unregisterable hotkeys
 /// (modifier-only / Wayland) are skipped with a log — the CLI path covers them.
-pub fn register_from_config(app: &AppHandle, profiles: &[Profile]) {
+pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hotkey: &[String]) {
     let gs = app.global_shortcut();
     let registry = app.state::<ShortcutRegistry>();
     let Ok(mut map) = registry.0.lock() else {
@@ -188,7 +201,7 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile]) {
                 if map
                     .insert(
                         shortcut,
-                        ShortcutTarget {
+                        ShortcutTarget::Dictate {
                             profile_id: p.id.clone(),
                             activation: p.activation,
                         },
@@ -199,6 +212,26 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile]) {
                 }
             }
             Err(e) => tracing::warn!("[hotkey] could not register '{accel}' (Windows/X11 only): {e}"),
+        }
+    }
+
+    // The quick-add window shortcut (not a Profile) — same plugin registration path.
+    if !quick_add_hotkey.is_empty() {
+        match crate::config::codes_to_accelerator(quick_add_hotkey) {
+            Some(accel) => match Shortcut::from_str(&accel) {
+                Ok(shortcut) => match gs.register(shortcut.clone()) {
+                    Ok(()) => {
+                        tracing::info!("[hotkey] registered '{accel}' → quick-add");
+                        map.insert(shortcut, ShortcutTarget::OpenQuickAdd);
+                    }
+                    Err(e) => tracing::warn!("[hotkey] could not register quick-add '{accel}' (Windows/X11 only): {e}"),
+                },
+                Err(_) => tracing::warn!("[hotkey] quick-add '{accel}' is not a registerable global shortcut"),
+            },
+            None => tracing::info!(
+                "[hotkey] quick-add chord {:?} isn't a global-shortcut chord (modifier-only / AltGr) — use the evdev backend or a desktop shortcut → `app --quick-add`",
+                quick_add_hotkey
+            ),
         }
     }
 }
