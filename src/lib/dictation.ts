@@ -5,6 +5,7 @@
 
 import { useApp } from "./store";
 import { startLive, stopLive, cancelLive } from "./streaming";
+import { showQuickAdd } from "./api";
 import type { Profile } from "./types";
 
 export type TriggerAction = "start" | "stop" | "toggle";
@@ -70,6 +71,10 @@ export function homeTargetProfile(
 export function runOverlayAction(kind: string): void {
   if (kind === "cancel-dictation") {
     void cancelLive();
+    return;
+  }
+  if (kind === "open-quick-add") {
+    void showQuickAdd();
     return;
   }
   const s = useApp.getState();

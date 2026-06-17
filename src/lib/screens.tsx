@@ -3,7 +3,7 @@
 // quick-launch row, the Settings quick-launch editor, and the cross-window
 // navigation bridge (App.tsx). Keep `id`s in sync with the router paths in App.tsx.
 
-import { Home, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindow, BookA } from "lucide-react";
+import { Home, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindow, BookA, Plus } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { OverlayScreen, OverlayActionKind, OverlayQuickAction } from "./types";
 
@@ -40,6 +40,7 @@ export interface OverlayActionDef {
 export const OVERLAY_ACTIONS: OverlayActionDef[] = [
   { id: "toggle-dictation", label: "Toggle dictation", icon: Power },
   { id: "cycle-active-profile", label: "Cycle profile", icon: RefreshCw },
+  { id: "open-quick-add", label: "Quick add", icon: Plus },
 ];
 
 /** Label + icon for a quick-launch entry, resolved from the registries above. */
