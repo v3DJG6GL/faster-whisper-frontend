@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { motion, AnimatePresence, MotionConfig } from "motion/react";
-import { X } from "lucide-react";
+import { Target, X } from "lucide-react";
 import { Waveform } from "@/components/Waveform";
 import { setChipHitRegion, emitOverlayAction, showMainAtScreen } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -584,6 +584,77 @@ export default function Overlay() {
   const peekRestY = state.position === "bottom" ? 8 : -8;
   const slideY = peeked ? tuckY : peekRestoring ? peekRestY : restY;
 
+  // Identity-row groups: the active-Profile tag (hover reveals "· language · mode"), the usage
+  // readout, and the injection target. They're rendered as DISTINCT groups joined by thin
+  // vertical rules — a tier below the body divider — so each reads as its own fact instead of one
+  // run-on interpunct chain. The interpunct stays for true peers WITHIN a group ("en · stream").
+  // The target uses a Target glyph rather than an arrow (which read as "words → sent somewhere").
+  const idGroups: ReactNode[] = [];
+  if (state.profileTag) {
+    idGroups.push(
+      <div key="tag" className="flex items-center">
+        <span className="max-w-[140px] truncate uppercase text-dim">{state.profileTag}</span>
+        <AnimatePresence>
+          {hoverReveal && detail && (
+            <motion.span
+              key="detail"
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: "auto", opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={MORPH}
+              onAnimationComplete={reportBounds}
+              className="inline-block overflow-hidden align-middle"
+            >
+              {/* The tag│language seam — rides the hover-reveal so it appears with the detail. */}
+              <span className="flex items-center whitespace-nowrap normal-case text-faint">
+                <span className="mx-2.5 h-3 w-px shrink-0 bg-line-strong" aria-hidden />
+                {detail}
+              </span>
+            </motion.span>
+          )}
+        </AnimatePresence>
+      </div>,
+    );
+  }
+  if (state.statsLine) {
+    idGroups.push(
+      <span key="stats" className="whitespace-nowrap normal-case tabular-nums text-dim">
+        {state.statsLine}
+      </span>,
+    );
+  }
+  if (showTarget) {
+    idGroups.push(
+      <span
+        key="target"
+        className={cn(
+          "flex items-center gap-1.5 normal-case",
+          state.targetSkip === "blocked"
+            ? "text-rec"
+            : state.targetSkip === "notEditable"
+              ? "text-warn"
+              : "text-dim",
+        )}
+      >
+        <Target className="size-3 shrink-0 opacity-90" aria-hidden />
+        {/* The skip state lives on the app NAME itself — struck-through when blocked, italic when
+            not a text field — so the chip stays compact. The full word ("blocked" / "not a text
+            field") returns when expanded; the title + sr-only status keep it accessible collapsed. */}
+        <span
+          className={cn(
+            "max-w-[130px] truncate",
+            state.targetSkip === "blocked" && "line-through",
+            state.targetSkip === "notEditable" && "italic",
+          )}
+          title={targetWarn ? skipLabel : undefined}
+        >
+          {state.targetTitle}
+        </span>
+        {targetWarn && expanded && <span className="whitespace-nowrap">· {skipLabel}</span>}
+      </span>,
+    );
+  }
+
   return (
     <MotionConfig reducedMotion="user">
       <div
@@ -651,67 +722,18 @@ export default function Overlay() {
             )}
           />
 
-          {/* Identity row: the active-Profile tag (hover ≥1s reveals "· language · mode", which
-              animates its WIDTH open so the text never scales) and/or the P16/D injection-target
-              readout ("→ App", warn-tinted with a reason when coerced to the clipboard). */}
-          {(state.profileTag || state.statsLine || showTarget) && !peeked && (
-            <div className="ml-2 flex shrink-0 items-center gap-2 font-mono text-[11px] leading-none tracking-[0.12em]">
-              {state.profileTag && (
-                <div className="flex items-center">
-                  <span className="max-w-[140px] truncate uppercase text-dim">{state.profileTag}</span>
-                  <AnimatePresence>
-                    {hoverReveal && detail && (
-                      <motion.span
-                        key="detail"
-                        initial={{ width: 0, opacity: 0 }}
-                        animate={{ width: "auto", opacity: 1 }}
-                        exit={{ width: 0, opacity: 0 }}
-                        transition={MORPH}
-                        onAnimationComplete={reportBounds}
-                        className="inline-block overflow-hidden align-middle"
-                      >
-                        <span className="whitespace-nowrap pl-1.5 normal-case text-faint">· {detail}</span>
-                      </motion.span>
-                    )}
-                  </AnimatePresence>
-                </div>
-              )}
-              {/* P28: ambient usage readout — neutral grey (never amber, so it can't
-                  read as the armed-state signal), normal-case for legible figures. */}
-              {state.statsLine && (
-                <span className="whitespace-nowrap normal-case tabular-nums text-dim">
-                  {state.statsLine}
-                </span>
-              )}
-              {showTarget && (
-                <span
-                  className={cn(
-                    "flex items-center gap-1 normal-case",
-                    state.targetSkip === "blocked"
-                      ? "text-rec"
-                      : state.targetSkip === "notEditable"
-                        ? "text-warn"
-                        : "text-dim",
-                  )}
-                >
-                  <span aria-hidden>→</span>
-                  {/* The skip state lives on the app NAME itself — struck-through when blocked,
-                      italic when it isn't a text field — so the chip stays compact. The full word
-                      ("blocked" / "not a text field") returns when the chip is expanded, and the
-                      title + the sr-only status node keep it accessible while collapsed. */}
-                  <span
-                    className={cn(
-                      "max-w-[130px] truncate",
-                      state.targetSkip === "blocked" && "line-through",
-                      state.targetSkip === "notEditable" && "italic",
-                    )}
-                    title={targetWarn ? skipLabel : undefined}
-                  >
-                    {state.targetTitle}
-                  </span>
-                  {targetWarn && expanded && <span className="whitespace-nowrap">· {skipLabel}</span>}
-                </span>
-              )}
+          {/* Identity row: the Profile tag (hover ≥1s reveals "│ language · mode", which animates
+              its WIDTH open so the text never scales), the usage readout, and the P16/D injection
+              target — each its own group, joined by thin vertical rules so they don't blur into one
+              chain. The tag│language seam rides the hover-reveal (inside the tag group above). */}
+          {idGroups.length > 0 && !peeked && (
+            <div className="ml-2 flex shrink-0 items-center gap-2.5 font-mono text-[11px] leading-none tracking-[0.12em]">
+              {idGroups.map((g, i) => (
+                <Fragment key={i}>
+                  {i > 0 && <span className="h-3 w-px shrink-0 bg-line-strong" aria-hidden />}
+                  {g}
+                </Fragment>
+              ))}
             </div>
           )}
 
