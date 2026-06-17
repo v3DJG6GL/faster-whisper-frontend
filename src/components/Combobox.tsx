@@ -84,6 +84,8 @@ export function Combobox({
 
   const inputRef = useRef<HTMLInputElement>(null);
   const activeRef = useRef<HTMLLIElement | null>(null);
+  // Set when ArrowDown is pressed before suggestions have loaded — see below.
+  const wantFirstRef = useRef(false);
 
   const candidates = disabled ? [] : rank(suggestions, value);
   const showPopover = open && candidates.length > 0;
@@ -114,8 +116,18 @@ export function Combobox({
   useEffect(() => {
     if (showPopover && active >= 0) activeRef.current?.scrollIntoView({ block: "nearest" });
   }, [active, showPopover]);
+  // If ArrowDown landed before the suggestions finished loading (a cold-start race —
+  // recent words are fetched async), honour it the moment they arrive so the very
+  // first press isn't silently swallowed.
+  useEffect(() => {
+    if (wantFirstRef.current && candidates.length > 0) {
+      wantFirstRef.current = false;
+      setActive(0);
+    }
+  }, [candidates.length]);
 
   function choose(word: string) {
+    wantFirstRef.current = false;
     setOpen(false);
     setActive(-1);
     onSelect(word);
@@ -126,8 +138,12 @@ export function Combobox({
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        if (!open) { setOpen(true); setActive(candidates.length ? 0 : -1); }
-        else setActive((a) => Math.min(a + 1, candidates.length - 1));
+        if (!open) setOpen(true);
+        // No candidates yet (still loading) → remember the intent; the effect above
+        // lands on the first option once they arrive. Otherwise move down — from no
+        // selection (-1) the first press lands on index 0.
+        if (candidates.length === 0) wantFirstRef.current = true;
+        else setActive((a) => (a < 0 ? 0 : Math.min(a + 1, candidates.length - 1)));
         break;
       case "ArrowUp":
         if (open) { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
@@ -163,7 +179,7 @@ export function Combobox({
         aria-controls={listId}
         aria-autocomplete="list"
         aria-activedescendant={showPopover && active >= 0 ? optId(active) : undefined}
-        onChange={(e) => { onChange(e.target.value); setOpen(true); setActive(-1); }}
+        onChange={(e) => { wantFirstRef.current = false; onChange(e.target.value); setOpen(true); setActive(-1); }}
         onFocus={() => { if (!disabled && openOnFocus) setOpen(true); }}
         // A click in an already-focused field (e.g. after Esc closed the popover)
         // doesn't refire onFocus — reopen explicitly so the user can get it back.
