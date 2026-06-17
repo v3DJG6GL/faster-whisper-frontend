@@ -58,6 +58,11 @@ const TONE_BG: Record<DictationTone, string> = {
 // instant you pause. Stacks on top of SILENCE_HOLD_MS.
 const COLLAPSE_LINGER_MS = 2000;
 
+// The cancel-finalize affordance (the ✕) is a RECOVERY control for a slow/stuck finalize, not
+// something to flash on every normal end — a quarter-second blink you can't use and that reads
+// as noise. Only surface it once finalizing/inserting has actually persisted this long.
+const CANCEL_AFFORDANCE_DELAY_MS = 700;
+
 // The chip morph: one element fluidly grows from a calm dot into the full pill
 // (Motion `layout` → FLIP/transform, smooth on WebKit). Spring tuned snappy-but-
 // settled (Apple-fluid). We deliberately DON'T use backdrop-blur — on WebKitGTK
@@ -210,24 +215,33 @@ export default function Overlay() {
     if (sp !== speaking) setSpeaking(sp);
   }, [state.level, state.status, speaking]);
 
-  // Collapsed = armed but silent (or idle, when the window is hidden anyway).
+  const [expanded, setExpanded] = useState(false);
+
+  // Collapsed = armed but silent (or idle, when the window is hidden anyway). Warming
+  // expands too, so "warming up…" is actually visible. The end-of-session finalize/insert
+  // (transcribing/injecting) only KEEPS an already-open pill open (continuity through the
+  // linger below) — it never POPS a minimized chip open just to flash a sub-second state,
+  // which read as a glitch (a tucked dot sliding out, an empty pill falling back to "listening").
   const wantExpanded =
-    state.status === "transcribing" ||
-    state.status === "injecting" ||
     state.status === "error" ||
-    (state.status === "listening" && speaking);
+    !!state.warming ||
+    (state.status === "listening" && speaking) ||
+    ((state.status === "transcribing" || state.status === "injecting") && expanded);
 
   // Expand instantly when speech (or a state change) wants it; collapse only after a
   // linger, so the final words linger on screen rather than snapping shut on a pause.
-  const [expanded, setExpanded] = useState(false);
   useEffect(() => {
     if (wantExpanded) {
       setExpanded(true);
       return;
     }
-    const t = setTimeout(() => setExpanded(false), COLLAPSE_LINGER_MS);
+    // Linger so the FINAL words stay readable — but only when there ARE words. With nothing
+    // to show (a no-speech session ending), collapse at once instead of holding an empty pill
+    // that would fall through to the "listening" label after the session is already over.
+    const linger = state.partial ? COLLAPSE_LINGER_MS : 0;
+    const t = setTimeout(() => setExpanded(false), linger);
     return () => clearTimeout(t);
-  }, [wantExpanded]);
+  }, [wantExpanded, state.partial]);
 
   // Hover-to-reveal: holding the cursor over the chip for ≥1s expands it to show
   // the language + stream/batch detail beside the tag. (Under Tauri this only fires
@@ -374,6 +388,19 @@ export default function Overlay() {
   const processing = state.status === "transcribing" || state.status === "injecting";
   const standby = state.status === "idle"; // only ever visible when persistentDock is on
 
+  // Hold off the cancel ✕ until finalizing/inserting has actually persisted (see the const): on a
+  // normal quick end it never shows, so there's no quarter-second blink; a genuinely slow/stuck
+  // finalize surfaces it as a real, clickable recovery control.
+  const [showCancel, setShowCancel] = useState(false);
+  useEffect(() => {
+    if (!processing) {
+      setShowCancel(false);
+      return;
+    }
+    const t = setTimeout(() => setShowCancel(true), CANCEL_AFFORDANCE_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [processing]);
+
   // Insert feedback is ONE thing: a colour-coded pulse of the status dot — green when text was
   // typed/pasted into the field, amber when it was copied to the clipboard. No distinct glyphs.
   // Two edge-triggers drive the same `pulse` state:
@@ -422,7 +449,9 @@ export default function Overlay() {
       ? "finalizing…"
       : state.status === "injecting"
         ? "inserting…"
-        : "listening";
+        : state.status === "listening"
+          ? "listening"
+          : ""; // idle (post-session linger) — never fall back to a stale "listening"
 
   // Status dot colour (NEVER red while listening) via the SHARED dictationVisual()
   // mapping — so the chip, sidebar dot, Home button + waveforms all agree. The chip
@@ -484,20 +513,26 @@ export default function Overlay() {
     // `hovering` made a tucked ("hidden") chip pop out the instant the cursor grazed it while a
     // resting ("minimized") dot correctly waited out hoverRevealMs; the two felt inconsistent and
     // a fly-over flicked the pill open. An error always pops out so its message is readable.
+    // Already tucked + the session is wrapping up (finalize/insert): hold the tuck so a minimized
+    // chip just hides from the edge instead of sliding out to flash a sub-second end state (the
+    // "it pops open for a quarter second" glitch). Only affects an already-peeked chip.
+    const endFlash = peeked && (state.status === "transcribing" || state.status === "injecting");
     const blocked =
       !state.overlayPeek ||
       state.position === "off" ||
       hoverReveal ||
       state.status === "error" ||
-      (!keepMin && (speaking || processing || expanded));
-    const eligible = !blocked && (standby || (keepMin ? activeStatus : state.status === "listening"));
+      (!keepMin && !endFlash && (speaking || processing || expanded));
+    const eligible =
+      !blocked && (standby || endFlash || (keepMin ? activeStatus : state.status === "listening"));
     if (!eligible) {
       setPeeked(false);
       return;
     }
     // Normal mode bounces out on fresh activity (a status change) then re-arms; keep-minimized
-    // glues the dot in place across the whole lifecycle (listening → finalizing → done).
-    if (statusChanged && !keepMin) setPeeked(false);
+    // glues the dot in place across the whole lifecycle (listening → finalizing → done). A tucked
+    // end-of-session flash also holds (endFlash), so it hides without sliding out first.
+    if (statusChanged && !keepMin && !endFlash) setPeeked(false);
     // Idle/standby honours the user's full inactivity timeout; a live keep-minimized session
     // tucks promptly instead. A recent hover extends either via the grace floor.
     const base =
@@ -517,6 +552,7 @@ export default function Overlay() {
     processing,
     expanded,
     standby,
+    peeked,
   ]);
 
   // Quick-launch: icon buttons shown when hovering the idle/standby chip (never while
@@ -762,15 +798,16 @@ export default function Overlay() {
                             )}
                           </div>
                         ) : (
-                          <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-dim">
+                          <div className="whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.14em] text-dim">
                             {label}
                           </div>
                         )}
                       </div>
                       {/* Cancel the in-flight finalize/insert. The chip can't call
                           cancelLive() directly (separate window), so route it through the
-                          main window via an action event. */}
-                      {processing && (
+                          main window via an action event. Delayed (showCancel) so it only
+                          appears for a slow/stuck finalize, never a quarter-second blink. */}
+                      {showCancel && (
                         <button
                           type="button"
                           title="Cancel"

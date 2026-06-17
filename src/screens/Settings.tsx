@@ -28,8 +28,12 @@ const TABS = ["General", "Audio", "Recording", "Chip", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
 
 // Smoothed level above the digital-silence floor ⇒ the mic is actually capturing (a
-// cold/Bluetooth mic can be open but silent for ~1–2s first). Mirrors streaming.ts.
-const MIC_LIVE_LEVEL = 0.012;
+// cold/Bluetooth mic can be open but silent for ~1–2s first). A live mic has a faint
+// noise floor (~0.0002) even in silence; a warming one is exact zero. Mirrors streaming.ts.
+const MIC_LIVE_LEVEL = 0.0001;
+// Cap a mic test so it can't hold the mic open indefinitely (a Bluetooth headset would
+// stay stuck in low-quality mic mode the whole time). Plenty for a "does it work?" check.
+const MIC_TEST_MAX_MS = 15000;
 
 function AudioTab() {
   const microphoneId = useApp((s) => s.settings.microphoneId);
@@ -63,7 +67,11 @@ function AudioTab() {
     // Show "warming up…" until real audio flows (a cold/Bluetooth mic is silent for
     // ~1–2s first), with a safety timeout so it never hangs on a silent device.
     setMicWarming(true);
-    const warmTimer = window.setTimeout(() => setMicWarming(false), 2500);
+    const warmTimer = window.setTimeout(() => setMicWarming(false), 5000);
+    // Auto-stop so the test can't run (and hold the mic) forever.
+    const maxTimer = window.setTimeout(() => {
+      if (active) setTesting(false);
+    }, MIC_TEST_MAX_MS);
     void (async () => {
       const un = await onAudioLevel((l) => {
         if (!active) return;
@@ -82,6 +90,7 @@ function AudioTab() {
     return () => {
       active = false;
       clearTimeout(warmTimer);
+      clearTimeout(maxTimer);
       unlisten?.();
       void stopMicTest();
       setLevel(0);

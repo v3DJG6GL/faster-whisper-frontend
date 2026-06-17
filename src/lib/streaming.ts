@@ -54,14 +54,23 @@ let lastSpokeAt = 0;
 let lastSavedRecordingPath: string | null = null;
 let activeEndpoint: "stream" | "batch" | null = null;
 
-// Mic warm-up gate: a cold mic can be open but deliver SILENCE for ~1–2s before real
-// audio flows (classic for a Bluetooth headset switching into its HFP/mic profile).
-// We hold the chip in "warming up…" (and defer the start cue) until the level meter
-// shows real audio — the smoothed level sits at ~0 during the silent warm-up and rises
-// the instant the mic is actually capturing. A safety timeout clears it regardless.
-const MIC_LIVE_LEVEL = 0.012; // smoothed level above the digital-silence floor ⇒ mic live
-const MIC_WARM_TIMEOUT_MS = 2500;
+// Mic warm-up gate. A cold mic can be open but deliver SILENCE for ~1–2s before real
+// audio flows (classic for a Bluetooth headset switching into its HFP/mic profile). From
+// the first frame we hold the chip in "warming up…" — a neutral/grey dot, NEVER an amber
+// "listening" flash before the mic is live — and defer the start cue until real audio
+// actually arrives:
+//   • MIC_LIVE_LEVEL — a warming mic delivers exact zeros (level 0); a live mic always
+//     has a faint noise floor above it even in silence (measured ~0.0002 on a quiet
+//     Bluetooth headset). The threshold sits in that gap, so we detect "live" from the
+//     floor alone — no need to wait for speech.
+//   • MIC_LIVE_CONFIRM — require a couple of consecutive frames above the floor, so a
+//     single open-blip (a click/DC spike when the stream opens) can't end it early.
+//   • MIC_WARM_TIMEOUT_MS — hard cap on "warming up…" even if no audio is ever detected.
+const MIC_LIVE_LEVEL = 0.0001;
+const MIC_LIVE_CONFIRM = 2;
+const MIC_WARM_TIMEOUT_MS = 5000;
 let warmTimer: ReturnType<typeof setTimeout> | null = null;
+let micLiveHits = 0;
 function clearWarmTimer(): void {
   if (warmTimer) {
     clearTimeout(warmTimer);
@@ -339,11 +348,20 @@ async function ensureListeners(): Promise<void> {
   let latestLevel = 0;
   await listen<number>("stream://level", (e) => {
     latestLevel = e.payload;
-    // First real audio after a cold open → the mic is live; drop the warm-up gate so
-    // the chip flips to "listening" and the start cue fires (see startLive).
-    if (latestLevel > MIC_LIVE_LEVEL && useApp.getState().warming) {
-      clearWarmTimer();
-      setDictation({ warming: false });
+    // Mic warm-up gate (see startLive): while gating, detect the mic going live. Real
+    // audio sits above the digital-silence floor for a couple of consecutive frames; a
+    // warming mic delivers zeros and a lone open-click is a single frame. Going live
+    // cancels the pending "warming up…" (a warm mic never flashes it) and clears it if
+    // already shown, flipping the chip to "listening" + firing the start cue.
+    if (warmTimer !== null) {
+      if (latestLevel > MIC_LIVE_LEVEL) {
+        if (++micLiveHits >= MIC_LIVE_CONFIRM) {
+          clearWarmTimer();
+          setDictation({ warming: false });
+        }
+      } else {
+        micLiveHits = 0;
+      }
     }
     // Latch auto-stop (when armed): track silence via the shared speaking detector and end the
     // session after the configured quiet stretch. Fires once, then disarms itself.
@@ -378,10 +396,20 @@ async function ensureListeners(): Promise<void> {
   await listen<{ committed: string; pending: string }>("stream://partial", (e) => {
     const live = e.payload.committed + e.payload.pending;
     const sep = committedDoc && live && !/\s$/.test(committedDoc) ? " " : "";
-    setDictation({ status: "listening", partial: committedDoc + sep + live });
+    // A partial can still arrive AFTER stopLive() — the finalize drain emits buffered
+    // transcription — or even after `closed`. Update the preview text, but NEVER resurrect
+    // "listening" once we've left it: that stuck the indicator at "listening" with the mic
+    // already closed, and disabled the stuck-finalize watchdog (which only fires while
+    // "transcribing"). Only hold the status / defer per-phrase actions while truly capturing.
+    const capturing = useApp.getState().status === "listening";
+    setDictation(
+      capturing
+        ? { status: "listening", partial: committedDoc + sep + live }
+        : { partial: committedDoc + sep + live },
+    );
     // Still speaking → keep deferring the per-phrase actions (Enter / clipboard restore / clipboard
-    // phrase boundary) until you actually pause. Armed for any live session.
-    if (insertCfg?.live) bumpPhraseEnd();
+    // phrase boundary) until you actually pause. Armed for any live session, but only while capturing.
+    if (insertCfg?.live && capturing) bumpPhraseEnd();
   });
 
   await listen<{ committed: string; tail: string; last: boolean }>("stream://final", (e) => {
@@ -520,10 +548,11 @@ async function ensureListeners(): Promise<void> {
 
   await listen<string>("stream://status", (e) => {
     if (e.payload === "ready") {
-      // Server is ready ⇒ audio is reaching it, so the mic is definitely live: drop any
-      // lingering warm-up gate (belt-and-suspenders alongside the level-based clear).
-      clearWarmTimer();
-      setDictation({ status: "listening", warming: false, dictationError: null });
+      // NOTE: do NOT clear `warming` here. "ready" is just the WS/model handshake and
+      // usually arrives BEFORE a cold (Bluetooth) mic finishes warming up — clearing it
+      // here would flip the chip to "listening" while the mic is still silent. Warming is
+      // cleared only by real audio (the level handler) or the safety timeout.
+      setDictation({ status: "listening", dictationError: null });
     } else if (e.payload === "closed") {
       clearStuckWatchdog(); // the stream resolved on its own
       stopTargetPoll(); // session ending — stop tracking focus for the chip
@@ -772,7 +801,8 @@ export async function startLive(
   const targetSkip = insertCfg.blocked ? "blocked" : insertCfg.notEditable ? "notEditable" : null;
   setDictation({
     status: "listening",
-    // Gate: hold "warming up…" + the start cue until real audio flows (cold/Bluetooth mic).
+    // Warm-up gate: grey "warming up…" from the first frame (never an amber "listening"
+    // flash before the mic is live); cleared by real audio or the safety timeout below.
     warming: true,
     partial: "",
     level: 0,
@@ -784,9 +814,10 @@ export async function startLive(
     lastInsert: null,
     sessionOutcome: null,
   });
-  // Safety net: if no real audio is ever detected (e.g. a silent/odd device), stop
-  // "warming up…" after a bounded wait rather than hang. The level handler clears it
-  // sooner the moment the mic actually starts capturing.
+  // Warm-up gate: hold "warming up…" until real audio actually flows (a cold/Bluetooth
+  // mic is silent for ~1–2s first). The level handler clears it on sustained real audio
+  // (a single open-blip is ignored); a safety timeout caps it. micLiveHits resets here.
+  micLiveHits = 0;
   clearWarmTimer();
   warmTimer = setTimeout(() => {
     warmTimer = null;
@@ -841,7 +872,7 @@ export async function startLive(
 
 export async function stopLive(): Promise<void> {
   autoStopMs = 0; // disarm latch auto-stop — we're stopping now
-  clearWarmTimer(); // drop the warm-up fallback if we stop before the mic went live
+  clearWarmTimer(); // drop the warm-up gate if we stop before the mic went live
   // Streaming: server flushes + drains. Batch: transcription runs now. Either way the
   // `closed` event then moves us "transcribing" → "injecting" (while the text is
   // written out) → "idle" — so the chip shows progress the whole way through.
