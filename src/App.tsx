@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { useApp } from "@/lib/store";
 import { initConfig } from "@/lib/persistence";
 import { initOverlayController } from "@/lib/overlay";
+import { initUsageController } from "@/lib/usage";
 import { onTrigger, onSystemResumed, onOverlayAction, onAppNavigate } from "@/lib/api";
 import { dictate, runOverlayAction } from "@/lib/dictation";
 import { cancelLive } from "@/lib/streaming";
@@ -45,6 +46,7 @@ export default function App() {
   useEffect(() => {
     void initConfig();
     void initOverlayController();
+    initUsageController();
   }, []);
 
   // Global dictation triggers (CLI / hotkeys) → start/stop the right mode.

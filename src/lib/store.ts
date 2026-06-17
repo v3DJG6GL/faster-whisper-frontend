@@ -9,6 +9,7 @@ import type {
   FocusedApp,
   Profile,
   ThemeName,
+  UsageStats,
 } from "./types";
 import { newSpeakMemo, stepSpeaking } from "./speaking";
 
@@ -171,6 +172,12 @@ interface AppState {
 
   connections: Record<string, ConnectionInfo | undefined>; // keyed by Backend id
 
+  /** P28: per-Backend usage stats (GET /v1/usage), keyed by Backend id. A
+   *  present-but-null value means "fetched and unsupported" (hide the stats
+   *  surfaces); an absent key means "not fetched yet". Runtime-only — kept off
+   *  the persisted Config. Fed by the usage controller (lib/usage.ts). */
+  usage: Record<string, UsageStats | null>;
+
   setTheme: (t: ThemeName) => void;
   updateSettings: (patch: Partial<AppSettings>) => void;
   updateGeneral: (patch: Partial<AppSettings["general"]>) => void;
@@ -189,6 +196,9 @@ interface AppState {
   removeAppRule: (id: string) => void;
 
   setConnection: (backendId: string, info: ConnectionInfo) => void;
+
+  /** Store the latest usage stats for a Backend (null = fetched-but-unsupported). */
+  setUsage: (backendId: string, stats: UsageStats | null) => void;
 
   /** Update live dictation runtime (status / level / partial transcript). */
   setDictation: (
@@ -231,6 +241,7 @@ export const useApp = create<AppState>((set) => ({
   sessionOutcome: null,
 
   connections: {},
+  usage: {},
 
   setTheme: (t) => {
     document.documentElement.dataset.theme = t;
@@ -304,6 +315,9 @@ export const useApp = create<AppState>((set) => ({
 
   setConnection: (backendId, info) =>
     set((s) => ({ connections: { ...s.connections, [backendId]: info } })),
+
+  setUsage: (backendId, stats) =>
+    set((s) => ({ usage: { ...s.usage, [backendId]: stats } })),
 
   setDictation: (patch) =>
     set((s) => {
