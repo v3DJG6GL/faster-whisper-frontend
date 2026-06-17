@@ -54,6 +54,7 @@ mod imp {
     const KEY_ENTER: i32 = 28;
     const KEY_LEFTCTRL: i32 = 29;
     const KEY_LEFTSHIFT: i32 = 42;
+    const KEY_CAPSLOCK: i32 = 58;
     const KEY_V: i32 = 47;
     const KEY_RIGHTALT: i32 = 100; // AltGr / ISO_Level3_Shift
 
@@ -62,6 +63,11 @@ mod imp {
         keycode: i32,
         shift: bool,
         altgr: bool,
+        /// The capital is reachable ONLY via Caps Lock, not Shift — e.g. Swiss-German Ü/Ä/Ö,
+        /// whose keys use the XKB `FOUR_LEVEL` type (Shift gives è/à/é, and Lock isn't in the
+        /// type's modifiers, so KWin capitalizes the lowercase keysym under Caps Lock). The
+        /// typer brackets such a keypress with a Caps Lock toggle. See `build_charmap`.
+        lock: bool,
     }
 
     fn token_path(app: &AppHandle) -> Option<PathBuf> {
@@ -147,18 +153,48 @@ mod imp {
                             keycode: (kc - EVDEV_OFFSET) as i32,
                             shift: level == 1 || level == 3,
                             altgr: level == 2 || level == 3,
+                            lock: false,
                         });
                     }
                 }
             }
+        }
+
+        // Second pass: capitals NOT directly on any level. On layouts like Swiss-German
+        // (ch/de_nodeadkeys) the ü/ä/ö keys are XKB type `FOUR_LEVEL` — Shift yields è/à/é, and
+        // the type doesn't consume Lock, so the capital Ü/Ä/Ö (and È/É/À) exists only because
+        // KWin capitalizes the lowercase keysym while Caps Lock is on. The level scan above can't
+        // see those, so each typed capital would be silently dropped. Recover them: for every
+        // lowercase char we DID map, register its uppercase (if not already reachable) on the same
+        // key with a `lock` flag — the typer presses it with Caps Lock toggled on for that key.
+        let extras: Vec<(char, KeySpec)> = map
+            .iter()
+            .filter_map(|(&ch, &spec)| {
+                if !ch.is_lowercase() {
+                    return None;
+                }
+                let up: Vec<char> = ch.to_uppercase().collect();
+                // Skip multi-char expansions (e.g. ß → "SS") — no single keypress produces those.
+                if up.len() != 1 {
+                    return None;
+                }
+                let u = up[0];
+                if u == ch || map.contains_key(&u) {
+                    return None; // capital already typeable via Shift (normal A–Z) — leave it.
+                }
+                Some((u, KeySpec { lock: true, ..spec }))
+            })
+            .collect();
+        for (u, spec) in extras {
+            map.entry(u).or_insert(spec);
         }
         Some(map)
     }
 
     fn key_spec_for(c: char, map: &HashMap<char, KeySpec>) -> Option<KeySpec> {
         match c {
-            '\n' | '\r' => Some(KeySpec { keycode: KEY_ENTER, shift: false, altgr: false }),
-            '\t' => Some(KeySpec { keycode: KEY_TAB, shift: false, altgr: false }),
+            '\n' | '\r' => Some(KeySpec { keycode: KEY_ENTER, shift: false, altgr: false, lock: false }),
+            '\t' => Some(KeySpec { keycode: KEY_TAB, shift: false, altgr: false, lock: false }),
             _ => map.get(&c).copied(),
         }
     }
@@ -380,6 +416,47 @@ mod imp {
                     let Some(spec) = key_spec_for(c, &charmap) else {
                         continue; // char not reachable on this layout — skip
                     };
+
+                    // Capital reachable ONLY via Caps Lock (Swiss-German Ü/Ä/Ö, È/É/À): press the
+                    // base key with Caps Lock effectively ON so KWin capitalizes the lowercase
+                    // keysym. If Caps is currently OFF, bracket the press with a Caps Lock tap to
+                    // flip it on and back (leaving the user's Caps state unchanged); if it's already
+                    // ON, the press alone yields the capital. Shift/AltGr still apply (È = Lock+Shift).
+                    if spec.lock {
+                        let flip = !caps;
+                        if flip {
+                            press!(KEY_CAPSLOCK);
+                            release!(KEY_CAPSLOCK);
+                            tokio::time::sleep(Duration::from_millis(6)).await;
+                        }
+                        if spec.shift {
+                            press!(KEY_LEFTSHIFT);
+                            tokio::time::sleep(Duration::from_millis(4)).await;
+                        }
+                        if spec.altgr {
+                            press!(KEY_RIGHTALT);
+                            tokio::time::sleep(Duration::from_millis(4)).await;
+                        }
+                        press!(spec.keycode);
+                        tokio::time::sleep(Duration::from_millis(4)).await;
+                        release!(spec.keycode);
+                        if spec.altgr {
+                            tokio::time::sleep(Duration::from_millis(4)).await;
+                            release!(KEY_RIGHTALT);
+                        }
+                        if spec.shift {
+                            tokio::time::sleep(Duration::from_millis(4)).await;
+                            release!(KEY_LEFTSHIFT);
+                        }
+                        if flip {
+                            tokio::time::sleep(Duration::from_millis(6)).await;
+                            press!(KEY_CAPSLOCK);
+                            release!(KEY_CAPSLOCK);
+                        }
+                        tokio::time::sleep(Duration::from_millis(6)).await;
+                        continue;
+                    }
+
                     let needs_shift = spec.shift ^ (caps && c.is_alphabetic());
                     if needs_shift {
                         press!(KEY_LEFTSHIFT);
