@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Mic, Check, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus, FolderOpen } from "lucide-react";
+import { Mic, Check, Play, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus, FolderOpen } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
@@ -8,6 +8,7 @@ import {
   listAudioDevices,
   startMicTest,
   stopMicTest,
+  playMicTest,
   onAudioLevel,
   evdevStatus,
   evdevSetup,
@@ -31,6 +32,8 @@ function AudioTab() {
   const [devices, setDevices] = useState<AudioDevice[]>([]);
   const [testing, setTesting] = useState(false);
   const [level, setLevel] = useState(0);
+  // True once a stopped test captured something worth replaying (enables Replay).
+  const [hasClip, setHasClip] = useState(false);
 
   const refresh = useCallback(async () => {
     setDevices(await listAudioDevices());
@@ -66,6 +69,23 @@ function AudioTab() {
     };
   }, [testing, microphoneId]);
 
+  // Test/Stop: pressing Stop replays what was just captured (a quick "did my mic
+  // work?" check). The capture effect's cleanup also calls stopMicTest — harmless;
+  // here we stop first so the recorded clip is final, then play it back.
+  const onToggle = useCallback(async () => {
+    if (!testing) {
+      setHasClip(false);
+      setTesting(true);
+      return;
+    }
+    const secs = await stopMicTest();
+    setTesting(false);
+    if (secs > 0.2) {
+      setHasClip(true);
+      await playMicTest();
+    }
+  }, [testing]);
+
   const options = [
     { value: "default", label: "System default" },
     ...devices.map((d) => ({ value: d.id, label: d.label })),
@@ -86,20 +106,36 @@ function AudioTab() {
           </Button>
         </div>
       </SettingRow>
-      <SettingRow title="Test microphone" desc="Open the mic and watch the input level." last>
+      <SettingRow
+        title="Test microphone"
+        desc="Open the mic and watch the input level; pressing Stop replays what it just heard."
+        last
+      >
         <div className="flex items-center gap-3">
           <Waveform level={level} active={testing} bars={16} tone={testing ? "accent" : "dim"} className="h-7 w-28" />
-          <Button variant={testing ? "danger" : "default"} size="sm" onClick={() => setTesting((t) => !t)}>
-            {testing ? (
-              <>
-                <Square className="size-3.5" /> Stop
-              </>
-            ) : (
-              <>
-                <Mic className="size-4" /> Test
-              </>
+          <div className="flex items-center gap-2">
+            <Button variant={testing ? "danger" : "default"} size="sm" onClick={() => void onToggle()}>
+              {testing ? (
+                <>
+                  <Square className="size-3.5" /> Stop
+                </>
+              ) : (
+                <>
+                  <Mic className="size-4" /> Test
+                </>
+              )}
+            </Button>
+            {hasClip && !testing && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void playMicTest()}
+                title="Replay the last test recording"
+              >
+                <Play className="size-3.5" /> Replay
+              </Button>
             )}
-          </Button>
+          </div>
         </div>
       </SettingRow>
     </Card>

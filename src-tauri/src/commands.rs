@@ -1,6 +1,6 @@
 //! Tauri commands exposed to the web UI (config load/save + secret-store keys).
 
-use crate::audio::{self, AudioDevice, AudioState};
+use crate::audio::{self, AudioDevice, AudioState, MicTestClip};
 use crate::config::{self, Config};
 use crate::session::{self, RecordParams, RecordState, StartParams, StreamState};
 use crate::transport;
@@ -237,17 +237,53 @@ pub fn list_audio_devices() -> Vec<AudioDevice> {
 pub fn start_mic_test(
     app: AppHandle,
     state: State<AudioState>,
+    clip: State<MicTestClip>,
     device_id: Option<String>,
 ) -> Result<(), String> {
-    let handle = audio::capture::start_level_meter(app, device_id)?;
+    let handle = audio::capture::start_level_meter(app, device_id, clip.0.clone())?;
     // Replacing the Option drops (and stops) any previous capture.
     *state.0.lock().map_err(|_| "audio state poisoned")? = Some(handle);
     Ok(())
 }
 
+/// Stop the mic test and return the number of seconds captured (so the UI can
+/// decide whether there's anything worth replaying). Dropping the handle joins the
+/// capture thread, so the recorded clip is final by the time we read its length.
 #[tauri::command]
-pub fn stop_mic_test(state: State<AudioState>) -> Result<(), String> {
+pub fn stop_mic_test(state: State<AudioState>, clip: State<MicTestClip>) -> Result<f32, String> {
     *state.0.lock().map_err(|_| "audio state poisoned")? = None;
+    let c = clip.0.lock().map_err(|_| "mic clip poisoned")?;
+    let secs = if c.sample_rate > 0 {
+        c.samples.len() as f32 / c.sample_rate as f32
+    } else {
+        0.0
+    };
+    Ok(secs)
+}
+
+/// Replay the most recent mic-test capture on the default output device. Returns
+/// immediately; playback runs on a detached thread (like the sound cues). A no-op
+/// when nothing has been recorded.
+#[tauri::command]
+pub fn play_mic_test(clip: State<MicTestClip>) -> Result<(), String> {
+    let (samples, sample_rate) = {
+        let c = clip.0.lock().map_err(|_| "mic clip poisoned")?;
+        (c.samples.clone(), c.sample_rate)
+    };
+    if samples.is_empty() || sample_rate == 0 {
+        return Ok(());
+    }
+    std::thread::spawn(move || {
+        // Keep `_stream` alive until playback finishes (dropping it cuts audio).
+        let Ok((_stream, handle)) = rodio::OutputStream::try_default() else {
+            return;
+        };
+        let Ok(sink) = rodio::Sink::try_new(&handle) else {
+            return;
+        };
+        sink.append(rodio::buffer::SamplesBuffer::new(1, sample_rate, samples));
+        sink.sleep_until_end();
+    });
     Ok(())
 }
 

@@ -203,9 +203,17 @@ export async function startMicTest(deviceId: string | null): Promise<void> {
   await invoke("start_mic_test", { deviceId });
 }
 
-export async function stopMicTest(): Promise<void> {
+/** Stop the mic test; resolves to the number of seconds captured (0 = nothing). */
+export async function stopMicTest(): Promise<number> {
+  if (!isTauri) return 0;
+  return invoke<number>("stop_mic_test");
+}
+
+/** Replay the most recent mic-test capture on the default output device (no-op if
+ *  nothing was recorded). Returns once playback has been dispatched. */
+export async function playMicTest(): Promise<void> {
   if (!isTauri) return;
-  await invoke("stop_mic_test");
+  await invoke("play_mic_test");
 }
 
 /** Subscribe to live RMS levels (0..1) emitted during capture. Returns an unlisten fn. */

@@ -41,6 +41,7 @@ pub fn run() {
             None,
         ))
         .manage(audio::AudioState::default())
+        .manage(audio::MicTestClip::default())
         .manage(session::StreamState::default())
         .manage(session::RecordState::default())
         .manage(triggers::ShortcutRegistry::default())
@@ -114,6 +115,7 @@ pub fn run() {
             commands::list_audio_devices,
             commands::start_mic_test,
             commands::stop_mic_test,
+            commands::play_mic_test,
             commands::start_stream,
             commands::stop_stream,
             commands::start_record,

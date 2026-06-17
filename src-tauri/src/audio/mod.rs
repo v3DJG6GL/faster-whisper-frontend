@@ -4,7 +4,7 @@
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub mod capture;
 pub mod device;
@@ -22,6 +22,20 @@ pub struct AudioDevice {
 /// and joins the capture thread.
 #[derive(Default)]
 pub struct AudioState(pub Mutex<Option<capture::CaptureHandle>>);
+
+/// The most recent mic-test capture: mono f32 samples at `sample_rate`. Kept after
+/// the capture stream stops so the Settings mic-test can replay what it just heard.
+/// The capture thread clears + fills it (capped to the last few seconds);
+/// `play_mic_test` reads it.
+#[derive(Default)]
+pub struct MicClip {
+    pub samples: Vec<f32>,
+    pub sample_rate: u32,
+}
+
+/// Managed handle to the last mic-test recording, shared with the capture thread.
+#[derive(Default, Clone)]
+pub struct MicTestClip(pub Arc<Mutex<MicClip>>);
 
 /// Wrap mono 16-bit little-endian PCM in a minimal WAV container.
 pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32) -> Vec<u8> {

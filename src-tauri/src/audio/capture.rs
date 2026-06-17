@@ -1,5 +1,7 @@
 //! Capture engine: opens an input device and emits a smoothed RMS level
-//! (`audio://level`, f32 in 0..1) at ~30 Hz until stopped.
+//! (`audio://level`, f32 in 0..1) at ~30 Hz until stopped. While running it also
+//! records the down-mixed mono audio into a shared [`MicClip`] (capped to the last
+//! few seconds) so the Settings mic-test can replay what it just heard.
 //!
 //! The `cpal::Stream` is not `Send`, so it lives entirely on a dedicated capture
 //! thread; the [`CaptureHandle`] only carries a stop flag + join handle (both
@@ -8,10 +10,15 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleFormat, StreamConfig, StreamError};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+
+use crate::audio::MicClip;
+
+/// Keep at most this many seconds of the most recent capture for replay.
+const MAX_CLIP_SECS: usize = 30;
 
 pub struct CaptureHandle {
     stop: Arc<AtomicBool>,
@@ -44,25 +51,52 @@ impl Meter {
     }
 }
 
+/// Appends captured mono samples to the shared clip, dropping the oldest so it
+/// never holds more than `cap` samples (a simple ring of the last few seconds).
+struct Recorder {
+    clip: Arc<Mutex<MicClip>>,
+    cap: usize,
+}
+
+impl Recorder {
+    fn push(&self, mono: &[f32]) {
+        if let Ok(mut c) = self.clip.lock() {
+            c.samples.extend_from_slice(mono);
+            if c.samples.len() > self.cap {
+                let excess = c.samples.len() - self.cap;
+                c.samples.drain(0..excess);
+            }
+        }
+    }
+}
+
 fn err_cb(e: StreamError) {
     tracing::warn!("[audio] stream error: {e}");
 }
 
-fn rms_mono<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> f32 {
+/// One pass over an interleaved block: down-mix each frame to mono (appended to
+/// `mono`, which is cleared first) and return the block RMS for the level meter.
+fn analyze<T: Copy>(
+    data: &[T],
+    channels: usize,
+    to_f32: impl Fn(T) -> f32,
+    mono: &mut Vec<f32>,
+) -> f32 {
+    mono.clear();
     if data.is_empty() || channels == 0 {
         return 0.0;
     }
     let mut sum = 0.0f32;
-    let mut frames = 0u32;
     for frame in data.chunks(channels) {
         let mut acc = 0.0;
         for &s in frame {
             acc += to_f32(s);
         }
-        let mono = acc / frame.len() as f32;
-        sum += mono * mono;
-        frames += 1;
+        let m = acc / frame.len() as f32;
+        mono.push(m);
+        sum += m * m;
     }
+    let frames = mono.len();
     if frames == 0 {
         0.0
     } else {
@@ -70,14 +104,19 @@ fn rms_mono<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> 
     }
 }
 
-/// Start capturing on the given device (or the default), emitting `audio://level`.
-pub fn start_level_meter(app: AppHandle, device_id: Option<String>) -> Result<CaptureHandle, String> {
+/// Start capturing on the given device (or the default), emitting `audio://level`
+/// and recording mono audio into `clip` for replay.
+pub fn start_level_meter(
+    app: AppHandle,
+    device_id: Option<String>,
+    clip: Arc<Mutex<MicClip>>,
+) -> Result<CaptureHandle, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let join = std::thread::Builder::new()
         .name("mic-capture".into())
         .spawn(move || {
-            if let Err(e) = run(app, device_id, stop_thread) {
+            if let Err(e) = run(app, device_id, stop_thread, clip) {
                 tracing::warn!("[audio] capture ended: {e}");
             }
         })
@@ -102,40 +141,66 @@ fn pick_device(device_id: Option<String>) -> Result<Device, String> {
     }
 }
 
-fn run(app: AppHandle, device_id: Option<String>, stop: Arc<AtomicBool>) -> Result<(), String> {
+fn run(
+    app: AppHandle,
+    device_id: Option<String>,
+    stop: Arc<AtomicBool>,
+    clip: Arc<Mutex<MicClip>>,
+) -> Result<(), String> {
     let device = pick_device(device_id)?;
     let supported = device.default_input_config().map_err(|e| e.to_string())?;
     let sample_format = supported.sample_format();
     let channels = supported.channels() as usize;
     let config: StreamConfig = supported.config();
+    let sample_rate = config.sample_rate.0;
+    let cap = MAX_CLIP_SECS * sample_rate as usize;
+
+    // Fresh capture: reset the shared clip and stamp its rate for playback.
+    if let Ok(mut c) = clip.lock() {
+        c.samples.clear();
+        c.sample_rate = sample_rate;
+    }
 
     let level_bits = Arc::new(AtomicU32::new(0));
 
     let stream = match sample_format {
         SampleFormat::F32 => {
             let mut meter = Meter::new(level_bits.clone());
+            let rec = Recorder { clip: clip.clone(), cap };
+            let mut mono: Vec<f32> = Vec::new();
             device.build_input_stream(
                 &config,
-                move |data: &[f32], _| meter.push(rms_mono(data, channels, |s| s)),
+                move |data: &[f32], _| {
+                    meter.push(analyze(data, channels, |s| s, &mut mono));
+                    rec.push(&mono);
+                },
                 err_cb,
                 None,
             )
         }
         SampleFormat::I16 => {
             let mut meter = Meter::new(level_bits.clone());
+            let rec = Recorder { clip: clip.clone(), cap };
+            let mut mono: Vec<f32> = Vec::new();
             device.build_input_stream(
                 &config,
-                move |data: &[i16], _| meter.push(rms_mono(data, channels, |s| s as f32 / 32768.0)),
+                move |data: &[i16], _| {
+                    meter.push(analyze(data, channels, |s| s as f32 / 32768.0, &mut mono));
+                    rec.push(&mono);
+                },
                 err_cb,
                 None,
             )
         }
         SampleFormat::U16 => {
             let mut meter = Meter::new(level_bits.clone());
+            let rec = Recorder { clip: clip.clone(), cap };
+            let mut mono: Vec<f32> = Vec::new();
             device.build_input_stream(
                 &config,
                 move |data: &[u16], _| {
-                    meter.push(rms_mono(data, channels, |s| (s as f32 - 32768.0) / 32768.0))
+                    meter.push(analyze(data, channels, |s| (s as f32 - 32768.0) / 32768.0, &mut mono));
+                    rec.push(&mono);
                 },
                 err_cb,
                 None,
