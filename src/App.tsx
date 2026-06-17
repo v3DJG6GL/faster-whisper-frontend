@@ -15,6 +15,7 @@ import Profiles from "@/screens/Profiles";
 import Backends from "@/screens/Backends";
 import Dictionary from "@/screens/Dictionary";
 import AppRules from "@/screens/AppRules";
+import Statistics from "@/screens/Statistics";
 import Settings from "@/screens/Settings";
 
 // Bridges overlay → main-window navigation: the chip calls show_main_at_screen, which
@@ -117,6 +118,7 @@ export default function App() {
             <Route path="/backends" element={<Backends />} />
             <Route path="/dictionary" element={<Dictionary />} />
             <Route path="/app-rules" element={<AppRules />} />
+            <Route path="/statistics" element={<Statistics />} />
             {/* legacy path → Backends (renamed from "Servers"/models) */}
             <Route path="/models" element={<Navigate to="/backends" replace />} />
             <Route path="/settings" element={<Settings />} />

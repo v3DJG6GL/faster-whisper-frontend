@@ -117,7 +117,7 @@ export type HomeStatsLayout = "chart" | "sparklines";
 
 /** A navigable app screen, referenced by the sidebar, the overlay quick-launch,
  *  and cross-window navigation (kept in sync with the router in App.tsx). */
-export type OverlayScreen = "home" | "transcribe" | "profiles" | "backends" | "dictionary" | "app-rules" | "settings";
+export type OverlayScreen = "home" | "transcribe" | "profiles" | "backends" | "dictionary" | "app-rules" | "statistics" | "settings";
 /** A dictation action the overlay quick-launch can trigger (beyond screen nav). */
 export type OverlayActionKind = "toggle-dictation" | "cycle-active-profile" | "open-quick-add";
 /** One quick-launch chip button: a screen nav target or a dictation action. A flat

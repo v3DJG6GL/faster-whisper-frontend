@@ -17,7 +17,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { Clock, Mic, Type, TriangleAlert } from "lucide-react";
+import { ArrowRight, Clock, Mic, Type, TriangleAlert } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useApp } from "@/lib/store";
 import { Card, SectionLabel, Segmented } from "@/components/ui";
 import {
@@ -30,13 +31,7 @@ import {
   localTodayDay,
 } from "@/lib/format";
 import { TREND_DAYS } from "@/lib/usage";
-import type {
-  Backend,
-  HomeStatsLayout,
-  UsageSeriesPoint,
-  UsageStats,
-  UsageTotals,
-} from "@/lib/types";
+import type { Backend, UsageSeriesPoint, UsageStats, UsageTotals } from "@/lib/types";
 
 type MetricKey = "words" | "audio" | "requests" | "errors";
 
@@ -389,37 +384,63 @@ function StatTile({ tile, stats, dense, spark }: { tile: (typeof TILES)[number];
   );
 }
 
-export function UsageStatsSection({ backend }: { backend: Backend | undefined }) {
+/** Read the backend's stats from the store + densify the sparse series once. Shared
+ *  by both surfaces; `stats` is null on a standard/old server (no /v1/usage) or before
+ *  the first fetch. */
+function useDenseStats(backend: Backend | undefined) {
   const stats = useApp((s) => (backend ? s.usage[backend.id] : null));
-  const layout = useApp((s) => s.settings.homeStatsLayout) ?? "chart";
-  const updateSettings = useApp((s) => s.updateSettings);
+  const dense = useMemo(() => (stats ? densify(stats.series) : []), [stats]);
+  return { stats, dense };
+}
 
-  // Hidden until we have stats: a standard/old server (no /v1/usage) or not yet
-  // fetched leaves this null/undefined — no empty box, no error.
+/** Home: a compact strip of four sparkline stat tiles + a link to the full Statistics
+ *  page. Hidden entirely (no empty box) until we have stats. */
+export function HomeUsageStrip({ backend }: { backend: Backend | undefined }) {
+  const { stats, dense } = useDenseStats(backend);
   if (!stats) return null;
-  const spark = layout === "sparklines";
-  // Densify the sparse server series once (cheap, ≤90 days) for both surfaces.
-  const dense = densify(stats.series);
-
   return (
-    <section>
-      <div className="mb-3 mt-10 flex items-center justify-between gap-3">
+    <section className="mb-10">
+      <div className="mb-3 flex items-center justify-between gap-3">
         <SectionLabel className="!m-0">Usage</SectionLabel>
-        <Segmented
-          value={layout}
-          onChange={(v) => updateSettings({ homeStatsLayout: v as HomeStatsLayout })}
-          options={[
-            { value: "chart", label: "Chart" },
-            { value: "sparklines", label: "Sparklines" },
-          ]}
-        />
+        <Link
+          to="/statistics"
+          className="ring-signal flex items-center gap-1.5 rounded-pill border border-line px-3 py-1 font-mono text-[11px] text-dim transition-colors hover:border-line-strong hover:bg-surface hover:text-text"
+        >
+          View statistics
+          <ArrowRight className="size-3.5" />
+        </Link>
       </div>
       <div className="grid grid-cols-4 gap-4">
         {TILES.map((t) => (
-          <StatTile key={t.key} tile={t} stats={stats} dense={dense} spark={spark} />
+          <StatTile key={t.key} tile={t} stats={stats} dense={dense} spark />
         ))}
       </div>
-      {!spark && <TrendChart dense={dense} />}
     </section>
+  );
+}
+
+/** Statistics page body: the four stat tiles (today + all-time) plus the full
+ *  interactive trend chart. Shows a friendly empty state when there's no usage data. */
+export function StatisticsView({ backend }: { backend: Backend | undefined }) {
+  const { stats, dense } = useDenseStats(backend);
+  if (!stats) {
+    return (
+      <Card className="grid place-items-center p-12 text-center">
+        <div className="text-[14px] text-dim">No usage data yet.</div>
+        <div className="mt-1.5 max-w-sm text-[12.5px] text-faint">
+          Usage statistics appear here once you’ve dictated against a backend that records them.
+        </div>
+      </Card>
+    );
+  }
+  return (
+    <>
+      <div className="grid grid-cols-4 gap-4">
+        {TILES.map((t) => (
+          <StatTile key={t.key} tile={t} stats={stats} dense={dense} spark={false} />
+        ))}
+      </div>
+      <TrendChart dense={dense} />
+    </>
   );
 }
