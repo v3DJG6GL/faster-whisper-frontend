@@ -9,6 +9,8 @@
 // BracketLeft, Backquote, IntlBackslash, …) and ContextMenu aren't supported and
 // are rejected here; `validateShortcut` is the final gate in the Rust layer.
 
+import { keycapLabel } from "./keyboardLayout";
+
 /** Named keys (by `event.code`) the plugin accepts as a shortcut's key part. */
 const NAMED_CODES = new Set<string>([
   "Backspace", "Delete", "Enter", "Space", "Tab",
@@ -74,10 +76,12 @@ const MOD_LABELS: Record<string, string> = {
   MetaLeft: "Super", MetaRight: "R-Super",
 };
 
-/** Display label for one binding `event.code` (modifier or key). */
+/** Display label for one binding `event.code` (modifier or key). Letters use the
+ *  user's learned keyboard layout (so a QWERTZ "Z"-keycap on physical KeyY shows
+ *  "Z", not "Y") — see keyboardLayout.ts — falling back to the physical letter. */
 export function codeToLabel(code: string): string {
   if (MOD_LABELS[code]) return MOD_LABELS[code];
-  if (/^Key[A-Z]$/.test(code)) return code.slice(3); // KeyH → H
+  if (/^Key[A-Z]$/.test(code)) return keycapLabel(code) ?? code.slice(3); // KeyH → H
   if (/^Digit[0-9]$/.test(code)) return code.slice(5); // Digit1 → 1
   return prettyToken(code); // Numpad0 → Num 0, ArrowUp → ↑, Backspace → ⌫, F1 …
 }

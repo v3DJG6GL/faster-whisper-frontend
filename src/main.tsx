@@ -10,6 +10,7 @@ import "./app.css";
 import App from "./App";
 import Overlay from "./Overlay";
 import QuickAdd from "./QuickAdd";
+import { initKeyboardLayout } from "./lib/keyboardLayout";
 
 type WindowLabel = "main" | "overlay" | "quickadd";
 
@@ -30,6 +31,9 @@ function detectWindowLabel(): WindowLabel {
 
 const label = detectWindowLabel();
 document.body.dataset.window = label;
+// Learn the user's keyboard layout (QWERTZ etc.) so shortcut chips show the keys on
+// their keycaps, not the physical US-QWERTY positions event.code reports.
+initKeyboardLayout();
 if (label === "overlay" || label === "quickadd") {
   // Initial default; the chip then follows the theme broadcast on `dictation://update`
   // (Overlay.tsx), and the quick-add window sets it from the loaded config (QuickAdd.tsx).

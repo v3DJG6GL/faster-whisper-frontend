@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import { validateCodes, suspendShortcuts, reregisterShortcuts } from "./api";
 import { MODIFIER_CODES, codeToToken, canonicalizeCodes } from "./keys";
+import { learnLetter } from "./keyboardLayout";
 import { findChordConflict } from "./conflicts";
 import type { Profile } from "./types";
 
@@ -75,6 +76,9 @@ export function useHotkeyCapture(opts: {
         setHeldCodes(cur);
         return;
       }
+      // The user is holding modifiers here, so the passive learner skipped this key;
+      // learn its layout label now so the committed chip shows the right keycap.
+      learnLetter(e.code, e.key);
       if (!codeToToken(e.code) && !evdevActive) {
         setWarn("That key can’t be a global shortcut — try another");
         return;
