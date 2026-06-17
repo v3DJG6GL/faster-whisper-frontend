@@ -1,13 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Plus, Mic, Hand, Pencil, Copy, Trash2, Keyboard, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
+import { Plus, Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Kbd, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
+import { Button, Card, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
+import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { DecodeFields } from "@/components/DecodeFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
-import { codesToLabels } from "@/lib/keys";
 import { conflictsByProfile } from "@/lib/conflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { deriveChipTag } from "@/lib/profileTag";
@@ -150,33 +150,13 @@ function Editor({
           />
         </Labeled>
         <Labeled label="Shortcut">
-          <div className="flex items-center gap-2">
-            {capturing ? (
-              <div className="flex min-h-10 flex-1 items-center gap-2 rounded-xl border border-accent/60 bg-accent-soft/40 px-3 py-1.5 ring-2 ring-accent/25">
-                <span className="size-2 animate-pulse rounded-full bg-accent" />
-                <span className="inline-flex items-center gap-1">
-                  {codesToLabels(heldCodes).map((k, i) => (
-                    <span key={i} className="inline-flex items-center gap-1">
-                      {i > 0 && <span className="text-faint">+</span>}
-                      <Kbd>{k}</Kbd>
-                    </span>
-                  ))}
-                  {heldCodes.length > 0 && <span className="text-faint">+</span>}
-                  <Kbd>…</Kbd>
-                </span>
-                <span className={cn("ml-1 text-[12px]", warn ? "text-rec" : "text-dim")}>
-                  {warn ?? "Press your shortcut · Esc to cancel"}
-                </span>
-              </div>
-            ) : (
-              <div className="flex flex-1 items-center">
-                <HotkeyChips codes={p.hotkey} />
-              </div>
-            )}
-            <Button variant="ghost" size="sm" onClick={() => setCapturing((c) => !c)}>
-              <Keyboard className="size-4" /> {capturing ? "Cancel" : "Rebind"}
-            </Button>
-          </div>
+          <HotkeyCaptureControl
+            codes={p.hotkey}
+            capturing={capturing}
+            heldCodes={heldCodes}
+            warn={warn}
+            onToggle={() => setCapturing((c) => !c)}
+          />
         </Labeled>
       </div>
 

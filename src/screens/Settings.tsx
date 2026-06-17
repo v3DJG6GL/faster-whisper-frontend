@@ -19,9 +19,8 @@ import {
 } from "@/lib/api";
 import type { AudioDevice, OverlayQuickAction } from "@/lib/types";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
-import { HotkeyChips } from "@/components/HotkeyChips";
+import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
-import { codesToLabels } from "@/lib/keys";
 
 const TABS = ["General", "Audio", "Recording", "Chip", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
@@ -223,45 +222,20 @@ function QuickAddShortcutRow({ evdevActive }: { evdevActive: boolean }) {
   });
   return (
     <div className="py-4">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-[14px] font-medium text-text">Quick-add shortcut</div>
-          <div className="mt-0.5 text-[12.5px] leading-snug text-dim">
-            A global hotkey that opens the quick-add window. On Wayland this needs the evdev backend
-            (Permissions); otherwise bind a desktop shortcut to{" "}
-            <span className="font-mono text-[11px] text-faint">app --quick-add</span>.
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {capturing ? (
-            <span className="flex min-h-[30px] items-center gap-1 rounded-lg border border-accent bg-accent-soft px-2.5">
-              {heldCodes.length === 0 ? (
-                <span className="font-mono text-[11.5px] text-accent">Press keys…</span>
-              ) : (
-                codesToLabels(heldCodes).map((k, i) => (
-                  <kbd
-                    key={i}
-                    className="rounded border border-line-strong bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-dim"
-                  >
-                    {k}
-                  </kbd>
-                ))
-              )}
-            </span>
-          ) : (
-            <HotkeyChips codes={codes} />
-          )}
-          <Button size="sm" variant={capturing ? "danger" : "default"} onClick={() => setCapturing((c) => !c)}>
-            {capturing ? "Cancel" : codes.length ? "Change" : "Set"}
-          </Button>
-          {codes.length > 0 && !capturing && (
-            <Button size="sm" variant="ghost" title="Clear the quick-add shortcut" onClick={() => updateGeneral({ quickAddHotkey: [] })}>
-              Clear
-            </Button>
-          )}
-        </div>
+      <div className="text-[14px] font-medium text-text">Quick-add shortcut</div>
+      <div className="mb-3 mt-0.5 max-w-xl text-[12.5px] leading-snug text-dim">
+        A global hotkey that opens the quick-add window. On Wayland this needs the evdev backend
+        (Permissions); otherwise bind a desktop shortcut to{" "}
+        <span className="font-mono text-[11px] text-faint">app --quick-add</span>.
       </div>
-      {warn && <div className="mt-2 text-[12px] text-warn">{warn}</div>}
+      <HotkeyCaptureControl
+        codes={codes}
+        capturing={capturing}
+        heldCodes={heldCodes}
+        warn={warn}
+        onToggle={() => setCapturing((c) => !c)}
+        onClear={() => updateGeneral({ quickAddHotkey: [] })}
+      />
     </div>
   );
 }
