@@ -42,6 +42,7 @@ pub fn run() {
         ))
         .manage(audio::AudioState::default())
         .manage(audio::MicTestClip::default())
+        .manage(audio::MicPlayback::default())
         .manage(session::StreamState::default())
         .manage(session::RecordState::default())
         .manage(triggers::ShortcutRegistry::default())

@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 pub mod capture;
@@ -36,6 +37,13 @@ pub struct MicClip {
 /// Managed handle to the last mic-test recording, shared with the capture thread.
 #[derive(Default, Clone)]
 pub struct MicTestClip(pub Arc<Mutex<MicClip>>);
+
+/// Generation counter for mic-test playback. Each new replay (and each new capture)
+/// bumps it; a running playback thread stops the instant it sees a newer generation,
+/// so at most one replay is ever audible — no overlapping playbacks. The thread that
+/// finishes while still current emits `audio://test-play-ended`.
+#[derive(Default)]
+pub struct MicPlayback(pub Arc<AtomicU64>);
 
 /// Wrap mono 16-bit little-endian PCM in a minimal WAV container.
 pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32) -> Vec<u8> {

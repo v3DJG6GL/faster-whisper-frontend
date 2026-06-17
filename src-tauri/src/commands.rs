@@ -1,11 +1,12 @@
 //! Tauri commands exposed to the web UI (config load/save + secret-store keys).
 
-use crate::audio::{self, AudioDevice, AudioState, MicTestClip};
+use crate::audio::{self, AudioDevice, AudioState, MicPlayback, MicTestClip};
 use crate::config::{self, Config};
 use crate::session::{self, RecordParams, RecordState, StartParams, StreamState};
 use crate::transport;
 use crate::wayland_inject::WaylandTyper;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -238,8 +239,12 @@ pub fn start_mic_test(
     app: AppHandle,
     state: State<AudioState>,
     clip: State<MicTestClip>,
+    playback: State<MicPlayback>,
     device_id: Option<String>,
 ) -> Result<(), String> {
+    // Starting a fresh test silences any lingering replay (the bump makes the
+    // playback thread see a newer generation and stop).
+    playback.0.fetch_add(1, Ordering::SeqCst);
     let handle = audio::capture::start_level_meter(app, device_id, clip.0.clone())?;
     // Replacing the Option drops (and stops) any previous capture.
     *state.0.lock().map_err(|_| "audio state poisoned")? = Some(handle);
@@ -263,9 +268,15 @@ pub fn stop_mic_test(state: State<AudioState>, clip: State<MicTestClip>) -> Resu
 
 /// Replay the most recent mic-test capture on the default output device. Returns
 /// immediately; playback runs on a detached thread (like the sound cues). A no-op
-/// when nothing has been recorded.
+/// when nothing has been recorded. Bumps the playback generation so any in-flight
+/// replay stops before this one starts (never two at once), and emits
+/// `audio://test-play-ended` when playback finishes while still current.
 #[tauri::command]
-pub fn play_mic_test(clip: State<MicTestClip>) -> Result<(), String> {
+pub fn play_mic_test(
+    app: AppHandle,
+    clip: State<MicTestClip>,
+    playback: State<MicPlayback>,
+) -> Result<(), String> {
     let (samples, sample_rate) = {
         let c = clip.0.lock().map_err(|_| "mic clip poisoned")?;
         (c.samples.clone(), c.sample_rate)
@@ -273,6 +284,8 @@ pub fn play_mic_test(clip: State<MicTestClip>) -> Result<(), String> {
     if samples.is_empty() || sample_rate == 0 {
         return Ok(());
     }
+    let counter = playback.0.clone();
+    let generation = counter.fetch_add(1, Ordering::SeqCst) + 1;
     std::thread::spawn(move || {
         // Keep `_stream` alive until playback finishes (dropping it cuts audio).
         let Ok((_stream, handle)) = rodio::OutputStream::try_default() else {
@@ -282,7 +295,18 @@ pub fn play_mic_test(clip: State<MicTestClip>) -> Result<(), String> {
             return;
         };
         sink.append(rodio::buffer::SamplesBuffer::new(1, sample_rate, samples));
-        sink.sleep_until_end();
+        // Play until it drains, but bail the instant a newer replay (or a new test)
+        // superseded us — that newer playback owns the "ended" signal.
+        while !sink.empty() {
+            if counter.load(Ordering::SeqCst) != generation {
+                sink.stop();
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(40));
+        }
+        if counter.load(Ordering::SeqCst) == generation {
+            let _ = app.emit("audio://test-play-ended", ());
+        }
     });
     Ok(())
 }

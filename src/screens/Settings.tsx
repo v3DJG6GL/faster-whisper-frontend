@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Mic, Check, Play, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus, FolderOpen } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
@@ -9,6 +9,7 @@ import {
   startMicTest,
   stopMicTest,
   playMicTest,
+  onMicTestPlayEnded,
   onAudioLevel,
   evdevStatus,
   evdevSetup,
@@ -34,6 +35,11 @@ function AudioTab() {
   const [level, setLevel] = useState(0);
   // True once a stopped test captured something worth replaying (enables Replay).
   const [hasClip, setHasClip] = useState(false);
+  // Whether a replay is currently sounding — drives the button label and guards
+  // against starting a second, overlapping playback.
+  const [playing, setPlaying] = useState(false);
+  const clipSecsRef = useRef(0);
+  const playTimerRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     setDevices(await listAudioDevices());
@@ -69,11 +75,50 @@ function AudioTab() {
     };
   }, [testing, microphoneId]);
 
+  // Clear "playing" when the replay finishes — Rust emits this once the current
+  // playback drains (and wasn't superseded). The duration-based timer in replay()
+  // is just a safety net in case the event is missed.
+  useEffect(() => {
+    let active = true;
+    let un: (() => void) | undefined;
+    void onMicTestPlayEnded(() => {
+      if (active) setPlaying(false);
+    }).then((u) => {
+      if (active) un = u;
+      else u();
+    });
+    return () => {
+      active = false;
+      un?.();
+      if (playTimerRef.current != null) clearTimeout(playTimerRef.current);
+    };
+  }, []);
+
+  // Replay the last capture. Rust guarantees a single playback at a time (a new
+  // play stops the previous), so we just reflect "playing" and let the play-ended
+  // event clear it, with a duration-based fallback.
+  const replay = useCallback(() => {
+    if (clipSecsRef.current <= 0) return;
+    setPlaying(true);
+    void playMicTest();
+    if (playTimerRef.current != null) clearTimeout(playTimerRef.current);
+    playTimerRef.current = window.setTimeout(() => {
+      setPlaying(false);
+      playTimerRef.current = null;
+    }, clipSecsRef.current * 1000 + 1000);
+  }, []);
+
   // Test/Stop: pressing Stop replays what was just captured (a quick "did my mic
   // work?" check). The capture effect's cleanup also calls stopMicTest — harmless;
   // here we stop first so the recorded clip is final, then play it back.
   const onToggle = useCallback(async () => {
     if (!testing) {
+      // Starting a test silences any lingering replay (Rust bumps the generation).
+      setPlaying(false);
+      if (playTimerRef.current != null) {
+        clearTimeout(playTimerRef.current);
+        playTimerRef.current = null;
+      }
       setHasClip(false);
       setTesting(true);
       return;
@@ -82,9 +127,10 @@ function AudioTab() {
     setTesting(false);
     if (secs > 0.2) {
       setHasClip(true);
-      await playMicTest();
+      clipSecsRef.current = secs;
+      replay();
     }
-  }, [testing]);
+  }, [testing, replay]);
 
   const options = [
     { value: "default", label: "System default" },
@@ -129,10 +175,12 @@ function AudioTab() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => void playMicTest()}
+                onClick={() => replay()}
+                disabled={playing}
                 title="Replay the last test recording"
               >
-                <Play className="size-3.5" /> Replay
+                <Play className={playing ? "size-3.5 animate-pulse" : "size-3.5"} />{" "}
+                {playing ? "Playing…" : "Replay"}
               </Button>
             )}
           </div>

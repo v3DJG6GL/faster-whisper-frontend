@@ -210,10 +210,19 @@ export async function stopMicTest(): Promise<number> {
 }
 
 /** Replay the most recent mic-test capture on the default output device (no-op if
- *  nothing was recorded). Returns once playback has been dispatched. */
+ *  nothing was recorded). Returns once playback has been dispatched. Stops any
+ *  replay already in progress, so two never overlap. */
 export async function playMicTest(): Promise<void> {
   if (!isTauri) return;
   await invoke("play_mic_test");
+}
+
+/** Fires when a mic-test replay finishes (and wasn't superseded), so the UI can
+ *  clear its "playing" state. Returns an unlisten fn. */
+export async function onMicTestPlayEnded(cb: () => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen("audio://test-play-ended", () => cb());
 }
 
 /** Subscribe to live RMS levels (0..1) emitted during capture. Returns an unlisten fn. */
