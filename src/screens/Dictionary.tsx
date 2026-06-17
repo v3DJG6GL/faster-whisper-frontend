@@ -17,6 +17,7 @@ import {
 import { useApp } from "@/lib/store";
 import { Button, Card, Stack, Toggle, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
+import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows } from "@/lib/pipelineMap";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { getPipelineRules, getRecentWords, savePipelineRules } from "@/lib/api";
 import type {
@@ -41,11 +42,9 @@ const COLOR_DOT: Record<string, string> = {
 };
 
 /* ── editor-friendly working copy of a rule's editable body ────────────── */
-let _rowId = 1;
-const mkId = () => _rowId++;
+const mkId = nextRowId;
 
 type EntryRow = { id: number; pattern: string; replacement: string; label?: string; note?: string };
-type MapRow = { id: number; k: string; v: string };
 interface EditState {
   enabled: boolean;
   entries?: EntryRow[]; // regex-list
@@ -64,10 +63,7 @@ function toEdit(rule: PipelineRule): EditState {
       }));
       break;
     case "callback:map":
-      // Newest first (desc by the server-stamped map_meta); unstamped → oldest.
-      e.pairs = Object.entries(rule.map ?? {})
-        .map(([k, v]) => ({ id: mkId(), k, v }))
-        .sort((a, b) => (rule.map_meta?.[b.k] ?? 0) - (rule.map_meta?.[a.k] ?? 0));
+      e.pairs = mapRowsFromRule(rule);
       break;
     case "callback:lowercase-wordlist":
       e.pattern = rule.pattern ?? "";
@@ -94,18 +90,8 @@ function emitBody(type: RuleType, e: EditState): Record<string, unknown> {
           return o;
         }),
       };
-    case "callback:map": {
-      const map: Record<string, string> = {};
-      for (const p of e.pairs ?? []) {
-        const k = p.k.trim();
-        if (k) map[k] = p.v;
-      }
-      // Canonical (key-sorted) so reordering pairs for display (newest-first)
-      // is never mistaken for an edit in the dirty diff.
-      const sorted: Record<string, string> = {};
-      for (const k of Object.keys(map).sort()) sorted[k] = map[k];
-      return { map: sorted };
-    }
+    case "callback:map":
+      return mapBodyFromRows(e.pairs ?? []);
     case "callback:lowercase-wordlist":
       return {
         pattern: e.pattern ?? "",
