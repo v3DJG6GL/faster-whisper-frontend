@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   BookA, Loader2, RefreshCw, Plus, Trash2, Lock, RotateCcw, ChevronRight,
-  ArrowUp, ArrowDown, AlertTriangle, Check,
+  ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Stack, Toggle, TextInput } from "@/components/ui";
@@ -144,7 +144,7 @@ const monoInput = "font-mono text-[12.5px]";
 /* ── one rule (stable, module-scope component) ─────────────────────────── */
 function RuleCard({
   rule, edit, base, editable, expanded, mapCollapseAfter, recentWords, recentMax,
-  onToggleExpand, onPatch, onReset,
+  pinned, onTogglePin, onToggleExpand, onPatch, onReset,
 }: {
   rule: PipelineRule;
   edit: EditState;
@@ -154,6 +154,8 @@ function RuleCard({
   mapCollapseAfter: number;
   recentWords: string[];
   recentMax?: number;
+  pinned: boolean;
+  onTogglePin?: () => void;
   onToggleExpand: () => void;
   onPatch: (updater: (e: EditState) => EditState) => void;
   onReset: () => void;
@@ -211,6 +213,7 @@ function RuleCard({
           <span className="truncate text-[14px] font-medium text-text">{rule.label}</span>
           {dirty && <span className="size-1.5 shrink-0 rounded-full bg-accent" title="Unsaved changes" aria-hidden />}
           <Badge>{TYPE_LABEL[rule.type] ?? rule.type}</Badge>
+          {pinned && <Badge tone="accent">quick-add</Badge>}
           {locked && (
             <span className="inline-flex items-center gap-1 text-faint" title="Locked by the server admin — read-only">
               <Lock className="size-3" />
@@ -222,6 +225,20 @@ function RuleCard({
             <Badge key={t} tone="dim">{t}</Badge>
           ))}
         </div>
+        {rule.type === "callback:map" && onTogglePin && (
+          <button
+            type="button"
+            onClick={onTogglePin}
+            aria-pressed={pinned}
+            title={pinned ? "Pinned as the quick-add list — click to unpin" : "Set as the quick-add list"}
+            className={cn(
+              "ring-signal grid size-7 shrink-0 place-items-center rounded-md transition-colors",
+              pinned ? "bg-accent-soft text-accent" : "text-faint hover:text-text",
+            )}
+          >
+            <Crosshair className="size-4" />
+          </button>
+        )}
         <Toggle
           checked={edit.enabled}
           disabled={!canEnable}
@@ -512,6 +529,8 @@ function wordCount(words?: string): number {
 export default function Dictionary() {
   const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
+  const quickAddList = useApp((s) => s.settings.quickAddList);
+  const updateSettings = useApp((s) => s.updateSettings);
 
   // Candidate Backends: full faster-whisper servers (and untested ones — we can't
   // prove "standard", so we let the fetch decide). Standard servers are excluded.
@@ -739,6 +758,18 @@ export default function Dictionary() {
               mapCollapseAfter={fetchRes?.state?.map_collapse_after ?? 15}
               recentWords={recentWords}
               recentMax={recentMax}
+              pinned={!!backend && quickAddList?.backendId === backend.id && quickAddList?.slug === r.name}
+              onTogglePin={
+                r.type === "callback:map" && backend
+                  ? () =>
+                      updateSettings({
+                        quickAddList:
+                          quickAddList?.backendId === backend.id && quickAddList?.slug === r.name
+                            ? null
+                            : { backendId: backend.id, slug: r.name },
+                      })
+                  : undefined
+              }
               onToggleExpand={() =>
                 setExpanded((prev) => {
                   const next = new Set(prev);
