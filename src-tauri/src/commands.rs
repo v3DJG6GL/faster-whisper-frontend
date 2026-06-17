@@ -668,11 +668,11 @@ pub async fn get_quickadd_seed(
             tracing::info!("[quickadd-seed] atspi: nothing selected -> no seed");
             Ok(None)
         }
-        SelRead::Unavailable => {
-            let read = tokio::task::spawn_blocking(crate::inject::read_primary_selection);
-            let raw = match tokio::time::timeout(std::time::Duration::from_millis(400), read).await {
-                Ok(Ok(Some(s))) => s,
-                _ => return Ok(None),
+        // Opaque (rich-text ￼) or no Text interface at all → the real word lives in PRIMARY.
+        SelRead::Opaque | SelRead::Unavailable => {
+            let raw = match read_primary_now().await {
+                Some(s) => s,
+                None => return Ok(None),
             };
             let seed = sanitize_seed(&raw);
             tracing::info!("[quickadd-seed] primary fallback {} chars -> seed {} chars", raw.len(), seed.as_deref().map_or(0, str::len));
@@ -681,10 +681,13 @@ pub async fn get_quickadd_seed(
     }
 }
 
-/// Read the focused element's CURRENT text selection (AT-SPI only, no PRIMARY fallback): the
-/// selected text, or `None` when nothing is selected / it can't be read. The correct-on-close
-/// guard calls this AFTER Quick-Add hides (focus back on the source app) to confirm the SAME word
-/// is still highlighted before replacing it — PRIMARY would be stale, so it is deliberately excluded.
+/// Read the focused element's CURRENT text selection for the correct-on-close guard, called AFTER
+/// Quick-Add hides (focus back on the source app) to confirm the SAME word is still highlighted
+/// before replacing it. Accessibility must FIRST confirm a live selection exists in the focused app:
+/// `Text` returns it directly; `Opaque` (a real rich-text selection whose chars are ￼) is confirmed
+/// to exist, so we read its rendered text from PRIMARY. `Empty`/`Unavailable` return `None` — we
+/// can't confirm the word is still selected, so we never paste blindly (and never consult PRIMARY,
+/// which would be stale). This keeps the "check first, then replace" guarantee in rich-text editors.
 #[tauri::command]
 pub async fn get_focused_selection(
     guard: State<'_, crate::atspi_guard::AtspiGuard>,
@@ -692,8 +695,19 @@ pub async fn get_focused_selection(
     use crate::atspi_guard::SelRead;
     Ok(match crate::atspi_guard::focused_selection(guard.inner()).await {
         SelRead::Text(s) => Some(s),
+        SelRead::Opaque => read_primary_now().await,
         SelRead::Empty | SelRead::Unavailable => None,
     })
+}
+
+/// Read the Wayland PRIMARY ("highlight") selection off the UI thread, time-bounded — the same
+/// hazard guard as `begin_injection` (a hung clipboard owner must not stall the caller).
+async fn read_primary_now() -> Option<String> {
+    let read = tokio::task::spawn_blocking(crate::inject::read_primary_selection);
+    match tokio::time::timeout(std::time::Duration::from_millis(400), read).await {
+        Ok(Ok(Some(s))) => Some(s),
+        _ => None,
+    }
 }
 
 /// Turn a raw selection into a usable mapping KEY, or reject it. Multi-WORD selections are kept

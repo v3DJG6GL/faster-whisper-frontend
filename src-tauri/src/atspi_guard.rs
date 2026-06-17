@@ -40,11 +40,16 @@ pub struct FocusedApp {
 
 /// Result of reading the focused element's text selection (for the Quick-Add seed + the
 /// correct-on-close). `Text` = a real, non-empty selection; `Empty` = authoritatively nothing
-/// selected (so we never seed a stale highlight); `Unavailable` = no Text interface / proxy error
-/// (terminals, canvases, asleep trees) → the caller falls back (e.g. to the PRIMARY selection).
+/// selected (so we never seed a stale highlight); `Opaque` = a selection genuinely EXISTS but its
+/// text is an embedded object (U+FFFC — rich-text links/images/formatting anchors), so accessibility
+/// can confirm "something is selected here" but can't give the letters → the caller reads the actual
+/// rendered text from PRIMARY; `Unavailable` = no Text interface / proxy error (terminals, canvases,
+/// asleep trees) → can't even confirm a selection exists → the seed falls back to PRIMARY, but the
+/// correct-on-close guard treats it as "don't touch" (it can't verify the word is still selected).
 pub enum SelRead {
     Text(String),
     Empty,
+    Opaque,
     Unavailable,
 }
 
@@ -503,9 +508,10 @@ mod imp {
             match text.get_text(start, end).await {
                 // Rich text (Thunderbird/Joplin links, images, formatting anchors) comes back with
                 // U+FFFC object-replacement chars in place of the words. That's not usable plain
-                // text → report Unavailable so the caller falls back to PRIMARY, which holds the
-                // actual rendered selection.
-                Ok(s) if s.contains('\u{fffc}') => super::SelRead::Unavailable,
+                // text, BUT a real selection demonstrably exists here → report Opaque so the caller
+                // reads the actual rendered selection from PRIMARY (and the close-guard can still
+                // trust "a selection exists in the focused app").
+                Ok(s) if s.contains('\u{fffc}') => super::SelRead::Opaque,
                 Ok(s) => super::SelRead::Text(s),
                 Err(_) => super::SelRead::Unavailable,
             }
