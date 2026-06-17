@@ -50,7 +50,10 @@ export interface Backend {
   responseFormat: ResponseFormat;
   decodeOverrides?: DecodeOverrides; // Phase-B: per-Backend decode defaults
   kind?: BackendKind; // full vs standard server; absent/"auto" = infer from the connection test
-  overrideProfile?: string; // name of a server-side override-profile to reference (full backend only)
+  // Server override-profile (full backend only): a profile name to reference,
+  // NO_OVERRIDE_PROFILE = force no profile (plain defaults), undefined = server
+  // default (a server-bound profile may still apply).
+  overrideProfile?: string;
 }
 
 /** How a Profile is activated — first-class, decoupled from its identity. */
@@ -68,8 +71,15 @@ export interface Profile {
   language?: string; // override Backend.language; empty/undefined = inherit
   prompt?: string; // override Backend.prompt; empty/undefined = inherit
   decodeOverrides?: DecodeOverrides; // Phase-B: per-Profile decode overrides
-  overrideProfile?: string; // override Backend.overrideProfile; empty/undefined = inherit
+  // Override Backend.overrideProfile: a profile name, NO_OVERRIDE_PROFILE =
+  // force no profile (plain defaults), undefined = inherit the backend.
+  overrideProfile?: string;
 }
+
+/** Reserved override-profile value meaning "apply NO server profile — plain
+ *  defaults", distinct from undefined (inherit / server default). Sent to the
+ *  backend verbatim; MUST match the backend's config_store.NO_PROFILE_SENTINEL. */
+export const NO_OVERRIDE_PROFILE = "__none__";
 
 /** A per-application injection rule, keyed by the focused window's app_id. Overrides are
  *  inherit-by-default: a null/undefined field falls back to the global setting. */

@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import { Select, TextInput } from "@/components/ui";
 import { listOverrideProfiles } from "@/lib/api";
+import { NO_OVERRIDE_PROFILE } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
+
+// Local-only sentinel for the "type a name by hand" row — never stored; the
+// stored value comes from the text field it reveals.
+const CUSTOM = "__custom__";
 
 // Picks a server-side override-profile name to reference per request. Only the
 // full faster-whisper-backend exposes profiles, so on a server KNOWN to be
@@ -30,11 +35,12 @@ export function OverrideProfilePicker({
   /** Per-identity capability: when false, this caller may not request override-
    *  profiles — show a disabled hint. undefined ("unknown") = permitted. */
   canRequest?: boolean;
-  value: string; // "" = none / inherit
+  value: string; // "" = inherit / server default · NO_OVERRIDE_PROFILE = no profile · else a name
   inheritLabel: string;
   onChange: (v: string) => void;
 }) {
   const [names, setNames] = useState<string[]>([]);
+  const [showCustom, setShowCustom] = useState(false);
   const blocked = canRequest === false;
 
   useEffect(() => {
@@ -65,20 +71,43 @@ export function OverrideProfilePicker({
     );
   }
 
+  // "None" forces the server to apply no profile (plain defaults) — distinct
+  // from inherit/server-default (""), which lets a server-bound profile apply.
+  const noneOpt = { value: NO_OVERRIDE_PROFILE, label: "None — no profile" };
+
   if (names.length > 0) {
-    const options = [
-      { value: "", label: inheritLabel },
-      ...names.map((n) => ({ value: n, label: n })),
-    ];
-    if (value && !names.includes(value)) options.push({ value, label: `${value} · not on server` });
+    const options = [{ value: "", label: inheritLabel }, noneOpt, ...names.map((n) => ({ value: n, label: n }))];
+    if (value && value !== NO_OVERRIDE_PROFILE && !names.includes(value))
+      options.push({ value, label: `${value} · not on server` });
     return <Select value={value} onChange={onChange} options={options} />;
   }
 
+  // Server enumerated no names (not a full backend yet, or empty list): still
+  // offer inherit + None, plus a "custom name…" escape hatch with a text field.
+  const isCustomValue = value !== "" && value !== NO_OVERRIDE_PROFILE;
+  const custom = showCustom || isCustomValue;
   return (
-    <TextInput
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder="profile name (e.g. clinic-de)"
-    />
+    <div className="space-y-2">
+      <Select
+        value={custom ? CUSTOM : value}
+        onChange={(v) => {
+          if (v === CUSTOM) {
+            setShowCustom(true);
+            if (value === NO_OVERRIDE_PROFILE) onChange(""); // leave the None sentinel behind
+          } else {
+            setShowCustom(false);
+            onChange(v);
+          }
+        }}
+        options={[{ value: "", label: inheritLabel }, noneOpt, { value: CUSTOM, label: "Custom name…" }]}
+      />
+      {custom && (
+        <TextInput
+          value={isCustomValue ? value : ""}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="profile name (e.g. clinic-de)"
+        />
+      )}
+    </div>
   );
 }

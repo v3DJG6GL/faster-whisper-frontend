@@ -254,7 +254,7 @@ function Editor({
           serverKind={kind}
           canRequest={caps?.can_request_override_profile}
           value={b.overrideProfile ?? ""}
-          inheritLabel="(none)"
+          inheritLabel="Server default"
           onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
         />
       </Labeled>
