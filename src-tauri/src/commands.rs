@@ -229,6 +229,31 @@ pub async fn get_recent_words(
     transport::pipeline::get_recent_words(&server_url, key.as_deref()).await
 }
 
+/// P28: the caller's own usage (`GET /v1/usage`) — today + lifetime totals +
+/// a self-scoped trend series, for the Home stats section and the optional chip
+/// readout. Best-effort — null on any error so the UI hides the feature on a
+/// standard/old server or when unreachable. `tz_midnight` is the client's local
+/// midnight (epoch seconds) for a viewer-local "today".
+#[tauri::command]
+pub async fn get_usage_stats(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    tz_midnight: Option<f64>,
+    days: Option<i64>,
+    bucket: Option<String>,
+) -> Option<transport::UsageStats> {
+    let key = resolve_key(api_key, backend_id);
+    transport::discovery::get_usage_stats(
+        &server_url,
+        key.as_deref(),
+        tz_midnight,
+        days,
+        bucket.as_deref(),
+    )
+    .await
+}
+
 #[tauri::command]
 pub fn list_audio_devices() -> Vec<AudioDevice> {
     audio::device::list_input_devices()

@@ -2,6 +2,7 @@
 
 use super::{
     base_url, client, with_auth, Capabilities, ConnectionInfo, ResolvedOverrideProfile, ServerModel,
+    UsageStats,
 };
 use serde::Deserialize;
 
@@ -144,6 +145,42 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     let base = base_url(server_url);
     match with_auth(client().get(format!("{base}/v1/me")), api_key).send().await {
         Ok(resp) if resp.status().is_success() => resp.json::<Capabilities>().await.ok(),
+        _ => None,
+    }
+}
+
+/// The caller's own usage (`GET /v1/usage`, full backend only): today + total
+/// + a self-scoped daily/weekly trend series. Best-effort: any error (endpoint
+/// absent on a standard/old server, unauthorized, unreachable) → None, so the
+/// UI simply hides the stats surfaces (Home section + chip line). Query params
+/// are omitted when None so the server applies its own defaults.
+pub async fn get_usage_stats(
+    server_url: &str,
+    api_key: Option<&str>,
+    tz_midnight: Option<f64>,
+    days: Option<i64>,
+    bucket: Option<&str>,
+) -> Option<UsageStats> {
+    let base = base_url(server_url);
+    let mut q: Vec<String> = Vec::new();
+    if let Some(tz) = tz_midnight {
+        q.push(format!("tz_midnight={tz}"));
+    }
+    if let Some(d) = days {
+        q.push(format!("days={d}"));
+    }
+    if let Some(b) = bucket {
+        if !b.is_empty() {
+            q.push(format!("bucket={b}"));
+        }
+    }
+    let url = if q.is_empty() {
+        format!("{base}/v1/usage")
+    } else {
+        format!("{base}/v1/usage?{}", q.join("&"))
+    };
+    match with_auth(client().get(url), api_key).send().await {
+        Ok(resp) if resp.status().is_success() => resp.json::<UsageStats>().await.ok(),
         _ => None,
     }
 }

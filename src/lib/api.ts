@@ -14,6 +14,8 @@ import type {
   PipelineSaveResult,
   RecentWords,
   ResolvedOverrideProfile,
+  UsageBucket,
+  UsageStats,
 } from "./types";
 
 export const isTauri =
@@ -160,6 +162,31 @@ export async function getRecentWords(args: {
     serverUrl: args.serverUrl,
     backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
+  });
+}
+
+/** P28: the caller's own usage (GET /v1/usage) — today + lifetime totals + a
+ *  self-scoped daily/weekly trend series, for the Home stats section and the
+ *  optional chip readout. Best-effort: null outside Tauri or on any error
+ *  (endpoint absent / standard server / unreachable) — callers hide the stats
+ *  surfaces when null. `tzMidnight` is the client's local-midnight epoch
+ *  (seconds) for a viewer-local "today"; `days` <= 0 = lifetime series. */
+export async function getUsageStats(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  tzMidnight?: number | null;
+  days?: number | null;
+  bucket?: UsageBucket | null;
+}): Promise<UsageStats | null> {
+  if (!isTauri) return null;
+  return invoke<UsageStats | null>("get_usage_stats", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    tzMidnight: args.tzMidnight ?? null,
+    days: args.days ?? null,
+    bucket: args.bucket ?? null,
   });
 }
 

@@ -113,6 +113,7 @@ pub fn run() {
             commands::get_pipeline_rules, // P17: GET /v1/pipeline-rules
             commands::save_pipeline_rules, // P17: PATCH /v1/pipeline-rules
             commands::get_recent_words,   // P18: GET /v1/recent-words (key suggestions)
+            commands::get_usage_stats,    // P28: GET /v1/usage (per-user stats + trend)
             commands::list_audio_devices,
             commands::start_mic_test,
             commands::stop_mic_test,

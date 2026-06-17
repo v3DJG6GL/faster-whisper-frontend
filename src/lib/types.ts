@@ -333,6 +333,34 @@ export interface RecentWords {
   max?: number;
 }
 
+// P28: per-user usage stats (GET /v1/usage). snake_case mirrors the backend
+// JSON 1:1 — it passes straight through the Rust IPC boundary unchanged.
+export type UsageBucket = "day" | "week";
+
+/** One usage bucket's counters (the four metrics the backend rolls up). */
+export interface UsageTotals {
+  requests: number;
+  errors: number;
+  words: number;
+  /** Seconds of audio (render as minutes/hours). */
+  audio_s: number;
+}
+
+/** One trend point: a server-local day (days-since-epoch; ×86 400 000 → a JS
+ *  Date) plus that day's (or week's) summed counters. */
+export interface UsageSeriesPoint extends UsageTotals {
+  day: number;
+}
+
+/** The caller's own usage: today + lifetime totals + a self-scoped trend. */
+export interface UsageStats {
+  username: string;
+  today: UsageTotals;
+  total: UsageTotals;
+  range: { days: number; bucket: UsageBucket };
+  series: UsageSeriesPoint[];
+}
+
 /** The persisted config blob (mirrors the Rust `Config`). */
 export interface Config {
   settings: AppSettings;

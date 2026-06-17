@@ -74,6 +74,62 @@ pub struct ResolvedOverrideProfile {
     pub prompt_locked: bool,
 }
 
+// P28: per-user usage stats (`GET /v1/usage`). snake_case passthrough like
+// Capabilities — mirrors the backend JSON 1:1 and reaches the TS side unchanged.
+/// One usage bucket's counters (the four metrics the backend rolls up).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageTotals {
+    #[serde(default)]
+    pub requests: i64,
+    #[serde(default)]
+    pub errors: i64,
+    #[serde(default)]
+    pub words: i64,
+    /// Seconds of audio (the client renders minutes/hours).
+    #[serde(default)]
+    pub audio_s: f64,
+}
+
+/// One point in the trend series — a server-local day (days-since-epoch) plus
+/// that day's (or week's) summed counters.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageSeriesPoint {
+    #[serde(default)]
+    pub day: i64,
+    #[serde(default)]
+    pub requests: i64,
+    #[serde(default)]
+    pub errors: i64,
+    #[serde(default)]
+    pub words: i64,
+    #[serde(default)]
+    pub audio_s: f64,
+}
+
+/// Echo of the trend window the server applied (`days` 0 = lifetime).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageWindow {
+    #[serde(default)]
+    pub days: i64,
+    #[serde(default)]
+    pub bucket: String,
+}
+
+/// The caller's own usage: today + lifetime totals + a self-scoped trend series.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageStats {
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub today: UsageTotals,
+    #[serde(default)]
+    pub total: UsageTotals,
+    #[serde(default)]
+    pub range: UsageWindow,
+    #[serde(default)]
+    pub series: Vec<UsageSeriesPoint>,
+}
+
 /// Trim a trailing slash so we can join `/v1/...` paths cleanly.
 pub fn base_url(server_url: &str) -> String {
     server_url.trim().trim_end_matches('/').to_string()
