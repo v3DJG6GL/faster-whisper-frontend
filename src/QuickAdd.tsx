@@ -19,21 +19,15 @@ import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from
 import { Button, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows } from "@/lib/pipelineMap";
+import { ruleDotColor } from "@/lib/ruleColor";
 import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
 } from "@/lib/api";
 import type { PipelineFetch } from "@/lib/types";
-import { cn } from "@/lib/cn";
 
 type Target = { serverUrl: string; backendId: string; slug: string };
 type Phase = "loading" | "nopin" | "error" | "ok";
 type SaveState = "idle" | "saving" | "saved" | "error";
-
-// Admin rule-card colours → nearest Signal token (cosmetic dot). Mirrors Dictionary.
-const COLOR_DOT: Record<string, string> = {
-  red: "bg-rec", amber: "bg-warn", green: "bg-ok", teal: "bg-live",
-  blue: "bg-accent", purple: "bg-accent", pink: "bg-accent",
-};
 
 function Kbd({ children }: { children: ReactNode }) {
   return (
@@ -207,7 +201,7 @@ export default function QuickAdd() {
     return () => window.removeEventListener("keydown", onKey);
   }, [closeNow]);
 
-  const dot = color ? COLOR_DOT[color] ?? "bg-live" : "bg-live";
+  const dotHex = ruleDotColor(color);
 
   return (
     <div className="flex h-screen w-screen bg-transparent p-3">
@@ -215,7 +209,9 @@ export default function QuickAdd() {
         {/* header */}
         <div className="flex items-center gap-2.5 border-b border-line px-4 py-3">
           <Plus className="size-4 text-accent" />
-          <span className={cn("size-2 shrink-0 rounded-full", dot)} aria-hidden />
+          {dotHex && (
+            <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: dotHex }} aria-hidden />
+          )}
           <span className="truncate font-display text-[15px] font-semibold text-text">{label}</span>
           <span className="font-mono text-[10px] uppercase tracking-wider text-faint">quick add</span>
           <span className="ml-auto flex items-center gap-2">

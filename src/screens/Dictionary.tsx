@@ -18,6 +18,7 @@ import { useApp } from "@/lib/store";
 import { Button, Card, Stack, Toggle, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows } from "@/lib/pipelineMap";
+import { ruleDotColor } from "@/lib/ruleColor";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { getPipelineRules, getRecentWords, savePipelineRules } from "@/lib/api";
 import type {
@@ -33,12 +34,6 @@ const TYPE_LABEL: Record<RuleType, string> = {
   "callback:dedup": "De-duplicate",
   "callback:upper": "Capitalize",
   terminal: "Trim",
-};
-
-// Admin rule-card colours → nearest Signal token (read-only cosmetic dot).
-const COLOR_DOT: Record<string, string> = {
-  red: "bg-rec", amber: "bg-warn", green: "bg-ok", teal: "bg-live",
-  blue: "bg-accent", purple: "bg-accent", pink: "bg-accent",
 };
 
 /* ── editor-friendly working copy of a rule's editable body ────────────── */
@@ -164,7 +159,7 @@ function RuleCard({
   const canEnable = editable.includes("enabled");
   const bodyEditable = editable.some((f) => f !== "enabled");
   const dirty = Object.keys(buildPatch(rule.type, edit, base, editable)).length > 0;
-  const colorDot = rule.color ? COLOR_DOT[rule.color] : undefined;
+  const dotHex = ruleDotColor(rule.color);
   // Per-entry note show/hide override. Default is open iff the entry already has
   // a note; a single toggle both reveals AND hides it (content is preserved).
   const [noteShow, setNoteShow] = useState<Map<number, boolean>>(() => new Map());
@@ -209,7 +204,9 @@ function RuleCard({
           className="ring-signal flex min-w-0 flex-1 items-center gap-2.5 text-left"
         >
           <ChevronRight className={cn("size-4 shrink-0 text-faint transition-transform", expanded && "rotate-90")} />
-          {colorDot && <span className={cn("size-2 shrink-0 rounded-full", colorDot)} aria-hidden />}
+          {dotHex && (
+            <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: dotHex }} aria-hidden />
+          )}
           <span className="truncate text-[14px] font-medium text-text">{rule.label}</span>
           {dirty && <span className="size-1.5 shrink-0 rounded-full bg-accent" title="Unsaved changes" aria-hidden />}
           <Badge>{TYPE_LABEL[rule.type] ?? rule.type}</Badge>
