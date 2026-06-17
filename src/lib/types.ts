@@ -111,6 +111,9 @@ export type IndicatorPosition = "top" | "bottom" | "off";
 export type ThemeName = "dark" | "light";
 /** Which usage figure the chip's optional readout shows (today's value). */
 export type OverlayStatsMetric = "words" | "audio" | "both";
+/** How the Home usage section presents the trend: one shared chart, or a
+ *  sparkline embedded in each stat tile. */
+export type HomeStatsLayout = "chart" | "sparklines";
 
 /** A navigable app screen, referenced by the sidebar, the overlay quick-launch,
  *  and cross-window navigation (kept in sync with the router in App.tsx). */
@@ -176,6 +179,7 @@ export interface AppSettings {
   theme: ThemeName;
   microphoneId: string | null;
   homeProfileId?: string | null; // which Profile the Home button targets (null = first enabled)
+  homeStatsLayout?: HomeStatsLayout; // Home usage section: shared chart vs per-tile sparklines
   quickAddList?: QuickAddTarget | null; // pinned "Word mappings" list the QuickAdd window targets
   general: GeneralSettings;
   recording: RecordingSettings;

@@ -111,6 +111,19 @@ fn default_stats_metric() -> OverlayStatsMetric {
     OverlayStatsMetric::Words
 }
 
+/// How the Home usage section presents the trend: one shared chart, or a
+/// sparkline embedded in each stat tile.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HomeStatsLayout {
+    Chart,
+    Sparklines,
+}
+
+fn default_home_stats_layout() -> HomeStatsLayout {
+    HomeStatsLayout::Chart
+}
+
 /// How a Profile's chord behaves. First-class, decoupled from the Profile's id
 /// (the old `DictationModeId = hold|handsfree` fused identity with behavior).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -442,6 +455,10 @@ pub struct AppSettings {
     /// older configs load.
     #[serde(default)]
     pub home_profile_id: Option<String>,
+    /// Home usage section presentation: a shared trend chart vs per-tile
+    /// sparklines. `#[serde(default = …)]` (chart) so older configs load.
+    #[serde(default = "default_home_stats_layout")]
+    pub home_stats_layout: HomeStatsLayout,
     /// The pinned quick-add word-mapping list (Backend id + callback:map rule slug)
     /// the QuickAdd window targets. None = not chosen yet. `#[serde(default, skip…)]`
     /// so older configs load and an unset value round-trips byte-stable.
@@ -474,6 +491,7 @@ impl Default for Config {
                 theme: ThemeName::Dark,
                 microphone_id: None,
                 home_profile_id: None,
+                home_stats_layout: HomeStatsLayout::Chart,
                 quick_add_list: None,
                 general: GeneralSettings {
                     open_at_login: false,

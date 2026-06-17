@@ -44,6 +44,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: "dark",
   microphoneId: null,
   homeProfileId: null,
+  homeStatsLayout: "chart",
   quickAddList: null,
   general: {
     openAtLogin: false,

@@ -7,6 +7,7 @@ import { dictationVisual } from "@/lib/dictationVisual";
 import { Button, Card, SectionLabel, Select, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
+import { UsageStatsSection } from "@/components/UsageStats";
 import { startLive, stopLive, cancelLive } from "@/lib/streaming";
 import { homeTargetProfile } from "@/lib/dictation";
 import type { Backend, Profile } from "@/lib/types";
@@ -283,6 +284,8 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      <UsageStatsSection backend={headerBackend} />
 
       <SectionLabel className="mb-3 mt-10">Profiles</SectionLabel>
       {profiles.length === 0 ? (
