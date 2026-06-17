@@ -450,6 +450,18 @@ export async function getQuickAddSeed(): Promise<string | null> {
   }
 }
 
+/** Read the focused element's CURRENT text selection (accessibility only — no highlight-buffer
+ *  fallback). null when nothing is selected or it can't be read. The correct-on-close guard uses
+ *  this to confirm the same word is still highlighted before replacing it. */
+export async function getFocusedSelection(): Promise<string | null> {
+  if (!isTauri) return null;
+  try {
+    return (await invoke<string | null>("get_focused_selection")) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Shape the overlay window's mouse input region to just the visible chip (logical
  * px, relative to the window's top-left), so the chip becomes hoverable while the

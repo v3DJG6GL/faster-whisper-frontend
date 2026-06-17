@@ -40,3 +40,56 @@ export function mapBodyFromRows(rows: MapRow[]): { map: Record<string, string> }
   for (const k of Object.keys(map).sort()) sorted[k] = map[k];
   return { map: sorted };
 }
+
+/** Apply a `callback:map` rule (the editor rows) to `text`, mirroring the backend's matcher
+ *  exactly: longest-key-first, whole-word, case-insensitive, values inserted verbatim, ONE pass
+ *  (no cascade). Used to correct a selected word against the current list on close.
+ *
+ *  Word boundaries are computed manually (not via regex `\b`, which is ASCII-only in JS, nor
+ *  lookbehind, which older WebKitGTK lacks) so they're Unicode-aware AND depend on each key's edge
+ *  char — reproducing Python's `\b(key)\b` for keys whose edge is a space/punct (e.g. " Prozent").
+ *  Returns the transformed string, terminal-trimmed of spaces/tabs/CR like the backend's last step. */
+export function applyMap(text: string, rows: MapRow[]): string {
+  const map = new Map<string, string>();
+  for (const r of rows) if (r.k.trim()) map.set(r.k, r.v); // key verbatim; later row wins on dup
+  if (map.size === 0) return text;
+  // case-insensitive: lower-cased key → value (matches the backend's lowercased lookup dict)
+  const lookup = new Map<string, string>();
+  for (const [k, v] of map) lookup.set(k.toLowerCase(), v);
+  const keys = [...map.keys()].sort((a, b) => b.length - a.length); // longest first → phrases win
+  const lower = text.toLowerCase();
+
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    let hit = "";
+    for (const key of keys) {
+      const kl = key.toLowerCase();
+      if (!lower.startsWith(kl, i)) continue;
+      const before = i > 0 ? text[i - 1] : "";
+      const after = i + key.length < text.length ? text[i + key.length] : "";
+      // \b on each side: a boundary sits where one neighbour is a word char and the other isn't.
+      if (isBoundary(before, key[0]) && isBoundary(text[i + key.length - 1], after)) {
+        hit = key;
+        break; // first (longest) key that matches with boundaries wins
+      }
+    }
+    if (hit) {
+      out += lookup.get(hit.toLowerCase()) ?? hit;
+      i += hit.length;
+    } else {
+      out += text[i];
+      i += 1;
+    }
+  }
+  return out.replace(/^[ \t\r]+/, "").replace(/[ \t\r]+$/, "");
+}
+
+/** A `\b`-equivalent boundary: true when exactly one side is a word char (string edge = ""
+ *  counts as a non-word char). Unicode-aware. */
+function isBoundary(left: string, right: string): boolean {
+  return isWordChar(left) !== isWordChar(right);
+}
+function isWordChar(ch: string): boolean {
+  return ch !== "" && /[\p{L}\p{N}_]/u.test(ch);
+}

@@ -18,11 +18,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from "lucide-react";
 import { Button, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
-import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows } from "@/lib/pipelineMap";
+import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
-  getQuickAddSeed,
+  getQuickAddSeed, getFocusedSelection, injectText,
 } from "@/lib/api";
 import type { PipelineFetch } from "@/lib/types";
 
@@ -80,13 +80,21 @@ export default function QuickAdd() {
   rowsRef.current = rows;
   const saveTimer = useRef<number | null>(null);
   const insertRef = useRef<HTMLInputElement>(null);
+  // The word seeded from the source app's selection this summon (null if none). On close we run
+  // the current list over it and, if it changed AND it's still selected, paste the result back —
+  // correcting the word in place. `pasteShortcut` is captured from config for that replace-paste.
+  const originalSelectionRef = useRef<string | null>(null);
+  const pasteShortcutRef = useRef<string[]>(["ControlLeft", "KeyV"]);
 
   const usedKeys = new Set(rows.map((r) => r.k.trim().toLowerCase()).filter(Boolean));
   const suggestions = recent.filter((w) => !usedKeys.has(w.toLowerCase()));
 
   const refresh = useCallback(async () => {
     const cfg = await loadConfig();
-    if (cfg) document.documentElement.dataset.theme = cfg.settings.theme;
+    if (cfg) {
+      document.documentElement.dataset.theme = cfg.settings.theme;
+      pasteShortcutRef.current = cfg.settings.general.pasteShortcut ?? ["ControlLeft", "KeyV"];
+    }
     const pin = cfg?.settings.quickAddList ?? null;
     const backend = pin ? cfg!.backends.find((b) => b.id === pin.backendId) ?? null : null;
     if (!pin || !backend) {
@@ -143,6 +151,7 @@ export default function QuickAdd() {
           // drop the cursor straight in "Insert" (it's captured). Nothing usable → fall back to
           // the old behaviour: open the recent-words dropdown on the (already-focused) find field.
           const seed = await getQuickAddSeed();
+          originalSelectionRef.current = seed; // remember the selected word for correct-on-close
           if (seed) {
             setFind(seed);
             setOpenOnSummon(false);
@@ -218,7 +227,15 @@ export default function QuickAdd() {
       saveTimer.current = null;
     }
     if (pending) void flushSave(); // persist a debounced edit before hiding
+    // Correct-on-close: run the current list over the word we seeded from the selection; if it
+    // changed, replace the still-selected word in the source app with the result (see helper).
+    const original = originalSelectionRef.current;
+    const corrected = original ? applyMap(original, rowsRef.current) : null;
+    originalSelectionRef.current = null; // one-shot — don't re-correct on a later close
     void hideQuickAdd();
+    if (original && corrected && corrected !== original) {
+      void replaceSelectionAfterClose(original, corrected, pasteShortcutRef.current);
+    }
   }, [flushSave]);
 
   // Esc closes the window from anywhere in it — not only when a text field is focused.
@@ -407,6 +424,17 @@ export default function QuickAdd() {
       </div>
     </div>
   );
+}
+
+/** After Quick-Add hides, wait for focus to return to the source app, confirm (via accessibility)
+ *  that the SAME word is still selected, then paste the list-corrected version over it — correcting
+ *  the word in place. Silently does nothing if the selection is gone or changed (the "check first"
+ *  guard). Paste replaces the active selection; the user's prior clipboard is restored afterwards. */
+async function replaceSelectionAfterClose(original: string, corrected: string, pasteShortcut: string[]) {
+  await new Promise((r) => setTimeout(r, 250)); // let the compositor hand focus back to the source
+  const current = await getFocusedSelection();
+  if (current == null || current.trim() !== original) return;
+  await injectText({ text: corrected, method: "paste", autoEnter: false, restoreClipboard: true, pasteShortcut });
 }
 
 function errTitle(f: PipelineFetch | null): string {
