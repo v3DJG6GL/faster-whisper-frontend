@@ -100,8 +100,11 @@ body {
   cursor: default;
 }
 
-/* The overlay (dictation chip) window paints its own transparent surface. */
-body[data-window="overlay"] {
+/* The overlay (chip) and quick-add windows are transparent so their rounded panel
+   floats on the desktop — the body must not paint the opaque app background (which
+   would show as a hard rectangle in the window's padding/shadow gutter). */
+body[data-window="overlay"],
+body[data-window="quickadd"] {
   background: transparent;
 }
 
