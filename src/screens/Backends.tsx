@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Plus, Server, Pencil, Copy, Trash2, Plug, Loader2, Check, AlertTriangle } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Labeled, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
@@ -51,6 +51,13 @@ function Editor({
   const setConnection = useApp((s) => s.setConnection);
   const [b, setB] = useState<Backend>(initial);
   const [key, setKey] = useState("");
+  // Debounce the typed key before it drives the best-effort capability / override-profile
+  // lookups, so typing an API key doesn't fire a burst of requests on every keystroke.
+  const [debouncedKey, setDebouncedKey] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedKey(key), 400);
+    return () => clearTimeout(t);
+  }, [key]);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ConnectionInfo | null>(null);
   const [showDecode, setShowDecode] = useState(
@@ -66,7 +73,7 @@ function Editor({
   const { caps, resolved, resolvedPrompt } = useOverrideContext({
     serverUrl: b.serverUrl,
     backendId: b.id,
-    apiKey: key || null,
+    apiKey: debouncedKey || null,
     profileName: b.overrideProfile,
     serverKind: kind,
   });
@@ -242,7 +249,7 @@ function Editor({
         <OverrideProfilePicker
           serverUrl={b.serverUrl}
           backendId={b.id}
-          apiKey={key || null}
+          apiKey={debouncedKey || null}
           serverKind={kind}
           canRequest={caps?.can_request_override_profile}
           value={b.overrideProfile ?? ""}
