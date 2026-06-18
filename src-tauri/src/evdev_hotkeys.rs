@@ -178,7 +178,7 @@ mod imp {
     }
 
     pub fn start(app: &AppHandle, state: &EvdevState, profiles: &[Profile], quick_add_hotkey: &[String]) {
-        stop(state);
+        super::stop(state);
         // Fresh start: drop any held-key counts left over from a previous run so the
         // inject-gate can't wait on a phantom modifier.
         app.state::<crate::held_keys::HeldKeys>().clear();
@@ -220,12 +220,6 @@ mod imp {
         );
         if let Ok(mut g) = state.0.lock() {
             *g = Some(Running { tasks });
-        }
-    }
-
-    fn stop(state: &EvdevState) {
-        if let Ok(mut g) = state.0.lock() {
-            *g = None;
         }
     }
 
