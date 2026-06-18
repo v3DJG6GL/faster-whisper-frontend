@@ -25,6 +25,8 @@ interface ChipState {
   // P28: a tiny preformatted usage readout (e.g. "1.2k words"), absent unless the
   // chip-stats setting is on and the backend supports it. Neutral grey — never amber.
   statsLine?: string;
+  // P33: when true, the readout is shown only while the chip is hover-revealed (else always).
+  statsOnHover?: boolean;
   // P16/D: the app dictation is typing into (→ readout) + why it's coerced to clipboard
   // ("blocked" by a per-app rule / "notEditable" by deep detection). Empty = nothing to show.
   targetTitle?: string;
@@ -152,6 +154,7 @@ export default function Overlay() {
             targetOnlySpeaking: e.payload.targetOnlySpeaking ?? false,
             lastInsert: e.payload.lastInsert ?? null,
             sessionOutcome: e.payload.sessionOutcome ?? null,
+            statsOnHover: e.payload.statsOnHover ?? false,
           });
         }),
       )
@@ -616,7 +619,9 @@ export default function Overlay() {
       </div>,
     );
   }
-  if (state.statsLine) {
+  // "On hover" mode: only surface the usage readout once the chip is hover-revealed;
+  // "always" mode (statsOnHover false) shows it whenever it's present.
+  if (state.statsLine && (!state.statsOnHover || hoverReveal)) {
     idGroups.push(
       <span key="stats" className="whitespace-nowrap normal-case tabular-nums text-dim">
         {state.statsLine}

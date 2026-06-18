@@ -397,6 +397,10 @@ pub struct RecordingSettings {
     /// — opt-in; `#[serde(default)]` so older configs load with it disabled.
     #[serde(default)]
     pub show_stats_on_overlay: bool,
+    /// When the readout is shown, reveal it only while hovering the chip (vs. always).
+    /// `#[serde(default)]` so older configs default to always-shown.
+    #[serde(default)]
+    pub overlay_stats_on_hover: bool,
     /// Which usage figure the chip shows. `#[serde(default = …)]` (words) so older
     /// configs load with a sensible metric.
     #[serde(default = "default_stats_metric")]
@@ -516,6 +520,7 @@ impl Default for Config {
                     realtime_preview: true,
                     show_profile_on_overlay: true,
                     show_stats_on_overlay: false,
+                    overlay_stats_on_hover: false,
                     overlay_stats_metric: OverlayStatsMetric::Words,
                     show_target_on_overlay: true,
                     show_target_only_speaking: false,

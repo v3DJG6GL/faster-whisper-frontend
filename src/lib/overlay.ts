@@ -117,6 +117,8 @@ export async function initOverlayController(): Promise<void> {
         lastInsert: state.lastInsert,
         sessionOutcome: state.sessionOutcome,
         statsLine: statsLine ?? "",
+        // When on, the chip reveals the readout only while hovered (vs. always shown).
+        statsOnHover: rec.showStatsOnOverlay && rec.overlayStatsOnHover,
         ...chip,
       });
     }

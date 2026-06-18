@@ -686,11 +686,30 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title="Show usage on chip"
-              desc="Add a tiny usage readout (today's totals) to the chip. Needs the faster-whisper-backend; hidden on a standard server."
+              desc="Add a tiny usage readout (today's totals) to the chip — always, or only while you hover it. Needs the faster-whisper-backend; hidden on a standard server."
             >
-              <Toggle
-                checked={s.recording.showStatsOnOverlay}
-                onChange={(v) => updateRecording({ showStatsOnOverlay: v })}
+              <Segmented
+                value={
+                  !s.recording.showStatsOnOverlay
+                    ? "off"
+                    : s.recording.overlayStatsOnHover
+                      ? "hover"
+                      : "always"
+                }
+                onChange={(v) =>
+                  updateRecording(
+                    v === "off"
+                      ? { showStatsOnOverlay: false }
+                      : v === "hover"
+                        ? { showStatsOnOverlay: true, overlayStatsOnHover: true }
+                        : { showStatsOnOverlay: true, overlayStatsOnHover: false },
+                  )
+                }
+                options={[
+                  { value: "off", label: "Off" },
+                  { value: "always", label: "Always" },
+                  { value: "hover", label: "On hover" },
+                ]}
               />
             </SettingRow>
             <SettingRow

@@ -69,6 +69,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     realtimePreview: true,
     showProfileOnOverlay: true,
     showStatsOnOverlay: false,
+    overlayStatsOnHover: false,
     overlayStatsMetric: "words",
     showTargetOnOverlay: true,
     showTargetOnlySpeaking: false,
