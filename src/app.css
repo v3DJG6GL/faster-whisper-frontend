@@ -182,20 +182,6 @@ textarea {
   animation: rec-pulse 1.4s ease-in-out infinite;
 }
 
-@keyframes chip-in {
-  from {
-    opacity: 0;
-    transform: translateY(-14px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-.animate-chip-in {
-  animation: chip-in 0.34s cubic-bezier(0.2, 0.9, 0.2, 1);
-}
-
 /* Calm "breathing" for the armed-but-silent dot and the transcribing label —
    OPACITY ONLY (vestibular-safe), floor 0.55 keeps the dim-amber dot ≥3:1 on the
    near-black pill, and ~0.33Hz is far under the 3Hz seizure threshold. */
@@ -213,13 +199,6 @@ textarea {
 }
 .animate-chip-think {
   animation: chip-breathe 1.6s ease-in-out infinite;
-}
-
-/* Smoothly morph the pill between its collapsed (dot) and expanded states. */
-.chip-morph {
-  transition:
-    max-width 0.22s cubic-bezier(0.2, 0.9, 0.2, 1),
-    padding 0.22s cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
 /* Dictionary recent-word combobox popover: a quick, restrained entrance
@@ -285,7 +264,6 @@ textarea {
    legible via static opacity/color. The Waveform canvas (a JS RAF) freezes to a
    static readout in its own component when this is set. */
 @media (prefers-reduced-motion: reduce) {
-  .animate-chip-in,
   .animate-chip-breathe,
   .animate-chip-think,
   .animate-combobox-pop,
@@ -293,9 +271,6 @@ textarea {
   .animate-insert-pulse-warn,
   .animate-rec-pulse {
     animation: none !important;
-  }
-  .chip-morph {
-    transition: none !important;
   }
 }
 
