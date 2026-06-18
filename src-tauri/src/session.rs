@@ -505,16 +505,27 @@ impl Drop for SystemMuteGuard {
     }
 }
 
-/// Current mute state of the default sink, via `wpctl get-volume` ("[MUTED]").
+/// Current mute state of the default sink: PipeWire (`wpctl get-volume` → "[MUTED]") first, then
+/// PulseAudio (`pactl get-sink-mute` → "Mute: yes"). The fallback MUST mirror set_system_mute's
+/// wpctl→pactl fallback: on a PulseAudio-only host wpctl is absent, so a wpctl-only read returns
+/// None → the guard records "unmuted" and then wrongly UN-mutes a user who began muted on drop.
 fn get_system_mute() -> Option<bool> {
-    let out = std::process::Command::new("wpctl")
+    if let Ok(out) = std::process::Command::new("wpctl")
         .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
+        .output()
+    {
+        if out.status.success() {
+            return Some(String::from_utf8_lossy(&out.stdout).contains("[MUTED]"));
+        }
+    }
+    let out = std::process::Command::new("pactl")
+        .args(["get-sink-mute", "@DEFAULT_SINK@"])
         .output()
         .ok()?;
     if !out.status.success() {
         return None;
     }
-    Some(String::from_utf8_lossy(&out.stdout).contains("[MUTED]"))
+    Some(String::from_utf8_lossy(&out.stdout).to_lowercase().contains("yes"))
 }
 
 fn set_system_mute(mute: bool) {
