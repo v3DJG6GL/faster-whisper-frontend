@@ -139,7 +139,9 @@ export function DecodeFields({
             const s = e.target.value;
             if (s === "") return setField(f.key, undefined);
             const n = Number(s);
-            setField(f.key, Number.isNaN(n) ? undefined : n);
+            // isFinite (not isNaN) so "1e999" → Infinity also falls back to undefined,
+            // instead of being JSON-serialized to null in the request body.
+            setField(f.key, Number.isFinite(n) ? n : undefined);
           }}
         />
       );
