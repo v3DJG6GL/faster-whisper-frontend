@@ -4,7 +4,9 @@
 // this is about a sensible default rather than a hard width guarantee.
 
 export function deriveChipTag(name: string): string {
-  return name.trim().replace(/\s+/g, " ").toUpperCase().slice(0, 10).trimEnd();
+  // Slice by code points (spread) not UTF-16 units, so an astral char (emoji) straddling the
+  // cap isn't split into a lone surrogate that renders as the replacement glyph "�".
+  return [...name.trim().replace(/\s+/g, " ").toUpperCase()].slice(0, 10).join("").trimEnd();
 }
 
 /** The effective chip tag for a Profile: its authored tag, else derived from name. */
