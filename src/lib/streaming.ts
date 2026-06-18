@@ -37,7 +37,7 @@ import {
   reregisterShortcuts,
   writeRecordingTranscript,
 } from "./api";
-import type { ActivationKind, Backend, DecodeOverrides, FocusedApp } from "./types";
+import type { ActivationKind, AppRule, Backend, DecodeOverrides, FocusedApp, GeneralSettings } from "./types";
 
 let wired = false;
 
@@ -210,11 +210,39 @@ function clearPhraseEnd(): void {
   clipBaseline = "";
 }
 
+/** The per-app injection policy: focused app + per-app rule + opt-in deep detection → the effective
+ *  insertion method, paste shortcut, the matched rule, and whether a non-editable target was coerced
+ *  to clipboard. This MUST be the single source: it is resolved both at session start (startLive,
+ *  frozen into insertCfg + the chip's blocked/notEditable flags) AND per phrase / on the focus poll
+ *  (resolveTarget) — open-coding it twice risks the chip readout, the start-of-session decision, and
+ *  the per-phrase injection silently disagreeing. `targetApp` null (nothing known yet) → no rule, so
+ *  global settings apply. Opt-in deep detection is positive-only (only editable===false coerces) and
+ *  an explicit per-app insert method opts out — the user already decided how to inject here (e.g.
+ *  "konsole → paste": a terminal isn't an editable AT-SPI field, yet the user told us to paste). */
+function resolveInjectionTarget(
+  targetApp: FocusedApp | null,
+  appRules: AppRule[],
+  g: GeneralSettings,
+): { rule: AppRule | undefined; notEditable: boolean; method: InsertCfg["method"]; pasteShortcut: string[] } {
+  const rule = targetApp
+    ? appRules.find((r) => r.appId.toLowerCase() === targetApp.appId.toLowerCase())
+    : undefined;
+  const notEditable = !!(
+    g.deepFieldDetection && !rule?.block && !rule?.insertMethod && targetApp?.editable === false
+  );
+  // A blocked app OR a non-editable target is coerced to clipboard-only: nothing is typed there, but
+  // the text isn't lost — it lands on the clipboard for the user to paste.
+  const method: InsertCfg["method"] =
+    rule?.block || notEditable ? "clipboard" : rule?.insertMethod ?? g.insertMethod;
+  const pasteShortcut = rule?.pasteShortcut ?? g.pasteShortcut;
+  return { rule, notEditable, method, pasteShortcut };
+}
+
 /** Resolve the CURRENT injection target (focused app → per-app rule) into the method +
  *  paste-shortcut to use RIGHT NOW. Called per injection — NOT once at dictation start — so
  *  per-app rules follow window switches mid-session: a latched/live dictation that moves
  *  from Konsole to another app picks up each window's own rule instead of being frozen to
- *  whatever was focused when dictation began. Mirrors the resolution in startLive. */
+ *  whatever was focused when dictation began. Shares resolveInjectionTarget with startLive. */
 async function resolveTarget(): Promise<{ method: InsertCfg["method"]; pasteShortcut: string[]; isSelf: boolean }> {
   const g = useApp.getState().settings.general;
   const appRules = useApp.getState().appRules;
@@ -225,20 +253,7 @@ async function resolveTarget(): Promise<{ method: InsertCfg["method"]; pasteShor
     publishTarget(targetApp, null);
     return { method: g.insertMethod, pasteShortcut: g.pasteShortcut, isSelf: true };
   }
-  const rule = targetApp
-    ? appRules.find((r) => r.appId.toLowerCase() === targetApp.appId.toLowerCase())
-    : undefined;
-  // Opt-in deep detection: a definitely-non-editable focused element → clipboard-only.
-  // Positive-only: only editable===false skips. BUT an explicit per-app insert method means the
-  // user already decided how to inject here, so deep detection must not second-guess it — e.g. a
-  // "konsole → paste" rule: a terminal isn't an editable AT-SPI field (no Role::Terminal on the
-  // focused element), yet the user told us to paste there. Only coerce when no rule forces a method.
-  const notEditable = !!(
-    g.deepFieldDetection && !rule?.block && !rule?.insertMethod && targetApp?.editable === false
-  );
-  const method: InsertCfg["method"] =
-    rule?.block || notEditable ? "clipboard" : rule?.insertMethod ?? g.insertMethod;
-  const pasteShortcut = rule?.pasteShortcut ?? g.pasteShortcut;
+  const { rule, notEditable, method, pasteShortcut } = resolveInjectionTarget(targetApp ?? null, appRules, g);
   // Keep the chip's "→ app" readout + skip hint live as focus moves mid-session: this resolves
   // the CURRENT window on every call, so it's the chip's source of truth — not the frozen
   // start-of-session value.
@@ -765,25 +780,15 @@ export async function startLive(
   // A set per-Profile override-profile name wins; else inherit the Backend's.
   const overrideProfile = pov?.overrideProfile?.trim() ? pov.overrideProfile : backend.overrideProfile;
 
-  // Per-app rule (P16): the focused app at start decides block/method/paste-shortcut.
-  // Resolved once here — you dictate into the app you triggered from. Via AT-SPI;
-  // getFocusedApp returns null when nothing is known yet → no rule, global settings apply.
+  // Per-app rule (P16): the focused app at start decides block/method/paste-shortcut. Resolved
+  // once here — you dictate into the app you triggered from — via the shared resolveInjectionTarget
+  // (same policy resolveTarget re-runs per phrase, so the frozen start value can't diverge).
   const targetApp = await getFocusedApp();
-  const rule = targetApp
-    ? useApp.getState().appRules.find((r) => r.appId.toLowerCase() === targetApp.appId.toLowerCase())
-    : undefined;
-  // Opt-in deep field detection: if the focused element definitively isn't editable — and
-  // no rule forces typing here — don't type into it. Positive-only: editable===false is the
-  // ONLY skip; null/undefined (unknown / app not on the a11y bus) still types. An explicit
-  // per-app insert method (rule.insertMethod) opts out — the user already decided how to inject
-  // here, so deep detection must not override it (e.g. "konsole → paste"; see resolveTarget).
-  const notEditable =
-    !!g.deepFieldDetection && !rule?.block && !rule?.insertMethod && targetApp?.editable === false;
-  // A blocked app OR a non-editable target is coerced to clipboard-only: nothing is typed
-  // there, but the text isn't lost — it lands on the clipboard for the user to paste.
-  const method: InsertCfg["method"] =
-    rule?.block || notEditable ? "clipboard" : rule?.insertMethod ?? g.insertMethod;
-  const pasteShortcut = rule?.pasteShortcut ?? g.pasteShortcut;
+  const { rule, notEditable, method, pasteShortcut } = resolveInjectionTarget(
+    targetApp ?? null,
+    useApp.getState().appRules,
+    g,
+  );
 
   insertCfg = {
     timing: g.insertTiming,
