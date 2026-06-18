@@ -681,17 +681,17 @@ async function ensureListeners(): Promise<void> {
     // into the user's now-refocused window. On error we want no trailing Enter (like cancel).
     clearPhraseEnd();
     // clearPhraseEnd cancelled the pending per-phrase clipboard restore, so a pasted phrase would
-    // leave the clipboard holding the transcript — and the un-consumed snapshot would leak into the
-    // next session (whose begin_injection keeps the prior snapshot). Restore the user's clipboard: a
+    // leave the clipboard holding the transcript (and the un-consumed snapshot would leak into the
+    // next session, whose begin_injection keeps the prior snapshot). Restore the user's clipboard: a
     // swap ONLY, no keystroke, so nothing lands in the now-refocused window (unlike a stray Enter).
-    // DRAIN the inject queue first, THEN re-check beganInjection — it's set only INSIDE the queued
-    // paste task (after begin_injection resolves), so a paste still in flight when the error frame
-    // arrives would be missed by a synchronous read. Mirrors the closed handler's late-paste re-check;
-    // the `closed` frame early-returns on the error status so it won't double-restore, and endInjection
-    // consumes the snapshot so cancelLive won't either.
-    void injectChain
-      .then(() => (beganInjection ? endInjection() : undefined))
-      .catch((err) => console.error("end injection on error failed:", err));
+    // Capture the queue (with any in-flight paste) and restore UNCONDITIONALLY once it drains — we
+    // must NOT re-read beganInjection here: it's set only INSIDE the queued paste task (a sync read
+    // misses a paste in flight), AND a fast error-recovery re-trigger runs startLive, which resets
+    // beganInjection to false before this drains (which would wrongly skip the restore + leak the
+    // snapshot). end_injection is idempotent — it take()s the snapshot, a no-op when none was taken —
+    // so the unconditional call restores exactly the sessions that snapshotted, no double-restore.
+    const owed = injectChain;
+    void owed.then(() => endInjection()).catch((err) => console.error("end injection on error failed:", err));
     console.error("stream error:", e.payload);
     flashError(e.payload);
     // Tear down the Rust capture session so the mic closes and system audio
