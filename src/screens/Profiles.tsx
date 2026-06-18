@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Plus, Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Labeled, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
+import { Badge, Button, Card, Labeled, PageHeader, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { DecodeFields } from "@/components/DecodeFields";
@@ -317,19 +317,9 @@ function ProfileRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-[14px] font-semibold text-text">{p.name}</span>
-            {p.tag?.trim() && (
-              <span className="rounded-md bg-accent-soft px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider text-accent">
-                {p.tag.trim()}
-              </span>
-            )}
-            <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider text-dim">
-              {meta.label}
-            </span>
-            {p.language && (
-              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider text-dim">
-                {languageLabel(p.language)}
-              </span>
-            )}
+            {p.tag?.trim() && <Badge tone="accent">{p.tag.trim()}</Badge>}
+            <Badge>{meta.label}</Badge>
+            {p.language && <Badge>{languageLabel(p.language)}</Badge>}
           </div>
           <div className="mt-1.5 flex items-center gap-3">
             <HotkeyChips codes={p.hotkey} />
@@ -423,12 +413,10 @@ export default function Profiles() {
     <div className="mx-auto max-w-[820px] px-10 py-12">
       <div className="flex items-end justify-between">
         <div>
-          <div className="font-mono text-[11px] uppercase tracking-label text-accent">profiles</div>
-          <h1 className="mt-2 font-display text-[30px] font-bold tracking-tight text-text">Profiles</h1>
-          <p className="mt-2 max-w-md text-[13.5px] text-dim">
+          <PageHeader eyebrow="profiles" title="Profiles">
             Each profile is a way to dictate: push-to-talk or latch, its own shortcut and backend,
             with optional per-profile language and prompt.
-          </p>
+          </PageHeader>
         </div>
         {!draft && (
           <Button variant="accent" onClick={startAdd}>

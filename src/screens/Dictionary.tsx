@@ -15,7 +15,7 @@ import {
   ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Stack, Toggle, TextInput } from "@/components/ui";
+import { Badge, Button, Card, Stack, Toggle, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
@@ -116,19 +116,6 @@ function buildPatch(type: RuleType, edit: EditState, base: EditState, editable: 
   return patch;
 }
 
-/* ── small shared bits ─────────────────────────────────────────────────── */
-function Badge({ children, tone }: { children: ReactNode; tone?: "accent" | "dim" | "warn" }) {
-  return (
-    <span
-      className={cn(
-        "rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider",
-        tone === "accent" ? "bg-accent-soft text-accent" : tone === "warn" ? "bg-warn/10 text-warn" : "bg-surface-2 text-dim",
-      )}
-    >
-      {children}
-    </span>
-  );
-}
 
 function FieldLabel({ children }: { children: ReactNode }) {
   return <label className="mb-1.5 block text-[11.5px] font-medium text-dim">{children}</label>;

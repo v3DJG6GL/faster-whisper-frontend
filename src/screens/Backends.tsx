@@ -1,7 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Server, Pencil, Copy, Trash2, Plug, Loader2, Check, AlertTriangle } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Labeled, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
+import { Badge, Button, Card, Labeled, PageHeader, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
@@ -24,19 +24,6 @@ function blankBackend(): Backend {
     prompt: "",
     responseFormat: "verbose_json",
   };
-}
-
-function Badge({ children, tone }: { children: ReactNode; tone?: "accent" | "dim" }) {
-  return (
-    <span
-      className={cn(
-        "rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider",
-        tone === "accent" ? "bg-accent-soft text-accent" : "bg-surface-2 text-dim",
-      )}
-    >
-      {children}
-    </span>
-  );
 }
 
 function Editor({
@@ -374,12 +361,10 @@ export default function Backends() {
     <div className="mx-auto max-w-[820px] px-10 py-12">
       <div className="flex items-end justify-between">
         <div>
-          <div className="font-mono text-[11px] uppercase tracking-label text-accent">backends</div>
-          <h1 className="mt-2 font-display text-[30px] font-bold tracking-tight text-text">Backends</h1>
-          <p className="mt-2 max-w-md text-[13.5px] text-dim">
+          <PageHeader eyebrow="backends" title="Backends">
             A backend is a connection to a transcription server, with its own model, default
             language, and endpoint. Profiles point at one.
-          </p>
+          </PageHeader>
         </div>
         {!editing && (
           <Button variant="accent" onClick={() => setEditing(blankBackend())}>

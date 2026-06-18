@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { UploadCloud, FileAudio, X, Loader2, Copy, Check, AlertTriangle } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Select } from "@/components/ui";
+import { Button, Card, PageHeader, Select } from "@/components/ui";
 import { LANGUAGES } from "@/lib/languages";
 import { pickAudioFile, transcribeFile, isTauri } from "@/lib/api";
 import type { BatchResult } from "@/lib/types";
@@ -80,11 +80,9 @@ export default function Transcribe() {
 
   return (
     <div className="mx-auto max-w-[820px] px-10 py-12">
-      <div className="font-mono text-[11px] uppercase tracking-label text-accent">batch</div>
-      <h1 className="mt-2 font-display text-[30px] font-bold tracking-tight text-text">Transcribe a file</h1>
-      <p className="mt-2 max-w-md text-[13.5px] text-dim">
+      <PageHeader eyebrow="batch" title="Transcribe a file">
         Send an audio or video file to one of your backends via the batch endpoint.
-      </p>
+      </PageHeader>
 
       <button
         type="button"

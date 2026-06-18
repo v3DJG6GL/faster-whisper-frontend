@@ -30,6 +30,38 @@ export function SectionLabel({ children, className }: { children: ReactNode; cla
   );
 }
 
+/* ── Page header ──────────────────────────────────────────────────────── */
+/** The eyebrow + title + lede triple at the top of a screen. Renders a fragment so it
+ *  drops into either a bare container or the inner div of a flex header row unchanged. */
+export function PageHeader({ eyebrow, title, children }: { eyebrow: string; title: string; children: ReactNode }) {
+  return (
+    <>
+      <div className="font-mono text-[11px] uppercase tracking-label text-accent">{eyebrow}</div>
+      <h1 className="mt-2 font-display text-[30px] font-bold tracking-tight text-text">{title}</h1>
+      <p className="mt-2 max-w-md text-[13.5px] text-dim">{children}</p>
+    </>
+  );
+}
+
+/* ── Badge ────────────────────────────────────────────────────────────── */
+/** A small uppercase pill. `accent` = highlighted, `warn` = caution, default = dim. */
+export function Badge({ children, tone }: { children: ReactNode; tone?: "accent" | "dim" | "warn" }) {
+  return (
+    <span
+      className={cn(
+        "rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider",
+        tone === "accent"
+          ? "bg-accent-soft text-accent"
+          : tone === "warn"
+            ? "bg-warn/10 text-warn"
+            : "bg-surface-2 text-dim",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
 /** A form field with a small dim label above its control. */
 export function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
