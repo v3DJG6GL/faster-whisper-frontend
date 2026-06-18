@@ -7,7 +7,7 @@
 // and logical modifiers (Ctrl/Alt/Shift/Super) — it can NOT distinguish left/right
 // modifiers (that needs the evdev backend, P5). Punctuation/symbol codes (Minus,
 // BracketLeft, Backquote, IntlBackslash, …) and ContextMenu aren't supported and
-// are rejected here; `validateShortcut` is the final gate in the Rust layer.
+// are rejected here; `validateCodes` is the final gate in the Rust layer.
 
 import { keycapLabel } from "./keyboardLayout";
 

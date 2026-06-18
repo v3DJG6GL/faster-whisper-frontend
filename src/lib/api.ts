@@ -356,12 +356,6 @@ export async function suspendShortcuts(): Promise<void> {
   await invoke("suspend_shortcuts");
 }
 
-/** Whether an accelerator (e.g. "Ctrl+Shift+Space") can be registered as a global shortcut. */
-export async function validateShortcut(accelerator: string): Promise<boolean> {
-  if (!isTauri) return true;
-  return invoke<boolean>("validate_shortcut", { accelerator });
-}
-
 /** Whether a code-list chord (["ControlLeft","KeyH"]) can be registered via the
  *  global-shortcut plugin. Modifier-only / AltGr chords return false (evdev-only). */
 export async function validateCodes(codes: string[]): Promise<boolean> {
