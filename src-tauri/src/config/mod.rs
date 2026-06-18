@@ -690,6 +690,11 @@ pub fn load(dir: &Path) -> Config {
         }
         None => {
             tracing::warn!("config parse failed; using defaults");
+            // Don't silently discard a config we couldn't parse — the frontend arms auto-save
+            // after load, so the next save would overwrite it with defaults and lose the user's
+            // backends/profiles/settings for good. Stash the unparseable file so a corrupt,
+            // hand-edited, or forward-incompatible config stays recoverable.
+            let _ = std::fs::rename(&path, path.with_extension("json.bak"));
             Config::default()
         }
     }
