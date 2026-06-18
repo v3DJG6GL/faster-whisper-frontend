@@ -137,6 +137,7 @@ export default function QuickAdd() {
   // selection read, so the window is responsive at once; the seed then swoops in if there is one.
   useEffect(() => {
     let un: (() => void) | undefined;
+    let cancelled = false;
     import("@tauri-apps/api/event")
       .then(({ listen }) =>
         listen("quickadd://shown", async () => {
@@ -164,9 +165,15 @@ export default function QuickAdd() {
         }),
       )
       .then((f) => {
-        un = f;
+        // If the effect was torn down before listen() resolved (StrictMode dev mount→unmount→
+        // remount), drop the subscription now instead of leaking a duplicate listener.
+        if (cancelled) f();
+        else un = f;
       });
-    return () => un?.();
+    return () => {
+      cancelled = true;
+      un?.();
+    };
   }, [refresh]);
 
   // After a summon, land the cursor in "Insert" when we seeded a selection (the word's already
