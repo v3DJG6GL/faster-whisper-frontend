@@ -135,11 +135,15 @@ function Editor({
 }
 
 function RuleRow({ r, onEdit, onRemove }: { r: AppRule; onEdit: () => void; onRemove: () => void }) {
+  const globalMethod = useApp((s) => s.settings.general.insertMethod);
+  // Mirror the editor's `pasteRelevant`: a saved paste shortcut only fires when paste is the
+  // effective method, so don't list it for a rule that resolves to direct/clipboard typing.
+  const pasteRelevant = !r.block && (r.insertMethod ?? globalMethod) === "paste";
   const summary = r.block
     ? "Blocked — never typed here"
     : [
         r.insertMethod ? METHOD_OPTIONS.find((m) => m.value === r.insertMethod)?.label : "Inherit method",
-        r.pasteShortcut ? pasteLabel(r.pasteShortcut) : null,
+        pasteRelevant && r.pasteShortcut ? pasteLabel(r.pasteShortcut) : null,
       ]
         .filter(Boolean)
         .join(" · ");
