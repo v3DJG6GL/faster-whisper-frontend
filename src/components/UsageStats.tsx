@@ -73,10 +73,12 @@ const tick = (m: MetricKey, v: number) => (m === "audio" ? fmtDurationAxis(v) : 
 
 /** Round a max up to a clean 1/2/5 × 10ⁿ so gridline labels read nicely. */
 function niceMax(v: number): number {
-  if (v <= 0) return 1;
+  if (v <= 0) return 3;
   const p = 10 ** Math.floor(Math.log10(v));
   const u = v / p;
-  return (u <= 1 ? 1 : u <= 2 ? 2 : u <= 5 ? 5 : 10) * p;
+  // Floor at 3: the axis draws 3 equal intervals (4 labels), so a top of 1 or 2 yields
+  // fractional thirds that round to DUPLICATE ticks (0,0,1,1 / 0,1,1,2). 3 and up stay distinct.
+  return Math.max(3, (u <= 1 ? 1 : u <= 2 ? 2 : u <= 5 ? 5 : 10) * p);
 }
 
 /** Densify the sparse series into one point per calendar day across the trend
