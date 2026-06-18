@@ -1,7 +1,7 @@
 //! Connection test + model discovery against `/v1/models` and `/auth/whoami`.
 
 use super::{
-    base_url, client, friendly_err, with_auth, Capabilities, ConnectionInfo,
+    base_url, client, friendly_err, get_json, with_auth, Capabilities, ConnectionInfo,
     ResolvedOverrideProfile, ServerModel, UsageStats,
 };
 use serde::Deserialize;
@@ -133,10 +133,7 @@ pub async fn list_override_profiles(server_url: &str, api_key: Option<&str>) -> 
 /// (never gate a knob we can't prove is unsupported).
 pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option<Capabilities> {
     let base = base_url(server_url);
-    match with_auth(client().get(format!("{base}/v1/me")), api_key).send().await {
-        Ok(resp) if resp.status().is_success() => resp.json::<Capabilities>().await.ok(),
-        _ => None,
-    }
+    get_json(format!("{base}/v1/me"), api_key).await
 }
 
 /// The caller's own usage (`GET /v1/usage`, full backend only): today + total
@@ -169,10 +166,7 @@ pub async fn get_usage_stats(
     } else {
         format!("{base}/v1/usage?{}", q.join("&"))
     };
-    match with_auth(client().get(url), api_key).send().await {
-        Ok(resp) if resp.status().is_success() => resp.json::<UsageStats>().await.ok(),
-        _ => None,
-    }
+    get_json(url, api_key).await
 }
 
 /// A single override-profile's decode values + locked client keys
@@ -194,10 +188,5 @@ pub async fn get_override_profile(
     }
     let base = base_url(server_url);
     let url = format!("{base}/v1/override-profiles/{name}");
-    match with_auth(client().get(url), api_key).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            resp.json::<ResolvedOverrideProfile>().await.ok()
-        }
-        _ => None,
-    }
+    get_json(url, api_key).await
 }

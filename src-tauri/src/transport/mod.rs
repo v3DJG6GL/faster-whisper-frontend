@@ -178,3 +178,13 @@ pub fn with_auth(req: reqwest::RequestBuilder, api_key: Option<&str>) -> reqwest
         _ => req,
     }
 }
+
+/// Best-effort `GET <url>` deserialized as `T`: any failure — transport error, non-2xx, or a body
+/// that won't deserialize — collapses to `None`. The discovery probes (`/v1/me`, `/v1/usage`,
+/// `/v1/override-profiles/{name}`) all treat an unreachable/absent/unauthorized endpoint this way.
+pub async fn get_json<T: serde::de::DeserializeOwned>(url: String, api_key: Option<&str>) -> Option<T> {
+    match with_auth(client().get(url), api_key).send().await {
+        Ok(resp) if resp.status().is_success() => resp.json::<T>().await.ok(),
+        _ => None,
+    }
+}
