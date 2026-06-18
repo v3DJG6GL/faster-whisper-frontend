@@ -46,9 +46,17 @@ export function OverrideProfilePicker({
   useEffect(() => {
     if (serverKind === "standard" || blocked) return; // no endpoint / not permitted
     let cancelled = false;
-    void listOverrideProfiles({ serverUrl, backendId, apiKey }).then((n) => {
-      if (!cancelled) setNames(n);
-    });
+    // Clear the prior connection's names up front so switching backends never shows a stale
+    // dropdown while the refetch is in flight (or if it fails/returns empty).
+    setNames([]);
+    void listOverrideProfiles({ serverUrl, backendId, apiKey })
+      .then((n) => {
+        if (!cancelled) setNames(n);
+      })
+      .catch(() => {
+        // Best-effort, per the doc above: on failure degrade to the free-text input.
+        if (!cancelled) setNames([]);
+      });
     return () => {
       cancelled = true;
     };
