@@ -4,7 +4,7 @@ import { Mic, Radio, Hand, Square, Pencil, AlertTriangle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
 import { dictationVisual } from "@/lib/dictationVisual";
-import { Button, Card, SectionLabel, Select, StatusDot, Toggle } from "@/components/ui";
+import { Button, Card, SectionLabel, Select, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/UsageStats";
@@ -154,17 +154,11 @@ export default function Home() {
             Push-to-talk or latch it on. Audio streams to your own faster-whisper backend and the text appears wherever your cursor is.
           </p>
         </div>
-        <div className="flex items-center gap-2 rounded-pill border border-line bg-surface/70 px-3 py-1.5">
-          <StatusDot tone="ok" />
-          <span className="font-mono text-[11px] text-dim">
-            {headerBackend?.serverUrl.replace(/^https?:\/\//, "") ?? "no backend"}
-          </span>
-        </div>
       </div>
 
       {/* Usage at a glance — sparkline tiles between the heading and the dictation
           instrument; the full chart lives on /statistics. */}
-      <HomeUsageStrip backend={headerBackend} />
+      <HomeUsageStrip />
 
       {/* Hero instrument */}
       <Card className="mt-8 overflow-hidden p-0">

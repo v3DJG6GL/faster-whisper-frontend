@@ -7,6 +7,7 @@ import { HotkeyChips } from "@/components/HotkeyChips";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { DecodeFields } from "@/components/DecodeFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
+import { ReorderControls } from "@/components/ReorderControls";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { conflictsByProfile } from "@/lib/conflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
@@ -281,6 +282,10 @@ function ProfileRow({
   p,
   backendName,
   conflictText,
+  canUp,
+  canDown,
+  onMoveUp,
+  onMoveDown,
   onEdit,
   onDuplicate,
   onRemove,
@@ -288,6 +293,10 @@ function ProfileRow({
   p: Profile;
   backendName: string;
   conflictText: string | null;
+  canUp: boolean;
+  canDown: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
   onRemove: () => void;
@@ -298,6 +307,7 @@ function ProfileRow({
   return (
     <Card className={cn("p-5", conflictText && "border-warn/40")}>
       <div className="flex items-center gap-4">
+        <ReorderControls canUp={canUp} canDown={canDown} onUp={onMoveUp} onDown={onMoveDown} />
         <div
           className={cn(
             "grid size-10 place-items-center rounded-xl",
@@ -360,6 +370,7 @@ export default function Profiles() {
   const upsertProfile = useApp((s) => s.upsertProfile);
   const removeProfile = useApp((s) => s.removeProfile);
   const duplicateProfile = useApp((s) => s.duplicateProfile);
+  const moveProfile = useApp((s) => s.moveProfile);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Profile | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -446,12 +457,16 @@ export default function Profiles() {
             </Card>
           ) : (
             <div className="flex flex-col gap-3">
-              {profiles.map((p) => (
+              {profiles.map((p, i) => (
                 <ProfileRow
                   key={p.id}
                   p={p}
                   backendName={backendName(p.backendId)}
                   conflictText={conflictText(p.id)}
+                  canUp={i > 0}
+                  canDown={i < profiles.length - 1}
+                  onMoveUp={() => moveProfile(p.id, "up")}
+                  onMoveDown={() => moveProfile(p.id, "down")}
                   onEdit={() => startEdit(p)}
                   onDuplicate={() => duplicateProfile(p.id)}
                   onRemove={() => removeProfile(p.id)}

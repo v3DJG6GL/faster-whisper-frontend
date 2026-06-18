@@ -181,6 +181,11 @@ interface AppState {
    *  the persisted Config. Fed by the usage controller (lib/usage.ts). */
   usage: Record<string, UsageStats | null>;
 
+  /** P31: which Backend the usage VIEW (Home strip + Statistics page) shows. null =
+   *  follow the dictation/home-target backend. Runtime-only (a view preference, not
+   *  persisted). The chip readout ignores this — it always uses activeStatsBackend. */
+  usageViewBackendId: string | null;
+
   setTheme: (t: ThemeName) => void;
   updateSettings: (patch: Partial<AppSettings>) => void;
   updateGeneral: (patch: Partial<AppSettings["general"]>) => void;
@@ -189,11 +194,13 @@ interface AppState {
   upsertBackend: (b: Backend) => void;
   removeBackend: (id: string) => void;
   duplicateBackend: (id: string) => void;
+  moveBackend: (id: string, dir: "up" | "down") => void;
 
   upsertProfile: (p: Profile) => void;
   updateProfile: (id: string, patch: Partial<Profile>) => void;
   removeProfile: (id: string) => void;
   duplicateProfile: (id: string) => void;
+  moveProfile: (id: string, dir: "up" | "down") => void;
 
   upsertAppRule: (r: AppRule) => void;
   removeAppRule: (id: string) => void;
@@ -202,6 +209,9 @@ interface AppState {
 
   /** Store the latest usage stats for a Backend (null = fetched-but-unsupported). */
   setUsage: (backendId: string, stats: UsageStats | null) => void;
+
+  /** Pick which Backend the usage view shows (null = follow the dictation target). */
+  setUsageViewBackend: (id: string | null) => void;
 
   /** Update live dictation runtime (status / level / partial transcript). */
   setDictation: (
@@ -245,6 +255,7 @@ export const useApp = create<AppState>((set) => ({
 
   connections: {},
   usage: {},
+  usageViewBackendId: null,
 
   setTheme: (t) => {
     document.documentElement.dataset.theme = t;
@@ -282,6 +293,15 @@ export const useApp = create<AppState>((set) => ({
       backends.splice(i + 1, 0, copy);
       return { backends };
     }),
+  moveBackend: (id, dir) =>
+    set((s) => {
+      const i = s.backends.findIndex((b) => b.id === id);
+      const j = dir === "up" ? i - 1 : i + 1;
+      if (i < 0 || j < 0 || j >= s.backends.length) return {};
+      const backends = [...s.backends];
+      [backends[i], backends[j]] = [backends[j], backends[i]];
+      return { backends };
+    }),
 
   upsertProfile: (p) =>
     set((s) => {
@@ -305,6 +325,15 @@ export const useApp = create<AppState>((set) => ({
       profiles.splice(i + 1, 0, copy);
       return { profiles };
     }),
+  moveProfile: (id, dir) =>
+    set((s) => {
+      const i = s.profiles.findIndex((p) => p.id === id);
+      const j = dir === "up" ? i - 1 : i + 1;
+      if (i < 0 || j < 0 || j >= s.profiles.length) return {};
+      const profiles = [...s.profiles];
+      [profiles[i], profiles[j]] = [profiles[j], profiles[i]];
+      return { profiles };
+    }),
 
   upsertAppRule: (r) =>
     set((s) => {
@@ -321,6 +350,8 @@ export const useApp = create<AppState>((set) => ({
 
   setUsage: (backendId, stats) =>
     set((s) => ({ usage: { ...s.usage, [backendId]: stats } })),
+
+  setUsageViewBackend: (id) => set({ usageViewBackendId: id }),
 
   setDictation: (patch) =>
     set((s) => {

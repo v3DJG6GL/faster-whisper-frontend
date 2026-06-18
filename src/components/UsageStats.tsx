@@ -31,7 +31,9 @@ import {
   localTodayDay,
 } from "@/lib/format";
 import { TREND_DAYS } from "@/lib/usage";
-import type { Backend, UsageSeriesPoint, UsageStats, UsageTotals } from "@/lib/types";
+import { homeTargetProfile } from "@/lib/dictation";
+import { BackendChips } from "@/components/BackendChips";
+import type { UsageSeriesPoint, UsageStats, UsageTotals } from "@/lib/types";
 
 type MetricKey = "words" | "audio" | "requests" | "errors";
 
@@ -384,31 +386,52 @@ function StatTile({ tile, stats, dense, spark }: { tile: (typeof TILES)[number];
   );
 }
 
-/** Read the backend's stats from the store + densify the sparse series once. Shared
- *  by both surfaces; `stats` is null on a standard/old server (no /v1/usage) or before
- *  the first fetch. */
-function useDenseStats(backend: Backend | undefined) {
-  const stats = useApp((s) => (backend ? s.usage[backend.id] : null));
+/** Resolve which backends have usage stats, the currently-VIEWED one (the user's pick,
+ *  defaulting to the dictation/home-target backend), the densified series, and a setter.
+ *  Shared by the Home strip + the Statistics page so they stay in sync. The chip readout
+ *  is independent — it always follows the dictation backend (see lib/usage.ts). */
+function useUsageView() {
+  const backends = useApp((s) => s.backends);
+  const usage = useApp((s) => s.usage);
+  const profiles = useApp((s) => s.profiles);
+  const homeProfileId = useApp((s) => s.settings.homeProfileId);
+  const viewId = useApp((s) => s.usageViewBackendId);
+  const setView = useApp((s) => s.setUsageViewBackend);
+
+  // Only backends that actually have usage stats are shown / switchable.
+  const statsBackends = backends.filter((b) => !!usage[b.id]);
+  // Default view = the dictation/home-target backend (what the chip shows) when it has
+  // stats; otherwise the first backend that does.
+  const defaultId = homeTargetProfile(profiles, homeProfileId)?.backendId ?? backends[0]?.id;
+  const viewBackend =
+    statsBackends.find((b) => b.id === viewId) ??
+    statsBackends.find((b) => b.id === defaultId) ??
+    statsBackends[0];
+  const stats = viewBackend ? usage[viewBackend.id] : null;
   const dense = useMemo(() => (stats ? densify(stats.series) : []), [stats]);
-  return { stats, dense };
+  return { statsBackends, viewBackend, setView, stats, dense };
 }
 
-/** Home: a compact strip of four sparkline stat tiles + a link to the full Statistics
- *  page. Hidden entirely (no empty box) until we have stats. */
-export function HomeUsageStrip({ backend }: { backend: Backend | undefined }) {
-  const { stats, dense } = useDenseStats(backend);
-  if (!stats) return null;
+/** Home: a compact strip of four sparkline stat tiles, with the backend selector +
+ *  "View statistics" link on the header row. Hidden entirely (no empty box) until some
+ *  backend has usage stats. */
+export function HomeUsageStrip() {
+  const { statsBackends, viewBackend, setView, stats, dense } = useUsageView();
+  if (!viewBackend || !stats) return null;
   return (
     <section className="mt-8">
-      <div className="mb-3 flex items-center justify-between gap-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <SectionLabel className="!m-0">Usage</SectionLabel>
-        <Link
-          to="/statistics"
-          className="ring-signal flex items-center gap-1.5 rounded-pill border border-line px-3 py-1 font-mono text-[11px] text-dim transition-colors hover:border-line-strong hover:bg-surface hover:text-text"
-        >
-          View statistics
-          <ArrowRight className="size-3.5" />
-        </Link>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <BackendChips backends={statsBackends} selectedId={viewBackend.id} onSelect={setView} />
+          <Link
+            to="/statistics"
+            className="ring-signal flex items-center gap-1.5 rounded-pill border border-line px-3 py-1 font-mono text-[11px] text-dim transition-colors hover:border-line-strong hover:bg-surface hover:text-text"
+          >
+            View statistics
+            <ArrowRight className="size-3.5" />
+          </Link>
+        </div>
       </div>
       <div className="grid grid-cols-4 gap-4">
         {TILES.map((t) => (
@@ -419,11 +442,11 @@ export function HomeUsageStrip({ backend }: { backend: Backend | undefined }) {
   );
 }
 
-/** Statistics page body: the four stat tiles (today + all-time) plus the full
- *  interactive trend chart. Shows a friendly empty state when there's no usage data. */
-export function StatisticsView({ backend }: { backend: Backend | undefined }) {
-  const { stats, dense } = useDenseStats(backend);
-  if (!stats) {
+/** Statistics page body: the backend selector, the four stat tiles (today + all-time)
+ *  and the full interactive trend chart. Friendly empty state when no backend has usage. */
+export function StatisticsView() {
+  const { statsBackends, viewBackend, setView, stats, dense } = useUsageView();
+  if (!viewBackend || !stats) {
     return (
       <Card className="grid place-items-center p-12 text-center">
         <div className="text-[14px] text-dim">No usage data yet.</div>
@@ -435,6 +458,9 @@ export function StatisticsView({ backend }: { backend: Backend | undefined }) {
   }
   return (
     <>
+      <div className="mb-4">
+        <BackendChips backends={statsBackends} selectedId={viewBackend.id} onSelect={setView} />
+      </div>
       <div className="grid grid-cols-4 gap-4">
         {TILES.map((t) => (
           <StatTile key={t.key} tile={t} stats={stats} dense={dense} spark={false} />

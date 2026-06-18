@@ -19,7 +19,7 @@ const AFTER_SESSION_MS = 1_500; // the server records usage in its post-request 
 export const TREND_DAYS = 90; // fetched once; the chart slices 7/30/90 from it
 
 let started = false;
-let inFlight = false;
+let pollingAll = false;
 
 /** The Backend whose usage the chip + Home stats reflect: the Profile currently
  *  dictating, else the home target Profile (so an idle dock previews the same
@@ -37,29 +37,44 @@ function localMidnightEpoch(): number {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
 }
 
-async function refresh(backend: Backend | undefined): Promise<void> {
-  if (!backend || inFlight) return;
+async function refreshOne(backend: Backend): Promise<void> {
   const { connections, usage, setUsage } = useApp.getState();
   // Skip a server we KNOW is standard (no /v1/usage); "unknown" ⇒ try anyway.
   if (effectiveServerKind(backend, connections[backend.id]) === "standard") {
-    setUsage(backend.id, null);
+    // Don't clobber a backend that has been serving usage just because the
+    // connection probe hasn't run yet — only mark null if we've no good value.
+    if (!usage[backend.id]) setUsage(backend.id, null);
     return;
   }
-  inFlight = true;
+  const stats = await getUsageStats({
+    serverUrl: backend.serverUrl,
+    backendId: backend.id,
+    tzMidnight: localMidnightEpoch(),
+    days: TREND_DAYS,
+    bucket: "day",
+  });
+  // Keep the last-known-good value on a transient miss — only commit null when
+  // we've never succeeded for this backend (genuinely unsupported/unreachable).
+  if (stats === null && usage[backend.id]) return;
+  setUsage(backend.id, stats);
+}
+
+/** Refresh usage for EVERY configured backend (sequentially, best-effort) so the
+ *  usage view can switch between backends instantly from the store. Guarded so
+ *  overlapping polls don't stack. */
+async function refreshAll(): Promise<void> {
+  if (pollingAll) return;
+  pollingAll = true;
   try {
-    const stats = await getUsageStats({
-      serverUrl: backend.serverUrl,
-      backendId: backend.id,
-      tzMidnight: localMidnightEpoch(),
-      days: TREND_DAYS,
-      bucket: "day",
-    });
-    // Keep the last-known-good value on a transient miss — only commit null when
-    // we've never succeeded for this backend (genuinely unsupported/unreachable).
-    if (stats === null && usage[backend.id]) return;
-    setUsage(backend.id, stats);
+    for (const b of useApp.getState().backends) {
+      try {
+        await refreshOne(b);
+      } catch {
+        /* one backend failing must not stop the rest */
+      }
+    }
   } finally {
-    inFlight = false;
+    pollingAll = false;
   }
 }
 
@@ -67,22 +82,22 @@ export function initUsageController(): void {
   if (!isTauri || started) return;
   started = true;
 
-  void refresh(activeStatsBackend());
-  setInterval(() => void refresh(activeStatsBackend()), POLL_MS);
+  void refreshAll();
+  setInterval(() => void refreshAll(), POLL_MS);
 
-  let lastBackendId = activeStatsBackend()?.id;
+  let lastBackends = useApp.getState().backends;
   let afterTimer: ReturnType<typeof setTimeout> | undefined;
   useApp.subscribe((state, prev) => {
-    // Re-target immediately when the active/home backend changes.
-    const b = activeStatsBackend(state);
-    if (b?.id && b.id !== lastBackendId) {
-      lastBackendId = b.id;
-      void refresh(b);
+    // Refetch when the set of backends changes (added / removed / url edited).
+    if (state.backends !== lastBackends) {
+      lastBackends = state.backends;
+      void refreshAll();
     }
-    // Refetch shortly after a dictation session ends (idle transition).
+    // Refetch shortly after a dictation session ends (idle transition) — the server
+    // records usage in its post-request finally, so today's totals just moved.
     if (prev.status !== "idle" && state.status === "idle") {
       clearTimeout(afterTimer);
-      afterTimer = setTimeout(() => void refresh(activeStatsBackend()), AFTER_SESSION_MS);
+      afterTimer = setTimeout(() => void refreshAll(), AFTER_SESSION_MS);
     }
   });
 }

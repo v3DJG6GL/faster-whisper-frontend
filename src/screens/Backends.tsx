@@ -4,6 +4,7 @@ import { useApp } from "@/lib/store";
 import { Button, Card, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
+import { ReorderControls } from "@/components/ReorderControls";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
@@ -308,6 +309,7 @@ export default function Backends() {
   const upsertBackend = useApp((s) => s.upsertBackend);
   const removeBackend = useApp((s) => s.removeBackend);
   const duplicateBackend = useApp((s) => s.duplicateBackend);
+  const moveBackend = useApp((s) => s.moveBackend);
   const setConnection = useApp((s) => s.setConnection);
   const [editing, setEditing] = useState<Backend | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -359,10 +361,16 @@ export default function Backends() {
         <>
           <SectionLabel className="mb-3 mt-8">Configured</SectionLabel>
           <div className="flex flex-col gap-3">
-            {backends.map((b) => {
+            {backends.map((b, i) => {
               const conn = connections[b.id];
               return (
                 <Card key={b.id} className="flex items-center gap-4 p-5">
+                  <ReorderControls
+                    canUp={i > 0}
+                    canDown={i < backends.length - 1}
+                    onUp={() => moveBackend(b.id, "up")}
+                    onDown={() => moveBackend(b.id, "down")}
+                  />
                   <div className="grid size-10 place-items-center rounded-xl bg-surface-2 text-accent">
                     <Server className="size-[18px]" />
                   </div>
