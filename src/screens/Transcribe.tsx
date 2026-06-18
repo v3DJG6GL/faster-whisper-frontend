@@ -58,7 +58,12 @@ export default function Transcribe() {
 
   const copy = async () => {
     if (!result) return;
-    await navigator.clipboard.writeText(result.text);
+    try {
+      await navigator.clipboard.writeText(result.text);
+    } catch (e) {
+      console.error("clipboard copy failed:", e); // don't flash "Copied" if the write failed
+      return;
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
