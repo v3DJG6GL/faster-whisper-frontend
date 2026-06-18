@@ -13,6 +13,9 @@ pub struct Resampler16k {
     inner: Option<SincFixedIn<f32>>,
     acc: Vec<f32>,
     needed: usize,
+    /// Reused output scratch (one channel, sized to the resampler's max output) so each chunk
+    /// converts without a per-call heap allocation on the audio thread.
+    out: Vec<Vec<f32>>,
 }
 
 impl Resampler16k {
@@ -23,6 +26,7 @@ impl Resampler16k {
                 inner: None,
                 acc: Vec::new(),
                 needed: 0,
+                out: Vec::new(),
             });
         }
         let params = SincInterpolationParameters {
@@ -34,38 +38,72 @@ impl Resampler16k {
         };
         let inner = SincFixedIn::<f32>::new(16_000.0 / in_rate as f64, 2.0, params, 1024, 1)?;
         let needed = inner.input_frames_next();
+        let out = inner.output_buffer_allocate(true);
         Ok(Self {
             inner: Some(inner),
             acc: Vec::new(),
             needed,
+            out,
         })
     }
 
     /// Feed mono f32 samples; returns any ready 16 kHz s16le bytes.
     pub fn push(&mut self, samples: &[f32]) -> Vec<u8> {
         let mut out = Vec::new();
-        let Some(resampler) = self.inner.as_mut() else {
+        if self.inner.is_none() {
             // Pass-through: already 16 kHz.
             out.reserve(samples.len() * 2);
             for &s in samples {
                 push_i16le(&mut out, s);
             }
             return out;
-        };
+        }
 
         self.acc.extend_from_slice(samples);
         while self.acc.len() >= self.needed && self.needed > 0 {
-            let chunk: Vec<f32> = self.acc.drain(..self.needed).collect();
-            if let Ok(frames) = resampler.process(&[chunk], None) {
-                if let Some(ch0) = frames.into_iter().next() {
-                    out.reserve(ch0.len() * 2);
-                    for s in ch0 {
-                        push_i16le(&mut out, s);
-                    }
+            let needed = self.needed;
+            // Convert the front block in place into the reused output buffer — `process_into_buffer`
+            // avoids the per-chunk input/output heap allocations `process()` does on the audio thread.
+            let res = self
+                .inner
+                .as_mut()
+                .unwrap()
+                .process_into_buffer(&[&self.acc[..needed]], &mut self.out, None);
+            if let Ok((_, written)) = res {
+                out.reserve(written * 2);
+                for &s in &self.out[0][..written] {
+                    push_i16le(&mut out, s);
                 }
             }
-            self.needed = resampler.input_frames_next();
+            self.acc.drain(..needed);
+            self.needed = self.inner.as_ref().unwrap().input_frames_next();
         }
+        out
+    }
+
+    /// Flush the buffered tail (< one input block) at end of stream: zero-pad to a full input block
+    /// and resample, so the final (< ~64 ms) of audio isn't dropped. The trailing zeros resample to
+    /// a soft decay into silence (no click). Pass-through mode buffers nothing, so it's a no-op.
+    pub fn flush(&mut self) -> Vec<u8> {
+        let mut out = Vec::new();
+        if self.inner.is_none() || self.acc.is_empty() || self.needed == 0 {
+            self.acc.clear();
+            return out;
+        }
+        self.acc.resize(self.needed, 0.0); // pad the partial block with silence
+        let needed = self.needed;
+        let res = self
+            .inner
+            .as_mut()
+            .unwrap()
+            .process_into_buffer(&[&self.acc[..needed]], &mut self.out, None);
+        if let Ok((_, written)) = res {
+            out.reserve(written * 2);
+            for &s in &self.out[0][..written] {
+                push_i16le(&mut out, s);
+            }
+        }
+        self.acc.clear();
         out
     }
 }
@@ -94,5 +132,14 @@ mod tests {
         let mut r = Resampler16k::new(16_000).unwrap();
         let bytes = r.push(&[0.0, 0.5, -0.5, 1.0]);
         assert_eq!(bytes.len(), 8); // 4 samples × 2 bytes
+    }
+
+    #[test]
+    fn flush_emits_buffered_tail() {
+        let mut r = Resampler16k::new(48_000).unwrap();
+        // Fewer than one input block → buffered, nothing emitted yet.
+        assert!(r.push(&vec![0.3f32; 100]).is_empty());
+        // Flush pads + resamples that tail, so it's no longer dropped.
+        assert!(!r.flush().is_empty());
     }
 }

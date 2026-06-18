@@ -536,19 +536,22 @@ fn run_record_capture(
     level: Arc<AtomicU32>,
     stop: &AtomicBool,
 ) -> Result<(), String> {
+    // One resampler, shared with the `move` capture closure via Arc<Mutex>, so we can flush its
+    // buffered tail after capture stops (the closure owns nothing else we could reach).
+    let resampler = Arc::new(Mutex::new(Resampler16k::new(in_rate).map_err(|e| e.to_string())?));
     let stream = match format {
         SampleFormat::F32 => {
             let buf = buffer.clone();
             let lvl = level.clone();
             let mut sm = 0.0f32;
-            let mut resampler = Resampler16k::new(in_rate).map_err(|e| e.to_string())?;
+            let resampler = resampler.clone();
             device.build_input_stream(
                 &config,
                 move |data: &[f32], _| {
                     let mono = downmix(data, channels, |s| s);
                     sm = sm * 0.7 + (rms(&mono) * 6.0).clamp(0.0, 1.0) * 0.3;
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
-                    let bytes = resampler.push(&mono);
+                    let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
                     if !bytes.is_empty() {
                         if let Ok(mut b) = buf.lock() {
                             b.extend_from_slice(&bytes);
@@ -563,14 +566,14 @@ fn run_record_capture(
             let buf = buffer.clone();
             let lvl = level.clone();
             let mut sm = 0.0f32;
-            let mut resampler = Resampler16k::new(in_rate).map_err(|e| e.to_string())?;
+            let resampler = resampler.clone();
             device.build_input_stream(
                 &config,
                 move |data: &[i16], _| {
                     let mono = downmix(data, channels, |s| s as f32 / 32768.0);
                     sm = sm * 0.7 + (rms(&mono) * 6.0).clamp(0.0, 1.0) * 0.3;
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
-                    let bytes = resampler.push(&mono);
+                    let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
                     if !bytes.is_empty() {
                         if let Ok(mut b) = buf.lock() {
                             b.extend_from_slice(&bytes);
@@ -585,14 +588,14 @@ fn run_record_capture(
             let buf = buffer.clone();
             let lvl = level.clone();
             let mut sm = 0.0f32;
-            let mut resampler = Resampler16k::new(in_rate).map_err(|e| e.to_string())?;
+            let resampler = resampler.clone();
             device.build_input_stream(
                 &config,
                 move |data: &[u16], _| {
                     let mono = downmix(data, channels, |s| (s as f32 - 32768.0) / 32768.0);
                     sm = sm * 0.7 + (rms(&mono) * 6.0).clamp(0.0, 1.0) * 0.3;
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
-                    let bytes = resampler.push(&mono);
+                    let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
                     if !bytes.is_empty() {
                         if let Ok(mut b) = buf.lock() {
                             b.extend_from_slice(&bytes);
@@ -612,6 +615,17 @@ fn run_record_capture(
         let l = f32::from_bits(level.load(Ordering::Relaxed));
         let _ = app.emit("stream://level", l);
         std::thread::sleep(Duration::from_millis(33));
+    }
+    // Stop capture (drop the stream → no more callbacks), then flush the resampler's buffered tail
+    // (< ~64 ms) into the recording so the final sliver isn't dropped.
+    drop(stream);
+    if let Ok(mut r) = resampler.lock() {
+        let tail = r.flush();
+        if !tail.is_empty() {
+            if let Ok(mut b) = buffer.lock() {
+                b.extend_from_slice(&tail);
+            }
+        }
     }
     Ok(())
 }

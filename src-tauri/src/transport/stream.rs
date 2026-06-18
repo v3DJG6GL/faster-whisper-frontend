@@ -362,6 +362,16 @@ pub async fn run<F>(
         // within a few seconds.
         const DRAIN_DEADLINE: Duration = Duration::from_secs(6);
         let _ = tokio::time::timeout(DRAIN_DEADLINE, async {
+            // Flush the resampler's buffered tail (< one input block, < ~64 ms) before asking the
+            // server to finalize, so the final sliver of audio isn't dropped from the transcript
+            // (or the saved recording). The trailing zeros resample to a soft decay, not a click.
+            let tail = resampler.flush();
+            if !tail.is_empty() {
+                if params.save_dir.is_some() {
+                    saved.extend_from_slice(&tail);
+                }
+                let _ = write.send(Message::Binary(tail.into())).await;
+            }
             let _ = write.send(text_msg(json!({"type":"flush"}).to_string())).await;
             let _ = write.send(text_msg(json!({"type":"stop"}).to_string())).await;
             while let Some(from) = evt_rx.recv().await {
