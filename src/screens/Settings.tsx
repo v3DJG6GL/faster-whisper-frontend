@@ -50,6 +50,9 @@ function AudioTab() {
   const [playing, setPlaying] = useState(false);
   const clipSecsRef = useRef(0);
   const playTimerRef = useRef<number | null>(null);
+  // Latest "stop + offer replay" handler, so the auto-stop timer (armed in an effect defined
+  // above the handler) can call it without a declaration-order / stale-closure problem.
+  const stopAndReplayRef = useRef<() => void>(() => {});
 
   const refresh = useCallback(async () => {
     try {
@@ -74,7 +77,9 @@ function AudioTab() {
     const warmTimer = window.setTimeout(() => setMicWarming(false), 5000);
     // Auto-stop so the test can't run (and hold the mic) forever.
     const maxTimer = window.setTimeout(() => {
-      if (active) setTesting(false);
+      // Auto-stop: take the SAME path as pressing Stop, so the captured clip is offered for replay
+      // too (the bare setTesting(false) skipped the capture, leaving no Replay button after timeout).
+      if (active) void stopAndReplayRef.current();
     }, MIC_TEST_MAX_MS);
     void (async () => {
       const un = await onAudioLevel((l) => {
@@ -145,6 +150,24 @@ function AudioTab() {
     }, clipSecsRef.current * 1000 + 1000);
   }, []);
 
+  // Stop the test and, if it captured something, enable + play the replay. Shared by the manual
+  // Stop button AND the 15s auto-stop, so both offer replay. try/finally: always flip testing off
+  // even if the stop invoke rejects, so the button can't stick on "Stop".
+  const stopAndReplay = useCallback(async () => {
+    let secs = 0;
+    try {
+      secs = await stopMicTest();
+    } finally {
+      setTesting(false);
+    }
+    if (secs > 0.2) {
+      setHasClip(true);
+      clipSecsRef.current = secs;
+      replay();
+    }
+  }, [replay]);
+  stopAndReplayRef.current = stopAndReplay;
+
   // Test/Stop: pressing Stop replays what was just captured (a quick "did my mic
   // work?" check). The capture effect's cleanup also calls stopMicTest — harmless;
   // here we stop first so the recorded clip is final, then play it back.
@@ -160,18 +183,8 @@ function AudioTab() {
       setTesting(true);
       return;
     }
-    let secs = 0;
-    try {
-      secs = await stopMicTest();
-    } finally {
-      setTesting(false); // always flip off, even if the stop invoke rejects, so the button isn't stuck on Stop
-    }
-    if (secs > 0.2) {
-      setHasClip(true);
-      clipSecsRef.current = secs;
-      replay();
-    }
-  }, [testing, replay]);
+    await stopAndReplay();
+  }, [testing, stopAndReplay]);
 
   const options = [
     { value: "default", label: "System default" },
