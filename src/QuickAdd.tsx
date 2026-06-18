@@ -110,7 +110,11 @@ export default function QuickAdd() {
       setPhase("error");
       return;
     }
-    const rule = res.state?.rules.find((r) => r.name === pin.slug && r.type === "callback:map") ?? null;
+    // `rules` is forwarded opaque (serde_json::Value) — a buggy/old/proxied server can send a
+    // non-array (or omit it). Coerce before .find so we degrade to the "no longer exists" error
+    // state below instead of throwing (which would reject refresh() and wedge the Loading spinner).
+    const rules = res.state && Array.isArray(res.state.rules) ? res.state.rules : [];
+    const rule = rules.find((r) => r.name === pin.slug && r.type === "callback:map") ?? null;
     if (!rule) {
       setFetchErr({ ok: false, status: 404, error: "The pinned list no longer exists on this server — re-pin one in the Dictionary." });
       setPhase("error");
