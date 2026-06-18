@@ -251,6 +251,10 @@ mod imp {
             .iter()
             .map(|c| c.keys.iter().map(|k| k.code()).collect())
             .collect();
+        // Reused per-event scratch for "which chords are fully held" — this loop reads /dev/input
+        // SYSTEM-WIDE, so it fires on every keystroke in any app; recompute in place rather than
+        // heap-allocating a fresh Vec per key event.
+        let mut fully = vec![false; chords.len()];
 
         loop {
             let ev = match stream.next_event().await {
@@ -272,12 +276,11 @@ mod imp {
                 _ => continue, // 2 = autorepeat
             }
 
-            // Which chords are fully held right now? (Small N → recomputing the whole
-            // set per event is O(N·chord-len) and negligible.)
-            let fully: Vec<bool> = key_codes
-                .iter()
-                .map(|codes| codes.iter().all(|c| held.contains(c)))
-                .collect();
+            // Which chords are fully held right now? Recompute into the reused scratch (small N →
+            // O(N·chord-len) per event is negligible CPU; the point is to avoid a per-event alloc).
+            for (slot, codes) in fully.iter_mut().zip(key_codes.iter()) {
+                *slot = codes.iter().all(|c| held.contains(c));
+            }
 
             for i in 0..chords.len() {
                 // Active iff fully held AND no strict-superset chord is also fully held.
