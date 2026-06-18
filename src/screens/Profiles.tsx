@@ -11,6 +11,7 @@ import { ReorderControls } from "@/components/ReorderControls";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { conflictsByProfile } from "@/lib/conflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
+import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -42,7 +43,16 @@ function Editor({
 }) {
   const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
-  const evdevActive = useApp((s) => s.settings.general.evdevEnabled);
+  const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
+  // evdev is the active hotkey backend only when enabled AND permitted — same gate as the Settings
+  // quick-add row, so both rebind surfaces accept the same chords (useHotkeyCapture commits
+  // modifier-only / AltGr chords ONLY when evdev is active). Gating on `evdevEnabled` alone would
+  // let this editor accept a chord that can't fire when evdev is toggled on but not permitted.
+  const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
+  useEffect(() => {
+    void evdevStatus().then(setEvdev);
+  }, []);
+  const evdevActive = !!evdev?.permitted && evdevEnabled;
   const [p, setP] = useState<Profile>(initial);
   const [capturing, setCapturing] = useState(false);
   const [showOverrides, setShowOverrides] = useState(
