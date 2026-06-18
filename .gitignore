@@ -28,3 +28,6 @@ design-mockups/
 *.njsproj
 *.sln
 *.sw?
+
+# Code-review working notes (local only)
+CODE-REVIEW_NOTES.md
