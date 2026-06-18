@@ -14,7 +14,7 @@
 // Re-fetching on each summon re-syncs any out-of-band edits — adequate for a
 // single-user quick-capture surface (the Dictionary screen keeps explicit-save).
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from "lucide-react";
 import { Button, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
@@ -86,8 +86,11 @@ export default function QuickAdd() {
   const originalSelectionRef = useRef<string | null>(null);
   const pasteShortcutRef = useRef<string[]>(["ControlLeft", "KeyV"]);
 
-  const usedKeys = new Set(rows.map((r) => r.k.trim().toLowerCase()).filter(Boolean));
-  const suggestions = recent.filter((w) => !usedKeys.has(w.toLowerCase()));
+  // Memoized so editing the insert field or a list row doesn't rebuild the Set + filtered pool
+  // (and hand a fresh array into Combobox, re-running its rank) on every keystroke. Mirrors the
+  // Dictionary RuleCard's usedKeys/keySuggestions memos.
+  const usedKeys = useMemo(() => new Set(rows.map((r) => r.k.trim().toLowerCase()).filter(Boolean)), [rows]);
+  const suggestions = useMemo(() => recent.filter((w) => !usedKeys.has(w.toLowerCase())), [recent, usedKeys]);
 
   const refresh = useCallback(async () => {
     const cfg = await loadConfig();
