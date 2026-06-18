@@ -188,12 +188,20 @@ pub async fn get_usage_stats(
 /// A single override-profile's decode values + locked client keys
 /// (`GET /v1/override-profiles/{name}`), for previewing inherited defaults.
 /// Best-effort: any error (incl. 404 when the caller may not request it) → None.
-/// `name` is a `[a-z0-9-]` profile name, so it's URL-path safe as-is.
 pub async fn get_override_profile(
     server_url: &str,
     name: &str,
     api_key: Option<&str>,
 ) -> Option<ResolvedOverrideProfile> {
+    // Enforce the slug invariant before interpolating `name` into the path: server profile
+    // names are `[a-z0-9-_]`. A free-typed "custom name" that isn't one can't match a real
+    // profile, and pasting it raw could escape the path (e.g. "../") or break URL parsing —
+    // so a non-slug name is treated as "no such profile" (None), consistent with best-effort.
+    if name.is_empty()
+        || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return None;
+    }
     let base = base_url(server_url);
     let url = format!("{base}/v1/override-profiles/{name}");
     match with_auth(client().get(url), api_key).send().await {
