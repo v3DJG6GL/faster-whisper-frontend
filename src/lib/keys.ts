@@ -100,7 +100,10 @@ const CODE_RANK: Record<string, number> = {
  *  chord is independent of press order and comparable by value. */
 export function canonicalizeCodes(codes: string[]): string[] {
   return Array.from(new Set(codes)).sort(
-    (a, b) => (CODE_RANK[a] ?? 100) - (CODE_RANK[b] ?? 100),
+    // Rank orders modifiers first (by type+side); equal-rank codes — e.g. two non-modifier
+    // keys in an evdev N-chord, both rank 100 — fall back to a stable lexical tie-break so the
+    // same chord canonicalizes identically regardless of press order (keeps `sameCodes` correct).
+    (a, b) => (CODE_RANK[a] ?? 100) - (CODE_RANK[b] ?? 100) || a.localeCompare(b),
   );
 }
 
