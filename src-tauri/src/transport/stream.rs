@@ -362,6 +362,19 @@ pub async fn run<F>(
         // within a few seconds.
         const DRAIN_DEADLINE: Duration = Duration::from_secs(6);
         let _ = tokio::time::timeout(DRAIN_DEADLINE, async {
+            // Drain any PCM the capture thread already queued but the main loop hadn't consumed when
+            // the stop signal won the (non-biased) select — push it through the resampler and send
+            // it, so the final tens of ms aren't silently dropped from the transcript. Saved (when
+            // recording) like the flush tail below: the end-of-stream sliver isn't speech-gated.
+            while let Ok(chunk) = pcm_rx.try_recv() {
+                let bytes = resampler.push(&chunk);
+                if !bytes.is_empty() {
+                    if params.save_dir.is_some() {
+                        saved.extend_from_slice(&bytes);
+                    }
+                    let _ = write.send(Message::Binary(bytes.into())).await;
+                }
+            }
             // Flush the resampler's buffered tail (< one input block, < ~64 ms) before asking the
             // server to finalize, so the final sliver of audio isn't dropped from the transcript
             // (or the saved recording). The trailing zeros resample to a soft decay, not a click.
