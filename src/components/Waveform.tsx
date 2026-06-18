@@ -86,6 +86,9 @@ export function Waveform({
   // Pride hover-reveal state (all refs so the draw loop reads them without re-subscribing).
   const prideOnRef = useRef(pride);
   prideOnRef.current = pride;
+  // `tone === "live"` is the green/speaking state — the only time the flag reveals.
+  const toneRef = useRef(tone);
+  toneRef.current = tone;
   const hoverRef = useRef(false);
   const hoverStartRef = useRef(0);
 
@@ -143,11 +146,10 @@ export function Waveform({
         colorDirtyRef.current = false;
       }
 
-      // Pride flag-mix: only while the meter is ACTIVE (dictating / finishing) — never at
-      // idle. While hovered, flicker between the normal colour and the rainbow, settling on
-      // it; fade back out on leave or when the session ends.
-      const prideEligible =
-        prideOnRef.current && (activeRef.current || processingRef.current);
+      // Pride flag-mix: only while the meter is GREEN (actively speaking) — never at idle
+      // or while armed-but-silent. While hovered, flicker between the normal colour and the
+      // rainbow, settling on it; fade back out on leave or when you stop speaking.
+      const prideEligible = prideOnRef.current && toneRef.current === "live";
       // Becoming active while already hovering should still play the flicker from the top.
       if (prideEligible && !prevEligible && hoverRef.current) hoverStartRef.current = performance.now();
       prevEligible = prideEligible;
@@ -272,7 +274,9 @@ export function Waveform({
           ? () => {
               hoverRef.current = true;
               hoverStartRef.current = performance.now();
-              kickRef.current();
+              // Only wake the loop when it would actually reveal (green). At idle the loop
+              // stays parked, so hovering causes no redraw at all.
+              if (toneRef.current === "live") kickRef.current();
             }
           : undefined
       }
@@ -280,7 +284,7 @@ export function Waveform({
         pride
           ? () => {
               hoverRef.current = false;
-              kickRef.current();
+              if (toneRef.current === "live") kickRef.current();
             }
           : undefined
       }
