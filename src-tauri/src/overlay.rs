@@ -226,6 +226,10 @@ mod kwin {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
 
+    // Generic KConfig/KWin primitives are shared with quickadd::kwin via crate::kwin.
+    use crate::kwin::{config_tools, merge_general, reconfigure, set_key};
+    pub use crate::kwin::is_kde_wayland;
+
     /// KConfig group (and `rules=` entry) for our rule. A fixed name keeps the
     /// operation idempotent — re-runs update the same entry instead of piling up.
     const GROUP: &str = "fwf-dictation-chip";
@@ -234,20 +238,6 @@ mod kwin {
     /// The last logical position we forced, so we only reconfigure KWin when the
     /// active output actually changes (avoids churn on every dictation).
     static LAST_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
-
-    /// KDE Plasma on Wayland — the only place this rule is needed and usable.
-    pub fn is_kde_wayland() -> bool {
-        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
-            || std::env::var("XDG_SESSION_TYPE")
-                .map(|s| s.eq_ignore_ascii_case("wayland"))
-                .unwrap_or(false);
-        let kde = std::env::var("XDG_CURRENT_DESKTOP")
-            .map(|s| s.to_ascii_uppercase().contains("KDE"))
-            .unwrap_or(false)
-            || std::env::var_os("KDE_SESSION_VERSION").is_some()
-            || std::env::var_os("KDE_FULL_SESSION").is_some();
-        wayland && kde
-    }
 
     /// Connector name of the output the user is on (cursor / focused window), via
     /// KWin's D-Bus. e.g. "DP-1". None if KWin isn't reachable.
@@ -314,77 +304,6 @@ mod kwin {
         Some((x, y))
     }
 
-    /// First of the candidate KConfig CLI tools that is runnable.
-    fn tool(candidates: &[&'static str]) -> Option<&'static str> {
-        candidates
-            .iter()
-            .find(|name| {
-                Command::new(name)
-                    .arg("--help")
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .is_ok()
-            })
-            .copied()
-    }
-
-    fn set_key(tool: &str, group: &str, key: &str, value: &str) {
-        // No piped stdout: writing kwinrulesrc can D-Bus-activate kded6/kconf_update,
-        // which would inherit a captured stdout pipe and hold it open, deadlocking the
-        // wait. With null stdio there's no pipe to leak — and we never read the output.
-        let _ = Command::new(tool)
-            .args(["--file", "kwinrulesrc", "--group", group, "--key", key, value])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-
-    fn read_key(tool: &str, group: &str, key: &str) -> Option<String> {
-        let out = Command::new(tool)
-            .args(["--file", "kwinrulesrc", "--group", group, "--key", key])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        (!s.is_empty()).then_some(s)
-    }
-
-    /// Ask KWin to reload its configuration so the rule applies to the live window.
-    fn reconfigure() {
-        let _ = Command::new("dbus-send")
-            .args([
-                "--type=method_call",
-                "--dest=org.kde.KWin",
-                "/KWin",
-                "org.kde.KWin.reconfigure",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-
-    /// Merge our group into General/rules, preserving any existing user rules.
-    fn merge_general(writer: &str, reader: &str) {
-        let mut list: Vec<String> = read_key(reader, "General", "rules")
-            .map(|s| {
-                s.split(',')
-                    .map(|g| g.trim().to_string())
-                    .filter(|g| !g.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
-        if !list.iter().any(|g| g == GROUP) {
-            list.push(GROUP.to_string());
-        }
-        set_key(writer, "General", "count", &list.len().to_string());
-        set_key(writer, "General", "rules", &list.join(","));
-    }
-
     /// Write the position-independent rule body (strength 2 = "Force").
     fn write_rule_body(writer: &str) {
         let rule: &[(&str, &str)] = &[
@@ -413,17 +332,14 @@ mod kwin {
     pub fn place_chip(pos: Option<(i32, i32)>) {
         // Need both tools; if we can't read existing rules we must not rewrite the
         // `rules=` list, or we'd silently drop the user's other window rules.
-        let (Some(writer), Some(reader)) = (
-            tool(&["kwriteconfig6", "kwriteconfig5"]),
-            tool(&["kreadconfig6", "kreadconfig5"]),
-        ) else {
+        let Some((writer, reader)) = config_tools() else {
             return;
         };
 
         let mut need_reconfigure = false;
 
         if !INSTALLED.swap(true, Ordering::Relaxed) {
-            merge_general(writer, reader);
+            merge_general(writer, reader, GROUP);
             write_rule_body(writer);
             need_reconfigure = true;
         }

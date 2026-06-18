@@ -99,107 +99,25 @@ pub fn hide_quick_add(app: AppHandle) {
 /// `kwinrulesrc` without clobbering their other rules.
 #[cfg(target_os = "linux")]
 mod kwin {
-    use std::process::{Command, Stdio};
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    // Generic KConfig/KWin primitives are shared with overlay::kwin via crate::kwin.
+    use crate::kwin::{config_tools, merge_general, reconfigure, set_key};
+    pub use crate::kwin::is_kde_wayland;
 
     const GROUP: &str = "fwf-quick-add";
     static INSTALLED: AtomicBool = AtomicBool::new(false);
-
-    pub fn is_kde_wayland() -> bool {
-        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
-            || std::env::var("XDG_SESSION_TYPE")
-                .map(|s| s.eq_ignore_ascii_case("wayland"))
-                .unwrap_or(false);
-        let kde = std::env::var("XDG_CURRENT_DESKTOP")
-            .map(|s| s.to_ascii_uppercase().contains("KDE"))
-            .unwrap_or(false)
-            || std::env::var_os("KDE_SESSION_VERSION").is_some()
-            || std::env::var_os("KDE_FULL_SESSION").is_some();
-        wayland && kde
-    }
-
-    /// First of the candidate KConfig CLI tools that is runnable.
-    fn tool(candidates: &[&'static str]) -> Option<&'static str> {
-        candidates
-            .iter()
-            .find(|name| {
-                Command::new(name)
-                    .arg("--help")
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .is_ok()
-            })
-            .copied()
-    }
-
-    // Null stdio throughout: writing kwinrulesrc can D-Bus-activate a KDE helper that would
-    // inherit (and hold open) a captured stdout pipe, deadlocking the wait. We never read it.
-    fn set_key(tool: &str, group: &str, key: &str, value: &str) {
-        let _ = Command::new(tool)
-            .args(["--file", "kwinrulesrc", "--group", group, "--key", key, value])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-
-    fn read_key(tool: &str, group: &str, key: &str) -> Option<String> {
-        let out = Command::new(tool)
-            .args(["--file", "kwinrulesrc", "--group", group, "--key", key])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        (!s.is_empty()).then_some(s)
-    }
-
-    fn reconfigure() {
-        let _ = Command::new("dbus-send")
-            .args([
-                "--type=method_call",
-                "--dest=org.kde.KWin",
-                "/KWin",
-                "org.kde.KWin.reconfigure",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-
-    /// Append our group to General/rules, preserving any existing user (and chip) rules.
-    fn merge_general(writer: &str, reader: &str) {
-        let mut list: Vec<String> = read_key(reader, "General", "rules")
-            .map(|s| {
-                s.split(',')
-                    .map(|g| g.trim().to_string())
-                    .filter(|g| !g.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
-        if !list.iter().any(|g| g == GROUP) {
-            list.push(GROUP.to_string());
-        }
-        set_key(writer, "General", "count", &list.len().to_string());
-        set_key(writer, "General", "rules", &list.join(","));
-    }
 
     /// Install the keep-above rule once per session (strength 2 = "Force"), then reload KWin.
     pub fn install_keep_above() {
         if INSTALLED.swap(true, Ordering::Relaxed) {
             return;
         }
-        let (Some(writer), Some(reader)) = (
-            tool(&["kwriteconfig6", "kwriteconfig5"]),
-            tool(&["kreadconfig6", "kreadconfig5"]),
-        ) else {
+        let Some((writer, reader)) = config_tools() else {
             INSTALLED.store(false, Ordering::Relaxed); // let a later summon retry once tools exist
             return;
         };
-        merge_general(writer, reader);
+        merge_general(writer, reader, GROUP);
         let rule: &[(&str, &str)] = &[
             ("Description", "faster-whisper quick-add"),
             ("title", super::QA_TITLE),
