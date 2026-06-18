@@ -45,7 +45,7 @@ function Editor({
   onCancel,
 }: {
   initial: Backend;
-  onSave: (b: Backend, typedKey: string) => void;
+  onSave: (b: Backend) => void;
   onCancel: () => void;
 }) {
   const setConnection = useApp((s) => s.setConnection);
@@ -60,6 +60,11 @@ function Editor({
   }, [key]);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ConnectionInfo | null>(null);
+  // Saving the API key to the OS keyring can fail (locked/absent Secret Service). Track it so we
+  // keep the editor open with an error instead of persisting a backend whose "key" badge claims a
+  // key that was never stored.
+  const [savingKey, setSavingKey] = useState(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
   const [showDecode, setShowDecode] = useState(
     () => !!initial.decodeOverrides && Object.keys(initial.decodeOverrides).length > 0,
   );
@@ -91,6 +96,25 @@ function Editor({
     } finally {
       setTesting(false);
     }
+  };
+
+  // Write the API key to the keyring FIRST (awaited) and only commit + close on success, so a
+  // keyring failure can't persist a backend whose "key" badge claims a key that isn't stored.
+  const doSave = async () => {
+    setKeyError(null);
+    if (key) {
+      setSavingKey(true);
+      try {
+        await setBackendKey(b.id, key);
+      } catch (e) {
+        console.error("saving API key failed:", e);
+        setKeyError("Couldn't save the API key to the system keyring — the key was not stored. Try again.");
+        return;
+      } finally {
+        setSavingKey(false);
+      }
+    }
+    onSave(b);
   };
 
   return (
@@ -260,6 +284,13 @@ function Editor({
 
       {result && <ConnResult info={result} />}
 
+      {keyError && (
+        <div className="mt-4 flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <div>{keyError}</div>
+        </div>
+      )}
+
       <div className="mt-6 flex items-center justify-between">
         <Button variant="ghost" onClick={onCancel}>
           Cancel
@@ -269,7 +300,7 @@ function Editor({
             {testing ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
             Test connection
           </Button>
-          <Button variant="accent" onClick={() => onSave(b, key)}>
+          <Button variant="accent" onClick={() => void doSave()} disabled={savingKey}>
             Save backend
           </Button>
         </div>
@@ -334,9 +365,8 @@ export default function Backends() {
     void deleteBackendKey(id);
   };
 
-  const handleSave = (b: Backend, typedKey: string) => {
+  const handleSave = (b: Backend) => {
     upsertBackend(b);
-    if (typedKey) void setBackendKey(b.id, typedKey);
     setEditing(null);
   };
 
