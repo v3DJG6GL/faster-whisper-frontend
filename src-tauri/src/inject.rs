@@ -182,14 +182,30 @@ fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
     }
     // Settle delays: without them a modifier can arrive after the key, so the target
     // sees a literal character instead of a paste (an XTEST timing race).
+    //
+    // Track how many modifiers we actually pressed so we can release them even when the
+    // main-key click (or a later modifier press) fails: enigo synthesizes REAL key events
+    // here (X11/Win/macOS), so a Ctrl/Cmd left logically DOWN wedges the whole desktop.
+    let mut pressed = 0usize;
+    let mut result = Ok(());
     for m in &mods {
-        enigo.key(*m, Direction::Press).map_err(|e| e.to_string())?;
+        if let Err(e) = enigo.key(*m, Direction::Press) {
+            result = Err(e.to_string());
+            break;
+        }
+        pressed += 1;
         std::thread::sleep(Duration::from_millis(30));
     }
-    enigo.key(main, Direction::Click).map_err(|e| e.to_string())?;
-    std::thread::sleep(Duration::from_millis(30));
-    for m in mods.iter().rev() {
-        enigo.key(*m, Direction::Release).map_err(|e| e.to_string())?;
+    if result.is_ok() {
+        match enigo.key(main, Direction::Click) {
+            Ok(()) => std::thread::sleep(Duration::from_millis(30)),
+            Err(e) => result = Err(e.to_string()),
+        }
     }
-    Ok(())
+    // Release exactly the modifiers we pressed, in reverse, regardless of the outcome
+    // above (best-effort: we're already unwinding, so don't mask the original error).
+    for m in mods[..pressed].iter().rev() {
+        let _ = enigo.key(*m, Direction::Release);
+    }
+    result
 }
