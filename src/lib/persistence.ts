@@ -56,7 +56,7 @@ export async function initConfig(): Promise<void> {
       if (conflicts(s.profiles).length > 0) return;
       const reReg = pendingBindingChange;
       pendingBindingChange = false;
-      saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules })
+      saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules, version: 2 })
         .then(() => (reReg ? reregisterShortcuts() : undefined))
         .catch((e) => console.error("saveConfig failed", e));
     }, 400);
