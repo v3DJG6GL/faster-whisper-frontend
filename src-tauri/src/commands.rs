@@ -304,7 +304,8 @@ pub fn play_mic_test(
 ) -> Result<(), String> {
     let (samples, sample_rate) = {
         let c = clip.0.lock().map_err(|_| "mic clip poisoned")?;
-        (c.samples.clone(), c.sample_rate)
+        // Collect the ring into a contiguous Vec for playback (one alloc, off the capture path).
+        (c.samples.iter().copied().collect::<Vec<f32>>(), c.sample_rate)
     };
     if samples.is_empty() || sample_rate == 0 {
         return Ok(());

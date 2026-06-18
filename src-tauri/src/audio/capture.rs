@@ -61,10 +61,11 @@ struct Recorder {
 impl Recorder {
     fn push(&self, mono: &[f32]) {
         if let Ok(mut c) = self.clip.lock() {
-            c.samples.extend_from_slice(mono);
-            if c.samples.len() > self.cap {
-                let excess = c.samples.len() - self.cap;
-                c.samples.drain(0..excess);
+            c.samples.extend(mono.iter().copied());
+            // Drop the oldest beyond the cap — O(1) per popped sample on the VecDeque ring, vs the
+            // O(len) front-shift a Vec::drain did on every callback once the cap was reached.
+            while c.samples.len() > self.cap {
+                c.samples.pop_front();
             }
         }
     }

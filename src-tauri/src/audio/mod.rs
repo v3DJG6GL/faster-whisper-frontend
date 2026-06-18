@@ -3,6 +3,7 @@
 //! lands in M3, where it is actually consumed.
 
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
@@ -30,7 +31,9 @@ pub struct AudioState(pub Mutex<Option<capture::CaptureHandle>>);
 /// `play_mic_test` reads it.
 #[derive(Default)]
 pub struct MicClip {
-    pub samples: Vec<f32>,
+    /// Ring of the last `MAX_CLIP_SECS` of mono samples — a VecDeque so trimming the oldest is
+    /// O(1) per dropped sample, not an O(len) shift of the whole buffer on every capture callback.
+    pub samples: VecDeque<f32>,
     pub sample_rate: u32,
 }
 
