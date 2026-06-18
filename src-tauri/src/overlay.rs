@@ -53,7 +53,7 @@ fn position(win: &WebviewWindow, edge: &str) {
     let chip_w = (CHIP_W * scale) as i32;
     let chip_h = (CHIP_H * scale) as i32;
 
-    let x = m_pos.x + (m_size.width as i32 - chip_w) / 2;
+    let x = m_pos.x + ((m_size.width as i32 - chip_w) / 2).max(0);
     let y = if edge == "bottom" {
         m_pos.y + m_size.height as i32 - chip_h
     } else {
