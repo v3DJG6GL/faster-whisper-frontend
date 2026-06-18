@@ -903,7 +903,13 @@ export async function cancelLive(): Promise<void> {
   sessionDocs = [];
   // If we snapshotted the clipboard for live paste, give the user's original back and clear the
   // snapshot so it can't leak into the next session (end_injection restores + consumes it).
-  if (beganInjection) void endInjection();
+  // Chain it on the existing queue so it runs AFTER any in-flight paste — calling it directly
+  // would race a still-running paste (the restore could win and the paste reads the wrong
+  // clipboard). Then reset the queue for the next session.
+  if (beganInjection) {
+    const pending = injectChain;
+    void pending.then(() => endInjection()).catch((e) => console.error("end injection failed:", e));
+  }
   beganInjection = false;
   clearPhraseEnd();
   insertCfg = null;
