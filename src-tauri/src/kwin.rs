@@ -57,8 +57,8 @@ pub fn set_key(tool: &str, group: &str, key: &str, value: &str) {
         .status();
 }
 
-/// Read one KConfig key (None when empty / unreadable).
-pub fn read_key(tool: &str, group: &str, key: &str) -> Option<String> {
+/// Read one KConfig key (None when empty / unreadable). Internal to this module (merge_general).
+fn read_key(tool: &str, group: &str, key: &str) -> Option<String> {
     let out = Command::new(tool)
         .args(["--file", "kwinrulesrc", "--group", group, "--key", key])
         .stdin(Stdio::null())
