@@ -67,7 +67,10 @@ function SaveErrorBanner() {
   if (!saveError) return null;
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-4">
-      <div className="pointer-events-auto flex max-w-xl items-start gap-2 rounded-xl border border-warn/40 bg-warn/10 px-3.5 py-2.5 text-[12.5px] text-warn shadow-lg backdrop-blur-sm">
+      <div
+        role="alert"
+        className="pointer-events-auto flex max-w-xl items-start gap-2 rounded-xl border border-warn/40 bg-warn/10 px-3.5 py-2.5 text-[12.5px] text-warn shadow-lg backdrop-blur-sm"
+      >
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
         <div className="flex-1">
           <span className="font-semibold">Couldn’t save your settings.</span> Recent changes may be
