@@ -10,6 +10,7 @@
 // 7/30/90 ranges genuinely differ. Zero-dependency SVG; Intl for de-CH dates.
 
 import {
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -162,6 +163,12 @@ function TrendChart({ dense }: { dense: UsageSeriesPoint[] }) {
   const H = 200;
   const pad = { l: 46, r: 12, t: 14, b: 24 };
   const plotW = w - pad.l - pad.r;
+
+  // hover is a left-anchored index into the sliced window, so the same index means a different
+  // calendar day after the range changes — clear it so the tooltip can't show the wrong day.
+  useEffect(() => {
+    setHover(null);
+  }, [range]);
 
   const pts = useMemo(() => dense.slice(-range), [dense, range]);
   const vals = useMemo(() => pts.map((p) => valOf(p, metric)), [pts, metric]);
