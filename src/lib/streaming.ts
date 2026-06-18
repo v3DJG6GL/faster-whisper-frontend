@@ -660,6 +660,11 @@ async function ensureListeners(): Promise<void> {
   await listen<string>("stream://error", (e) => {
     clearStuckWatchdog();
     stopTargetPoll();
+    // Cancel any pending per-phrase Enter / clipboard-restore. A server error frame is
+    // NON-terminal (no prompt `closed`; the real one only arrives ~6s later from the drain),
+    // so without this the ~1.2s quiet timer armed by the last `final` would fire a stray Enter
+    // into the user's now-refocused window. On error we want no trailing Enter (like cancel).
+    clearPhraseEnd();
     console.error("stream error:", e.payload);
     flashError(e.payload);
     // Tear down the Rust capture session so the mic closes and system audio
