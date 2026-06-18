@@ -358,6 +358,9 @@ mod imp {
             // after `Ctrl↓`/`Shift↓` leaves that modifier logically DOWN system-wide
             // and wedges the desktop (clicks/drag/selection break) until a VT switch.
             let mut held: Vec<i32> = Vec::new();
+            // Set while we've tapped Caps Lock ON for a lock-char (Ü/Ä/Ö) but not yet tapped it
+            // back; if an error bails out in that window, the cleanup below restores Caps Lock.
+            let mut caps_flipped = false;
 
             // `press!`/`release!` mirror the shared session and keep `held` in sync.
             // Both use `?`, so a failure bails out of the inner block — after which
@@ -427,6 +430,7 @@ mod imp {
                         if flip {
                             press!(KEY_CAPSLOCK);
                             release!(KEY_CAPSLOCK);
+                            caps_flipped = true;
                             tokio::time::sleep(Duration::from_millis(6)).await;
                         }
                         if spec.shift {
@@ -452,6 +456,7 @@ mod imp {
                             tokio::time::sleep(Duration::from_millis(6)).await;
                             press!(KEY_CAPSLOCK);
                             release!(KEY_CAPSLOCK);
+                            caps_flipped = false;
                         }
                         tokio::time::sleep(Duration::from_millis(6)).await;
                         continue;
@@ -495,6 +500,17 @@ mod imp {
             for code in held.iter().rev() {
                 let _ = proxy
                     .notify_keyboard_keycode(&session, *code, KeyState::Released, Default::default())
+                    .await;
+            }
+            // The held loop only releases keycodes still pressed; a Caps Lock tap is press+release,
+            // so its toggle survives. If we bailed mid lock-char with Caps left flipped, tap it once
+            // more to restore the user's Caps Lock state.
+            if caps_flipped {
+                let _ = proxy
+                    .notify_keyboard_keycode(&session, KEY_CAPSLOCK, KeyState::Pressed, Default::default())
+                    .await;
+                let _ = proxy
+                    .notify_keyboard_keycode(&session, KEY_CAPSLOCK, KeyState::Released, Default::default())
                     .await;
             }
 
