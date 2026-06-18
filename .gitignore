@@ -15,6 +15,9 @@ dist-ssr
 # Local UX reference material (third-party app screenshots), not part of the project
 vowen_screenshots/
 
+# Local design mockups (rendered-HTML proposals for picking layouts), not part of the project
+design-mockups/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
