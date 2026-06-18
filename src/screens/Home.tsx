@@ -70,13 +70,21 @@ function ProfileCard({ p }: { p: Profile }) {
   );
 }
 
+// Subscribes to the live `partial` transcript itself, so the several-times-a-second partial
+// updates re-render ONLY this line — not the whole Home tree (the hero hotkey rows, the
+// profile-picker Select, and the ProfileCard grid don't depend on the transcript). Mirrors how
+// the 30Hz level meter is isolated inside LiveWaveform.
+function LiveTranscriptText() {
+  const partial = useApp((s) => s.partial);
+  return <>{partial || <span className="text-faint">…</span>}</>;
+}
+
 export default function Home() {
   const profiles = useApp((s) => s.profiles);
   const backends = useApp((s) => s.backends);
   const status = useApp((s) => s.status);
   const warming = useApp((s) => s.warming);
   const speaking = useApp((s) => s.speaking);
-  const partial = useApp((s) => s.partial);
   const dictationError = useApp((s) => s.dictationError);
   const overridesIgnored = useApp((s) => s.overridesIgnored);
   const micId = useApp((s) => s.settings.microphoneId);
@@ -269,7 +277,7 @@ export default function Home() {
                 <div className="select-text text-[13.5px] leading-relaxed text-rec">{dictationError}</div>
               ) : (
                 <div className="min-h-6 select-text whitespace-pre-wrap text-[15px] leading-relaxed text-text">
-                  {partial || <span className="text-faint">…</span>}
+                  <LiveTranscriptText />
                 </div>
               )}
             </Card>
