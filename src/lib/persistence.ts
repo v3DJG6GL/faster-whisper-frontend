@@ -57,17 +57,21 @@ export async function initConfig(): Promise<void> {
       const reReg = pendingBindingChange;
       pendingBindingChange = false;
       saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules, version: 2 })
-        .then(() => {
-          // The write landed — clear any prior failure banner, THEN re-register.
-          useApp.getState().setSaveError(null);
-          return reReg ? reregisterShortcuts() : undefined;
-        })
-        .catch((e) => {
-          // A real disk/IPC failure (full/read-only disk, perms) — the in-memory store still
-          // shows the change, but it wasn't written, so warn the user it may be lost on restart.
-          console.error("saveConfig failed", e);
-          useApp.getState().setSaveError(e instanceof Error ? e.message : String(e));
-        });
+        .then(
+          () => {
+            // The write landed — clear any prior failure banner, THEN re-register. Re-registration
+            // has its OWN catch: a reregister failure is NOT data loss (the config was persisted
+            // fine), so it must never raise the "couldn't save your settings" banner below.
+            useApp.getState().setSaveError(null);
+            if (reReg) void reregisterShortcuts().catch((e) => console.error("reregisterShortcuts failed", e));
+          },
+          (e) => {
+            // A real disk/IPC failure (full/read-only disk, perms) — the in-memory store still
+            // shows the change, but it wasn't written, so warn the user it may be lost on restart.
+            console.error("saveConfig failed", e);
+            useApp.getState().setSaveError(e instanceof Error ? e.message : String(e));
+          },
+        );
     }, 400);
   });
 }
