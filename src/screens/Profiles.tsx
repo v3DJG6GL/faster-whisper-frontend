@@ -1,8 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Plus, Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
+import { Button, Card, Labeled, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { DecodeFields } from "@/components/DecodeFields";
@@ -24,15 +24,6 @@ const ACTIVATION = {
 
 function blankProfile(backendId: string | null): Profile {
   return { id: crypto.randomUUID(), name: "New profile", activation: "hold", enabled: true, hotkey: [], backendId };
-}
-
-function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
-  return (
-    <div className={className}>
-      <label className="mb-2 block text-[12px] font-medium text-dim">{label}</label>
-      {children}
-    </div>
-  );
 }
 
 // useHotkeyCapture moved to src/lib/useHotkeyCapture.ts (shared with the Settings
@@ -141,7 +132,7 @@ function Editor({
         </Labeled>
         <Labeled label="Backend">
           <Select
-            value={p.backendId ?? ""}
+            value={backends.some((b) => b.id === p.backendId) ? p.backendId! : ""}
             onChange={(v) => set({ backendId: v || null })}
             options={
               backends.length
