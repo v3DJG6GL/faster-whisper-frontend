@@ -310,15 +310,22 @@ export default function Backends() {
   const moveBackend = useApp((s) => s.moveBackend);
   const setConnection = useApp((s) => s.setConnection);
   const [editing, setEditing] = useState<Backend | null>(null);
-  const [testingId, setTestingId] = useState<string | null>(null);
+  // Set of backend ids whose connection test is in flight. A Set (not a single id) so two
+  // concurrent tests track independently — finishing one can't clear another's spinner, and
+  // its late result can't be misattributed.
+  const [testing, setTesting] = useState<ReadonlySet<string>>(new Set());
 
   const handleTest = async (b: Backend) => {
-    setTestingId(b.id);
+    setTesting((s) => new Set(s).add(b.id));
     try {
       const info = await testConnection({ serverUrl: b.serverUrl, backendId: b.id });
       setConnection(b.id, info);
     } finally {
-      setTestingId(null);
+      setTesting((s) => {
+        const next = new Set(s);
+        next.delete(b.id);
+        return next;
+      });
     }
   };
 
@@ -387,11 +394,11 @@ export default function Backends() {
                   </div>
                   <div className="flex w-24 items-center justify-end gap-1.5 text-[12px] text-dim" title={conn?.error}>
                     <StatusDot tone={conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
-                    {testingId === b.id ? "testing…" : conn?.ok ? "connected" : conn?.error ? "error" : "untested"}
+                    {testing.has(b.id) ? "testing…" : conn?.ok ? "connected" : conn?.error ? "error" : "untested"}
                   </div>
                   <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="sm" title="Test connection" onClick={() => handleTest(b)} disabled={testingId === b.id}>
-                      {testingId === b.id ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
+                    <Button variant="ghost" size="sm" title="Test connection" onClick={() => handleTest(b)} disabled={testing.has(b.id)}>
+                      {testing.has(b.id) ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
                     </Button>
                     <Button variant="ghost" size="sm" title="Edit" onClick={() => setEditing(b)}>
                       <Pencil className="size-4" />
