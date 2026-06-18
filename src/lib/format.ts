@@ -11,10 +11,9 @@ export function fmtCompact(n: number): string {
   const v = Math.round(n || 0);
   const a = Math.abs(v);
   if (a < 1000) return v.toLocaleString("en-US");
-  if (a < 1_000_000) {
-    const k = v / 1000;
-    return `${(a < 10_000 ? k.toFixed(1) : String(Math.round(k))).replace(/\.0$/, "")}k`;
-  }
+  if (a < 10_000) return `${(v / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  // Use M once the rounded kilo saturates to 1000 (e.g. 999,999 → "1M", not "1000k").
+  if (a < 1_000_000 && Math.abs(Math.round(v / 1000)) < 1000) return `${Math.round(v / 1000)}k`;
   return `${(v / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
 }
 
@@ -22,9 +21,12 @@ export function fmtCompact(n: number): string {
 export function fmtDuration(seconds: number): string {
   const s = Math.max(0, Math.round(seconds || 0));
   if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.round(s / 60)}m`;
-  const h = Math.floor(s / 3600);
-  const m = Math.round((s % 3600) / 60);
+  // Round to whole minutes ONCE, then split — otherwise a remainder that rounds to 60
+  // renders as "60m" / "1h 60m" (e.g. 3599→"60m", 7170→"1h 60m") instead of "1h" / "2h".
+  const totalMin = Math.round(s / 60);
+  if (totalMin < 60) return `${totalMin}m`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
@@ -32,7 +34,8 @@ export function fmtDuration(seconds: number): string {
 export function fmtDurationAxis(seconds: number): string {
   const s = Math.max(0, Math.round(seconds || 0));
   if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.round(s / 60)}m`;
+  // Once the minutes round up to 60, show hours (3599 → "1h", not "60m").
+  if (Math.round(s / 60) < 60) return `${Math.round(s / 60)}m`;
   return `${(s / 3600).toFixed(1).replace(/\.0$/, "")}h`;
 }
 
