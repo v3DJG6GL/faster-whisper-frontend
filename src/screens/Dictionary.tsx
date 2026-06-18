@@ -17,7 +17,7 @@ import {
 import { useApp } from "@/lib/store";
 import { Badge, Button, Card, Stack, Toggle, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
-import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows } from "@/lib/pipelineMap";
+import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { getPipelineRules, getRecentWords, savePipelineRules } from "@/lib/api";
@@ -508,16 +508,6 @@ function swap<T>(arr: T[], i: number, j: number): T[] {
 }
 function wordCount(words?: string): number {
   return (words ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean).length;
-}
-
-// Rust forwards the server's pipeline-rules payload as an opaque value
-// (`#[serde(default)] serde_json::Value`), so a buggy/old/proxied server can deliver a
-// non-array `rules` (or non-object `editable_fields`) with ok:true. The screen types them
-// as PipelineRule[]/Record<string,string[]>, so coerce at the boundary — otherwise the
-// `.map`/`.includes` below throw and, with no error boundary, the route white-screens.
-function ruleListOf(res: PipelineFetch): PipelineRule[] {
-  const r = res.ok ? res.state?.rules : undefined;
-  return Array.isArray(r) ? r : [];
 }
 
 /* ── screen ────────────────────────────────────────────────────────────── */

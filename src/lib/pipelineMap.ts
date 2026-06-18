@@ -2,7 +2,16 @@
 // used by both the full Dictionary screen and the minimal QuickAdd window so the
 // newest-first ordering and the canonical (key-sorted) PATCH body stay identical.
 
-import type { PipelineRule } from "./types";
+import type { PipelineFetch, PipelineRule } from "./types";
+
+/** The pipeline `rules` as PipelineRule[]. Rust forwards the server's payload opaque
+ *  (#[serde(default)] serde_json::Value), so a buggy/old/proxied server can deliver a non-array
+ *  `rules` (or omit it) with ok:true — coerce at the boundary so the `.map`/`.find` consumers can't
+ *  throw and white-screen the route. Returns [] unless ok AND rules is an array. */
+export function ruleListOf(res: PipelineFetch): PipelineRule[] {
+  const r = res.ok ? res.state?.rules : undefined;
+  return Array.isArray(r) ? r : [];
+}
 
 /** One editor row for a spoken→symbol mapping. `id` is a client-only stable React
  *  key (never persisted); `k` = spoken phrase, `v` = inserted symbol. */

@@ -18,7 +18,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from "lucide-react";
 import { Button, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
-import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap } from "@/lib/pipelineMap";
+import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
@@ -113,10 +113,7 @@ export default function QuickAdd() {
       setPhase("error");
       return;
     }
-    // `rules` is forwarded opaque (serde_json::Value) — a buggy/old/proxied server can send a
-    // non-array (or omit it). Coerce before .find so we degrade to the "no longer exists" error
-    // state below instead of throwing (which would reject refresh() and wedge the Loading spinner).
-    const rules = res.state && Array.isArray(res.state.rules) ? res.state.rules : [];
+    const rules = ruleListOf(res);
     const rule = rules.find((r) => r.name === pin.slug && r.type === "callback:map") ?? null;
     if (!rule) {
       setFetchErr({ ok: false, status: 404, error: "The pinned list no longer exists on this server — re-pin one in the Dictionary." });
