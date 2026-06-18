@@ -1,8 +1,9 @@
 // Home "Usage" section: four stat tiles (Words / Minutes / Dictations / Errors,
 // today + all-time) plus a trend — either one shared chart (layout "chart") or a
-// sparkline baked into each tile (layout "sparklines"), switched in the header
-// and persisted via settings.homeStatsLayout. Reads the active backend's stats
-// from the store (fed by lib/usage.ts); renders nothing when unsupported.
+// sparkline baked into each tile (layout "sparklines"), chosen per call site (Home
+// uses sparkline tiles, the Statistics screen uses the shared chart). Reads the
+// active backend's stats from the store (fed by lib/usage.ts); renders nothing when
+// unsupported.
 //
 // The backend series is SPARSE (only days that had usage). We densify it on the
 // client into one point per calendar day across the window, so the chart plots
