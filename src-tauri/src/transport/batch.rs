@@ -1,6 +1,6 @@
 //! Batch transcription: `POST /v1/audio/transcriptions` (multipart).
 
-use super::{base_url, client, with_auth};
+use super::{base_url, client, detail_from, with_auth};
 use anyhow::{bail, Context};
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
@@ -141,11 +141,7 @@ async fn post(
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        let detail = serde_json::from_str::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
-            .unwrap_or(body);
-        bail!("HTTP {}: {}", status.as_u16(), detail);
+        bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
     }
 
     let parsed: VerboseJson = resp.json().await.context("decoding response")?;

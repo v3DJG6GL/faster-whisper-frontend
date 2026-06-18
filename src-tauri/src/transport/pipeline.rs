@@ -9,7 +9,7 @@
 //! cb:map `map` / `pattern` / `wordlist`), so they pass through as opaque JSON
 //! and are typed on the TS side.
 
-use super::{base_url, client, with_auth};
+use super::{base_url, client, detail_from, friendly_err, with_auth};
 use serde::{Deserialize, Serialize};
 
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
@@ -68,24 +68,6 @@ struct SaveBody {
     conflicts: serde_json::Value,
     #[serde(default)]
     requires_restart: bool,
-}
-
-fn friendly_err(e: &reqwest::Error) -> String {
-    if e.is_connect() {
-        "Could not connect — is the server running and the URL correct?".into()
-    } else if e.is_timeout() {
-        "Timed out waiting for the server.".into()
-    } else {
-        e.to_string()
-    }
-}
-
-/// Pull FastAPI's `detail` string from an error body, falling back to the raw text.
-fn detail_from(body: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
-        .unwrap_or_else(|| body.to_string())
 }
 
 /// GET /v1/pipeline-rules — the rules this caller may view + edit.

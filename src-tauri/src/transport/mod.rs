@@ -152,6 +152,25 @@ pub fn client() -> reqwest::Client {
         .clone()
 }
 
+/// A short, user-facing message for a request-level reqwest failure.
+pub fn friendly_err(e: &reqwest::Error) -> String {
+    if e.is_connect() {
+        "Could not connect — is the server running and the URL correct?".into()
+    } else if e.is_timeout() {
+        "Timed out waiting for the server.".into()
+    } else {
+        e.to_string()
+    }
+}
+
+/// Pull FastAPI's `detail` string from an error body, falling back to the raw text.
+pub fn detail_from(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+        .unwrap_or_else(|| body.to_string())
+}
+
 /// Attach a bearer token if one is provided.
 pub fn with_auth(req: reqwest::RequestBuilder, api_key: Option<&str>) -> reqwest::RequestBuilder {
     match api_key {

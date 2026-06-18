@@ -1,8 +1,8 @@
 //! Connection test + model discovery against `/v1/models` and `/auth/whoami`.
 
 use super::{
-    base_url, client, with_auth, Capabilities, ConnectionInfo, ResolvedOverrideProfile, ServerModel,
-    UsageStats,
+    base_url, client, friendly_err, with_auth, Capabilities, ConnectionInfo,
+    ResolvedOverrideProfile, ServerModel, UsageStats,
 };
 use serde::Deserialize;
 
@@ -102,16 +102,6 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
             boot_id: None,
             error: Some(friendly_err(&e)),
         },
-    }
-}
-
-fn friendly_err(e: &reqwest::Error) -> String {
-    if e.is_connect() {
-        "Could not connect — is the server running and the URL correct?".into()
-    } else if e.is_timeout() {
-        "Timed out waiting for the server.".into()
-    } else {
-        e.to_string()
     }
 }
 
