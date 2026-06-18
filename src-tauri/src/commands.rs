@@ -458,6 +458,10 @@ pub fn suspend_shortcuts(app: AppHandle) {
     crate::triggers::unregister_all(&app);
     let state = app.state::<crate::evdev_hotkeys::EvdevState>();
     crate::evdev_hotkeys::stop(&state);
+    // stop() aborts the reader tasks, which skips their post-loop held-key cleanup, so
+    // a modifier held at this instant would leave a phantom count and make the next
+    // inject_text wait the full gate timeout. Restore held_keys' "not running ⇒ empty".
+    app.state::<crate::held_keys::HeldKeys>().clear();
 }
 
 /// Apply the current bindings to the right backend: when the evdev backend is
@@ -474,6 +478,9 @@ pub fn apply_bindings(app: &AppHandle) {
         tracing::info!("[bindings] evdev backend active (plugin silenced)");
     } else {
         crate::evdev_hotkeys::stop(&state);
+        // Aborting the reader skips its held-key cleanup; drop any stale counts so the
+        // inject gate isn't wedged on a phantom modifier while evdev stays off.
+        app.state::<crate::held_keys::HeldKeys>().clear();
         crate::triggers::register_from_config(app, &cfg.profiles, quick_add);
     }
 }
