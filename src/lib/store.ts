@@ -237,6 +237,15 @@ interface AppState {
   hydrate: (cfg: Config) => void;
 }
 
+// Replace-or-append by id — the shared body of the upsert* reducers (backends/profiles/appRules).
+function upsertById<T extends { id: string }>(arr: T[], item: T): T[] {
+  const i = arr.findIndex((x) => x.id === item.id);
+  const next = [...arr];
+  if (i >= 0) next[i] = item;
+  else next.push(item);
+  return next;
+}
+
 export const useApp = create<AppState>((set) => ({
   settings: DEFAULT_SETTINGS,
   backends: [DEFAULT_BACKEND],
@@ -270,14 +279,7 @@ export const useApp = create<AppState>((set) => ({
   updateRecording: (patch) =>
     set((s) => ({ settings: { ...s.settings, recording: { ...s.settings.recording, ...patch } } })),
 
-  upsertBackend: (b) =>
-    set((s) => {
-      const i = s.backends.findIndex((x) => x.id === b.id);
-      const backends = [...s.backends];
-      if (i >= 0) backends[i] = b;
-      else backends.push(b);
-      return { backends };
-    }),
+  upsertBackend: (b) => set((s) => ({ backends: upsertById(s.backends, b) })),
   removeBackend: (id) =>
     set((s) => ({
       backends: s.backends.filter((b) => b.id !== id),
@@ -306,14 +308,7 @@ export const useApp = create<AppState>((set) => ({
       return { backends };
     }),
 
-  upsertProfile: (p) =>
-    set((s) => {
-      const i = s.profiles.findIndex((x) => x.id === p.id);
-      const profiles = [...s.profiles];
-      if (i >= 0) profiles[i] = p;
-      else profiles.push(p);
-      return { profiles };
-    }),
+  upsertProfile: (p) => set((s) => ({ profiles: upsertById(s.profiles, p) })),
   updateProfile: (id, patch) =>
     set((s) => ({ profiles: s.profiles.map((p) => (p.id === id ? { ...p, ...patch } : p)) })),
   removeProfile: (id) => set((s) => ({ profiles: s.profiles.filter((p) => p.id !== id) })),
@@ -338,14 +333,7 @@ export const useApp = create<AppState>((set) => ({
       return { profiles };
     }),
 
-  upsertAppRule: (r) =>
-    set((s) => {
-      const i = s.appRules.findIndex((x) => x.id === r.id);
-      const appRules = [...s.appRules];
-      if (i >= 0) appRules[i] = r;
-      else appRules.push(r);
-      return { appRules };
-    }),
+  upsertAppRule: (r) => set((s) => ({ appRules: upsertById(s.appRules, r) })),
   removeAppRule: (id) => set((s) => ({ appRules: s.appRules.filter((r) => r.id !== id) })),
 
   setConnection: (backendId, info) =>
