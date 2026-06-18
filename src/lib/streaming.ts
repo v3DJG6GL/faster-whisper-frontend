@@ -865,6 +865,11 @@ export async function startLive(
     }
   } catch (e) {
     clearWarmTimer();
+    // The start invoke rejected before any stream exists, so no closed/error event will fire to
+    // tear these down — do it here, else the 700ms focus-poll interval leaks (republishing a
+    // stale target forever) and activeEndpoint stays set.
+    stopTargetPoll();
+    activeEndpoint = null;
     console.error("start dictation failed:", e);
     flashError(String(e));
   }
@@ -881,8 +886,15 @@ export async function stopLive(): Promise<void> {
   useApp.getState().setDictation({ status: "transcribing", warming: false });
   // Guard against a `closed` that never comes (socket died mid-finalize).
   armStuckWatchdog();
-  if (activeEndpoint === "batch") await stopRecord();
-  else await stopStream();
+  try {
+    if (activeEndpoint === "batch") await stopRecord();
+    else await stopStream();
+  } catch (e) {
+    // A rejected stop would otherwise wedge the chip at "finalizing…" — batch has no stuck-
+    // watchdog (it's stream-only), so surface the error to return the UI to a clear state.
+    console.error("stop dictation failed:", e);
+    flashError(String(e));
+  }
 }
 
 /** Hard-reset dictation to idle immediately: abort the in-flight session, drop the
