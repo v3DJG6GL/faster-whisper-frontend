@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { UploadCloud, FileAudio, X, Loader2, Copy, Check, AlertTriangle } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Select } from "@/components/ui";
@@ -19,6 +19,16 @@ export default function Transcribe() {
   const [result, setResult] = useState<BatchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // The store boots with a seeded backend, then config hydration (and later edits/removals)
+  // can replace the list with different ids. Re-sync the selection when the current id falls
+  // out of the list, so the Backend dropdown and language don't reference a backend that's gone.
+  useEffect(() => {
+    if (backends.length && !backends.some((b) => b.id === backendId)) {
+      setBackendId(backends[0].id);
+      setLanguage(backends[0].language ?? "auto");
+    }
+  }, [backends, backendId]);
 
   const backend = backends.find((b) => b.id === backendId) ?? backends[0];
 
