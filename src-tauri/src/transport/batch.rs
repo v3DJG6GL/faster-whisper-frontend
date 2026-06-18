@@ -60,13 +60,20 @@ pub async fn transcribe(
     file_path: &str,
 ) -> anyhow::Result<BatchResult> {
     let path = Path::new(file_path);
-    let bytes = std::fs::read(path).with_context(|| format!("reading {file_path}"))?;
     let filename = path
         .file_name()
         .and_then(|f| f.to_str())
         .unwrap_or("audio")
         .to_string();
-    let part = Part::bytes(bytes).file_name(filename).mime_str(mime_for(path))?;
+    let mime = mime_for(path);
+    // Read off the runtime's worker pool: a large file on slow/network storage shouldn't park a
+    // tokio worker thread that's also servicing other IPC (chip focus, audio-level events).
+    let read_path = file_path.to_string();
+    let bytes = tokio::task::spawn_blocking(move || std::fs::read(&read_path))
+        .await
+        .context("file-read task panicked")?
+        .with_context(|| format!("reading {file_path}"))?;
+    let part = Part::bytes(bytes).file_name(filename).mime_str(mime)?;
     post(server_url, api_key, model, language, prompt, overrides, override_profile, part).await
 }
 
