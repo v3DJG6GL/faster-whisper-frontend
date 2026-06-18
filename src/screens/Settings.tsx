@@ -20,13 +20,46 @@ import {
   pickRecordingsDir,
   type EvdevStatus,
 } from "@/lib/api";
-import type { AudioDevice, OverlayQuickAction } from "@/lib/types";
+import type { AudioDevice, OverlayQuickAction, RecordingSettings } from "@/lib/types";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 
 const TABS = ["General", "Audio", "Recording", "Chip", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
+
+// The keys of RecordingSettings whose value is a boolean (the chip-visibility flags).
+type ChipVisKey = {
+  [K in keyof RecordingSettings]: RecordingSettings[K] extends boolean ? K : never;
+}[keyof RecordingSettings];
+
+// The chip's visibility settings are all the same Off / Always / On-hover tri-state, backed by a
+// (visible, onHover) boolean pair on RecordingSettings. One control keyed on those two fields keeps
+// the four identical Segmented blocks (live transcript / profile / usage / target) from drifting.
+function HoverModeSegmented({ visibleKey, hoverKey }: { visibleKey: ChipVisKey; hoverKey: ChipVisKey }) {
+  const visible = useApp((st) => st.settings.recording[visibleKey]);
+  const onHover = useApp((st) => st.settings.recording[hoverKey]);
+  const updateRecording = useApp((st) => st.updateRecording);
+  return (
+    <Segmented
+      value={!visible ? "off" : onHover ? "hover" : "always"}
+      onChange={(v) =>
+        updateRecording(
+          (v === "off"
+            ? { [visibleKey]: false }
+            : v === "hover"
+              ? { [visibleKey]: true, [hoverKey]: true }
+              : { [visibleKey]: true, [hoverKey]: false }) as Partial<RecordingSettings>,
+        )
+      }
+      options={[
+        { value: "off", label: "Off" },
+        { value: "always", label: "Always" },
+        { value: "hover", label: "On hover" },
+      ]}
+    />
+  );
+}
 
 // Smoothed level above the digital-silence floor ⇒ the mic is actually capturing (a
 // cold/Bluetooth mic can be open but silent for ~1–2s first). A live mic has a faint
@@ -724,77 +757,19 @@ export default function Settings() {
               title="Live transcript"
               desc="Show words in the chip as you speak — always, or only while you hover it (streaming backends only)."
             >
-              <Segmented
-                value={
-                  !s.recording.realtimePreview ? "off" : s.recording.realtimePreviewOnHover ? "hover" : "always"
-                }
-                onChange={(v) =>
-                  updateRecording(
-                    v === "off"
-                      ? { realtimePreview: false }
-                      : v === "hover"
-                        ? { realtimePreview: true, realtimePreviewOnHover: true }
-                        : { realtimePreview: true, realtimePreviewOnHover: false },
-                  )
-                }
-                options={[
-                  { value: "off", label: "Off" },
-                  { value: "always", label: "Always" },
-                  { value: "hover", label: "On hover" },
-                ]}
-              />
+              <HoverModeSegmented visibleKey="realtimePreview" hoverKey="realtimePreviewOnHover" />
             </SettingRow>
             <SettingRow
               title="Show active profile"
               desc="Label the chip with the running profile's tag — always, or only while you hover it; hover always reveals language and mode."
             >
-              <Segmented
-                value={
-                  !s.recording.showProfileOnOverlay ? "off" : s.recording.showProfileOnHover ? "hover" : "always"
-                }
-                onChange={(v) =>
-                  updateRecording(
-                    v === "off"
-                      ? { showProfileOnOverlay: false }
-                      : v === "hover"
-                        ? { showProfileOnOverlay: true, showProfileOnHover: true }
-                        : { showProfileOnOverlay: true, showProfileOnHover: false },
-                  )
-                }
-                options={[
-                  { value: "off", label: "Off" },
-                  { value: "always", label: "Always" },
-                  { value: "hover", label: "On hover" },
-                ]}
-              />
+              <HoverModeSegmented visibleKey="showProfileOnOverlay" hoverKey="showProfileOnHover" />
             </SettingRow>
             <SettingRow
               title="Show usage on chip"
               desc="Add a tiny usage readout (today's totals) to the chip — always, or only while you hover it. Needs the faster-whisper-backend; hidden on a standard server."
             >
-              <Segmented
-                value={
-                  !s.recording.showStatsOnOverlay
-                    ? "off"
-                    : s.recording.overlayStatsOnHover
-                      ? "hover"
-                      : "always"
-                }
-                onChange={(v) =>
-                  updateRecording(
-                    v === "off"
-                      ? { showStatsOnOverlay: false }
-                      : v === "hover"
-                        ? { showStatsOnOverlay: true, overlayStatsOnHover: true }
-                        : { showStatsOnOverlay: true, overlayStatsOnHover: false },
-                  )
-                }
-                options={[
-                  { value: "off", label: "Off" },
-                  { value: "always", label: "Always" },
-                  { value: "hover", label: "On hover" },
-                ]}
-              />
+              <HoverModeSegmented visibleKey="showStatsOnOverlay" hoverKey="overlayStatsOnHover" />
             </SettingRow>
             <SettingRow
               title="Chip metric"
@@ -816,25 +791,7 @@ export default function Settings() {
               title="Show injection target"
               desc="Show which app dictation is typing into (→ app) on the chip — always, or only while you hover it — and warn when it isn't a text field."
             >
-              <Segmented
-                value={
-                  !s.recording.showTargetOnOverlay ? "off" : s.recording.showTargetOnHover ? "hover" : "always"
-                }
-                onChange={(v) =>
-                  updateRecording(
-                    v === "off"
-                      ? { showTargetOnOverlay: false }
-                      : v === "hover"
-                        ? { showTargetOnOverlay: true, showTargetOnHover: true }
-                        : { showTargetOnOverlay: true, showTargetOnHover: false },
-                  )
-                }
-                options={[
-                  { value: "off", label: "Off" },
-                  { value: "always", label: "Always" },
-                  { value: "hover", label: "On hover" },
-                ]}
-              />
+              <HoverModeSegmented visibleKey="showTargetOnOverlay" hoverKey="showTargetOnHover" />
             </SettingRow>
             <SettingRow
               title="Only while speaking"
