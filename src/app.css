@@ -298,3 +298,41 @@ textarea {
     transition: none !important;
   }
 }
+
+/* Sidebar Pride footer mark: a faint ghost at rest that FLICKERS into full colour on
+   hover (like a tube warming up); the slogan brightens just after. Always present. */
+.pride-mark .pride-flag {
+  opacity: 0.16;
+  filter: saturate(0.15);
+  transition: opacity 0.2s, filter 0.2s;
+}
+.pride-mark .pride-slogan {
+  opacity: 0.4;
+  transition: opacity 0.25s;
+}
+.pride-mark:hover .pride-flag {
+  filter: none;
+  animation: pride-flicker 0.7s both;
+}
+.pride-mark:hover .pride-slogan {
+  opacity: 0.9;
+  transition-delay: 0.42s;
+}
+@keyframes pride-flicker {
+  0% { opacity: 0.16; }
+  8% { opacity: 0.85; }
+  11% { opacity: 0.12; }
+  19% { opacity: 0.95; }
+  22% { opacity: 0.25; }
+  31% { opacity: 1; }
+  35% { opacity: 0.4; }
+  42% { opacity: 1; }
+  49% { opacity: 0.6; }
+  57%, 100% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pride-mark:hover .pride-flag {
+    animation: none;
+    opacity: 1;
+  }
+}

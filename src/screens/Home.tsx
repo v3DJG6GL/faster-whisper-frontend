@@ -224,6 +224,7 @@ export default function Home() {
             tone={waveTone}
             bars={28}
             variant="bars"
+            pride
             className="h-12 w-48"
           />
         </div>

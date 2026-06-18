@@ -1,11 +1,58 @@
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/cn";
+import { PRIDE_FLAG_URI, PRIDE_FLAG_ASPECT } from "@/lib/prideFlag";
 
 /**
  * The signature motif — a live level meter rendered on canvas. Used both as the
  * dictation chip's voice indicator and as ambient instrument readouts across the
  * app. Reacts to `level` (0..1 RMS); idles with a gentle breathing baseline.
+ *
+ * `pride`: a quiet solidarity touch — while you HOVER the meter, the bars flicker
+ * between their normal colour and the Intersex-Inclusive Progress Pride flag (kept at
+ * its true proportions, repeating across the bars), settling on the flag; it fades
+ * back out when you leave. Off by default; honours prefers-reduced-motion (no flicker).
  */
+
+// Shared, lazily-loaded flag image (one for all meters). Used to bake a repeating,
+// correctly-proportioned CanvasPattern per meter.
+let flagImg: HTMLImageElement | null = null;
+if (typeof Image !== "undefined") {
+  flagImg = new Image();
+  flagImg.src = PRIDE_FLAG_URI;
+}
+
+// Flicker envelope (fraction-of-duration → flag opacity). Dips toward the normal colour,
+// spikes toward the flag, then settles fully on the flag — a tube-warming-up flicker.
+const FLICKER_MS = 700;
+const FLK: [number, number][] = [
+  [0, 0.12], [0.08, 0.85], [0.11, 0.12], [0.19, 0.95], [0.22, 0.25],
+  [0.31, 1], [0.35, 0.4], [0.42, 1], [0.49, 0.6], [0.57, 1], [1, 1],
+];
+function flicker(elapsedMs: number): number {
+  const f = Math.min(1, elapsedMs / FLICKER_MS);
+  for (let i = 1; i < FLK.length; i++) {
+    if (f <= FLK[i][0]) {
+      const [t0, o0] = FLK[i - 1];
+      const [t1, o1] = FLK[i];
+      const k = t1 === t0 ? 1 : (f - t0) / (t1 - t0);
+      return o0 + (o1 - o0) * k;
+    }
+  }
+  return 1;
+}
+
+function buildFlagPattern(ctx: CanvasRenderingContext2D, h: number): CanvasPattern | null {
+  if (!flagImg || !flagImg.complete || flagImg.naturalWidth === 0) return null;
+  const tileW = Math.max(1, Math.round(h * PRIDE_FLAG_ASPECT));
+  const off = document.createElement("canvas");
+  off.width = tileW;
+  off.height = Math.max(1, Math.round(h));
+  const octx = off.getContext("2d");
+  if (!octx) return null;
+  octx.drawImage(flagImg, 0, 0, off.width, off.height);
+  return ctx.createPattern(off, "repeat");
+}
+
 export function Waveform({
   level,
   active,
@@ -13,6 +60,7 @@ export function Waveform({
   bars = 5,
   variant = "bars",
   tone = "accent",
+  pride = false,
   className,
 }: {
   level: number;
@@ -24,6 +72,8 @@ export function Waveform({
   bars?: number;
   variant?: "bars" | "dots";
   tone?: "accent" | "rec" | "dim" | "live";
+  /** Reveal the Pride flag through the bars while hovered (see component note). */
+  pride?: boolean;
   className?: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -39,6 +89,11 @@ export function Waveform({
   // Recompute the resolved CSS color on the next frame (set when `tone` changes),
   // instead of polling getComputedStyle on a timer for the whole session.
   const colorDirtyRef = useRef(true);
+  // Pride hover-reveal state (all refs so the draw loop reads them without re-subscribing).
+  const prideOnRef = useRef(pride);
+  prideOnRef.current = pride;
+  const hoverRef = useRef(false);
+  const hoverStartRef = useRef(0);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -57,6 +112,10 @@ export function Waveform({
     let color = "#ff9e2c";
     let raf = 0;
     let running = false;
+    // Pride pattern (rebuilt on size change) + current flag-mix (0..1).
+    let pridePat: CanvasPattern | null = null;
+    let pridePatH = 0;
+    let prideMix = 0;
 
     const rr = (x: number, y: number, w: number, h: number, r: number) => {
       const rad = Math.min(r, w / 2, h / 2);
@@ -88,7 +147,30 @@ export function Waveform({
         color = getComputedStyle(canvas).color || color;
         colorDirtyRef.current = false;
       }
-      ctx.fillStyle = color;
+
+      // Pride flag-mix: while hovered, flicker between colour and flag, settling on the
+      // flag; fade back out on leave. Off entirely unless the `pride` prop is set.
+      let prideAnimating = false;
+      if (prideOnRef.current) {
+        if (hoverRef.current) {
+          const el = performance.now() - hoverStartRef.current;
+          prideMix = reduce ? 1 : flicker(el);
+          prideAnimating = !reduce && el < FLICKER_MS;
+        } else {
+          prideMix = reduce ? 0 : prideMix * 0.7; // quick fade back to the normal colour
+          if (prideMix < 0.01) prideMix = 0;
+          prideAnimating = prideMix > 0;
+        }
+        if (prideMix > 0) {
+          if (!pridePat || pridePatH !== h) {
+            pridePat = buildFlagPattern(ctx, h);
+            pridePatH = h;
+          }
+        }
+      } else {
+        prideMix = 0;
+      }
+      const pat = prideMix > 0 ? pridePat : null;
 
       const isActive = activeRef.current;
       const isProcessing = processingRef.current && !isActive;
@@ -130,23 +212,32 @@ export function Waveform({
         heights[i] += delta;
         if (Math.abs(delta) > maxStep) maxStep = Math.abs(delta);
         const x = (i + 0.5) * slot;
-        ctx.globalAlpha = isActive ? 1 : isProcessing ? 0.92 : 0.55;
+        const baseAlpha = isActive ? 1 : isProcessing ? 0.92 : 0.55;
+        // Build the bar shape, then fill it with the normal colour and (cross-faded by
+        // prideMix) the flag pattern. The pattern is anchored to the canvas origin, so
+        // each bar reveals the flag column at its x — together rebuilding the flag.
         if (variant === "dots") {
           const r = bw / 2 + heights[i] * (h * 0.16);
           ctx.beginPath();
           ctx.arc(x, h / 2, r, 0, Math.PI * 2);
-          ctx.fill();
         } else {
           const bh = Math.max(bw, heights[i] * h * 0.92);
           rr(x - bw / 2, (h - bh) / 2, bw, bh, bw / 2);
+        }
+        ctx.globalAlpha = baseAlpha * (1 - prideMix);
+        ctx.fillStyle = color;
+        ctx.fill();
+        if (pat) {
+          ctx.globalAlpha = baseAlpha * prideMix;
+          ctx.fillStyle = pat;
           ctx.fill();
         }
       }
-      // Keep animating only while there's something to animate — a live level meter
-      // or the processing sweep. Once idle and visually settled, park the loop: a
-      // static silhouette costs the renderer nothing, and leaving a canvas repainting
-      // every frame for hours is exactly what bloated the shared WebKitGTK renderer.
-      const needsAnimation = !reduce && (isActive || isProcessing);
+      // Keep animating only while there's something to animate — a live level meter,
+      // the processing sweep, or a Pride flicker/fade in progress. Once idle and visually
+      // settled, park the loop: a static silhouette costs the renderer nothing, and leaving
+      // a canvas repainting every frame for hours is exactly what bloated WebKitGTK.
+      const needsAnimation = (!reduce && (isActive || isProcessing)) || prideAnimating;
       if (!needsAnimation && maxStep < 0.001) {
         running = false;
         raf = 0;
@@ -181,6 +272,23 @@ export function Waveform({
     <canvas
       ref={ref}
       aria-hidden
+      onMouseEnter={
+        pride
+          ? () => {
+              hoverRef.current = true;
+              hoverStartRef.current = performance.now();
+              kickRef.current();
+            }
+          : undefined
+      }
+      onMouseLeave={
+        pride
+          ? () => {
+              hoverRef.current = false;
+              kickRef.current();
+            }
+          : undefined
+      }
       className={cn(
         tone === "rec"
           ? "text-rec"

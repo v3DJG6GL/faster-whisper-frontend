@@ -790,6 +790,7 @@ export default function Overlay() {
                         bars={11}
                         variant="bars"
                         tone={barTone}
+                        pride
                         className="h-6 w-[92px] shrink-0"
                       />
                       {/* min-w-0 + default flex-shrink: this transcript box is the ONE flexible

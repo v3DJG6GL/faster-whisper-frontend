@@ -3,6 +3,7 @@ import { Settings as SettingsIcon, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
 import { SCREENS } from "@/lib/screens";
+import { PRIDE_FLAG_URI } from "@/lib/prideFlag";
 import { dictationVisual } from "@/lib/dictationVisual";
 import { StatusDot } from "./ui";
 
@@ -96,6 +97,20 @@ export function Sidebar() {
           >
             {theme === "dark" ? <Sun className="size-[17px]" /> : <Moon className="size-[17px]" />}
           </button>
+        </div>
+
+        {/* A small, year-round solidarity mark: a faint flag that flickers into full
+            colour on hover. Decorative (aria-hidden); the slogan carries the meaning. */}
+        <div
+          className="pride-mark mt-3 flex items-center justify-center gap-2.5 px-3"
+          title="sometimes antisocial · always antifascist"
+        >
+          <img src={PRIDE_FLAG_URI} alt="" aria-hidden className="pride-flag h-3 w-[19px] shrink-0 rounded-[2px]" />
+          <span className="pride-slogan font-mono text-[9px] uppercase leading-[1.35] tracking-[0.12em] text-faint">
+            sometimes antisocial
+            <br />
+            always antifascist
+          </span>
         </div>
       </div>
     </aside>
