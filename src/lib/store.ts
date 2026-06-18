@@ -189,6 +189,12 @@ interface AppState {
    *  persisted). The chip readout ignores this — it always uses activeStatsBackend. */
   usageViewBackendId: string | null;
 
+  /** Last config auto-save failure (disk full / read-only / IPC), surfaced as a banner so the
+   *  user knows their recent settings/backends/profiles changes were NOT written to disk and
+   *  may be lost on restart. null = last save succeeded. Runtime-only; set by the persistence
+   *  auto-save, cleared on the next successful save. */
+  saveError: string | null;
+
   setTheme: (t: ThemeName) => void;
   updateSettings: (patch: Partial<AppSettings>) => void;
   updateGeneral: (patch: Partial<AppSettings["general"]>) => void;
@@ -215,6 +221,9 @@ interface AppState {
 
   /** Pick which Backend the usage view shows (null = follow the dictation target). */
   setUsageViewBackend: (id: string | null) => void;
+
+  /** Set (or clear, with null) the config-save error banner. */
+  setSaveError: (msg: string | null) => void;
 
   /** Update live dictation runtime (status / level / partial transcript). */
   setDictation: (
@@ -268,6 +277,7 @@ export const useApp = create<AppState>((set) => ({
   connections: {},
   usage: {},
   usageViewBackendId: null,
+  saveError: null,
 
   setTheme: (t) => {
     document.documentElement.dataset.theme = t;
@@ -343,6 +353,8 @@ export const useApp = create<AppState>((set) => ({
     set((s) => ({ usage: { ...s.usage, [backendId]: stats } })),
 
   setUsageViewBackend: (id) => set({ usageViewBackendId: id }),
+
+  setSaveError: (msg) => set({ saveError: msg }),
 
   setDictation: (patch) =>
     set((s) => {

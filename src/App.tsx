@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { AlertTriangle, X } from "lucide-react";
 import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
 import { useApp } from "@/lib/store";
@@ -39,6 +40,36 @@ function NavigationBridge() {
     };
   }, [navigate]);
   return null;
+}
+
+// Surfaces a config auto-save failure (disk full / read-only / IPC). The app otherwise saves
+// settings/backends/profiles silently (debounced), so without this a failed write is invisible
+// and the user's changes vanish on the next launch. A transient failure self-heals — the next
+// successful save clears the banner. Dismissible.
+function SaveErrorBanner() {
+  const saveError = useApp((s) => s.saveError);
+  const setSaveError = useApp((s) => s.setSaveError);
+  if (!saveError) return null;
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-4">
+      <div className="flex max-w-xl items-start gap-2 rounded-xl border border-warn/40 bg-warn/10 px-3.5 py-2.5 text-[12.5px] text-warn shadow-lg backdrop-blur-sm">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <div className="flex-1">
+          <span className="font-semibold">Couldn’t save your settings.</span> Recent changes may be
+          lost when you restart the app. <span className="text-warn/80">{saveError}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setSaveError(null)}
+          title="Dismiss"
+          aria-label="Dismiss"
+          className="shrink-0 rounded-md p-0.5 text-warn/70 hover:text-warn"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -126,6 +157,7 @@ export default function App() {
           </Routes>
         </main>
       </div>
+      <SaveErrorBanner />
     </HashRouter>
   );
 }

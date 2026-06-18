@@ -57,8 +57,17 @@ export async function initConfig(): Promise<void> {
       const reReg = pendingBindingChange;
       pendingBindingChange = false;
       saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules, version: 2 })
-        .then(() => (reReg ? reregisterShortcuts() : undefined))
-        .catch((e) => console.error("saveConfig failed", e));
+        .then(() => {
+          // The write landed — clear any prior failure banner, THEN re-register.
+          useApp.getState().setSaveError(null);
+          return reReg ? reregisterShortcuts() : undefined;
+        })
+        .catch((e) => {
+          // A real disk/IPC failure (full/read-only disk, perms) — the in-memory store still
+          // shows the change, but it wasn't written, so warn the user it may be lost on restart.
+          console.error("saveConfig failed", e);
+          useApp.getState().setSaveError(e instanceof Error ? e.message : String(e));
+        });
     }, 400);
   });
 }
