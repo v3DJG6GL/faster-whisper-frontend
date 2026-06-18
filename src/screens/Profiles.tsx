@@ -145,7 +145,14 @@ function Editor({
             onChange={(v) => set({ backendId: v || null })}
             options={
               backends.length
-                ? backends.map((b) => ({ value: b.id, label: b.name }))
+                ? [
+                    // Surface an orphaned/cleared backendId (e.g. its backend was deleted)
+                    // so the shown value matches state instead of silently picking the first.
+                    ...(backends.some((b) => b.id === p.backendId)
+                      ? []
+                      : [{ value: "", label: "No backend" }]),
+                    ...backends.map((b) => ({ value: b.id, label: b.name })),
+                  ]
                 : [{ value: "", label: "No backends — add one" }]
             }
           />

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCapabilities, getOverrideProfile } from "@/lib/api";
-import type { Capabilities, InheritedValues } from "@/lib/types";
+import { NO_OVERRIDE_PROFILE, type Capabilities, type InheritedValues } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
 
 /**
@@ -48,7 +48,7 @@ export function useOverrideContext(args: {
 
   useEffect(() => {
     const name = profileName?.trim();
-    if (!name || serverKind === "standard") {
+    if (!name || name === NO_OVERRIDE_PROFILE || serverKind === "standard") {
       setResolved(undefined);
       setResolvedPrompt(undefined);
       return;

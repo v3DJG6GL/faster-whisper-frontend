@@ -187,28 +187,21 @@ export default function AppRules() {
   const appRules = useApp((s) => s.appRules);
   const upsertAppRule = useApp((s) => s.upsertAppRule);
   const removeAppRule = useApp((s) => s.removeAppRule);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<AppRule | null>(null);
 
   const startAdd = () => {
-    const r = blankAppRule();
-    setDraft(r);
-    setEditingId(r.id);
+    setDraft(blankAppRule());
   };
   const startEdit = (r: AppRule) => {
     setDraft(r);
-    setEditingId(r.id);
   };
   const onSave = (r: AppRule) => {
     upsertAppRule(r);
     setDraft(null);
-    setEditingId(null);
   };
   const onCancel = () => {
     setDraft(null);
-    setEditingId(null);
   };
-  void editingId;
 
   return (
     <div className="mx-auto max-w-[820px] px-10 py-12">
