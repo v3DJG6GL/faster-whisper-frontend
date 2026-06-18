@@ -138,13 +138,13 @@ const monoInput = "font-mono text-[12.5px]";
 
 /* ── one rule (stable, module-scope component) ─────────────────────────── */
 function RuleCard({
-  rule, edit, base, editable, expanded, mapCollapseAfter, recentWords, recentMax,
+  rule, edit, editable, dirty, expanded, mapCollapseAfter, recentWords, recentMax,
   pinned, onTogglePin, onToggleExpand, onPatch, onReset,
 }: {
   rule: PipelineRule;
   edit: EditState;
-  base: EditState;
   editable: string[];
+  dirty: boolean;
   expanded: boolean;
   mapCollapseAfter: number;
   recentWords: string[];
@@ -158,7 +158,8 @@ function RuleCard({
   const locked = !!rule.locked;
   const canEnable = editable.includes("enabled");
   const bodyEditable = editable.some((f) => f !== "enabled");
-  const dirty = Object.keys(buildPatch(rule.type, edit, base, editable)).length > 0;
+  // `dirty` is passed in (computed once, cached, in the parent) — recomputing buildPatch here
+  // re-ran a whole-map sort + JSON.stringify in every card on every keystroke.
   const dotHex = ruleDotColor(rule.color);
   // Per-entry note show/hide override. Default is open iff the entry already has
   // a note; a single toggle both reveals AND hides it (content is preserved).
@@ -623,13 +624,28 @@ export default function Dictionary() {
     };
   }, [backend?.id, backend?.serverUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const dirty = useMemo(() => {
-    return rules.filter((r) => {
+  // Cache buildPatch by the (edit, base, editable) references so a keystroke only re-diffs the
+  // ONE rule that changed — not every rule. setEdits keeps other rules' edit values referentially
+  // stable, so they hit the cache; each cb:map diff is a whole-map sort + JSON.stringify, so this
+  // matters on large word-mapping lists. buildPatch is pure in (type, e, b, ed), so reference-equal
+  // inputs always yield the same patch.
+  const patchCache = useRef(new Map<string, { e: EditState; b: EditState; ed: string[]; patch: Record<string, unknown> }>());
+  const patchFor = useCallback(
+    (r: PipelineRule): Record<string, unknown> => {
       const e = edits[r.name];
       const b = base[r.name];
-      return e && b && Object.keys(buildPatch(r.type, e, b, editableFor(r))).length > 0;
-    });
-  }, [rules, edits, base, editableFor]);
+      if (!e || !b) return {};
+      const ed = editableFor(r);
+      const hit = patchCache.current.get(r.name);
+      if (hit && hit.e === e && hit.b === b && hit.ed === ed) return hit.patch;
+      const patch = buildPatch(r.type, e, b, ed);
+      patchCache.current.set(r.name, { e, b, ed, patch });
+      return patch;
+    },
+    [edits, base, editableFor],
+  );
+  const dirty = useMemo(() => rules.filter((r) => Object.keys(patchFor(r)).length > 0), [rules, patchFor]);
+  const dirtyNames = useMemo(() => new Set(dirty.map((r) => r.name)), [dirty]);
 
   const role = fetchRes?.state?.role;
 
@@ -638,7 +654,7 @@ export default function Dictionary() {
     const rules_patch: Record<string, Record<string, unknown>> = {};
     const fingerprints: Record<string, string> = {};
     for (const r of dirty) {
-      rules_patch[r.name] = buildPatch(r.type, edits[r.name], base[r.name], editableFor(r));
+      rules_patch[r.name] = patchFor(r);
       if (r._fp) fingerprints[r.name] = r._fp;
     }
     setSaving(true);
@@ -758,8 +774,8 @@ export default function Dictionary() {
               key={r.name}
               rule={r}
               edit={edits[r.name]}
-              base={base[r.name]}
               editable={editableFor(r)}
+              dirty={dirtyNames.has(r.name)}
               expanded={expanded.has(r.name)}
               mapCollapseAfter={fetchRes?.state?.map_collapse_after ?? 15}
               recentWords={recentWords}
