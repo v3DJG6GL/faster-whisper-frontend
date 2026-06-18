@@ -523,6 +523,16 @@ function wordCount(words?: string): number {
   return (words ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean).length;
 }
 
+// Rust forwards the server's pipeline-rules payload as an opaque value
+// (`#[serde(default)] serde_json::Value`), so a buggy/old/proxied server can deliver a
+// non-array `rules` (or non-object `editable_fields`) with ok:true. The screen types them
+// as PipelineRule[]/Record<string,string[]>, so coerce at the boundary — otherwise the
+// `.map`/`.includes` below throw and, with no error boundary, the route white-screens.
+function ruleListOf(res: PipelineFetch): PipelineRule[] {
+  const r = res.ok ? res.state?.rules : undefined;
+  return Array.isArray(r) ? r : [];
+}
+
 /* ── screen ────────────────────────────────────────────────────────────── */
 export default function Dictionary() {
   const backends = useApp((s) => s.backends);
@@ -563,9 +573,17 @@ export default function Dictionary() {
   const [recentWords, setRecentWords] = useState<string[]>([]);
   const [recentMax, setRecentMax] = useState<number | undefined>(undefined);
 
-  const editableFields: Record<string, string[]> = fetchRes?.state?.editable_fields ?? {};
+  // editable_fields is also forwarded as an opaque server value — coerce to a plain object,
+  // and to an array per type, so a malformed shape can't make `.includes`/`.filter` throw.
+  const efRaw = fetchRes?.state?.editable_fields as unknown;
+  const editableFields: Record<string, string[]> =
+    efRaw && typeof efRaw === "object" && !Array.isArray(efRaw) ? (efRaw as Record<string, string[]>) : {};
   const editableFor = useCallback(
-    (r: PipelineRule) => (r.locked ? [] : editableFields[r.type] ?? []),
+    (r: PipelineRule) => {
+      if (r.locked) return [];
+      const f = editableFields[r.type];
+      return Array.isArray(f) ? f : [];
+    },
     [editableFields],
   );
 
@@ -575,7 +593,7 @@ export default function Dictionary() {
     const res = await getPipelineRules({ serverUrl: b.serverUrl, backendId: b.id });
     if (b.id !== selectedIdRef.current) return; // Backend switched mid-load → don't clobber it.
     setFetchRes(res);
-    const list = res.ok ? res.state?.rules ?? [] : [];
+    const list = ruleListOf(res);
     setRules(list);
     const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
     setEdits(fresh);
@@ -606,7 +624,7 @@ export default function Dictionary() {
     getPipelineRules({ serverUrl: backend.serverUrl, backendId: backend.id }).then((res) => {
       if (cancelled) return;
       setFetchRes(res);
-      const list = res.ok ? res.state?.rules ?? [] : [];
+      const list = ruleListOf(res);
       setRules(list);
       const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
       setEdits(fresh);
