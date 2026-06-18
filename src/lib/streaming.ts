@@ -665,6 +665,18 @@ async function ensureListeners(): Promise<void> {
     // so without this the ~1.2s quiet timer armed by the last `final` would fire a stray Enter
     // into the user's now-refocused window. On error we want no trailing Enter (like cancel).
     clearPhraseEnd();
+    // clearPhraseEnd cancelled the pending per-phrase clipboard restore, so if we'd pasted a phrase
+    // this session the clipboard is still holding the transcript. Give the user's original back —
+    // a clipboard swap ONLY (no keystroke, so nothing lands in the now-refocused window, unlike a
+    // stray Enter), chained after any in-flight paste. endInjection consumes the snapshot. The
+    // following `closed` frame early-returns on the error status, so it won't double-restore. Mirrors
+    // cancelLive's restore path.
+    if (beganInjection) {
+      const pending = injectChain;
+      void pending.then(() => endInjection()).catch((err) => console.error("end injection on error failed:", err));
+      beganInjection = false;
+      injectChain = Promise.resolve();
+    }
     console.error("stream error:", e.payload);
     flashError(e.payload);
     // Tear down the Rust capture session so the mic closes and system audio
