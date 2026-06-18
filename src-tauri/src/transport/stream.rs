@@ -338,14 +338,16 @@ pub async fn run<F>(
                 }
             }
             _ = keepalive.tick() => {
-                if tokio::time::timeout(SEND_TIMEOUT, write.send(Message::Ping(Vec::<u8>::new().into())))
-                    .await
-                    .is_err()
-                {
-                    on_event(StreamEvent::Error(
-                        "stream connection lost (keepalive timed out)".into(),
-                    ));
-                    break;
+                match tokio::time::timeout(SEND_TIMEOUT, write.send(Message::Ping(Vec::<u8>::new().into()))).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => break, // socket closed/errored → finish + Closed (reader surfaces it)
+                    Err(_) => {
+                        // Stalled send → the connection is gone. Surface it and close.
+                        on_event(StreamEvent::Error(
+                            "stream connection lost (keepalive timed out)".into(),
+                        ));
+                        break;
+                    }
                 }
             }
         }
