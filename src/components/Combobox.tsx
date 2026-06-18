@@ -126,7 +126,10 @@ export function Combobox({
     }
   }, [candidates.length]);
 
-  function choose(word: string) {
+  function choose(word: string | undefined) {
+    // A keyboard pick reads candidates[active]; guard against a stale active index that
+    // momentarily exceeds a just-shrunk candidate list (would pass undefined to onSelect).
+    if (word == null) return;
     wantFirstRef.current = false;
     setOpen(false);
     setActive(-1);
