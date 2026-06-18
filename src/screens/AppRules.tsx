@@ -1,7 +1,7 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import { Plus, AppWindow, Ban, Crosshair, Pencil, Trash2 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
+import { Button, Card, Labeled, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { getFocusedOtherApp } from "@/lib/api";
 import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
 import type { AppRule, InsertMethod } from "@/lib/types";
@@ -20,15 +20,6 @@ const PASTE_OPTIONS: { value: string; label: string }[] = [
 
 function blankAppRule(): AppRule {
   return { id: crypto.randomUUID(), appId: "", name: "", block: false };
-}
-
-function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
-  return (
-    <div className={className}>
-      <label className="mb-2 block text-[12px] font-medium text-dim">{label}</label>
-      {children}
-    </div>
-  );
 }
 
 function Editor({

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Plus, Server, Pencil, Copy, Trash2, Plug, Loader2, Check, AlertTriangle } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
+import { Button, Card, Labeled, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
@@ -36,15 +36,6 @@ function Badge({ children, tone }: { children: ReactNode; tone?: "accent" | "dim
     >
       {children}
     </span>
-  );
-}
-
-function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
-  return (
-    <div className={className}>
-      <label className="mb-2 block text-[12px] font-medium text-dim">{label}</label>
-      {children}
-    </div>
   );
 }
 

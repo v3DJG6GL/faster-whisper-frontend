@@ -30,6 +30,16 @@ export function SectionLabel({ children, className }: { children: ReactNode; cla
   );
 }
 
+/** A form field with a small dim label above its control. */
+export function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={className}>
+      <label className="mb-2 block text-[12px] font-medium text-dim">{label}</label>
+      {children}
+    </div>
+  );
+}
+
 /* ── Toggle (pill switch) ─────────────────────────────────────────────── */
 export function Toggle({
   checked,
