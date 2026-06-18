@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Mic, Radio, Hand, Square, Pencil, AlertTriangle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -13,6 +13,14 @@ import { homeTargetProfile } from "@/lib/dictation";
 import type { Backend, Profile } from "@/lib/types";
 
 const GLYPH = { hold: Mic, latch: Hand } as const;
+
+/** Subscribes to the high-frequency dictation `level` (~30Hz) on its own, so a level tick
+ *  re-renders just this leaf — not all of Home + every ProfileCard. Waveform reads the level
+ *  into a ref and self-animates via rAF, so isolating the subscription here costs nothing. */
+function LiveWaveform(props: Omit<ComponentProps<typeof Waveform>, "level">) {
+  const level = useApp((s) => s.level);
+  return <Waveform level={level} {...props} />;
+}
 
 // After dictation ends, keep the live-transcript card on screen this long so you can
 // read the final result, then it animates out. An empty/cancelled session lingers the
@@ -65,7 +73,6 @@ function ProfileCard({ p }: { p: Profile }) {
 export default function Home() {
   const profiles = useApp((s) => s.profiles);
   const backends = useApp((s) => s.backends);
-  const level = useApp((s) => s.level);
   const status = useApp((s) => s.status);
   const warming = useApp((s) => s.warming);
   const speaking = useApp((s) => s.speaking);
@@ -217,8 +224,7 @@ export default function Home() {
               The transcript appears wherever your cursor is.
             </div>
           </div>
-          <Waveform
-            level={level}
+          <LiveWaveform
             active={status === "listening"}
             processing={waveProcessing}
             tone={waveTone}
@@ -250,8 +256,7 @@ export default function Home() {
           >
             <Card className="p-5">
               <div className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-label text-faint">
-                <Waveform
-                  level={level}
+                <LiveWaveform
                   active={status === "listening"}
                   processing={waveProcessing}
                   bars={5}
