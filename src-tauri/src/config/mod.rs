@@ -389,10 +389,18 @@ pub struct RecordingSettings {
     #[serde(default = "default_latch_auto_stop")]
     pub latch_auto_stop_min: f64,
     pub realtime_preview: bool,
+    /// When the live preview is on, reveal the words only while hovering the chip (vs. always).
+    /// `#[serde(default)]` so older configs default to always-shown.
+    #[serde(default)]
+    pub realtime_preview_on_hover: bool,
     /// Show the active Profile's tag on the overlay chip. `#[serde(default = …)]`
     /// so older configs load (and default the feature on).
     #[serde(default = "default_true")]
     pub show_profile_on_overlay: bool,
+    /// When the Profile tag is shown, reveal it only while hovering the chip (vs. always).
+    /// `#[serde(default)]` so older configs default to always-shown.
+    #[serde(default)]
+    pub show_profile_on_hover: bool,
     /// Show a tiny usage readout (today's words/minutes) on the chip. Default off
     /// — opt-in; `#[serde(default)]` so older configs load with it disabled.
     #[serde(default)]
@@ -409,6 +417,10 @@ pub struct RecordingSettings {
     /// element isn't a typable text field. `#[serde(default = …)]` so older configs default on.
     #[serde(default = "default_true")]
     pub show_target_on_overlay: bool,
+    /// When the target is shown, reveal it only while hovering the chip (vs. always).
+    /// `#[serde(default)]` so older configs default to always-shown.
+    #[serde(default)]
+    pub show_target_on_hover: bool,
     /// Only show the injection target while actively dictating (the chip is expanded), hiding it
     /// when armed but silent — so it doesn't flicker as focus moves between phrases. Default off.
     #[serde(default)]
@@ -518,11 +530,14 @@ impl Default for Config {
                     mute_system_audio: false,
                     latch_auto_stop_min: 5.0,
                     realtime_preview: true,
+                    realtime_preview_on_hover: false,
                     show_profile_on_overlay: true,
+                    show_profile_on_hover: false,
                     show_stats_on_overlay: false,
                     overlay_stats_on_hover: false,
                     overlay_stats_metric: OverlayStatsMetric::Words,
                     show_target_on_overlay: true,
+                    show_target_on_hover: false,
                     show_target_only_speaking: false,
                     persistent_dock: false,
                     overlay_peek: false,

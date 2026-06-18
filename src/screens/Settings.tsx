@@ -671,17 +671,50 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title="Live transcript"
-              desc="Show words appear in the chip as you speak (streaming backends only)."
+              desc="Show words in the chip as you speak — always, or only while you hover it (streaming backends only)."
             >
-              <Toggle checked={s.recording.realtimePreview} onChange={(v) => updateRecording({ realtimePreview: v })} />
+              <Segmented
+                value={
+                  !s.recording.realtimePreview ? "off" : s.recording.realtimePreviewOnHover ? "hover" : "always"
+                }
+                onChange={(v) =>
+                  updateRecording(
+                    v === "off"
+                      ? { realtimePreview: false }
+                      : v === "hover"
+                        ? { realtimePreview: true, realtimePreviewOnHover: true }
+                        : { realtimePreview: true, realtimePreviewOnHover: false },
+                  )
+                }
+                options={[
+                  { value: "off", label: "Off" },
+                  { value: "always", label: "Always" },
+                  { value: "hover", label: "On hover" },
+                ]}
+              />
             </SettingRow>
             <SettingRow
               title="Show active profile"
-              desc="Label the chip with the running profile's tag; hover it to reveal language and mode."
+              desc="Label the chip with the running profile's tag — always, or only while you hover it; hover always reveals language and mode."
             >
-              <Toggle
-                checked={s.recording.showProfileOnOverlay}
-                onChange={(v) => updateRecording({ showProfileOnOverlay: v })}
+              <Segmented
+                value={
+                  !s.recording.showProfileOnOverlay ? "off" : s.recording.showProfileOnHover ? "hover" : "always"
+                }
+                onChange={(v) =>
+                  updateRecording(
+                    v === "off"
+                      ? { showProfileOnOverlay: false }
+                      : v === "hover"
+                        ? { showProfileOnOverlay: true, showProfileOnHover: true }
+                        : { showProfileOnOverlay: true, showProfileOnHover: false },
+                  )
+                }
+                options={[
+                  { value: "off", label: "Off" },
+                  { value: "always", label: "Always" },
+                  { value: "hover", label: "On hover" },
+                ]}
               />
             </SettingRow>
             <SettingRow
@@ -730,22 +763,37 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title="Show injection target"
-              desc="Show which app dictation is typing into (→ app) on the chip, and warn when it isn't a text field."
+              desc="Show which app dictation is typing into (→ app) on the chip — always, or only while you hover it — and warn when it isn't a text field."
             >
-              <Toggle
-                checked={s.recording.showTargetOnOverlay}
-                onChange={(v) => updateRecording({ showTargetOnOverlay: v })}
+              <Segmented
+                value={
+                  !s.recording.showTargetOnOverlay ? "off" : s.recording.showTargetOnHover ? "hover" : "always"
+                }
+                onChange={(v) =>
+                  updateRecording(
+                    v === "off"
+                      ? { showTargetOnOverlay: false }
+                      : v === "hover"
+                        ? { showTargetOnOverlay: true, showTargetOnHover: true }
+                        : { showTargetOnOverlay: true, showTargetOnHover: false },
+                  )
+                }
+                options={[
+                  { value: "off", label: "Off" },
+                  { value: "always", label: "Always" },
+                  { value: "hover", label: "On hover" },
+                ]}
               />
             </SettingRow>
             <SettingRow
               title="Only while speaking"
               desc="Show the injection target only while you're actively dictating — hide it when armed but silent, so it doesn't flicker as you move between windows."
-              disabled={!s.recording.showTargetOnOverlay}
+              disabled={!s.recording.showTargetOnOverlay || s.recording.showTargetOnHover}
             >
               <Toggle
                 checked={s.recording.showTargetOnlySpeaking}
                 onChange={(v) => updateRecording({ showTargetOnlySpeaking: v })}
-                disabled={!s.recording.showTargetOnOverlay}
+                disabled={!s.recording.showTargetOnOverlay || s.recording.showTargetOnHover}
               />
             </SettingRow>
 

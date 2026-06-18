@@ -92,8 +92,10 @@ export async function initOverlayController(): Promise<void> {
         status: state.status,
         warming: state.warming, // mic opening but not yet capturing → chip shows "warming up…"
         level: state.level,
-        // "Live transcript in overlay" off → show the status label, not words.
+        // "Live transcript in overlay" off → show the status label, not words. In "on hover"
+        // mode the words are still sent but the chip only surfaces them while hovered.
         partial: rec.realtimePreview ? state.partial : "",
+        previewOnHover: rec.realtimePreview && rec.realtimePreviewOnHover,
         dictationError: state.dictationError ?? "",
         // So the chip can pin itself to the correct edge of its window.
         position: rec.indicatorPosition,
@@ -112,6 +114,8 @@ export async function initOverlayController(): Promise<void> {
         targetTitle: tgt?.title ?? "",
         targetSkip: tgt ? (state.targetSkip ?? "") : "",
         targetOnlySpeaking: rec.showTargetOnlySpeaking,
+        // When on, the chip reveals the target only while hovered (vs. always shown).
+        targetOnHover: rec.showTargetOnOverlay && rec.showTargetOnHover,
         // P19: per-phrase "inserted" pulse + truthful end-of-session done marker. Sent
         // UNGATED by ACTIVE — the done marker must reach the chip on the idle transition.
         lastInsert: state.lastInsert,
@@ -119,6 +123,8 @@ export async function initOverlayController(): Promise<void> {
         statsLine: statsLine ?? "",
         // When on, the chip reveals the readout only while hovered (vs. always shown).
         statsOnHover: rec.showStatsOnOverlay && rec.overlayStatsOnHover,
+        // When on, the chip reveals the Profile tag only while hovered (vs. always shown).
+        profileOnHover: rec.showProfileOnOverlay && rec.showProfileOnHover,
         ...chip,
       });
     }

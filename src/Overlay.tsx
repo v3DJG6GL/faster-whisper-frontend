@@ -15,11 +15,15 @@ interface ChipState {
   warming?: boolean;
   level: number;
   partial: string;
+  // When true, the live words are revealed only while the chip is hover-revealed (else always).
+  previewOnHover?: boolean;
   dictationError: string;
   position: "top" | "bottom" | "off";
   theme: ThemeName;
   // Active-Profile indicator (optional; absent when the feature is off / no Profile).
   profileTag?: string;
+  // When true, the Profile tag is revealed only while the chip is hover-revealed (else always).
+  profileOnHover?: boolean;
   language?: string;
   mode?: "stream" | "batch";
   // P28: a tiny preformatted usage readout (e.g. "1.2k words"), absent unless the
@@ -32,6 +36,7 @@ interface ChipState {
   targetTitle?: string;
   targetSkip?: "blocked" | "notEditable" | "";
   targetOnlySpeaking?: boolean; // hide the target unless the chip is expanded (actively dictating)
+  targetOnHover?: boolean; // reveal the target only while the chip is hover-revealed (else always)
   // P19: per-phrase "inserted" pulse trigger (seq bumps on each landed phrase) + the truthful
   // end-of-session done marker (✓ typed / clipboard glyph / nothing).
   lastInsert?: { kind: "typed" | "clipboard"; seq: number } | null;
@@ -152,9 +157,12 @@ export default function Overlay() {
             targetTitle: e.payload.targetTitle ?? "",
             targetSkip: e.payload.targetSkip ?? "",
             targetOnlySpeaking: e.payload.targetOnlySpeaking ?? false,
+            targetOnHover: e.payload.targetOnHover ?? false,
             lastInsert: e.payload.lastInsert ?? null,
             sessionOutcome: e.payload.sessionOutcome ?? null,
             statsOnHover: e.payload.statsOnHover ?? false,
+            profileOnHover: e.payload.profileOnHover ?? false,
+            previewOnHover: e.payload.previewOnHover ?? false,
           });
         }),
       )
@@ -282,10 +290,15 @@ export default function Overlay() {
     setHoverReveal(false);
   };
   const detail = [state.language, state.mode].filter(Boolean).join(" · ");
+  // "On hover" mode for the Profile tag: only surface it once the chip is hover-revealed;
+  // "always" (profileOnHover false) shows it whenever a tag was sent.
+  const showProfile = !!state.profileTag && (!state.profileOnHover || hoverReveal);
   // P16/D target readout: overlay.ts only sends `targetTitle` while a session is active AND the
   // "Show injection target" setting is on, so its presence alone gates the chip's "→ app" segment.
   // A `targetSkip` reason means injection was coerced to the clipboard → tint the readout warn.
-  const showTarget = !!state.targetTitle && (!state.targetOnlySpeaking || expanded);
+  // The "only while speaking" and "on hover" reveal gates stack on top.
+  const showTarget =
+    !!state.targetTitle && (!state.targetOnlySpeaking || expanded) && (!state.targetOnHover || hoverReveal);
   const targetWarn = !!state.targetSkip;
   const skipLabel = state.targetSkip === "blocked" ? "blocked" : "not a text field";
 
@@ -593,7 +606,7 @@ export default function Overlay() {
   // run-on interpunct chain. The interpunct stays for true peers WITHIN a group ("en · stream").
   // The target uses a Target glyph rather than an arrow (which read as "words → sent somewhere").
   const idGroups: ReactNode[] = [];
-  if (state.profileTag) {
+  if (showProfile) {
     idGroups.push(
       <div key="tag" className="flex items-center">
         <span className="max-w-[140px] truncate uppercase text-dim">{state.profileTag}</span>
@@ -760,7 +773,7 @@ export default function Overlay() {
                     width cap so its flexible child (the transcript) yields space — a w-max
                     (max-content) row stays full width and pushes the pill past the window. */}
                 <div className="flex min-w-0 items-center gap-3 pl-3">
-                  {(state.profileTag || showTarget) && <span className="h-4 w-px shrink-0 bg-line" aria-hidden />}
+                  {(showProfile || showTarget) && <span className="h-4 w-px shrink-0 bg-line" aria-hidden />}
                   {showQuickLaunch ? (
                     <div className="flex items-center gap-2">
                       {state.quickLaunch.map((e) => {
@@ -804,7 +817,9 @@ export default function Overlay() {
                           can pin the newest words right and drop the oldest off the left. Short
                           text keeps its natural width (sits next to the waveform). */}
                       <div className="min-w-0">
-                        {state.partial ? (
+                        {/* "On hover" live transcript: keep the waveform + status label while speaking,
+                            and only reveal the words once the chip is hover-revealed. */}
+                        {state.partial && (!state.previewOnHover || hoverReveal) ? (
                           // Left-edge fade via a STATIC overlay rather than a CSS mask:
                           // the transcript text/scroll changes several times a second,
                           // and re-evaluating a mask-image each time flickers on

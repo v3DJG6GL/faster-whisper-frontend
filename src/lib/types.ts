@@ -153,12 +153,15 @@ export interface RecordingSettings {
   trimSilence: boolean; // when saving: keep only spoken spans (drop silence) in the .wav
   muteSystemAudio: boolean;
   latchAutoStopMin: number; // auto-stop a hands-free (latch) session after N min of silence (0 = never)
-  realtimePreview: boolean;
+  realtimePreview: boolean; // show live words on the chip as you speak (streaming backends)
+  realtimePreviewOnHover: boolean; // when on, reveal the live words only while hovering the chip (else always)
   showProfileOnOverlay: boolean; // show the active Profile's tag on the chip
+  showProfileOnHover: boolean; // when on, reveal the Profile tag only while hovering the chip (else always)
   showStatsOnOverlay: boolean; // show a tiny usage readout on the chip (off by default)
   overlayStatsOnHover: boolean; // when shown, reveal it only while hovering the chip (else always)
   overlayStatsMetric: OverlayStatsMetric; // which usage figure the chip shows
   showTargetOnOverlay: boolean; // show the injection target (→ app) + a warn hint when not typable
+  showTargetOnHover: boolean; // when on, reveal the target only while hovering the chip (else always)
   showTargetOnlySpeaking: boolean; // only show the target while actively dictating (chip expanded)
   persistentDock: boolean; // keep the chip on screen (a standby dot) even when dictation is off
   overlayPeek: boolean; // after sitting idle, slide the chip to the screen edge (hover to restore)
