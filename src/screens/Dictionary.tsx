@@ -857,8 +857,13 @@ function describeFetchError(fetch: PipelineFetch, name: string): { title: string
 }
 
 function SaveBanner({ result, onReload }: { result: PipelineSaveResult; onReload: () => void }) {
-  // Validation failure — keep the user's edits so they can fix them.
-  if (result.status === 422 && result.errors?.length) {
+  // Validation failure — keep the user's edits so they can fix them. `errors` is opaque server JSON:
+  // a non-array value (e.g. a bare string from a buggy/old/proxied server) passes a plain `.length`
+  // truthy check and then crashes `.slice().map()`, white-screening the route. Coerce to an array
+  // first — mirrors the GET-path rule coercion (ruleListOf). 422-without-errors falls through to the
+  // generic !ok banner below.
+  const errors = Array.isArray(result.errors) ? result.errors : [];
+  if (result.status === 422 && errors.length) {
     return (
       <div className="rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
         <div className="flex items-start gap-2">
@@ -866,7 +871,7 @@ function SaveBanner({ result, onReload }: { result: PipelineSaveResult; onReload
           <div>
             <div className="font-medium">The server rejected the changes</div>
             <ul className="mt-1 space-y-0.5 text-warn/90">
-              {result.errors.slice(0, 6).map((e, i) => (
+              {errors.slice(0, 6).map((e, i) => (
                 <li key={i}>
                   {e.loc ? <span className="font-mono text-[11px] opacity-80">{e.loc}: </span> : null}
                   {e.msg}
