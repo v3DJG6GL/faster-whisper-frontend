@@ -318,23 +318,29 @@ pub fn play_mic_test(
     let counter = playback.0.clone();
     let generation = counter.fetch_add(1, Ordering::SeqCst) + 1;
     std::thread::spawn(move || {
-        // Keep `_stream` alive until playback finishes (dropping it cuts audio).
-        let Ok((_stream, handle)) = rodio::OutputStream::try_default() else {
-            return;
-        };
-        let Ok(sink) = rodio::Sink::try_new(&handle) else {
-            return;
-        };
-        sink.append(rodio::buffer::SamplesBuffer::new(1, sample_rate, samples));
-        // Play until it drains, but bail the instant a newer replay (or a new test)
-        // superseded us — that newer playback owns the "ended" signal.
-        while !sink.empty() {
-            if counter.load(Ordering::SeqCst) != generation {
-                sink.stop();
-                return;
+        'play: {
+            // Keep `_stream` alive until playback finishes (dropping it cuts audio).
+            let Ok((_stream, handle)) = rodio::OutputStream::try_default() else {
+                break 'play; // no output device / audio server down — fall through to signal "ended"
+            };
+            let Ok(sink) = rodio::Sink::try_new(&handle) else {
+                break 'play;
+            };
+            sink.append(rodio::buffer::SamplesBuffer::new(1, sample_rate, samples));
+            // Play until it drains, but bail the instant a newer replay (or a new test)
+            // superseded us — that newer playback owns the "ended" signal.
+            while !sink.empty() {
+                if counter.load(Ordering::SeqCst) != generation {
+                    sink.stop();
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(40));
             }
-            std::thread::sleep(std::time::Duration::from_millis(40));
         }
+        // Finished draining, OR no output device was available — either way nothing of ours is
+        // sounding now, so signal "ended" if we're still current. Without the failure path emitting
+        // here, a device-acquire failure left the button stuck on "Stop" with no audio until the
+        // frontend's duration fallback fired.
         if counter.load(Ordering::SeqCst) == generation {
             let _ = app.emit("audio://test-play-ended", ());
         }
