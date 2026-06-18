@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type DependencyList } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
@@ -19,18 +19,17 @@ import AppRules from "@/screens/AppRules";
 import Statistics from "@/screens/Statistics";
 import Settings from "@/screens/Settings";
 
-// Bridges overlay → main-window navigation: the chip calls show_main_at_screen, which
-// focuses this window and emits `app://navigate`; here (inside the router) we turn
-// that into a route change. Must live within <HashRouter> to use useNavigate.
-function NavigationBridge() {
-  const navigate = useNavigate();
+// Subscribe to a Tauri event for the component's lifetime via the StrictMode-safe cancelled-guard.
+// React StrictMode (dev) mounts → unmounts → remounts and runs the cleanup BEFORE the listen()
+// promise resolves; without the guard the first listener is never removed and a second is added, so
+// every event fires its handler twice (double sound + duplicate sessions). `subscribe` returns the
+// unlisten fn; re-subscribes when `deps` change. (deps drive the effect; `subscribe` is recreated
+// each render so it's intentionally excluded.)
+function useTauriListener(subscribe: () => Promise<() => void>, deps: DependencyList) {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    void onAppNavigate((screen) => {
-      const path = SCREEN_PATH[screen as keyof typeof SCREEN_PATH];
-      if (path) navigate(path);
-    }).then((u) => {
+    void subscribe().then((u) => {
       if (cancelled) u();
       else unlisten = u;
     });
@@ -38,7 +37,23 @@ function NavigationBridge() {
       cancelled = true;
       unlisten?.();
     };
-  }, [navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
+// Bridges overlay → main-window navigation: the chip calls show_main_at_screen, which
+// focuses this window and emits `app://navigate`; here (inside the router) we turn
+// that into a route change. Must live within <HashRouter> to use useNavigate.
+function NavigationBridge() {
+  const navigate = useNavigate();
+  useTauriListener(
+    () =>
+      onAppNavigate((screen) => {
+        const path = SCREEN_PATH[screen as keyof typeof SCREEN_PATH];
+        if (path) navigate(path);
+      }),
+    [navigate],
+  );
   return null;
 }
 
@@ -82,55 +97,22 @@ export default function App() {
   }, []);
 
   // Global dictation triggers (CLI / hotkeys) → start/stop the right mode.
-  // The cancelled flag is essential: React StrictMode (dev) mounts → unmounts →
-  // remounts, and the cleanup runs before `listen()` resolves. Without it the
-  // first listener is never removed and a second is added, so every trigger
-  // fires dictate() twice (double sound + duplicate backend sessions).
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-    void onTrigger((e) => dictate(e.profileId, e.action)).then((u) => {
-      if (cancelled) u();
-      else unlisten = u;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
+  useTauriListener(() => onTrigger((e) => dictate(e.profileId, e.action)), []);
 
   // Dictation actions requested from the overlay chip's quick-launch (a separate
-  // window) arrive as `overlay://action` events — run them here (same StrictMode guard).
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-    void onOverlayAction((kind) => runOverlayAction(kind)).then((u) => {
-      if (cancelled) u();
-      else unlisten = u;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
+  // window) arrive as `overlay://action` events — run them here.
+  useTauriListener(() => onOverlayAction((kind) => runOverlayAction(kind)), []);
 
   // After the machine resumes from suspend, the mic/WebSocket of any in-flight
   // dictation is dead — reset it so the chip doesn't hang at "finalizing…". (Rust has
   // already rebuilt the hotkey backend by the time this fires.)
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-    void onSystemResumed(() => {
-      if (useApp.getState().status !== "idle") void cancelLive();
-    }).then((u) => {
-      if (cancelled) u();
-      else unlisten = u;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
+  useTauriListener(
+    () =>
+      onSystemResumed(() => {
+        if (useApp.getState().status !== "idle") void cancelLive();
+      }),
+    [],
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
