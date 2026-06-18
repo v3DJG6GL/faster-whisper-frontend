@@ -876,7 +876,9 @@ export async function stopLive(): Promise<void> {
   // Streaming: server flushes + drains. Batch: transcription runs now. Either way the
   // `closed` event then moves us "transcribing" → "injecting" (while the text is
   // written out) → "idle" — so the chip shows progress the whole way through.
-  useApp.getState().setDictation({ status: "transcribing" });
+  // Clear `warming` too: stopping DURING warm-up (before the mic went live) otherwise
+  // left the chip stuck on "warming up…" instead of showing "finalizing…".
+  useApp.getState().setDictation({ status: "transcribing", warming: false });
   // Guard against a `closed` that never comes (socket died mid-finalize).
   armStuckWatchdog();
   if (activeEndpoint === "batch") await stopRecord();
@@ -909,7 +911,8 @@ export async function cancelLive(): Promise<void> {
   useApp
     .getState()
     // Cancelled → no done marker (outcome "none"); clear any pending per-phrase pulse.
-    .setDictation({ status: "idle", partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", lastInsert: null });
+    // `warming: false` so a cancel during warm-up doesn't strand the chip on "warming up…".
+    .setDictation({ status: "idle", warming: false, partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", lastInsert: null });
   const endpoint = activeEndpoint;
   activeEndpoint = null;
   try {
