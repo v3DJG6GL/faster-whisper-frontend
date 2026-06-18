@@ -211,6 +211,10 @@ function AudioTab() {
             onChange={(v) => updateSettings({ microphoneId: v === "default" ? null : v })}
             options={options}
             className="w-56"
+            // Locked during a test: switching the device mid-test re-runs the capture effect,
+            // racing the old fire-and-forget stop against the new start (the late stop could tear
+            // down the freshly-opened device → dead meter). Stop the test to change the mic.
+            disabled={testing}
           />
           <Button variant="ghost" size="sm" title="Refresh devices" onClick={() => void refresh()}>
             <RefreshCw className="size-4" />
