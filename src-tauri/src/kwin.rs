@@ -84,8 +84,16 @@ pub fn reconfigure() {
         .status();
 }
 
+/// Serializes the General/rules read-modify-write below. The chip (overlay::kwin, on dictation
+/// start) and the quick-add window (quickadd::kwin, on summon) install on separate detached
+/// threads; without this, a first-install interleave would let both read the same `rules=` list
+/// and the second writer would clobber the first's append — dropping one window's rule. Held only
+/// across synchronous shell-outs (no .await, no nested lock), so it can't deadlock.
+static RULES_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Merge `group` into General/rules, preserving any existing user (and sibling) rules.
 pub fn merge_general(writer: &str, reader: &str, group: &str) {
+    let _guard = RULES_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut list: Vec<String> = read_key(reader, "General", "rules")
         .map(|s| {
             s.split(',')
