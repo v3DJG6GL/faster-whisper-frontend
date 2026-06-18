@@ -319,6 +319,17 @@ mod imp {
         for &code in &held {
             held_keys.set(code, false);
         }
+        // Stop any push-to-talk session this keyboard had active: its key-release (which
+        // normally emits "stop") can never arrive now the device is gone, so without this a
+        // hold-to-talk dictation started here would stay stuck running. Latch/quick-add are
+        // rising-edge, so their dangling `active` flag dies with the task — only Hold leaks.
+        for i in 0..chords.len() {
+            if active[i] {
+                if let ChordAction::Dictate { profile_id, activation: ActivationType::Hold } = &chords[i].action {
+                    emit(&app, profile_id, "stop");
+                }
+            }
+        }
     }
 
     /// Map a binding's `event.code` list to evdev keys (carrying left/right + AltGr).
