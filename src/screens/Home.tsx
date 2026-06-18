@@ -9,7 +9,7 @@ import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/UsageStats";
 import { startLive, stopLive, cancelLive } from "@/lib/streaming";
-import { homeTargetProfile } from "@/lib/dictation";
+import { backendForProfile, homeTargetProfile } from "@/lib/dictation";
 import type { Backend, Profile } from "@/lib/types";
 
 const GLYPH = { hold: Mic, latch: Hand } as const;
@@ -89,8 +89,7 @@ export default function Home() {
   // style. It targets the profile picked below — falling back to the first enabled
   // latch profile, then any enabled — and uses that profile's backend + overrides.
   const target = homeTargetProfile(profiles, homeProfileId);
-  const headerBackend: Backend | undefined =
-    backends.find((b) => b.id === target?.backendId) ?? backends[0];
+  const headerBackend: Backend | undefined = backendForProfile(target, backends);
 
   // "Busy" = any non-idle state; the hero button is a stop/cancel while busy. We keep
   // a graceful stop for "listening" (deliver the last words) but force a hard reset

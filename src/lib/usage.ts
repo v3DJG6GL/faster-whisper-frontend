@@ -10,7 +10,7 @@
 
 import { useApp } from "./store";
 import { isTauri, getUsageStats } from "./api";
-import { homeTargetProfile } from "./dictation";
+import { backendForProfile, homeTargetProfile } from "./dictation";
 import { effectiveServerKind } from "./serverKind";
 import type { Backend } from "./types";
 
@@ -28,7 +28,7 @@ export function activeStatsBackend(s = useApp.getState()): Backend | undefined {
   const profile = s.activeProfile
     ? s.profiles.find((p) => p.id === s.activeProfile)
     : homeTargetProfile(s.profiles, s.settings.homeProfileId);
-  return s.backends.find((b) => b.id === profile?.backendId) ?? s.backends[0];
+  return backendForProfile(profile, s.backends);
 }
 
 /** The client's local-midnight epoch (seconds) — the server's "today" boundary. */

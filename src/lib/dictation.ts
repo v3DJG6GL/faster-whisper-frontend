@@ -6,7 +6,7 @@
 import { useApp } from "./store";
 import { startLive, stopLive, cancelLive } from "./streaming";
 import { showQuickAdd } from "./api";
-import type { Profile } from "./types";
+import type { Backend, Profile } from "./types";
 
 export type TriggerAction = "start" | "stop" | "toggle";
 
@@ -30,7 +30,7 @@ export function dictate(profileId: string, action: TriggerAction): void {
   const s = useApp.getState();
   const profile = s.profiles.find((p) => p.id === profileId);
   if (!profile || !profile.enabled) return;
-  const backend = s.backends.find((b) => b.id === profile.backendId) ?? s.backends[0];
+  const backend = backendForProfile(profile, s.backends);
   if (!backend) return;
   const micId = s.settings.microphoneId;
 
@@ -49,6 +49,16 @@ export function dictate(profileId: string, action: TriggerAction): void {
     if (isBusy()) stopOrCancel();
     else start();
   }
+}
+
+/** The Backend a Profile dictates through: its configured `backendId`, falling back to
+ *  the first Backend (undefined only when there are no Backends at all). The single home
+ *  for this resolution + its silent first-Backend fallback. */
+export function backendForProfile(
+  profile: Profile | null | undefined,
+  backends: Backend[],
+): Backend | undefined {
+  return backends.find((b) => b.id === profile?.backendId) ?? backends[0];
 }
 
 /** The Profile the Home button + the overlay quick-launch target: the configured
@@ -88,7 +98,7 @@ export function runOverlayAction(kind: string): void {
       return;
     }
     const target = homeTargetProfile(s.profiles, s.settings.homeProfileId);
-    const backend = s.backends.find((b) => b.id === target?.backendId) ?? s.backends[0];
+    const backend = backendForProfile(target, s.backends);
     if (!backend) return;
     s.setDictation({ activeProfile: target?.id ?? null });
     void startLive(backend, s.settings.microphoneId, "latch", target);

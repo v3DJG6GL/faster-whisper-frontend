@@ -10,7 +10,7 @@
 import { useApp } from "./store";
 import { isTauri, showOverlay, hideOverlay, setTrayState, playCue } from "./api";
 import { chipTagFor } from "./profileTag";
-import { homeTargetProfile } from "./dictation";
+import { backendForProfile, homeTargetProfile } from "./dictation";
 import { activeStatsBackend } from "./usage";
 import { fmtCompact, fmtDuration } from "./format";
 import type { DictationStatus, OverlayStatsMetric, UsageStats } from "./types";
@@ -68,7 +68,7 @@ export async function initOverlayController(): Promise<void> {
           ? homeTargetProfile(state.profiles, state.settings.homeProfileId)
           : undefined;
       if (rec.showProfileOnOverlay && chipProfile) {
-        const backend = state.backends.find((b) => b.id === chipProfile.backendId) ?? state.backends[0];
+        const backend = backendForProfile(chipProfile, state.backends);
         chip = {
           profileTag: chipTagFor(chipProfile),
           // Effective language: a set per-Profile override wins; else the Backend's.
