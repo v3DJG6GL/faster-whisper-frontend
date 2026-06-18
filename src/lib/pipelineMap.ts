@@ -57,7 +57,6 @@ export function applyMap(text: string, rows: MapRow[]): string {
   const lookup = new Map<string, string>();
   for (const [k, v] of map) lookup.set(k.toLowerCase(), v);
   const keys = [...map.keys()].sort((a, b) => b.length - a.length); // longest first → phrases win
-  const lower = text.toLowerCase();
 
   let out = "";
   let i = 0;
@@ -65,7 +64,10 @@ export function applyMap(text: string, rows: MapRow[]): string {
     let hit = "";
     for (const key of keys) {
       const kl = key.toLowerCase();
-      if (!lower.startsWith(kl, i)) continue;
+      // Compare the slice at the CURRENT position rather than a once-lowercased whole string:
+      // a char whose lowercase changes length (e.g. Turkish "İ" → "i̇") would otherwise desync the
+      // original-case index `i` from a precomputed lowercased string and silently miss every later key.
+      if (text.slice(i, i + key.length).toLowerCase() !== kl) continue;
       const before = i > 0 ? text[i - 1] : "";
       const after = i + key.length < text.length ? text[i + key.length] : "";
       // \b on each side: a boundary sits where one neighbour is a word char and the other isn't.
