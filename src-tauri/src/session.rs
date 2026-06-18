@@ -229,6 +229,13 @@ fn rms(samples: &[f32]) -> f32 {
     (sum / samples.len() as f32).sqrt()
 }
 
+/// One EMA step of the level meter (gain 6.0, clamp, 0.7/0.3 smoothing) — mirrors the
+/// capture meter. Centralized so the coefficients stay in one place across both capture
+/// loops' per-sample-format arms (they were copied verbatim 6×).
+fn smooth(prev: f32, mono: &[f32]) -> f32 {
+    prev * 0.7 + (rms(mono) * 6.0).clamp(0.0, 1.0) * 0.3
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_capture(
     app: AppHandle,
@@ -270,7 +277,7 @@ fn run_capture(
                 &config,
                 move |data: &[f32], _| {
                     let mono = downmix(data, channels, |s| s);
-                    sm = sm * 0.7 + (rms(&mono) * 6.0).clamp(0.0, 1.0) * 0.3;
+                    sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     let _ = tx.send(mono);
                 },
@@ -286,7 +293,7 @@ fn run_capture(
                 &config,
                 move |data: &[i16], _| {
                     let mono = downmix(data, channels, |s| s as f32 / 32768.0);
-                    sm = sm * 0.7 + (rms(&mono) * 6.0).clamp(0.0, 1.0) * 0.3;
+                    sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     let _ = tx.send(mono);
                 },
@@ -302,7 +309,7 @@ fn run_capture(
                 &config,
                 move |data: &[u16], _| {
                     let mono = downmix(data, channels, |s| (s as f32 - 32768.0) / 32768.0);
-                    sm = sm * 0.7 + (rms(&mono) * 6.0).clamp(0.0, 1.0) * 0.3;
+                    sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     let _ = tx.send(mono);
                 },
@@ -549,7 +556,7 @@ fn run_record_capture(
                 &config,
                 move |data: &[f32], _| {
                     let mono = downmix(data, channels, |s| s);
-                    sm = sm * 0.7 + (rms(&mono) * 6.0).clamp(0.0, 1.0) * 0.3;
+                    sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
                     if !bytes.is_empty() {
@@ -571,7 +578,7 @@ fn run_record_capture(
                 &config,
                 move |data: &[i16], _| {
                     let mono = downmix(data, channels, |s| s as f32 / 32768.0);
-                    sm = sm * 0.7 + (rms(&mono) * 6.0).clamp(0.0, 1.0) * 0.3;
+                    sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
                     if !bytes.is_empty() {
@@ -593,7 +600,7 @@ fn run_record_capture(
                 &config,
                 move |data: &[u16], _| {
                     let mono = downmix(data, channels, |s| (s as f32 - 32768.0) / 32768.0);
-                    sm = sm * 0.7 + (rms(&mono) * 6.0).clamp(0.0, 1.0) * 0.3;
+                    sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
                     if !bytes.is_empty() {
