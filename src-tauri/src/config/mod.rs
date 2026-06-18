@@ -713,7 +713,6 @@ pub mod keys {
         Ok(())
     }
 
-    #[allow(dead_code)] // read path is wired in M1 (backend connectivity)
     pub fn get(backend_id: &str) -> Option<String> {
         entry(backend_id).ok()?.get_password().ok()
     }
