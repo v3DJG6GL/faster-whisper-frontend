@@ -542,6 +542,13 @@ export default function Dictionary() {
     setSelectedId(candidates[0]?.id ?? null);
   }, [candidates, selectedId]);
   const backend = candidates.find((b) => b.id === selectedId) ?? null;
+  // Mirror of selectedId for the imperative load() ([]-deps): after its await it drops a
+  // stale result if the user switched Backend mid-fetch (else it clobbers the new backend's
+  // rules + the user's edits). The load-on-change effect below uses its own `cancelled` flag.
+  const selectedIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   const [loading, setLoading] = useState(false);
   const [fetchRes, setFetchRes] = useState<PipelineFetch | null>(null);
@@ -565,6 +572,7 @@ export default function Dictionary() {
     setLoading(true);
     setResult(null);
     const res = await getPipelineRules({ serverUrl: b.serverUrl, backendId: b.id });
+    if (b.id !== selectedIdRef.current) return; // Backend switched mid-load → don't clobber it.
     setFetchRes(res);
     const list = res.ok ? res.state?.rules ?? [] : [];
     setRules(list);
@@ -572,6 +580,7 @@ export default function Dictionary() {
     setEdits(fresh);
     setBase(JSON.parse(JSON.stringify(fresh)));
     getRecentWords({ serverUrl: b.serverUrl, backendId: b.id }).then((rw) => {
+      if (b.id !== selectedIdRef.current) return;
       setRecentWords(rw.words ?? []);
       setRecentMax(rw.max ?? undefined);
     });
