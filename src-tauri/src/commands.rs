@@ -337,6 +337,13 @@ pub fn play_mic_test(
     Ok(())
 }
 
+/// Stop an in-flight mic-test replay (no-op if nothing is playing): bump the playback generation
+/// so the playing thread sees it's superseded and stops. Does NOT start a new playback.
+#[tauri::command]
+pub fn stop_mic_test_playback(playback: State<MicPlayback>) {
+    playback.0.fetch_add(1, Ordering::SeqCst);
+}
+
 #[tauri::command]
 pub fn start_stream(
     app: AppHandle,

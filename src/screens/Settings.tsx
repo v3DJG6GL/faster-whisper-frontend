@@ -9,6 +9,7 @@ import {
   startMicTest,
   stopMicTest,
   playMicTest,
+  stopMicTestPlayback,
   onMicTestPlayEnded,
   onAudioLevel,
   evdevStatus,
@@ -150,6 +151,16 @@ function AudioTab() {
     }, clipSecsRef.current * 1000 + 1000);
   }, []);
 
+  // Stop an in-flight replay — the Replay button doubles as a Stop while it's playing.
+  const stopPlayback = useCallback(() => {
+    void stopMicTestPlayback();
+    setPlaying(false);
+    if (playTimerRef.current != null) {
+      clearTimeout(playTimerRef.current);
+      playTimerRef.current = null;
+    }
+  }, []);
+
   // Stop the test and, if it captured something, enable + play the replay. Shared by the manual
   // Stop button AND the 15s auto-stop, so both offer replay. try/finally: always flip testing off
   // even if the stop invoke rejects, so the button can't stick on "Stop".
@@ -238,12 +249,11 @@ function AudioTab() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => replay()}
-                disabled={playing}
-                title="Replay the last test recording"
+                onClick={() => (playing ? stopPlayback() : replay())}
+                title={playing ? "Stop playback" : "Replay the last test recording"}
               >
-                <Play className={playing ? "size-3.5 animate-pulse" : "size-3.5"} />{" "}
-                {playing ? "Playing…" : "Replay"}
+                {playing ? <Square className="size-3.5" /> : <Play className="size-3.5" />}{" "}
+                {playing ? "Stop" : "Replay"}
               </Button>
             )}
           </div>

@@ -244,6 +244,12 @@ export async function playMicTest(): Promise<void> {
   await invoke("play_mic_test");
 }
 
+/** Stop an in-flight mic-test replay (no-op if nothing is playing). */
+export async function stopMicTestPlayback(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("stop_mic_test_playback");
+}
+
 /** Fires when a mic-test replay finishes (and wasn't superseded), so the UI can
  *  clear its "playing" state. Returns an unlisten fn. */
 export async function onMicTestPlayEnded(cb: () => void): Promise<() => void> {
