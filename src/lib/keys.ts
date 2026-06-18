@@ -30,12 +30,6 @@ export const MODIFIER_CODES = new Set<string>([
   "AltLeft", "AltRight", "MetaLeft", "MetaRight",
 ]);
 
-/** Is this `event.key` a bare modifier (no real key pressed yet)? */
-export function isModifierKey(key: string): boolean {
-  return key === "Control" || key === "Shift" || key === "Alt" ||
-    key === "Meta" || key === "AltGraph";
-}
-
 /**
  * Map a `KeyboardEvent.code` to the plugin's accelerator key token, or null if it
  * can't be a global-shortcut key. Letters → "H", digits → "1", everything else is

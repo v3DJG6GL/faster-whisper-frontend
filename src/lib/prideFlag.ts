@@ -26,9 +26,6 @@ export const PRIDE_FLAG_SVG =
 /** data: URI for use as an <img> src or a canvas Image. */
 export const PRIDE_FLAG_URI = `data:image/svg+xml,${encodeURIComponent(PRIDE_FLAG_SVG)}`;
 
-/** The flag's intrinsic aspect (width / height) — for keeping it un-stretched. */
-export const PRIDE_FLAG_ASPECT = 1200 / 762;
-
 /** Plain 6-stripe rainbow Pride flag, top→bottom (Gay_Pride_Flag.svg). Used for the
  *  WAVEFORM reveal: it's uniform horizontally, so one vertical gradient fills the whole
  *  meter seamlessly — no tiling, no chevron to duplicate. (The sidebar mark keeps the
