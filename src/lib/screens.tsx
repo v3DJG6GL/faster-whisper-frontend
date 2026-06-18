@@ -17,12 +17,12 @@ export interface ScreenDef {
 
 export const SCREENS: ScreenDef[] = [
   { id: "home", label: "Home", path: "/", icon: Home, end: true },
+  { id: "statistics", label: "Statistics", path: "/statistics", icon: BarChart3 },
   { id: "transcribe", label: "Transcribe", path: "/transcribe", icon: AudioLines },
   { id: "profiles", label: "Profiles", path: "/profiles", icon: Command },
   { id: "backends", label: "Backends", path: "/backends", icon: Server },
   { id: "dictionary", label: "Dictionary", path: "/dictionary", icon: BookA },
   { id: "app-rules", label: "App rules", path: "/app-rules", icon: AppWindow },
-  { id: "statistics", label: "Statistics", path: "/statistics", icon: BarChart3 },
   { id: "settings", label: "Settings", path: "/settings", icon: Settings },
 ];
 
