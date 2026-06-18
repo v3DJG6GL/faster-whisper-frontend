@@ -25,6 +25,17 @@ pub fn is_wayland() -> bool {
     }
 }
 
+/// Strip C0/C1 control characters (except Tab, LF, CR) from text bound for injection, so a
+/// malicious / compromised / garbled transcription server can't smuggle terminal-escape or
+/// other control sequences onto the clipboard or into a typed paste. Tab/newline/CR are kept
+/// (they're legitimate keystrokes). The Wayland direct-typing paths already drop controls;
+/// this brings the paste / clipboard / X11-direct paths to the same posture.
+pub fn sanitize_injected(text: &str) -> String {
+    text.chars()
+        .filter(|&c| !c.is_control() || c == '\t' || c == '\n' || c == '\r')
+        .collect()
+}
+
 pub fn inject(
     text: &str,
     method: &str,
@@ -208,4 +219,19 @@ fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
         let _ = enigo.key(*m, Direction::Release);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_injected;
+
+    #[test]
+    fn sanitize_drops_controls_but_keeps_tab_newline_cr() {
+        // Printable text + Tab/LF/CR survive unchanged.
+        assert_eq!(sanitize_injected("hello\tworld\nline\r"), "hello\tworld\nline\r");
+        // ESC, BEL, NUL, DEL, and a C1 control are stripped; the surrounding text stays.
+        assert_eq!(sanitize_injected("a\x1bb\x07c\0d\x7fe\u{0085}f"), "abcdef");
+        // Non-ASCII printable (incl. astral) is untouched.
+        assert_eq!(sanitize_injected("café 😀"), "café 😀");
+    }
 }
