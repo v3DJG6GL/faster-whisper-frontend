@@ -288,7 +288,7 @@ function settleToIdleAfterInjection(startedAt: number): void {
     const wait = Math.max(0, MIN_INJECT_VISIBLE_MS - (performance.now() - startedAt));
     setTimeout(() => {
       if (useApp.getState().status === "injecting") {
-        useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome() });
+        useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
       }
     }, wait);
   });
@@ -590,7 +590,7 @@ async function ensureListeners(): Promise<void> {
 
       const cfg = insertCfg;
       if (!cfg || cfg.timing === "off") {
-        setDictation({ status: "idle", sessionOutcome: endOutcome() });
+        setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
         return;
       }
 
@@ -617,7 +617,7 @@ async function ensureListeners(): Promise<void> {
           void injectChain.then(() => {
             if (beganInjection) void endInjection();
             if (useApp.getState().status === "transcribing") {
-              useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome() });
+              useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
             }
           });
           return;
@@ -632,7 +632,7 @@ async function ensureListeners(): Promise<void> {
         // bankedDoc holds any documents finalized before a hard break this session.
         const text = (bankedDoc + committedDoc).trim();
         if (!text) {
-          setDictation({ status: "idle", sessionOutcome: endOutcome() });
+          setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
           return;
         }
         setDictation({ status: "injecting" });
@@ -714,7 +714,7 @@ function flashError(message: string): void {
   errorClearTimer = setTimeout(() => {
     errorClearTimer = null;
     if (useApp.getState().status === "error") {
-      useApp.getState().setDictation({ status: "idle", dictationError: null });
+      useApp.getState().setDictation({ status: "idle", dictationError: null, activeProfile: null });
     }
   }, ERROR_LINGER_MS);
 }
@@ -930,7 +930,7 @@ export async function cancelLive(): Promise<void> {
     .getState()
     // Cancelled → no done marker (outcome "none"); clear any pending per-phrase pulse.
     // `warming: false` so a cancel during warm-up doesn't strand the chip on "warming up…".
-    .setDictation({ status: "idle", warming: false, partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", lastInsert: null });
+    .setDictation({ status: "idle", warming: false, partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", lastInsert: null, activeProfile: null });
   const endpoint = activeEndpoint;
   activeEndpoint = null;
   try {
