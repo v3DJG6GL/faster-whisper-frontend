@@ -40,13 +40,18 @@ function rank(suggestions: string[], query: string): string[] {
 function Highlight({ text, query }: { text: string; query: string }): ReactNode {
   const q = query.trim();
   if (!q) return text;
-  const i = text.toLowerCase().indexOf(q.toLowerCase());
-  if (i < 0) return text;
+  // Match against the original text (case-insensitive), not text.toLowerCase(): toLowerCase is not
+  // length-preserving (Turkish İ → "i̇" is 1→2 units), so indexing the lowercased string while
+  // slicing the original shifts the bold span. A regex on `text` keeps the index and matched length
+  // in the same string space; a non-match just renders unbolded.
+  const m = text.match(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+  if (!m || m.index === undefined) return text;
+  const end = m.index + m[0].length;
   return (
     <>
-      {text.slice(0, i)}
-      <b className="font-semibold">{text.slice(i, i + q.length)}</b>
-      {text.slice(i + q.length)}
+      {text.slice(0, m.index)}
+      <b className="font-semibold">{text.slice(m.index, end)}</b>
+      {text.slice(end)}
     </>
   );
 }
