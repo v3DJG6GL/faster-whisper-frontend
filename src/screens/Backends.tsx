@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Plus, Server, Pencil, Copy, Trash2, Plug, Loader2, Check, AlertTriangle } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, Labeled, PageHeader, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
+import { Badge, Button, Card, DisclosureToggle, Labeled, PageHeader, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
@@ -226,19 +226,14 @@ function Editor({
       </Labeled>
 
       <div className="mt-5">
-        <button
-          type="button"
-          onClick={() => setShowDecode((v) => !v)}
-          className="ring-signal inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium text-dim hover:text-text"
-        >
-          <span className={cn("transition-transform", showDecode && "rotate-90")}>›</span>
+        <DisclosureToggle open={showDecode} onToggle={() => setShowDecode((v) => !v)}>
           Decode defaults
           {b.decodeOverrides && Object.keys(b.decodeOverrides).length ? (
             <span className="text-accent">· set</span>
           ) : (
             <span className="text-faint">· inherit server</span>
           )}
-        </button>
+        </DisclosureToggle>
         {showDecode && (
           <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
             <p className="mb-3 text-[12px] text-dim">

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { RotateCcw, Info, Eraser } from "lucide-react";
-import { Segmented, TextInput, SectionLabel } from "@/components/ui";
+import { DisclosureToggle, Segmented, TextInput, SectionLabel } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { DecodeOverrides, InheritedValues } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
@@ -226,14 +226,9 @@ export function DecodeFields({
 
       {grid(FIELDS.filter((f) => f.section === "primary"))}
 
-      <button
-        type="button"
-        onClick={() => setShowAdvanced((v) => !v)}
-        className="ring-signal mt-4 inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium text-dim hover:text-text"
-      >
-        <span className={cn("transition-transform", showAdvanced && "rotate-90")}>›</span>
+      <DisclosureToggle open={showAdvanced} onToggle={() => setShowAdvanced((v) => !v)} className="mt-4">
         Advanced decode params
-      </button>
+      </DisclosureToggle>
 
       {showAdvanced && (
         <div className="mt-4 space-y-5">

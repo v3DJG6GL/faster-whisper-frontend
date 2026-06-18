@@ -62,6 +62,35 @@ export function Badge({ children, tone }: { children: ReactNode; tone?: "accent"
   );
 }
 
+/** A text "›" disclosure toggle that rotates 90° when open (used to reveal advanced/override
+ *  sections). The chevron + base button styling are single-sourced; pass `className` for per-site
+ *  spacing (e.g. mt-4) and `children` for the label (and any trailing "· set" suffix). */
+export function DisclosureToggle({
+  open,
+  onToggle,
+  className,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={cn(
+        "ring-signal inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium text-dim hover:text-text",
+        className,
+      )}
+    >
+      <span className={cn("transition-transform", open && "rotate-90")}>›</span>
+      {children}
+    </button>
+  );
+}
+
 /** A form field with a small dim label above its control. */
 export function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (

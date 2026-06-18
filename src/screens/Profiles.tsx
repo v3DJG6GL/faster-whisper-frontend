@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Plus, Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, Labeled, PageHeader, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
+import { Badge, Button, Card, DisclosureToggle, Labeled, PageHeader, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { DecodeFields } from "@/components/DecodeFields";
@@ -169,19 +169,14 @@ function Editor({
         </Labeled>
       </div>
 
-      <button
-        type="button"
-        onClick={() => setShowOverrides((v) => !v)}
-        className="ring-signal mt-5 inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium text-dim hover:text-text"
-      >
-        <span className={cn("transition-transform", showOverrides && "rotate-90")}>›</span>
+      <DisclosureToggle open={showOverrides} onToggle={() => setShowOverrides((v) => !v)} className="mt-5">
         Overrides{" "}
         {p.language || p.prompt || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) ? (
           <span className="text-accent">· set</span>
         ) : (
           <span className="text-faint">· inherit backend</span>
         )}
-      </button>
+      </DisclosureToggle>
 
       {showOverrides && (
         <>
