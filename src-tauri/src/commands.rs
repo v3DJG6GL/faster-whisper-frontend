@@ -270,9 +270,14 @@ pub fn start_mic_test(
     // Starting a fresh test silences any lingering replay (the bump makes the
     // playback thread see a newer generation and stop).
     playback.0.fetch_add(1, Ordering::SeqCst);
+    let mut guard = state.0.lock().map_err(|_| "audio state poisoned")?;
+    // Stop any previous capture FIRST — dropping the handle joins its thread, so its cpal
+    // callback can't still be appending the old device's samples while the new capture clears +
+    // re-stamps the shared clip (which would interleave two devices' audio under one rate stamp,
+    // garbling the replay). Mirrors start_stream/start_record's stop-old-before-start-new order.
+    *guard = None;
     let handle = audio::capture::start_level_meter(app, device_id, clip.0.clone())?;
-    // Replacing the Option drops (and stops) any previous capture.
-    *state.0.lock().map_err(|_| "audio state poisoned")? = Some(handle);
+    *guard = Some(handle);
     Ok(())
 }
 
