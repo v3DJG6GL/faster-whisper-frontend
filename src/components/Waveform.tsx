@@ -1,25 +1,17 @@
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/cn";
-import { PRIDE_FLAG_URI, PRIDE_FLAG_ASPECT } from "@/lib/prideFlag";
+import { PRIDE_RAINBOW_STOPS } from "@/lib/prideFlag";
 
 /**
  * The signature motif — a live level meter rendered on canvas. Used both as the
  * dictation chip's voice indicator and as ambient instrument readouts across the
  * app. Reacts to `level` (0..1 RMS); idles with a gentle breathing baseline.
  *
- * `pride`: a quiet solidarity touch — while you HOVER the meter, the bars flicker
- * between their normal colour and the Intersex-Inclusive Progress Pride flag (kept at
- * its true proportions, repeating across the bars), settling on the flag; it fades
- * back out when you leave. Off by default; honours prefers-reduced-motion (no flicker).
+ * `pride`: a quiet solidarity touch — while the meter is ACTIVE (dictating) and you
+ * HOVER it, the bars flicker between their normal colour and the rainbow Pride flag,
+ * settling on it; they fade back when you leave or the session ends. No effect at idle.
+ * Off by default; honours prefers-reduced-motion (no flicker).
  */
-
-// Shared, lazily-loaded flag image (one for all meters). Used to bake a repeating,
-// correctly-proportioned CanvasPattern per meter.
-let flagImg: HTMLImageElement | null = null;
-if (typeof Image !== "undefined") {
-  flagImg = new Image();
-  flagImg.src = PRIDE_FLAG_URI;
-}
 
 // Flicker envelope (fraction-of-duration → flag opacity). Dips toward the normal colour,
 // spikes toward the flag, then settles fully on the flag — a tube-warming-up flicker.
@@ -41,16 +33,18 @@ function flicker(elapsedMs: number): number {
   return 1;
 }
 
-function buildFlagPattern(ctx: CanvasRenderingContext2D, h: number): CanvasPattern | null {
-  if (!flagImg || !flagImg.complete || flagImg.naturalWidth === 0) return null;
-  const tileW = Math.max(1, Math.round(h * PRIDE_FLAG_ASPECT));
-  const off = document.createElement("canvas");
-  off.width = tileW;
-  off.height = Math.max(1, Math.round(h));
-  const octx = off.getContext("2d");
-  if (!octx) return null;
-  octx.drawImage(flagImg, 0, 0, off.width, off.height);
-  return ctx.createPattern(off, "repeat");
+// A vertical 6-stripe rainbow gradient (hard bands) spanning the meter height. The plain
+// Pride flag is uniform horizontally, so one gradient fills every bar identically — no
+// tiling, no stretched chevron. Each bar is a centred window into it: taller spikes reveal
+// more of the flag (toward red at the top, violet at the bottom).
+function buildRainbow(ctx: CanvasRenderingContext2D, h: number): CanvasGradient {
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  const n = PRIDE_RAINBOW_STOPS.length;
+  PRIDE_RAINBOW_STOPS.forEach((c, i) => {
+    g.addColorStop(i / n, c);
+    g.addColorStop((i + 1) / n, c);
+  });
+  return g;
 }
 
 export function Waveform({
@@ -112,10 +106,11 @@ export function Waveform({
     let color = "#ff9e2c";
     let raf = 0;
     let running = false;
-    // Pride pattern (rebuilt on size change) + current flag-mix (0..1).
-    let pridePat: CanvasPattern | null = null;
-    let pridePatH = 0;
+    // Pride rainbow gradient (rebuilt on size change) + current flag-mix (0..1).
+    let prideGrad: CanvasGradient | null = null;
+    let prideGradH = 0;
     let prideMix = 0;
+    let prevEligible = false;
 
     const rr = (x: number, y: number, w: number, h: number, r: number) => {
       const rad = Math.min(r, w / 2, h / 2);
@@ -148,29 +143,29 @@ export function Waveform({
         colorDirtyRef.current = false;
       }
 
-      // Pride flag-mix: while hovered, flicker between colour and flag, settling on the
-      // flag; fade back out on leave. Off entirely unless the `pride` prop is set.
+      // Pride flag-mix: only while the meter is ACTIVE (dictating / finishing) — never at
+      // idle. While hovered, flicker between the normal colour and the rainbow, settling on
+      // it; fade back out on leave or when the session ends.
+      const prideEligible =
+        prideOnRef.current && (activeRef.current || processingRef.current);
+      // Becoming active while already hovering should still play the flicker from the top.
+      if (prideEligible && !prevEligible && hoverRef.current) hoverStartRef.current = performance.now();
+      prevEligible = prideEligible;
       let prideAnimating = false;
-      if (prideOnRef.current) {
-        if (hoverRef.current) {
-          const el = performance.now() - hoverStartRef.current;
-          prideMix = reduce ? 1 : flicker(el);
-          prideAnimating = !reduce && el < FLICKER_MS;
-        } else {
-          prideMix = reduce ? 0 : prideMix * 0.7; // quick fade back to the normal colour
-          if (prideMix < 0.01) prideMix = 0;
-          prideAnimating = prideMix > 0;
-        }
-        if (prideMix > 0) {
-          if (!pridePat || pridePatH !== h) {
-            pridePat = buildFlagPattern(ctx, h);
-            pridePatH = h;
-          }
-        }
+      if (prideEligible && hoverRef.current) {
+        const el = performance.now() - hoverStartRef.current;
+        prideMix = reduce ? 1 : flicker(el);
+        prideAnimating = !reduce && el < FLICKER_MS;
       } else {
-        prideMix = 0;
+        prideMix = reduce ? 0 : prideMix * 0.7; // quick fade back to the normal colour
+        if (prideMix < 0.01) prideMix = 0;
+        prideAnimating = prideMix > 0;
       }
-      const pat = prideMix > 0 ? pridePat : null;
+      if (prideMix > 0 && (!prideGrad || prideGradH !== h)) {
+        prideGrad = buildRainbow(ctx, h);
+        prideGradH = h;
+      }
+      const flag = prideMix > 0 ? prideGrad : null;
 
       const isActive = activeRef.current;
       const isProcessing = processingRef.current && !isActive;
@@ -227,9 +222,9 @@ export function Waveform({
         ctx.globalAlpha = baseAlpha * (1 - prideMix);
         ctx.fillStyle = color;
         ctx.fill();
-        if (pat) {
+        if (flag) {
           ctx.globalAlpha = baseAlpha * prideMix;
-          ctx.fillStyle = pat;
+          ctx.fillStyle = flag;
           ctx.fill();
         }
       }

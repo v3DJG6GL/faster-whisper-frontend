@@ -28,3 +28,16 @@ export const PRIDE_FLAG_URI = `data:image/svg+xml,${encodeURIComponent(PRIDE_FLA
 
 /** The flag's intrinsic aspect (width / height) — for keeping it un-stretched. */
 export const PRIDE_FLAG_ASPECT = 1200 / 762;
+
+/** Plain 6-stripe rainbow Pride flag, top→bottom (Gay_Pride_Flag.svg). Used for the
+ *  WAVEFORM reveal: it's uniform horizontally, so one vertical gradient fills the whole
+ *  meter seamlessly — no tiling, no chevron to duplicate. (The sidebar mark keeps the
+ *  fuller Intersex-Inclusive Progress flag above.) */
+export const PRIDE_RAINBOW_STOPS = [
+  "#E50000", // red
+  "#FF8D00", // orange
+  "#FFEE00", // yellow
+  "#028121", // green
+  "#004CFF", // blue
+  "#770088", // violet
+];
