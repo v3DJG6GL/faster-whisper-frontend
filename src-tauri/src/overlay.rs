@@ -21,8 +21,11 @@
 
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow};
 
-/// Logical size declared for the `overlay` window in tauri.conf.json.
-const CHIP_W: f64 = 680.0;
+/// Logical size declared for the `overlay` window in tauri.conf.json. The chip pill is
+/// centred in this (transparent, click-through) strip and capped to it; widened so a full
+/// readout (tag │ lang · mode │ stats │ target) plus up to ~6 quick-launch buttons fits
+/// on one line without the last button being clipped.
+const CHIP_W: f64 = 820.0;
 const CHIP_H: f64 = 132.0;
 /// A unique, stable window title the KDE rule matches on. Invisible to the user:
 /// the chip has no decorations and is hidden from the taskbar/switcher.
