@@ -52,7 +52,11 @@ function AudioTab() {
   const playTimerRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
-    setDevices(await listAudioDevices());
+    try {
+      setDevices(await listAudioDevices());
+    } catch (e) {
+      console.error("listing audio devices failed:", e); // keep prior list; don't float the rejection
+    }
   }, []);
 
   useEffect(() => {
@@ -85,7 +89,17 @@ function AudioTab() {
         return;
       }
       unlisten = un;
-      await startMicTest(microphoneId);
+      try {
+        await startMicTest(microphoneId);
+      } catch (e) {
+        // The mic failed to open (busy / unplugged / denied). Don't leave a silent dead meter
+        // with the button stuck on Stop — end the test (cleanup stops + unlistens).
+        console.error("mic test failed to start:", e);
+        if (active) {
+          setMicWarming(false);
+          setTesting(false);
+        }
+      }
     })();
     return () => {
       active = false;
@@ -146,8 +160,12 @@ function AudioTab() {
       setTesting(true);
       return;
     }
-    const secs = await stopMicTest();
-    setTesting(false);
+    let secs = 0;
+    try {
+      secs = await stopMicTest();
+    } finally {
+      setTesting(false); // always flip off, even if the stop invoke rejects, so the button isn't stuck on Stop
+    }
     if (secs > 0.2) {
       setHasClip(true);
       clipSecsRef.current = secs;
@@ -377,7 +395,13 @@ export default function Settings() {
   const customRecDir = s.recording.recordingsDir;
   const [recDirDisplay, setRecDirDisplay] = useState<string | null>(null);
   useEffect(() => {
-    void recordingsDirPath(customRecDir).then(setRecDirDisplay);
+    void recordingsDirPath(customRecDir)
+      .then(setRecDirDisplay)
+      .catch((e) => {
+        // Don't hang forever on "resolving…" if the path lookup fails.
+        console.error("resolve recordings dir:", e);
+        setRecDirDisplay(customRecDir ?? "—");
+      });
   }, [customRecDir]);
   const openRecDir = () =>
     void openRecordingsDir(customRecDir).catch((e) => console.error("open recordings dir:", e));
