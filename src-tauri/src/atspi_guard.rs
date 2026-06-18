@@ -568,6 +568,13 @@ mod imp {
         element: Option<ObjectRefOwned>,
     ) {
         let new_is_noise = super::is_noise(&app_id);
+        // A `window:activate` carries no element (it's the window frame). When it re-activates the
+        // app that is ALREADY current (e.g. Alt-Tab back to it), keep the field ref we already hold
+        // — otherwise we'd wipe the selection source to None and degrade to the PRIMARY fallback
+        // even though the same field is still focused. A switch to a DIFFERENT app must still clear
+        // it (no stale cross-app ref); the element focus that follows the switch replaces it.
+        let reactivating_same =
+            element.is_none() && snap.current.as_ref().map_or(false, |c| c.app_id == app_id);
         let fa = super::FocusedApp {
             title: app_id.clone(),
             app_id,
@@ -585,7 +592,9 @@ mod imp {
             }
         }
         snap.current = Some(fa);
-        snap.current_el = element;
+        if !reactivating_same {
+            snap.current_el = element;
+        }
     }
 
     /// Poke every application's top of tree (bounded depth/breadth) so Chromium/Electron
