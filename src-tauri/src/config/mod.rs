@@ -214,7 +214,12 @@ fn code_rank(code: &str) -> u8 {
 }
 
 fn canonicalize(mut codes: Vec<String>) -> Vec<String> {
-    codes.sort_by_key(|c| code_rank(c));
+    // Rank orders modifiers first (by type+side); equal-rank codes (e.g. two non-modifier keys in
+    // an N-chord, both rank 100) fall back to a lexical tie-break so the order is press-order-
+    // independent. Mirrors the TS `canonicalizeCodes` so the two layers agree on equality + round-
+    // trip. The tie-break also makes identical codes adjacent, so `dedup` removes them all (not
+    // just consecutive duplicates).
+    codes.sort_by(|a, b| code_rank(a).cmp(&code_rank(b)).then_with(|| a.cmp(b)));
     codes.dedup();
     codes
 }
