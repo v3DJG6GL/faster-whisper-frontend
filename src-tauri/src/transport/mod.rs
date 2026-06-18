@@ -136,11 +136,20 @@ pub fn base_url(server_url: &str) -> String {
 }
 
 pub fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(120))
-        .user_agent(concat!("faster-whisper-frontend/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .expect("failed to build reqwest client")
+    // One process-wide client: a reqwest::Client owns the connection pool + TLS session cache,
+    // so rebuilding it per request threw away keep-alive reuse and paid a fresh TCP/TLS handshake
+    // on every call (incl. the 30s usage poll). The config is constant (no per-request timeout/
+    // header), and clone is cheap (Arc inside) so callers still get an owned client sharing the pool.
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(120))
+                .user_agent(concat!("faster-whisper-frontend/", env!("CARGO_PKG_VERSION")))
+                .build()
+                .expect("failed to build reqwest client")
+        })
+        .clone()
 }
 
 /// Attach a bearer token if one is provided.
