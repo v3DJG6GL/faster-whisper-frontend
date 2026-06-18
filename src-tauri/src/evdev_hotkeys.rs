@@ -420,4 +420,43 @@ mod imp {
             _ => return None,
         })
     }
+
+    #[cfg(test)]
+    mod tests {
+        // Every key a user can bind via the UI (src/lib/keys.ts `codeToToken` + MODIFIER_CODES)
+        // MUST map here, or its chord is silently dropped under the evdev backend while still
+        // firing under the plugin/CLI. This pins that bindability matrix so future drift fails the
+        // test instead of producing a dead hotkey. Keep the list in sync with keys.ts.
+        #[test]
+        fn every_bindable_code_maps_to_an_evdev_key() {
+            let mut codes: Vec<String> = [
+                "ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight",
+                "AltLeft", "AltRight", "MetaLeft", "MetaRight",
+                "Backspace", "Delete", "Enter", "Space", "Tab", "Home", "End", "Insert",
+                "PageUp", "PageDown", "PrintScreen",
+                "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+                "NumpadAdd", "NumpadSubtract", "NumpadMultiply", "NumpadDivide",
+                "NumpadDecimal", "NumpadEnter", "NumpadEqual",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect();
+            for c in b'A'..=b'Z' {
+                codes.push(format!("Key{}", c as char));
+            }
+            for d in 0..=9 {
+                codes.push(format!("Digit{d}"));
+                codes.push(format!("Numpad{d}"));
+            }
+            for f in 1..=24 {
+                codes.push(format!("F{f}"));
+            }
+            for code in &codes {
+                assert!(
+                    super::code_to_key(code).is_some(),
+                    "bindable code {code:?} has no evdev mapping — its hotkey would silently never fire under evdev"
+                );
+            }
+        }
+    }
 }
