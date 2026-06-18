@@ -159,6 +159,9 @@ export function Segmented<T extends string>({
           <button
             key={o.value}
             type="button"
+            // Single-select state for screen readers (mirrors Toggle's role=switch and the Dictionary
+            // pin's aria-pressed) — otherwise the active option reads as just another plain button.
+            aria-pressed={active}
             disabled={disabled}
             onClick={() => onChange(o.value)}
             className={cn(
