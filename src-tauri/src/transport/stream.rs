@@ -362,11 +362,15 @@ pub async fn run<F>(
         // within a few seconds.
         const DRAIN_DEADLINE: Duration = Duration::from_secs(6);
         let _ = tokio::time::timeout(DRAIN_DEADLINE, async {
-            // Drain any PCM the capture thread already queued but the main loop hadn't consumed when
-            // the stop signal won the (non-biased) select — push it through the resampler and send
-            // it, so the final tens of ms aren't silently dropped from the transcript. Saved (when
+            // Drain the PCM the capture thread queued but the main loop hadn't consumed when the stop
+            // signal won the (non-biased) select — push it through the resampler and send it, so the
+            // final tens of ms aren't silently dropped from the transcript. `recv().await` (not a
+            // one-shot try_recv) keeps draining until the channel CLOSES, so we also catch the chunks
+            // the capture callback enqueues during its own shutdown: finish()/Drop set capture_stop
+            // BEFORE ws_stop, so the capture thread is already exiting and drops its sender within
+            // ~one buffer; the whole block is bounded by DRAIN_DEADLINE regardless. Saved (when
             // recording) like the flush tail below: the end-of-stream sliver isn't speech-gated.
-            while let Ok(chunk) = pcm_rx.try_recv() {
+            while let Some(chunk) = pcm_rx.recv().await {
                 let bytes = resampler.push(&chunk);
                 if !bytes.is_empty() {
                     if params.save_dir.is_some() {
