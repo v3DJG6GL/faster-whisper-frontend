@@ -41,6 +41,11 @@ export default function Transcribe() {
     }
   };
 
+  const clearFile = () => {
+    setFilePath(null);
+    setResult(null);
+  };
+
   const run = async () => {
     if (!filePath || !backend) return;
     setBusy(true);
@@ -96,10 +101,17 @@ export default function Transcribe() {
             <span
               role="button"
               tabIndex={0}
+              aria-label="Remove file"
               onClick={(e) => {
                 e.stopPropagation();
-                setFilePath(null);
-                setResult(null);
+                clearFile();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  clearFile();
+                }
               }}
               className="grid size-6 place-items-center rounded-lg text-faint hover:text-rec"
             >
