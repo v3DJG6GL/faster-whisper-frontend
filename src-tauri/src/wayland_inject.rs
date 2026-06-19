@@ -137,7 +137,12 @@ mod imp {
             if keymap.num_layouts_for_key(key) == 0 {
                 continue;
             }
-            let levels = keymap.num_levels_for_key(key, 0);
+            // Only the 4 standard levels are encoded below (none / Shift / AltGr / Shift+AltGr).
+            // Cap the scan: an ISO_Level5 layout (Neo, intl-extended) exposes 6-8 levels, and a
+            // glyph reachable ONLY at level 4+ would be registered as `shift=false, altgr=false`
+            // — a bare keypress that types that key's LEVEL-0 glyph instead. Leaving such glyphs
+            // out of the map makes them fall back to the portal path rather than mis-type.
+            let levels = keymap.num_levels_for_key(key, 0).min(4);
             for level in 0..levels {
                 for sym in keymap.key_get_syms_by_level(key, 0, level) {
                     let cp = xkb::keysym_to_utf32(*sym);
