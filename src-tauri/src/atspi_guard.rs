@@ -526,7 +526,15 @@ mod imp {
     /// element is the window FRAME (not a text field), so no selection source is stored here.
     fn note_activate(snapshot: &parking_lot::Mutex<super::Snapshot>, app_id: String) {
         let mut snap = snapshot.lock();
-        snap.active_app = Some(app_id.clone());
+        // A desktop-shell app (plasmashell/kwin/…) taking window focus must NOT become the
+        // foreground gate: shell noise is filtered everywhere else (focused_app output,
+        // last_other), so letting it set `active_app` would make note_focus reject the REAL
+        // app's next element focus until the panel deactivates. Our OWN window is still marked —
+        // the summon/last_other flow relies on that gate. Either way fold it into the snapshot:
+        // set_current already demotes a real current into last_other.
+        if super::is_self(&app_id) || !super::is_noise(&app_id) {
+            snap.active_app = Some(app_id.clone());
+        }
         set_current(&mut snap, app_id, None, None);
     }
 
