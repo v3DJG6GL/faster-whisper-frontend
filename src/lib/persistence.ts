@@ -56,10 +56,16 @@ export async function initConfig(): Promise<void> {
     clearTimeout(timer);
     timer = setTimeout(() => {
       const s = useApp.getState();
-      // Don't persist or register a conflicting binding set — the Shortcuts/Profiles
-      // UI shows a banner; the last good config stays live until the user resolves it.
-      // Keep pendingBindingChange so the fix triggers a reregister.
-      if (conflicts(s.profiles).length > 0) return;
+      // Don't persist or register a conflicting binding set — the last good config stays live
+      // until the user resolves it. Surface the freeze GLOBALLY via the save banner: otherwise
+      // it's silent and unrelated settings/backends edits are dropped, with only the Profiles
+      // screen hinting why. Keep pendingBindingChange so the fix triggers a reregister.
+      if (conflicts(s.profiles).length > 0) {
+        useApp
+          .getState()
+          .setSaveError("Two profiles share the same shortcut — resolve the conflict to resume saving.");
+        return;
+      }
       const reReg = pendingBindingChange;
       pendingBindingChange = false;
       saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules, version: 2 })

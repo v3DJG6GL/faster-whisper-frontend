@@ -57,10 +57,11 @@ function NavigationBridge() {
   return null;
 }
 
-// Surfaces a config auto-save failure (disk full / read-only / IPC). The app otherwise saves
-// settings/backends/profiles silently (debounced), so without this a failed write is invisible
-// and the user's changes vanish on the next launch. A transient failure self-heals — the next
-// successful save clears the banner. Dismissible.
+// Surfaces a config auto-save failure (disk full / read-only / IPC) OR a refused save (two
+// profiles share a shortcut, so the conflicting set is held back). The app otherwise saves
+// settings/backends/profiles silently (debounced), so without this a non-write is invisible
+// and the user's changes vanish on the next launch. Both self-heal — the next successful save
+// clears the banner. Dismissible.
 function SaveErrorBanner() {
   const saveError = useApp((s) => s.saveError);
   const setSaveError = useApp((s) => s.setSaveError);
