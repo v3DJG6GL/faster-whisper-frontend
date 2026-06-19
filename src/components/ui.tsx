@@ -43,6 +43,42 @@ export function PageHeader({ eyebrow, title, children }: { eyebrow: string; titl
   );
 }
 
+/* ── ListScreenHeader ─────────────────────────────────────────────────── */
+/**
+ * The header row shared by the list screens (Backends / Profiles / Per-app rules):
+ * a {@link PageHeader} on the left and an optional accent "Add …" button on the right.
+ */
+export function ListScreenHeader({
+  eyebrow,
+  title,
+  children,
+  showAdd,
+  addLabel,
+  onAdd,
+}: {
+  eyebrow: string;
+  title: string;
+  children: ReactNode;
+  showAdd: boolean;
+  addLabel: string;
+  onAdd: () => void;
+}) {
+  return (
+    <div className="flex items-end justify-between">
+      <div>
+        <PageHeader eyebrow={eyebrow} title={title}>
+          {children}
+        </PageHeader>
+      </div>
+      {showAdd && (
+        <Button variant="accent" onClick={onAdd}>
+          <Plus className="size-4" /> {addLabel}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 /* ── Badge ────────────────────────────────────────────────────────────── */
 /** A small uppercase pill. `accent` = highlighted, `warn` = caution, default = dim. */
 export function Badge({ children, tone }: { children: ReactNode; tone?: "accent" | "dim" | "warn" }) {

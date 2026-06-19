@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
-import { Plus, AppWindow, Ban, Crosshair, Pencil, Trash2 } from "lucide-react";
+import { AppWindow, Ban, Crosshair, Pencil, Trash2 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Labeled, PageHeader, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
+import { Button, Card, Labeled, ListScreenHeader, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { getFocusedOtherApp } from "@/lib/api";
 import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
 import type { AppRule, InsertMethod } from "@/lib/types";
@@ -200,19 +200,16 @@ export default function AppRules() {
 
   return (
     <div className="mx-auto max-w-[820px] px-10 py-12">
-      <div className="flex items-end justify-between">
-        <div>
-          <PageHeader eyebrow="app rules" title="Per-app rules">
-            Override how dictation inserts into specific apps — block it entirely, force a method, or set the
-            paste shortcut (terminals need Ctrl+Shift+V). Matched by the focused window’s app id.
-          </PageHeader>
-        </div>
-        {!draft && (
-          <Button variant="accent" onClick={startAdd}>
-            <Plus className="size-4" /> Add rule
-          </Button>
-        )}
-      </div>
+      <ListScreenHeader
+        eyebrow="app rules"
+        title="Per-app rules"
+        showAdd={!draft}
+        addLabel="Add rule"
+        onAdd={startAdd}
+      >
+        Override how dictation inserts into specific apps — block it entirely, force a method, or set the
+        paste shortcut (terminals need Ctrl+Shift+V). Matched by the focused window’s app id.
+      </ListScreenHeader>
 
       {draft ? (
         <div className="mt-8">

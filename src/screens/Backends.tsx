@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Plus, Server, Pencil, Copy, Trash2, Plug, Loader2, Check, AlertTriangle } from "lucide-react";
+import { Server, Pencil, Copy, Trash2, Plug, Loader2, Check, AlertTriangle } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, DisclosureToggle, Labeled, PageHeader, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
+import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
@@ -354,19 +354,16 @@ export default function Backends() {
 
   return (
     <div className="mx-auto max-w-[820px] px-10 py-12">
-      <div className="flex items-end justify-between">
-        <div>
-          <PageHeader eyebrow="backends" title="Backends">
-            A backend is a connection to a transcription server, with its own model, default
-            language, and endpoint. Profiles point at one.
-          </PageHeader>
-        </div>
-        {!editing && (
-          <Button variant="accent" onClick={() => setEditing(blankBackend())}>
-            <Plus className="size-4" /> Add backend
-          </Button>
-        )}
-      </div>
+      <ListScreenHeader
+        eyebrow="backends"
+        title="Backends"
+        showAdd={!editing}
+        addLabel="Add backend"
+        onAdd={() => setEditing(blankBackend())}
+      >
+        A backend is a connection to a transcription server, with its own model, default
+        language, and endpoint. Profiles point at one.
+      </ListScreenHeader>
 
       {editing ? (
         <div className="mt-8">

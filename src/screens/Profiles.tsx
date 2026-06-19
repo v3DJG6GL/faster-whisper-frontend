@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Plus, Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
+import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, DisclosureToggle, Labeled, PageHeader, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
+import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { DecodeFields } from "@/components/DecodeFields";
@@ -416,19 +416,16 @@ export default function Profiles() {
 
   return (
     <div className="mx-auto max-w-[820px] px-10 py-12">
-      <div className="flex items-end justify-between">
-        <div>
-          <PageHeader eyebrow="profiles" title="Profiles">
-            Each profile is a way to dictate: push-to-talk or latch, its own shortcut and backend,
-            with optional per-profile language and prompt.
-          </PageHeader>
-        </div>
-        {!draft && (
-          <Button variant="accent" onClick={startAdd}>
-            <Plus className="size-4" /> Add profile
-          </Button>
-        )}
-      </div>
+      <ListScreenHeader
+        eyebrow="profiles"
+        title="Profiles"
+        showAdd={!draft}
+        addLabel="Add profile"
+        onAdd={startAdd}
+      >
+        Each profile is a way to dictate: push-to-talk or latch, its own shortcut and backend,
+        with optional per-profile language and prompt.
+      </ListScreenHeader>
 
       {draft ? (
         <div className="mt-8">
