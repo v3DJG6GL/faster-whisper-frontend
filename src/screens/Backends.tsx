@@ -400,7 +400,7 @@ export default function Backends() {
                     </div>
                   </div>
                   <div className="flex w-24 items-center justify-end gap-1.5 text-[12px] text-dim" title={conn?.error}>
-                    <StatusDot tone={conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
+                    <StatusDot tone={testing.has(b.id) ? "idle" : conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
                     {testing.has(b.id) ? "testing…" : conn?.ok ? "connected" : conn?.error ? "error" : "untested"}
                   </div>
                   <div className="flex items-center gap-1">
