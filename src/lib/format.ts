@@ -6,7 +6,7 @@ export function fmtFull(n: number): string {
   return Math.round(n || 0).toLocaleString("en-US");
 }
 
-/** Compact for large totals: `1,240` · `84.2k` · `1.2M`. */
+/** Compact for large totals: `840` · `1.2k` · `84k` · `1.2M`. */
 export function fmtCompact(n: number): string {
   const v = Math.round(n || 0);
   const a = Math.abs(v);
