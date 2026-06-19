@@ -201,19 +201,9 @@ pub async fn run<F>(
     let mut saved: Vec<u8> = Vec::new();
     // Speech-gate for the SAVED recording (NOT what's streamed to the server): keep only the spans
     // the chip shows as "speaking" + a short lead-in, so a long latch session doesn't store hours
-    // of silence. Ported from the frontend detector (lib/speaking.ts) so the file matches the
-    // indicator — two-stage smoothed RMS with hysteresis (enter >0.08, leave <0.04 after ~900 ms
-    // quiet) feeding a 250 ms pre-roll ring that's flushed on each silence→speech edge (so word
-    // onsets aren't clipped; the 900 ms leave-hold gives the trailing tail for free).
-    const SPEAK_HIGH: f32 = 0.08;
-    const SPEAK_LOW: f32 = 0.04;
-    const HOLD_SAMPLES: usize = 14_400; // 900 ms @ 16 kHz
-    const PREROLL_BYTES: usize = 8_000; // 250 ms @ 16 kHz s16le
-    let mut sp_stream = 0.0f32; // ~ session.rs `stream://level` (0.7/0.3 EMA of rms*6)
-    let mut sp_smooth = 0.0f32; // ~ speaking.ts memo.smooth (0.8/0.2 EMA)
-    let mut sp_speaking = false;
-    let mut sp_low_run = 0usize; // consecutive 16 kHz samples below SPEAK_LOW
-    let mut preroll: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
+    // of silence. The detector itself lives in `crate::audio::SpeechGate` (shared with the batch
+    // record save so both paths trim identically); here it's fed chunk-by-chunk as audio arrives.
+    let mut gate = crate::audio::SpeechGate::new();
 
     // Bound on a single WS send. The server now decodes off its receive loop (it no
     // longer freezes mid-utterance), so a stalled send means a genuinely dead/half-
@@ -277,33 +267,10 @@ pub async fn run<F>(
                         if !bytes.is_empty() {
                             if trim {
                                 // Advance the speech detector from this chunk's RMS (same scaling +
-                                // thresholds as the chip), then keep audio only while "speaking",
-                                // prepending the buffered lead-in on each silence→speech edge.
+                                // thresholds as the chip); the gate keeps audio only while "speaking"
+                                // and prepends the buffered lead-in on each silence→speech edge.
                                 let lvl = (rms_f32(&chunk) * 6.0).clamp(0.0, 1.0);
-                                sp_stream = sp_stream * 0.7 + lvl * 0.3;
-                                sp_smooth = sp_smooth * 0.8 + sp_stream * 0.2;
-                                if sp_smooth > SPEAK_HIGH {
-                                    sp_speaking = true;
-                                    sp_low_run = 0;
-                                } else if sp_smooth < SPEAK_LOW {
-                                    sp_low_run += bytes.len() / 2;
-                                    if sp_speaking && sp_low_run >= HOLD_SAMPLES {
-                                        sp_speaking = false;
-                                    }
-                                } else {
-                                    sp_low_run = 0; // hysteresis band → hold current state
-                                }
-                                if sp_speaking {
-                                    if !preroll.is_empty() {
-                                        saved.extend(preroll.drain(..));
-                                    }
-                                    saved.extend_from_slice(&bytes);
-                                } else {
-                                    preroll.extend(bytes.iter().copied());
-                                    while preroll.len() > PREROLL_BYTES {
-                                        preroll.pop_front();
-                                    }
-                                }
+                                gate.push(lvl, &bytes, &mut saved);
                             } else if saving {
                                 saved.extend_from_slice(&bytes);
                             }

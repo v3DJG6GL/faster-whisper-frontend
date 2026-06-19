@@ -364,6 +364,9 @@ pub struct RecordParams {
     pub override_profile: Option<String>,
     pub device_id: Option<String>,
     pub save_dir: Option<PathBuf>,
+    /// When saving: keep only the spoken spans (drop silence) in the `.wav`, matching the
+    /// streaming save path. Affects ONLY the saved file, never what's sent for transcription.
+    pub trim_silence: bool,
     pub mute_system: bool,
 }
 
@@ -445,10 +448,16 @@ async fn transcribe_recording(app: AppHandle, params: RecordParams, pcm: Vec<u8>
         let _ = app.emit("stream://status", "closed");
         return;
     }
-    let saved_path = params
-        .save_dir
-        .as_ref()
-        .and_then(|dir| crate::audio::save_recording(dir, &pcm, 16_000));
+    let saved_path = params.save_dir.as_ref().and_then(|dir| {
+        // "Trim silence" affects ONLY the saved file — the full clip is still sent for
+        // transcription below — exactly as on the streaming save path. trim_silence_16k can
+        // reduce an all-silence clip to nothing, which save_recording skips (empty buffer).
+        if params.trim_silence {
+            crate::audio::save_recording(dir, &crate::audio::trim_silence_16k(&pcm), 16_000)
+        } else {
+            crate::audio::save_recording(dir, &pcm, 16_000)
+        }
+    });
     let wav = crate::audio::wav_from_pcm16(&pcm, 16_000);
     match batch::transcribe_wav_bytes(
         &params.server_url,

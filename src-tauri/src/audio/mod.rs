@@ -105,6 +105,110 @@ pub fn save_recording(dir: &Path, pcm: &[u8], sample_rate: u32) -> Option<PathBu
     }
 }
 
+/// Speech gate for the SAVED recording, shared by the streaming save path
+/// (`transport/stream.rs`, fed chunk-by-chunk as audio arrives) and the batch record
+/// save (`trim_silence_16k` below, fed the finished buffer). Keeps only the spans the
+/// chip shows as "speaking" plus a short lead-in, so a long latch session doesn't store
+/// hours of silence and the file matches the indicator. Ported from the frontend
+/// detector (`lib/speaking.ts`): a two-stage smoothed RMS with hysteresis (enter
+/// >`SPEAK_HIGH`, leave <`SPEAK_LOW` after ~900 ms quiet) feeding a 250 ms pre-roll ring
+/// that's flushed on each silence→speech edge (so word onsets aren't clipped; the 900 ms
+/// leave-hold gives the trailing tail for free). The hold/pre-roll are sample-counted, so
+/// only the EMA smoothing is sensitive to the caller's chunk cadence.
+pub struct SpeechGate {
+    sp_stream: f32, // ~ session.rs `stream://level` (0.7/0.3 EMA of rms*6)
+    sp_smooth: f32, // ~ speaking.ts memo.smooth (0.8/0.2 EMA)
+    speaking: bool,
+    low_run: usize, // consecutive 16 kHz samples below SPEAK_LOW
+    preroll: VecDeque<u8>,
+}
+
+impl SpeechGate {
+    const SPEAK_HIGH: f32 = 0.08;
+    const SPEAK_LOW: f32 = 0.04;
+    const HOLD_SAMPLES: usize = 14_400; // 900 ms @ 16 kHz
+    const PREROLL_BYTES: usize = 8_000; // 250 ms @ 16 kHz s16le
+
+    pub fn new() -> Self {
+        Self {
+            sp_stream: 0.0,
+            sp_smooth: 0.0,
+            speaking: false,
+            low_run: 0,
+            preroll: VecDeque::new(),
+        }
+    }
+
+    /// Feed one chunk. `level` is the chip-scaled RMS (`rms * 6`, clamped 0..1) for this
+    /// chunk; `bytes` is the matching 16 kHz s16le audio. Spoken audio (plus the buffered
+    /// lead-in on each silence→speech edge) is appended to `out`.
+    pub fn push(&mut self, level: f32, bytes: &[u8], out: &mut Vec<u8>) {
+        self.sp_stream = self.sp_stream * 0.7 + level * 0.3;
+        self.sp_smooth = self.sp_smooth * 0.8 + self.sp_stream * 0.2;
+        if self.sp_smooth > Self::SPEAK_HIGH {
+            self.speaking = true;
+            self.low_run = 0;
+        } else if self.sp_smooth < Self::SPEAK_LOW {
+            self.low_run += bytes.len() / 2;
+            if self.speaking && self.low_run >= Self::HOLD_SAMPLES {
+                self.speaking = false;
+            }
+        } else {
+            self.low_run = 0; // hysteresis band → hold current state
+        }
+        if self.speaking {
+            if !self.preroll.is_empty() {
+                out.extend(self.preroll.drain(..));
+            }
+            out.extend_from_slice(bytes);
+        } else {
+            self.preroll.extend(bytes.iter().copied());
+            while self.preroll.len() > Self::PREROLL_BYTES {
+                self.preroll.pop_front();
+            }
+        }
+    }
+}
+
+impl Default for SpeechGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// RMS of a 16 kHz s16le mono frame, scaled and clamped to the chip's 0..1 level the
+/// same way the streaming path scales `rms_f32(&chunk) * 6.0` — so the batch gate keys
+/// off the same thresholds as the live indicator.
+fn frame_level_s16le(bytes: &[u8]) -> f32 {
+    let n = bytes.len() / 2;
+    if n == 0 {
+        return 0.0;
+    }
+    let mut sum = 0.0f32;
+    for s in bytes.chunks_exact(2) {
+        let v = i16::from_le_bytes([s[0], s[1]]) as f32 / 32768.0;
+        sum += v * v;
+    }
+    ((sum / n as f32).sqrt() * 6.0).clamp(0.0, 1.0)
+}
+
+/// Trim leading / internal / trailing silence from a COMPLETE 16 kHz s16le mono buffer
+/// using the shared [`SpeechGate`], so the "Trim silence" setting produces the same kind
+/// of saved file on a batch (record-then-POST) backend as it already does on the
+/// streaming path. Processes the buffer in fixed ~64 ms frames (the gate's hold/pre-roll
+/// are sample-counted, so only the EMA smoothing is frame-cadence sensitive — a frame
+/// near the streaming chunk size keeps the trimming close). Returns the spoken-only bytes
+/// (empty if the whole clip was below the speech threshold).
+pub fn trim_silence_16k(pcm: &[u8]) -> Vec<u8> {
+    const FRAME_BYTES: usize = 2_048; // 1024 samples ≈ 64 ms @ 16 kHz s16le
+    let mut gate = SpeechGate::new();
+    let mut out = Vec::with_capacity(pcm.len());
+    for frame in pcm.chunks(FRAME_BYTES) {
+        gate.push(frame_level_s16le(frame), frame, &mut out);
+    }
+    out
+}
+
 /// Write the dictation transcript next to its `.wav` as a sibling `.txt` (same stem), so the
 /// recordings folder is browsable/searchable. Best-effort: logs and returns on any error.
 pub fn save_transcript_sidecar(wav_path: &Path, text: &str) {

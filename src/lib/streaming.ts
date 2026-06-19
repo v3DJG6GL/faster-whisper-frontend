@@ -866,6 +866,7 @@ export async function startLive(
         deviceId,
         save: rec.saveRecordings,
         recordingsDir: rec.recordingsDir,
+        trimSilence: rec.trimSilence,
         muteSystem: rec.muteSystemAudio,
       });
     } else {

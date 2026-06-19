@@ -319,6 +319,7 @@ export async function startRecord(args: {
   deviceId?: string | null;
   save?: boolean;
   recordingsDir?: string | null;
+  trimSilence?: boolean;
   muteSystem?: boolean;
 }): Promise<void> {
   if (!isTauri) return;
@@ -334,6 +335,7 @@ export async function startRecord(args: {
     deviceId: args.deviceId ?? null,
     save: args.save ?? false,
     recordingsDir: args.recordingsDir ?? null,
+    trimSilence: args.trimSilence ?? true,
     muteSystem: args.muteSystem ?? false,
   });
 }

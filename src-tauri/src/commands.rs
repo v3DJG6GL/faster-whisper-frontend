@@ -429,6 +429,7 @@ pub fn start_record(
     device_id: Option<String>,
     save: bool,
     recordings_dir: Option<String>,
+    trim_silence: bool,
     mute_system: bool,
 ) -> Result<(), String> {
     let key = resolve_key(api_key, backend_id);
@@ -451,6 +452,7 @@ pub fn start_record(
             override_profile,
             device_id,
             save_dir,
+            trim_silence,
             mute_system,
         },
     )?;
