@@ -1,5 +1,5 @@
 import { type ReactNode, type InputHTMLAttributes, forwardRef, useEffect, useRef, useState } from "react";
-import { Minus, Plus } from "lucide-react";
+import { AlertTriangle, Check, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 /* ── Card ─────────────────────────────────────────────────────────────── */
@@ -95,6 +95,35 @@ export function Badge({ children, tone }: { children: ReactNode; tone?: "accent"
     >
       {children}
     </span>
+  );
+}
+
+/* ── Notice ───────────────────────────────────────────────────────────── */
+/** An inline status banner: a tinted, rounded box with a leading icon and content.
+ *  `warn` (default) = caution amber + AlertTriangle; `ok` = success + Check. Pass
+ *  `className` for per-site spacing (e.g. `mt-3`). Single-sources the inline banner
+ *  that recurred across the Backends / Transcribe / Dictionary / Home screens. */
+export function Notice({
+  tone = "warn",
+  className,
+  children,
+}: {
+  tone?: "warn" | "ok";
+  className?: string;
+  children: ReactNode;
+}) {
+  const Icon = tone === "ok" ? Check : AlertTriangle;
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-2 rounded-xl border px-3.5 py-2.5 text-[12.5px]",
+        tone === "ok" ? "border-ok/30 bg-ok/5 text-ok" : "border-warn/30 bg-warn/5 text-warn",
+        className,
+      )}
+    >
+      <Icon className="mt-0.5 size-4 shrink-0" />
+      <div>{children}</div>
+    </div>
   );
 }
 

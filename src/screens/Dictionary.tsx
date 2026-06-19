@@ -15,7 +15,7 @@ import {
   ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, Stack, Toggle, TextInput } from "@/components/ui";
+import { Badge, Button, Card, Notice, Stack, Toggle, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
@@ -876,33 +876,24 @@ function SaveBanner({ result, onReload }: { result: PipelineSaveResult; onReload
   }
   if (!result.ok) {
     return (
-      <div className="flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
-        <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-        <span>{result.detail || "Couldn't save the changes."}</span>
-      </div>
+      <Notice>{result.detail || "Couldn't save the changes."}</Notice>
     );
   }
   const conflicts = result.conflicts?.length ?? 0;
   return (
     <div className="space-y-2">
       {result.saved.length > 0 && (
-        <div className="flex items-start gap-2 rounded-xl border border-ok/30 bg-ok/5 px-3.5 py-2.5 text-[12.5px] text-ok">
-          <Check className="mt-0.5 size-4 shrink-0" />
-          <span>
-            Saved {result.saved.length} {result.saved.length === 1 ? "rule" : "rules"}.
-            {result.requires_restart ? " Some changes need a server restart to take effect." : ""}
-          </span>
-        </div>
+        <Notice tone="ok">
+          Saved {result.saved.length} {result.saved.length === 1 ? "rule" : "rules"}.
+          {result.requires_restart ? " Some changes need a server restart to take effect." : ""}
+        </Notice>
       )}
       {conflicts > 0 && (
-        <div className="flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <span>
-            {conflicts} {conflicts === 1 ? "rule" : "rules"} changed on the server and {conflicts === 1 ? "was" : "were"} not saved.
-            The latest version has been reloaded.{" "}
-            <button type="button" className="ring-signal underline hover:text-text" onClick={onReload}>Reload again</button>
-          </span>
-        </div>
+        <Notice>
+          {conflicts} {conflicts === 1 ? "rule" : "rules"} changed on the server and {conflicts === 1 ? "was" : "were"} not saved.
+          The latest version has been reloaded.{" "}
+          <button type="button" className="ring-signal underline hover:text-text" onClick={onReload}>Reload again</button>
+        </Notice>
       )}
     </div>
   );

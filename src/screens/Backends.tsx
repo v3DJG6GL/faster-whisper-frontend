@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Server, Pencil, Copy, Trash2, Plug, Loader2, Check, AlertTriangle } from "lucide-react";
+import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
+import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
@@ -180,13 +180,10 @@ function Editor({
       </div>
 
       {kind === "standard" && b.endpoint === "stream" && (
-        <div className="mt-3 flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <div>
-            A standard Whisper server has no streaming endpoint — switch Endpoint to{" "}
-            <span className="font-medium">Batch</span>.
-          </div>
-        </div>
+        <Notice className="mt-3">
+          A standard Whisper server has no streaming endpoint — switch Endpoint to{" "}
+          <span className="font-medium">Batch</span>.
+        </Notice>
       )}
 
       {result?.ok && result.models.length > 0 && (
@@ -267,10 +264,7 @@ function Editor({
       {result && <ConnResult info={result} />}
 
       {keyError && (
-        <div className="mt-4 flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <div>{keyError}</div>
-        </div>
+        <Notice className="mt-4">{keyError}</Notice>
       )}
 
       <div className="mt-6 flex items-center justify-between">
@@ -293,24 +287,16 @@ function Editor({
 
 function ConnResult({ info }: { info: ConnectionInfo }) {
   return (
-    <div
-      className={cn(
-        "mt-4 flex items-start gap-2 rounded-xl border px-3.5 py-2.5 text-[12.5px]",
-        info.ok ? "border-ok/30 bg-ok/5 text-ok" : "border-warn/30 bg-warn/5 text-warn",
+    <Notice tone={info.ok ? "ok" : "warn"} className="mt-4">
+      {info.ok ? (
+        <>
+          Connected — {info.models.length} model{info.models.length === 1 ? "" : "s"}
+          {info.openMode ? " · open mode (no auth)" : info.username ? ` · ${info.username}` : ""}.
+        </>
+      ) : (
+        info.error
       )}
-    >
-      {info.ok ? <Check className="mt-0.5 size-4 shrink-0" /> : <AlertTriangle className="mt-0.5 size-4 shrink-0" />}
-      <div>
-        {info.ok ? (
-          <>
-            Connected — {info.models.length} model{info.models.length === 1 ? "" : "s"}
-            {info.openMode ? " · open mode (no auth)" : info.username ? ` · ${info.username}` : ""}.
-          </>
-        ) : (
-          info.error
-        )}
-      </div>
-    </div>
+    </Notice>
   );
 }
 
