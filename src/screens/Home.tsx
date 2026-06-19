@@ -244,7 +244,11 @@ export default function Home() {
         <div className="grid grid-cols-3 border-t border-line font-mono text-[12px]">
           <Readout label="model" value={headerBackend?.model ?? "—"} />
           <Readout label="endpoint" value={headerBackend?.endpoint ?? "—"} accent />
-          <Readout label="language" value={headerBackend?.language ?? "auto"} last />
+          <Readout
+            label="language"
+            value={target?.language?.trim() ? target.language : (headerBackend?.language ?? "auto")}
+            last
+          />
         </div>
       </Card>
 
