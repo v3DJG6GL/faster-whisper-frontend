@@ -12,13 +12,39 @@ use crate::transport::stream::{self, StreamEvent, StreamParams};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleFormat, StreamConfig, StreamError};
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, watch};
+
+/// Monotonic dictation-session epoch. Each new streaming/record session claims the next value
+/// (which thereby becomes the "active" one). A session emits `stream://*` transcript/status
+/// events ONLY while it is still the active epoch. This matters because a stopped session keeps
+/// running in the BACKGROUND after the foreground returns: `StreamSession::finish` detaches the
+/// WS task to drain the last utterance, and the batch path spawns its transcribe POST — both
+/// emit `final`/`closed` later. The events are global and carry no session id, so without this
+/// gate a session that was CANCELLED (cancelLive, e.g. on suspend/resume or an impatient
+/// stop-then-restart) could, once a NEW session starts, inject its leftover transcript into the
+/// new target and kill the new session's focus poll. Gating at the emit (not the listener) means
+/// the moment a newer session claims the epoch, the older one's late drain goes silent.
+/// (Level emits don't need this: the capture thread is always joined before the next session
+/// starts, so they can't outlive their session.)
+static ACTIVE_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// Claim the next epoch for a starting session (also makes it the active one).
+fn next_session_epoch() -> u64 {
+    ACTIVE_EPOCH.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+/// Emit a `stream://*` event only if `epoch` is still the active session (see [`ACTIVE_EPOCH`]).
+fn emit_if_active<S: Serialize + Clone>(app: &AppHandle, epoch: u64, event: &str, payload: S) {
+    if ACTIVE_EPOCH.load(Ordering::SeqCst) == epoch {
+        let _ = app.emit(event, payload);
+    }
+}
 
 #[derive(Default)]
 pub struct StreamState(pub Mutex<Option<StreamSession>>);
@@ -99,6 +125,7 @@ struct FinalPayload {
 pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
     let (device, format, channels, config, in_rate) = open_input(p.device_id)?;
     let mute = SystemMuteGuard::new(p.mute_system);
+    let epoch = next_session_epoch();
 
     let (pcm_tx, pcm_rx) = mpsc::unbounded_channel::<Vec<f32>>();
     let (ws_stop_tx, ws_stop_rx) = watch::channel(false);
@@ -131,15 +158,18 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
     };
 
     let appc = app.clone();
+    // This closure runs on the WS task, which `finish()` DETACHES to drain in the background —
+    // so it can fire after the session is gone. Gate every emit on `epoch` so a superseded/
+    // cancelled session's late drain can't bleed into the next one (see ACTIVE_EPOCH).
     let on_event = move |ev: StreamEvent| match ev {
         StreamEvent::Ready { overrides_ignored } => {
-            let _ = appc.emit("stream://status", "ready");
+            emit_if_active(&appc, epoch, "stream://status", "ready");
             if !overrides_ignored.is_empty() {
-                let _ = appc.emit("stream://overrides-ignored", overrides_ignored);
+                emit_if_active(&appc, epoch, "stream://overrides-ignored", overrides_ignored);
             }
         }
         StreamEvent::Partial { committed, pending } => {
-            let _ = appc.emit("stream://partial", PartialPayload { committed, pending });
+            emit_if_active(&appc, epoch, "stream://partial", PartialPayload { committed, pending });
         }
         StreamEvent::Final { committed, tail, last } => {
             tracing::info!(
@@ -148,20 +178,20 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
                 tail.len(),
                 last
             );
-            let _ = appc.emit("stream://final", FinalPayload { committed, tail, last });
+            emit_if_active(&appc, epoch, "stream://final", FinalPayload { committed, tail, last });
         }
         StreamEvent::Boundary { separator } => {
             tracing::info!("[stream] boundary (hard break)");
-            let _ = appc.emit("stream://boundary", separator);
+            emit_if_active(&appc, epoch, "stream://boundary", separator);
         }
         StreamEvent::RecordingSaved(path) => {
-            let _ = appc.emit("stream://recording-saved", path);
+            emit_if_active(&appc, epoch, "stream://recording-saved", path);
         }
         StreamEvent::Error(m) => {
-            let _ = appc.emit("stream://error", m);
+            emit_if_active(&appc, epoch, "stream://error", m);
         }
         StreamEvent::Closed => {
-            let _ = appc.emit("stream://status", "closed");
+            emit_if_active(&appc, epoch, "stream://status", "closed");
         }
     };
 
@@ -372,6 +402,7 @@ pub struct RecordParams {
 
 pub struct RecordSession {
     app: AppHandle,
+    epoch: u64,
     params: RecordParams,
     buffer: Arc<Mutex<Vec<u8>>>,
     capture_stop: Arc<AtomicBool>,
@@ -401,9 +432,10 @@ impl RecordSession {
             .map(|mut b| std::mem::take(&mut *b))
             .unwrap_or_default();
         let app = self.app.clone();
+        let epoch = self.epoch;
         let params = self.params.clone();
         tauri::async_runtime::spawn(async move {
-            transcribe_recording(app, params, pcm).await;
+            transcribe_recording(app, epoch, params, pcm).await;
         });
     }
 }
@@ -411,6 +443,7 @@ impl RecordSession {
 pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, String> {
     let (device, format, channels, config, in_rate) = open_input(p.device_id.clone())?;
     let mute = SystemMuteGuard::new(p.mute_system);
+    let epoch = next_session_epoch();
     let buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
     let level = Arc::new(AtomicU32::new(0));
     let capture_stop = Arc::new(AtomicBool::new(false));
@@ -434,6 +467,7 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
 
     Ok(RecordSession {
         app,
+        epoch,
         params: p,
         buffer,
         capture_stop,
@@ -442,10 +476,10 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
     })
 }
 
-async fn transcribe_recording(app: AppHandle, params: RecordParams, pcm: Vec<u8>) {
+async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, pcm: Vec<u8>) {
     if pcm.len() < 32_000 {
         // < ~1 s of 16 kHz mono audio — nothing meaningful captured.
-        let _ = app.emit("stream://status", "closed");
+        emit_if_active(&app, epoch, "stream://status", "closed");
         return;
     }
     let saved_path = params.save_dir.as_ref().and_then(|dir| {
@@ -481,9 +515,11 @@ async fn transcribe_recording(app: AppHandle, params: RecordParams, pcm: Vec<u8>
             // but it was being dropped here — so on a batch backend a locked override was
             // silently ignored with no "Server ignored N override(s)" notice on Home/chip.
             if !res.overrides_ignored.is_empty() {
-                let _ = app.emit("stream://overrides-ignored", res.overrides_ignored);
+                emit_if_active(&app, epoch, "stream://overrides-ignored", res.overrides_ignored);
             }
-            let _ = app.emit(
+            emit_if_active(
+                &app,
+                epoch,
                 "stream://final",
                 FinalPayload {
                     committed: res.text,
@@ -491,11 +527,11 @@ async fn transcribe_recording(app: AppHandle, params: RecordParams, pcm: Vec<u8>
                     last: true,
                 },
             );
-            let _ = app.emit("stream://status", "closed");
+            emit_if_active(&app, epoch, "stream://status", "closed");
         }
         Err(e) => {
-            let _ = app.emit("stream://error", format!("Transcription failed: {e}"));
-            let _ = app.emit("stream://status", "closed");
+            emit_if_active(&app, epoch, "stream://error", format!("Transcription failed: {e}"));
+            emit_if_active(&app, epoch, "stream://status", "closed");
         }
     }
 }
