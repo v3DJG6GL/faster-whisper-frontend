@@ -467,6 +467,13 @@ async fn transcribe_recording(app: AppHandle, params: RecordParams, pcm: Vec<u8>
             if let Some(p) = &saved_path {
                 crate::audio::save_transcript_sidecar(p, &res.text);
             }
+            // Surface server-locked decode overrides the same way the streaming path's
+            // `ready` frame does. The batch POST hands the same list back in its result,
+            // but it was being dropped here — so on a batch backend a locked override was
+            // silently ignored with no "Server ignored N override(s)" notice on Home/chip.
+            if !res.overrides_ignored.is_empty() {
+                let _ = app.emit("stream://overrides-ignored", res.overrides_ignored);
+            }
             let _ = app.emit(
                 "stream://final",
                 FinalPayload {
