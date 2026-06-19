@@ -494,6 +494,7 @@ export default function Settings() {
             <button
               key={t}
               onClick={() => setTab(t)}
+              aria-current={tab === t ? "page" : undefined}
               className={
                 "ring-signal rounded-lg px-3 py-2 text-left text-[13px] font-medium transition-colors " +
                 (tab === t ? "bg-surface-2 text-text" : "text-dim hover:text-text")
@@ -555,6 +556,7 @@ export default function Settings() {
                 value={pasteKey(s.general.pasteShortcut)}
                 onChange={(v) => updateGeneral({ pasteShortcut: pasteCodes(v) })}
                 options={PASTE_PRESETS.map((p) => ({ value: p.value, label: p.label }))}
+                disabled={s.general.insertMethod !== "paste"}
               />
             </SettingRow>
             <SettingRow
