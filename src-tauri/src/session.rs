@@ -207,10 +207,20 @@ fn err_cb(e: StreamError) {
 }
 
 fn downmix<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> Vec<f32> {
+    let mut out = Vec::new();
+    downmix_into(data, channels, to_f32, &mut out);
+    out
+}
+
+/// Downmix to mono into a caller-owned scratch buffer (cleared first), so a per-buffer capture
+/// callback can reuse one `Vec` instead of allocating every ~10-20 ms. Mirrors `capture::analyze`.
+fn downmix_into<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32, out: &mut Vec<f32>) {
+    out.clear();
     if channels <= 1 {
-        return data.iter().map(|&s| to_f32(s)).collect();
+        out.extend(data.iter().map(|&s| to_f32(s)));
+        return;
     }
-    let mut out = Vec::with_capacity(data.len() / channels + 1);
+    out.reserve(data.len() / channels + 1);
     for frame in data.chunks(channels) {
         let mut acc = 0.0;
         for &s in frame {
@@ -218,7 +228,6 @@ fn downmix<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> V
         }
         out.push(acc / frame.len() as f32);
     }
-    out
 }
 
 fn rms(samples: &[f32]) -> f32 {
@@ -562,11 +571,12 @@ fn run_record_capture(
             let buf = buffer.clone();
             let lvl = level.clone();
             let mut sm = 0.0f32;
+            let mut mono: Vec<f32> = Vec::new();
             let resampler = resampler.clone();
             device.build_input_stream(
                 &config,
                 move |data: &[f32], _| {
-                    let mono = downmix(data, channels, |s| s);
+                    downmix_into(data, channels, |s| s, &mut mono);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
@@ -584,11 +594,12 @@ fn run_record_capture(
             let buf = buffer.clone();
             let lvl = level.clone();
             let mut sm = 0.0f32;
+            let mut mono: Vec<f32> = Vec::new();
             let resampler = resampler.clone();
             device.build_input_stream(
                 &config,
                 move |data: &[i16], _| {
-                    let mono = downmix(data, channels, |s| s as f32 / 32768.0);
+                    downmix_into(data, channels, |s| s as f32 / 32768.0, &mut mono);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
@@ -606,11 +617,12 @@ fn run_record_capture(
             let buf = buffer.clone();
             let lvl = level.clone();
             let mut sm = 0.0f32;
+            let mut mono: Vec<f32> = Vec::new();
             let resampler = resampler.clone();
             device.build_input_stream(
                 &config,
                 move |data: &[u16], _| {
-                    let mono = downmix(data, channels, |s| (s as f32 - 32768.0) / 32768.0);
+                    downmix_into(data, channels, |s| (s as f32 - 32768.0) / 32768.0, &mut mono);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
