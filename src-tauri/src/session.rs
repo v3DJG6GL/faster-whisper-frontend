@@ -477,21 +477,27 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
 }
 
 async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, pcm: Vec<u8>) {
-    if pcm.len() < 32_000 {
-        // < ~1 s of 16 kHz mono audio — nothing meaningful captured.
-        emit_if_active(&app, epoch, "stream://status", "closed");
-        return;
-    }
+    // Save the captured clip FIRST, regardless of length — exactly as the streaming save path
+    // does (it saves any non-empty buffer, with no minimum-duration gate). Whether a too-short
+    // recording is worth keeping is the BACKEND's call (CAPTURE_RECORDINGS_MIN_DURATION_SEC),
+    // not ours, so "Save recordings" produces the same files on a streaming and a batch backend.
+    // "Trim silence" affects ONLY the saved file — the full clip is still sent for transcription
+    // below — and trim_silence_16k can reduce an all-silence clip to nothing, which save_recording
+    // skips (empty buffer).
     let saved_path = params.save_dir.as_ref().and_then(|dir| {
-        // "Trim silence" affects ONLY the saved file — the full clip is still sent for
-        // transcription below — exactly as on the streaming save path. trim_silence_16k can
-        // reduce an all-silence clip to nothing, which save_recording skips (empty buffer).
         if params.trim_silence {
             crate::audio::save_recording(dir, &crate::audio::trim_silence_16k(&pcm), 16_000)
         } else {
             crate::audio::save_recording(dir, &pcm, 16_000)
         }
     });
+    if pcm.len() < 32_000 {
+        // < ~1 s of 16 kHz mono audio — nothing meaningful to TRANSCRIBE, so skip the POST (the
+        // recording, if any, was already saved above). No transcript ⇒ no sidecar, matching a
+        // sub-1 s streaming clip that produced no final.
+        emit_if_active(&app, epoch, "stream://status", "closed");
+        return;
+    }
     let wav = crate::audio::wav_from_pcm16(&pcm, 16_000);
     match batch::transcribe_wav_bytes(
         &params.server_url,
