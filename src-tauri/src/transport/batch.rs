@@ -5,6 +5,16 @@ use anyhow::{bail, Context};
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::time::Duration;
+
+/// Generous per-request ceiling for the Transcribe screen's file upload: an hour-long
+/// recording on a CPU-only / slow backend can legitimately decode for many minutes — far
+/// longer than the shared client's 120 s default, which is sized for short dictation clips
+/// and the status polls. Without this, a long file failed with a spurious "Timed out" while
+/// the server was still working, losing the result. Still bounded so a black-holed server
+/// can't hang the screen forever. The dictation batch path keeps the 120 s default (its only
+/// stuck-session backstop).
+const FILE_TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,7 +84,8 @@ pub async fn transcribe(
         .context("file-read task panicked")?
         .with_context(|| format!("reading {file_path}"))?;
     let part = Part::bytes(bytes).file_name(filename).mime_str(mime)?;
-    post(server_url, api_key, model, language, prompt, overrides, override_profile, part).await
+    // File upload (Transcribe screen): a long recording can decode for many minutes — allow it.
+    post(server_url, api_key, model, language, prompt, overrides, override_profile, part, Some(FILE_TRANSCRIBE_TIMEOUT)).await
 }
 
 /// Transcribe an in-memory WAV (used by batch-mode dictation recording).
@@ -89,7 +100,9 @@ pub async fn transcribe_wav_bytes(
     wav: Vec<u8>,
 ) -> anyhow::Result<BatchResult> {
     let part = Part::bytes(wav).file_name("recording.wav").mime_str("audio/wav")?;
-    post(server_url, api_key, model, language, prompt, overrides, override_profile, part).await
+    // Dictation batch: short clips; keep the 120 s client default (the record path's only
+    // stuck-session backstop, since the streaming-style finalize watchdog is stream-only).
+    post(server_url, api_key, model, language, prompt, overrides, override_profile, part, None).await
 }
 
 async fn post(
@@ -101,6 +114,7 @@ async fn post(
     overrides: Option<&serde_json::Value>,
     override_profile: Option<&str>,
     file_part: Part,
+    timeout: Option<Duration>,
 ) -> anyhow::Result<BatchResult> {
     let mut form = reqwest::multipart::Form::new()
         .part("file", file_part)
@@ -132,11 +146,15 @@ async fn post(
     }
 
     let base = base_url(server_url);
-    let resp = with_auth(client().post(format!("{base}/v1/audio/transcriptions")), api_key)
-        .multipart(form)
-        .send()
-        .await
-        .context("request failed")?;
+    let mut req = with_auth(client().post(format!("{base}/v1/audio/transcriptions")), api_key)
+        .multipart(form);
+    // Per-request override of the shared client's 120 s default (reqwest's RequestBuilder::timeout
+    // replaces the client-level timeout for this request only). Only the file-upload path sets it;
+    // dictation passes None and keeps the 120 s default.
+    if let Some(t) = timeout {
+        req = req.timeout(t);
+    }
+    let resp = req.send().await.context("request failed")?;
 
     let status = resp.status();
     if !status.is_success() {
