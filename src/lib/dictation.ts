@@ -28,27 +28,32 @@ function stopOrCancel(): void {
 
 export function dictate(profileId: string, action: TriggerAction): void {
   const s = useApp.getState();
+
+  // A stop/cancel must never be gated on the Profile — only `status` matters. If a
+  // hold-to-talk Profile is disabled or deleted mid-session (the UI toggle is live even
+  // while dictating), the hold-release `stop` (and the evdev device-disconnect `stop`,
+  // emitted precisely to avoid a stranded session) would otherwise be dropped, wedging
+  // the session listening forever. Handle it before resolving the Profile.
+  if (action === "stop") {
+    stopOrCancel();
+    return;
+  }
+  if (action === "toggle" && isBusy()) {
+    stopOrCancel();
+    return;
+  }
+
+  // Starting a session DOES require an enabled Profile with a resolvable Backend.
   const profile = s.profiles.find((p) => p.id === profileId);
   if (!profile || !profile.enabled) return;
   const backend = backendForProfile(profile, s.backends);
   if (!backend) return;
-  const micId = s.settings.microphoneId;
+  if (isBusy()) return; // start over a running session is a no-op (toggle-busy handled above)
 
-  const start = () => {
-    s.setDictation({ activeProfile: profileId });
-    // startLive resolves the effective language / prompt / decode overrides
-    // (the Profile's set fields win over the Backend's defaults).
-    void startLive(backend, micId, profile.activation, profile);
-  };
-
-  if (action === "stop") {
-    stopOrCancel();
-  } else if (action === "start") {
-    if (!isBusy()) start();
-  } else {
-    if (isBusy()) stopOrCancel();
-    else start();
-  }
+  s.setDictation({ activeProfile: profileId });
+  // startLive resolves the effective language / prompt / decode overrides
+  // (the Profile's set fields win over the Backend's defaults).
+  void startLive(backend, s.settings.microphoneId, profile.activation, profile);
 }
 
 /** The Backend a Profile dictates through: its configured `backendId`, falling back to
