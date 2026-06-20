@@ -504,9 +504,17 @@ export async function getFocusedSelection(): Promise<string | null> {
  * px, relative to the window's top-left), so the chip becomes hoverable while the
  * rest of the transparent strip stays click-through. No-op outside Tauri.
  */
-export async function setChipHitRegion(x: number, y: number, w: number, h: number): Promise<void> {
+export async function setChipHitRegion(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  // persist=false for the transient full-window hover hold — applied but not remembered as the
+  // restore target, so a later re-show never reapplies a whole-window (click-swallowing) region.
+  persist = true,
+): Promise<void> {
   if (!isTauri) return;
-  await invoke("set_chip_hit_region", { x, y, w, h });
+  await invoke("set_chip_hit_region", { x, y, w, h, persist });
 }
 
 /** Reflect the dictation status in the tray tooltip. */

@@ -321,7 +321,10 @@ export default function Overlay() {
     // strip is click-through again). Growing to full-window happens while the cursor is
     // safely interior (on the chip), so it never drops a crossing itself.
     if (hovering) {
-      void setChipHitRegion(0, 0, window.innerWidth, window.innerHeight);
+      // persist=false: this full-window hold is transient (keeps the cursor inside the shape
+      // through the morph) — don't let it become the region a re-show restores, or the whole
+      // strip would swallow clicks if a session ends with the cursor still over the chip.
+      void setChipHitRegion(0, 0, window.innerWidth, window.innerHeight, false);
       return;
     }
     const el = chipRef.current;

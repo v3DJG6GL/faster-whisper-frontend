@@ -136,7 +136,7 @@ pub fn hide_overlay(app: AppHandle) {
 /// click-through (`set_ignore_cursor_events(true)`), i.e. today's behavior: the
 /// persistent tag still shows, only hover-reveal is unavailable. Never panics.
 #[tauri::command]
-pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64) {
+pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64, persist: bool) {
     let Some(win) = app.get_webview_window("overlay") else {
         return;
     };
@@ -146,8 +146,14 @@ pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64) {
         // re-applies set_ignore_cursor_events(true), which REPLACES the input shape with an empty
         // one (whole window click-through) and would otherwise leave the chip unhoverable until
         // the webview happens to re-report. See reapply_last_hit_region / show_overlay.
-        if let Ok(mut last) = LAST_HIT_REGION.lock() {
-            *last = Some((x, y, w, h));
+        // persist=false is the TRANSIENT full-window hover hold (applied to keep the cursor inside
+        // the shape through the body morph) — NOT the chip's real bounds, so we must NOT remember
+        // it: a re-show that reapplied a full-window region would make the whole transparent strip
+        // swallow clicks until the webview re-reports precise bounds.
+        if persist {
+            if let Ok(mut last) = LAST_HIT_REGION.lock() {
+                *last = Some((x, y, w, h));
+            }
         }
         let applied = apply_hit_region(&win, x, y, w, h).is_some();
         tracing::debug!("[overlay] hit_region x={x:.0} y={y:.0} w={w:.0} h={h:.0} applied={applied}");
@@ -159,7 +165,7 @@ pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64) {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (&win, x, y, w, h);
+        let _ = (&win, x, y, w, h, persist);
     }
 }
 
