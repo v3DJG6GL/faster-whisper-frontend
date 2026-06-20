@@ -36,7 +36,15 @@ type ChipVisKey = {
 // The chip's visibility settings are all the same Off / Always / On-hover tri-state, backed by a
 // (visible, onHover) boolean pair on RecordingSettings. One control keyed on those two fields keeps
 // the four identical Segmented blocks (live transcript / profile / usage / target) from drifting.
-function HoverModeSegmented({ visibleKey, hoverKey }: { visibleKey: ChipVisKey; hoverKey: ChipVisKey }) {
+function HoverModeSegmented({
+  visibleKey,
+  hoverKey,
+  disabled,
+}: {
+  visibleKey: ChipVisKey;
+  hoverKey: ChipVisKey;
+  disabled?: boolean;
+}) {
   const visible = useApp((st) => st.settings.recording[visibleKey]);
   const onHover = useApp((st) => st.settings.recording[hoverKey]);
   const updateRecording = useApp((st) => st.updateRecording);
@@ -52,6 +60,7 @@ function HoverModeSegmented({ visibleKey, hoverKey }: { visibleKey: ChipVisKey; 
               : { [visibleKey]: true, [hoverKey]: false }) as Partial<RecordingSettings>,
         )
       }
+      disabled={disabled}
       options={[
         { value: "off", label: "Off" },
         { value: "always", label: "Always" },
@@ -538,7 +547,7 @@ export default function Settings() {
               title="Insertion method"
               desc={
                 s.general.insertTiming === "live"
-                  ? "Applies to “When I stop”. Live always types (keystrokes) — it has to backspace-correct revised words, which the clipboard can’t do."
+                  ? "Clipboard paste is the most reliable. Direct typing never touches the clipboard but can struggle with some layouts. Clipboard only copies each phrase for you to paste. Live only ever appends as you speak — it never goes back to revise earlier words."
                   : "Clipboard paste is the most reliable. Direct typing never touches the clipboard but can struggle with some layouts. Clipboard only copies the text without typing — you paste it yourself."
               }
               disabled={s.general.insertTiming === "off"}
@@ -778,25 +787,40 @@ export default function Settings() {
             <SettingRow
               title="Live transcript"
               desc="Show words in the chip as you speak — always, or only while you hover it (streaming backends only)."
+              disabled={s.recording.indicatorPosition === "off"}
             >
-              <HoverModeSegmented visibleKey="realtimePreview" hoverKey="realtimePreviewOnHover" />
+              <HoverModeSegmented
+                visibleKey="realtimePreview"
+                hoverKey="realtimePreviewOnHover"
+                disabled={s.recording.indicatorPosition === "off"}
+              />
             </SettingRow>
             <SettingRow
               title="Show active profile"
               desc="Label the chip with the running profile's tag — always, or only while you hover it; hover always reveals language and mode."
+              disabled={s.recording.indicatorPosition === "off"}
             >
-              <HoverModeSegmented visibleKey="showProfileOnOverlay" hoverKey="showProfileOnHover" />
+              <HoverModeSegmented
+                visibleKey="showProfileOnOverlay"
+                hoverKey="showProfileOnHover"
+                disabled={s.recording.indicatorPosition === "off"}
+              />
             </SettingRow>
             <SettingRow
               title="Show usage on chip"
               desc="Add a tiny usage readout (today's totals) to the chip — always, or only while you hover it. Needs the faster-whisper-backend; hidden on a standard server."
+              disabled={s.recording.indicatorPosition === "off"}
             >
-              <HoverModeSegmented visibleKey="showStatsOnOverlay" hoverKey="overlayStatsOnHover" />
+              <HoverModeSegmented
+                visibleKey="showStatsOnOverlay"
+                hoverKey="overlayStatsOnHover"
+                disabled={s.recording.indicatorPosition === "off"}
+              />
             </SettingRow>
             <SettingRow
               title="Chip metric"
               desc="Which usage figure the chip shows."
-              disabled={!s.recording.showStatsOnOverlay}
+              disabled={s.recording.indicatorPosition === "off" || !s.recording.showStatsOnOverlay}
             >
               <Select
                 value={s.recording.overlayStatsMetric}
@@ -806,24 +830,37 @@ export default function Settings() {
                   { value: "audio", label: "Minutes today" },
                   { value: "both", label: "Words + minutes" },
                 ]}
-                disabled={!s.recording.showStatsOnOverlay}
+                disabled={s.recording.indicatorPosition === "off" || !s.recording.showStatsOnOverlay}
               />
             </SettingRow>
             <SettingRow
               title="Show injection target"
               desc="Show which app dictation is typing into (→ app) on the chip — always, or only while you hover it — and warn when it isn't a text field."
+              disabled={s.recording.indicatorPosition === "off"}
             >
-              <HoverModeSegmented visibleKey="showTargetOnOverlay" hoverKey="showTargetOnHover" />
+              <HoverModeSegmented
+                visibleKey="showTargetOnOverlay"
+                hoverKey="showTargetOnHover"
+                disabled={s.recording.indicatorPosition === "off"}
+              />
             </SettingRow>
             <SettingRow
               title="Only while speaking"
               desc="Show the injection target only while you're actively dictating — hide it when armed but silent, so it doesn't flicker as you move between windows."
-              disabled={!s.recording.showTargetOnOverlay || s.recording.showTargetOnHover}
+              disabled={
+                s.recording.indicatorPosition === "off" ||
+                !s.recording.showTargetOnOverlay ||
+                s.recording.showTargetOnHover
+              }
             >
               <Toggle
                 checked={s.recording.showTargetOnlySpeaking}
                 onChange={(v) => updateRecording({ showTargetOnlySpeaking: v })}
-                disabled={!s.recording.showTargetOnOverlay || s.recording.showTargetOnHover}
+                disabled={
+                  s.recording.indicatorPosition === "off" ||
+                  !s.recording.showTargetOnOverlay ||
+                  s.recording.showTargetOnHover
+                }
               />
             </SettingRow>
 
