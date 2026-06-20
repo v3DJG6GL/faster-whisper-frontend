@@ -470,6 +470,12 @@ async function ensureListeners(): Promise<void> {
             if (!t.isSelf) {
               sessionClipboard = true;
               signalInsert("clipboard");
+              // The clipboard now holds THIS clipboard-only transcript (what the user wants to
+              // paste), not our earlier paste transcript — so we no longer owe a restore. Clear
+              // clipDirty so neither the per-phrase restore (bumpPhraseEnd) nor the end-of-session
+              // restore puts the old snapshot back over it. Covers a fast paste→clipboard-only
+              // switch with no pause between, which would otherwise leave clipDirty set from the paste.
+              clipDirty = false;
             }
           }
         } else if (toType.length > 0) {
