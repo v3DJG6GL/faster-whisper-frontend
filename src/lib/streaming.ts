@@ -678,13 +678,32 @@ async function ensureListeners(): Promise<void> {
         setDictation({ status: "injecting" });
         enqueueInject(async () => {
           const t = await resolveTarget();
-          await injectText({
-            text,
-            method: t.method,
-            autoEnter: cfg.autoEnter,
-            restoreClipboard: cfg.restoreClipboard,
-            pasteShortcut: t.pasteShortcut,
-          });
+          try {
+            await injectText({
+              text,
+              method: t.method,
+              autoEnter: cfg.autoEnter,
+              restoreClipboard: cfg.restoreClipboard,
+              pasteShortcut: t.pasteShortcut,
+            });
+          } catch (e) {
+            // The whole-session insert IS the product of the dictation. A failure here (portal
+            // denied, VK + portal both fail, …) would otherwise drop the entire transcript silently
+            // and resolve the chip to a benign-looking "nothing landed" idle. Surface it, and keep
+            // the transcript on the clipboard so it's recoverable: paste leaves it there on failure
+            // (the Rust skip-restore-on-failed-paste), clipboard-only already put it there, so only
+            // direct typing (which never touches the clipboard) needs an explicit copy.
+            console.error("end-of-session insert failed:", e);
+            if (t.method === "direct") {
+              try {
+                await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+              } catch (e2) {
+                console.error("clipboard fallback after failed insert failed:", e2);
+              }
+            }
+            flashError("Couldn’t insert the text — it’s on the clipboard to paste manually.");
+            return;
+          }
           // Single end-of-session insert — record the outcome for the done marker (no separate
           // per-phrase pulse; this IS the whole session).
           if (!t.isSelf) {

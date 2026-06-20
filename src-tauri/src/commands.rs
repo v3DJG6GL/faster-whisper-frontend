@@ -905,7 +905,12 @@ pub async fn inject_text(
             let prev = set_res?;
             tokio::time::sleep(std::time::Duration::from_millis(60)).await;
             let r = crate::wayland_inject::paste(&app, typer.inner(), paste_shortcut, auto_enter).await;
-            crate::inject::restore_clipboard_later(prev);
+            // Restore the user's prior clipboard only if the paste actually landed. If it failed,
+            // leave the transcript on the clipboard so it's recoverable (the user can paste it
+            // manually) instead of silently clobbering it with the old clipboard.
+            if r.is_ok() {
+                crate::inject::restore_clipboard_later(prev);
+            }
             r
         }
     } else {
