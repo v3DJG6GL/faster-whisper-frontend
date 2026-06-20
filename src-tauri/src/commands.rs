@@ -588,13 +588,6 @@ pub async fn evdev_setup() -> Result<String, String> {
     crate::evdev_hotkeys::setup().await
 }
 
-/// Whether an accelerator string can be registered as a global shortcut.
-#[tauri::command]
-pub fn validate_shortcut(accelerator: String) -> bool {
-    use std::str::FromStr;
-    tauri_plugin_global_shortcut::Shortcut::from_str(&accelerator).is_ok()
-}
-
 /// Whether a code-list chord can be registered via the global-shortcut plugin.
 /// Modifier-only / AltGr chords return false — those need the evdev backend.
 #[tauri::command]

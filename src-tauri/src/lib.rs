@@ -138,7 +138,6 @@ pub fn run() {
             commands::write_recording_transcript, // label a saved .wav with its transcript (.txt sidecar)
             commands::reregister_shortcuts,
             commands::suspend_shortcuts,
-            commands::validate_shortcut,
             commands::validate_codes,
             commands::evdev_status,
             commands::evdev_setup,
