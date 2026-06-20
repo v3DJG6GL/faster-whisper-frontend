@@ -160,6 +160,18 @@ pub fn run() {
             tray::set_tray_state,
             tray::show_main_at_screen,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Restore the system-audio mute guard (and tear down any live dictation) on every
+            // in-process exit, not just the tray "Quit". `app.exit()` / window-close exits skip
+            // managed-state destructors, which would otherwise strand the system muted. Idempotent
+            // with the tray's explicit cleanup (the session is taken once, then a no-op).
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                crate::session::cleanup_for_exit(app);
+            }
+        });
 }
