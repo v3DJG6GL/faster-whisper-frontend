@@ -56,7 +56,9 @@ function Editor({
   const [p, setP] = useState<Profile>(initial);
   const [capturing, setCapturing] = useState(false);
   const [showOverrides, setShowOverrides] = useState(
-    !!(initial.language || initial.prompt || initial.overrideProfile ||
+    // prompt is tri-state: `!== undefined` so an explicit clear ("") still counts
+    // as a set override (a truthy check would treat clear as "inherit").
+    !!(initial.language || initial.prompt !== undefined || initial.overrideProfile ||
       (initial.decodeOverrides && Object.keys(initial.decodeOverrides).length)),
   );
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
@@ -171,7 +173,7 @@ function Editor({
 
       <DisclosureToggle open={showOverrides} onToggle={() => setShowOverrides((v) => !v)} className="mt-5">
         Overrides{" "}
-        {p.language || p.prompt || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) ? (
+        {p.language || p.prompt !== undefined || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) ? (
           <span className="text-accent">· set</span>
         ) : (
           <span className="text-faint">· inherit backend</span>
