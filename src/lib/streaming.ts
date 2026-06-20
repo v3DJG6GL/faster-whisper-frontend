@@ -733,9 +733,14 @@ async function ensureListeners(): Promise<void> {
 }
 
 /** Merge a Backend's decode defaults with a Profile's overrides (profile wins per
- *  field). Unset values (undefined/null/empty string = "inherit") are dropped, so a
- *  field only reaches the server when explicitly set. Returns undefined when nothing
- *  is set — the wire then carries no decode_overrides at all. */
+ *  field). Only true-inherit (undefined/null) is dropped, so a field reaches the server
+ *  when explicitly set. NB: an empty string "" is a SET value, not inherit — the text
+ *  fields (hotwords, suppress_tokens, prepend/append_punctuations) expose an explicit
+ *  "clear" (DecodeFields' Eraser button) that sends "" to suppress the inherited value,
+ *  exactly like the prompt 3-state; dropping "" here silently lost that clear (and let a
+ *  backend value win over a profile's clear). Numbers/bools never produce "" (the number
+ *  input maps ""→undefined), so keeping "" only affects the text fields. Returns undefined
+ *  when nothing is set — the wire then carries no decode_overrides at all. */
 function mergeDecodeOverrides(
   base?: DecodeOverrides,
   over?: DecodeOverrides,
@@ -744,7 +749,7 @@ function mergeDecodeOverrides(
   for (const src of [base, over]) {
     if (!src) continue;
     for (const [k, v] of Object.entries(src)) {
-      if (v !== undefined && v !== null && v !== "") out[k] = v;
+      if (v !== undefined && v !== null) out[k] = v;
     }
   }
   return Object.keys(out).length ? (out as DecodeOverrides) : undefined;
