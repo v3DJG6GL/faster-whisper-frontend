@@ -434,8 +434,11 @@ mod imp {
                         let flip = !caps;
                         if flip {
                             press!(KEY_CAPSLOCK);
-                            release!(KEY_CAPSLOCK);
+                            // Caps Lock toggles on the PRESS, so mark it flipped here — before the
+                            // release. If the release errors and bails the block, the cleanup tap
+                            // below must still run, else Caps is left inverted system-wide.
                             caps_flipped = true;
+                            release!(KEY_CAPSLOCK);
                             tokio::time::sleep(Duration::from_millis(6)).await;
                         }
                         if spec.shift {
@@ -460,8 +463,12 @@ mod imp {
                         if flip {
                             tokio::time::sleep(Duration::from_millis(6)).await;
                             press!(KEY_CAPSLOCK);
-                            release!(KEY_CAPSLOCK);
+                            // Symmetric to the opening tap: this PRESS toggles Caps back to the
+                            // user's original state, so clear the flag here — before the release.
+                            // Otherwise a failing release leaves caps_flipped set and the cleanup
+                            // tap would re-invert Caps.
                             caps_flipped = false;
+                            release!(KEY_CAPSLOCK);
                         }
                         tokio::time::sleep(Duration::from_millis(6)).await;
                         continue;
