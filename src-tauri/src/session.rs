@@ -570,33 +570,107 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
 }
 
 // ── System-audio mute guard ─────────────────────────────────────────────────
-// Optionally mutes the default audio output for the duration of a dictation, so
-// playback / notification sounds don't leak into the mic, restoring the prior
-// state on drop. Best-effort: PipeWire (`wpctl`) first, then PulseAudio (`pactl`);
-// a no-op where neither exists (e.g. Windows). A hard crash mid-dictation can
-// leave it muted until the next dictation restores it.
+// Optionally silences OTHER apps' audio for the duration of a dictation, so playback /
+// notification sounds don't leak into the mic — while leaving OUR OWN start/stop cues audible.
+// Per-app: snapshot the playback streams (PulseAudio / PipeWire sink-inputs) at session start and
+// mute every one that isn't ours (matched by PID) and isn't already muted, restoring exactly those
+// on drop. There's no mid-session watcher, so audio that STARTS after dictation begins isn't muted.
+// Falls back to muting the whole default sink when pactl can't enumerate streams (no PulseAudio /
+// pipewire-pulse); a no-op where neither exists (e.g. Windows). A hard crash mid-dictation can
+// leave streams muted until the next dictation restores them.
+
+/// What the guard did, so Drop undoes exactly that.
+enum MuteMode {
+    None,
+    /// Per-app: the sink-input ids WE muted (others' playback). Unmute these on drop.
+    PerApp(Vec<u32>),
+    /// Fallback: the whole default sink was muted; restore its prior mute state on drop.
+    WholeSink(bool),
+}
 
 struct SystemMuteGuard {
-    prior: Option<bool>,
+    mode: MuteMode,
 }
 
 impl SystemMuteGuard {
     fn new(enabled: bool) -> Self {
         if !enabled {
-            return Self { prior: None };
+            return Self { mode: MuteMode::None };
+        }
+        // Prefer per-app muting so our own cues stay audible; fall back to the whole-sink mute
+        // only when pactl can't enumerate streams.
+        if let Some(muted) = mute_other_streams() {
+            return Self { mode: MuteMode::PerApp(muted) };
         }
         let prior = get_system_mute().unwrap_or(false);
         set_system_mute(true);
-        Self { prior: Some(prior) }
+        Self { mode: MuteMode::WholeSink(prior) }
     }
 }
 
 impl Drop for SystemMuteGuard {
     fn drop(&mut self) {
-        if let Some(prior) = self.prior {
-            set_system_mute(prior);
+        match &self.mode {
+            MuteMode::None => {}
+            MuteMode::PerApp(ids) => {
+                for &id in ids {
+                    set_sink_input_mute(id, false);
+                }
+            }
+            MuteMode::WholeSink(prior) => set_system_mute(*prior),
         }
     }
+}
+
+/// Parse `pactl list sink-inputs` output → the ids of streams to MUTE: every block that is neither
+/// ours (`application.process.id` == our PID, so our cues stay audible) nor already muted (so we
+/// never restore something the user muted). Pure (no IO) for testability.
+fn streams_to_mute(text: &str, our_pid: u32) -> Vec<u32> {
+    // Each block: (sink-input id, already-muted, owner pid).
+    let mut blocks: Vec<(u32, bool, Option<u32>)> = Vec::new();
+    let mut cur: Option<(u32, bool, Option<u32>)> = None;
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("Sink Input #") {
+            blocks.extend(cur.take());
+            cur = rest.trim().parse::<u32>().ok().map(|id| (id, false, None));
+        } else if let Some(b) = cur.as_mut() {
+            if let Some(rest) = t.strip_prefix("Mute:") {
+                b.1 = rest.trim().eq_ignore_ascii_case("yes");
+            } else if let Some(rest) = t.strip_prefix("application.process.id = ") {
+                b.2 = rest.trim().trim_matches('"').parse::<u32>().ok();
+            }
+        }
+    }
+    blocks.extend(cur);
+    blocks
+        .into_iter()
+        .filter(|&(_, already_muted, pid)| !already_muted && pid != Some(our_pid))
+        .map(|(id, _, _)| id)
+        .collect()
+}
+
+/// Mute every other app's playback stream (see streams_to_mute); returns the ids muted (to restore
+/// on drop), or None when pactl is unavailable so the caller falls back to a whole-sink mute.
+fn mute_other_streams() -> Option<Vec<u32>> {
+    let out = std::process::Command::new("pactl")
+        .args(["list", "sink-inputs"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let ids = streams_to_mute(&String::from_utf8_lossy(&out.stdout), std::process::id());
+    for &id in &ids {
+        set_sink_input_mute(id, true);
+    }
+    Some(ids)
+}
+
+fn set_sink_input_mute(id: u32, mute: bool) {
+    let _ = std::process::Command::new("pactl")
+        .args(["set-sink-input-mute", &id.to_string(), if mute { "1" } else { "0" }])
+        .status();
 }
 
 /// Current mute state of the default sink: PipeWire (`wpctl get-volume` → "[MUTED]") first, then
@@ -743,4 +817,36 @@ fn run_record_capture(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::streams_to_mute;
+
+    // A trimmed `pactl list sink-inputs` with three streams: a normal other-app stream, one the
+    // user already muted, and our own (matched by PID).
+    const SAMPLE: &str = "Sink Input #10\n\
+\tCorked: no\n\
+\tMute: no\n\
+\tProperties:\n\
+\t\tapplication.name = \"Firefox\"\n\
+\t\tapplication.process.id = \"100\"\n\
+Sink Input #11\n\
+\tMute: yes\n\
+\t\tapplication.process.id = \"200\"\n\
+Sink Input #12\n\
+\tMute: no\n\
+\t\tapplication.process.id = \"999\"\n";
+
+    #[test]
+    fn mutes_others_but_skips_ours_and_already_muted() {
+        // our pid = 999 → skip #12 (ours) + #11 (already muted) → only #10 gets muted.
+        assert_eq!(streams_to_mute(SAMPLE, 999), vec![10]);
+    }
+
+    #[test]
+    fn empty_or_garbage_input_mutes_nothing() {
+        assert!(streams_to_mute("", 1).is_empty());
+        assert!(streams_to_mute("no sink inputs here\nSink Input #notanumber\n", 1).is_empty());
+    }
 }
