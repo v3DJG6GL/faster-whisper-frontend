@@ -403,7 +403,11 @@ async function ensureListeners(): Promise<void> {
       levelTimer = setTimeout(() => {
         levelTimer = undefined;
         lastLevelAt = performance.now();
-        setDictation({ level: latestLevel });
+        // Only publish while a session is still capturing: this trailing tick is closure-
+        // local and can't be cleared on teardown, so if it fires after `closed`/cancelLive
+        // froze the meter to 0 it must not resurrect the last non-zero level (it would stick
+        // until the next session and churn a needless cross-window emit).
+        if (useApp.getState().status === "listening") setDictation({ level: latestLevel });
       }, wait);
     }
   });
