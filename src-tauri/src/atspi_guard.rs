@@ -224,13 +224,25 @@ mod imp {
         // what libatspi's init does). Best-effort; left on after exit — benign, and KDE's
         // QT_ACCESSIBILITY=1 already implies it. This makes app detection work WITHOUT deep
         // detection; deep detection then only adds the Chromium/Electron poke.
-        // Time-bounded: on a congested/half-wedged session bus this call can hang, which would
-        // block the reconnect loop below from ever starting. Best-effort, so a timeout is fine.
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            set_session_accessibility(true),
-        )
-        .await;
+        // Time-bounded + retried: on a congested/half-wedged session bus this call can hang or
+        // error. It's the CRITICAL bit that makes bridges emit — but run_once below will happily
+        // connect to a SILENT stream if it never lands, and a silent stream never "ends", so the
+        // reconnect loop won't fire to retry it. A single fire-and-forget attempt (the old code)
+        // therefore left a transient first-boot hang as permanently-off detection. Retry a few
+        // times on hang/error; bounded so a permanently-failing call (unsupported, or already
+        // implied by KDE's QT_ACCESSIBILITY=1 — which succeeds on the first try) still lets us
+        // proceed into the reconnect loop.
+        for _ in 0..3 {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                set_session_accessibility(true),
+            )
+            .await
+            {
+                Ok(Ok(())) => break,
+                _ => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+            }
+        }
         // Reconnect loop: the a11y connection can die — registry daemon restart, or (the big
         // one for long sessions) suspend/resume drops the bus. If we just returned, the task
         // would exit forever and the snapshot would freeze on the last-seen app (looked like
@@ -281,6 +293,8 @@ mod imp {
         let mut stream = std::pin::pin!(conn.event_stream());
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(4));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Single-flight guard for the periodic deep-detection poke (see the ticker arm below).
+        let poke_busy = Arc::new(AtomicBool::new(false));
         tracing::info!("[atspi] focus listener started");
 
         // Resolve focus OFF the event loop, in a single COALESCING task that always works on
@@ -410,10 +424,22 @@ mod imp {
                 _ = ticker.tick() => {
                     // Deep detection only adds the poke now (accessibility is enabled at
                     // startup). Spawn it so a slow poke over many apps can't stall this loop.
-                    if deep.load(Ordering::Relaxed) {
+                    // Single-flight + time-bounded: poke_all walks every app on the bus with
+                    // unbounded D-Bus reads, so on a congested/wedged bus one poke can stall for
+                    // a long time. Without a guard a fresh task would spawn every tick and pile
+                    // up (untracked, and they outlive this connection — resolver.abort() below
+                    // doesn't touch them). The flag skips a new poke while the previous is still
+                    // running; the timeout caps any single poke so ≤1 short-lived task is in flight.
+                    if deep.load(Ordering::Relaxed) && !poke_busy.swap(true, Ordering::AcqRel) {
                         let bus2 = bus.clone();
+                        let busy = poke_busy.clone();
                         tauri::async_runtime::spawn(async move {
-                            let _ = poke_all(&bus2).await;
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_secs(3),
+                                poke_all(&bus2),
+                            )
+                            .await;
+                            busy.store(false, Ordering::Release);
                         });
                     }
                 }
