@@ -751,7 +751,32 @@ function flashError(message: string): void {
   }, ERROR_LINGER_MS);
 }
 
+// Synchronous in-flight guard for startLive. dictate()'s isBusy() gate reads `status`,
+// but startLiveInner doesn't flip status to "listening" until AFTER its awaits
+// (ensureListeners + getFocusedApp). Without this, two triggers landing inside that window
+// both pass the gate and launch overlapping sessions — and because stream and record are
+// independent Rust states, a stream+batch double-fire leaves one session's capture thread +
+// system-mute guard leaked when the later stop routes to only the other endpoint. Ignoring
+// the second concurrent start closes that window; the finally guarantees the flag resets
+// even if a pre-status await (ensureListeners/getFocusedApp) rejects.
+let startingSession = false;
+
 export async function startLive(
+  backend: Backend,
+  deviceId: string | null,
+  activation: ActivationKind,
+  pov?: { language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; overrideProfile?: string },
+): Promise<void> {
+  if (startingSession) return;
+  startingSession = true;
+  try {
+    await startLiveInner(backend, deviceId, activation, pov);
+  } finally {
+    startingSession = false;
+  }
+}
+
+async function startLiveInner(
   backend: Backend,
   deviceId: string | null,
   activation: ActivationKind,
