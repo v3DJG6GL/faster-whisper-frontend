@@ -184,7 +184,9 @@ export function Combobox({
         autoComplete="off"
         role="combobox"
         aria-expanded={showPopover}
-        aria-controls={listId}
+        // Only reference the listbox while it's actually in the DOM (rendered under showPopover) —
+        // a dangling aria-controls makes assistive tech announce a controlled list that isn't there.
+        aria-controls={showPopover ? listId : undefined}
         aria-autocomplete="list"
         aria-activedescendant={showPopover && active >= 0 ? optId(active) : undefined}
         onChange={(e) => { wantFirstRef.current = false; onChange(e.target.value); setOpen(true); setActive(-1); }}
