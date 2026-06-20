@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { UploadCloud, FileAudio, X, Loader2, Copy, Check } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Notice, PageHeader, Select } from "@/components/ui";
@@ -19,6 +19,10 @@ export default function Transcribe() {
   const [result, setResult] = useState<BatchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Identifies the in-flight transcription. Removing/replacing the file (or a new run) bumps it,
+  // so a request that resolves AFTER the user moved on can't strand its (now-stale) result/error
+  // against a different/absent file. The file picker + the clear (X) are reachable during a run.
+  const runId = useRef(0);
 
   // The store boots with a seeded backend, then config hydration (and later edits/removals)
   // can replace the list with different ids. Re-sync the selection when the current id falls
@@ -35,19 +39,24 @@ export default function Transcribe() {
   const choose = async () => {
     const path = await pickAudioFile();
     if (path) {
+      runId.current++; // a changed file abandons any in-flight run for the old file
       setFilePath(path);
       setResult(null);
       setError(null);
+      setBusy(false);
     }
   };
 
   const clearFile = () => {
+    runId.current++; // abandon any in-flight run — its result must not land against no file
     setFilePath(null);
     setResult(null);
+    setBusy(false);
   };
 
   const run = async () => {
     if (!filePath || !backend) return;
+    const myRun = ++runId.current;
     setBusy(true);
     setError(null);
     setResult(null);
@@ -63,11 +72,13 @@ export default function Transcribe() {
         overrideProfile: backend.overrideProfile,
         filePath,
       });
-      setResult(res);
+      // Only commit if this is still the current request — the user may have cleared/changed
+      // the file (or started another run) while this one was in flight.
+      if (runId.current === myRun) setResult(res);
     } catch (e) {
-      setError(String(e));
+      if (runId.current === myRun) setError(String(e));
     } finally {
-      setBusy(false);
+      if (runId.current === myRun) setBusy(false);
     }
   };
 
