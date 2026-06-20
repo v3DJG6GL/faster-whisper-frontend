@@ -89,6 +89,7 @@ export default function Home() {
   const overridesIgnored = useApp((s) => s.overridesIgnored);
   const micId = useApp((s) => s.settings.microphoneId);
   const homeProfileId = useApp((s) => s.settings.homeProfileId);
+  const activeProfile = useApp((s) => s.activeProfile);
   const updateSettings = useApp((s) => s.updateSettings);
   const setDictation = useApp((s) => s.setDictation);
 
@@ -98,6 +99,13 @@ export default function Home() {
   // latch profile, then any enabled — and uses that profile's backend + overrides.
   const target = homeTargetProfile(profiles, homeProfileId);
   const headerBackend: Backend | undefined = backendForProfile(target, backends);
+  // While a session is live, the hero READOUTS (model / endpoint / language) describe the
+  // RUNNING profile — like the chip + usage do — not the home-button target, which can drift if
+  // the profile set changes mid-session (disabling the active profile, reordering, deleting). The
+  // button/start logic + the Select keep using `target` (the next-dictation pick, a config choice).
+  // activeProfile is null when idle, so this falls back to the home target then.
+  const shown = (activeProfile ? profiles.find((p) => p.id === activeProfile) : undefined) ?? target;
+  const shownBackend: Backend | undefined = backendForProfile(shown, backends);
 
   // "Busy" = any non-idle state; the hero button is a stop/cancel while busy. We keep
   // a graceful stop for "listening" (deliver the last words) but force a hard reset
@@ -242,11 +250,11 @@ export default function Home() {
           />
         </div>
         <div className="grid grid-cols-3 border-t border-line font-mono text-[12px]">
-          <Readout label="model" value={headerBackend?.model ?? "—"} />
-          <Readout label="endpoint" value={headerBackend?.endpoint ?? "—"} accent />
+          <Readout label="model" value={shownBackend?.model ?? "—"} />
+          <Readout label="endpoint" value={shownBackend?.endpoint ?? "—"} accent />
           <Readout
             label="language"
-            value={target?.language?.trim() ? target.language : (headerBackend?.language ?? "auto")}
+            value={shown?.language?.trim() ? shown.language : (shownBackend?.language ?? "auto")}
             last
           />
         </div>
