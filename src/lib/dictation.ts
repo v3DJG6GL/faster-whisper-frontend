@@ -112,6 +112,11 @@ export function runOverlayAction(kind: string): void {
       void cancelLive(); // force a clean idle (recover a wedged session)
       return;
     }
+    // A chip toggle landing during the start prologue (status still "idle", session
+    // mid-start) must tear it down like the hero/hotkey toggle do — else it falls
+    // through to startLive and is swallowed by the startingSession guard, wedging the
+    // just-started latch with the user's intended OFF lost. Mirrors dictate()'s toggle.
+    if (requestStopIfStarting()) return;
     const target = homeTargetProfile(s.profiles, s.settings.homeProfileId);
     const backend = backendForProfile(target, s.backends);
     if (!backend) return;
