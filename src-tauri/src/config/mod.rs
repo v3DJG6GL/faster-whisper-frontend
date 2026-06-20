@@ -289,7 +289,16 @@ pub fn codes_to_accelerator(codes: &[String]) -> Option<String> {
                     mods.push("Super");
                 }
             }
-            other => key = Some(code_to_token(other)),
+            other => {
+                // A second non-modifier means this is a multi-key (N-chord) binding,
+                // which a plugin accelerator can't express (modifiers + exactly ONE key).
+                // Return None so it routes to the evdev/CLI path instead of silently
+                // collapsing to — and globally hijacking — the lexically-last key.
+                if key.is_some() {
+                    return None;
+                }
+                key = Some(code_to_token(other));
+            }
         }
     }
     let key = key?; // modifier-only → not registerable via the plugin
