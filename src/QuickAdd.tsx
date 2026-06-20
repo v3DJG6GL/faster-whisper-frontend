@@ -151,7 +151,12 @@ export default function QuickAdd() {
           setOpenOnSummon(false);
           setFocusInsert(false);
           setShowSeq((s) => s + 1);
-          void refresh();
+          // Don't re-fetch over an unsaved edit: refresh() replaces `rows` with the server
+          // map, so re-summoning while a debounced list edit is still pending would clobber
+          // the in-progress edit — and the still-armed 600ms saveTimer would then re-save the
+          // stale server rows over it. A pending save means the local rows ARE the newest
+          // state, so skip the re-sync this summon and let that save flush.
+          if (saveTimer.current === null) void refresh();
           // Seed from whatever the user highlighted in the source app. Got a word → fill it and
           // drop the cursor straight in "Insert" (it's captured). Nothing usable → fall back to
           // the old behaviour: open the recent-words dropdown on the (already-focused) find field.
