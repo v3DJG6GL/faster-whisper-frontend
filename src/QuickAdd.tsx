@@ -250,7 +250,9 @@ export default function QuickAdd() {
     originalSelectionRef.current = null; // one-shot — don't re-correct on a later close
     void hideQuickAdd();
     if (original && corrected && corrected !== original) {
-      void replaceSelectionAfterClose(original, corrected, pasteShortcutRef.current);
+      void replaceSelectionAfterClose(original, corrected, pasteShortcutRef.current).catch((e) =>
+        console.error("correct-on-close paste failed:", e),
+      );
     }
   }, [flushSave]);
 

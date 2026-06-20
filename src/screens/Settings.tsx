@@ -588,7 +588,7 @@ export default function Settings() {
                 checked={s.general.deepFieldDetection}
                 onChange={(v) => {
                   updateGeneral({ deepFieldDetection: v });
-                  void setDeepFieldDetection(v);
+                  void setDeepFieldDetection(v).catch((e) => console.error("set deep field detection:", e));
                 }}
               />
             </SettingRow>
