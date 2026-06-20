@@ -335,7 +335,10 @@ mod imp {
                             if on && !active[i] {
                                 active[i] = true;
                                 emit(&app, profile_id, "toggle");
-                            } else if !on {
+                            } else if !fully[i] {
+                                // Re-arm on a real RELEASE only — not when a superset chord merely
+                                // suppresses this one (fully[i] still held, on=false). Re-arming on
+                                // suppression would re-toggle this latch when the superset releases.
                                 active[i] = false;
                             }
                         }
@@ -345,7 +348,8 @@ mod imp {
                         if on && !active[i] {
                             active[i] = true;
                             crate::quickadd::show(&app);
-                        } else if !on {
+                        } else if !fully[i] {
+                            // Re-arm on a real release only, not superset suppression (see Latch).
                             active[i] = false;
                         }
                     }
