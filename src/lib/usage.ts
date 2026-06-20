@@ -42,8 +42,11 @@ async function refreshOne(backend: Backend): Promise<void> {
   // Skip a server we KNOW is standard (no /v1/usage); "unknown" ⇒ try anyway.
   if (effectiveServerKind(backend, connections[backend.id]) === "standard") {
     // Don't clobber a backend that has been serving usage just because the
-    // connection probe hasn't run yet — only mark null if we've no good value.
-    if (!usage[backend.id]) setUsage(backend.id, null);
+    // connection probe hasn't run yet — only seed null if we've never recorded a
+    // value. Test key-presence (not truthiness): `!usage[id]` is true for the null
+    // we just wrote, so it would re-set null every poll, and setUsage always spreads
+    // a fresh `usage` object — churning a cross-window dictation://update each tick.
+    if (!(backend.id in usage)) setUsage(backend.id, null);
     return;
   }
   const stats = await getUsageStats({
@@ -53,9 +56,11 @@ async function refreshOne(backend: Backend): Promise<void> {
     days: TREND_DAYS,
     bucket: "day",
   });
-  // Keep the last-known-good value on a transient miss — only commit null when
-  // we've never succeeded for this backend (genuinely unsupported/unreachable).
-  if (stats === null && usage[backend.id]) return;
+  // Keep the last-known value on a transient miss — only commit null the first
+  // time. Key-presence (not truthiness) so an already-null backend isn't re-set to
+  // null every poll (which would spread a fresh `usage` object and churn the
+  // cross-window update); a real value still overwrites since stats!==null falls through.
+  if (stats === null && backend.id in usage) return;
   setUsage(backend.id, stats);
 }
 
