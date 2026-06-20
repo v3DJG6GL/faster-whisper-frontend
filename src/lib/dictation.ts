@@ -4,7 +4,7 @@
 // affordances.
 
 import { useApp } from "./store";
-import { startLive, stopLive, cancelLive } from "./streaming";
+import { startLive, stopLive, cancelLive, requestStopIfStarting } from "./streaming";
 import { showQuickAdd } from "./api";
 import type { Backend, Profile } from "./types";
 
@@ -24,6 +24,10 @@ function stopOrCancel(): void {
   const s = useApp.getState().status;
   if (s === "listening") void stopLive();
   else if (s === "transcribing" || s === "injecting") void cancelLive();
+  // idle/error but a session may be mid-START (its status not yet "listening", e.g. a fast PTT tap
+  // whose chord-release "stop" landed during the start prologue) → mark it to tear down on go-live,
+  // else it would wedge "listening" with the chord already released. No-op when nothing is starting.
+  else requestStopIfStarting();
 }
 
 export function dictate(profileId: string, action: TriggerAction): void {

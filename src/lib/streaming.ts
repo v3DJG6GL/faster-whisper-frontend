@@ -792,6 +792,21 @@ function flashError(message: string): void {
 // the second concurrent start closes that window; the finally guarantees the flag resets
 // even if a pre-status await (ensureListeners/getFocusedApp) rejects.
 let startingSession = false;
+// A stop/cancel trigger that arrives DURING the start prologue (before startLiveInner flips status
+// to "listening") finds status still "idle", so dictate()'s stopOrCancel no-ops it. For HOLD/PTT a
+// fast tap releases the chord inside that window — the emitted "stop" would be dropped and the
+// session left wedged "listening" forever (the chord is already released, nothing re-triggers a
+// stop). This records that a stop is owed; startLiveInner honors it the moment the session is up.
+let stopRequestedDuringStart = false;
+
+/** Called by dictate()'s stopOrCancel when status is idle/error: if a session is mid-start (status
+ *  not yet "listening"), remember a stop was requested so the starting session is torn down as soon
+ *  as it goes live (a short tap-dictation) instead of wedging. Returns whether a start was in flight. */
+export function requestStopIfStarting(): boolean {
+  if (!startingSession) return false;
+  stopRequestedDuringStart = true;
+  return true;
+}
 
 export async function startLive(
   backend: Backend,
@@ -801,6 +816,7 @@ export async function startLive(
 ): Promise<void> {
   if (startingSession) return;
   startingSession = true;
+  stopRequestedDuringStart = false; // fresh start; a prologue stop sets it (see requestStopIfStarting)
   try {
     await startLiveInner(backend, deviceId, activation, pov);
   } finally {
@@ -942,6 +958,13 @@ async function startLiveInner(
         trimSilence: rec.trimSilence,
         muteSystem: rec.muteSystemAudio,
       });
+    }
+    // A stop landed during the start prologue (a fast PTT tap released the chord before status was
+    // "listening", so stopOrCancel no-op'd against idle). The session is up now → stop it promptly
+    // (a short tap-dictation) instead of leaving it wedged "listening" with the chord released.
+    if (stopRequestedDuringStart) {
+      stopRequestedDuringStart = false;
+      void stopLive();
     }
   } catch (e) {
     clearWarmTimer();
