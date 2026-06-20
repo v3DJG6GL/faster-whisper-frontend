@@ -653,7 +653,7 @@ async function ensureListeners(): Promise<void> {
           // glyph/✓ never shows. If a late paste set beganInjection after this sync check, honor its
           // final clipboard restore too (can't double-fire: the injecting branch handles the rest).
           void injectChain.then(() => {
-            void finalClip();
+            void finalClip().catch((e) => console.error("final clip failed:", e));
             if (useApp.getState().status === "transcribing") {
               useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
             }
