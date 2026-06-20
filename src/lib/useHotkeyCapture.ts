@@ -99,11 +99,21 @@ export function useHotkeyCapture(opts: {
         }
       }
     };
+    // If focus is stolen mid-chord (alt-tab, an OS/global-shortcut modifier grab), the matching
+    // keyup never arrives — drop the in-progress chord so a phantom-held modifier can't poison the
+    // next captured binding, and reset `peak` (which otherwise only ever grows within a session).
+    const onBlur = () => {
+      pressed.clear();
+      peak = [];
+      setHeldCodes([]);
+    };
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", onBlur);
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", onBlur);
       void reregisterShortcuts();
     };
   }, [capturing, evdevActive]);
