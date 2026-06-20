@@ -576,8 +576,16 @@ export default function Settings() {
                 }}
               />
             </SettingRow>
-            <SettingRow title="Press Enter after" desc="Send a Return key once the text is inserted.">
-              <Toggle checked={s.general.autoEnter} onChange={(v) => updateGeneral({ autoEnter: v })} />
+            <SettingRow
+              title="Press Enter after"
+              desc="Send a Return key once the text is inserted."
+              disabled={s.general.insertMethod === "clipboard"}
+            >
+              <Toggle
+                checked={s.general.autoEnter}
+                onChange={(v) => updateGeneral({ autoEnter: v })}
+                disabled={s.general.insertMethod === "clipboard"}
+              />
             </SettingRow>
             <SettingRow
               title="Restore clipboard afterward"
