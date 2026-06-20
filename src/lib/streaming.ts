@@ -772,8 +772,10 @@ function flashError(message: string): void {
   // otherwise the stale `partial` lingers in the store — when the error auto-clears to idle the
   // Home transcript card (which lingers longer than the error) would flip from the red message to
   // the leftover preview text labelled "done". cancelLive/startLive clear it on their paths; the
-  // error auto-clear didn't.
-  useApp.getState().setDictation({ status: "error", dictationError: message, level: 0, partial: "" });
+  // error auto-clear didn't. Clear `warming` for the same reason: a start-failure lands here with
+  // warming:true AND the warm-timer backstop already cancelled (start-reject catch), so without this
+  // the chip would stay stuck on "warming up…" (read ungated) and expanded until the next session.
+  useApp.getState().setDictation({ status: "error", dictationError: message, level: 0, partial: "", warming: false });
   if (errorClearTimer) clearTimeout(errorClearTimer);
   errorClearTimer = setTimeout(() => {
     errorClearTimer = null;
