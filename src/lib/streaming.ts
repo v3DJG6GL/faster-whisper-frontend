@@ -582,6 +582,9 @@ async function ensureListeners(): Promise<void> {
     } else if (e.payload === "closed") {
       clearStuckWatchdog(); // the stream resolved on its own
       stopTargetPoll(); // session ending — stop tracking focus for the chip
+      clearWarmTimer(); // reconcile the warm-up gate: a close that bypasses stopLive/cancelLive
+      // (e.g. a silent-mic capture-thread death emits `closed` directly) would otherwise leave the
+      // armed backstop running and `warming` stuck true (the chip reads it ungated by status).
       // Stop the pending phrase-end Enter from firing after the session closes; the stop tail
       // below decides the final phrase's Enter. Keep `phraseDirty` for that decision.
       if (phraseEndTimer) {
@@ -599,7 +602,7 @@ async function ensureListeners(): Promise<void> {
       // showing a processing indicator until the text actually lands, rather than
       // collapsing the instant the server closes (the injection is async). We only
       // return to idle once the queue drains (see settleToIdleAfterInjection).
-      setDictation({ level: 0 });
+      setDictation({ level: 0, warming: false });
 
       // If a recording was saved this session, label it with the full transcript (sibling .txt) so
       // the recordings folder is searchable. Independent of insert timing/method; best-effort.
