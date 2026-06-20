@@ -20,7 +20,13 @@ pub fn create(app: &App) -> tauri::Result<()> {
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main(app),
-            "quit" => app.exit(0),
+            "quit" => {
+                // Drop any live dictation first: app.exit ends the process without running
+                // managed-state destructors, so a mute_system session would otherwise leave
+                // the user's system audio muted after we're gone.
+                crate::session::cleanup_for_exit(app);
+                app.exit(0)
+            }
             _ => {}
         });
 

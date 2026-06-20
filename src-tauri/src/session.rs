@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{mpsc, watch};
 
 /// Monotonic dictation-session epoch. Each new streaming/record session claims the next value
@@ -48,6 +48,23 @@ fn emit_if_active<S: Serialize + Clone>(app: &AppHandle, epoch: u64, event: &str
 
 #[derive(Default)]
 pub struct StreamState(pub Mutex<Option<StreamSession>>);
+
+/// Tear down any in-flight dictation on app exit. Dropping the session aborts capture and —
+/// critically — runs `SystemMuteGuard::drop`, restoring the user's audio if a `mute_system`
+/// session was live. The tray "Quit" calls `AppHandle::exit`, which ends the process WITHOUT
+/// running destructors for managed state, so without this an explicit quit mid-dictation would
+/// strand the system muted. Takes the session out under the lock, then drops it outside (matches
+/// `stop_stream`/`stop_record`, so the capture-thread join doesn't run while the state is locked).
+pub fn cleanup_for_exit(app: &AppHandle) {
+    if let Some(state) = app.try_state::<StreamState>() {
+        let sess = state.0.lock().ok().and_then(|mut g| g.take());
+        drop(sess);
+    }
+    if let Some(state) = app.try_state::<RecordState>() {
+        let sess = state.0.lock().ok().and_then(|mut g| g.take());
+        drop(sess);
+    }
+}
 
 pub struct StartParams {
     pub server_url: String,
