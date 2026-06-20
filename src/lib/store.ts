@@ -289,12 +289,39 @@ export const useApp = create<AppState>((set) => ({
   updateRecording: (patch) =>
     set((s) => ({ settings: { ...s.settings, recording: { ...s.settings.recording, ...patch } } })),
 
-  upsertBackend: (b) => set((s) => ({ backends: upsertById(s.backends, b) })),
+  upsertBackend: (b) =>
+    set((s) => {
+      const prev = s.backends.find((x) => x.id === b.id);
+      const backends = upsertById(s.backends, b);
+      // A changed server URL (or key presence) invalidates the cached connection: its
+      // ok/bootId/models/capabilities describe the OLD server, yet effectiveServerKind, the
+      // Backends status dot, the decode-override gate, and the usage poll all key on the backend
+      // id. Drop the stale connection + usage so they re-test against the new target instead of
+      // showing the old server's "connected"/classification.
+      if (prev && (prev.serverUrl !== b.serverUrl || prev.hasApiKey !== b.hasApiKey)) {
+        const connections = { ...s.connections };
+        delete connections[b.id];
+        const usage = { ...s.usage };
+        delete usage[b.id];
+        return { backends, connections, usage };
+      }
+      return { backends };
+    }),
   removeBackend: (id) =>
-    set((s) => ({
-      backends: s.backends.filter((b) => b.id !== id),
-      profiles: s.profiles.map((p) => (p.backendId === id ? { ...p, backendId: null } : p)),
-    })),
+    set((s) => {
+      // Drop the removed backend's cached connection + usage too, so a re-added backend that
+      // recycles the id (or a late in-flight test) can't read the dead server's state.
+      const connections = { ...s.connections };
+      delete connections[id];
+      const usage = { ...s.usage };
+      delete usage[id];
+      return {
+        backends: s.backends.filter((b) => b.id !== id),
+        profiles: s.profiles.map((p) => (p.backendId === id ? { ...p, backendId: null } : p)),
+        connections,
+        usage,
+      };
+    }),
   duplicateBackend: (id) =>
     set((s) => {
       const i = s.backends.findIndex((b) => b.id === id);
