@@ -249,9 +249,15 @@ export function Waveform({
     };
     kickRef.current = kick;
     kick();
+    // The loop self-parks when idle and only re-reads the canvas size inside draw, so a resize
+    // while parked would leave a stale (blurry/clipped) backing store until an unrelated re-kick.
+    // Re-kick on any size change so draw re-syncs the backing store, then it re-parks.
+    const ro = new ResizeObserver(() => kick());
+    ro.observe(canvas);
     return () => {
       running = false;
       cancelAnimationFrame(raf);
+      ro.disconnect();
     };
   }, [bars, variant]);
 
