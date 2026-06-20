@@ -51,6 +51,7 @@ export default function Transcribe() {
     runId.current++; // abandon any in-flight run — its result must not land against no file
     setFilePath(null);
     setResult(null);
+    setError(null); // clear any stale error Notice from a prior failed run (matches choose())
     setBusy(false);
   };
 
