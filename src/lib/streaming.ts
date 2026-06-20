@@ -972,6 +972,14 @@ export async function stopLive(): Promise<void> {
   } catch (e) {
     // A rejected stop would otherwise wedge the chip at "finalizing…" — batch has no stuck-
     // watchdog (it's stream-only), so surface the error to return the UI to a clear state.
+    // Also tear down the focus-poll + endpoint here, mirroring startLiveInner's reject path: a
+    // rejected stop means no stream is left to emit `closed`, so nothing else stops the 700ms
+    // targetPollTimer (it would republish a stale target forever) or resets activeEndpoint, and
+    // the stuck-watchdog can't recover it (flashError flips status to "error", which gates off its
+    // status==="transcribing" cancelLive).
+    clearStuckWatchdog();
+    stopTargetPoll();
+    activeEndpoint = null;
     console.error("stop dictation failed:", e);
     flashError(String(e));
   }
