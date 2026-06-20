@@ -201,7 +201,7 @@ pub async fn focused_selection(g: &AtspiGuard) -> SelRead {
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use atspi::connection::{set_session_accessibility, AccessibilityConnection};
+    use atspi_connection::{set_session_accessibility, AccessibilityConnection};
     use atspi::events::focus::FocusEvent;
     use atspi::events::object::StateChangedEvent;
     use atspi::events::window::{ActivateEvent, DeactivateEvent};

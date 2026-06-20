@@ -100,7 +100,14 @@ memfd = "0.6"
 # from the EDITABLE state. `tokio` switches zbus to our async reactor; `zbus` re-exports
 # zbus so we can flip the org.a11y.Status flag. Apps not on the a11y bus → editable=None
 # → callers degrade to typing (the guard is positive-only).
-atspi = { version = "0.30", features = ["tokio", "zbus"] }
+# p2p is a DEFAULT feature of atspi-connection, and atspi's `connection` feature pulls
+# atspi-connection WITH its defaults — so the only way to drop p2p is to NOT use atspi's `connection`
+# feature and depend on atspi-connection directly with default-features=false. WHY drop p2p: it makes
+# AccessibilityConnection::new() open a direct peer connection to EVERY app on the a11y bus; on a
+# busy/populated bus one unresponsive app hangs the whole connect → the focus listener never starts →
+# no app detection except our own window (the "this app only" symptom). The bus-routed path is robust.
+atspi = { version = "0.30", default-features = false, features = ["proxies", "wrappers", "tokio", "zbus"] }
+atspi-connection = { version = "0.14", default-features = false, features = ["wrappers"] }
 
 # NOTE: `time` is pinned to 0.3.47 in Cargo.lock. time 0.3.48 introduced a trait
 # impl that collides (E0119) with `cookie` 0.18.1 (a transitive Tauri dep). Do not
