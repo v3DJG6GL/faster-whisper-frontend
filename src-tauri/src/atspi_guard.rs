@@ -504,9 +504,19 @@ mod imp {
     /// whole read is time-bounded so an unresponsive app can't hang the caller. Distinguishes a
     /// genuinely-empty selection (`Empty`) from "no Text interface / proxy error" (`Unavailable`).
     pub(super) async fn read_selection(el: ObjectRefOwned) -> super::SelRead {
-        let conn = match AccessibilityConnection::new().await {
-            Ok(c) => c,
-            Err(_) => return super::SelRead::Unavailable,
+        // Bound the connect too — not just the read below. A wedged a11y bus can make
+        // AccessibilityConnection::new() hang indefinitely (same reason run_once bounds it),
+        // and read_selection is awaited inline by get_quickadd_seed / get_focused_selection,
+        // so an unbounded connect would hang the command — the exact failure this fn's
+        // "whole read is time-bounded" contract promises to avoid.
+        let conn = match tokio::time::timeout(
+            std::time::Duration::from_millis(800),
+            AccessibilityConnection::new(),
+        )
+        .await
+        {
+            Ok(Ok(c)) => c,
+            _ => return super::SelRead::Unavailable, // timed out or connect error → degrade
         };
         let bus = conn.connection().clone();
         let read = async move {
