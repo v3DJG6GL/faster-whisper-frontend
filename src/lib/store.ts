@@ -343,7 +343,19 @@ export const useApp = create<AppState>((set) => ({
       return { profiles };
     }),
 
-  upsertAppRule: (r) => set((s) => ({ appRules: upsertById(s.appRules, r) })),
+  upsertAppRule: (r) =>
+    set((s) => {
+      // Per-app rules are MATCHED by appId (resolveInjectionTarget uses find() = first wins),
+      // so two rules sharing an appId silently shadow each other — a newly-added or re-captured
+      // rule for an already-ruled app would never apply (the older one keeps winning). Upsert by
+      // appId (and the id being edited): replace any rule for this appId in place, so the rule the
+      // user just saved is the one that takes effect.
+      const key = r.appId.trim().toLowerCase();
+      const matches = (x: AppRule) => x.id === r.id || x.appId.trim().toLowerCase() === key;
+      const pos = s.appRules.findIndex(matches);
+      const rest = s.appRules.filter((x) => !matches(x));
+      return { appRules: pos < 0 ? [...rest, r] : [...rest.slice(0, pos), r, ...rest.slice(pos)] };
+    }),
   removeAppRule: (id) => set((s) => ({ appRules: s.appRules.filter((r) => r.id !== id) })),
 
   setConnection: (backendId, info) =>
