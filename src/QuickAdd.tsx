@@ -85,6 +85,11 @@ export default function QuickAdd() {
   // correcting the word in place. `pasteShortcut` is captured from config for that replace-paste.
   const originalSelectionRef = useRef<string | null>(null);
   const pasteShortcutRef = useRef<string[]>(["ControlLeft", "KeyV"]);
+  // Generation guards so an out-of-order async resolution can't apply stale state (mirrors
+  // Dictionary's selectedIdRef / Transcribe's runId). `loadGen` covers refresh()'s fetches
+  // (a re-pin between rapid summons); `summonGen` covers the per-summon selection seed.
+  const loadGen = useRef(0);
+  const summonGen = useRef(0);
 
   // Memoized so editing the insert field or a list row doesn't rebuild the Set + filtered pool
   // (and hand a fresh array into Combobox, re-running its rank) on every keystroke. Mirrors the
@@ -93,7 +98,9 @@ export default function QuickAdd() {
   const suggestions = useMemo(() => recent.filter((w) => !usedKeys.has(w.toLowerCase())), [recent, usedKeys]);
 
   const refresh = useCallback(async () => {
+    const gen = ++loadGen.current;
     const cfg = await loadConfig();
+    if (gen !== loadGen.current) return; // superseded by a newer refresh/summon
     if (cfg) {
       document.documentElement.dataset.theme = cfg.settings.theme;
       pasteShortcutRef.current = cfg.settings.general.pasteShortcut ?? ["ControlLeft", "KeyV"];
@@ -108,6 +115,7 @@ export default function QuickAdd() {
     target.current = { serverUrl: backend.serverUrl, backendId: backend.id, slug: pin.slug };
     setPhase("loading");
     const res = await getPipelineRules({ serverUrl: backend.serverUrl, backendId: backend.id });
+    if (gen !== loadGen.current) return; // a newer refresh won — don't clobber its rows/target
     if (!res.ok) {
       setFetchErr(res);
       setPhase("error");
@@ -126,6 +134,7 @@ export default function QuickAdd() {
     setSaveState("idle");
     setPhase("ok");
     getRecentWords({ serverUrl: backend.serverUrl, backendId: backend.id }).then((rw) => {
+      if (gen !== loadGen.current) return;
       setRecent(rw.words ?? []);
       setRecentMax(rw.max ?? undefined);
     });
@@ -145,6 +154,7 @@ export default function QuickAdd() {
     import("@tauri-apps/api/event")
       .then(({ listen }) =>
         listen("quickadd://shown", async () => {
+          const sgen = ++summonGen.current;
           // Instant empty-capture reset — focus the find field quietly (no dropdown yet).
           setFind("");
           setInsert("");
@@ -161,6 +171,7 @@ export default function QuickAdd() {
           // drop the cursor straight in "Insert" (it's captured). Nothing usable → fall back to
           // the old behaviour: open the recent-words dropdown on the (already-focused) find field.
           const seed = await getQuickAddSeed();
+          if (sgen !== summonGen.current) return; // a newer summon superseded this one
           originalSelectionRef.current = seed; // remember the selected word for correct-on-close
           if (seed) {
             setFind(seed);
