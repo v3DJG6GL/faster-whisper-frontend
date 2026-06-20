@@ -224,7 +224,13 @@ mod imp {
         // what libatspi's init does). Best-effort; left on after exit — benign, and KDE's
         // QT_ACCESSIBILITY=1 already implies it. This makes app detection work WITHOUT deep
         // detection; deep detection then only adds the Chromium/Electron poke.
-        let _ = set_session_accessibility(true).await;
+        // Time-bounded: on a congested/half-wedged session bus this call can hang, which would
+        // block the reconnect loop below from ever starting. Best-effort, so a timeout is fine.
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            set_session_accessibility(true),
+        )
+        .await;
         // Reconnect loop: the a11y connection can die — registry daemon restart, or (the big
         // one for long sessions) suspend/resume drops the bus. If we just returned, the task
         // would exit forever and the snapshot would freeze on the last-seen app (looked like
@@ -241,24 +247,34 @@ mod imp {
     /// One connection's lifetime: connect, register, pump events until the stream ends or
     /// errors (then `run` reconnects). Returns `Ok(())` on a clean stream end.
     async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String> {
-        let conn = AccessibilityConnection::new()
-            .await
-            .map_err(|e| format!("a11y bus connect: {e}"))?;
-        conn.register_event::<StateChangedEvent>()
-            .await
-            .map_err(|e| format!("register state-changed: {e}"))?;
-        conn.register_event::<FocusEvent>()
-            .await
-            .map_err(|e| format!("register focus: {e}"))?;
-        // Window activation tracks Alt-Tab / window switches (no element-focus change fires).
-        conn.register_event::<ActivateEvent>()
-            .await
-            .map_err(|e| format!("register window-activate: {e}"))?;
-        // Deactivation clears the foreground mark — essential so that switching INTO an Electron
-        // app (which never emits window:activate) is accepted instead of rejected as a ghost.
-        conn.register_event::<DeactivateEvent>()
-            .await
-            .map_err(|e| format!("register window-deactivate: {e}"))?;
+        // Connect + register, time-bounded: on a congested or half-wedged session/a11y bus these
+        // D-Bus round-trips can hang indefinitely, leaving the listener neither connected NOR
+        // erroring — so `run`'s reconnect loop never fires and detection is dead until an app
+        // restart (the "this app works, others show nothing" symptom). A timeout turns a hang into
+        // a normal error the loop retries after its backoff, so the listener self-heals.
+        let conn = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let conn = AccessibilityConnection::new()
+                .await
+                .map_err(|e| format!("a11y bus connect: {e}"))?;
+            conn.register_event::<StateChangedEvent>()
+                .await
+                .map_err(|e| format!("register state-changed: {e}"))?;
+            conn.register_event::<FocusEvent>()
+                .await
+                .map_err(|e| format!("register focus: {e}"))?;
+            // Window activation tracks Alt-Tab / window switches (no element-focus change fires).
+            conn.register_event::<ActivateEvent>()
+                .await
+                .map_err(|e| format!("register window-activate: {e}"))?;
+            // Deactivation clears the foreground mark — essential so that switching INTO an Electron
+            // app (which never emits window:activate) is accepted instead of rejected as a ghost.
+            conn.register_event::<DeactivateEvent>()
+                .await
+                .map_err(|e| format!("register window-deactivate: {e}"))?;
+            Ok::<_, String>(conn)
+        })
+        .await
+        .map_err(|_| "connect/register timed out".to_string())??;
         // Owned clone of the underlying bus for proxy calls — keeps off the event
         // stream's borrow of `conn`.
         let bus = conn.connection().clone();
