@@ -665,6 +665,9 @@ export default function Dictionary() {
       patch: { rules_patch, fingerprints },
     });
     setSaving(false);
+    // Backend switched while the save was in flight → this result belongs to the
+    // old backend; don't reload or flash its banner over the now-selected one.
+    if (backend.id !== selectedIdRef.current) return;
     // On success, re-sync to server truth (fresh fingerprints; conflicted edits
     // are replaced by the server's version) BEFORE showing the banner — load()
     // clears `result`, so set it afterwards. On 422 keep edits so the user can fix.
