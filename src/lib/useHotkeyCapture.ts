@@ -39,6 +39,10 @@ export function useHotkeyCapture(opts: {
     const pressed = new Set<string>();
     let peak: string[] = [];
     let done = false;
+    // A validateCodes() resolution that lands after the user cancels (Escape) or the
+    // capture effect tears down must not commit the abandoned chord (mirrors the
+    // cancelled-flag guard in useOverrideContext).
+    let cancelled = false;
     const finalize = (codes: string[]) => {
       const clash = findChordConflict(codes, ref.current.others);
       if (clash) {
@@ -54,6 +58,7 @@ export function useHotkeyCapture(opts: {
         ref.current.onCommit(codes);
       } else {
         void validateCodes(codes).then((ok) => {
+          if (cancelled) return; // capture torn down / cancelled while validating
           if (ok) ref.current.onCommit(codes);
           else {
             setWarn("Can’t register that — add a letter/digit, or enable evdev (Settings → Permissions) for modifier-only / AltGr");
@@ -111,6 +116,7 @@ export function useHotkeyCapture(opts: {
     window.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("blur", onBlur);
     return () => {
+      cancelled = true;
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", onBlur);
