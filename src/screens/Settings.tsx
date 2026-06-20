@@ -577,8 +577,13 @@ export default function Settings() {
             <SettingRow
               title="Restore clipboard afterward"
               desc="Put your previous clipboard contents back once the paste is done."
+              disabled={s.general.insertMethod !== "paste"}
             >
-              <Toggle checked={s.general.restoreClipboard} onChange={(v) => updateGeneral({ restoreClipboard: v })} />
+              <Toggle
+                checked={s.general.restoreClipboard}
+                onChange={(v) => updateGeneral({ restoreClipboard: v })}
+                disabled={s.general.insertMethod !== "paste"}
+              />
             </SettingRow>
             <SettingRow title="Sound cues" desc="A short tone when dictation starts and stops.">
               <Toggle checked={s.general.soundEffects} onChange={(v) => updateGeneral({ soundEffects: v })} />
