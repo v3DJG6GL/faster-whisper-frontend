@@ -58,35 +58,45 @@ fn emit_for_activation(app: &AppHandle, want: ActivationType, action: &str) {
 pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
     let mut profile: Option<String> = None;
     let mut action: Option<String> = None;
+    // Did this relaunch carry a recognized trigger/quick-add flag? If not, it's a bare
+    // "open the app again" launch (e.g. double-clicking the icon) and we reveal the window.
+    let mut recognized = false;
     let mut i = 0;
     while i < argv.len() {
         match argv[i].as_str() {
             "--profile" if i + 1 < argv.len() => {
                 profile = Some(argv[i + 1].clone());
+                recognized = true;
                 i += 2;
             }
             "--action" if i + 1 < argv.len() => {
                 action = Some(argv[i + 1].clone());
+                recognized = true;
                 i += 2;
             }
             "--ptt-down" => {
                 emit_for_activation(app, ActivationType::Hold, "start");
+                recognized = true;
                 i += 1;
             }
             "--ptt-up" => {
                 emit_for_activation(app, ActivationType::Hold, "stop");
+                recognized = true;
                 i += 1;
             }
             "--toggle-hold" => {
                 emit_for_activation(app, ActivationType::Hold, "toggle");
+                recognized = true;
                 i += 1;
             }
             "--toggle" | "--toggle-latch" => {
                 emit_for_activation(app, ActivationType::Latch, "toggle");
+                recognized = true;
                 i += 1;
             }
             "--quick-add" => {
                 crate::quickadd::show(app);
+                recognized = true;
                 i += 1;
             }
             _ => i += 1,
@@ -98,6 +108,12 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
         } else {
             tracing::warn!("[trigger] cli ignored unknown action '{a}'");
         }
+    }
+    // A bare second launch (no trigger/quick-add flag) means "open the app again". The main
+    // window is routinely hidden (start-minimized, or close-to-tray), so without this the
+    // already-running instance would stay invisible and the app would appear not to open.
+    if !recognized {
+        crate::tray::show_main(app);
     }
 }
 
