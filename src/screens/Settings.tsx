@@ -541,10 +541,12 @@ export default function Settings() {
                   ? "Applies to “When I stop”. Live always types (keystrokes) — it has to backspace-correct revised words, which the clipboard can’t do."
                   : "Clipboard paste is the most reliable. Direct typing never touches the clipboard but can struggle with some layouts. Clipboard only copies the text without typing — you paste it yourself."
               }
+              disabled={s.general.insertTiming === "off"}
             >
               <Segmented
                 value={s.general.insertMethod}
                 onChange={(v) => updateGeneral({ insertMethod: v })}
+                disabled={s.general.insertTiming === "off"}
                 options={[
                   { value: "paste", label: "Clipboard paste" },
                   { value: "direct", label: "Direct typing" },
@@ -579,23 +581,23 @@ export default function Settings() {
             <SettingRow
               title="Press Enter after"
               desc="Send a Return key once the text is inserted."
-              disabled={s.general.insertMethod === "clipboard"}
+              disabled={s.general.insertTiming === "off" || s.general.insertMethod === "clipboard"}
             >
               <Toggle
                 checked={s.general.autoEnter}
                 onChange={(v) => updateGeneral({ autoEnter: v })}
-                disabled={s.general.insertMethod === "clipboard"}
+                disabled={s.general.insertTiming === "off" || s.general.insertMethod === "clipboard"}
               />
             </SettingRow>
             <SettingRow
               title="Restore clipboard afterward"
               desc="Put your previous clipboard contents back once the paste is done."
-              disabled={s.general.insertMethod !== "paste"}
+              disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
             >
               <Toggle
                 checked={s.general.restoreClipboard}
                 onChange={(v) => updateGeneral({ restoreClipboard: v })}
-                disabled={s.general.insertMethod !== "paste"}
+                disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
               />
             </SettingRow>
             <SettingRow title="Sound cues" desc="A short tone when dictation starts and stops.">
