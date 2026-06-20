@@ -42,9 +42,15 @@ export function dictate(profileId: string, action: TriggerAction): void {
     stopOrCancel();
     return;
   }
-  if (action === "toggle" && isBusy()) {
-    stopOrCancel();
-    return;
+  if (action === "toggle") {
+    if (isBusy()) {
+      stopOrCancel();
+      return;
+    }
+    // A toggle-off that lands during the start prologue (status still "idle", session mid-start)
+    // would otherwise fall through to the start branch and be swallowed by startLive's
+    // startingSession guard, wedging the just-started latch. Honor it like the explicit "stop".
+    if (requestStopIfStarting()) return;
   }
 
   // Starting a session DOES require an enabled Profile with a resolvable Backend.

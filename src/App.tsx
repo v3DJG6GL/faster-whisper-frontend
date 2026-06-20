@@ -8,7 +8,7 @@ import { initOverlayController } from "@/lib/overlay";
 import { initUsageController } from "@/lib/usage";
 import { onTrigger, onSystemResumed, onOverlayAction, onAppNavigate } from "@/lib/api";
 import { dictate, runOverlayAction } from "@/lib/dictation";
-import { cancelLive } from "@/lib/streaming";
+import { cancelLive, requestStopIfStarting } from "@/lib/streaming";
 import { SCREEN_PATH } from "@/lib/screens";
 import Home from "@/screens/Home";
 import Transcribe from "@/screens/Transcribe";
@@ -113,7 +113,11 @@ export default function App() {
   useTauriListener(
     () =>
       onSystemResumed(() => {
+        // A live session's mic/WS is dead after resume → reset it. A session still mid-START
+        // (status not yet "listening") reads "idle", so cancelLive wouldn't catch it; mark it to
+        // tear down on go-live instead, else its prologue completes against the dead mic and wedges.
         if (useApp.getState().status !== "idle") void cancelLive();
+        else requestStopIfStarting();
       }),
     [],
   );
