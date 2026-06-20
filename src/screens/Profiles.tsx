@@ -366,6 +366,7 @@ export default function Profiles() {
   const removeProfile = useApp((s) => s.removeProfile);
   const duplicateProfile = useApp((s) => s.duplicateProfile);
   const moveProfile = useApp((s) => s.moveProfile);
+  const quickAddHotkey = useApp((s) => s.settings.general.quickAddHotkey);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Profile | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -433,7 +434,17 @@ export default function Profiles() {
         <div className="mt-8">
           <Editor
             initial={draft}
-            others={profiles.filter((p) => p.id !== editingId)}
+            // Include the global quick-add shortcut as a pseudo-profile so capturing a chord that
+            // clashes with it is WARNED: the evdev matcher silently drops the quick-add chord when
+            // it duplicates a profile chord (profiles register first), so a rebind could otherwise
+            // kill quick-add with no warning. Symmetric with the Settings quick-add row, which
+            // already checks against the profiles.
+            others={[
+              ...profiles.filter((p) => p.id !== editingId),
+              ...(quickAddHotkey.length > 0
+                ? [{ id: "__quick-add__", name: "Quick add", activation: "hold" as const, enabled: true, hotkey: quickAddHotkey, backendId: null }]
+                : []),
+            ]}
             onSave={onSave}
             onCancel={onCancel}
           />
