@@ -1,6 +1,6 @@
 //! Batch transcription: `POST /v1/audio/transcriptions` (multipart).
 
-use super::{base_url, client, detail_from, with_auth};
+use super::{base_url, client, detail_from, friendly_err, with_auth};
 use anyhow::{bail, Context};
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
@@ -154,7 +154,13 @@ async fn post(
     if let Some(t) = timeout {
         req = req.timeout(t);
     }
-    let resp = req.send().await.context("request failed")?;
+    // Classify connect/timeout failures the same way discovery/pipeline/streaming do, so the
+    // Transcribe screen and batch dictation show "Could not connect…" / "Timed out…" instead of
+    // a raw reqwest error chain.
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
 
     let status = resp.status();
     if !status.is_success() {
