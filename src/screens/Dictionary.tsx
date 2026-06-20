@@ -126,7 +126,7 @@ const monoInput = "font-mono text-[12.5px]";
 /* ── one rule (stable, module-scope component) ─────────────────────────── */
 function RuleCard({
   rule, edit, editable, dirty, expanded, mapCollapseAfter, recentWords, recentMax,
-  pinned, onTogglePin, onToggleExpand, onPatch, onReset,
+  pinned, saving, onTogglePin, onToggleExpand, onPatch, onReset,
 }: {
   rule: PipelineRule;
   edit: EditState;
@@ -137,6 +137,7 @@ function RuleCard({
   recentWords: string[];
   recentMax?: number;
   pinned: boolean;
+  saving: boolean;
   onTogglePin?: () => void;
   onToggleExpand: () => void;
   onPatch: (updater: (e: EditState) => EditState) => void;
@@ -145,6 +146,11 @@ function RuleCard({
   const locked = !!rule.locked;
   const canEnable = editable.includes("enabled");
   const bodyEditable = editable.some((f) => f !== "enabled");
+  // Freeze the body inputs while a save is in flight: on success the save re-syncs from server
+  // truth (load → setEdits), which would silently discard — with no unsaved-changes warning — any
+  // keystroke typed during the network round-trip. The show/hide below keeps using bodyEditable so
+  // controls gray in place rather than vanishing for the brief save.
+  const inputsDisabled = !bodyEditable || saving;
   // `dirty` is passed in (computed once, cached, in the parent) — recomputing buildPatch here
   // re-ran a whole-map sort + JSON.stringify in every card on every keystroke.
   const dotHex = ruleDotColor(rule.color);
@@ -281,7 +287,7 @@ function RuleCard({
                       <div className="flex items-center gap-2">
                         <input
                           value={row.label ?? ""}
-                          disabled={!bodyEditable}
+                          disabled={inputsDisabled}
                           placeholder="label (optional)"
                           spellCheck={false}
                           onChange={(ev) => setRow({ label: ev.target.value })}
@@ -311,13 +317,13 @@ function RuleCard({
                       <Stack gap={2}>
                         <div className="flex items-center gap-3">
                           <span className="w-12 shrink-0 text-right font-mono text-[11px] text-faint">find</span>
-                          <TextInput value={row.pattern} disabled={!bodyEditable} spellCheck={false}
+                          <TextInput value={row.pattern} disabled={inputsDisabled} spellCheck={false}
                             placeholder="regex pattern (required)" className={cn(monoInput, "min-w-0 flex-1")}
                             onChange={(ev) => setRow({ pattern: ev.target.value })} />
                         </div>
                         <div className="flex items-center gap-3">
                           <span className="w-12 shrink-0 text-right font-mono text-[11px] text-faint">→ repl</span>
-                          <TextInput value={row.replacement} disabled={!bodyEditable} spellCheck={false}
+                          <TextInput value={row.replacement} disabled={inputsDisabled} spellCheck={false}
                             placeholder="(empty = delete match)" className={cn(monoInput, "min-w-0 flex-1")}
                             onChange={(ev) => setRow({ replacement: ev.target.value })} />
                         </div>
@@ -326,7 +332,7 @@ function RuleCard({
                       {noteShown && (
                         <div className="flex items-start gap-3">
                           <span className="w-12 shrink-0 pt-2 text-right font-mono text-[11px] text-faint">note</span>
-                          <textarea value={row.note ?? ""} disabled={!bodyEditable} rows={2} autoFocus={!hasNote}
+                          <textarea value={row.note ?? ""} disabled={inputsDisabled} rows={2} autoFocus={!hasNote}
                             placeholder="note (optional)"
                             onChange={(ev) => setRow({ note: ev.target.value })}
                             className="ring-signal min-w-0 flex-1 rounded-xl border border-line bg-surface-2 px-3 py-2 text-[12px] leading-relaxed text-text placeholder:italic placeholder:text-faint disabled:opacity-50" />
@@ -377,7 +383,7 @@ function RuleCard({
                   <div key={row.id} className="flex items-center gap-3 rounded-lg border border-line bg-surface-2/40 px-2.5 py-2">
                     <Combobox
                       value={row.k}
-                      disabled={!bodyEditable}
+                      disabled={inputsDisabled}
                       placeholder="comma"
                       className="min-w-0 flex-1"
                       autoFocus={row.id === justAddedId}
@@ -391,7 +397,7 @@ function RuleCard({
                     />
                     <span className="w-4 shrink-0 text-center text-faint" aria-hidden>→</span>
                     <TextInput ref={(el) => { valueRefs.current.set(row.id, el); }}
-                      value={row.v} disabled={!bodyEditable} spellCheck={false} placeholder="," className={cn(monoInput, "min-w-0 flex-1")}
+                      value={row.v} disabled={inputsDisabled} spellCheck={false} placeholder="," className={cn(monoInput, "min-w-0 flex-1")}
                       onChange={(ev) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, v: ev.target.value } : r)))} />
                     <span className="w-44 shrink-0 whitespace-nowrap text-right font-mono text-[10.5px] text-faint"
                       title={ts ? absWhen(ts) : undefined}>
@@ -425,7 +431,7 @@ function RuleCard({
                 <FieldLabel>Match (regex)</FieldLabel>
                 <TextInput
                   value={edit.pattern ?? ""}
-                  disabled={!bodyEditable}
+                  disabled={inputsDisabled}
                   spellCheck={false}
                   className={monoInput}
                   onChange={(ev) => onPatch((e) => ({ ...e, pattern: ev.target.value }))}
@@ -435,7 +441,7 @@ function RuleCard({
                 <FieldLabel>Word list — one per line ({wordCount(edit.words)})</FieldLabel>
                 <textarea
                   value={edit.words ?? ""}
-                  disabled={!bodyEditable}
+                  disabled={inputsDisabled}
                   spellCheck={false}
                   rows={6}
                   onChange={(ev) => onPatch((e) => ({ ...e, words: ev.target.value }))}
@@ -451,7 +457,7 @@ function RuleCard({
               <FieldLabel>Match (regex)</FieldLabel>
               <TextInput
                 value={edit.pattern ?? ""}
-                disabled={!bodyEditable}
+                disabled={inputsDisabled}
                 spellCheck={false}
                 className={monoInput}
                 onChange={(ev) => onPatch((e) => ({ ...e, pattern: ev.target.value }))}
@@ -775,6 +781,7 @@ export default function Dictionary() {
               mapCollapseAfter={fetchRes?.state?.map_collapse_after ?? 15}
               recentWords={recentWords}
               recentMax={recentMax}
+              saving={saving}
               pinned={!!backend && quickAddList?.backendId === backend.id && quickAddList?.slug === r.name}
               onTogglePin={
                 r.type === "callback:map" && backend
