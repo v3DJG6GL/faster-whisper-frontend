@@ -403,6 +403,14 @@ export async function restoreClipboardSnapshot(): Promise<void> {
   await invoke("restore_clipboard_snapshot");
 }
 
+/** Drop the beginInjection snapshot WITHOUT restoring it — for when a session ends on a
+ *  clipboard-only phrase, so the transcript the user wants to paste survives (no restore)
+ *  yet the snapshot can't leak into a later session. No-op when no snapshot was taken. */
+export async function discardInjectionSnapshot(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("discard_injection_snapshot");
+}
+
 /** Insert text into the focused field of the active app. */
 export async function injectText(args: {
   text: string;

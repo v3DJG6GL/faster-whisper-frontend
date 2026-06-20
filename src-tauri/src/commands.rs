@@ -654,6 +654,18 @@ pub fn restore_clipboard_snapshot(snap: State<ClipboardSnapshot>) {
     }
 }
 
+/// Clear the `begin_injection` snapshot WITHOUT restoring it. Used when a live paste session
+/// ENDS on a clipboard-only phrase: the clipboard then deliberately holds the transcript the
+/// user wants to paste, so the end-of-session restore must NOT clobber it — but we still drop
+/// the snapshot so it can't leak a stale value into a later session (e.g. a future
+/// begin_injection that times out and keeps the prior snapshot).
+#[tauri::command]
+pub fn discard_injection_snapshot(snap: State<ClipboardSnapshot>) {
+    if let Ok(mut g) = snap.0.lock() {
+        let _ = g.take();
+    }
+}
+
 /// The focused application's id + title + (when deep detection is on) whether its focused
 /// element is editable. Via AT-SPI; `None` when nothing is known yet (no a11y bridge / cold
 /// listener). Used to resolve per-app rules, the chip readout, and the field guard. When one

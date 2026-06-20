@@ -138,6 +138,7 @@ pub fn run() {
             commands::begin_injection,
             commands::end_injection,
             commands::restore_clipboard_snapshot,
+            commands::discard_injection_snapshot,
             commands::get_focused_app,
             commands::get_focused_other_app,
             commands::set_deep_field_detection,

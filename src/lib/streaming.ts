@@ -33,6 +33,7 @@ import {
   beginInjection,
   endInjection,
   restoreClipboardSnapshot,
+  discardInjectionSnapshot,
   getFocusedApp,
   reregisterShortcuts,
   writeRecordingTranscript,
@@ -625,7 +626,13 @@ async function ensureListeners(): Promise<void> {
         // Skip the "injecting" flash when there's no tail work.
         const enterTail = cfg.autoEnter && phraseDirty;
         phraseDirty = false;
-        clipDirty = false; // end_injection below does the final restore + clears the snapshot
+        // Do we still OWE the user a clipboard restore? Only if the clipboard currently holds
+        // OUR paste transcript (clipDirty). If the last landed phrase was clipboard-only, the
+        // clipboard deliberately holds the transcript the user wants to paste — restoring would
+        // clobber it — so we discard the snapshot instead (clears it, no restore). Captured here
+        // because the line below zeroes clipDirty.
+        const owedRestore = clipDirty;
+        clipDirty = false;
         const hasTail = enterTail || beganInjection;
         if (!hasTail) {
           // No visible write-out tail (clipboard-only, direct typing, or nothing landed): skip the
@@ -643,7 +650,9 @@ async function ensureListeners(): Promise<void> {
         }
         setDictation({ status: "injecting" });
         if (enterTail) enqueueAutoEnter();
-        if (beganInjection) enqueueInject(() => endInjection());
+        // Restore only if we owe one; otherwise just clear the snapshot so a final clipboard-only
+        // phrase's transcript survives on the clipboard (and no stale snapshot leaks forward).
+        if (beganInjection) enqueueInject(() => (owedRestore ? endInjection() : discardInjectionSnapshot()));
         settleToIdleAfterInjection(startedAt);
       } else {
         // "stop" (and "live" on a batch profile): insert the whole transcript once, into the
