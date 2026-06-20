@@ -39,12 +39,14 @@ pub fn stop(state: &EvdevState) {
 }
 
 #[cfg(target_os = "linux")]
-pub use imp::{permitted, setup, start};
+pub use imp::{permitted, setup, start, stop_held_sessions};
 
 #[cfg(not(target_os = "linux"))]
 pub fn permitted() -> bool {
     false
 }
+#[cfg(not(target_os = "linux"))]
+pub fn stop_held_sessions(_app: &tauri::AppHandle) {}
 #[cfg(not(target_os = "linux"))]
 pub fn start(_app: &tauri::AppHandle, _state: &EvdevState, _profiles: &[crate::config::Profile], _quick_add_hotkey: &[String]) {}
 #[cfg(not(target_os = "linux"))]
@@ -233,6 +235,37 @@ mod imp {
         );
     }
 
+    // PTT (Hold) chords currently emitting "start", across all reader tasks. A listener teardown
+    // (apply_bindings restart, evdev disable, suspend-for-rebind) aborts the readers, which SKIPS
+    // their post-loop "stop" cleanup — so a Hold session held across the teardown would wedge
+    // "listening" forever: the new (or absent) reader never observed the press, so the eventual
+    // key-release matches no chord and emits no "stop". Tracked here so the teardown can emit those
+    // stops itself (see stop_held_sessions). Vec so the static is const-initializable; entries are
+    // deduped on insert and dictate("stop") is a no-op when idle, so any staleness is harmless.
+    static ACTIVE_HOLDS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+    fn note_hold(profile_id: &str, active: bool) {
+        if let Ok(mut h) = ACTIVE_HOLDS.lock() {
+            h.retain(|p| p != profile_id);
+            if active {
+                h.push(profile_id.to_string());
+            }
+        }
+    }
+
+    /// Emit "stop" for every PTT chord still held, then clear the set. Call from a listener teardown
+    /// whose abort()'d readers skip their own post-loop stop cleanup, so a session held across the
+    /// restart isn't wedged "listening". No-op when nothing is held (the common case).
+    pub fn stop_held_sessions(app: &AppHandle) {
+        let stuck = ACTIVE_HOLDS
+            .lock()
+            .map(|mut h| std::mem::take(&mut *h))
+            .unwrap_or_default();
+        for profile_id in stuck {
+            emit(app, &profile_id, "stop");
+        }
+    }
+
     async fn run_device(
         app: AppHandle,
         mut stream: evdev::EventStream,
@@ -291,9 +324,11 @@ mod imp {
                             if on && !active[i] {
                                 active[i] = true;
                                 emit(&app, profile_id, "start");
+                                note_hold(profile_id, true);
                             } else if !on && active[i] {
                                 active[i] = false;
                                 emit(&app, profile_id, "stop");
+                                note_hold(profile_id, false);
                             }
                         }
                         ActivationType::Latch => {
@@ -330,6 +365,7 @@ mod imp {
             if active[i] {
                 if let ChordAction::Dictate { profile_id, activation: ActivationType::Hold } = &chords[i].action {
                     emit(&app, profile_id, "stop");
+                    note_hold(profile_id, false);
                 }
             }
         }

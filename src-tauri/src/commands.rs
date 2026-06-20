@@ -479,10 +479,13 @@ pub fn suspend_shortcuts(app: AppHandle) {
     crate::triggers::unregister_all(&app);
     let state = app.state::<crate::evdev_hotkeys::EvdevState>();
     crate::evdev_hotkeys::stop(&state);
-    // stop() aborts the reader tasks, which skips their post-loop held-key cleanup, so
-    // a modifier held at this instant would leave a phantom count and make the next
-    // inject_text wait the full gate timeout. Restore held_keys' "not running ⇒ empty".
+    // stop() aborts the reader tasks, which skips their post-loop cleanup, so compensate for both:
+    // (1) the held-KEY counts — a modifier held now would leave a phantom count and make the next
+    // inject_text wait the full gate timeout; restore held_keys' "not running ⇒ empty".
     app.state::<crate::held_keys::HeldKeys>().clear();
+    // (2) the held-SESSION "stop" — a PTT chord held while a rebind capture starts would otherwise
+    // wedge "listening" until manual cancel (the release reaches no reader). No-op when none held.
+    crate::evdev_hotkeys::stop_held_sessions(&app);
 }
 
 /// Apply the current bindings to the right backend: when the evdev backend is
@@ -493,6 +496,11 @@ pub fn apply_bindings(app: &AppHandle) {
     let cfg = config::load(&dir);
     let state = app.state::<crate::evdev_hotkeys::EvdevState>();
     let quick_add = &cfg.settings.general.quick_add_hotkey;
+    // Re-registering aborts the evdev reader tasks, which skips their post-loop "stop" for any
+    // PTT chord held right now — so a session held across this restart (e.g. editing a profile
+    // while holding push-to-talk) would wedge "listening". Emit those stops first. No-op when
+    // nothing is held.
+    crate::evdev_hotkeys::stop_held_sessions(app);
     if cfg.settings.general.evdev_enabled && crate::evdev_hotkeys::permitted() {
         crate::triggers::unregister_all(app);
         crate::evdev_hotkeys::start(app, &state, &cfg.profiles, quick_add);
