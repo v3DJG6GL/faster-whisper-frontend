@@ -413,7 +413,7 @@ export default function QuickAdd() {
                       type="button"
                       title="Remove mapping"
                       onClick={() => mutate((rs) => rs.filter((r) => r.id !== row.id))}
-                      className="ring-signal grid size-7 shrink-0 place-items-center rounded-md text-faint opacity-0 transition-opacity hover:text-warn group-hover:opacity-100"
+                      className="ring-signal grid size-7 shrink-0 place-items-center rounded-md text-faint opacity-0 transition-opacity hover:text-warn group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100"
                     >
                       <Trash2 className="size-3.5" />
                     </button>
