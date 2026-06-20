@@ -632,13 +632,16 @@ async function ensureListeners(): Promise<void> {
         // Skip the "injecting" flash when there's no tail work.
         const enterTail = cfg.autoEnter && phraseDirty;
         phraseDirty = false;
-        // Do we still OWE the user a clipboard restore? Only if the clipboard currently holds
-        // OUR paste transcript (clipDirty). If the last landed phrase was clipboard-only, the
-        // clipboard deliberately holds the transcript the user wants to paste — restoring would
-        // clobber it — so we discard the snapshot instead (clears it, no restore). Captured here
-        // because the line below zeroes clipDirty.
-        const owedRestore = clipDirty;
-        clipDirty = false;
+        // The final clipboard action is decided once the inject queue has DRAINED (finalClip, run
+        // below), reading the LIVE clipDirty: restore the user's clipboard only if it still holds
+        // OUR paste transcript; if the last phrase to land was clipboard-only, the clipboard holds
+        // the transcript the user wants to paste, so discard the snapshot (clear, no restore). We
+        // decide at drain time — not here — so a late paste OR late clipboard-only still queued when
+        // `closed` fires is honored on BOTH the tail and the no-tail path. (clipDirty is reset for
+        // the next session by startLive's clearPhraseEnd, and microtask ordering guarantees finalClip
+        // runs before any new session could reset it.)
+        const finalClip = (): Promise<void> =>
+          beganInjection ? (clipDirty ? endInjection() : discardInjectionSnapshot()) : Promise.resolve();
         const hasTail = enterTail || beganInjection;
         if (!hasTail) {
           // No visible write-out tail (clipboard-only, direct typing, or nothing landed): skip the
@@ -647,7 +650,7 @@ async function ensureListeners(): Promise<void> {
           // glyph/✓ never shows. If a late paste set beganInjection after this sync check, honor its
           // final clipboard restore too (can't double-fire: the injecting branch handles the rest).
           void injectChain.then(() => {
-            if (beganInjection) void endInjection();
+            void finalClip();
             if (useApp.getState().status === "transcribing") {
               useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
             }
@@ -656,9 +659,9 @@ async function ensureListeners(): Promise<void> {
         }
         setDictation({ status: "injecting" });
         if (enterTail) enqueueAutoEnter();
-        // Restore only if we owe one; otherwise just clear the snapshot so a final clipboard-only
-        // phrase's transcript survives on the clipboard (and no stale snapshot leaks forward).
-        if (beganInjection) enqueueInject(() => (owedRestore ? endInjection() : discardInjectionSnapshot()));
+        // Restore/discard once the queue drains (finalClip): restore only if we still owe one, else
+        // keep a final clipboard-only transcript on the clipboard (and drop the snapshot).
+        enqueueInject(finalClip);
         settleToIdleAfterInjection(startedAt);
       } else {
         // "stop" (and "live" on a batch profile): insert the whole transcript once, into the
