@@ -653,8 +653,12 @@ fn streams_to_mute(text: &str, our_pid: u32) -> Vec<u32> {
 /// Mute every other app's playback stream (see streams_to_mute); returns the ids muted (to restore
 /// on drop), or None when pactl is unavailable so the caller falls back to a whole-sink mute.
 fn mute_other_streams() -> Option<Vec<u32>> {
+    // LC_ALL=C: pactl localizes the labels we parse ("Sink Input #", "Mute:", "yes"/"no"), so on a
+    // non-English desktop the parse would find nothing → Some(vec![]) → no whole-sink fallback →
+    // muting silently does nothing. Force the C locale so the parse is language-independent.
     let out = std::process::Command::new("pactl")
         .args(["list", "sink-inputs"])
+        .env("LC_ALL", "C")
         .output()
         .ok()?;
     if !out.status.success() {
@@ -680,6 +684,7 @@ fn set_sink_input_mute(id: u32, mute: bool) {
 fn get_system_mute() -> Option<bool> {
     if let Ok(out) = std::process::Command::new("wpctl")
         .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
+        .env("LC_ALL", "C")
         .output()
     {
         if out.status.success() {
@@ -688,6 +693,7 @@ fn get_system_mute() -> Option<bool> {
     }
     let out = std::process::Command::new("pactl")
         .args(["get-sink-mute", "@DEFAULT_SINK@"])
+        .env("LC_ALL", "C")
         .output()
         .ok()?;
     if !out.status.success() {
