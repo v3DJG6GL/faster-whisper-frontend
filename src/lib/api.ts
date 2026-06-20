@@ -41,6 +41,14 @@ export async function deleteBackendKey(backendId: string): Promise<void> {
   await invoke("delete_backend_key", { backendId });
 }
 
+/** The app version baked into the binary at build time. Sourced from tauri.conf.json,
+ *  which a release bump keeps in lockstep with package.json / Cargo.toml via
+ *  `scripts/version.mjs`. Empty string outside the desktop app (plain `pnpm dev`). */
+export async function appVersion(): Promise<string> {
+  if (!isTauri) return "";
+  return invoke<string>("app_version");
+}
+
 export async function testConnection(args: {
   serverUrl: string;
   backendId?: string | null;

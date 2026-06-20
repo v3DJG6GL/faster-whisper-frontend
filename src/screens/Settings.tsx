@@ -19,6 +19,7 @@ import {
   openRecordingsDir,
   recordingsDirPath,
   pickRecordingsDir,
+  appVersion,
   type EvdevStatus,
 } from "@/lib/api";
 import type { AudioDevice, OverlayQuickAction, RecordingSettings } from "@/lib/types";
@@ -468,6 +469,14 @@ export default function Settings() {
   useEffect(() => {
     void evdevStatus().then(setEvdev);
   }, [tab]);
+
+  // Build-time app version (from tauri.conf.json) for the footer readout. Fetched once.
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    void appVersion()
+      .then(setVersion)
+      .catch(() => {}); // best-effort: a missing version just hides the footer label
+  }, []);
 
   // Recordings folder: resolve the active path for display (custom or default), and
   // re-resolve whenever the custom selection changes.
@@ -952,6 +961,7 @@ export default function Settings() {
 
         <div className="mt-5 flex items-center gap-2 px-1 font-mono text-[11px] text-faint">
           <Check className="size-3.5 text-ok" /> changes apply immediately
+          {version && <span className="ml-auto tracking-label">v{version}</span>}
         </div>
       </div>
     </div>
