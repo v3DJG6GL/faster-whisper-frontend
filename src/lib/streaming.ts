@@ -768,7 +768,12 @@ let errorClearTimer: ReturnType<typeof setTimeout> | null = null;
 /** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
  *  Guarded: if a new session starts first (status leaves "error"), the pending clear is a no-op. */
 function flashError(message: string): void {
-  useApp.getState().setDictation({ status: "error", dictationError: message, level: 0 });
+  // Clear the live preview too (like level:0 freezes the meter): the error supersedes it, and
+  // otherwise the stale `partial` lingers in the store — when the error auto-clears to idle the
+  // Home transcript card (which lingers longer than the error) would flip from the red message to
+  // the leftover preview text labelled "done". cancelLive/startLive clear it on their paths; the
+  // error auto-clear didn't.
+  useApp.getState().setDictation({ status: "error", dictationError: message, level: 0, partial: "" });
   if (errorClearTimer) clearTimeout(errorClearTimer);
   errorClearTimer = setTimeout(() => {
     errorClearTimer = null;
