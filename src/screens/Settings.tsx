@@ -4,6 +4,7 @@ import { useApp } from "@/lib/store";
 import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screens";
+import { cn } from "@/lib/cn";
 import {
   listAudioDevices,
   startMicTest,
@@ -321,9 +322,11 @@ const QUICK_LAUNCH_MAX = 6;
 function QuickLaunchEditor({
   items,
   onChange,
+  disabled,
 }: {
   items: OverlayQuickAction[];
   onChange: (v: OverlayQuickAction[]) => void;
+  disabled?: boolean;
 }) {
   const [pick, setPick] = useState("");
   const used = new Set(items.map((e) => `${e.kind}:${e.target}`));
@@ -369,7 +372,7 @@ function QuickLaunchEditor({
             <span className="text-[13px] text-text">{label}</span>
             <span className="font-mono text-[10px] uppercase tracking-label text-faint">{e.kind}</span>
             <div className="ml-auto flex items-center gap-1">
-              <Button variant="ghost" size="sm" title="Move up" onClick={() => move(i, -1)} disabled={i === 0}>
+              <Button variant="ghost" size="sm" title="Move up" onClick={() => move(i, -1)} disabled={disabled || i === 0}>
                 <ArrowUp className="size-3.5" />
               </Button>
               <Button
@@ -377,7 +380,7 @@ function QuickLaunchEditor({
                 size="sm"
                 title="Move down"
                 onClick={() => move(i, 1)}
-                disabled={i === items.length - 1}
+                disabled={disabled || i === items.length - 1}
               >
                 <ArrowDown className="size-3.5" />
               </Button>
@@ -386,6 +389,7 @@ function QuickLaunchEditor({
                 size="sm"
                 title="Remove"
                 onClick={() => onChange(items.filter((x) => x.id !== e.id))}
+                disabled={disabled}
               >
                 <Trash2 className="size-3.5" />
               </Button>
@@ -400,8 +404,9 @@ function QuickLaunchEditor({
             value={pick}
             onChange={setPick}
             options={[{ value: "", label: "Add a button…" }, ...addable]}
+            disabled={disabled}
           />
-          <Button size="sm" onClick={add} disabled={!pick}>
+          <Button size="sm" onClick={add} disabled={disabled || !pick}>
             <Plus className="size-3.5" /> Add
           </Button>
         </div>
@@ -883,13 +888,26 @@ export default function Settings() {
               />
             </SettingRow>
             <div className="py-4">
-              <div className="text-[14px] font-medium text-text">Quick-launch buttons</div>
-              <div className="mb-3 mt-0.5 text-[12.5px] leading-snug text-dim">
+              <div
+                className={cn(
+                  "text-[14px] font-medium text-text",
+                  s.recording.indicatorPosition === "off" && "opacity-50",
+                )}
+              >
+                Quick-launch buttons
+              </div>
+              <div
+                className={cn(
+                  "mb-3 mt-0.5 text-[12.5px] leading-snug text-dim",
+                  s.recording.indicatorPosition === "off" && "opacity-50",
+                )}
+              >
                 Icon buttons shown on the idle chip when you hover it — jump to a screen or run a dictation action.
               </div>
               <QuickLaunchEditor
                 items={s.recording.quickLaunch ?? []}
                 onChange={(v) => updateRecording({ quickLaunch: v })}
+                disabled={s.recording.indicatorPosition === "off"}
               />
             </div>
           </Card>
