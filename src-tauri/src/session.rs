@@ -477,6 +477,14 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
                     run_record_capture(&app, device, format, channels, config, in_rate, buffer, level, &stop)
                 {
                     tracing::warn!("[record] capture: {e}");
+                    // Parity with the streaming path: there, a capture failure drops pcm_tx,
+                    // closes the channel, and drives a StreamEvent::Closed → "stream://status:
+                    // closed", so the chip settles back to idle. The batch path has no such
+                    // channel loop, so without this the chip strands on "listening" over a dead
+                    // mic with no error and no recovery but a manual cancel. Emit the same close
+                    // (committedDoc is empty pre-transcription, so the frontend just returns to
+                    // idle, exactly as the streaming path does).
+                    emit_if_active(&app, epoch, "stream://status", "closed");
                 }
             })
             .map_err(|e| e.to_string())?
