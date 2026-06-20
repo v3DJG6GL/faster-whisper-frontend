@@ -491,10 +491,12 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             crate::audio::save_recording(dir, &pcm, 16_000)
         }
     });
-    if pcm.len() < 32_000 {
-        // < ~1 s of 16 kHz mono audio — nothing meaningful to TRANSCRIBE, so skip the POST (the
-        // recording, if any, was already saved above). No transcript ⇒ no sidecar, matching a
-        // sub-1 s streaming clip that produced no final.
+    if pcm.is_empty() {
+        // Nothing captured at all (an instant tap / misfire) — there's no audio to transcribe, and
+        // the streaming path likewise closes an empty session without sending anything. We do NOT
+        // gate on a minimum DURATION here: any actual audio, however short, is sent so the BACKEND
+        // decides whether it's worth transcribing (its CAPTURE_RECORDINGS_MIN_DURATION_SEC etc.) —
+        // keeping batch and streaming identical.
         emit_if_active(&app, epoch, "stream://status", "closed");
         return;
     }
