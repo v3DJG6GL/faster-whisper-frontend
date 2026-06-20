@@ -581,11 +581,13 @@ export default function Dictionary() {
     const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
     setEdits(fresh);
     setBase(JSON.parse(JSON.stringify(fresh)));
-    getRecentWords({ serverUrl: b.serverUrl, backendId: b.id }).then((rw) => {
-      if (b.id !== selectedIdRef.current) return;
-      setRecentWords(rw.words ?? []);
-      setRecentMax(rw.max ?? undefined);
-    });
+    getRecentWords({ serverUrl: b.serverUrl, backendId: b.id })
+      .then((rw) => {
+        if (b.id !== selectedIdRef.current) return;
+        setRecentWords(rw.words ?? []);
+        setRecentMax(rw.max ?? undefined);
+      })
+      .catch(() => {}); // best-effort pool — a fetch failure must not surface as an unhandled rejection
     // Keep whichever rule cards are open across a save-triggered reload (and the conflict
     // auto-reload) — both go through load(). A rule that vanished server-side drops out.
     // Switching Backend resets expansion separately (the load-on-change effect below).
@@ -615,11 +617,13 @@ export default function Dictionary() {
       setExpanded(new Set());
       setLoading(false);
     });
-    getRecentWords({ serverUrl: backend.serverUrl, backendId: backend.id }).then((rw) => {
-      if (cancelled) return;
-      setRecentWords(rw.words ?? []);
-      setRecentMax(rw.max ?? undefined);
-    });
+    getRecentWords({ serverUrl: backend.serverUrl, backendId: backend.id })
+      .then((rw) => {
+        if (cancelled) return;
+        setRecentWords(rw.words ?? []);
+        setRecentMax(rw.max ?? undefined);
+      })
+      .catch(() => {}); // best-effort pool — a fetch failure must not surface as an unhandled rejection
     return () => {
       cancelled = true;
     };

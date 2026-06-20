@@ -133,11 +133,13 @@ export default function QuickAdd() {
     setRows(mapRowsFromRule(rule));
     setSaveState("idle");
     setPhase("ok");
-    getRecentWords({ serverUrl: backend.serverUrl, backendId: backend.id }).then((rw) => {
-      if (gen !== loadGen.current) return;
-      setRecent(rw.words ?? []);
-      setRecentMax(rw.max ?? undefined);
-    });
+    getRecentWords({ serverUrl: backend.serverUrl, backendId: backend.id })
+      .then((rw) => {
+        if (gen !== loadGen.current) return;
+        setRecent(rw.words ?? []);
+        setRecentMax(rw.max ?? undefined);
+      })
+      .catch(() => {}); // best-effort pool — a fetch failure must not surface as an unhandled rejection
   }, []);
 
   // Initial load (the static window mounts hidden at startup).
