@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
@@ -70,16 +70,28 @@ function Editor({
     serverKind: kind,
   });
 
+  // The Server URL / API-key fields stay editable during an in-flight test (only the Test button
+  // is disabled), so a result that resolves after the user edits them describes a server they've
+  // already moved off. Track the live target and only commit a test whose URL+key still match
+  // (mirrors Transcribe's runId guard); else effectiveServerKind / the status dot / the decode gate
+  // would cache the old server's classification under this backend id.
+  const liveTarget = useRef({ url: b.serverUrl, key });
+  liveTarget.current = { url: b.serverUrl, key };
+
   const runTest = async () => {
+    const testedUrl = b.serverUrl;
+    const testedKey = key;
     setTesting(true);
     try {
       const info = await testConnection({
-        serverUrl: b.serverUrl,
+        serverUrl: testedUrl,
         backendId: b.id,
-        apiKey: key || null,
+        apiKey: testedKey || null,
       });
-      setResult(info);
-      setConnection(b.id, info);
+      if (liveTarget.current.url === testedUrl && liveTarget.current.key === testedKey) {
+        setResult(info);
+        setConnection(b.id, info);
+      }
     } finally {
       setTesting(false);
     }
