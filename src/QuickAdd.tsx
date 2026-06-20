@@ -254,6 +254,24 @@ export default function QuickAdd() {
     }
   }, [flushSave]);
 
+  // An OS/WM close (Alt+F4 / compositor close) hides the window in Rust but bypasses the in-app
+  // Esc/X path, so Rust emits quickadd://closing — run the same closeNow (flush a pending save +
+  // correct-on-close). closeNow's own hideQuickAdd is a no-op since Rust already hid it.
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    let cancelled = false;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) => listen("quickadd://closing", () => closeNow()))
+      .then((f) => {
+        if (cancelled) f();
+        else un = f;
+      });
+    return () => {
+      cancelled = true;
+      un?.();
+    };
+  }, [closeNow]);
+
   // Esc closes the window from anywhere in it — not only when a text field is focused.
   // (Clicking empty space moves focus to <body>, an ancestor of the React root, so a
   // keydown there never bubbled through the root div's handler.) The Combobox stops

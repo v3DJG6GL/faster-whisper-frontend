@@ -69,6 +69,14 @@ pub fn run() {
                     api.prevent_close();
                     let _ = window.hide();
                 }
+                // An OS/WM close (Alt+F4 / compositor close) of quick-add bypasses the in-app
+                // Esc/X path, so its debounced-save flush + correct-on-close word replacement would
+                // never run. Nudge the webview to run the same closeNow Esc/X do (its own hide is
+                // then a no-op since we already hid above).
+                if window.label() == "quickadd" {
+                    use tauri::Emitter;
+                    let _ = window.emit("quickadd://closing", ());
+                }
             }
         })
         .setup(|app| {
