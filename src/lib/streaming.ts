@@ -744,14 +744,25 @@ async function ensureListeners(): Promise<void> {
             // (the Rust skip-restore-on-failed-paste), clipboard-only already put it there, so only
             // direct typing (which never touches the clipboard) needs an explicit copy.
             console.error("end-of-session insert failed:", e);
+            // Did the transcript actually end up on the clipboard? paste leaves it there on a failed
+            // paste (Rust skip-restore-on-failed-paste) and clipboard-only already put it there; only
+            // direct typing needs an explicit copy — and that copy can ALSO fail. Tell the truth
+            // either way (mirrors the per-phrase handler), so a double failure doesn't promise a
+            // clipboard recovery that isn't there.
+            let onClipboard = t.method !== "direct";
             if (t.method === "direct") {
               try {
                 await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+                onClipboard = true;
               } catch (e2) {
                 console.error("clipboard fallback after failed insert failed:", e2);
               }
             }
-            flashError("Couldn’t insert the text — it’s on the clipboard to paste manually.");
+            flashError(
+              onClipboard
+                ? "Couldn’t insert the text — it’s on the clipboard to paste manually."
+                : "Couldn’t insert the text.",
+            );
             return;
           }
           // Single end-of-session insert — record the outcome for the done marker (no separate
