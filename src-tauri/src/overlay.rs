@@ -336,6 +336,13 @@ mod kwin {
     /// Install the chip rule (once) and force its position to `pos` (when known),
     /// reloading KWin only when something actually changed.
     pub fn place_chip(pos: Option<(i32, i32)>) {
+        // Serialize: show_overlay spawns this on a thread, so two back-to-back shows (rapid stop→start
+        // or a profile switch) would run two place_chip threads racing on the EXTERNAL kwinrulesrc
+        // file — concurrent kwriteconfig6 read-modify-writes can lose an update and reconfigure() can
+        // reload a half-written rule. The in-memory INSTALLED/LAST_POS guards don't cover the file.
+        static PLACE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = PLACE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
         // Need both tools; if we can't read existing rules we must not rewrite the
         // `rules=` list, or we'd silently drop the user's other window rules.
         let Some((writer, reader)) = config_tools() else {
