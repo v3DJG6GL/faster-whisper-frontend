@@ -156,7 +156,18 @@ mod imp {
         };
         while let Some(job) = rx.blocking_recv() {
             let res = conn.type_text(&job.text, job.auto_enter);
+            let failed = res.is_err();
             let _ = job.reply.send(res);
+            if failed {
+                // A type_text error means a roundtrip/flush failed — the wl connection is likely dead.
+                // Break so rx drops; ensure_started sees the closed channel (tx.is_closed) and respawns
+                // a fresh connection on the next call (mirrors wayland_inject::session_loop's self-heal).
+                // Otherwise the worker keeps looping on a dead connection and every direct-typing
+                // injection silently falls back to the portal for the rest of the run, losing the VK
+                // fast-path and its Caps-Lock/layout immunity. Breaking on a rare non-fatal error is
+                // harmless — the next injection simply reconnects.
+                break;
+            }
         }
     }
 
