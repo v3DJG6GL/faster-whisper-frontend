@@ -447,7 +447,7 @@ async function ensureListeners(): Promise<void> {
 
   await listen<{ committed: string; pending: string }>("stream://partial", (e) => {
     const live = e.payload.committed + e.payload.pending;
-    const sep = committedDoc && live && !/\s$/.test(committedDoc) ? " " : "";
+    const sep = committedDoc && live && !/\s$/.test(committedDoc) && !/^\s/.test(live) ? " " : "";
     // A partial can still arrive AFTER stopLive() — the finalize drain emits buffered
     // transcription — or even after `closed`. Update the preview text, but NEVER resurrect
     // "listening" once we've left it: that stuck the indicator at "listening" with the mic
@@ -1015,7 +1015,7 @@ async function startLiveInner(
   lastSpokeAt = performance.now();
   autoStopMs = activation !== "hold" && rec.latchAutoStopMin > 0 ? rec.latchAutoStopMin * 60_000 : 0;
   // Effective values: a set per-Profile override wins; else inherit the Backend.
-  const language = pov?.language?.trim() ? pov.language : backend.language;
+  const language = pov?.language?.trim() ? pov.language.trim() : backend.language;
   // prompt is a 3-state sentinel sent to the backend: undefined → omit (inherit the
   // server DEFAULT_PROMPT); "" → explicit clear (no initial_prompt); value → use it.
   // A profile that set its prompt (incl. an explicit "" clear) wins; else the
@@ -1024,7 +1024,7 @@ async function startLiveInner(
     pov?.prompt !== undefined ? pov.prompt : backend.prompt !== "" ? backend.prompt : undefined;
   const decodeOverrides = mergeDecodeOverrides(backend.decodeOverrides, pov?.decodeOverrides);
   // A set per-Profile override-profile name wins; else inherit the Backend's.
-  const overrideProfile = pov?.overrideProfile?.trim() ? pov.overrideProfile : backend.overrideProfile;
+  const overrideProfile = pov?.overrideProfile?.trim() ? pov.overrideProfile.trim() : backend.overrideProfile;
 
   // Per-app rule (P16): the focused app at start decides block/method/paste-shortcut. Resolved
   // once here — you dictate into the app you triggered from — via the shared resolveInjectionTarget
