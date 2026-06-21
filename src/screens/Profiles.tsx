@@ -71,7 +71,7 @@ function Editor({
   // The effective override-profile (Profile over Backend) and the caller's
   // capabilities, so the decode editor ghosts the profile's resolved values
   // (under the backend defaults) and gates on what this connection allows.
-  const effectiveProfile = p.overrideProfile?.trim() ? p.overrideProfile : backend?.overrideProfile;
+  const effectiveProfile = p.overrideProfile?.trim() ? p.overrideProfile.trim() : backend?.overrideProfile;
   const { caps, resolved, resolvedPrompt } = useOverrideContext({
     serverUrl: backend?.serverUrl ?? "",
     backendId: backend?.id ?? null,
