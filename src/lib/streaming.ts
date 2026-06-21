@@ -480,6 +480,11 @@ async function ensureListeners(): Promise<void> {
       seenDoc = target;
       enqueueInject(async () => {
         const t = await resolveTarget();
+        // A cancel that landed during the (awaited) target resolve nulled insertCfg and aborted the
+        // session — don't inject the phrase it was meant to discard. The outer status gate (above)
+        // ran before this task was queued; insertCfg is the in-task discriminator. stopLive keeps
+        // insertCfg set, so a normal end-of-session phrase still lands; only a true cancel bails.
+        if (!insertCfg) return;
         // HOLD/PTT must never live-TYPE: the trigger chord is still physically held, so injected keys
         // fold into the held modifier and fire shortcuts — which is why live-in-hold is allowed only
         // when the method is clipboard. At start that's enforced; but focus can move mid-session to a
