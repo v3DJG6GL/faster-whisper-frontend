@@ -242,12 +242,20 @@ export default function QuickAdd() {
     const t = target.current;
     if (!t) return;
     saveTimer.current = null;
-    const res = await savePipelineRules({
-      serverUrl: t.serverUrl,
-      backendId: t.backendId,
-      patch: { rules_patch: { [t.slug]: mapBodyFromRows(rowsRef.current) } },
-    });
-    setSaveState(res.ok ? "saved" : "error");
+    try {
+      const res = await savePipelineRules({
+        serverUrl: t.serverUrl,
+        backendId: t.backendId,
+        patch: { rules_patch: { [t.slug]: mapBodyFromRows(rowsRef.current) } },
+      });
+      setSaveState(res.ok ? "saved" : "error");
+    } catch (e) {
+      // savePipelineRules is a bare invoke that can reject on an IPC failure — without this saveState
+      // stays stuck at "saving" (no retry button + unhandled rejection), AND the re-summon guard reads
+      // it as not-"error" and lets refresh() clobber the unsaved edit. Treat a reject as a save error.
+      console.error("quick-add save failed:", e);
+      setSaveState("error");
+    }
   }, []);
 
   const scheduleSave = useCallback(() => {
