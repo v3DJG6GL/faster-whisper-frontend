@@ -10,6 +10,7 @@ import type {
   ConnectionInfo,
   DecodeOverrides,
   FocusedApp,
+  InsertMethod,
   PipelineFetch,
   PipelineSaveResult,
   RecentWords,
@@ -450,7 +451,7 @@ export async function discardInjectionSnapshot(): Promise<void> {
 /** Insert text into the focused field of the active app. */
 export async function injectText(args: {
   text: string;
-  method: "paste" | "direct" | "clipboard";
+  method: InsertMethod;
   autoEnter: boolean;
   restoreClipboard: boolean;
   pasteShortcut: string[];
