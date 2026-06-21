@@ -52,9 +52,13 @@ const FILES = [
 // --- writers (targeted single-line edits to keep the diff minimal) --------------------
 function writeJsonVersion(p, v) {
   const src = readFileSync(p, "utf8");
-  const out = src.replace(/("version":\s*")[^"]*(")/, `$1${v}$2`); // first match = top-level
-  if (out === src) throw new Error(`no top-level "version" found in ${p}`);
-  writeFileSync(p, out);
+  const re = /("version":\s*")[^"]*(")/; // first match = top-level
+  // Test the regex, don't compare before/after content: replacing the version with the SAME value
+  // yields a byte-identical string, so an `out === src` guard would mis-fire "no version found" on
+  // an idempotent re-set — and, since tauri.conf.json is written first, abort mid-loop leaving
+  // Cargo.toml + package.json unwritten (the very drift this script prevents). Mirrors writeCargoVersion.
+  if (!re.test(src)) throw new Error(`no top-level "version" found in ${p}`);
+  writeFileSync(p, src.replace(re, `$1${v}$2`));
 }
 
 function writeCargoVersion(p, v) {
