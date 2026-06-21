@@ -281,7 +281,7 @@ function Editor({
       )}
 
       <div className="mt-6 flex items-center justify-between">
-        <Button variant="ghost" onClick={onCancel}>
+        <Button variant="ghost" onClick={onCancel} disabled={savingKey}>
           Cancel
         </Button>
         <div className="flex items-center gap-2">
