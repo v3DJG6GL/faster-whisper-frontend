@@ -101,45 +101,43 @@ export default function Transcribe() {
         Send an audio or video file to one of your backends via the batch endpoint.
       </PageHeader>
 
-      <button
-        type="button"
-        onClick={choose}
-        className="ring-signal mt-8 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-12 text-center transition-colors hover:border-faint"
-      >
-        {filePath ? (
+      {filePath ? (
+        <div className="mt-8 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-12">
           <div className="flex items-center gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3">
-            <FileAudio className="size-5 text-accent" />
-            <span className="max-w-[360px] truncate text-[13px] text-text">{basename(filePath)}</span>
-            <span
-              role="button"
-              tabIndex={0}
+            {/* Re-choose by clicking the file, remove with the X. Two SIBLING buttons — never a
+                button nested in a button (invalid HTML) — so both are valid, focusable, and
+                keyboard-operable (native Enter/Space; no manual key handling needed). */}
+            <button
+              type="button"
+              onClick={choose}
+              className="ring-signal flex items-center gap-3 rounded-lg text-left"
+            >
+              <FileAudio className="size-5 text-accent" />
+              <span className="max-w-[360px] truncate text-[13px] text-text">{basename(filePath)}</span>
+            </button>
+            <button
+              type="button"
               aria-label="Remove file"
-              onClick={(e) => {
-                e.stopPropagation();
-                clearFile();
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  clearFile();
-                }
-              }}
-              className="grid size-6 place-items-center rounded-lg text-faint hover:text-rec"
+              onClick={clearFile}
+              className="ring-signal grid size-6 place-items-center rounded-lg text-faint transition-colors hover:text-rec"
             >
               <X className="size-4" />
-            </span>
+            </button>
           </div>
-        ) : (
-          <>
-            <div className="grid size-12 place-items-center rounded-2xl bg-surface-2 text-faint">
-              <UploadCloud className="size-6" />
-            </div>
-            <div className="mt-4 text-[14px] text-text">Choose a file to transcribe</div>
-            <div className="mt-1 text-[12.5px] text-dim">Audio or video — wav, mp3, m4a, ogg, webm, flac…</div>
-          </>
-        )}
-      </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={choose}
+          className="ring-signal mt-8 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-12 text-center transition-colors hover:border-faint"
+        >
+          <div className="grid size-12 place-items-center rounded-2xl bg-surface-2 text-faint">
+            <UploadCloud className="size-6" />
+          </div>
+          <div className="mt-4 text-[14px] text-text">Choose a file to transcribe</div>
+          <div className="mt-1 text-[12.5px] text-dim">Audio or video — wav, mp3, m4a, ogg, webm, flac…</div>
+        </button>
+      )}
 
       <div className="mt-6 grid grid-cols-2 gap-4">
         <div>
