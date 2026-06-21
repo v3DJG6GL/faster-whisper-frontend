@@ -342,7 +342,7 @@ export default function Backends() {
 
   const handleRemove = (id: string) => {
     removeBackend(id);
-    void deleteBackendKey(id);
+    void deleteBackendKey(id).catch((e) => console.error("delete backend key failed:", e));
   };
 
   const handleSave = (b: Backend) => {
