@@ -37,6 +37,11 @@ export function useOverrideContext(args: {
       setCaps(null);
       return;
     }
+    // Clear before refetching so a backend switch shows the neutral "unknown ⇒ permitted" gate
+    // during the in-flight window instead of ghosting the PREVIOUS server's caps (the cancelled
+    // flag only suppresses the stale setState; it doesn't reset the already-committed value).
+    // Mirrors OverrideProfilePicker, which clears its names up front for the same reason.
+    setCaps(null);
     let cancelled = false;
     void getCapabilities({ serverUrl, backendId, apiKey })
       .then((c) => {
@@ -59,6 +64,10 @@ export function useOverrideContext(args: {
       setResolvedPrompt(undefined);
       return;
     }
+    // Clear before refetching so switching profile/backend doesn't briefly ghost the PREVIOUS
+    // override-profile's decode baseline + prompt into the editor while the new fetch is in flight.
+    setResolved(undefined);
+    setResolvedPrompt(undefined);
     let cancelled = false;
     void getOverrideProfile({ serverUrl, backendId, apiKey, name })
       .then((r) => {
