@@ -9,7 +9,7 @@
 //! cb:map `map` / `pattern` / `wordlist`), so they pass through as opaque JSON
 //! and are typed on the TS side.
 
-use super::{base_url, client, detail_from, friendly_err, with_auth};
+use super::{base_url, client, detail_from, friendly_err, get_json, with_auth};
 use serde::{Deserialize, Serialize};
 
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
@@ -192,10 +192,6 @@ pub struct RecentWords {
 pub async fn get_recent_words(server_url: &str, api_key: Option<&str>) -> RecentWords {
     let base = base_url(server_url);
     let url = format!("{base}/v1/recent-words");
-    match with_auth(client().get(url), api_key).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            resp.json::<RecentWords>().await.unwrap_or_default()
-        }
-        _ => RecentWords::default(),
-    }
+    // get_json already collapses transport-fail / non-2xx / parse-fail to None — best-effort.
+    get_json::<RecentWords>(url, api_key).await.unwrap_or_default()
 }

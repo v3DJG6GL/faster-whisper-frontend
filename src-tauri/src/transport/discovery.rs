@@ -117,14 +117,9 @@ struct OverrideProfilesResp {
 /// so the picker falls back to free-text entry.
 pub async fn list_override_profiles(server_url: &str, api_key: Option<&str>) -> Vec<String> {
     let base = base_url(server_url);
-    match with_auth(client().get(format!("{base}/v1/override-profiles")), api_key).send().await {
-        Ok(resp) if resp.status().is_success() => resp
-            .json::<OverrideProfilesResp>()
-            .await
-            .map(|r| r.profiles)
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    }
+    let url = format!("{base}/v1/override-profiles");
+    // Best-effort: get_json → None on any failure, so the picker falls back to free-text.
+    get_json::<OverrideProfilesResp>(url, api_key).await.map(|r| r.profiles).unwrap_or_default()
 }
 
 /// The caller's effective request-override capabilities (`GET /v1/me`, full
