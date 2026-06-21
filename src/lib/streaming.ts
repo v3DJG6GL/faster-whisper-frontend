@@ -35,7 +35,7 @@ import {
   restoreClipboardSnapshot,
   discardInjectionSnapshot,
   getFocusedApp,
-  reregisterShortcuts,
+  reregisterShortcutsUnlessCapturing,
   writeRecordingTranscript,
 } from "./api";
 import type { ActivationKind, AppRule, Backend, DecodeOverrides, FocusedApp, GeneralSettings } from "./types";
@@ -1160,9 +1160,12 @@ export async function cancelLive(): Promise<void> {
   } catch (e) {
     console.error("cancelLive: stop failed:", e);
   }
-  // Clear any stuck hardware-hotkey state (re-enumerates keyboards → fresh held-set).
+  // Clear any stuck hardware-hotkey state (re-enumerates keyboards → fresh held-set). Use the
+  // capture-aware variant: cancelLive runs on system://resumed, and if a binding capture is in
+  // progress the suspend-watch deliberately left shortcuts suspended — re-arming here would let the
+  // user's next chord both rebind AND fire dictation. The capture-end reregister re-arms when done.
   try {
-    await reregisterShortcuts();
+    await reregisterShortcutsUnlessCapturing();
   } catch (e) {
     console.error("cancelLive: reregister shortcuts failed:", e);
   }

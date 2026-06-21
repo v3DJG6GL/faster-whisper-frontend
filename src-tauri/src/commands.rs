@@ -532,6 +532,20 @@ pub fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Like `reregister_shortcuts`, but a NO-OP while a binding capture is in progress
+/// (CAPTURE_SUSPENDED). cancelLive's resume-recovery calls this: cancelling a session on
+/// `system://resumed` must NOT clear the capture suspension and re-arm the hotkeys mid-capture
+/// (the suspend-watch deliberately left them suspended, and the capture-end `reregister_shortcuts`
+/// will re-arm once capture truly ends). Outside a capture it behaves exactly like the unconditional
+/// reregister, preserving cancelLive's stuck-hotkey recovery.
+#[tauri::command]
+pub fn reregister_shortcuts_unless_capturing(app: AppHandle) -> Result<(), String> {
+    if CAPTURE_SUSPENDED.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    reregister_shortcuts(app)
+}
+
 /// Detect a system suspend/resume by watching the wall clock for a large gap: a
 /// dedicated thread ticks every couple of seconds; if far more time elapsed between
 /// ticks than it slept, the machine was asleep in between. Suspend is hostile to both

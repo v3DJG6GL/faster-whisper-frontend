@@ -359,6 +359,14 @@ export async function reregisterShortcuts(): Promise<void> {
   await invoke("reregister_shortcuts");
 }
 
+/** Like reregisterShortcuts, but a no-op while a binding capture is in progress — used by
+ *  cancelLive's resume-recovery so cancelling a session on system://resumed can't re-arm the
+ *  hotkeys (and clear the capture suspension) mid-capture. */
+export async function reregisterShortcutsUnlessCapturing(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("reregister_shortcuts_unless_capturing");
+}
+
 /** Suspend all global hotkeys while capturing a new binding (so a keypress only
  *  rebinds and doesn't also trigger dictation). Restore with reregisterShortcuts. */
 export async function suspendShortcuts(): Promise<void> {
