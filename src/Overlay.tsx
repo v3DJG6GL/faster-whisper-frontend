@@ -226,8 +226,11 @@ export default function Overlay() {
   const speakMemo = useRef(newSpeakMemo());
   useEffect(() => {
     const sp = stepSpeaking(speakMemo.current, state.level, state.status === "listening", performance.now());
-    if (sp !== speaking) setSpeaking(sp);
-  }, [state.level, state.status, speaking]);
+    // Functional update + no `speaking` dep: stepSpeaking mutates its memo, so re-running the effect
+    // when `speaking` flips would double-step the smoothing on every transition and drift the chip's
+    // detector ahead of the store's (which steps exactly once per level sample). One step per frame.
+    setSpeaking((prev) => (prev === sp ? prev : sp));
+  }, [state.level, state.status]);
 
   const [expanded, setExpanded] = useState(false);
 
