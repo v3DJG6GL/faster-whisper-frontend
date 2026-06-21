@@ -458,6 +458,9 @@ function QuickAddShortcutRow({ evdevActive }: { evdevActive: boolean }) {
 export default function Settings() {
   const [tab, setTab] = useState<Tab>("General");
   const s = useApp((st) => st.settings);
+  // The chip "off" position disables every dependent Chip-tab control; compute once (used ~27×) so
+  // a row and its control can't drift out of sync.
+  const chipOff = s.recording.indicatorPosition === "off";
   const updateGeneral = useApp((st) => st.updateGeneral);
   const updateRecording = useApp((st) => st.updateRecording);
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
@@ -730,11 +733,11 @@ export default function Settings() {
             <SettingRow
               title="Keep chip docked"
               desc="Keep the chip on screen as a small standby dot when you're not dictating, instead of hiding it."
-              disabled={s.recording.indicatorPosition === "off"}
+              disabled={chipOff}
             >
               <Toggle
                 checked={s.recording.persistentDock}
-                disabled={s.recording.indicatorPosition === "off"}
+                disabled={chipOff}
                 onChange={(v) => updateRecording({ persistentDock: v })}
               />
             </SettingRow>
@@ -743,18 +746,18 @@ export default function Settings() {
             <SettingRow
               title="Auto-hide to edge"
               desc="After sitting idle, hide the chip against the screen edge so it stops covering things — hover the edge dot to bring it back."
-              disabled={s.recording.indicatorPosition === "off"}
+              disabled={chipOff}
             >
               <Toggle
                 checked={s.recording.overlayPeek}
-                disabled={s.recording.indicatorPosition === "off"}
+                disabled={chipOff}
                 onChange={(v) => updateRecording({ overlayPeek: v })}
               />
             </SettingRow>
             <SettingRow
               title="Hide after"
               desc="How long the chip sits idle before it hides against the edge."
-              disabled={!s.recording.overlayPeek || s.recording.indicatorPosition === "off"}
+              disabled={!s.recording.overlayPeek || chipOff}
             >
               <Stepper
                 ariaLabel="hide after"
@@ -765,17 +768,17 @@ export default function Settings() {
                 step={0.5}
                 decimals={1}
                 unit="s"
-                disabled={!s.recording.overlayPeek || s.recording.indicatorPosition === "off"}
+                disabled={!s.recording.overlayPeek || chipOff}
               />
             </SettingRow>
             <SettingRow
               title="Stay hidden while dictating"
               desc="Keep the chip hidden against the edge as a small dot even while you dictate, instead of popping out — it just changes colour and gently pulses while you speak. Hover the edge dot to reveal the transcript."
-              disabled={!s.recording.overlayPeek || s.recording.indicatorPosition === "off"}
+              disabled={!s.recording.overlayPeek || chipOff}
             >
               <Toggle
                 checked={s.recording.peekWhileActive}
-                disabled={!s.recording.overlayPeek || s.recording.indicatorPosition === "off"}
+                disabled={!s.recording.overlayPeek || chipOff}
                 onChange={(v) => updateRecording({ peekWhileActive: v })}
               />
             </SettingRow>
@@ -784,7 +787,7 @@ export default function Settings() {
             <SettingRow
               title="Dim after"
               desc="How long the chip sits idle before it fades to a dim, unobtrusive opacity (a docked standby dot dims too). Set to Never to keep it full opacity."
-              disabled={s.recording.indicatorPosition === "off"}
+              disabled={chipOff}
             >
               <Stepper
                 ariaLabel="dim after"
@@ -796,46 +799,46 @@ export default function Settings() {
                 decimals={1}
                 unit="s"
                 zeroLabel="Never"
-                disabled={s.recording.indicatorPosition === "off"}
+                disabled={chipOff}
               />
             </SettingRow>
             <SettingRow
               title="Live transcript"
               desc="Show words in the chip as you speak — always, or only while you hover it (streaming backends only)."
-              disabled={s.recording.indicatorPosition === "off"}
+              disabled={chipOff}
             >
               <HoverModeSegmented
                 visibleKey="realtimePreview"
                 hoverKey="realtimePreviewOnHover"
-                disabled={s.recording.indicatorPosition === "off"}
+                disabled={chipOff}
               />
             </SettingRow>
             <SettingRow
               title="Show active profile"
               desc="Label the chip with the running profile's tag — always, or only while you hover it; hover always reveals language and mode."
-              disabled={s.recording.indicatorPosition === "off"}
+              disabled={chipOff}
             >
               <HoverModeSegmented
                 visibleKey="showProfileOnOverlay"
                 hoverKey="showProfileOnHover"
-                disabled={s.recording.indicatorPosition === "off"}
+                disabled={chipOff}
               />
             </SettingRow>
             <SettingRow
               title="Show usage on chip"
               desc="Add a tiny usage readout (today's totals) to the chip — always, or only while you hover it. Needs the faster-whisper-backend; hidden on a standard server."
-              disabled={s.recording.indicatorPosition === "off"}
+              disabled={chipOff}
             >
               <HoverModeSegmented
                 visibleKey="showStatsOnOverlay"
                 hoverKey="overlayStatsOnHover"
-                disabled={s.recording.indicatorPosition === "off"}
+                disabled={chipOff}
               />
             </SettingRow>
             <SettingRow
               title="Chip metric"
               desc="Which usage figure the chip shows."
-              disabled={s.recording.indicatorPosition === "off" || !s.recording.showStatsOnOverlay}
+              disabled={chipOff || !s.recording.showStatsOnOverlay}
             >
               <Select
                 value={s.recording.overlayStatsMetric}
@@ -845,25 +848,25 @@ export default function Settings() {
                   { value: "audio", label: "Minutes today" },
                   { value: "both", label: "Words + minutes" },
                 ]}
-                disabled={s.recording.indicatorPosition === "off" || !s.recording.showStatsOnOverlay}
+                disabled={chipOff || !s.recording.showStatsOnOverlay}
               />
             </SettingRow>
             <SettingRow
               title="Show injection target"
               desc="Show which app dictation is typing into (→ app) on the chip — always, or only while you hover it — and warn when it isn't a text field."
-              disabled={s.recording.indicatorPosition === "off"}
+              disabled={chipOff}
             >
               <HoverModeSegmented
                 visibleKey="showTargetOnOverlay"
                 hoverKey="showTargetOnHover"
-                disabled={s.recording.indicatorPosition === "off"}
+                disabled={chipOff}
               />
             </SettingRow>
             <SettingRow
               title="Only while speaking"
               desc="Show the injection target only while you're actively dictating — hide it when armed but silent, so it doesn't flicker as you move between windows."
               disabled={
-                s.recording.indicatorPosition === "off" ||
+                chipOff ||
                 !s.recording.showTargetOnOverlay ||
                 s.recording.showTargetOnHover
               }
@@ -872,7 +875,7 @@ export default function Settings() {
                 checked={s.recording.showTargetOnlySpeaking}
                 onChange={(v) => updateRecording({ showTargetOnlySpeaking: v })}
                 disabled={
-                  s.recording.indicatorPosition === "off" ||
+                  chipOff ||
                   !s.recording.showTargetOnOverlay ||
                   s.recording.showTargetOnHover
                 }
@@ -883,7 +886,7 @@ export default function Settings() {
             <SettingRow
               title="Hover reveal delay"
               desc="How long you hover the chip before it expands to show language / mode and the quick-launch buttons."
-              disabled={s.recording.indicatorPosition === "off"}
+              disabled={chipOff}
             >
               <Stepper
                 ariaLabel="hover reveal delay"
@@ -894,14 +897,14 @@ export default function Settings() {
                 step={50}
                 unit="ms"
                 zeroLabel="Instant"
-                disabled={s.recording.indicatorPosition === "off"}
+                disabled={chipOff}
               />
             </SettingRow>
             <div className="py-4">
               <div
                 className={cn(
                   "text-[14px] font-medium text-text",
-                  s.recording.indicatorPosition === "off" && "opacity-50",
+                  chipOff && "opacity-50",
                 )}
               >
                 Quick-launch buttons
@@ -909,7 +912,7 @@ export default function Settings() {
               <div
                 className={cn(
                   "mb-3 mt-0.5 text-[12.5px] leading-snug text-dim",
-                  s.recording.indicatorPosition === "off" && "opacity-50",
+                  chipOff && "opacity-50",
                 )}
               >
                 Icon buttons shown on the idle chip when you hover it — jump to a screen or run a dictation action.
@@ -917,7 +920,7 @@ export default function Settings() {
               <QuickLaunchEditor
                 items={s.recording.quickLaunch ?? []}
                 onChange={(v) => updateRecording({ quickLaunch: v })}
-                disabled={s.recording.indicatorPosition === "off"}
+                disabled={chipOff}
               />
             </div>
           </Card>
