@@ -47,6 +47,11 @@ function Editor({
   }, [key]);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ConnectionInfo | null>(null);
+  // Drop a connection-test result once the tested target changes (URL or key edited): the in-flight
+  // liveTarget guard only stops a result that RESOLVES after the edit — one that already committed
+  // would keep showing the OLD server's classification / models / "Connected" under the new URL.
+  // On mount result is already null, so this is a no-op there.
+  useEffect(() => setResult(null), [b.serverUrl, key]);
   // Saving the API key to the OS keyring can fail (locked/absent Secret Service). Track it so we
   // keep the editor open with an error instead of persisting a backend whose "key" badge claims a
   // key that was never stored.
