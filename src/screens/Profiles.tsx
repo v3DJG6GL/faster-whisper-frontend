@@ -9,7 +9,7 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
-import { conflictsByProfile } from "@/lib/conflicts";
+import { conflictsByProfile, quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/conflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { deriveChipTag } from "@/lib/profileTag";
@@ -390,12 +390,10 @@ export default function Profiles() {
   // chord shows a banner on its own card — not just the global save freeze. All three conflict
   // surfaces now agree.
   const conflictPeers =
-    quickAddHotkey.length > 0
-      ? [...profiles, { id: "__quick-add__", name: "Quick add", activation: "hold" as const, enabled: true, hotkey: quickAddHotkey, backendId: null }]
-      : profiles;
+    quickAddHotkey.length > 0 ? [...profiles, quickAddPeer(quickAddHotkey)] : profiles;
   const conflicts = conflictsByProfile(conflictPeers);
   const nameOf = (id: string) =>
-    id === "__quick-add__" ? "Quick add" : (profiles.find((p) => p.id === id)?.name ?? "another profile");
+    id === QUICK_ADD_PEER_ID ? "Quick add" : (profiles.find((p) => p.id === id)?.name ?? "another profile");
   const backendName = (id: string | null) => backends.find((b) => b.id === id)?.name ?? "No backend";
 
   const conflictText = (id: string): string | null => {
@@ -450,9 +448,7 @@ export default function Profiles() {
             // already checks against the profiles.
             others={[
               ...profiles.filter((p) => p.id !== editingId),
-              ...(quickAddHotkey.length > 0
-                ? [{ id: "__quick-add__", name: "Quick add", activation: "hold" as const, enabled: true, hotkey: quickAddHotkey, backendId: null }]
-                : []),
+              ...(quickAddHotkey.length > 0 ? [quickAddPeer(quickAddHotkey)] : []),
             ]}
             onSave={onSave}
             onCancel={onCancel}

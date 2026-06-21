@@ -1,6 +1,6 @@
 import { useApp } from "./store";
 import { isTauri, loadConfig, saveConfig, reregisterShortcuts } from "./api";
-import { conflicts } from "./conflicts";
+import { conflicts, quickAddPeer } from "./conflicts";
 
 /**
  * Load persisted config on startup, then auto-save (debounced) whenever
@@ -66,13 +66,7 @@ export async function initConfig(): Promise<void> {
       // enable toggle bypasses capture — so an enabled profile could silently collide with quick-add
       // unless the save-gate sees it too.
       const qa = s.settings.general.quickAddHotkey;
-      const conflictPeers =
-        qa.length > 0
-          ? [
-              ...s.profiles,
-              { id: "__quick-add__", name: "Quick add", activation: "hold" as const, enabled: true, hotkey: qa, backendId: null },
-            ]
-          : s.profiles;
+      const conflictPeers = qa.length > 0 ? [...s.profiles, quickAddPeer(qa)] : s.profiles;
       if (conflicts(conflictPeers).length > 0) {
         useApp
           .getState()

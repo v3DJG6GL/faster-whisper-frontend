@@ -21,6 +21,15 @@ export interface ProfileConflict {
   kind: ConflictKind;
 }
 
+/** The global quick-add chord participates in conflict detection as a synthetic peer profile, so a
+ *  profile chord colliding with it is flagged on all three surfaces (per-card banner, the Editor
+ *  capture-warn check, and the persistence save-gate). One factory + id keeps those in lockstep. */
+export const QUICK_ADD_PEER_ID = "__quick-add__";
+
+export function quickAddPeer(hotkey: string[]): Profile {
+  return { id: QUICK_ADD_PEER_ID, name: "Quick add", activation: "hold", enabled: true, hotkey, backendId: null };
+}
+
 /** Is `a` a strict subset of `b` (fewer keys, all contained in `b`)? */
 function isStrictSubset(a: string[], b: string[]): boolean {
   return a.length < b.length && a.every((c) => b.includes(c));
