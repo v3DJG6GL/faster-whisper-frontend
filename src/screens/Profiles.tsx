@@ -167,6 +167,7 @@ function Editor({
             heldCodes={heldCodes}
             warn={warn}
             onToggle={() => setCapturing((c) => !c)}
+            onClear={() => set({ hotkey: [] })}
           />
         </Labeled>
       </div>
