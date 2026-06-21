@@ -638,7 +638,16 @@ mod imp {
         let fa = super::FocusedApp {
             title: app_id.clone(),
             app_id,
-            editable,
+            // A `window:activate` carries no field info (editable=None). On a same-app re-activation
+            // (Alt-Tab back) carry the editable flag we already hold — in lockstep with the
+            // current_el preservation below — so we don't wipe a known Some(false)/Some(true) to
+            // unknown and degrade the field guard. (fa is built before snap.current.take() runs, so
+            // snap.current still holds the prior FocusedApp here.)
+            editable: if reactivating_same {
+                editable.or_else(|| snap.current.as_ref().and_then(|c| c.editable))
+            } else {
+                editable
+            },
             is_self: false,
         };
         if new_is_noise {
