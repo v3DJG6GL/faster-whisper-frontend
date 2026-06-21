@@ -37,7 +37,16 @@ export default function Transcribe() {
   const backend = backends.find((b) => b.id === backendId) ?? backends[0];
 
   const choose = async () => {
-    const path = await pickAudioFile();
+    let path: string | null;
+    try {
+      path = await pickAudioFile();
+    } catch (e) {
+      // pickAudioFile dynamic-imports @tauri-apps/plugin-dialog and calls open() — both can reject.
+      // Leave the current selection unchanged and don't let it float as an unhandled rejection
+      // (mirrors run()'s try/catch and Settings.changeRecDir's .catch). A cancel resolves to null, not a reject.
+      console.error("pick audio file failed:", e);
+      return;
+    }
     if (path) {
       runId.current++; // a changed file abandons any in-flight run for the old file
       setFilePath(path);
