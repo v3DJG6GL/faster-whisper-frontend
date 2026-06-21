@@ -433,6 +433,15 @@ async function ensureListeners(): Promise<void> {
   });
 
   await listen<{ committed: string; tail: string; last: boolean }>("stream://final", (e) => {
+    // A cancelled/errored session's detached drain can still emit a late `final` on the
+    // un-advanced epoch (cancelLive/stopRecord don't bump ACTIVE_EPOCH, so emit_if_active
+    // still passes). Don't let it resurrect the preview / re-inject after the cancel cleared
+    // everything: only fold in a final while genuinely busy. Mirrors the partial handler's
+    // `capturing` discriminator — a legitimate post-stop drain runs while transcribing/
+    // injecting and the trailing `closed` then idles, so real finals pass; only post-cancel
+    // (idle) and post-error (error) late emits are dropped.
+    const st = useApp.getState().status;
+    if (st !== "listening" && st !== "transcribing" && st !== "injecting") return;
     // committed+tail is the whole document so far — fold it in and show it.
     committedDoc = e.payload.committed + e.payload.tail;
     setDictation({ partial: committedDoc });
@@ -787,6 +796,12 @@ async function ensureListeners(): Promise<void> {
   // admin-locked (reported in the stream `ready` frame). Non-blocking FYI;
   // cleared at the start of the next dictation.
   await listen<string[]>("stream://overrides-ignored", (e) => {
+    // Same un-advanced-epoch path as `final`: ignore a cancelled/errored session's late drain
+    // emit so a stale overrides-ignored notice can't appear after the session was dropped. The
+    // legitimate emit rides the `ready` frame (status already "listening") or the batch drain
+    // (transcribing), so real notices pass.
+    const st = useApp.getState().status;
+    if (st !== "listening" && st !== "transcribing" && st !== "injecting") return;
     setDictation({ overridesIgnored: e.payload });
   });
 }
