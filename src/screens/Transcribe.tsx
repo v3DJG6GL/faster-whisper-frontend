@@ -156,7 +156,7 @@ export default function Transcribe() {
             onChange={(v) => {
               setBackendId(v);
               const b = backends.find((x) => x.id === v);
-              if (b) setLanguage(b.language);
+              if (b) setLanguage(b.language ?? "auto");
             }}
             options={backends.map((b) => ({ value: b.id, label: b.name }))}
           />
