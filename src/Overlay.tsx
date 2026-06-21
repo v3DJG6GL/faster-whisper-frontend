@@ -508,7 +508,10 @@ export default function Overlay() {
               : !expanded
                 ? "0 0 12px rgba(255,158,44,0.55)" // calm breathing ember
                 : "0 0 8px rgba(255,158,44,0.4)";
-  const barTone = state.warming ? "dim" : speaking ? "live" : "accent";
+  // Match the dot + transcript during the post-speech finalize/insert phase: dictationVisual
+  // maps processing to the neutral "machine working" tone, so the bars must too (else they'd
+  // glow amber "ready" next to a grey dot). Mirrors Home's waveTone derivation.
+  const barTone = state.warming || processing ? "dim" : speaking ? "live" : "accent";
 
   // Deep-idle edge-peek driver: after the chip sits undisturbed for peekTimeoutSec, tuck it to
   // the edge; ANY activity — a status change (e.g. dictation starting), speech, finishing, a
