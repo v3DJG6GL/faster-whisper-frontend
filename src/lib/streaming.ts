@@ -465,7 +465,11 @@ async function ensureListeners(): Promise<void> {
           // the chip's clipboard glyph PER PHRASE (mirroring the typed green pulse) so a latch
           // session shows confirmation continuously, not only the end-of-session glyph. Skip our
           // own window (the injection guard copies nothing there → would be a false confirmation).
-          if (phraseClip.length > 0) {
+          // `toType > 0` is the document-grew guard the typed branch uses below: it's empty for a
+          // re-sent final (the flush `final` the drain emits at latch end), so without it a clipboard-
+          // only latch that ends mid-speech (no pause advanced clipBaseline) would re-copy + re-pulse
+          // the last phrase on the drain's re-sent final. Mirror the typed branch's guard here.
+          if (phraseClip.length > 0 && toType.length > 0) {
             await injectText({ text: phraseClip, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
             if (!t.isSelf) {
               sessionClipboard = true;
@@ -843,6 +847,14 @@ export async function startLive(
   stopRequestedDuringStart = false; // fresh start; a prologue stop sets it (see requestStopIfStarting)
   try {
     await startLiveInner(backend, deviceId, activation, pov);
+  } catch (e) {
+    // startLiveInner awaits ensureListeners() + getFocusedApp() BEFORE its own try/catch, so a
+    // reject there (e.g. an AT-SPI error out of get_focused_app) escapes to here. Surface it and
+    // log — otherwise it leaks as an unhandled rejection through every `void startLive(...)` caller
+    // (Home toggle, dictate, runOverlayAction) and the user sees nothing. Nothing is armed yet at
+    // the prologue stage (warm timer / target poll / activeEndpoint), so there's nothing to undo.
+    console.error("start dictation failed (prologue):", e);
+    flashError(String(e));
   } finally {
     startingSession = false;
   }
@@ -881,11 +893,13 @@ async function startLiveInner(
   // once here — you dictate into the app you triggered from — via the shared resolveInjectionTarget
   // (same policy resolveTarget re-runs per phrase, so the frozen start value can't diverge).
   const targetApp = await getFocusedApp();
-  const { rule, notEditable, method, pasteShortcut } = resolveInjectionTarget(
-    targetApp ?? null,
-    useApp.getState().appRules,
-    g,
-  );
+  // Our own window is focused at start → dictation won't type here (the Rust injection guard skips
+  // it), so don't match an app rule or field guard and don't coerce to clipboard-only / flash a
+  // "not a text field" skip on our own window. Mirror resolveTarget's isSelf short-circuit, which
+  // the per-phrase path already applies — without this the start-of-session resolution diverged.
+  const { rule, notEditable, method, pasteShortcut } = targetApp?.isSelf
+    ? { rule: undefined, notEditable: false, method: g.insertMethod, pasteShortcut: g.pasteShortcut }
+    : resolveInjectionTarget(targetApp ?? null, useApp.getState().appRules, g);
 
   insertCfg = {
     timing: g.insertTiming,
@@ -1053,10 +1067,14 @@ export async function cancelLive(): Promise<void> {
   // Chain it on the existing queue so it runs AFTER any in-flight paste — calling it directly
   // would race a still-running paste (the restore could win and the paste reads the wrong
   // clipboard). Then reset the queue for the next session.
-  if (beganInjection) {
-    const pending = injectChain;
-    void pending.then(() => endInjection()).catch((e) => console.error("end injection failed:", e));
-  }
+  // Chain endInjection() unconditionally on the in-flight queue, NOT gated on `beganInjection`:
+  // that flag is set true INSIDE the queued paste task, AFTER beginInjection() already snapshotted
+  // the clipboard. A cancel that lands while a phrase's paste is in flight (snapshot taken, flag not
+  // yet set) would otherwise skip the restore and strand the user's clipboard with our transcript.
+  // end_injection is idempotent (g.take() restores+consumes when a snapshot exists, no-op otherwise),
+  // so the unconditional call restores exactly the sessions that snapshotted, with no double-restore.
+  const pending = injectChain;
+  void pending.then(() => endInjection()).catch((e) => console.error("end injection failed:", e));
   beganInjection = false;
   clearPhraseEnd();
   insertCfg = null;
