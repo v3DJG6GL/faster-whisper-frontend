@@ -381,8 +381,12 @@ export default function Profiles() {
     if (p) {
       setDraft(p);
       setEditingId(p.id);
+      // Consume the param ONLY once the target profile exists. The store boots with seeded default
+      // profiles and hydrates the real config async; consuming it on a not-yet-found id would strip
+      // the deep link before hydration, so the editor would never open. An invalid id just lingers
+      // harmlessly (no state change, no loop).
+      setSearchParams({}, { replace: true });
     }
-    setSearchParams({}, { replace: true });
   }, [searchParams, profiles, setSearchParams]);
 
   // Feed the per-card banner the SAME synthetic quick-add peer the Editor (others, below) and the
@@ -440,6 +444,10 @@ export default function Profiles() {
       {draft ? (
         <div className="mt-8">
           <Editor
+            // Remount when the edited target changes (e.g. a deep link swaps draft while the editor
+            // stays mounted) so Editor's useState(initial) re-seeds instead of stranding the prior
+            // profile's fields. Normally draft just toggles null↔value, so this is inert.
+            key={editingId}
             initial={draft}
             // Include the global quick-add shortcut as a pseudo-profile so capturing a chord that
             // clashes with it is WARNED: the evdev matcher silently drops the quick-add chord when
