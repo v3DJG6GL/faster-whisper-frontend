@@ -389,7 +389,15 @@ export const useApp = create<AppState>((set) => ({
     set((s) => ({ connections: { ...s.connections, [backendId]: info } })),
 
   setUsage: (backendId, stats) =>
-    set((s) => ({ usage: { ...s.usage, [backendId]: stats } })),
+    set((s) => {
+      // The 30s usage poll hands us a fresh object every tick even when the numbers are identical.
+      // Skip the write when nothing changed so the `usage` reference is stable — otherwise every
+      // poll churns a cross-window overlay re-emit + a UsageStats SVG re-render for no reason. The
+      // shape is small + fixed (today/total + a ≤90-point series), so stringify-compare is trivial;
+      // JSON.stringify(null) === "null" also subsumes the already-null path.
+      if (backendId in s.usage && JSON.stringify(s.usage[backendId]) === JSON.stringify(stats)) return {};
+      return { usage: { ...s.usage, [backendId]: stats } };
+    }),
 
   setUsageViewBackend: (id) => set({ usageViewBackendId: id }),
 
