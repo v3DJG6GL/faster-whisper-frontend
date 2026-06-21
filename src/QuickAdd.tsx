@@ -22,9 +22,9 @@ import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, rul
 import { ruleDotColor } from "@/lib/ruleColor";
 import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
-  getQuickAddSeed, getFocusedSelection, injectText,
+  getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText,
 } from "@/lib/api";
-import type { PipelineFetch } from "@/lib/types";
+import type { AppRule, PipelineFetch } from "@/lib/types";
 
 type Target = { serverUrl: string; backendId: string; slug: string };
 type Phase = "loading" | "nopin" | "error" | "ok";
@@ -90,6 +90,9 @@ export default function QuickAdd() {
   // correcting the word in place. `pasteShortcut` is captured from config for that replace-paste.
   const originalSelectionRef = useRef<string | null>(null);
   const pasteShortcutRef = useRef<string[]>(["ControlLeft", "KeyV"]);
+  // Per-app rules, so correct-on-close honors the SOURCE app's paste shortcut (and "never type here")
+  // the same way the main injection path does — not just the global paste chord.
+  const appRulesRef = useRef<AppRule[]>([]);
   // Generation guards so an out-of-order async resolution can't apply stale state (mirrors
   // Dictionary's selectedIdRef / Transcribe's runId). `loadGen` covers refresh()'s fetches
   // (a re-pin between rapid summons); `summonGen` covers the per-summon selection seed.
@@ -109,6 +112,7 @@ export default function QuickAdd() {
     if (cfg) {
       document.documentElement.dataset.theme = cfg.settings.theme;
       pasteShortcutRef.current = cfg.settings.general.pasteShortcut ?? ["ControlLeft", "KeyV"];
+      appRulesRef.current = cfg.appRules ?? [];
     }
     const pin = cfg?.settings.quickAddList ?? null;
     const backend = pin ? cfg!.backends.find((b) => b.id === pin.backendId) ?? null : null;
@@ -272,7 +276,7 @@ export default function QuickAdd() {
     originalSelectionRef.current = null; // one-shot — don't re-correct on a later close
     void hideQuickAdd();
     if (original && corrected && corrected !== original) {
-      void replaceSelectionAfterClose(original, corrected, pasteShortcutRef.current).catch((e) =>
+      void replaceSelectionAfterClose(original, corrected, pasteShortcutRef.current, appRulesRef.current).catch((e) =>
         console.error("correct-on-close paste failed:", e),
       );
     }
@@ -489,10 +493,21 @@ export default function QuickAdd() {
  *  that the SAME word is still selected, then paste the list-corrected version over it — correcting
  *  the word in place. Silently does nothing if the selection is gone or changed (the "check first"
  *  guard). Paste replaces the active selection; the user's prior clipboard is restored afterwards. */
-async function replaceSelectionAfterClose(original: string, corrected: string, pasteShortcut: string[]) {
+async function replaceSelectionAfterClose(
+  original: string,
+  corrected: string,
+  globalPasteShortcut: string[],
+  appRules: AppRule[],
+) {
   await new Promise((r) => setTimeout(r, 250)); // let the compositor hand focus back to the source
-  const current = await getFocusedSelection();
+  // Focus is back on the source app now; read its selection AND identity together so the replace-paste
+  // uses the SAME per-app rule the main injection path would (resolveInjectionTarget) — not just the
+  // global paste chord.
+  const [current, app] = await Promise.all([getFocusedSelection(), getFocusedApp()]);
   if (current == null || current.trim() !== original) return;
+  const rule = app ? appRules.find((r) => r.appId.toLowerCase() === app.appId.toLowerCase()) : undefined;
+  if (rule?.block) return; // the user marked this app "never type into" — don't paste a correction into it either
+  const pasteShortcut = rule?.pasteShortcut ?? globalPasteShortcut; // null/undefined = inherit global
   await injectText({ text: corrected, method: "paste", autoEnter: false, restoreClipboard: true, pasteShortcut });
 }
 
