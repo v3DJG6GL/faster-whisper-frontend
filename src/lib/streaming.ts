@@ -80,9 +80,16 @@ function clearWarmTimer(): void {
 // for the chip/Home preview. Partials carry only the current utterance, so we
 // prepend this to keep earlier lines visible while the next sentence is spoken.
 let committedDoc = "";
-// The exact text we've typed into the focused field so far (live mode), so we can
-// diff the next document against it and append only what's new.
+// The exact text we've TYPED into a non-self field so far (live mode), so we can diff the next
+// document against it and append only what's new. Advanced in the inject queue ONLY when a phrase
+// actually lands (NOT for a phrase the own-window guard skips) — so after a focus switch, text
+// dictated while our own window was focused is re-typed rather than silently dropped.
 let injectedText = "";
+// The last final's document (advanced synchronously per final), used ONLY for the "did the document
+// grow" guard — distinguishes a real new phrase from a re-sent `final` (the flush final emitted at
+// latch end), independent of whether/where it was typed. Separate from `injectedText` so the typed
+// baseline can be type-time/own-window-aware without breaking re-sent-final detection.
+let seenDoc = "";
 // Documents completed before a hard break, accumulated for the "stop"-timing single
 // insert. Live mode types as it goes, so it doesn't read this back.
 let bankedDoc = "";
@@ -103,6 +110,7 @@ interface InsertCfg {
   targetApp: FocusedApp | null; // focused app at start (per-app rules + chip + field guard)
   blocked: boolean; // a per-app rule blocks typing here → coerced to clipboard-only
   notEditable: boolean; // deep detection: focused element isn't a text field → coerced to clipboard-only
+  activation: ActivationKind; // hold/PTT must never live-TYPE (the held chord folds into the keys)
 }
 let insertCfg: InsertCfg | null = null;
 // P19: per-phrase insert feedback. `sessionTyped`/`sessionClipboard` accumulate what actually
@@ -453,33 +461,40 @@ async function ensureListeners(): Promise<void> {
     // un-typed. `injectedText` tracks the backend's document so later phrases
     // append at the right point.
     if (insertCfg?.live) {
-      // Compute both candidate payloads synchronously (so the append baseline stays in
-      // event order), then pick + inject inside the queue after resolving the CURRENT
-      // window's rule — so the method/paste-shortcut follow window switches per segment.
+      // Snapshot the document synchronously (so it can't change under the queued task), then pick +
+      // inject inside the queue after resolving the CURRENT window's rule — so the method/paste-
+      // shortcut follow window switches per segment.
       //   • clipboard → just the CURRENT hard-break window (committedDoc) — everything since your
       //     last pause; set_clipboard_persistent replaces the prior owner. It resets each boundary,
       //     so the clipboard never accumulates the whole session.
-      //   • typed (paste/direct), append-only → only the new suffix beyond what we've typed.
-      //     Strip the document's leading whitespace (Whisper prefixes a space) so the first
-      //     phrase has none; inner/inter-phrase spacing is preserved. Never backspace/revise.
+      //   • typed (paste/direct), append-only → only the new suffix beyond what we've TYPED (diffed
+      //     in-queue against injectedText, below). Strip the document's leading whitespace (Whisper
+      //     prefixes a space) so the first phrase has none; inner spacing preserved. Never revise.
       const phraseClip = committedDoc.slice(commonPrefixLen(clipBaseline, committedDoc)).trim();
       const target = committedDoc.replace(/^\s+/, "");
-      const c = commonPrefixLen(injectedText, target);
-      const toType = target.slice(c);
-      injectedText = target;
+      // Did the document GROW vs the last final? Distinguishes a real new phrase from a re-sent
+      // `final` (the flush final the drain emits at latch end). Advanced synchronously per final and
+      // kept SEPARATE from the typed baseline (injectedText), so re-sent-final detection stays correct
+      // regardless of whether/where the phrase actually typed.
+      const grew = commonPrefixLen(seenDoc, target) < target.length;
+      seenDoc = target;
       enqueueInject(async () => {
         const t = await resolveTarget();
-        if (t.method === "clipboard") {
-          // Clipboard-only: copy just the current hard-break window (everything since your last
-          // pause) — never the whole session — so the clipboard doesn't pile up. Each copy flashes
-          // the chip's clipboard glyph PER PHRASE (mirroring the typed green pulse) so a latch
-          // session shows confirmation continuously, not only the end-of-session glyph. Skip our
-          // own window (the injection guard copies nothing there → would be a false confirmation).
-          // `toType > 0` is the document-grew guard the typed branch uses below: it's empty for a
-          // re-sent final (the flush `final` the drain emits at latch end), so without it a clipboard-
-          // only latch that ends mid-speech (no pause advanced clipBaseline) would re-copy + re-pulse
-          // the last phrase on the drain's re-sent final. Mirror the typed branch's guard here.
-          if (phraseClip.length > 0 && toType.length > 0) {
+        // HOLD/PTT must never live-TYPE: the trigger chord is still physically held, so injected keys
+        // fold into the held modifier and fire shortcuts — which is why live-in-hold is allowed only
+        // when the method is clipboard. At start that's enforced; but focus can move mid-session to a
+        // window that resolves to paste/direct, so for a hold session copy the phrase to the clipboard
+        // instead (types nothing, recoverable) rather than typing with the chord down.
+        const useClipboard = t.method === "clipboard" || insertCfg?.activation === "hold";
+        if (useClipboard) {
+          // Clipboard: copy just the current hard-break window (everything since your last pause) —
+          // never the whole session — so the clipboard doesn't pile up. Each copy flashes the chip's
+          // clipboard glyph PER PHRASE (mirroring the typed green pulse) so a latch session shows
+          // confirmation continuously. Skip our own window (the injection guard copies nothing there →
+          // would be a false confirmation). `grew` is the document-grew guard: false for a re-sent
+          // final (the flush final the drain emits at latch end), so a clipboard latch that ends
+          // mid-speech doesn't re-copy + re-pulse the last phrase on the re-sent final.
+          if (phraseClip.length > 0 && grew) {
             try {
               await injectText({ text: phraseClip, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
             } catch (e) {
@@ -501,59 +516,70 @@ async function ensureListeners(): Promise<void> {
               clipDirty = false;
             }
           }
-        } else if (toType.length > 0) {
-          // Snapshot the user's CURRENT clipboard right before this paste overwrites it — per phrase,
-          // not once at session start — and only when we don't already hold it (clipDirty false), so
-          // we never capture our own transcript. Fixes mid-session copies lost to a stale start-time
-          // snapshot, and sessions that start in a clipboard-coerced window then move to a paste one.
-          if (t.method === "paste" && insertCfg?.restoreClipboard && !clipDirty) {
-            try {
-              await beginInjection();
-              beganInjection = true;
-            } catch (e) {
-              console.error("beginInjection failed:", e);
-            }
-          }
-          try {
-            await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
-          } catch (e) {
-            // Surface a failed live phrase instead of dropping it silently (mirrors the end-of-session
-            // insert hardening), then skip the success-only pulse/clipDirty bookkeeping below.
-            console.error("live insert failed:", e);
-            if (t.method === "direct") {
-              // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
+        } else {
+          // Typed (paste/direct), append-only. Diff IN-QUEUE against the typed baseline (NOT
+          // synchronously): the queue is serial, so a phrase that actually lands advances the
+          // baseline before the next phrase diffs — AND a phrase the own-window guard SKIPS (our
+          // window focused) leaves the baseline untouched, so after a focus switch that text is
+          // re-typed into the real window instead of being silently dropped. Empty toType = a
+          // re-sent final or already-typed text → skip.
+          const toType = target.slice(commonPrefixLen(injectedText, target));
+          if (toType.length > 0) {
+            // Snapshot the user's CURRENT clipboard right before this paste overwrites it — per phrase,
+            // not once at session start — and only when we don't already hold it (clipDirty false), so
+            // we never capture our own transcript. Fixes mid-session copies lost to a stale start-time
+            // snapshot, and sessions that start in a clipboard-coerced window then move to a paste one.
+            if (t.method === "paste" && insertCfg?.restoreClipboard && !clipDirty) {
               try {
-                await injectText({ text: toType, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
-                flashError("Couldn’t type the text — it’s on the clipboard to paste manually.");
-              } catch (e2) {
-                console.error("clipboard fallback after failed live insert failed:", e2);
-                flashError("Couldn’t insert the text.");
+                await beginInjection();
+                beganInjection = true;
+              } catch (e) {
+                console.error("beginInjection failed:", e);
               }
-            } else {
-              // Paste failed; the deferred end-of-session restore will put the user's clipboard back,
-              // so don't promise the transcript is sitting there.
-              flashError("Couldn’t paste the text.");
             }
-            return;
-          }
-          // A real paste just clobbered the user's clipboard with the transcript → it owes a
-          // restore at phrase end. Direct typing never touches the clipboard, so don't.
-          if (t.method === "paste") clipDirty = true;
-          // A phrase just landed in the field → calm green "inserted" pulse. Skip our own window
-          // (the injection guard types nothing there, so it would be a false confirmation).
-          if (!t.isSelf) {
-            sessionTyped = true;
-            signalInsert("typed");
+            try {
+              await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+            } catch (e) {
+              // Surface a failed live phrase instead of dropping it silently (mirrors the end-of-session
+              // insert hardening), then skip the success-only pulse/clipDirty bookkeeping below.
+              console.error("live insert failed:", e);
+              if (t.method === "direct") {
+                // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
+                try {
+                  await injectText({ text: toType, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+                  flashError("Couldn’t type the text — it’s on the clipboard to paste manually.");
+                } catch (e2) {
+                  console.error("clipboard fallback after failed live insert failed:", e2);
+                  flashError("Couldn’t insert the text.");
+                }
+              } else {
+                // Paste failed; the deferred end-of-session restore will put the user's clipboard back,
+                // so don't promise the transcript is sitting there.
+                flashError("Couldn’t paste the text.");
+              }
+              return;
+            }
+            // A real paste just clobbered the user's clipboard with the transcript → it owes a
+            // restore at phrase end. Direct typing never touches the clipboard, so don't.
+            if (t.method === "paste") clipDirty = true;
+            // Advance the TYPED baseline + pulse ONLY when the phrase actually landed (NOT our own
+            // window, where the guard typed nothing): leaving it un-advanced re-types the skipped
+            // text after a focus switch, and a green pulse there would be a false confirmation.
+            if (!t.isSelf) {
+              injectedText = target;
+              sessionTyped = true;
+              signalInsert("typed");
+            }
           }
         }
       });
-      // A phrase's text just landed AND the document actually GREW (`toType` is empty for a
-      // re-sent final — e.g. the flush `final` the drain emits when you end latch — so we must
-      // NOT re-arm for text that was already typed + Entered; doing so is what fired a second
-      // Enter at latch end). (Re)start the quiet timer so the per-phrase Enter + clipboard
-      // restore fire ~PHRASE_END_QUIET_MS after you stop speaking (not at the ~20s hard break).
-      // Ongoing speech keeps bumping the timer via stream://partial.
-      if (toType.length > 0) {
+      // A phrase's text just landed AND the document actually GREW (`grew` is false for a re-sent
+      // final — e.g. the flush `final` the drain emits when you end latch — so we must NOT re-arm
+      // for text that was already typed + Entered; doing so is what fired a second Enter at latch
+      // end). (Re)start the quiet timer so the per-phrase Enter + clipboard restore fire
+      // ~PHRASE_END_QUIET_MS after you stop speaking (not at the ~20s hard break). Ongoing speech
+      // keeps bumping the timer via stream://partial.
+      if (grew) {
         if (insertCfg.autoEnter) phraseDirty = true;
         bumpPhraseEnd();
       }
@@ -579,6 +605,7 @@ async function ensureListeners(): Promise<void> {
     committedDoc = "";
     clipBaseline = "";
     injectedText = "";
+    seenDoc = "";
     setDictation({ partial: "" });
     // A hard break = a finished phrase. In live mode, emit (into the window focused NOW)
     // any configured separator AND — when "Press Enter after" is on — a REAL Enter, so each
@@ -971,6 +998,7 @@ async function startLiveInner(
     targetApp: targetApp ?? null,
     blocked: rule?.block ?? false,
     notEditable,
+    activation,
     // Hold/PTT holds the chord the whole time → live TYPING collides with the held modifier,
     // so paste/direct fall back to the single insert-on-release ("stop"). Clipboard-only types
     // nothing, so it can run live in any activation — it just refreshes the clipboard per segment.
@@ -981,6 +1009,7 @@ async function startLiveInner(
   };
   committedDoc = "";
   injectedText = "";
+  seenDoc = "";
   bankedDoc = "";
   beganInjection = false;
   sessionTyped = false;
@@ -1131,6 +1160,7 @@ export async function cancelLive(): Promise<void> {
   stopTargetPoll();
   committedDoc = "";
   injectedText = "";
+  seenDoc = "";
   bankedDoc = "";
   // If we snapshotted the clipboard for live paste, give the user's original back and clear the
   // snapshot so it can't leak into the next session (end_injection restores + consumes it).
