@@ -78,6 +78,11 @@ export default function QuickAdd() {
   const target = useRef<Target | null>(null);
   const rowsRef = useRef<MapRow[]>([]);
   rowsRef.current = rows;
+  // Live mirror of `find` so the once-built summon listener can tell whether the user has begun
+  // typing since the reset — the seed read is awaited (AT-SPI, up to ~1s) AFTER the field is made
+  // interactive, so a slow seed must not clobber input the user already entered.
+  const findRef = useRef("");
+  findRef.current = find;
   const saveTimer = useRef<number | null>(null);
   const insertRef = useRef<HTMLInputElement>(null);
   // The word seeded from the source app's selection this summon (null if none). On close we run
@@ -174,7 +179,10 @@ export default function QuickAdd() {
           // the old behaviour: open the recent-words dropdown on the (already-focused) find field.
           const seed = await getQuickAddSeed();
           if (sgen !== summonGen.current) return; // a newer summon superseded this one
-          originalSelectionRef.current = seed; // remember the selected word for correct-on-close
+          originalSelectionRef.current = seed; // remember the selected word for correct-on-close (always)
+          // The user began typing while the seed was still being read → keep their input + focus;
+          // don't overwrite the field or yank focus to Insert.
+          if (findRef.current !== "") return;
           if (seed) {
             setFind(seed);
             setOpenOnSummon(false);
