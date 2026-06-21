@@ -332,6 +332,12 @@ export const useApp = create<AppState>((set) => ({
           : s.profiles,
         connections,
         usage,
+        // Scrub the other id-keyed references to the removed backend so none dangle: the usage-view
+        // pin (runtime) and the PERSISTED quick-add-list pin. Keep each ref stable when it didn't
+        // point at this backend, so the auto-save subscriber doesn't see a spurious settings change.
+        usageViewBackendId: s.usageViewBackendId === id ? null : s.usageViewBackendId,
+        settings:
+          s.settings.quickAddList?.backendId === id ? { ...s.settings, quickAddList: null } : s.settings,
       };
     }),
   duplicateBackend: (id) =>
@@ -358,7 +364,13 @@ export const useApp = create<AppState>((set) => ({
   upsertProfile: (p) => set((s) => ({ profiles: upsertById(s.profiles, p) })),
   updateProfile: (id, patch) =>
     set((s) => ({ profiles: s.profiles.map((p) => (p.id === id ? { ...p, ...patch } : p)) })),
-  removeProfile: (id) => set((s) => ({ profiles: s.profiles.filter((p) => p.id !== id) })),
+  removeProfile: (id) =>
+    set((s) => ({
+      profiles: s.profiles.filter((p) => p.id !== id),
+      // Scrub the PERSISTED home-profile pin if it referenced the removed profile (else a stale id
+      // lingers on disk). Keep settings stable otherwise.
+      settings: s.settings.homeProfileId === id ? { ...s.settings, homeProfileId: null } : s.settings,
+    })),
   duplicateProfile: (id) =>
     set((s) => {
       const i = s.profiles.findIndex((p) => p.id === id);
