@@ -258,19 +258,25 @@ export async function stopMicTestPlayback(): Promise<void> {
   await invoke("stop_mic_test_playback");
 }
 
+/** Shared contract for every event subscription: no-op (empty unlisten) outside Tauri, else
+ *  dynamic-import the event module and listen, handing the typed payload to `cb`. Keeps the
+ *  isTauri guard + dynamic import in ONE place so a subscriber can't forget the empty-unlisten
+ *  return (which would throw, not no-op, in non-Tauri `pnpm dev`). Returns the unlisten fn. */
+async function subscribe<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<T>(event, (e) => cb(e.payload));
+}
+
 /** Fires when a mic-test replay finishes (and wasn't superseded), so the UI can
  *  clear its "playing" state. Returns an unlisten fn. */
 export async function onMicTestPlayEnded(cb: () => void): Promise<() => void> {
-  if (!isTauri) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen("audio://test-play-ended", () => cb());
+  return subscribe<unknown>("audio://test-play-ended", () => cb());
 }
 
 /** Subscribe to live RMS levels (0..1) emitted during capture. Returns an unlisten fn. */
 export async function onAudioLevel(cb: (level: number) => void): Promise<() => void> {
-  if (!isTauri) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen<number>("audio://level", (e) => cb(e.payload));
+  return subscribe<number>("audio://level", cb);
 }
 
 export async function startStream(args: {
@@ -552,17 +558,13 @@ export interface TriggerEvent {
 
 /** Subscribe to dictation triggers (CLI / global hotkey). Returns an unlisten fn. */
 export async function onTrigger(cb: (e: TriggerEvent) => void): Promise<() => void> {
-  if (!isTauri) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen<TriggerEvent>("trigger", (e) => cb(e.payload));
+  return subscribe<TriggerEvent>("trigger", cb);
 }
 
 /** Subscribe to system resume-from-suspend (emitted by the Rust suspend watcher).
  *  Returns an unlisten fn. */
 export async function onSystemResumed(cb: () => void): Promise<() => void> {
-  if (!isTauri) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen("system://resumed", () => cb());
+  return subscribe<unknown>("system://resumed", () => cb());
 }
 
 /** Show + focus the main window and ask its router to navigate to a screen. Used by
@@ -583,17 +585,13 @@ export async function emitOverlayAction(kind: string): Promise<void> {
 /** Subscribe (in the main window) to dictation actions emitted by the overlay chip.
  *  Returns an unlisten fn. */
 export async function onOverlayAction(cb: (kind: string) => void): Promise<() => void> {
-  if (!isTauri) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen<{ kind: string }>("overlay://action", (e) => cb(e.payload.kind));
+  return subscribe<{ kind: string }>("overlay://action", (p) => cb(p.kind));
 }
 
 /** Subscribe (in the main window) to navigate requests from show_main_at_screen.
  *  Returns an unlisten fn. */
 export async function onAppNavigate(cb: (screen: string) => void): Promise<() => void> {
-  if (!isTauri) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen<string>("app://navigate", (e) => cb(e.payload));
+  return subscribe<string>("app://navigate", cb);
 }
 
 /** Native "open file" dialog → absolute path (or null if cancelled / not in Tauri). */
