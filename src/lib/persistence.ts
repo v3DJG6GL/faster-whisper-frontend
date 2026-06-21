@@ -95,6 +95,11 @@ export async function initConfig(): Promise<void> {
             // shows the change, but it wasn't written, so warn the user it may be lost on restart.
             console.error("saveConfig failed", e);
             useApp.getState().setSaveError(e instanceof Error ? e.message : String(e));
+            // The write didn't land, so the re-register never ran — restore the intent (like the
+            // conflict early-return does) so the NEXT successful save re-registers the bindings.
+            // Otherwise a later non-binding save would persist the new chord to disk but leave it
+            // not-live (reReg=false) until an app restart.
+            if (reReg) pendingBindingChange = true;
           },
         );
     }, 400);
