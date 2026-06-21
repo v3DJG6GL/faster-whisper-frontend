@@ -113,7 +113,16 @@ function Editor({
         setSavingKey(false);
       }
     }
-    onSave(b);
+    // Normalize on save (mirrors Profiles.save): trim the URL/model, default an empty name, and trim
+    // the override-profile name → undefined when blank — so stray whitespace isn't persisted, sent to
+    // the server (a padded value never matches a real profile), or shown as a blank card.
+    onSave({
+      ...b,
+      name: b.name.trim() || "Untitled backend",
+      serverUrl: b.serverUrl.trim(),
+      model: b.model.trim(),
+      overrideProfile: b.overrideProfile?.trim() ? b.overrideProfile.trim() : undefined,
+    });
   };
 
   return (
