@@ -478,7 +478,7 @@ function RuleCard({
               {rule.note && <div className="text-[12px] italic leading-snug text-dim">{rule.note}</div>}
             </div>
             {dirty && (
-              <Button variant="ghost" size="sm" onClick={onReset} title="Discard this rule's changes">
+              <Button variant="ghost" size="sm" disabled={saving} onClick={onReset} title="Discard this rule's changes">
                 <RotateCcw className="size-3.5" /> Reset
               </Button>
             )}
