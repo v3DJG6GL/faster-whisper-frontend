@@ -817,9 +817,9 @@ pub async fn inject_text(
     restore_clipboard: bool,
     paste_shortcut: Vec<String>,
 ) -> Result<(), String> {
-    // Strip control characters (except Tab/LF/CR) from the server-transcribed text before it
-    // reaches ANY injection path — clipboard-only, Wayland paste, or X11 paste/direct — so a
-    // malicious/garbled server can't smuggle terminal-escape sequences onto the clipboard or
+    // Strip control characters (except Tab/LF; CR is normalized to LF) from the server-transcribed
+    // text before it reaches ANY injection path — clipboard-only, Wayland paste, or X11 paste/direct
+    // — so a malicious/garbled server can't smuggle terminal-escape sequences onto the clipboard or
     // into a paste. (The Wayland direct-typing paths already drop controls; this matches them.)
     let text = crate::inject::sanitize_injected(&text);
     tracing::info!("[inject] {} chars via {} (auto_enter={})", text.len(), method, auto_enter);
