@@ -101,7 +101,7 @@ function Editor({
             Dictation is still captured, but nothing is inserted here — avoids firing stray actions.
           </div>
         </div>
-        <Toggle checked={r.block} onChange={(v) => set({ block: v })} />
+        <Toggle ariaLabel="Never type into this app" checked={r.block} onChange={(v) => set({ block: v })} />
       </div>
 
       <Labeled label="Insert method" className="mt-4">

@@ -232,6 +232,7 @@ function RuleCard({
           </button>
         )}
         <Toggle
+          ariaLabel="Enable rule"
           checked={edit.enabled}
           disabled={!canEnable}
           onChange={(v) => onPatch((e) => ({ ...e, enabled: v }))}
@@ -736,6 +737,7 @@ export default function Dictionary() {
                 <button
                   key={b.id}
                   type="button"
+                  aria-pressed={active}
                   onClick={() => setSelectedId(b.id)}
                   className={cn(
                     "ring-signal rounded-pill border px-3.5 py-1.5 text-[12.5px] font-medium transition-colors",

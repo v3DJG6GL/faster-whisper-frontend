@@ -336,7 +336,7 @@ function ProfileRow({
             </span>
           </div>
         </div>
-        <Toggle checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
+        <Toggle ariaLabel={`Enable ${p.name}`} checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" title="Edit" onClick={onEdit}>
             <Pencil className="size-4" />

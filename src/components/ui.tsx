@@ -1,4 +1,14 @@
-import { type ReactNode, type InputHTMLAttributes, forwardRef, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type ReactElement,
+  type InputHTMLAttributes,
+  cloneElement,
+  forwardRef,
+  isValidElement,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { AlertTriangle, Check, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -171,16 +181,19 @@ export function Toggle({
   checked,
   onChange,
   disabled,
+  ariaLabel,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
+  ariaLabel?: string;
 }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={ariaLabel}
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
@@ -609,13 +622,22 @@ export function SettingRow({
   last?: boolean;
   disabled?: boolean;
 }) {
+  // A bare role="switch" Toggle has no accessible name (the title is a sibling <div>). Auto-label a
+  // direct Toggle child with the row title so a screen reader announces what it controls; respects an
+  // explicit ariaLabel and leaves other control types untouched.
+  const control =
+    isValidElement(children) && children.type === Toggle
+      ? cloneElement(children as ReactElement<{ ariaLabel?: string }>, {
+          ariaLabel: (children.props as { ariaLabel?: string }).ariaLabel ?? title,
+        })
+      : children;
   return (
     <div className={cn("flex items-center gap-6 py-4", !last && "border-b border-line")}>
       <div className={cn("min-w-0 flex-1 transition-opacity", disabled && "opacity-50")}>
         <div className="text-[14px] font-medium text-text">{title}</div>
         {desc && <div className="mt-0.5 text-[12.5px] leading-snug text-dim">{desc}</div>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="shrink-0">{control}</div>
     </div>
   );
 }

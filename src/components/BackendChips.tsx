@@ -39,6 +39,7 @@ export function BackendChips({
           <button
             key={b.id}
             type="button"
+            aria-pressed={active}
             onClick={() => onSelect(b.id)}
             title={b.name}
             className={cn(

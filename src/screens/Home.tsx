@@ -56,7 +56,7 @@ function ProfileCard({ p }: { p: Profile }) {
           >
             <Pencil className="size-4" />
           </Button>
-          <Toggle checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
+          <Toggle ariaLabel={`Enable ${p.name}`} checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
         </div>
       </div>
       <div className="mt-5 flex items-center justify-between">
