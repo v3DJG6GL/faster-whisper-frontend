@@ -50,7 +50,7 @@ function Editor({
   // let this editor accept a chord that can't fire when evdev is toggled on but not permitted.
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
   useEffect(() => {
-    void evdevStatus().then(setEvdev);
+    void evdevStatus().then(setEvdev).catch(() => {}); // match Settings' chain; ignore an IPC reject
   }, []);
   const evdevActive = !!evdev?.permitted && evdevEnabled;
   const [p, setP] = useState<Profile>(initial);
