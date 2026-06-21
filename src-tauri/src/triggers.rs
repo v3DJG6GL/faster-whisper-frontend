@@ -131,6 +131,36 @@ enum ShortcutTarget {
 #[derive(Default)]
 pub struct ShortcutRegistry(Mutex<HashMap<Shortcut, ShortcutTarget>>);
 
+// PTT (Hold) profiles currently emitting "start" on the plugin/global-shortcut path. Mirrors evdev's
+// ACTIVE_HOLDS: a registration teardown (a profile-edit rebind, or suspend-for-capture) means the
+// key-RELEASE that normally emits "stop" reaches no registration, so a Hold session held across the
+// teardown would wedge "listening". Tracked here so the teardown emits those stops itself. Entries
+// are deduped on insert; dictate("stop") is a no-op when idle, so a later real release-stop (if the
+// chord gets re-registered and released) is harmless.
+static ACTIVE_HOLDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn note_hold(profile_id: &str, active: bool) {
+    if let Ok(mut h) = ACTIVE_HOLDS.lock() {
+        h.retain(|p| p != profile_id);
+        if active {
+            h.push(profile_id.to_string());
+        }
+    }
+}
+
+/// Emit "stop" for every plugin Hold chord still held, then clear the set. Called from the
+/// registration teardowns (unregister_all / register_from_config) so a session held across a
+/// rebind/suspend isn't left wedged "listening". No-op when nothing is held (the common case).
+fn stop_held_sessions(app: &AppHandle) {
+    let stuck = ACTIVE_HOLDS
+        .lock()
+        .map(|mut h| std::mem::take(&mut *h))
+        .unwrap_or_default();
+    for profile_id in stuck {
+        emit_trigger(app, profile_id, "stop");
+    }
+}
+
 /// Plugin handler: map a fired shortcut back to its Profile and emit a trigger.
 /// Hold → start on press / stop on release; latch → toggle on press.
 pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
@@ -151,6 +181,10 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
                 (ActivationType::Latch, ShortcutState::Pressed) => "toggle",
                 _ => return,
             };
+            // Track a held PTT chord so a registration teardown can emit its "stop" (stop_held_sessions).
+            if matches!(activation, ActivationType::Hold) {
+                note_hold(&profile_id, event.state() == ShortcutState::Pressed);
+            }
             emit_trigger(app, profile_id, action);
         }
         ShortcutTarget::OpenQuickAdd => {
@@ -165,6 +199,9 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
 /// capturing a new binding, so pressing a key only rebinds and doesn't also fire
 /// dictation (which previously could start a stuck push-to-talk session).
 pub fn unregister_all(app: &AppHandle) {
+    // A PTT chord held across this teardown would never receive its "stop" (the registration is
+    // gone before the release) — emit it now so the session isn't left wedged "listening".
+    stop_held_sessions(app);
     let gs = app.global_shortcut();
     let registry = app.state::<ShortcutRegistry>();
     let Ok(mut map) = registry.0.lock() else {
@@ -179,6 +216,9 @@ pub fn unregister_all(app: &AppHandle) {
 /// (Re)register global shortcuts for the enabled Profiles. Unregisterable hotkeys
 /// (modifier-only / Wayland) are skipped with a log — the CLI path covers them.
 pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hotkey: &[String]) {
+    // Flush any held PTT chord's "stop" before tearing down the old registrations (a rebind mid-hold
+    // would otherwise lose the release-stop and wedge "listening"). Mirrors evdev's stop_held_sessions.
+    stop_held_sessions(app);
     let gs = app.global_shortcut();
     let registry = app.state::<ShortcutRegistry>();
     let Ok(mut map) = registry.0.lock() else {
