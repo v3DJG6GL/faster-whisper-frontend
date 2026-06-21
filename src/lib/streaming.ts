@@ -202,12 +202,18 @@ function bumpPhraseEnd(): void {
   }, PHRASE_END_QUIET_MS);
 }
 
-/** Drop any pending phrase-end Enter/restore (session reset / abort). */
-function clearPhraseEnd(): void {
+/** Clear just the per-phrase quiet timer (NOT the dirty flags) — the boundary/closed handlers
+ *  cancel the pending Enter/restore but deliberately keep phraseDirty/clipDirty for the tail. */
+function clearPhraseEndTimer(): void {
   if (phraseEndTimer) {
     clearTimeout(phraseEndTimer);
     phraseEndTimer = null;
   }
+}
+
+/** Drop any pending phrase-end Enter/restore (session reset / abort). */
+function clearPhraseEnd(): void {
+  clearPhraseEndTimer();
   phraseDirty = false;
   clipDirty = false;
   clipBaseline = "";
@@ -298,6 +304,13 @@ function stopTargetPoll(): void {
 // the instant you stop — which is the very thing we're fixing.
 const MIN_INJECT_VISIBLE_MS = 450;
 
+/** Settle the chip to idle, stamping the session's insert outcome (typed/clipboard/none) and
+ *  clearing the active profile — the single definition of the end-of-session contract so its
+ *  four call sites can't drift. */
+function settleIdle(): void {
+  useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
+}
+
 // Return to idle once the injection queue has fully drained (the text has landed in
 // the focused field) — but never before MIN_INJECT_VISIBLE_MS, and never over a status
 // that has moved on (a fresh session, or an error that arrived meanwhile).
@@ -306,7 +319,7 @@ function settleToIdleAfterInjection(startedAt: number): void {
     const wait = Math.max(0, MIN_INJECT_VISIBLE_MS - (performance.now() - startedAt));
     setTimeout(() => {
       if (useApp.getState().status === "injecting") {
-        useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
+        settleIdle();
       }
     }, wait);
   });
@@ -622,10 +635,7 @@ async function ensureListeners(): Promise<void> {
     // timer (~PHRASE_END_QUIET_MS after you stop, well before this ~20s hard break), so it's
     // already been pressed. Cancel the pending timer; only Enter here as a backstop if it
     // somehow hasn't. When auto-enter is off, fall back to the configured separator behavior.
-    if (phraseEndTimer) {
-      clearTimeout(phraseEndTimer);
-      phraseEndTimer = null;
-    }
+    clearPhraseEndTimer();
     if (insertCfg?.live) {
       if (insertCfg.autoEnter) {
         if (phraseDirty) enqueueAutoEnter();
@@ -663,10 +673,7 @@ async function ensureListeners(): Promise<void> {
       // armed backstop running and `warming` stuck true (the chip reads it ungated by status).
       // Stop the pending phrase-end Enter from firing after the session closes; the stop tail
       // below decides the final phrase's Enter. Keep `phraseDirty` for that decision.
-      if (phraseEndTimer) {
-        clearTimeout(phraseEndTimer);
-        phraseEndTimer = null;
-      }
+      clearPhraseEndTimer();
       // Don't clobber an error — `error` is followed immediately by `closed`.
       const st = useApp.getState();
       if (st.status === "error") {
@@ -692,7 +699,7 @@ async function ensureListeners(): Promise<void> {
 
       const cfg = insertCfg;
       if (!cfg || cfg.timing === "off") {
-        setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
+        settleIdle();
         return;
       }
 
@@ -728,7 +735,7 @@ async function ensureListeners(): Promise<void> {
           void injectChain.then(() => {
             void finalClip().catch((e) => console.error("final clip failed:", e));
             if (useApp.getState().status === "transcribing") {
-              useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
+              settleIdle();
             }
           });
           return;
@@ -745,7 +752,7 @@ async function ensureListeners(): Promise<void> {
         // bankedDoc holds any documents finalized before a hard break this session.
         const text = (bankedDoc + committedDoc).trim();
         if (!text) {
-          setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
+          settleIdle();
           return;
         }
         setDictation({ status: "injecting" });
