@@ -90,12 +90,11 @@ export function initUsageController(): void {
   void refreshAll();
   setInterval(() => void refreshAll(), POLL_MS);
 
-  let lastBackends = useApp.getState().backends;
   let afterTimer: ReturnType<typeof setTimeout> | undefined;
   useApp.subscribe((state, prev) => {
-    // Refetch when the set of backends changes (added / removed / url edited).
-    if (state.backends !== lastBackends) {
-      lastBackends = state.backends;
+    // Refetch when the set of backends changes (added / removed / url edited). The init-time
+    // refreshAll() above covers the first load, so comparing against prev suffices.
+    if (state.backends !== prev.backends) {
       void refreshAll();
     }
     // Refetch shortly after a dictation session ends (idle transition) — the server
