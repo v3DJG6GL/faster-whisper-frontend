@@ -470,7 +470,16 @@ async function ensureListeners(): Promise<void> {
           // only latch that ends mid-speech (no pause advanced clipBaseline) would re-copy + re-pulse
           // the last phrase on the drain's re-sent final. Mirror the typed branch's guard here.
           if (phraseClip.length > 0 && toType.length > 0) {
-            await injectText({ text: phraseClip, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+            try {
+              await injectText({ text: phraseClip, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+            } catch (e) {
+              // Surface a failed live phrase instead of dropping it silently (mirrors the end-of-
+              // session insert hardening). flashError coalesces, so repeated phrase failures just
+              // refresh the one red state. Skip the success-only bookkeeping below.
+              console.error("live clipboard insert failed:", e);
+              flashError("Couldn’t copy the text to the clipboard.");
+              return;
+            }
             if (!t.isSelf) {
               sessionClipboard = true;
               signalInsert("clipboard");
@@ -495,7 +504,28 @@ async function ensureListeners(): Promise<void> {
               console.error("beginInjection failed:", e);
             }
           }
-          await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+          try {
+            await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+          } catch (e) {
+            // Surface a failed live phrase instead of dropping it silently (mirrors the end-of-session
+            // insert hardening), then skip the success-only pulse/clipDirty bookkeeping below.
+            console.error("live insert failed:", e);
+            if (t.method === "direct") {
+              // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
+              try {
+                await injectText({ text: toType, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+                flashError("Couldn’t type the text — it’s on the clipboard to paste manually.");
+              } catch (e2) {
+                console.error("clipboard fallback after failed live insert failed:", e2);
+                flashError("Couldn’t insert the text.");
+              }
+            } else {
+              // Paste failed; the deferred end-of-session restore will put the user's clipboard back,
+              // so don't promise the transcript is sitting there.
+              flashError("Couldn’t paste the text.");
+            }
+            return;
+          }
           // A real paste just clobbered the user's clipboard with the transcript → it owes a
           // restore at phrase end. Direct typing never touches the clipboard, so don't.
           if (t.method === "paste") clipDirty = true;
