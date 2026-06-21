@@ -23,6 +23,10 @@ export default function Transcribe() {
   // so a request that resolves AFTER the user moved on can't strand its (now-stale) result/error
   // against a different/absent file. The file picker + the clear (X) are reachable during a run.
   const runId = useRef(0);
+  // The "Copied" confirmation timer. Held in a ref so a rapid second Copy click clears the first
+  // timer before re-arming — otherwise the stale timer fires mid-window and flips the label off
+  // early (every other transient timer in the app is cleared the same way).
+  const copyTimer = useRef<number | undefined>(undefined);
 
   // The store boots with a seeded backend, then config hydration (and later edits/removals)
   // can replace the list with different ids. Re-sync the selection when the current id falls
@@ -101,8 +105,12 @@ export default function Transcribe() {
       return;
     }
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (copyTimer.current) window.clearTimeout(copyTimer.current);
+    copyTimer.current = window.setTimeout(() => setCopied(false), 1500);
   };
+
+  // Clear a still-pending "Copied" timer if the screen unmounts mid-window.
+  useEffect(() => () => window.clearTimeout(copyTimer.current), []);
 
   return (
     <div className="mx-auto max-w-[820px] px-10 py-12">
