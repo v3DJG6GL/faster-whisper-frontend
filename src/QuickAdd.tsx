@@ -199,7 +199,8 @@ export default function QuickAdd() {
         // remount), drop the subscription now instead of leaking a duplicate listener.
         if (cancelled) f();
         else un = f;
-      });
+      })
+      .catch(() => {}); // a rejected dynamic import / listen() must not surface as an unhandled rejection
     return () => {
       cancelled = true;
       un?.();
@@ -288,7 +289,8 @@ export default function QuickAdd() {
       .then((f) => {
         if (cancelled) f();
         else un = f;
-      });
+      })
+      .catch(() => {}); // a rejected dynamic import / listen() must not surface as an unhandled rejection
     return () => {
       cancelled = true;
       un?.();
