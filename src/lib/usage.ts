@@ -20,6 +20,7 @@ export const TREND_DAYS = 90; // fetched once; the chart slices 7/30/90 from it
 
 let started = false;
 let pollingAll = false;
+let rerunRequested = false; // a refresh asked for mid-pass → run one more pass with the latest backends
 
 /** The Backend whose usage the chip + Home stats reflect: the Profile currently
  *  dictating, else the home target Profile (so an idle dock previews the same
@@ -68,16 +69,25 @@ async function refreshOne(backend: Backend): Promise<void> {
  *  usage view can switch between backends instantly from the store. Guarded so
  *  overlapping polls don't stack. */
 async function refreshAll(): Promise<void> {
-  if (pollingAll) return;
+  // Already polling: don't stack a second pass, but record the request so we run once more after —
+  // otherwise a refresh triggered by a backend edit (which deleted that backend's cached usage) is
+  // dropped and the just-edited backend stays blank until the next 30s tick.
+  if (pollingAll) {
+    rerunRequested = true;
+    return;
+  }
   pollingAll = true;
   try {
-    for (const b of useApp.getState().backends) {
-      try {
-        await refreshOne(b);
-      } catch {
-        /* one backend failing must not stop the rest */
+    do {
+      rerunRequested = false;
+      for (const b of useApp.getState().backends) {
+        try {
+          await refreshOne(b);
+        } catch {
+          /* one backend failing must not stop the rest */
+        }
       }
-    }
+    } while (rerunRequested); // re-reads the latest backends snapshot on the rerun
   } finally {
     pollingAll = false;
   }
