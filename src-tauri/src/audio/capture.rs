@@ -44,7 +44,7 @@ impl Meter {
         Meter { smoothed: 0.0, out }
     }
     fn push(&mut self, rms: f32) {
-        let level = (rms * 6.0).clamp(0.0, 1.0);
+        let level = super::chip_level(rms);
         self.smoothed = self.smoothed * 0.7 + level * 0.3;
         self.out.store(self.smoothed.to_bits(), Ordering::Relaxed);
     }

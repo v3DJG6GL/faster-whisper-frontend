@@ -269,7 +269,7 @@ pub async fn run<F>(
                                 // Advance the speech detector from this chunk's RMS (same scaling +
                                 // thresholds as the chip); the gate keeps audio only while "speaking"
                                 // and prepends the buffered lead-in on each silence→speech edge.
-                                let lvl = (rms_f32(&chunk) * 6.0).clamp(0.0, 1.0);
+                                let lvl = crate::audio::chip_level(rms_f32(&chunk));
                                 gate.push(lvl, &bytes, &mut saved);
                             } else if saving {
                                 saved.extend_from_slice(&bytes);

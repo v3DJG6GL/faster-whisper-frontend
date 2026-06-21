@@ -284,11 +284,11 @@ fn rms(samples: &[f32]) -> f32 {
     (sum / samples.len() as f32).sqrt()
 }
 
-/// One EMA step of the level meter (gain 6.0, clamp, 0.7/0.3 smoothing) — mirrors the
+/// One EMA step of the level meter (chip_level gain + clamp, 0.7/0.3 smoothing) — mirrors the
 /// capture meter. Centralized so the coefficients stay in one place across both capture
 /// loops' per-sample-format arms (they were copied verbatim 6×).
 fn smooth(prev: f32, mono: &[f32]) -> f32 {
-    prev * 0.7 + (rms(mono) * 6.0).clamp(0.0, 1.0) * 0.3
+    prev * 0.7 + crate::audio::chip_level(rms(mono)) * 0.3
 }
 
 #[allow(clippy::too_many_arguments)]

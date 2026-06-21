@@ -26,6 +26,13 @@ pub fn publish_levels(app: &AppHandle, event: &str, level: &AtomicU32, stop: &At
     }
 }
 
+/// Scale a raw RMS into the chip's 0..1 meter level: the tuned gain 6.0, clamped. This single
+/// constant COUPLES the live chip meter to the batch + streaming speech-gate thresholds, so it
+/// lives in ONE place — retuning it at one call site would silently desync the meter from the gate.
+pub fn chip_level(rms: f32) -> f32 {
+    (rms * 6.0).clamp(0.0, 1.0)
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioDevice {
@@ -190,9 +197,8 @@ impl Default for SpeechGate {
     }
 }
 
-/// RMS of a 16 kHz s16le mono frame, scaled and clamped to the chip's 0..1 level the
-/// same way the streaming path scales `rms_f32(&chunk) * 6.0` — so the batch gate keys
-/// off the same thresholds as the live indicator.
+/// RMS of a 16 kHz s16le mono frame, scaled and clamped to the chip's 0..1 level (chip_level) so
+/// the batch gate keys off the same thresholds as the live indicator.
 fn frame_level_s16le(bytes: &[u8]) -> f32 {
     let n = bytes.len() / 2;
     if n == 0 {
@@ -203,7 +209,7 @@ fn frame_level_s16le(bytes: &[u8]) -> f32 {
         let v = i16::from_le_bytes([s[0], s[1]]) as f32 / 32768.0;
         sum += v * v;
     }
-    ((sum / n as f32).sqrt() * 6.0).clamp(0.0, 1.0)
+    chip_level((sum / n as f32).sqrt())
 }
 
 /// Trim leading / internal / trailing silence from a COMPLETE 16 kHz s16le mono buffer
