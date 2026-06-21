@@ -16,7 +16,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::thread::JoinHandle;
-use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{mpsc, watch};
 
@@ -379,11 +378,7 @@ fn run_capture(
 
     stream.play().map_err(|e| e.to_string())?;
 
-    while !stop.load(Ordering::SeqCst) {
-        let l = f32::from_bits(level.load(Ordering::Relaxed));
-        let _ = app.emit("stream://level", l);
-        std::thread::sleep(Duration::from_millis(33));
-    }
+    crate::audio::publish_levels(app, "stream://level", &level, &stop);
     // `stream` (and the cloned sender) drop here, ending capture and the channel.
     Ok(())
 }
@@ -806,11 +801,7 @@ fn run_record_capture(
     .map_err(|e| e.to_string())?;
 
     stream.play().map_err(|e| e.to_string())?;
-    while !stop.load(Ordering::SeqCst) {
-        let l = f32::from_bits(level.load(Ordering::Relaxed));
-        let _ = app.emit("stream://level", l);
-        std::thread::sleep(Duration::from_millis(33));
-    }
+    crate::audio::publish_levels(app, "stream://level", &level, &stop);
     // Stop capture (drop the stream → no more callbacks), then flush the resampler's buffered tail
     // (< ~64 ms) into the recording so the final sliver isn't dropped.
     drop(stream);

@@ -12,8 +12,7 @@ use cpal::{Device, SampleFormat, StreamConfig, StreamError};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::audio::MicClip;
 
@@ -213,11 +212,7 @@ fn run(
 
     stream.play().map_err(|e| e.to_string())?;
 
-    while !stop.load(Ordering::SeqCst) {
-        let level = f32::from_bits(level_bits.load(Ordering::Relaxed));
-        let _ = app.emit("audio://level", level);
-        std::thread::sleep(Duration::from_millis(33));
-    }
+    super::publish_levels(&app, "audio://level", &level_bits, &stop);
     // `stream` is dropped here, on the capture thread, stopping the device.
     Ok(())
 }

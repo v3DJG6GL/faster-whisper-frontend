@@ -5,12 +5,26 @@
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tauri::{AppHandle, Emitter};
 
 pub mod capture;
 pub mod device;
 pub mod resample;
+
+/// Publish the live RMS meter to `event` at ~30 Hz until `stop` is set, decoding the level from the
+/// atomic f32-bits cell the capture callbacks write. The one cadence + bit-decode shared by all three
+/// capture loops (mic-test "audio://level", plus streaming and batch "stream://level"), so the refresh
+/// rate / decode protocol lives in one place. Runs on the caller's capture thread until stop flips.
+pub fn publish_levels(app: &AppHandle, event: &str, level: &AtomicU32, stop: &AtomicBool) {
+    while !stop.load(Ordering::SeqCst) {
+        let l = f32::from_bits(level.load(Ordering::Relaxed));
+        let _ = app.emit(event, l);
+        std::thread::sleep(Duration::from_millis(33));
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
