@@ -35,7 +35,7 @@ export function useHotkeyCapture(opts: {
       setWarn(null);
       return;
     }
-    void suspendShortcuts();
+    void suspendShortcuts().catch((e) => console.error("suspendShortcuts failed", e));
     const pressed = new Set<string>();
     let peak: string[] = [];
     let done = false;
@@ -57,14 +57,24 @@ export function useHotkeyCapture(opts: {
       if (evdevActive) {
         ref.current.onCommit(codes);
       } else {
-        void validateCodes(codes).then((ok) => {
-          if (cancelled) return; // capture torn down / cancelled while validating
-          if (ok) ref.current.onCommit(codes);
-          else {
-            setWarn("Can’t register that — add a letter/digit, or enable evdev (Settings → Permissions) for modifier-only / AltGr");
+        void validateCodes(codes)
+          .then((ok) => {
+            if (cancelled) return; // capture torn down / cancelled while validating
+            if (ok) ref.current.onCommit(codes);
+            else {
+              setWarn("Can’t register that — add a letter/digit, or enable evdev (Settings → Permissions) for modifier-only / AltGr");
+              done = false;
+            }
+          })
+          .catch((e) => {
+            // A rejected validateCodes (IPC failure) would otherwise wedge the capture: `done` was set
+            // true by the keydown caller, so the keyup modifier-only fallback is skipped and nothing
+            // commits or warns — the pill hangs on the held chord. Reset + surface so the user can retry.
+            if (cancelled) return;
+            console.error("validateCodes failed", e);
+            setWarn("Couldn’t check that shortcut — try again.");
             done = false;
-          }
-        });
+          });
       }
     };
     const onKeyDown = (e: KeyboardEvent) => {
