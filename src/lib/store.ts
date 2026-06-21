@@ -158,6 +158,10 @@ interface AppState {
    *  switching into its mic profile takes ~1–2s). While true the chip shows
    *  "warming up…" and the start cue is held until real audio actually flows. */
   warming: boolean;
+  /** The mic actually went LIVE this session — set when real audio flowed (or the warm-up
+   *  safety timeout fired), NOT when warming was cleared by teardown. Gates the start/stop
+   *  cues so a session that starts/ends DURING warm-up doesn't play a mismatched chime. */
+  micLive: boolean;
   level: number; // 0..1 audio RMS for the visualizer
   speaking: boolean; // derived from level (smoothed): actively speaking vs armed-silent
   partial: string; // live partial transcript for the chip preview
@@ -231,6 +235,7 @@ interface AppState {
     patch: Partial<{
       status: DictationStatus;
       warming: boolean;
+      micLive: boolean;
       level: number;
       partial: string;
       activeProfile: string | null;
@@ -264,6 +269,7 @@ export const useApp = create<AppState>((set) => ({
 
   status: "idle",
   warming: false,
+  micLive: false,
   level: 0,
   speaking: false,
   partial: "",

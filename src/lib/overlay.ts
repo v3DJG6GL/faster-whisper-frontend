@@ -140,20 +140,18 @@ export async function initOverlayController(): Promise<void> {
     // Cues stay keyed on status TRANSITIONS only (not warming), so a warm-up flip can't re-fire them.
     if (state.status !== prev.status) {
       if (state.settings.general.soundEffects) {
-        if (state.status === "transcribing" && prev.status === "listening") void playCue("stop");
+        // Only chime "stop" if the mic actually went live this session — a session ENDED during
+        // warm-up (stopLive sets {transcribing, warming:false} in one update, mic never live) would
+        // otherwise play a "stop" with no preceding "start".
+        if (state.status === "transcribing" && prev.status === "listening" && state.micLive) void playCue("stop");
         else if (state.status === "error") void playCue("error");
       }
     }
-    // The "start" cue fires when the mic actually goes LIVE — i.e. the warm-up gate
-    // clears while still listening — NOT when listening is first armed. On a cold
-    // Bluetooth mic that's ~1–2s later, so the "go" lines up with real capture and the
-    // user doesn't speak into a dead mic.
-    if (
-      state.settings.general.soundEffects &&
-      state.status === "listening" &&
-      prev.warming &&
-      !state.warming
-    ) {
+    // The "start" cue fires when the mic actually goes LIVE — gated on the micLive edge (real audio
+    // flowed, or the warm-up safety timeout fired), NOT merely on warming clearing: a session that
+    // DIES during warm-up (a teardown clears warming with the mic never live) must not chime "start".
+    // On a cold Bluetooth mic this is ~1–2s after arming, so the "go" lines up with real capture.
+    if (state.settings.general.soundEffects && state.micLive && !prev.micLive) {
       void playCue("start");
     }
 

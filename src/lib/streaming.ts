@@ -373,7 +373,9 @@ async function ensureListeners(): Promise<void> {
       if (latestLevel > MIC_LIVE_LEVEL) {
         if (++micLiveHits >= MIC_LIVE_CONFIRM) {
           clearWarmTimer();
-          setDictation({ warming: false });
+          // Real audio flowed → the mic genuinely went live. micLive gates the start/stop cues so
+          // they don't fire for a session that starts/ends during warm-up (mic never live).
+          setDictation({ warming: false, micLive: true });
         }
       } else {
         micLiveHits = 0;
@@ -1013,6 +1015,7 @@ async function startLiveInner(
     // Warm-up gate: grey "warming up…" from the first frame (never an amber "listening"
     // flash before the mic is live); cleared by real audio or the safety timeout below.
     warming: true,
+    micLive: false, // fresh session: the mic hasn't gone live yet (gates the start/stop cues)
     partial: "",
     level: 0,
     dictationError: null,
@@ -1030,7 +1033,9 @@ async function startLiveInner(
   clearWarmTimer();
   warmTimer = setTimeout(() => {
     warmTimer = null;
-    useApp.getState().setDictation({ warming: false });
+    // Safety cap: treat the mic as live even if no audio was detected (a genuinely-silent-but-live
+    // mic should still cue), so micLive lets the start cue fire here too.
+    useApp.getState().setDictation({ warming: false, micLive: true });
   }, MIC_WARM_TIMEOUT_MS);
   activeEndpoint = backend.endpoint;
   startTargetPoll(); // keep the chip's target readout live as focus moves during the session
