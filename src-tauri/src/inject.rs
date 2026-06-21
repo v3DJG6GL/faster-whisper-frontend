@@ -155,13 +155,16 @@ fn paste(enigo: &mut Enigo, text: &str, restore_clipboard: bool, chord: &[String
     clipboard.set_text(text.to_string()).map_err(|e| e.to_string())?;
     // Let the new clipboard owner settle before pasting.
     std::thread::sleep(Duration::from_millis(60));
-    paste_keystroke(enigo, chord)?;
+    let res = paste_keystroke(enigo, chord);
 
     // Restore after the paste has consumed the clipboard — via a live owner (same path as the
     // Wayland branch) so it actually persists; a plain set_text that drops doesn't stick on
-    // Wayland and is harmless on X11. No-op when restore is off (`previous` is None).
+    // Wayland and is harmless on X11. No-op when restore is off (`previous` is None). Run it
+    // UNCONDITIONALLY (not gated on the paste succeeding): a failed paste_keystroke must not strand
+    // the user's clipboard clobbered with our dictated text — mirrors the unconditional modifier
+    // release inside paste_keystroke.
     restore_clipboard_later(previous);
-    Ok(())
+    res
 }
 
 /// Map a KeyboardEvent.code to an enigo key + whether it's a modifier. "Control" maps to
