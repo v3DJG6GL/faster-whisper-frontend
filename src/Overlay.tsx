@@ -707,7 +707,7 @@ export default function Overlay() {
           // centred via the parent's justify-center, so the dot/tag translate (never
           // scale) as it grows.
           className={cn(
-            // max-w caps the pill to the fixed 680px overlay WINDOW (100vw here) so it can never
+            // max-w caps the pill to the fixed 820px overlay WINDOW (100vw here) so it can never
             // grow past the window edge — otherwise the centred, content-sized pill overflows and
             // the window edge clips the right-most (newest) transcript words. The transcript below
             // is the flex element that shrinks to make the pill fit (min-w-0 chain → its own
