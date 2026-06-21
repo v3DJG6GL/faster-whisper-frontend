@@ -516,6 +516,16 @@ pub fn suspend_shortcuts(app: AppHandle) {
 /// enabled AND permitted it owns the Profiles' chords and the global-shortcut
 /// plugin is silenced (mutual exclusion); otherwise the plugin registers and evdev stops.
 pub fn apply_bindings(app: &AppHandle) {
+    // Serialize the whole load→branch→apply. This is invoked from the suspend-watch thread, the
+    // reregister_shortcuts* command handlers, and setup, which can overlap (a resume runs
+    // apply_bindings AND emits system://resumed → the frontend calls reregister). Without this lock,
+    // if the on-disk config flips evdev_enabled between two concurrent runs' loads, the two take
+    // opposite branches and the evdev-XOR-plugin invariant breaks: both backends end up live (every
+    // chord double-fires) or neither is registered (no hotkeys until the next reregister). The body
+    // is synchronous, so holding a std Mutex across it is safe.
+    static APPLY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = APPLY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     let Ok(dir) = config_dir(app) else { return };
     let cfg = config::load(&dir);
     let state = app.state::<crate::evdev_hotkeys::EvdevState>();
