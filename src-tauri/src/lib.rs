@@ -131,8 +131,10 @@ pub fn run() {
             commands::stop_mic_test_playback,
             commands::start_stream,
             commands::stop_stream,
+            commands::cancel_stream,
             commands::start_record,
             commands::stop_record,
+            commands::cancel_record,
             commands::recordings_dir_path, // saved-recordings folder (display path)
             commands::open_recordings_dir, // open the saved-recordings folder
             commands::reregister_shortcuts,

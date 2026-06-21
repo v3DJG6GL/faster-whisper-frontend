@@ -320,6 +320,13 @@ export async function stopStream(): Promise<void> {
   await invoke("stop_stream");
 }
 
+/** Hard-abort the stream session WITHOUT draining (no wasted server work; releases the system mute).
+ *  Used by cancelLive, and as the closed-handler's idempotent release of a parked session. */
+export async function cancelStream(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("cancel_stream");
+}
+
 export async function startRecord(args: {
   serverUrl: string;
   backendId?: string | null;
@@ -357,6 +364,13 @@ export async function startRecord(args: {
 export async function stopRecord(): Promise<void> {
   if (!isTauri) return;
   await invoke("stop_record");
+}
+
+/** Hard-abort the record session WITHOUT transcribing (no wasted server POST; releases the system
+ *  mute). Used by cancelLive, and as the closed-handler's idempotent release of a parked session. */
+export async function cancelRecord(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("cancel_record");
 }
 
 /** Re-register global hotkeys after the bindings change (or to restore them). */

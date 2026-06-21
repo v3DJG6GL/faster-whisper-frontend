@@ -406,6 +406,18 @@ pub fn stop_stream(state: State<StreamState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Hard-ABORT the stream session: take it out and let `Drop` run (stops capture, aborts the WS task
+/// WITHOUT draining, releases the system-mute guard). Unlike `stop_stream`, no flush/drain happens —
+/// a cancel should discard the in-flight session, not fire wasted server work. Also the idempotent
+/// teardown the frontend's `closed` handler calls to release a parked session (capture-thread death /
+/// server-initiated close that never went through stop_stream): a no-op when already taken.
+#[tauri::command]
+pub fn cancel_stream(state: State<StreamState>) -> Result<(), String> {
+    let sess = state.0.lock().map_err(|_| "stream state poisoned")?.take();
+    drop(sess); // Drop (not finish) runs OUTSIDE the lock — the guard released on the line above
+    Ok(())
+}
+
 #[tauri::command]
 pub fn start_record(
     app: AppHandle,
@@ -459,6 +471,17 @@ pub fn stop_record(state: State<RecordState>) -> Result<(), String> {
     if let Some(s) = sess {
         s.finish();
     }
+    Ok(())
+}
+
+/// Hard-ABORT the record session: take it out and let `Drop` run (stops capture + joins WITHOUT
+/// transcribing, releases the system-mute guard). Unlike `stop_record`, it does NOT spawn the
+/// transcribe POST — a cancel should discard the clip, not fire a wasted server transcription. Also
+/// the idempotent teardown the `closed` handler calls to release a parked session on capture death.
+#[tauri::command]
+pub fn cancel_record(state: State<RecordState>) -> Result<(), String> {
+    let sess = state.0.lock().map_err(|_| "record state poisoned")?.take();
+    drop(sess); // Drop (not finish) runs OUTSIDE the lock — no transcription POST, releases the mute
     Ok(())
 }
 

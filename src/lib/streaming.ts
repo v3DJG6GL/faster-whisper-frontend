@@ -27,8 +27,10 @@ import {
   isTauri,
   startStream,
   stopStream,
+  cancelStream,
   startRecord,
   stopRecord,
+  cancelRecord,
   injectText,
   beginInjection,
   endInjection,
@@ -647,6 +649,14 @@ async function ensureListeners(): Promise<void> {
       setDictation({ level: 0, warming: false });
       // (The saved recording's transcript .txt sidecar is written in Rust, in the streaming drain —
       // ungated, so a cancelled/superseded session still gets it, matching the batch path.)
+      // Release a session that reached `closed` WITHOUT a user stop (capture-thread death / a
+      // server-initiated close): stopLive's finish() already removed the session from Rust state, so
+      // this is a no-op on a normal stop — but on a never-stopped session it drops the parked session
+      // and releases the system-mute guard (otherwise other apps stay muted until the next dictation).
+      // Fire-and-forget + idempotent.
+      void (activeEndpoint === "batch" ? cancelRecord() : cancelStream()).catch((e) =>
+        console.error("closed: release parked session failed:", e),
+      );
 
       const cfg = insertCfg;
       if (!cfg || cfg.timing === "off") {
@@ -1155,10 +1165,13 @@ export async function cancelLive(): Promise<void> {
   const endpoint = activeEndpoint;
   activeEndpoint = null;
   try {
-    if (endpoint === "batch") await stopRecord();
-    else await stopStream();
+    // ABORT, don't finish: a cancel discards the in-flight session, so skip the drain (streaming) /
+    // the transcription POST (batch) — they'd produce a result we immediately throw away. This also
+    // releases the system-mute guard right away.
+    if (endpoint === "batch") await cancelRecord();
+    else await cancelStream();
   } catch (e) {
-    console.error("cancelLive: stop failed:", e);
+    console.error("cancelLive: cancel failed:", e);
   }
   // Clear any stuck hardware-hotkey state (re-enumerates keyboards → fresh held-set). Use the
   // capture-aware variant: cancelLive runs on system://resumed, and if a binding capture is in
