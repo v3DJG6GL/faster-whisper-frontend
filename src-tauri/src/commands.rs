@@ -640,25 +640,35 @@ pub fn validate_codes(codes: Vec<String>) -> bool {
 pub struct ClipboardSnapshot(pub std::sync::Mutex<Option<String>>);
 
 /// Snapshot the current clipboard before a live paste-injection session.
+/// Run a blocking clipboard / PRIMARY-selection read OFF the UI thread, bounded to 400ms. arboard's
+/// get_text (and the PRIMARY read) are blocking Wayland round-trips that can hang indefinitely on a
+/// dead/slow owner — e.g. right after the previous clipboard owner exited — so every such read goes
+/// through here: one place owns the off-thread + 400ms-cap contract. Returns None on timeout, join
+/// error, or an empty read; callers log / handle None per-site.
+async fn read_selection_bounded(
+    read: impl FnOnce() -> Option<String> + Send + 'static,
+) -> Option<String> {
+    let task = tokio::task::spawn_blocking(read);
+    match tokio::time::timeout(std::time::Duration::from_millis(400), task).await {
+        Ok(Ok(v)) => v,
+        _ => None,
+    }
+}
+
 #[tauri::command]
 pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), String> {
-    // Read the clipboard OFF the GTK main thread, time-bounded. This is now called PER PHRASE, and a
-    // SYNC command runs on the UI thread — arboard's get_text is a blocking Wayland round-trip, so on
-    // the UI thread it freezes the whole app (and reading a dead/slow clipboard owner — e.g. right
-    // after the previous owner process exited — can hang indefinitely). On timeout/empty we KEEP the
-    // prior snapshot: that path means we still hold the clipboard ourselves (the user copied nothing
-    // new), so the existing snapshot already has their value.
-    let read = tokio::task::spawn_blocking(|| {
-        arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())
-    });
-    match tokio::time::timeout(std::time::Duration::from_millis(400), read).await {
-        Ok(Ok(Some(text))) => {
+    // Read the clipboard OFF the GTK main thread, time-bounded (see read_selection_bounded). This is
+    // called PER PHRASE, and a SYNC command runs on the UI thread — on the UI thread the blocking read
+    // freezes the whole app. On timeout/empty we KEEP the prior snapshot: that path means we still hold
+    // the clipboard ourselves (the user copied nothing new), so the existing snapshot already has it.
+    match read_selection_bounded(|| arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())).await {
+        Some(text) => {
             tracing::info!("[clip] begin_injection: snapshot {} chars", text.len());
             if let Ok(mut g) = snap.0.lock() {
                 *g = Some(text);
             }
         }
-        _ => tracing::info!("[clip] begin_injection: clipboard read empty/timeout — keeping prior snapshot"),
+        None => tracing::info!("[clip] begin_injection: clipboard read empty/timeout — keeping prior snapshot"),
     }
     Ok(())
 }
@@ -804,11 +814,7 @@ pub async fn get_focused_selection(
 /// Read the Wayland PRIMARY ("highlight") selection off the UI thread, time-bounded — the same
 /// hazard guard as `begin_injection` (a hung clipboard owner must not stall the caller).
 async fn read_primary_now() -> Option<String> {
-    let read = tokio::task::spawn_blocking(crate::inject::read_primary_selection);
-    match tokio::time::timeout(std::time::Duration::from_millis(400), read).await {
-        Ok(Ok(Some(s))) => Some(s),
-        _ => None,
-    }
+    read_selection_bounded(crate::inject::read_primary_selection).await
 }
 
 /// Turn a raw selection into a usable mapping KEY, or reject it. Multi-WORD selections are kept
@@ -936,16 +942,11 @@ pub async fn inject_text(
             // prev separately (400ms cap; None on timeout → skip the restore), then set the clipboard
             // with capture_prev=false so the set_text still lands regardless.
             let prev = if restore_clipboard {
-                let read = tokio::task::spawn_blocking(|| {
-                    arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())
-                });
-                match tokio::time::timeout(std::time::Duration::from_millis(400), read).await {
-                    Ok(Ok(p)) => p,
-                    _ => {
-                        tracing::info!("[clip] paste: prev-clipboard read empty/timeout — skipping restore");
-                        None
-                    }
+                let p = read_selection_bounded(|| arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())).await;
+                if p.is_none() {
+                    tracing::info!("[clip] paste: prev-clipboard read empty/timeout — skipping restore");
                 }
+                p
             } else {
                 None
             };
