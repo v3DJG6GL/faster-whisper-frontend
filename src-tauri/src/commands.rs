@@ -919,9 +919,16 @@ pub async fn inject_text(
                     tracing::info!("[inject] typed via virtual keyboard");
                     Ok(())
                 }
-                Err(e) => {
-                    tracing::warn!("[inject] virtual keyboard unavailable ({e}); using portal");
+                // Fall back to the portal ONLY when the VK failed before transmitting any key (protocol
+                // unavailable, keymap upload failed). A mid-typing failure already landed a prefix, so
+                // re-typing the whole text via the portal would duplicate it — surface the error instead.
+                Err(e) if !e.after_typing => {
+                    tracing::warn!("[inject] virtual keyboard unavailable ({}); using portal", e.message);
                     crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter).await
+                }
+                Err(e) => {
+                    tracing::error!("[inject] virtual keyboard failed mid-typing ({}); not re-typing via portal (would duplicate the landed prefix)", e.message);
+                    Err(e.message)
                 }
             }
         } else {

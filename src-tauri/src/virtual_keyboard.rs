@@ -19,11 +19,21 @@
 
 use tokio::sync::{mpsc, oneshot, Mutex};
 
+/// A virtual-keyboard typing failure. `after_typing` is true only if keys had ALREADY been
+/// transmitted to the compositor when it failed — the caller must NOT re-type the whole text via
+/// the portal then (it would duplicate the already-landed prefix); surface the error instead. A
+/// false value (protocol unavailable / keymap upload failed / thread gone — nothing typed yet) is
+/// safe to fall back to the portal.
+pub struct VkError {
+    pub message: String,
+    pub after_typing: bool,
+}
+
 /// One typing request handed to the virtual-keyboard thread.
 pub struct VkJob {
     text: String,
     auto_enter: bool,
-    reply: oneshot::Sender<Result<(), String>>,
+    reply: oneshot::Sender<Result<(), VkError>>,
 }
 
 enum VkChannel {
@@ -43,17 +53,20 @@ impl Default for VkChannel {
 #[derive(Default)]
 pub struct VirtualKeyboard(Mutex<VkChannel>);
 
-/// Type `text` (then an optional Enter) via the virtual keyboard. Err means the
-/// protocol is unavailable or the job failed — the caller should fall back to the
-/// portal path.
-pub async fn type_text(vk: &VirtualKeyboard, text: &str, auto_enter: bool) -> Result<(), String> {
-    let tx = ensure_started(vk).await?;
+/// Type `text` (then an optional Enter) via the virtual keyboard. Err means the protocol is
+/// unavailable or the job failed; check `VkError::after_typing` before falling back to the portal —
+/// when it's true, some keys already landed and re-typing would duplicate them. The setup/plumbing
+/// failures here are all "nothing typed yet" (after_typing: false).
+pub async fn type_text(vk: &VirtualKeyboard, text: &str, auto_enter: bool) -> Result<(), VkError> {
+    let tx = ensure_started(vk)
+        .await
+        .map_err(|message| VkError { message, after_typing: false })?;
     let (reply, reply_rx) = oneshot::channel();
     tx.send(VkJob { text: text.to_string(), auto_enter, reply })
-        .map_err(|_| "virtual keyboard thread gone".to_string())?;
+        .map_err(|_| VkError { message: "virtual keyboard thread gone".into(), after_typing: false })?;
     reply_rx
         .await
-        .map_err(|_| "virtual keyboard dropped the job".to_string())?
+        .map_err(|_| VkError { message: "virtual keyboard dropped the job".into(), after_typing: false })?
 }
 
 async fn ensure_started(vk: &VirtualKeyboard) -> Result<mpsc::UnboundedSender<VkJob>, String> {
@@ -94,7 +107,7 @@ async fn ensure_started(vk: &VirtualKeyboard) -> Result<mpsc::UnboundedSender<Vk
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use super::VkJob;
+    use super::{VkError, VkJob};
     use memfd::MemfdOptions;
     use std::collections::HashMap;
     use std::io::Write;
@@ -175,7 +188,10 @@ mod imp {
             Ok(Self { conn, queue, state, vk, start: Instant::now() })
         }
 
-        fn type_text(&mut self, text: &str, auto_enter: bool) -> Result<(), String> {
+        fn type_text(&mut self, text: &str, auto_enter: bool) -> Result<(), VkError> {
+            // Helper: an error raised BEFORE any key was transmitted (keymap upload, limit, the
+            // pre-key roundtrip) is safe to fall back to the portal. `before` builds those.
+            let before = |e: String| VkError { message: e, after_typing: false };
             // Each character → its keysym name; skip non-printing control chars (Enter
             // and Tab map to their named keysyms, matching the portal path).
             let mut order: Vec<String> = text.chars().filter_map(keysym_name).collect();
@@ -196,14 +212,14 @@ mod imp {
             }
             // xkb keycodes top out at 255 (8 + 247); far beyond any real dictation.
             if unique.len() > 248 {
-                return Err(format!("{} distinct symbols exceeds the keymap limit", unique.len()));
+                return Err(before(format!("{} distinct symbols exceeds the keymap limit", unique.len())));
             }
 
             let keymap = build_keymap(&unique);
-            let (mfd, size) = keymap_fd(&keymap)?;
+            let (mfd, size) = keymap_fd(&keymap).map_err(before)?;
             self.vk.keymap(1 /* WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 */, mfd.as_file().as_fd(), size);
             // Ensure the compositor has read + compiled the keymap before we send keys.
-            self.queue.roundtrip(&mut self.state).map_err(|e| e.to_string())?;
+            self.queue.roundtrip(&mut self.state).map_err(|e| before(e.to_string()))?;
             drop(mfd);
 
             // Zero our own modifier state. Belt-and-suspenders: on wlroots this clears any
@@ -211,19 +227,25 @@ mod imp {
             // the real Caps-immunity comes from the keymap's Lock-consuming key type.
             self.vk.modifiers(0, 0, 0, 0);
 
+            // Once the FIRST press-flush succeeds, key events have been transmitted — a later flush
+            // failure (compositor crash mid-typing) leaves an already-landed prefix, so the portal
+            // must NOT re-type the whole text (it would duplicate it). Track that with `emitted`.
+            let mut emitted = false;
             for name in &order {
                 let code = idx_of[name];
                 let t = self.start.elapsed().as_millis() as u32;
                 self.vk.key(t, code, 1); // pressed
-                self.conn.flush().map_err(|e| e.to_string())?;
+                // A failed press-flush BEFORE the first success transmitted nothing → safe fallback.
+                self.conn.flush().map_err(|e| VkError { message: e.to_string(), after_typing: emitted })?;
+                emitted = true; // a key-down was transmitted (the char likely registered on key-down)
                 std::thread::sleep(Duration::from_millis(3));
                 let t = self.start.elapsed().as_millis() as u32;
                 self.vk.key(t, code, 0); // released
-                self.conn.flush().map_err(|e| e.to_string())?;
+                self.conn.flush().map_err(|e| VkError { message: e.to_string(), after_typing: true })?;
                 std::thread::sleep(Duration::from_millis(5));
             }
             // Drain so the compositor has processed everything before we report done.
-            self.queue.roundtrip(&mut self.state).map_err(|e| e.to_string())?;
+            self.queue.roundtrip(&mut self.state).map_err(|e| VkError { message: e.to_string(), after_typing: emitted })?;
             Ok(())
         }
     }
