@@ -69,11 +69,16 @@ impl Resampler16k {
                 .as_mut()
                 .unwrap()
                 .process_into_buffer(&[&self.acc[..needed]], &mut self.out, None);
-            if let Ok((_, written)) = res {
-                out.reserve(written * 2);
-                for &s in &self.out[0][..written] {
-                    push_i16le(&mut out, s);
+            match res {
+                Ok((_, written)) => {
+                    out.reserve(written * 2);
+                    for &s in &self.out[0][..written] {
+                        push_i16le(&mut out, s);
+                    }
                 }
+                // Don't drop a block silently: the input is still drained below (no stall), but a
+                // vanished audio block would otherwise corrupt the transcription with no trace.
+                Err(e) => tracing::warn!("[resample] process_into_buffer failed, dropping a block: {e}"),
             }
             self.acc.drain(..needed);
             self.needed = self.inner.as_ref().unwrap().input_frames_next();
@@ -97,11 +102,14 @@ impl Resampler16k {
             .as_mut()
             .unwrap()
             .process_into_buffer(&[&self.acc[..needed]], &mut self.out, None);
-        if let Ok((_, written)) = res {
-            out.reserve(written * 2);
-            for &s in &self.out[0][..written] {
-                push_i16le(&mut out, s);
+        match res {
+            Ok((_, written)) => {
+                out.reserve(written * 2);
+                for &s in &self.out[0][..written] {
+                    push_i16le(&mut out, s);
+                }
             }
+            Err(e) => tracing::warn!("[resample] flush process_into_buffer failed, dropping the tail: {e}"),
         }
         self.acc.clear();
         out
