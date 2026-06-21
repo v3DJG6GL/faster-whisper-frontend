@@ -107,48 +107,58 @@ export default function QuickAdd() {
 
   const refresh = useCallback(async () => {
     const gen = ++loadGen.current;
-    const cfg = await loadConfig();
-    if (gen !== loadGen.current) return; // superseded by a newer refresh/summon
-    if (cfg) {
-      document.documentElement.dataset.theme = cfg.settings.theme;
-      pasteShortcutRef.current = cfg.settings.general.pasteShortcut ?? ["ControlLeft", "KeyV"];
-      appRulesRef.current = cfg.appRules ?? [];
-    }
-    const pin = cfg?.settings.quickAddList ?? null;
-    const backend = pin ? cfg!.backends.find((b) => b.id === pin.backendId) ?? null : null;
-    if (!pin || !backend) {
-      target.current = null;
-      setPhase("nopin");
-      return;
-    }
-    target.current = { serverUrl: backend.serverUrl, backendId: backend.id, slug: pin.slug };
-    setPhase("loading");
-    const res = await getPipelineRules({ serverUrl: backend.serverUrl, backendId: backend.id });
-    if (gen !== loadGen.current) return; // a newer refresh won — don't clobber its rows/target
-    if (!res.ok) {
-      setFetchErr(res);
+    try {
+      const cfg = await loadConfig();
+      if (gen !== loadGen.current) return; // superseded by a newer refresh/summon
+      if (cfg) {
+        document.documentElement.dataset.theme = cfg.settings.theme;
+        pasteShortcutRef.current = cfg.settings.general.pasteShortcut ?? ["ControlLeft", "KeyV"];
+        appRulesRef.current = cfg.appRules ?? [];
+      }
+      const pin = cfg?.settings.quickAddList ?? null;
+      const backend = pin ? cfg!.backends.find((b) => b.id === pin.backendId) ?? null : null;
+      if (!pin || !backend) {
+        target.current = null;
+        setPhase("nopin");
+        return;
+      }
+      target.current = { serverUrl: backend.serverUrl, backendId: backend.id, slug: pin.slug };
+      setPhase("loading");
+      const res = await getPipelineRules({ serverUrl: backend.serverUrl, backendId: backend.id });
+      if (gen !== loadGen.current) return; // a newer refresh won — don't clobber its rows/target
+      if (!res.ok) {
+        setFetchErr(res);
+        setPhase("error");
+        return;
+      }
+      const rules = ruleListOf(res);
+      const rule = rules.find((r) => r.name === pin.slug && r.type === "callback:map") ?? null;
+      if (!rule) {
+        setFetchErr({ ok: false, status: 404, error: "The pinned list no longer exists on this server — re-pin one in the Dictionary." });
+        setPhase("error");
+        return;
+      }
+      setLabel(rule.label || "Word mappings");
+      setColor(rule.color);
+      setRows(mapRowsFromRule(rule));
+      setSaveState("idle");
+      setPhase("ok");
+      getRecentWords({ serverUrl: backend.serverUrl, backendId: backend.id })
+        .then((rw) => {
+          if (gen !== loadGen.current) return;
+          setRecent(rw.words ?? []);
+          setRecentMax(rw.max ?? undefined);
+        })
+        .catch(() => {}); // best-effort pool — a fetch failure must not surface as an unhandled rejection
+    } catch (e) {
+      // loadConfig() is a bare IPC invoke that rejects on a plumbing failure; without this the
+      // standalone window would hang on "Loading…" forever (phase never advances) and Retry would
+      // re-throw. The main app guards the same call in initConfig — this is the parallel path.
+      if (gen !== loadGen.current) return;
+      console.error("quick-add refresh failed:", e);
+      setFetchErr({ ok: false, status: 0, error: "Couldn’t load the quick-add configuration — try again." });
       setPhase("error");
-      return;
     }
-    const rules = ruleListOf(res);
-    const rule = rules.find((r) => r.name === pin.slug && r.type === "callback:map") ?? null;
-    if (!rule) {
-      setFetchErr({ ok: false, status: 404, error: "The pinned list no longer exists on this server — re-pin one in the Dictionary." });
-      setPhase("error");
-      return;
-    }
-    setLabel(rule.label || "Word mappings");
-    setColor(rule.color);
-    setRows(mapRowsFromRule(rule));
-    setSaveState("idle");
-    setPhase("ok");
-    getRecentWords({ serverUrl: backend.serverUrl, backendId: backend.id })
-      .then((rw) => {
-        if (gen !== loadGen.current) return;
-        setRecent(rw.words ?? []);
-        setRecentMax(rw.max ?? undefined);
-      })
-      .catch(() => {}); // best-effort pool — a fetch failure must not surface as an unhandled rejection
   }, []);
 
   // Initial load (the static window mounts hidden at startup).
