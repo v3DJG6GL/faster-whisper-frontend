@@ -915,6 +915,14 @@ pub async fn inject_text(
         }
         return Ok(());
     }
+    // Nothing to type and no Enter to send → bail before the keystroke paths. Without this, the
+    // Wayland PASTE branch below would set_clipboard("") — clobbering the user's clipboard with an
+    // empty string and firing a no-op Ctrl+V — whenever a phrase sanitizes to empty (the server
+    // emitted only control chars). Mirrors the X11 inject::inject guard. (empty + auto_enter still
+    // falls through below to send the bare Enter.)
+    if text.is_empty() && !auto_enter {
+        return Ok(());
+    }
     // Wait briefly for the trigger chord's shortcut modifiers (Ctrl/Alt/Meta) to be
     // physically released before typing — otherwise the injected keys fold into the
     // still-held modifier and fire shortcuts in the focused app (worst with a latch
