@@ -84,6 +84,12 @@ export default function QuickAdd() {
   const findRef = useRef("");
   findRef.current = find;
   const saveTimer = useRef<number | null>(null);
+  // Mirror saveState into a ref so the summon listener (a stale-closure-prone callback) reads the
+  // latest value. A fired-but-failed save leaves saveTimer null yet the local rows are still unsaved.
+  const saveStateRef = useRef<SaveState>("idle");
+  useEffect(() => {
+    saveStateRef.current = saveState;
+  }, [saveState]);
   const insertRef = useRef<HTMLInputElement>(null);
   // The word seeded from the source app's selection this summon (null if none). On close we run
   // the current list over it and, if it changed AND it's still selected, paste the result back —
@@ -182,12 +188,13 @@ export default function QuickAdd() {
           setOpenOnSummon(false);
           setFocusInsert(false);
           setShowSeq((s) => s + 1);
-          // Don't re-fetch over an unsaved edit: refresh() replaces `rows` with the server
-          // map, so re-summoning while a debounced list edit is still pending would clobber
-          // the in-progress edit — and the still-armed 600ms saveTimer would then re-save the
-          // stale server rows over it. A pending save means the local rows ARE the newest
-          // state, so skip the re-sync this summon and let that save flush.
-          if (saveTimer.current === null) void refresh();
+          // Don't re-fetch over an unsaved edit: refresh() replaces `rows` with the server map, so
+          // re-summoning while a debounced list edit is still pending would clobber the in-progress
+          // edit — and the still-armed 600ms saveTimer would then re-save the stale server rows over
+          // it. A PENDING save (timer armed) OR a FAILED one (timer fired, saveState "error") both
+          // mean the local rows are newer-than-server, so skip the re-sync (refresh also resets
+          // saveState to "idle", which would drop the only retry signal). Let the save flush / retry.
+          if (saveTimer.current === null && saveStateRef.current !== "error") void refresh();
           // Seed from whatever the user highlighted in the source app. Got a word → fill it and
           // drop the cursor straight in "Insert" (it's captured). Nothing usable → fall back to
           // the old behaviour: open the recent-words dropdown on the (already-focused) find field.
