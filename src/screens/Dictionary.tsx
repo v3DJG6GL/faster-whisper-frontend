@@ -234,7 +234,7 @@ function RuleCard({
         <Toggle
           ariaLabel="Enable rule"
           checked={edit.enabled}
-          disabled={!canEnable}
+          disabled={!canEnable || saving}
           onChange={(v) => onPatch((e) => ({ ...e, enabled: v }))}
         />
       </div>
@@ -270,12 +270,12 @@ function RuleCard({
                       </span>
                       {bodyEditable && (
                         <>
-                          <button type="button" title="Move up" disabled={i === 0}
+                          <button type="button" title="Move up" disabled={saving || i === 0}
                             onClick={() => setEntries((rows) => swap(rows, i, i - 1))}
                             className="ring-signal grid size-6 place-items-center rounded-md text-faint hover:text-text disabled:opacity-30">
                             <ArrowUp className="size-3.5" />
                           </button>
-                          <button type="button" title="Move down" disabled={last}
+                          <button type="button" title="Move down" disabled={saving || last}
                             onClick={() => setEntries((rows) => swap(rows, i, i + 1))}
                             className="ring-signal grid size-6 place-items-center rounded-md text-faint hover:text-text disabled:opacity-30">
                             <ArrowDown className="size-3.5" />
@@ -307,9 +307,9 @@ function RuleCard({
                               note
                               {hasNote && <span className="size-1 rounded-full bg-current" aria-hidden />}
                             </button>
-                            <button type="button" title="Remove entry"
+                            <button type="button" title="Remove entry" disabled={saving}
                               onClick={() => setEntries((rows) => rows.filter((r) => r.id !== row.id))}
-                              className="ring-signal grid size-7 shrink-0 place-items-center rounded-md text-faint hover:text-rec">
+                              className="ring-signal grid size-7 shrink-0 place-items-center rounded-md text-faint hover:text-rec disabled:opacity-40">
                               <Trash2 className="size-3.5" />
                             </button>
                           </>
@@ -345,7 +345,7 @@ function RuleCard({
                 );
               })}
               {bodyEditable && (
-                <Button variant="ghost" size="sm" onClick={() => setEntries((rows) => [...rows, { id: mkId(), pattern: "", replacement: "" }])}>
+                <Button variant="ghost" size="sm" disabled={saving} onClick={() => setEntries((rows) => [...rows, { id: mkId(), pattern: "", replacement: "" }])}>
                   <Plus className="size-3.5" /> Add entry
                 </Button>
               )}
@@ -371,7 +371,7 @@ function RuleCard({
               </div>
               {/* Add is at the TOP — new mappings prepend (newest-first). */}
               {bodyEditable && (
-                <Button variant="ghost" size="sm" onClick={() => {
+                <Button variant="ghost" size="sm" disabled={saving} onClick={() => {
                   const id = mkId();
                   setPairs((rows) => [{ id, k: "", v: "" }, ...rows]);
                   setJustAddedId(id);
@@ -406,9 +406,9 @@ function RuleCard({
                       {fmtWhen(ts)}
                     </span>
                     {bodyEditable && (
-                      <button type="button" title="Remove mapping"
+                      <button type="button" title="Remove mapping" disabled={saving}
                         onClick={() => setPairs((rows) => rows.filter((r) => r.id !== row.id))}
-                        className="ring-signal grid size-7 shrink-0 place-items-center rounded-md text-faint hover:text-rec">
+                        className="ring-signal grid size-7 shrink-0 place-items-center rounded-md text-faint hover:text-rec disabled:opacity-40">
                         <Trash2 className="size-3.5" />
                       </button>
                     )}
