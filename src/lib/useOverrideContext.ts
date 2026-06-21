@@ -38,9 +38,15 @@ export function useOverrideContext(args: {
       return;
     }
     let cancelled = false;
-    void getCapabilities({ serverUrl, backendId, apiKey }).then((c) => {
-      if (!cancelled) setCaps(c);
-    });
+    void getCapabilities({ serverUrl, backendId, apiKey })
+      .then((c) => {
+        if (!cancelled) setCaps(c);
+      })
+      .catch(() => {
+        // Best-effort (mirrors OverrideProfilePicker): a rare IPC reject degrades to null,
+        // never an unhandled rejection.
+        if (!cancelled) setCaps(null);
+      });
     return () => {
       cancelled = true;
     };
@@ -54,12 +60,19 @@ export function useOverrideContext(args: {
       return;
     }
     let cancelled = false;
-    void getOverrideProfile({ serverUrl, backendId, apiKey, name }).then((r) => {
-      if (!cancelled) {
-        setResolved(r?.values);
-        setResolvedPrompt(r?.prompt);
-      }
-    });
+    void getOverrideProfile({ serverUrl, backendId, apiKey, name })
+      .then((r) => {
+        if (!cancelled) {
+          setResolved(r?.values);
+          setResolvedPrompt(r?.prompt);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResolved(undefined);
+          setResolvedPrompt(undefined);
+        }
+      });
     return () => {
       cancelled = true;
     };
