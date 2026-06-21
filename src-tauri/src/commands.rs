@@ -864,26 +864,29 @@ pub async fn inject_text(
     // into a paste. (The Wayland direct-typing paths already drop controls; this matches them.)
     let text = crate::inject::sanitize_injected(&text);
     tracing::info!("[inject] {} chars via {} (auto_enter={})", text.len(), method, auto_enter);
-    // Clipboard-only: put the text on the clipboard and inject NO keystrokes, so it can't
-    // fire actions in the wrong window — the user pastes it themselves. No own-window guard
-    // / modifier gate needed since nothing is typed.
-    if method == "clipboard" {
-        if !text.is_empty() {
-            crate::inject::set_clipboard_persistent(&text);
-        }
-        return Ok(());
-    }
-    // Never type into our OWN UI: if one of our real windows holds keyboard focus, the
-    // injected keys would fire buttons/shortcuts in the app itself (e.g. dictating while
-    // looking at Home). A Wayland client is always told its own keyboard focus, so this is
-    // reliable on KWin — unlike detecting other apps' focused fields. The click-through
-    // "overlay" chip never holds focus; exclude it. The transcript still shows in the chip.
+    // Never inject into our OWN UI: if one of our real windows holds keyboard focus, typed/pasted
+    // keys would fire buttons/shortcuts in the app itself (e.g. dictating while looking at Home) —
+    // AND a clipboard-only insert would silently clobber the user's clipboard for an insert they
+    // can't even see land. So this guard runs for ALL methods, BEFORE the clipboard-only branch
+    // (it used to sit after it, so clipboard-only clobbered the clipboard while our own window was
+    // focused). A Wayland client is always told its own keyboard focus, so this is reliable on KWin —
+    // unlike detecting other apps' focused fields. The click-through "overlay" chip never holds
+    // focus; exclude it. The transcript still shows in the chip.
     if app
         .webview_windows()
         .iter()
         .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
     {
         tracing::info!("[inject] skipped: our own window holds focus");
+        return Ok(());
+    }
+    // Clipboard-only: put the text on the clipboard and inject NO keystrokes, so it can't
+    // fire actions in the wrong window — the user pastes it themselves. No modifier gate needed
+    // since nothing is typed (the own-window guard above already ran).
+    if method == "clipboard" {
+        if !text.is_empty() {
+            crate::inject::set_clipboard_persistent(&text);
+        }
         return Ok(());
     }
     // Wait briefly for the trigger chord's shortcut modifiers (Ctrl/Alt/Meta) to be
