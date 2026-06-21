@@ -84,7 +84,12 @@ export function useHotkeyCapture(opts: {
       // The user is holding modifiers here, so the passive learner skipped this key;
       // learn its layout label now so the committed chip shows the right keycap.
       learnLetter(e.code, e.key);
-      if (!codeToToken(e.code) && !evdevActive) {
+      // Reject an unmappable key (Backquote, Minus, ContextMenu, …) in BOTH modes. The evdev branch
+      // of finalize() commits with no validateCodes gate, so without this an unmappable key under
+      // evdev would commit a binding that can never fire. Safe: evdev's non-modifier mappable set
+      // equals codeToToken's acceptable set (pinned by every_bindable_code_maps_to_an_evdev_key);
+      // modifier-only / AltGr chords return early above and commit via the keyup path.
+      if (!codeToToken(e.code)) {
         setWarn("That key can’t be a global shortcut — try another");
         return;
       }
@@ -120,7 +125,7 @@ export function useHotkeyCapture(opts: {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", onBlur);
-      void reregisterShortcuts();
+      void reregisterShortcuts().catch((e) => console.error("reregisterShortcuts failed", e));
     };
   }, [capturing, evdevActive]);
 
