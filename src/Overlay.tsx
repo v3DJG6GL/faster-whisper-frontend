@@ -409,7 +409,9 @@ export default function Overlay() {
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [state.partial, expanded]);
+    // hoverReveal/previewOnHover: in preview-on-hover mode the transcript element isn't mounted until
+    // the reveal flips, so the observer must (re)attach then — else the left-fade never measures.
+  }, [state.partial, expanded, hoverReveal, state.previewOnHover]);
 
   // Post-speech "working" phase: the server is finalizing the transcript and/or it's
   // being written out to the focused field. There's no audio to react to, so the chip
@@ -749,6 +751,7 @@ export default function Overlay() {
               // only liveness cue a minimized dot has). Finalizing pulses via chip-think below.
               // Suppressed while a pulse plays so the two don't fight.
               !pulse &&
+                !processing &&
                 ((!expanded && !standby && !showQuickLaunch && !peeked) || (peeked && speaking)) &&
                 "animate-chip-breathe",
               !pulse && processing && "animate-chip-think",
