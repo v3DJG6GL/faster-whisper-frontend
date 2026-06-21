@@ -193,10 +193,12 @@ export default function QuickAdd() {
           // Don't re-fetch over an unsaved edit: refresh() replaces `rows` with the server map, so
           // re-summoning while a debounced list edit is still pending would clobber the in-progress
           // edit — and the still-armed 600ms saveTimer would then re-save the stale server rows over
-          // it. A PENDING save (timer armed) OR a FAILED one (timer fired, saveState "error") both
-          // mean the local rows are newer-than-server, so skip the re-sync (refresh also resets
-          // saveState to "idle", which would drop the only retry signal). Let the save flush / retry.
-          if (saveTimer.current === null && saveStateRef.current !== "error") void refresh();
+          // it. A PENDING save (timer armed), an IN-FLIGHT one (timer fired/null, saveState still
+          // "saving" while the PATCH awaits), OR a FAILED one (saveState "error") all mean the local
+          // rows are newer-than-server, so skip the re-sync (refresh also resets saveState to "idle",
+          // which would drop the only retry signal). Let the save flush / retry.
+          if (saveTimer.current === null && saveStateRef.current !== "error" && saveStateRef.current !== "saving")
+            void refresh();
           // Seed from whatever the user highlighted in the source app. Got a word → fill it and
           // drop the cursor straight in "Insert" (it's captured). Nothing usable → fall back to
           // the old behaviour: open the recent-words dropdown on the (already-focused) find field.
