@@ -467,7 +467,7 @@ export default function Settings() {
   const evdevActive = !!evdev?.permitted && s.general.evdevEnabled;
 
   useEffect(() => {
-    void evdevStatus().then(setEvdev);
+    void evdevStatus().then(setEvdev).catch(() => {}); // match the file's other chains; ignore an IPC reject
   }, [tab]);
 
   // Build-time app version (from tauri.conf.json) for the footer readout. Fetched once.
@@ -580,13 +580,13 @@ export default function Settings() {
             <SettingRow
               title="Paste shortcut"
               desc="The keys sent for “Clipboard paste”. Terminals (Konsole, kitty…) need Ctrl + Shift + V."
-              disabled={s.general.insertMethod !== "paste"}
+              disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
             >
               <Select
                 value={pasteKey(s.general.pasteShortcut)}
                 onChange={(v) => updateGeneral({ pasteShortcut: pasteCodes(v) })}
                 options={PASTE_PRESETS.map((p) => ({ value: p.value, label: p.label }))}
-                disabled={s.general.insertMethod !== "paste"}
+                disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
               />
             </SettingRow>
             <SettingRow
