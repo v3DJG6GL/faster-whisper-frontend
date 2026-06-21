@@ -6,7 +6,7 @@ use crate::session::{self, RecordParams, RecordState, StartParams, StreamState};
 use crate::transport;
 use crate::wayland_inject::WaylandTyper;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -474,8 +474,16 @@ pub fn stop_record(state: State<RecordState>) -> Result<(), String> {
 /// silences both the global-shortcut plugin AND the evdev reader (which otherwise
 /// keeps firing from /dev/input). Pair with `reregister_shortcuts` (apply_bindings)
 /// to restore whichever backend is active when capture ends.
+///
+/// True while shortcuts are intentionally suspended for an in-progress binding capture
+/// (suspend_shortcuts is only ever called by the capture hook). The suspend-watch resume
+/// path reads this so an automatic resume re-arm can't override a deliberate capture
+/// suspension; reregister_shortcuts (the capture-end pair) clears it.
+static CAPTURE_SUSPENDED: AtomicBool = AtomicBool::new(false);
+
 #[tauri::command]
 pub fn suspend_shortcuts(app: AppHandle) {
+    CAPTURE_SUSPENDED.store(true, Ordering::SeqCst);
     crate::triggers::unregister_all(&app);
     let state = app.state::<crate::evdev_hotkeys::EvdevState>();
     crate::evdev_hotkeys::stop(&state);
@@ -517,6 +525,9 @@ pub fn apply_bindings(app: &AppHandle) {
 /// Re-read config and re-apply bindings (call after hotkeys / evdev toggle change).
 #[tauri::command]
 pub fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
+    // Capture ended (or bindings changed): no longer suspended-for-capture, so a later
+    // resume may re-arm normally again.
+    CAPTURE_SUSPENDED.store(false, Ordering::SeqCst);
     apply_bindings(&app);
     Ok(())
 }
@@ -547,10 +558,20 @@ pub fn spawn_suspend_watch(app: AppHandle) {
                 last = now;
                 if elapsed > GAP {
                     tracing::info!(
-                        "[suspend] resume detected (~{}s gap); rebuilding hotkeys + clearing dictation",
+                        "[suspend] resume detected (~{}s gap); clearing dictation",
                         elapsed.as_secs()
                     );
-                    apply_bindings(&app);
+                    // Don't re-arm while a binding capture is in progress: the frontend suspended
+                    // shortcuts on purpose so a press only rebinds, and it restores them via
+                    // reregister_shortcuts when capture ends. Re-arming here would let the user's
+                    // next chord both rebind AND fire dictation (for a held evdev PTT chord, wedge
+                    // "listening" — exactly what the suspend guards). The capture's reregister
+                    // rebuilds fresh held-state on completion, so nothing is lost by skipping.
+                    if CAPTURE_SUSPENDED.load(Ordering::SeqCst) {
+                        tracing::info!("[suspend] binding capture in progress; leaving shortcuts suspended");
+                    } else {
+                        apply_bindings(&app);
+                    }
                     let _ = app.emit("system://resumed", ());
                 }
             }
