@@ -17,11 +17,9 @@ import type { DictationStatus, OverlayStatsMetric, UsageStats } from "./types";
 
 /** Build the chip's tiny usage readout (today's value) for the chosen metric. */
 function chipStatsLine(u: UsageStats, metric: OverlayStatsMetric): string {
-  const words = `${fmtCompact(u.today.words)} words`;
-  const mins = `${fmtDuration(u.today.audio_s)} today`;
-  if (metric === "audio") return mins;
+  if (metric === "audio") return `${fmtDuration(u.today.audio_s)} today`;
   if (metric === "both") return `${fmtCompact(u.today.words)}w · ${fmtDuration(u.today.audio_s)}`;
-  return words;
+  return `${fmtCompact(u.today.words)} words`;
 }
 
 const ACTIVE: DictationStatus[] = ["listening", "transcribing", "injecting"];
