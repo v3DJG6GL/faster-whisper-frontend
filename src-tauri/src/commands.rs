@@ -900,10 +900,13 @@ pub async fn inject_text(
         }
     }
     let res = if crate::inject::is_wayland() {
-        if text.is_empty() && auto_enter {
-            // Auto-enter with no text (the per-phrase / tail Enter): press Enter WITHOUT
-            // touching the clipboard. The paste path would set_clipboard("") and clobber it;
-            // route the bare Enter through the portal type path instead.
+        if text.is_empty() && auto_enter && method != "direct" {
+            // Auto-enter with no text on the PASTE path (the per-phrase / tail Enter): press Enter
+            // WITHOUT touching the clipboard — paste would set_clipboard("") and clobber it, so route
+            // the bare Enter through the portal type path instead. (Direct falls through to the VK-first
+            // branch below: VK type_text("", true) cleanly types Return — and on KWin, where VK is
+            // unavailable, it falls back to this same portal path — so the per-phrase Enter takes the
+            // SAME silent VK route the phrase's words did instead of forcing a portal consent prompt.)
             crate::wayland_inject::type_text(&app, typer.inner(), "", true).await
         } else if method == "direct" {
             // Prefer the virtual keyboard (Caps Lock-/layout-correct typing). Fall back
