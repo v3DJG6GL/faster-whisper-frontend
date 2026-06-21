@@ -155,6 +155,9 @@ function enqueueInject(fn: () => Promise<void>): void {
 function enqueueAutoEnter(): void {
   enqueueInject(async () => {
     const t = await resolveTarget();
+    // A cancel landing during the awaited resolve nulled insertCfg + aborted the session — don't fire
+    // a stray Enter into the now-refocused window (mirrors the live final task's guard).
+    if (!insertCfg) return;
     if (t.method === "clipboard") return;
     await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
   });
@@ -311,6 +314,13 @@ function settleIdle(): void {
   useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
 }
 
+/** A stream-event handler should fold in / act on a late emit only while genuinely busy — a
+ *  post-cancel (idle) or post-error (error) drain emit on the un-advanced epoch must be dropped. */
+function inSession(): boolean {
+  const st = useApp.getState().status;
+  return st === "listening" || st === "transcribing" || st === "injecting";
+}
+
 // Return to idle once the injection queue has fully drained (the text has landed in
 // the focused field) — but never before MIN_INJECT_VISIBLE_MS, and never over a status
 // that has moved on (a fresh session, or an error that arrived meanwhile).
@@ -462,8 +472,7 @@ async function ensureListeners(): Promise<void> {
     // `capturing` discriminator — a legitimate post-stop drain runs while transcribing/
     // injecting and the trailing `closed` then idles, so real finals pass; only post-cancel
     // (idle) and post-error (error) late emits are dropped.
-    const st = useApp.getState().status;
-    if (st !== "listening" && st !== "transcribing" && st !== "injecting") return;
+    if (!inSession()) return;
     // committed+tail is the whole document so far — fold it in and show it.
     committedDoc = e.payload.committed + e.payload.tail;
     setDictation({ partial: committedDoc });
@@ -610,8 +619,7 @@ async function ensureListeners(): Promise<void> {
     // null insertCfg, so without this the separator-inject below would land in the now-refocused
     // window after the error handler deliberately suppressed the trailing Enter. Only process a
     // boundary while genuinely busy — post-cancel (idle) / post-error (error) drain emits drop.
-    const st = useApp.getState().status;
-    if (st !== "listening" && st !== "transcribing" && st !== "injecting") return;
+    if (!inSession()) return;
     // Long-silence hard break: the server reset its document. Bank what we have (for
     // the stop-timing single insert), drop our live baseline so the next utterance
     // starts fresh, clear the preview, and optionally type the configured separator.
@@ -642,6 +650,9 @@ async function ensureListeners(): Promise<void> {
       } else if (sep) {
         enqueueInject(async () => {
           const t = await resolveTarget();
+          // A cancel during the awaited resolve nulled insertCfg + aborted the session — don't fire a
+          // stray separator/Enter into the refocused window (mirrors the live final task's guard).
+          if (!insertCfg) return;
           if (t.method === "clipboard") return;
           if (sep.includes("\n")) {
             await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
@@ -660,6 +671,12 @@ async function ensureListeners(): Promise<void> {
 
   await listen<string>("stream://status", (e) => {
     if (e.payload === "ready") {
+      // Drop a late `ready` that lands after a stop (a short PTT tap, or a stop during a cold-model
+      // handshake delay): stopLive already moved us to "transcribing", and resurrecting "listening"
+      // here would make the subsequent `closed` skip its transcribing-gated settle and wedge the chip
+      // at "listening" with the mic already closed. startLiveInner sets "listening" before connecting,
+      // so a legit ready always passes.
+      if (useApp.getState().status !== "listening") return;
       // NOTE: do NOT clear `warming` here. "ready" is just the WS/model handshake and
       // usually arrives BEFORE a cold (Bluetooth) mic finishes warming up — clearing it
       // here would flip the chip to "listening" while the mic is still silent. Warming is
@@ -677,6 +694,15 @@ async function ensureListeners(): Promise<void> {
       // Don't clobber an error — `error` is followed immediately by `closed`.
       const st = useApp.getState();
       if (st.status === "error") {
+        setDictation({ level: 0 });
+        return;
+      }
+      // A late `closed` from the drain lands ~6s after the server closed — AFTER the 4s error-linger
+      // has already flipped the chip to idle (the error path leaves insertCfg + committedDoc/bankedDoc
+      // intact). Re-running the tail here would re-inject the whole transcript into the now-refocused
+      // window. Treat an already-settled idle as terminal (post-cancel also lands here with insertCfg
+      // null — handled below too, but bailing early is harmless and clearer).
+      if (st.status === "idle") {
         setDictation({ level: 0 });
         return;
       }
@@ -852,8 +878,7 @@ async function ensureListeners(): Promise<void> {
     // emit so a stale overrides-ignored notice can't appear after the session was dropped. The
     // legitimate emit rides the `ready` frame (status already "listening") or the batch drain
     // (transcribing), so real notices pass.
-    const st = useApp.getState().status;
-    if (st !== "listening" && st !== "transcribing" && st !== "injecting") return;
+    if (!inSession()) return;
     setDictation({ overridesIgnored: e.payload });
   });
 }
