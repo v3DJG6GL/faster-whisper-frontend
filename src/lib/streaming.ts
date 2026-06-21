@@ -399,7 +399,12 @@ async function ensureListeners(): Promise<void> {
         levelTimer = undefined;
       }
       lastLevelAt = performance.now();
-      setDictation({ level: latestLevel });
+      // Same guard as the trailing tick below: the capture thread keeps emitting level for a few ms
+      // after cancelLive sets {idle, level:0} and awaits the join (level emits are NOT epoch-gated),
+      // so a late leading-edge level must not resurrect a non-zero meter over the just-cleared idle
+      // state (it would stick until the next session + churn a cross-window emit). Bookkeeping above
+      // stays unconditional so coalescing remains correct regardless of status.
+      if (useApp.getState().status === "listening") setDictation({ level: latestLevel });
     } else if (!levelTimer) {
       levelTimer = setTimeout(() => {
         levelTimer = undefined;
