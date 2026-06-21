@@ -928,12 +928,31 @@ pub async fn inject_text(
             // synthesized modifier + remapped keycode makes apps fire the wrong
             // shortcut (e.g. opening editor tabs) instead of pasting.
             let clip = text.clone();
-            let set_res = tokio::task::spawn_blocking(move || {
-                crate::inject::set_clipboard(&clip, restore_clipboard)
-            })
-            .await
-            .map_err(|e| e.to_string())?;
-            let prev = set_res?;
+            // Capture the user's prior clipboard TIME-BOUNDED, mirroring begin_injection /
+            // read_primary_now: set_clipboard's get_text() is a blocking Wayland round-trip that can
+            // hang indefinitely on a dead clipboard owner, and it previously sat in an UN-timed
+            // spawn_blocking here — so the end-of-session insert (the restoreClipboard:true caller)
+            // could wedge at "injecting" forever (the stuck-finalize watchdog is stream-only). Read
+            // prev separately (400ms cap; None on timeout → skip the restore), then set the clipboard
+            // with capture_prev=false so the set_text still lands regardless.
+            let prev = if restore_clipboard {
+                let read = tokio::task::spawn_blocking(|| {
+                    arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())
+                });
+                match tokio::time::timeout(std::time::Duration::from_millis(400), read).await {
+                    Ok(Ok(p)) => p,
+                    _ => {
+                        tracing::info!("[clip] paste: prev-clipboard read empty/timeout — skipping restore");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let set_res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip, false))
+                .await
+                .map_err(|e| e.to_string())?;
+            set_res?; // propagate a set_text failure; prev was captured (time-bounded) above
             tokio::time::sleep(std::time::Duration::from_millis(60)).await;
             let r = crate::wayland_inject::paste(&app, typer.inner(), paste_shortcut, auto_enter).await;
             // Restore the user's prior clipboard only if the paste actually landed. If it failed,
