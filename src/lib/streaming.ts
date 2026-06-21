@@ -561,7 +561,10 @@ async function ensureListeners(): Promise<void> {
             // not once at session start — and only when we don't already hold it (clipDirty false), so
             // we never capture our own transcript. Fixes mid-session copies lost to a stale start-time
             // snapshot, and sessions that start in a clipboard-coerced window then move to a paste one.
-            if (t.method === "paste" && insertCfg?.restoreClipboard && !clipDirty) {
+            if (t.method === "paste" && insertCfg?.restoreClipboard && !clipDirty && !t.isSelf) {
+              // !t.isSelf: when our own window is focused the Rust guard skips the paste, so there's
+              // nothing to snapshot/restore — and latching beganInjection/clipDirty here would flash a
+              // spurious "injecting" tail AND pin the stale own-window clipboard over a later real paste.
               try {
                 await beginInjection();
                 beganInjection = true;
@@ -592,8 +595,9 @@ async function ensureListeners(): Promise<void> {
               return;
             }
             // A real paste just clobbered the user's clipboard with the transcript → it owes a
-            // restore at phrase end. Direct typing never touches the clipboard, so don't.
-            if (t.method === "paste") clipDirty = true;
+            // restore at phrase end. Direct typing never touches the clipboard, so don't — and our own
+            // window (guard-skipped, !t.isSelf) clobbered nothing either.
+            if (t.method === "paste" && !t.isSelf) clipDirty = true;
             // Advance the TYPED baseline + pulse ONLY when the phrase actually landed (NOT our own
             // window, where the guard typed nothing): leaving it un-advanced re-types the skipped
             // text after a focus switch, and a green pulse there would be a false confirmation.
@@ -711,12 +715,13 @@ async function ensureListeners(): Promise<void> {
         setDictation({ level: 0 });
         return;
       }
-      // Capture has stopped; freeze the meter. From here we hold an "injecting" state
-      // while the transcript is written out to the focused field — so the chip keeps
-      // showing a processing indicator until the text actually lands, rather than
-      // collapsing the instant the server closes (the injection is async). We only
-      // return to idle once the queue drains (see settleToIdleAfterInjection).
-      setDictation({ level: 0, warming: false });
+      // Capture has stopped; freeze the meter and move to "transcribing" (finalizing). No-op on a
+      // normal stop (stopLive already set it), but a capture-death / server-initiated close ran no
+      // stopLive, so status would still be "listening" — and the no-tail live branch below settles
+      // to idle only from "transcribing", so without this a no-tail capture-death close would wedge
+      // the chip at "listening" with the mic already gone (no stuck-watchdog runs for it either).
+      // From here the hasTail branch moves to "injecting" while the transcript is written out.
+      setDictation({ level: 0, warming: false, status: "transcribing" });
       // (The saved recording's transcript .txt sidecar is written in Rust, in the streaming drain —
       // ungated, so a cancelled/superseded session still gets it, matching the batch path.)
       // Release a session that reached `closed` WITHOUT a user stop (capture-thread death / a
