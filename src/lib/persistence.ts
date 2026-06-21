@@ -60,10 +60,23 @@ export async function initConfig(): Promise<void> {
       // until the user resolves it. Surface the freeze GLOBALLY via the save banner: otherwise
       // it's silent and unrelated settings/backends edits are dropped, with only the Profiles
       // screen hinting why. Keep pendingBindingChange so the fix triggers a reregister.
-      if (conflicts(s.profiles).length > 0) {
+      // Include the quick-add chord as a synthetic peer (mirrors the capture-time check in
+      // Profiles.tsx / the Settings quick-add row). It shares the same chord namespace as profile
+      // chords in BOTH hotkey backends (evdev drops a dup, the plugin last-wins clobbers), but the
+      // enable toggle bypasses capture — so an enabled profile could silently collide with quick-add
+      // unless the save-gate sees it too.
+      const qa = s.settings.general.quickAddHotkey;
+      const conflictPeers =
+        qa.length > 0
+          ? [
+              ...s.profiles,
+              { id: "__quick-add__", name: "Quick add", activation: "hold" as const, enabled: true, hotkey: qa, backendId: null },
+            ]
+          : s.profiles;
+      if (conflicts(conflictPeers).length > 0) {
         useApp
           .getState()
-          .setSaveError("Two profiles share the same shortcut — resolve the conflict to resume saving.");
+          .setSaveError("A shortcut is used by two bindings — resolve the conflict to resume saving.");
         return;
       }
       const reReg = pendingBindingChange;
