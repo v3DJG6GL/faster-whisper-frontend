@@ -798,6 +798,10 @@ async function ensureListeners(): Promise<void> {
   await listen<string>("stream://error", (e) => {
     clearStuckWatchdog();
     stopTargetPoll();
+    // Reconcile the warm-up gate, like every other terminal path (stop/cancel/closed): an error
+    // during warm-up otherwise leaves the backstop armed, so it fires MIC_WARM_TIMEOUT_MS later and
+    // stamps micLive:true onto the errored/idle chip — a spurious go-live that can mis-fire a cue.
+    clearWarmTimer();
     // Cancel any pending per-phrase Enter / clipboard-restore. A server error frame is
     // NON-terminal (no prompt `closed`; the real one only arrives ~6s later from the drain),
     // so without this the ~1.2s quiet timer armed by the last `final` would fire a stray Enter
