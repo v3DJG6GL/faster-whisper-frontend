@@ -29,10 +29,12 @@ function useTauriListener(subscribe: () => Promise<() => void>, deps: Dependency
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    void subscribe().then((u) => {
-      if (cancelled) u();
-      else unlisten = u;
-    });
+    void subscribe()
+      .then((u) => {
+        if (cancelled) u();
+        else unlisten = u;
+      })
+      .catch(() => {}); // a rejected dynamic import / listen() must not surface as an unhandled rejection
     return () => {
       cancelled = true;
       unlisten?.();
