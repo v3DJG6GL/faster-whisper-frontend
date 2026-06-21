@@ -888,6 +888,14 @@ export function requestStopIfStarting(): boolean {
   return true;
 }
 
+/** Read-only: is a session currently mid-start (the prologue is running but status hasn't flipped to
+ *  "listening" yet)? dictate()'s START path uses this to no-op a concurrent cross-profile start —
+ *  isBusy() only reads `status`, which is still "idle" through the prologue, so without this a second
+ *  start would overwrite the in-flight session's activeProfile and then no-op on the guard below. */
+export function isStarting(): boolean {
+  return startingSession;
+}
+
 export async function startLive(
   backend: Backend,
   deviceId: string | null,

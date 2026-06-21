@@ -4,7 +4,7 @@
 // affordances.
 
 import { useApp } from "./store";
-import { startLive, stopLive, cancelLive, requestStopIfStarting } from "./streaming";
+import { startLive, stopLive, cancelLive, requestStopIfStarting, isStarting } from "./streaming";
 import { showQuickAdd } from "./api";
 import type { Backend, Profile } from "./types";
 
@@ -58,7 +58,13 @@ export function dictate(profileId: string, action: TriggerAction): void {
   if (!profile || !profile.enabled) return;
   const backend = backendForProfile(profile, s.backends);
   if (!backend) return;
-  if (isBusy()) return; // start over a running session is a no-op (toggle-busy handled above)
+  // start over a running session is a no-op (toggle-busy handled above). Also no-op while a session
+  // is mid-START: isBusy() only reads `status`, still "idle" through the ~1s prologue (AT-SPI focus
+  // read), so a second cross-profile start (PTT re-fire / two keyboards) would otherwise overwrite
+  // the in-flight session's activeProfile — mislabeling its chip identity + usage attribution — and
+  // then silently no-op on startLive's startingSession guard. The toggle entry-points already guard
+  // the prologue via requestStopIfStarting; this is the START path's equivalent.
+  if (isBusy() || isStarting()) return;
 
   s.setDictation({ activeProfile: profileId });
   // startLive resolves the effective language / prompt / decode overrides
