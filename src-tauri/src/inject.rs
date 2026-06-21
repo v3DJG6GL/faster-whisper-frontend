@@ -157,13 +157,16 @@ fn paste(enigo: &mut Enigo, text: &str, restore_clipboard: bool, chord: &[String
     std::thread::sleep(Duration::from_millis(60));
     let res = paste_keystroke(enigo, chord);
 
-    // Restore after the paste has consumed the clipboard — via a live owner (same path as the
-    // Wayland branch) so it actually persists; a plain set_text that drops doesn't stick on
-    // Wayland and is harmless on X11. No-op when restore is off (`previous` is None). Run it
-    // UNCONDITIONALLY (not gated on the paste succeeding): a failed paste_keystroke must not strand
-    // the user's clipboard clobbered with our dictated text — mirrors the unconditional modifier
-    // release inside paste_keystroke.
-    restore_clipboard_later(previous);
+    // Restore the user's prior clipboard ONLY when the paste SUCCEEDED — via a live owner (same path
+    // as the Wayland branch) so it actually persists; a plain set_text that drops doesn't stick on
+    // Wayland and is harmless on X11. On FAILURE, deliberately leave our dictated text on the
+    // clipboard so it's recoverable by a manual paste: the dictation is the product, and losing it is
+    // worse than losing the prior clipboard. This matches the Wayland paste path AND streaming.ts's
+    // end-of-session "it's on the clipboard to paste manually" message, which documents this
+    // skip-restore-on-failure contract. No-op when restore is off (`previous` is None).
+    if res.is_ok() {
+        restore_clipboard_later(previous);
+    }
     res
 }
 
