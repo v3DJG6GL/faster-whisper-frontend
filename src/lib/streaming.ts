@@ -560,6 +560,13 @@ async function ensureListeners(): Promise<void> {
   });
 
   await listen<string>("stream://boundary", (e) => {
+    // Same un-advanced-epoch path as `final`/`overrides-ignored`: a cancelled/errored session's
+    // detached WS drain can still emit a late boundary. Unlike cancel, a stream://error does NOT
+    // null insertCfg, so without this the separator-inject below would land in the now-refocused
+    // window after the error handler deliberately suppressed the trailing Enter. Only process a
+    // boundary while genuinely busy — post-cancel (idle) / post-error (error) drain emits drop.
+    const st = useApp.getState().status;
+    if (st !== "listening" && st !== "transcribing" && st !== "injecting") return;
     // Long-silence hard break: the server reset its document. Bank what we have (for
     // the stop-timing single insert), drop our live baseline so the next utterance
     // starts fresh, clear the preview, and optionally type the configured separator.
@@ -1086,6 +1093,14 @@ export async function stopLive(): Promise<void> {
     clearStuckWatchdog();
     stopTargetPoll();
     activeEndpoint = null;
+    // No `closed` will follow a rejected stop, so the closed handler's per-phrase teardown never
+    // runs — mirror the stream://error handler: cancel the ~1.2s quiet timer so a pending live-mode
+    // phrase can't fire a stray auto-Enter into the now-refocused window, and restore the user's
+    // clipboard unconditionally once the queue drains (endInjection is idempotent) so a pasted
+    // phrase doesn't strand our transcript or leak the snapshot into the next session.
+    clearPhraseEnd();
+    const owed = injectChain;
+    void owed.then(() => endInjection()).catch((err) => console.error("end injection on stop failed:", err));
     console.error("stop dictation failed:", e);
     flashError(String(e));
   }
