@@ -621,6 +621,10 @@ export default function Dictionary() {
     let cancelled = false;
     setLoading(true);
     setResult(null);
+    // Reset the recent-word pool before refetching so a backend switch can't strand backend A's
+    // suggestions in B's editor if B's getRecentWords is slow or fails (it's best-effort/.catch).
+    setRecentWords([]);
+    setRecentMax(undefined);
     getPipelineRules({ serverUrl: backend.serverUrl, backendId: backend.id })
       .then((res) => {
         if (cancelled) return;
@@ -685,24 +689,36 @@ export default function Dictionary() {
       if (r._fp) fingerprints[r.name] = r._fp;
     }
     setSaving(true);
-    const res = await savePipelineRules({
-      serverUrl: backend.serverUrl,
-      backendId: backend.id,
-      patch: { rules_patch, fingerprints },
-    });
-    setSaving(false);
-    // Backend switched while the save was in flight → this result belongs to the
-    // old backend; don't reload or flash its banner over the now-selected one.
-    if (backend.id !== selectedIdRef.current) return;
-    // On success, re-sync to server truth (fresh fingerprints; conflicted edits
-    // are replaced by the server's version) BEFORE showing the banner — load()
-    // clears `result`, so set it afterwards. On 422 keep edits so the user can fix.
-    if (res.ok) await load(backend);
-    // load() awaited above — re-check the selection (mirrors the guard before it): a backend switch
-    // during that reload makes load() bail on its own guard (leaving result null), so setting the old
-    // backend's banner here would strand a stale "Saved N rules" over the now-selected backend.
-    if (backend.id !== selectedIdRef.current) return;
-    setResult(res);
+    // try/finally so setSaving(false) ALWAYS runs: savePipelineRules is a bare invoke that can reject
+    // on an IPC-level failure, and without this `saving` would stay true forever — freezing every rule
+    // control, the Save/Discard bar, AND the backend pills (all gated on saving), with no recovery but
+    // leaving the screen.
+    try {
+      const res = await savePipelineRules({
+        serverUrl: backend.serverUrl,
+        backendId: backend.id,
+        patch: { rules_patch, fingerprints },
+      });
+      // Backend switched while the save was in flight → this result belongs to the
+      // old backend; don't reload or flash its banner over the now-selected one.
+      if (backend.id !== selectedIdRef.current) return;
+      // On success, re-sync to server truth (fresh fingerprints; conflicted edits
+      // are replaced by the server's version) BEFORE showing the banner — load()
+      // clears `result`, so set it afterwards. On 422 keep edits so the user can fix.
+      if (res.ok) await load(backend);
+      // load() awaited above — re-check the selection (mirrors the guard before it): a backend switch
+      // during that reload makes load() bail on its own guard (leaving result null), so setting the old
+      // backend's banner here would strand a stale "Saved N rules" over the now-selected backend.
+      if (backend.id !== selectedIdRef.current) return;
+      setResult(res);
+    } catch (e) {
+      console.error("save pipeline rules failed:", e);
+      if (backend.id === selectedIdRef.current) {
+        setResult({ ok: false, status: 0, saved: [], conflicts: [], requires_restart: false, detail: e instanceof Error ? e.message : String(e) });
+      }
+    } finally {
+      setSaving(false);
+    }
   }
 
   function patchEdit(slug: string, updater: (e: EditState) => EditState) {
@@ -713,6 +729,9 @@ export default function Dictionary() {
   }
   function discardAll() {
     setEdits(cloneEdits(base));
+    // A full discard is a fresh slate — clear any lingering save banner (esp. a 422 rejection whose
+    // edits no longer exist; the banner persists independent of `dirty` until the next load).
+    setResult(null);
   }
 
   return (
