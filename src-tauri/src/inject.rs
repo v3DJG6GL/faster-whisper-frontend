@@ -25,14 +25,20 @@ pub fn is_wayland() -> bool {
     }
 }
 
-/// Strip C0/C1 control characters (except Tab, LF, CR) from text bound for injection, so a
+/// Strip C0/C1 control characters (except Tab and LF) from text bound for injection, so a
 /// malicious / compromised / garbled transcription server can't smuggle terminal-escape or
-/// other control sequences onto the clipboard or into a typed paste. Tab/newline/CR are kept
-/// (they're legitimate keystrokes). The Wayland direct-typing paths already drop controls;
-/// this brings the paste / clipboard / X11-direct paths to the same posture.
+/// other control sequences onto the clipboard or into a typed paste. Tab and newline are kept
+/// (legitimate keystrokes); CR is first normalized to LF. The Wayland direct-typing paths already
+/// drop controls; this brings the paste / clipboard / X11-direct paths to the same posture.
 pub fn sanitize_injected(text: &str) -> String {
-    text.chars()
-        .filter(|&c| !c.is_control() || c == '\t' || c == '\n' || c == '\r')
+    // Collapse CRLF and a lone CR to LF first: every direct-typing path maps BOTH '\r' and '\n' to
+    // an Enter keypress (wayland_inject's KeySpec, X11), so a server's Windows CRLF line endings
+    // would otherwise type TWO Enters per line break — a spurious blank line. Normalizing here makes
+    // direct + paste + clipboard agree on one Enter per break.
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .chars()
+        .filter(|&c| !c.is_control() || c == '\t' || c == '\n')
         .collect()
 }
 
@@ -226,9 +232,12 @@ mod tests {
     use super::sanitize_injected;
 
     #[test]
-    fn sanitize_drops_controls_but_keeps_tab_newline_cr() {
-        // Printable text + Tab/LF/CR survive unchanged.
-        assert_eq!(sanitize_injected("hello\tworld\nline\r"), "hello\tworld\nline\r");
+    fn sanitize_drops_controls_keeps_tab_lf_normalizes_cr() {
+        // Printable text + Tab/LF survive; a trailing CR is normalized to LF (not kept), so a
+        // CRLF break can't type a second Enter in the direct paths.
+        assert_eq!(sanitize_injected("hello\tworld\nline\r"), "hello\tworld\nline\n");
+        // CRLF collapses to a single LF (one Enter, not two).
+        assert_eq!(sanitize_injected("a\r\nb"), "a\nb");
         // ESC, BEL, NUL, DEL, and a C1 control are stripped; the surrounding text stays.
         assert_eq!(sanitize_injected("a\x1bb\x07c\0d\x7fe\u{0085}f"), "abcdef");
         // Non-ASCII printable (incl. astral) is untouched.
