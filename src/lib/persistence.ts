@@ -1,5 +1,5 @@
 import { useApp } from "./store";
-import { isTauri, loadConfig, saveConfig, reregisterShortcuts } from "./api";
+import { isTauri, loadConfig, saveConfig, reregisterShortcutsUnlessCapturing } from "./api";
 import { conflicts, quickAddPeer } from "./conflicts";
 
 /**
@@ -82,7 +82,12 @@ export async function initConfig(): Promise<void> {
             // has its OWN catch: a reregister failure is NOT data loss (the config was persisted
             // fine), so it must never raise the "couldn't save your settings" banner below.
             useApp.getState().setSaveError(null);
-            if (reReg) void reregisterShortcuts().catch((e) => console.error("reregisterShortcuts failed", e));
+            // Use the capture-aware variant: a debounced save left pending by an edit just before the
+            // user enters chord-capture can resolve DURING the capture window, and a plain reregister
+            // would re-arm the hotkeys mid-capture (the next keypress would both rebind AND fire
+            // dictation). When no capture is active it re-arms normally; the capture's own teardown
+            // re-arms when it ends. Mirrors cancelLive's use of the same variant.
+            if (reReg) void reregisterShortcutsUnlessCapturing().catch((e) => console.error("reregister failed", e));
           },
           (e) => {
             // A real disk/IPC failure (full/read-only disk, perms) — the in-memory store still
