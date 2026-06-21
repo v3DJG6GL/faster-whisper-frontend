@@ -1,8 +1,8 @@
 //! HTTP transport to a faster-whisper / OpenAI-compatible backend.
 //!
 //! `discovery` resolves server capabilities (`/v1/models`, `/auth/whoami`);
-//! `batch` does the multipart `POST /v1/audio/transcriptions`. The streaming
-//! WebSocket client lands in M3.
+//! `batch` does the multipart `POST /v1/audio/transcriptions`; `stream` is the
+//! streaming WebSocket client; `pipeline` reads/writes the server's text rules.
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
