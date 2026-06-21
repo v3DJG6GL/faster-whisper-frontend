@@ -8,7 +8,7 @@ import { Button, Card, Notice, SectionLabel, Select, Toggle } from "@/components
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/UsageStats";
-import { startLive, stopLive, cancelLive } from "@/lib/streaming";
+import { startLive, stopLive, cancelLive, requestStopIfStarting } from "@/lib/streaming";
 import { backendForProfile, homeTargetProfile } from "@/lib/dictation";
 import type { Backend, Profile } from "@/lib/types";
 
@@ -154,6 +154,11 @@ export default function Home() {
       void cancelLive(); // force a clean idle (and reset any stuck hotkeys)
       return;
     }
+    // A toggle-off that lands during the start prologue (status still "idle", session
+    // mid-start) would otherwise fall through to start and be swallowed by startLive's
+    // startingSession guard, wedging the just-started latch. Honor it like the hotkey
+    // (dictate) and chip (runOverlayAction) toggles do.
+    if (requestStopIfStarting()) return;
     // idle or error → start fresh (startLive clears any prior error).
     if (!headerBackend) return;
     // Tell the overlay chip which Profile is dictating (the hotkey path does this in
