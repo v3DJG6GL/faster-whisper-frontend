@@ -578,7 +578,17 @@ export default function Dictionary() {
     const myGen = ++loadGen.current;
     setLoading(true);
     setResult(null);
-    const res = await getPipelineRules({ serverUrl: b.serverUrl, backendId: b.id });
+    let res: Awaited<ReturnType<typeof getPipelineRules>>;
+    try {
+      res = await getPipelineRules({ serverUrl: b.serverUrl, backendId: b.id });
+    } catch {
+      // get_pipeline_rules is a non-Result command; a transport-level reject would otherwise leave
+      // the screen stuck on the loading spinner (and surface as an unhandled rejection from the
+      // Refresh / FetchError-retry / SaveBanner-reload callers, which call load() without a .catch).
+      // Clear loading unless a newer load() superseded us — mirrors the load-on-change effect's .catch.
+      if (myGen === loadGen.current) setLoading(false);
+      return;
+    }
     if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return; // backend switched OR a newer load() won
     setFetchRes(res);
     const list = ruleListOf(res);
