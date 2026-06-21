@@ -42,8 +42,12 @@ export function mapRowsFromRule(rule: PipelineRule): MapRow[] {
  *  skip rows the user never filled in (blank/whitespace-only key). */
 export function mapBodyFromRows(rows: MapRow[]): { map: Record<string, string> } {
   const map: Record<string, string> = {};
+  // Rows are newest-first; keep the FIRST occurrence of a duplicate key so the newest-shown mapping
+  // wins — adding a new mapping for a phrase that already has one now takes effect, instead of being
+  // silently overridden by the older (further-down) entry. hasOwnProperty (not `in`) so a key like
+  // "toString" isn't falsely treated as already-present.
   for (const r of rows) {
-    if (r.k.trim()) map[r.k] = r.v;
+    if (r.k.trim() && !Object.prototype.hasOwnProperty.call(map, r.k)) map[r.k] = r.v;
   }
   const sorted: Record<string, string> = {};
   for (const k of Object.keys(map).sort()) sorted[k] = map[k];
@@ -60,7 +64,7 @@ export function mapBodyFromRows(rows: MapRow[]): { map: Record<string, string> }
  *  Returns the transformed string, terminal-trimmed of spaces/tabs/CR like the backend's last step. */
 export function applyMap(text: string, rows: MapRow[]): string {
   const map = new Map<string, string>();
-  for (const r of rows) if (r.k.trim()) map.set(r.k, r.v); // key verbatim; later row wins on dup
+  for (const r of rows) if (r.k.trim() && !map.has(r.k)) map.set(r.k, r.v); // newest-shown row wins on a dup
   if (map.size === 0) return text;
   // case-insensitive: lower-cased key → value (matches the backend's lowercased lookup dict)
   const lookup = new Map<string, string>();
