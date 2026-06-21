@@ -694,6 +694,10 @@ export default function Dictionary() {
     // are replaced by the server's version) BEFORE showing the banner — load()
     // clears `result`, so set it afterwards. On 422 keep edits so the user can fix.
     if (res.ok) await load(backend);
+    // load() awaited above — re-check the selection (mirrors the guard before it): a backend switch
+    // during that reload makes load() bail on its own guard (leaving result null), so setting the old
+    // backend's banner here would strand a stale "Saved N rules" over the now-selected backend.
+    if (backend.id !== selectedIdRef.current) return;
     setResult(res);
   }
 
