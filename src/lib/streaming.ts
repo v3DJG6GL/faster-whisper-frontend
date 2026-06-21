@@ -453,6 +453,11 @@ async function ensureListeners(): Promise<void> {
     // "listening" once we've left it: that stuck the indicator at "listening" with the mic
     // already closed, and disabled the stuck-finalize watchdog (which only fires while
     // "transcribing"). Only hold the status / defer per-phrase actions while truly capturing.
+    // Drop a late drain partial once the session has fully settled (post-cancel idle / post-error):
+    // re-populating `partial` there resurrects a stale preview into an idle/errored chip. A legitimate
+    // post-stop drain (transcribing/injecting) still passes and updates the preview. Mirrors the
+    // inSession() guard the final/boundary/overrides-ignored handlers already carry.
+    if (!inSession()) return;
     const capturing = useApp.getState().status === "listening";
     setDictation(
       capturing
@@ -784,6 +789,9 @@ async function ensureListeners(): Promise<void> {
         setDictation({ status: "injecting" });
         enqueueInject(async () => {
           const t = await resolveTarget();
+          // A cancel landing during the awaited resolve nulled insertCfg + aborted the session — don't
+          // paste the whole transcript into the now-refocused window (mirrors the live-mode tasks).
+          if (!insertCfg) return;
           try {
             await injectText({
               text,
