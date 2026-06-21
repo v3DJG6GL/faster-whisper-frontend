@@ -206,6 +206,7 @@ function Editor({
               <button
                 key={m.id}
                 type="button"
+                aria-pressed={b.model === m.id}
                 onClick={() => set({ model: m.id })}
                 className={cn(
                   "ring-signal rounded-pill border px-3 py-1 font-mono text-[12px] transition-colors",
