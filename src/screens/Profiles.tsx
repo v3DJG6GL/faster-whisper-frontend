@@ -385,8 +385,17 @@ export default function Profiles() {
     setSearchParams({}, { replace: true });
   }, [searchParams, profiles, setSearchParams]);
 
-  const conflicts = conflictsByProfile(profiles);
-  const nameOf = (id: string) => profiles.find((p) => p.id === id)?.name ?? "another profile";
+  // Feed the per-card banner the SAME synthetic quick-add peer the Editor (others, below) and the
+  // save-gate (persistence.ts) use, so a profile whose chord collides with the global quick-add
+  // chord shows a banner on its own card — not just the global save freeze. All three conflict
+  // surfaces now agree.
+  const conflictPeers =
+    quickAddHotkey.length > 0
+      ? [...profiles, { id: "__quick-add__", name: "Quick add", activation: "hold" as const, enabled: true, hotkey: quickAddHotkey, backendId: null }]
+      : profiles;
+  const conflicts = conflictsByProfile(conflictPeers);
+  const nameOf = (id: string) =>
+    id === "__quick-add__" ? "Quick add" : (profiles.find((p) => p.id === id)?.name ?? "another profile");
   const backendName = (id: string | null) => backends.find((b) => b.id === id)?.name ?? "No backend";
 
   const conflictText = (id: string): string | null => {
