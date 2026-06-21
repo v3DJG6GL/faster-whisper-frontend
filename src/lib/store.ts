@@ -12,6 +12,7 @@ import type {
   UsageStats,
 } from "./types";
 import { newSpeakMemo, stepSpeaking } from "./speaking";
+import { swap } from "./arr";
 
 // Derives `speaking` (green vs amber) from the RMS level stream centrally, so the
 // main-window surfaces (Home button, sidebar dot, waveforms) all agree with the chip
@@ -340,9 +341,7 @@ export const useApp = create<AppState>((set) => ({
       const i = s.backends.findIndex((b) => b.id === id);
       const j = dir === "up" ? i - 1 : i + 1;
       if (i < 0 || j < 0 || j >= s.backends.length) return {};
-      const backends = [...s.backends];
-      [backends[i], backends[j]] = [backends[j], backends[i]];
-      return { backends };
+      return { backends: swap(s.backends, i, j) };
     }),
 
   upsertProfile: (p) => set((s) => ({ profiles: upsertById(s.profiles, p) })),
@@ -365,9 +364,7 @@ export const useApp = create<AppState>((set) => ({
       const i = s.profiles.findIndex((p) => p.id === id);
       const j = dir === "up" ? i - 1 : i + 1;
       if (i < 0 || j < 0 || j >= s.profiles.length) return {};
-      const profiles = [...s.profiles];
-      [profiles[i], profiles[j]] = [profiles[j], profiles[i]];
-      return { profiles };
+      return { profiles: swap(s.profiles, i, j) };
     }),
 
   upsertAppRule: (r) =>

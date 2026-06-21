@@ -19,6 +19,7 @@ import { Badge, Button, Card, Notice, Stack, Toggle, TextInput } from "@/compone
 import { Combobox } from "@/components/Combobox";
 import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
+import { swap } from "@/lib/arr";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { getPipelineRules, getRecentWords, savePipelineRules } from "@/lib/api";
 import type {
@@ -506,12 +507,6 @@ function fmtWhen(ts?: number): string {
   return r ? `${absWhen(ts)} | ${r}` : absWhen(ts);
 }
 
-function swap<T>(arr: T[], i: number, j: number): T[] {
-  if (j < 0 || j >= arr.length) return arr;
-  const next = arr.slice();
-  [next[i], next[j]] = [next[j], next[i]];
-  return next;
-}
 function wordCount(words?: string): number {
   return (words ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean).length;
 }

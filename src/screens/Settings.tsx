@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Mic, Check, Play, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus, FolderOpen } from "lucide-react";
 import { useApp } from "@/lib/store";
+import { swap } from "@/lib/arr";
 import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screens";
@@ -341,9 +342,7 @@ function QuickLaunchEditor({
   const move = (i: number, d: -1 | 1) => {
     const j = i + d;
     if (j < 0 || j >= items.length) return;
-    const next = items.slice();
-    [next[i], next[j]] = [next[j], next[i]];
-    onChange(next);
+    onChange(swap(items, i, j));
   };
   const add = () => {
     if (!pick) return;
