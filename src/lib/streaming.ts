@@ -1160,6 +1160,14 @@ export async function cancelLive(): Promise<void> {
   const pending = injectChain;
   void pending.then(() => endInjection()).catch((e) => console.error("end injection failed:", e));
   beganInjection = false;
+  // Reset the per-phrase insert-feedback flags too (startLiveInner does, on the next start). Without
+  // this, the cancelled session's detached drain emits a late stream://status:"closed" on the
+  // un-advanced epoch; the closed handler's insertCfg===null branch then re-stamps sessionOutcome via
+  // endOutcome(), which would read the STALE typed/clipboard flags and flip the cancel's intended
+  // "none" to a false "typed"/"clipboard" — firing a bogus "Inserted"/"Copied" chip pulse on a
+  // CANCELLED session. Reset here so endOutcome() returns "none" and the late re-stamp is a no-op.
+  sessionTyped = false;
+  sessionClipboard = false;
   clearPhraseEnd();
   insertCfg = null;
   injectChain = Promise.resolve();
