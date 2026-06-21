@@ -170,10 +170,12 @@ function AudioTab() {
     let un: (() => void) | undefined;
     void onMicTestPlayEnded(() => {
       if (active) setPlaying(false);
-    }).then((u) => {
-      if (active) un = u;
-      else u();
-    });
+    })
+      .then((u) => {
+        if (active) un = u;
+        else u();
+      })
+      .catch(() => {}); // a rejected dynamic import / listen() must not surface as an unhandled rejection
     return () => {
       active = false;
       un?.();
