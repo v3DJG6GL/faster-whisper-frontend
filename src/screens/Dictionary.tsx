@@ -40,6 +40,10 @@ const TYPE_LABEL: Record<RuleType, string> = {
 /* ── editor-friendly working copy of a rule's editable body ────────────── */
 const mkId = nextRowId;
 
+// Deep-clone an edit snapshot (plain JSON — strings/arrays/objects). Mirrors the prior inline
+// JSON round-trip, which intentionally drops undefined fields, so behaviour is unchanged.
+const cloneEdits = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
+
 type EntryRow = { id: number; pattern: string; replacement: string; label?: string; note?: string };
 interface EditState {
   enabled: boolean;
@@ -591,7 +595,7 @@ export default function Dictionary() {
     setRules(list);
     const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
     setEdits(fresh);
-    setBase(JSON.parse(JSON.stringify(fresh)));
+    setBase(cloneEdits(fresh));
     getRecentWords({ serverUrl: b.serverUrl, backendId: b.id })
       .then((rw) => {
         if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return;
@@ -625,7 +629,7 @@ export default function Dictionary() {
         setRules(list);
         const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
         setEdits(fresh);
-        setBase(JSON.parse(JSON.stringify(fresh)));
+        setBase(cloneEdits(fresh));
         setExpanded(new Set());
         setLoading(false);
       })
@@ -705,10 +709,10 @@ export default function Dictionary() {
     setEdits((prev) => ({ ...prev, [slug]: updater(prev[slug]) }));
   }
   function resetRule(slug: string) {
-    setEdits((prev) => ({ ...prev, [slug]: JSON.parse(JSON.stringify(base[slug])) }));
+    setEdits((prev) => ({ ...prev, [slug]: cloneEdits(base[slug]) }));
   }
   function discardAll() {
-    setEdits(JSON.parse(JSON.stringify(base)));
+    setEdits(cloneEdits(base));
   }
 
   return (
