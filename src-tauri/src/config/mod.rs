@@ -665,13 +665,43 @@ fn migrate_legacy(text: &str) -> Option<Config> {
     })
 }
 
+/// Read `config.json`, retrying briefly on a transient read error (a Windows AV/indexer lock usually
+/// clears within tens of ms) so a momentary glitch isn't mistaken for a corrupt config. Returns
+/// `Ok(None)` when the file genuinely doesn't exist yet (first run).
+fn read_config_text(path: &Path) -> std::io::Result<Option<String>> {
+    let mut attempt = 0;
+    loop {
+        match std::fs::read_to_string(path) {
+            Ok(text) => return Ok(Some(text)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => {
+                attempt += 1;
+                if attempt >= 3 {
+                    return Err(e);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    }
+}
+
 /// Load config from `<dir>/config.json`, falling back to defaults if missing or
 /// invalid. A legacy (pre-v2) config is migrated losslessly and re-saved so the
 /// next load takes the fast path.
 pub fn load(dir: &Path) -> Config {
     let path = config_path(dir);
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Config::default();
+    let text = match read_config_text(&path) {
+        Ok(Some(text)) => text,
+        Ok(None) => return Config::default(), // first run / file genuinely absent
+        Err(e) => {
+            // The file EXISTS but stayed unreadable across retries (bad permissions, a non-transient
+            // lock). Don't silently fall back to defaults that the frontend's auto-save would then
+            // write OVER the real config — back it up first (mirrors the parse-failure path below) so
+            // it stays recoverable.
+            tracing::warn!("config read failed ({e}); backing up + using defaults");
+            let _ = std::fs::rename(&path, path.with_extension("json.bak"));
+            return Config::default();
+        }
     };
     // Fast path: already the current (v2) shape.
     if let Ok(cfg) = serde_json::from_str::<Config>(&text) {

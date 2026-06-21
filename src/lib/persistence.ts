@@ -27,6 +27,12 @@ export async function initConfig(): Promise<void> {
     if (cfg) useApp.getState().hydrate(cfg);
   } catch (e) {
     console.error("loadConfig failed", e);
+    // The load failed at the IPC level (Rust load() itself returns a valid config and backs up an
+    // unreadable one). Auto-save is still armed below holding the seeded defaults, so warn that the
+    // saved settings couldn't be loaded and saving now may overwrite them.
+    useApp
+      .getState()
+      .setSaveError("Couldn’t load your saved settings — saving now may overwrite them. Restart to retry.");
   } finally {
     hydrated = true;
   }
