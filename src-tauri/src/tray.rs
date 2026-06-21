@@ -39,11 +39,18 @@ pub fn create(app: &App) -> tauri::Result<()> {
 }
 
 pub(crate) fn show_main(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-    }
+    // Hop the GTK window ops onto the main thread: one caller (triggers::handle_cli_args, the
+    // single-instance handler) runs off the main thread, and GTK window calls off the main thread
+    // can crash/hang. run_on_main_thread queues onto the loop, so the already-on-main callers
+    // (tray menu event, the sync show_main_at_screen command) stay correct without deadlocking.
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = handle.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    });
 }
 
 /// Show + focus the main window and ask its router to navigate to `screen`. Used by
