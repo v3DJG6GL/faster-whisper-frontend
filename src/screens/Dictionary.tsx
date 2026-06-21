@@ -543,6 +543,10 @@ export default function Dictionary() {
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+  // Monotonic load-generation: the backend-identity guard alone can't disambiguate two overlapping
+  // load() calls for the SAME backend (e.g. Refresh during the post-save reload, or rapid Refresh) —
+  // an out-of-order network resolution would let the older fetch win. Bump per call, ignore stale.
+  const loadGen = useRef(0);
 
   const [loading, setLoading] = useState(false);
   const [fetchRes, setFetchRes] = useState<PipelineFetch | null>(null);
@@ -571,10 +575,11 @@ export default function Dictionary() {
   );
 
   const load = useCallback(async (b: Backend) => {
+    const myGen = ++loadGen.current;
     setLoading(true);
     setResult(null);
     const res = await getPipelineRules({ serverUrl: b.serverUrl, backendId: b.id });
-    if (b.id !== selectedIdRef.current) return; // Backend switched mid-load → don't clobber it.
+    if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return; // backend switched OR a newer load() won
     setFetchRes(res);
     const list = ruleListOf(res);
     setRules(list);
@@ -583,7 +588,7 @@ export default function Dictionary() {
     setBase(JSON.parse(JSON.stringify(fresh)));
     getRecentWords({ serverUrl: b.serverUrl, backendId: b.id })
       .then((rw) => {
-        if (b.id !== selectedIdRef.current) return;
+        if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return;
         setRecentWords(rw.words ?? []);
         setRecentMax(rw.max ?? undefined);
       })
@@ -606,17 +611,24 @@ export default function Dictionary() {
     let cancelled = false;
     setLoading(true);
     setResult(null);
-    getPipelineRules({ serverUrl: backend.serverUrl, backendId: backend.id }).then((res) => {
-      if (cancelled) return;
-      setFetchRes(res);
-      const list = ruleListOf(res);
-      setRules(list);
-      const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
-      setEdits(fresh);
-      setBase(JSON.parse(JSON.stringify(fresh)));
-      setExpanded(new Set());
-      setLoading(false);
-    });
+    getPipelineRules({ serverUrl: backend.serverUrl, backendId: backend.id })
+      .then((res) => {
+        if (cancelled) return;
+        setFetchRes(res);
+        const list = ruleListOf(res);
+        setRules(list);
+        const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
+        setEdits(fresh);
+        setBase(JSON.parse(JSON.stringify(fresh)));
+        setExpanded(new Set());
+        setLoading(false);
+      })
+      // A transport-level reject (rare; get_pipeline_rules is a non-Result command) would otherwise
+      // leave the screen stuck on `loading` + an unhandled rejection. Mirror the getRecentWords
+      // sibling's .catch and clear loading so the empty/error state can render.
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
     getRecentWords({ serverUrl: backend.serverUrl, backendId: backend.id })
       .then((rw) => {
         if (cancelled) return;
@@ -893,7 +905,10 @@ function SaveBanner({ result, onReload }: { result: PipelineSaveResult; onReload
       <Notice>{result.detail || "Couldn't save the changes."}</Notice>
     );
   }
-  const conflicts = result.conflicts?.length ?? 0;
+  // `conflicts` is opaque server JSON (passed through verbatim, only null-coerced); a non-array
+  // value would make a plain `.length` produce a bogus count. Coerce to an array first — mirrors
+  // the `errors` sibling above and the GET-path rule coercion (ruleListOf).
+  const conflicts = (Array.isArray(result.conflicts) ? result.conflicts : []).length;
   return (
     <div className="space-y-2">
       {result.saved.length > 0 && (
