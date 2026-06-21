@@ -746,9 +746,10 @@ export default function Dictionary() {
                   key={b.id}
                   type="button"
                   aria-pressed={active}
+                  disabled={saving}
                   onClick={() => setSelectedId(b.id)}
                   className={cn(
-                    "ring-signal rounded-pill border px-3.5 py-1.5 text-[12.5px] font-medium transition-colors",
+                    "ring-signal rounded-pill border px-3.5 py-1.5 text-[12.5px] font-medium transition-colors disabled:opacity-40",
                     active
                       ? "border-accent bg-accent-soft text-accent"
                       : "border-line bg-surface-2 text-dim hover:text-text",
