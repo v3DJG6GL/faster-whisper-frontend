@@ -418,6 +418,11 @@ export default function Overlay() {
   // shows a self-driven processing motion (sweeping bars + a quicker pulsing dot)
   // rather than the frozen-looking bars it used to.
   const processing = state.status === "transcribing" || state.status === "injecting";
+  // The chip dot + waveform should also self-animate during warm-up (dictationVisual maps warming to
+  // a pulse + the dim "machine working" tone), else "warming up…" shows a frozen dot + flat bars while
+  // every other working state moves. The cancel-✕ and transcript text-dim must NOT engage during
+  // warm-up, so only the motion uses this wider flag; those keep bare `processing`.
+  const working = processing || !!state.warming;
   const standby = state.status === "idle"; // only ever visible when persistentDock is on
 
   // Hold off the cancel ✕ until finalizing/inserting has actually persisted (see the const): on a
@@ -754,7 +759,7 @@ export default function Overlay() {
                 !processing &&
                 ((!expanded && !standby && !showQuickLaunch && !peeked) || (peeked && speaking)) &&
                 "animate-chip-breathe",
-              !pulse && processing && "animate-chip-think",
+              !pulse && working && "animate-chip-think",
             )}
           />
 
@@ -822,7 +827,7 @@ export default function Overlay() {
                       <Waveform
                         level={state.level}
                         active={speaking}
-                        processing={processing}
+                        processing={working}
                         bars={11}
                         variant="bars"
                         tone={barTone}
