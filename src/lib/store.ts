@@ -324,7 +324,12 @@ export const useApp = create<AppState>((set) => ({
       delete usage[id];
       return {
         backends: s.backends.filter((b) => b.id !== id),
-        profiles: s.profiles.map((p) => (p.backendId === id ? { ...p, backendId: null } : p)),
+        // Only build a new profiles array if a profile actually referenced the removed backend —
+        // map() always returns a fresh reference, and the auto-save subscriber treats any new
+        // profiles ref as a chord change and re-registers the OS global hotkeys for nothing.
+        profiles: s.profiles.some((p) => p.backendId === id)
+          ? s.profiles.map((p) => (p.backendId === id ? { ...p, backendId: null } : p))
+          : s.profiles,
         connections,
         usage,
       };
