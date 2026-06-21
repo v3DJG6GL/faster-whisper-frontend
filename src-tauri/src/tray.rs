@@ -72,6 +72,7 @@ pub fn set_tray_state(app: AppHandle, status: String) {
         return;
     };
     let tip = match status.as_str() {
+        "warming" => "faster-whisper — warming up…",
         "listening" => "faster-whisper — recording…",
         "transcribing" => "faster-whisper — transcribing…",
         "injecting" => "faster-whisper — inserting…",

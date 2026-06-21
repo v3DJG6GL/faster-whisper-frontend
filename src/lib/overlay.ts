@@ -129,10 +129,14 @@ export async function initOverlayController(): Promise<void> {
       });
     }
 
-    // On a status change, reflect it in the tray and play the matching cue —
-    // the reliable status signal where the overlay can't be pinned.
+    // Reflect status in the tray tooltip — the reliable status cue on chip-less platforms
+    // (GNOME / non-KDE Wayland). Fire on a warming change too so the cold-mic warm-up reads
+    // "warming up…" there like every other surface, instead of falsely claiming "recording…".
+    if (state.status !== prev.status || state.warming !== prev.warming) {
+      void setTrayState(state.warming && state.status === "listening" ? "warming" : state.status);
+    }
+    // Cues stay keyed on status TRANSITIONS only (not warming), so a warm-up flip can't re-fire them.
     if (state.status !== prev.status) {
-      void setTrayState(state.status);
       if (state.settings.general.soundEffects) {
         if (state.status === "transcribing" && prev.status === "listening") void playCue("stop");
         else if (state.status === "error") void playCue("error");
