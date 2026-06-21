@@ -180,14 +180,26 @@ mod imp {
     }
 
     pub fn start(app: &AppHandle, state: &EvdevState, profiles: &[Profile], quick_add_hotkey: &[String]) {
-        super::stop(state);
+        // Hold the EvdevState lock across the ENTIRE stop→enumerate→spawn→store sequence so two
+        // concurrent apply_bindings() calls (the reregister_shortcuts IPC thread + the suspend-watch
+        // thread) can't interleave: otherwise both spawn reader-task sets that briefly read the same
+        // devices in parallel — double-firing every chord — before one store aborts the other. Inline
+        // the stop (set *g = None, dropping the old Running → aborting its readers) instead of calling
+        // super::stop(): std::sync::Mutex is non-reentrant, so re-locking here would deadlock. No
+        // .await runs under the guard (spawn just schedules; enumerate is a sync scan), so this can't
+        // hold the lock across a suspension point.
+        let mut g = match state.0.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        *g = None; // drop + abort any previous readers, under the lock
         // Fresh start: drop any held-key counts left over from a previous run so the
         // inject-gate can't wait on a phantom modifier.
         app.state::<crate::held_keys::HeldKeys>().clear();
         let chords = chords_from(profiles, quick_add_hotkey);
         if chords.is_empty() {
             tracing::info!("[evdev] no mappable chords; not starting");
-            return;
+            return; // guard drops → lock released; *g stays None (no listener)
         }
         // Fixed for the life of the listener → precompute once and share read-only.
         let supersets = Arc::new(compute_strict_supersets(&chords));
@@ -220,9 +232,7 @@ mod imp {
             tasks.len(),
             chords.len()
         );
-        if let Ok(mut g) = state.0.lock() {
-            *g = Some(Running { tasks });
-        }
+        *g = Some(Running { tasks }); // still holding the guard from the top → atomic stop→store
     }
 
     fn emit(app: &AppHandle, profile_id: &str, action: &str) {
