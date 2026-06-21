@@ -324,13 +324,18 @@ export default function Overlay() {
       // persist=false: this full-window hold is transient (keeps the cursor inside the shape
       // through the morph) — don't let it become the region a re-show restores, or the whole
       // strip would swallow clicks if a session ends with the cursor still over the chip.
-      void setChipHitRegion(0, 0, window.innerWidth, window.innerHeight, false);
+      void setChipHitRegion(0, 0, window.innerWidth, window.innerHeight, false).catch((e) =>
+        console.error("set chip hit region failed:", e),
+      );
       return;
     }
     const el = chipRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    if (r.width > 0 && r.height > 0) void setChipHitRegion(r.x, r.y, r.width, r.height);
+    if (r.width > 0 && r.height > 0)
+      void setChipHitRegion(r.x, r.y, r.width, r.height).catch((e) =>
+        console.error("set chip hit region failed:", e),
+      );
   }, [hovering]);
   // Report bounds ONLY at settled moments — never mid-morph. A region that resizes
   // out from under the cursor causes hover enter/leave thrash (chip flickering
@@ -590,8 +595,9 @@ export default function Overlay() {
   // abruptly under the cursor right as you reach for a button.
   const showQuickLaunch = restingIdle && hoverReveal && !peeked && hasQuickLaunch;
   const runQuickLaunch = (e: OverlayQuickAction) => {
-    if (e.kind === "screen") void showMainAtScreen(e.target);
-    else void emitOverlayAction(e.target);
+    if (e.kind === "screen")
+      void showMainAtScreen(e.target).catch((err) => console.error("overlay quick-launch failed:", err));
+    else void emitOverlayAction(e.target).catch((err) => console.error("overlay quick-launch failed:", err));
   };
 
   // Edge-peek slide offset (CSS translateY). The window is anchored flush at the screen edge
@@ -871,7 +877,11 @@ export default function Overlay() {
                           type="button"
                           title="Cancel"
                           aria-label="Cancel dictation"
-                          onClick={() => void emitOverlayAction("cancel-dictation")}
+                          onClick={() =>
+                            void emitOverlayAction("cancel-dictation").catch((e) =>
+                              console.error("cancel-dictation failed:", e),
+                            )
+                          }
                           className="ring-signal grid size-8 shrink-0 place-items-center rounded-full text-faint transition-colors hover:text-text"
                         >
                           <X className="size-4" />
