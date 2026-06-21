@@ -53,13 +53,6 @@ pub fn open_recordings_dir(app: AppHandle, custom: Option<String>) -> Result<(),
         .map_err(|e| e.to_string())
 }
 
-/// Write a dictation transcript next to its saved `.wav` as a sibling `.txt`. Called by the
-/// frontend at session end (it owns the assembled transcript). Best-effort, never errors.
-#[tauri::command]
-pub fn write_recording_transcript(wav_path: String, text: String) {
-    crate::audio::save_transcript_sidecar(std::path::Path::new(&wav_path), &text);
-}
-
 /// Resolve an API key: an explicit (just-typed) key wins; otherwise look it up in
 /// the OS keyring by Backend id.
 fn resolve_key(explicit: Option<String>, backend_id: Option<String>) -> Option<String> {

@@ -200,9 +200,6 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             tracing::info!("[stream] boundary (hard break)");
             emit_if_active(&appc, epoch, "stream://boundary", separator);
         }
-        StreamEvent::RecordingSaved(path) => {
-            emit_if_active(&appc, epoch, "stream://recording-saved", path);
-        }
         StreamEvent::Error(m) => {
             emit_if_active(&appc, epoch, "stream://error", m);
         }

@@ -36,7 +36,6 @@ import {
   discardInjectionSnapshot,
   getFocusedApp,
   reregisterShortcutsUnlessCapturing,
-  writeRecordingTranscript,
 } from "./api";
 import type { ActivationKind, AppRule, Backend, DecodeOverrides, FocusedApp, GeneralSettings } from "./types";
 
@@ -50,9 +49,6 @@ let autoStopMemo: SpeakMemo = newSpeakMemo();
 let autoStopMs = 0;
 let lastSpokeAt = 0;
 
-// Path of the .wav saved for THIS session (from `stream://recording-saved`), so the closed handler
-// can label it with the full transcript (sibling .txt). Reset each session; null = nothing saved.
-let lastSavedRecordingPath: string | null = null;
 let activeEndpoint: "stream" | "batch" | null = null;
 
 // Mic warm-up gate. A cold mic can be open but deliver SILENCE for ~1–2s before real
@@ -88,10 +84,6 @@ let injectedText = "";
 // Documents completed before a hard break, accumulated for the "stop"-timing single
 // insert. Live mode types as it goes, so it doesn't read this back.
 let bankedDoc = "";
-// The finished hard-break "paragraphs" (pause-delimited documents) this session, for the saved
-// transcript sidecar — joined with newlines so it reads cleanly regardless of the server's (often
-// empty) typed between-document separator. NOT used for injection. Reset each session.
-let sessionDocs: string[] = [];
 // Clipboard-only phrase boundary. committedDoc grows across phrases until the backend's long-silence
 // hard break — which can be many seconds away, far too late to feel like "just my last phrase". So we
 // detect the phrase boundary client-side: `clipBaseline` is the committedDoc text already copied as
@@ -582,7 +574,6 @@ async function ensureListeners(): Promise<void> {
     // back). Typed live ignores it (resets committedDoc/injectedText below and appends from there),
     // and clipboard-only now ignores it too (it copies just the current window per phrase).
     if (committedDoc) bankedDoc += committedDoc + sep;
-    if (committedDoc.trim()) sessionDocs.push(committedDoc.trim()); // archive: one line per paragraph
     committedDoc = "";
     clipBaseline = "";
     injectedText = "";
@@ -623,12 +614,6 @@ async function ensureListeners(): Promise<void> {
     clipDirty = false;
   });
 
-  // A streamed recording was just saved (emitted right before "closed"): remember its path so the
-  // closed handler can label it with the session transcript.
-  await listen<string>("stream://recording-saved", (e) => {
-    lastSavedRecordingPath = e.payload;
-  });
-
   await listen<string>("stream://status", (e) => {
     if (e.payload === "ready") {
       // NOTE: do NOT clear `warming` here. "ready" is just the WS/model handshake and
@@ -660,19 +645,8 @@ async function ensureListeners(): Promise<void> {
       // collapsing the instant the server closes (the injection is async). We only
       // return to idle once the queue drains (see settleToIdleAfterInjection).
       setDictation({ level: 0, warming: false });
-
-      // If a recording was saved this session, label it with the full transcript (sibling .txt) so
-      // the recordings folder is searchable. Independent of insert timing/method; best-effort.
-      if (lastSavedRecordingPath) {
-        // One line per hard-break paragraph so the saved transcript reads cleanly (the server's
-        // typed between-document separator is often empty). Independent of what was injected.
-        const docs = sessionDocs.slice();
-        const lastDoc = committedDoc.trim();
-        if (lastDoc) docs.push(lastDoc);
-        const transcript = docs.join("\n");
-        if (transcript) void writeRecordingTranscript(lastSavedRecordingPath, transcript);
-        lastSavedRecordingPath = null;
-      }
+      // (The saved recording's transcript .txt sidecar is written in Rust, in the streaming drain —
+      // ungated, so a cancelled/superseded session still gets it, matching the batch path.)
 
       const cfg = insertCfg;
       if (!cfg || cfg.timing === "off") {
@@ -954,7 +928,6 @@ async function startLiveInner(
   autoStopMemo = newSpeakMemo();
   lastSpokeAt = performance.now();
   autoStopMs = activation !== "hold" && rec.latchAutoStopMin > 0 ? rec.latchAutoStopMin * 60_000 : 0;
-  lastSavedRecordingPath = null; // set by the stream://recording-saved listener if a file is saved
   // Effective values: a set per-Profile override wins; else inherit the Backend.
   const language = pov?.language?.trim() ? pov.language : backend.language;
   // prompt is a 3-state sentinel sent to the backend: undefined → omit (inherit the
@@ -999,7 +972,6 @@ async function startLiveInner(
   committedDoc = "";
   injectedText = "";
   bankedDoc = "";
-  sessionDocs = [];
   beganInjection = false;
   sessionTyped = false;
   sessionClipboard = false;
@@ -1150,7 +1122,6 @@ export async function cancelLive(): Promise<void> {
   committedDoc = "";
   injectedText = "";
   bankedDoc = "";
-  sessionDocs = [];
   // If we snapshotted the clipboard for live paste, give the user's original back and clear the
   // snapshot so it can't leak into the next session (end_injection restores + consumes it).
   // Chain it on the existing queue so it runs AFTER any in-flight paste — calling it directly

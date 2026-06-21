@@ -25,9 +25,6 @@ pub enum StreamEvent {
     /// Long-silence hard break: the server reset its document. The client should
     /// reset its injection baseline and optionally type `separator` between docs.
     Boundary { separator: String },
-    /// The streamed audio was saved to this `.wav` path — emitted just before `Closed` so the
-    /// client can write a transcript sidecar next to it. Absent when nothing was saved.
-    RecordingSaved(String),
     Error(String),
     Closed,
 }
@@ -199,6 +196,13 @@ pub async fn run<F>(
     let saving = params.save_dir.is_some();
     let trim = saving && params.trim_silence;
     let mut saved: Vec<u8> = Vec::new();
+    // Accumulate the session transcript HERE (Rust) so a saved recording gets its `.txt` sidecar
+    // written in the drain — independent of the epoch-gated `recording-saved` emit — exactly like the
+    // batch path (transcribe_recording). A session superseded by cancel/suspend would otherwise keep
+    // the `.wav` with no `.txt` (the frontend never sees the suppressed emit). Mirrors the frontend's
+    // per-hard-break join: `current_doc` is the running document; a Boundary banks it into `docs`.
+    let mut transcript_docs: Vec<String> = Vec::new();
+    let mut transcript_cur = String::new();
     // Speech-gate for the SAVED recording (NOT what's streamed to the server): keep only the spans
     // the chip shows as "speaking" + a short lead-in, so a long latch session doesn't store hours
     // of silence. The detector itself lives in `crate::audio::SpeechGate` (shared with the batch
@@ -298,7 +302,10 @@ pub async fn run<F>(
             }
             from = evt_rx.recv() => {
                 match from {
-                    Some(FromReader::Event(e)) => on_event(e),
+                    Some(FromReader::Event(e)) => {
+                        if saving { accumulate_transcript(&e, &mut transcript_docs, &mut transcript_cur); }
+                        on_event(e);
+                    }
                     // Server closed the socket (or the read errored, already surfaced
                     // above) — stop now; not draining, so fall through to Closed.
                     Some(FromReader::Closed) | None => break,
@@ -360,7 +367,10 @@ pub async fn run<F>(
             let _ = write.send(text_msg(json!({"type":"stop"}).to_string())).await;
             while let Some(from) = evt_rx.recv().await {
                 match from {
-                    FromReader::Event(e) => on_event(e),
+                    FromReader::Event(e) => {
+                        if saving { accumulate_transcript(&e, &mut transcript_docs, &mut transcript_cur); }
+                        on_event(e);
+                    }
                     FromReader::Closed => break,
                 }
             }
@@ -377,11 +387,41 @@ pub async fn run<F>(
         // reduced to nothing). Emit the saved path so the client can label it with the transcript.
         if !saved.is_empty() {
             if let Some(path) = crate::audio::save_recording(dir, &saved, 16_000) {
-                on_event(StreamEvent::RecordingSaved(path.to_string_lossy().into_owned()));
+                // Label the .wav with the session transcript IN RUST (ungated), so a cancelled/
+                // superseded recording still gets its sibling .txt — matching the batch path.
+                let last = transcript_cur.trim();
+                if !last.is_empty() {
+                    transcript_docs.push(last.to_string());
+                }
+                let transcript = transcript_docs.join("\n");
+                if !transcript.is_empty() {
+                    crate::audio::save_transcript_sidecar(&path, &transcript);
+                }
             }
         }
     }
     on_event(StreamEvent::Closed);
+}
+
+/// Fold a stream event into the running session transcript (for the saved-recording `.txt` sidecar),
+/// mirroring the frontend's per-hard-break archive: a `Final` replaces the current document with
+/// `committed + tail`; a `Boundary` banks the (trimmed, non-empty) current document and resets it.
+fn accumulate_transcript(e: &StreamEvent, docs: &mut Vec<String>, current: &mut String) {
+    match e {
+        StreamEvent::Final { committed, tail, .. } => {
+            current.clear();
+            current.push_str(committed);
+            current.push_str(tail);
+        }
+        StreamEvent::Boundary { .. } => {
+            let trimmed = current.trim();
+            if !trimmed.is_empty() {
+                docs.push(trimmed.to_string());
+            }
+            current.clear();
+        }
+        _ => {}
+    }
 }
 
 /// Parse one server text frame, emit the matching event, return true if it was the
