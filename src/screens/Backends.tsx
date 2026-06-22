@@ -385,6 +385,11 @@ export default function Backends() {
       ) : (
         <>
           <SectionLabel className="mb-3 mt-8">Configured</SectionLabel>
+          {backends.length === 0 ? (
+            <Card className="p-8 text-center text-[13.5px] text-dim">
+              No backends yet. Add one to point the app at a faster-whisper server.
+            </Card>
+          ) : (
           <div className="flex flex-col gap-3">
             {backends.map((b, i) => {
               const conn = connections[b.id];
@@ -434,6 +439,7 @@ export default function Backends() {
               );
             })}
           </div>
+          )}
         </>
       )}
     </div>
