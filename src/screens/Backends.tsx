@@ -38,13 +38,19 @@ function Editor({
   const setConnection = useApp((s) => s.setConnection);
   const [b, setB] = useState<Backend>(initial);
   const [key, setKey] = useState("");
-  // Debounce the typed key before it drives the best-effort capability / override-profile
-  // lookups, so typing an API key doesn't fire a burst of requests on every keystroke.
+  // Debounce the typed key AND the server URL before they drive the best-effort capability /
+  // override-profile lookups, so typing either field doesn't fire a burst of requests on every
+  // keystroke (the URL drives two lookups — getCapabilities + listOverrideProfiles — per char).
   const [debouncedKey, setDebouncedKey] = useState("");
   useEffect(() => {
     const t = setTimeout(() => setDebouncedKey(key), 400);
     return () => clearTimeout(t);
   }, [key]);
+  const [debouncedUrl, setDebouncedUrl] = useState(initial.serverUrl);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedUrl(b.serverUrl), 400);
+    return () => clearTimeout(t);
+  }, [b.serverUrl]);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ConnectionInfo | null>(null);
   // Drop a connection-test result once the tested target changes (URL or key edited): the in-flight
@@ -68,7 +74,7 @@ function Editor({
   // Caller capabilities + the selected override-profile's resolved values, for
   // gating the decode editor and ghosting its inherited defaults.
   const { caps, resolved, resolvedPrompt } = useOverrideContext({
-    serverUrl: b.serverUrl,
+    serverUrl: debouncedUrl,
     backendId: b.id,
     apiKey: debouncedKey || null,
     profileName: b.overrideProfile,
@@ -277,7 +283,7 @@ function Editor({
 
       <Labeled label="Server override profile" className="mt-5">
         <OverrideProfilePicker
-          serverUrl={b.serverUrl}
+          serverUrl={debouncedUrl}
           backendId={b.id}
           apiKey={debouncedKey || null}
           serverKind={kind}
