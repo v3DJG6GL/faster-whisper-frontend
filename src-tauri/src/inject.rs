@@ -89,15 +89,14 @@ pub fn read_primary_selection() -> Option<String> {
     }
 }
 
-/// Put `text` on the clipboard; returns the previous contents when `capture_prev`
-/// (so the caller can restore it after the paste). Used by the Wayland paste path,
-/// which sets the clipboard here and synthesizes Ctrl+V via the portal.
-pub fn set_clipboard(text: &str, capture_prev: bool) -> Result<Option<String>, String> {
+/// Put `text` on the clipboard. Used by the Wayland paste path, which sets the clipboard
+/// here and synthesizes Ctrl+V via the portal. The prior clipboard is captured separately
+/// and TIME-BOUNDED by the caller (read_selection_bounded — see commands.rs), so this no
+/// longer does the unbounded get_text() that could wedge on a dead clipboard owner.
+pub fn set_clipboard(text: &str) -> Result<(), String> {
     use arboard::Clipboard;
     let mut cb = Clipboard::new().map_err(|e| e.to_string())?;
-    let prev = if capture_prev { cb.get_text().ok() } else { None };
-    cb.set_text(text.to_string()).map_err(|e| e.to_string())?;
-    Ok(prev)
+    cb.set_text(text.to_string()).map_err(|e| e.to_string())
 }
 
 /// Hold `text` on the clipboard as a LIVE owner, blocking the calling thread until the
@@ -132,7 +131,7 @@ pub fn set_clipboard_persistent(text: &str) {
     std::thread::spawn(move || serve_clipboard_blocking(text));
 }
 
-/// Restore clipboard text captured by [`set_clipboard`], after a short delay so the paste
+/// Restore clipboard text captured (time-bounded) by the caller before the paste, after a short delay so the paste
 /// has consumed the clipboard first. No-op when `prev` is None. Restores via a LIVE owner
 /// (not a plain set_text) so the restored value actually persists on Wayland.
 pub fn restore_clipboard_later(prev: Option<String>) {

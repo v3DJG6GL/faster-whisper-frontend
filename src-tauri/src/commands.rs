@@ -994,7 +994,7 @@ pub async fn inject_text(
             } else {
                 None
             };
-            let set_res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip, false))
+            let set_res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
                 .await
                 .map_err(|e| e.to_string())?;
             set_res?; // propagate a set_text failure; prev was captured (time-bounded) above
