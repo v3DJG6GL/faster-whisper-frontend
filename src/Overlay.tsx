@@ -6,7 +6,7 @@ import { setChipHitRegion, emitOverlayAction, showMainAtScreen } from "@/lib/api
 import { cn } from "@/lib/cn";
 import { quickLaunchMeta } from "@/lib/screens";
 import { newSpeakMemo, stepSpeaking } from "@/lib/speaking";
-import { dictationVisual, type DictationTone } from "@/lib/dictationVisual";
+import { dictationVisual, isActiveDictation, type DictationTone } from "@/lib/dictationVisual";
 import type { DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
 
 interface ChipState {
@@ -543,8 +543,7 @@ export default function Overlay() {
   useEffect(() => {
     const statusChanged = lastPeekStatus.current !== state.status;
     lastPeekStatus.current = state.status;
-    const activeStatus =
-      state.status === "listening" || state.status === "transcribing" || state.status === "injecting";
+    const activeStatus = isActiveDictation(state.status);
     const keepMin = state.overlayPeek && state.peekWhileActive && state.position !== "off";
     // Only an undisturbed armed-but-silent session, or a persistent standby dock, ever peeks —
     // unless keep-minimized is on, where any active state stays tucked too. A tucked chip

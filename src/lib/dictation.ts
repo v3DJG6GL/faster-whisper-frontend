@@ -6,6 +6,7 @@
 import { useApp } from "./store";
 import { startLive, stopLive, cancelLive, requestStopIfStarting, isStarting } from "./streaming";
 import { showQuickAdd } from "./api";
+import { isActiveDictation } from "./dictationVisual";
 import type { Backend, Profile } from "./types";
 
 export type TriggerAction = "start" | "stop" | "toggle";
@@ -13,8 +14,7 @@ export type TriggerAction = "start" | "stop" | "toggle";
 // "Busy" = any non-idle state. A new session must not start over one; a stop/toggle
 // while busy ends it.
 function isBusy(): boolean {
-  const s = useApp.getState().status;
-  return s === "listening" || s === "transcribing" || s === "injecting";
+  return isActiveDictation(useApp.getState().status);
 }
 
 // Graceful stop while still capturing ("listening"); a hard reset for the wedge-prone

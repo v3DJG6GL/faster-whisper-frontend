@@ -13,7 +13,8 @@ import { chipTagFor } from "./profileTag";
 import { backendForProfile, homeTargetProfile } from "./dictation";
 import { activeStatsBackend } from "./usage";
 import { fmtCompact, fmtDuration } from "./format";
-import type { DictationStatus, OverlayStatsMetric, UsageStats } from "./types";
+import { isActiveDictation } from "./dictationVisual";
+import type { OverlayStatsMetric, UsageStats } from "./types";
 
 /** Build the chip's tiny usage readout (today's value) for the chosen metric. */
 function chipStatsLine(u: UsageStats, metric: OverlayStatsMetric): string {
@@ -21,8 +22,6 @@ function chipStatsLine(u: UsageStats, metric: OverlayStatsMetric): string {
   if (metric === "both") return `${fmtCompact(u.today.words)}w · ${fmtDuration(u.today.audio_s)}`;
   return `${fmtCompact(u.today.words)} words`;
 }
-
-const ACTIVE: DictationStatus[] = ["listening", "transcribing", "injecting"];
 
 let started = false;
 let visible = false;
@@ -87,7 +86,7 @@ export async function initOverlayController(): Promise<void> {
       }
       // P16/D: the app being injected into (+ why, if it's coerced to clipboard), gated by the
       // setting and sent only while a session is active so the standby dock shows no stale target.
-      const tgt = rec.showTargetOnOverlay && ACTIVE.includes(state.status) ? state.targetApp : null;
+      const tgt = rec.showTargetOnOverlay && isActiveDictation(state.status) ? state.targetApp : null;
       void emit("dictation://update", {
         status: state.status,
         warming: state.warming, // mic opening but not yet capturing → chip shows "warming up…"
@@ -155,8 +154,8 @@ export async function initOverlayController(): Promise<void> {
 
     const pos = state.settings.recording.indicatorPosition;
     const persistent = state.settings.recording.persistentDock && pos !== "off";
-    const active = ACTIVE.includes(state.status);
-    const prevActive = ACTIVE.includes(prev.status);
+    const active = isActiveDictation(state.status);
+    const prevActive = isActiveDictation(prev.status);
 
     // Shown while a session is active, OR always (as a standby dot) when the dock is on.
     if (pos !== "off" && (active || persistent)) {

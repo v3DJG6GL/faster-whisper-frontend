@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Mic, Radio, Hand, Square, Pencil } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
-import { dictationVisual } from "@/lib/dictationVisual";
+import { dictationVisual, isActiveDictation } from "@/lib/dictationVisual";
 import { Button, Card, Notice, SectionLabel, Select, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
@@ -111,7 +111,7 @@ export default function Home() {
   // a graceful stop for "listening" (deliver the last words) but force a hard reset
   // for the post-speech states — so a wedged "finalizing…"/"inserting…" (e.g. the
   // stream died on suspend) is recoverable with the same button instead of dead.
-  const busy = status === "listening" || status === "transcribing" || status === "injecting";
+  const busy = isActiveDictation(status);
   // Shared state→colour mapping (same as the chip + sidebar): off=grey, armed=amber,
   // speaking=green, finalizing=neutral, error=neutral. OFF/idle reads as a recessed
   // neutral button (press to start) — NOT the old always-amber — and only goes amber

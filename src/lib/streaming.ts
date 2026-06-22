@@ -40,6 +40,7 @@ import {
   reregisterShortcutsUnlessCapturing,
 } from "./api";
 import type { ActivationKind, AppRule, Backend, DecodeOverrides, FocusedApp, GeneralSettings } from "./types";
+import { isActiveDictation } from "./dictationVisual";
 
 let wired = false;
 
@@ -321,8 +322,7 @@ function settleIdle(): void {
 /** A stream-event handler should fold in / act on a late emit only while genuinely busy — a
  *  post-cancel (idle) or post-error (error) drain emit on the un-advanced epoch must be dropped. */
 function inSession(): boolean {
-  const st = useApp.getState().status;
-  return st === "listening" || st === "transcribing" || st === "injecting";
+  return isActiveDictation(useApp.getState().status);
 }
 
 // Return to idle once the injection queue has fully drained (the text has landed in

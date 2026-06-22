@@ -65,3 +65,13 @@ export function dictationVisual(
       return { state: "off", tone: "faint", label: "off", pulse: false, filled: false };
   }
 }
+
+/**
+ * THE single membership test for the "active session" set {listening, transcribing, injecting}
+ * — armed/capturing → finalizing → inserting. Excludes idle (no session) and error. Centralizes
+ * what the chip visibility, Home stop/cancel button, hotkey busy-gate, and stream epoch-gating
+ * each used to hand-roll, so a future status can't be silently omitted at one of them.
+ */
+export function isActiveDictation(status: DictationStatus): boolean {
+  return status === "listening" || status === "transcribing" || status === "injecting";
+}
