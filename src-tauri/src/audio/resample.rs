@@ -87,8 +87,9 @@ impl Resampler16k {
     }
 
     /// Flush the buffered tail (< one input block) at end of stream: zero-pad to a full input block
-    /// and resample, so the final (< ~64 ms) of audio isn't dropped. The trailing zeros resample to
-    /// a soft decay into silence (no click). Pass-through mode buffers nothing, so it's a no-op.
+    /// and resample, so the final sliver (< 1024 INPUT frames — ~21 ms at 48 kHz, ~23 ms at 44.1 kHz)
+    /// of audio isn't dropped. The trailing zeros resample to a soft decay into silence (no click).
+    /// Pass-through mode buffers nothing, so it's a no-op.
     pub fn flush(&mut self) -> Vec<u8> {
         let mut out = Vec::new();
         if self.inner.is_none() || self.acc.is_empty() || self.needed == 0 {

@@ -800,7 +800,7 @@ fn run_record_capture(
     stream.play().map_err(|e| e.to_string())?;
     crate::audio::publish_levels(app, "stream://level", &level, &stop);
     // Stop capture (drop the stream → no more callbacks), then flush the resampler's buffered tail
-    // (< ~64 ms) into the recording so the final sliver isn't dropped.
+    // (< one input block — ~21 ms at 48 kHz) into the recording so the final sliver isn't dropped.
     drop(stream);
     if let Ok(mut r) = resampler.lock() {
         let tail = r.flush();

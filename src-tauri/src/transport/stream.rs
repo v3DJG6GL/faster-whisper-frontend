@@ -353,7 +353,7 @@ pub async fn run<F>(
                     let _ = write.send(Message::Binary(bytes.into())).await;
                 }
             }
-            // Flush the resampler's buffered tail (< one input block, < ~64 ms) before asking the
+            // Flush the resampler's buffered tail (< one input block — ~21 ms at 48 kHz) before asking the
             // server to finalize, so the final sliver of audio isn't dropped from the transcript
             // (or the saved recording). The trailing zeros resample to a soft decay, not a click.
             let tail = resampler.flush();
