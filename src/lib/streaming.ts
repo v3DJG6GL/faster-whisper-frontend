@@ -292,8 +292,12 @@ let targetPollTimer: ReturnType<typeof setInterval> | null = null;
 const TARGET_POLL_MS = 700;
 function startTargetPoll(): void {
   stopTargetPoll();
-  void resolveTarget(); // resolve once immediately, then keep it fresh
-  targetPollTimer = setInterval(() => void resolveTarget(), TARGET_POLL_MS);
+  // resolveTarget awaits getFocusedApp(), which (unlike the seed reads) does NOT swallow IPC
+  // errors. In this fire-and-forget poll there's no caller to surface them, so attach .catch here
+  // to avoid an unhandled rejection on each tick — matching every other void-ed IPC in this file.
+  const poll = () => void resolveTarget().catch((e) => console.error("target poll failed:", e));
+  poll(); // resolve once immediately, then keep it fresh
+  targetPollTimer = setInterval(poll, TARGET_POLL_MS);
 }
 function stopTargetPoll(): void {
   if (targetPollTimer) {
