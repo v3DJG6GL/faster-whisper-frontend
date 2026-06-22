@@ -425,10 +425,15 @@ export const useApp = create<AppState>((set) => ({
 
   setDictation: (patch) =>
     set((s) => {
-      // Keep the shared `speaking` flag current whenever level/status moves. Computing
-      // it here (not per-component) means subscribers re-render only on a transition,
-      // not on every RMS tick — important for the tiny always-mounted sidebar dot.
-      if (!("level" in patch) && !("status" in patch)) return patch;
+      // Keep the shared `speaking` flag current whenever the level moves or the status actually
+      // changes. Stepping the singleton speakMemo only on a genuine move — NOT on a same-value
+      // "listening" re-assert (the partial handler re-sends {status:"listening"} several times a
+      // second) — keeps the store's detector in lockstep with the chip's, which steps once per
+      // level sample (see Overlay.tsx / speaking.ts). Computing it here (not per-component) also
+      // means subscribers re-render only on a transition, not on every RMS tick — important for
+      // the tiny always-mounted sidebar dot.
+      const statusMoved = "status" in patch && patch.status !== s.status;
+      if (!("level" in patch) && !statusMoved) return patch;
       const status = patch.status ?? s.status;
       const level = patch.level ?? s.level;
       const speaking = stepSpeaking(speakMemo, level, status === "listening", performance.now());
