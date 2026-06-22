@@ -979,12 +979,12 @@ pub async fn inject_text(
             // shortcut (e.g. opening editor tabs) instead of pasting.
             let clip = text.clone();
             // Capture the user's prior clipboard TIME-BOUNDED, mirroring begin_injection /
-            // read_primary_now: set_clipboard's get_text() is a blocking Wayland round-trip that can
-            // hang indefinitely on a dead clipboard owner, and it previously sat in an UN-timed
-            // spawn_blocking here — so the end-of-session insert (the restoreClipboard:true caller)
-            // could wedge at "injecting" forever (the stuck-finalize watchdog is stream-only). Read
-            // prev separately (400ms cap; None on timeout → skip the restore), then set the clipboard
-            // with capture_prev=false so the set_text still lands regardless.
+            // read_primary_now: reading the clipboard is a blocking Wayland round-trip that can hang
+            // indefinitely on a dead clipboard owner, and it previously sat (inside set_clipboard) in an
+            // UN-timed spawn_blocking here — so the end-of-session insert (the restoreClipboard:true
+            // caller) could wedge at "injecting" forever (the stuck-finalize watchdog is stream-only).
+            // Read prev separately (400ms cap; None on timeout → skip the restore), then set the
+            // clipboard so the set_text still lands regardless of the prev-read result.
             let prev = if restore_clipboard {
                 let p = read_selection_bounded(|| arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())).await;
                 if p.is_none() {
