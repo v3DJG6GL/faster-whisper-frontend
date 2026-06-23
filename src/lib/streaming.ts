@@ -1038,6 +1038,15 @@ export async function startLive(
   if (startingSession) return;
   startingSession = true;
   stopRequestedDuringStart = false; // fresh start; a prologue stop sets it (see requestStopIfStarting)
+  // Cancel a prior error's lingering auto-clear timer: its body nulls activeProfile + blips the chip
+  // to idle, guarded only by status==="error" at fire time. A re-trigger during the ~1s start prologue
+  // (status stays "error" until startLiveInner sets "listening") would otherwise let it fire on the
+  // now-live session, stranding it with activeProfile=null (wrong chip tag + usage attribution).
+  // flashError re-arms its own timer on any fresh failure, so dropping the stale one is safe.
+  if (errorClearTimer) {
+    clearTimeout(errorClearTimer);
+    errorClearTimer = null;
+  }
   try {
     await startLiveInner(backend, deviceId, activation, pov);
   } catch (e) {
