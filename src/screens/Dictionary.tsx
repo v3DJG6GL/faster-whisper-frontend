@@ -548,7 +548,10 @@ export default function Dictionary() {
   // an out-of-order network resolution would let the older fetch win. Bump per call, ignore stale.
   const loadGen = useRef(0);
 
-  const [loading, setLoading] = useState(false);
+  // Start in the loading state so first paint shows the spinner, not the "No rules to manage" empty
+  // card (the load effect only flips loading true post-paint; candidates.length===0 is still checked
+  // first, so a no-compatible-server boot still shows that). Mirrors QuickAdd's useState<Phase>("loading").
+  const [loading, setLoading] = useState(true);
   const [fetchRes, setFetchRes] = useState<PipelineFetch | null>(null);
   const [rules, setRules] = useState<PipelineRule[]>([]);
   const [edits, setEdits] = useState<Record<string, EditState>>({});
@@ -766,7 +769,10 @@ export default function Dictionary() {
                   type="button"
                   aria-pressed={active}
                   disabled={saving}
-                  onClick={() => setSelectedId(b.id)}
+                  onClick={() => {
+                    setSelectedId(b.id);
+                    setLoading(true); // show the spinner on switch, not the prior backend's rules
+                  }}
                   className={cn(
                     "ring-signal rounded-pill border px-3.5 py-1.5 text-[12.5px] font-medium transition-colors disabled:opacity-40",
                     active
