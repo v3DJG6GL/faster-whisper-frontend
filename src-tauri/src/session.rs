@@ -38,6 +38,18 @@ fn next_session_epoch() -> u64 {
     ACTIVE_EPOCH.fetch_add(1, Ordering::SeqCst) + 1
 }
 
+/// Retire the active epoch when a session is DISCARDED (cancel) before any successor claims one, so
+/// the discarded session — and its already-detached background drain (finish() detaches the WS task;
+/// the batch path its spawned transcribe POST) — can never emit again. Without this the cancelled
+/// epoch stays active until the NEXT start claims one, leaving that next session's start prologue
+/// (status flips to "listening" before start() runs next_session_epoch) a window where the stale
+/// drain's final/closed would pass BOTH emit_if_active AND the frontend inSession() guard. Safe: a
+/// fresh start always claims a strictly higher epoch via next_session_epoch, and a discarded session's
+/// late `closed` can only reach the (cancelStream-calling) handler while its own epoch is still active.
+pub fn retire_active_epoch() {
+    ACTIVE_EPOCH.fetch_add(1, Ordering::SeqCst);
+}
+
 /// Emit a `stream://*` event only if `epoch` is still the active session (see [`ACTIVE_EPOCH`]).
 fn emit_if_active<S: Serialize + Clone>(app: &AppHandle, epoch: u64, event: &str, payload: S) {
     if ACTIVE_EPOCH.load(Ordering::SeqCst) == epoch {

@@ -415,6 +415,7 @@ pub fn stop_stream(state: State<StreamState>) -> Result<(), String> {
 pub fn cancel_stream(state: State<StreamState>) -> Result<(), String> {
     let sess = state.0.lock().map_err(|_| "stream state poisoned")?.take();
     drop(sess); // Drop (not finish) runs OUTSIDE the lock — the guard released on the line above
+    session::retire_active_epoch(); // discarded session (+ any detached drain) must never emit again
     Ok(())
 }
 
@@ -482,6 +483,7 @@ pub fn stop_record(state: State<RecordState>) -> Result<(), String> {
 pub fn cancel_record(state: State<RecordState>) -> Result<(), String> {
     let sess = state.0.lock().map_err(|_| "record state poisoned")?.take();
     drop(sess); // Drop (not finish) runs OUTSIDE the lock — no transcription POST, releases the mute
+    session::retire_active_epoch(); // discarded session (+ any in-flight transcribe POST) must never emit again
     Ok(())
 }
 
