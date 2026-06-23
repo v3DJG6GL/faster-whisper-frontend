@@ -520,6 +520,15 @@ mod imp {
         };
         let bus = conn.connection().clone();
         let read = async move {
+            // Password/secret field → never pull its selection into the Quick-Add seed or the
+            // correct-on-close guard. Native toolkits expose only masked bullets over AT-SPI, but skip
+            // it outright (defence in depth). Best-effort: a proxy error / asleep tree just falls
+            // through to the normal read.
+            if let Ok(acc) = el.as_accessible_proxy(&bus).await {
+                if matches!(acc.get_role().await, Ok(atspi::Role::PasswordText)) {
+                    return super::SelRead::Empty;
+                }
+            }
             // Build a Text proxy for the element from its (bus name, path) — same construction as
             // `as_accessible_proxy`, but for the Text interface.
             let Some(name) = el.name() else {
