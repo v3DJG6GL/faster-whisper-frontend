@@ -19,9 +19,13 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 /// One typing request handed to the persistent typer task: type `text`, then an
 /// optional Enter; `reply` carries the result back to the awaiting command.
 pub struct Job {
-    text: String,    // characters to type (empty for a paste chord)
-    paste: bool,     // true → synthesize the paste chord instead of typing `text`
-    chord: Vec<i32>, // evdev keycodes (modifiers first, main key last) for a paste job
+    text: String, // characters to type (empty for a paste chord)
+    paste: bool,  // true → synthesize the paste chord instead of typing `text`
+    // The paste chord as KeyboardEvent.code strings (modifiers first, main key last) — NOT pre-resolved
+    // keycodes — so the MAIN letter key is resolved by KEYSYM against the active layout's charmap inside
+    // session_loop (where the charmap is built). A fixed physical position would mis-paste on a layout
+    // whose physical V position isn't keysym 'v' (Dvorak/Colemak/Bepo).
+    chord_codes: Vec<String>,
     auto_enter: bool,
     reply: oneshot::Sender<Result<(), String>>,
 }
@@ -277,7 +281,7 @@ mod imp {
         chord_codes: Vec<String>,
         auto_enter: bool,
     ) -> Result<(), String> {
-        submit(app, typer, String::new(), true, chord_to_keycodes(&chord_codes), auto_enter).await
+        submit(app, typer, String::new(), true, chord_codes, auto_enter).await
     }
 
     fn is_modifier_code(code: &str) -> bool {
@@ -319,22 +323,38 @@ mod imp {
             _ => return None,
         })
     }
-    /// Map a KeyboardEvent.code chord (e.g. ["ControlLeft","ShiftLeft","KeyV"]) to evdev
-    /// keycodes, modifiers first and the main key last. Falls back to Ctrl+V when no main
-    /// key maps, so paste never silently no-ops.
-    fn chord_to_keycodes(codes: &[String]) -> Vec<i32> {
+    /// The MAIN (non-modifier) key's keycode, resolved by KEYSYM via the active-layout charmap so the
+    /// focused app receives the intended character (e.g. 'v' for Ctrl+V) regardless of physical layout —
+    /// matching the X11 path (inject.rs binds keysym 'v'). Falls back to the fixed physical position when
+    /// the layout has no such keysym, or for a non-letter main key (Insert).
+    fn main_key_keycode(code: &str, charmap: &HashMap<char, KeySpec>) -> Option<i32> {
+        if let Some(letter) = code.strip_prefix("Key").filter(|s| s.len() == 1) {
+            let ch = letter.chars().next().unwrap().to_ascii_lowercase();
+            if let Some(spec) = charmap.get(&ch) {
+                return Some(spec.keycode);
+            }
+        }
+        code_to_keycode(code) // fixed-table fallback (Insert, or the physical letter position)
+    }
+
+    /// Map a KeyboardEvent.code chord (e.g. ["ControlLeft","ShiftLeft","KeyV"]) to evdev keycodes,
+    /// modifiers first and the main key last. Modifiers map by fixed evdev position (layout-independent);
+    /// the main key maps by keysym via `charmap` (see main_key_keycode). Falls back to Ctrl+V — the
+    /// layout's own 'v' keycode — when no main key maps, so paste never silently no-ops.
+    fn chord_to_keycodes(codes: &[String], charmap: &HashMap<char, KeySpec>) -> Vec<i32> {
         let (mut mods, mut keys) = (Vec::new(), Vec::new());
         for c in codes {
-            if let Some(kc) = code_to_keycode(c) {
-                if is_modifier_code(c) {
-                    mods.push(kc)
-                } else {
-                    keys.push(kc)
+            if is_modifier_code(c) {
+                if let Some(kc) = code_to_keycode(c) {
+                    mods.push(kc);
                 }
+            } else if let Some(kc) = main_key_keycode(c, charmap) {
+                keys.push(kc);
             }
         }
         if keys.is_empty() {
-            return vec![KEY_LEFTCTRL, KEY_V];
+            let v = charmap.get(&'v').map(|s| s.keycode).unwrap_or(KEY_V);
+            return vec![KEY_LEFTCTRL, v];
         }
         mods.extend(keys);
         mods
@@ -347,7 +367,7 @@ mod imp {
         typer: &WaylandTyper,
         text: String,
         paste: bool,
-        chord: Vec<i32>,
+        chord_codes: Vec<String>,
         auto_enter: bool,
     ) -> Result<(), String> {
         let tx = {
@@ -362,7 +382,7 @@ mod imp {
             guard.as_ref().unwrap().clone()
         };
         let (reply, reply_rx) = oneshot::channel();
-        tx.send(Job { text, paste, chord, auto_enter, reply })
+        tx.send(Job { text, paste, chord_codes, auto_enter, reply })
             .await
             .map_err(|_| "wayland typer unavailable".to_string())?;
         reply_rx
@@ -445,14 +465,16 @@ mod imp {
                 }
 
                 if job.paste {
-                    // The configured paste chord as raw keycodes (modifiers first, main
-                    // key last), layout-independent. Press in order, release in reverse.
-                    let n = job.chord.len();
-                    for (i, &code) in job.chord.iter().enumerate() {
+                    // Resolve the chord to keycodes HERE (the charmap is built) so the MAIN key maps by
+                    // keysym against the active layout (e.g. 'v' for Ctrl+V) instead of a fixed physical
+                    // position — matching the X11 path. Press in order, release in reverse.
+                    let chord = chord_to_keycodes(&job.chord_codes, &charmap);
+                    let n = chord.len();
+                    for (i, &code) in chord.iter().enumerate() {
                         press!(code);
                         tokio::time::sleep(Duration::from_millis(if i + 1 == n { 4 } else { 6 })).await;
                     }
-                    for &code in job.chord.iter().rev() {
+                    for &code in chord.iter().rev() {
                         tokio::time::sleep(Duration::from_millis(6)).await;
                         release!(code);
                     }
