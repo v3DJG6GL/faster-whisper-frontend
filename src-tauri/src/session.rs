@@ -261,6 +261,23 @@ fn err_cb_with_stop(stop: Arc<AtomicBool>) -> impl FnMut(StreamError) + Send + '
     }
 }
 
+/// Like `err_cb_with_stop`, but also records that the stop was caused by a TERMINAL device loss (vs a
+/// user/finish stop). The record/batch path has no channel-close teardown like the streaming path, so
+/// it inspects this flag after capture returns to emit a recovery "closed" ONLY on a real disconnect —
+/// never on a normal stop (which would settle the chip before the final transcript lands).
+fn err_cb_with_lost(
+    stop: Arc<AtomicBool>,
+    device_lost: Arc<AtomicBool>,
+) -> impl FnMut(StreamError) + Send + 'static {
+    move |e| {
+        if matches!(e, StreamError::DeviceNotAvailable) {
+            device_lost.store(true, Ordering::SeqCst);
+            stop.store(true, Ordering::SeqCst);
+        }
+        tracing::warn!("[stream] device error: {e}");
+    }
+}
+
 fn downmix<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> Vec<f32> {
     let mut out = Vec::new();
     downmix_into(data, channels, to_f32, &mut out);
@@ -468,27 +485,42 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
     let buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
     let level = Arc::new(AtomicU32::new(0));
     let capture_stop = Arc::new(AtomicBool::new(false));
+    // Set by the capture err_cb on a TERMINAL device loss (vs a user/finish stop), so the post-capture
+    // arm below can emit a recovery "closed" only on a real disconnect.
+    let device_lost = Arc::new(AtomicBool::new(false));
 
     let capture_join = {
         let app = app.clone();
         let buffer = buffer.clone();
         let level = level.clone();
         let stop = capture_stop.clone();
+        let device_lost = device_lost.clone();
         std::thread::Builder::new()
             .name("record-capture".into())
             .spawn(move || {
-                if let Err(e) =
-                    run_record_capture(&app, device, format, channels, config, in_rate, buffer, level, stop)
-                {
-                    tracing::warn!("[record] capture: {e}");
-                    // Parity with the streaming path: there, a capture failure drops pcm_tx,
-                    // closes the channel, and drives a StreamEvent::Closed → "stream://status:
-                    // closed", so the chip settles back to idle. The batch path has no such
-                    // channel loop, so without this the chip strands on "listening" over a dead
-                    // mic with no error and no recovery but a manual cancel. Emit the same close
-                    // (committedDoc is empty pre-transcription, so the frontend just returns to
-                    // idle, exactly as the streaming path does).
-                    emit_if_active(&app, epoch, "stream://status", "closed");
+                match run_record_capture(
+                    &app, device, format, channels, config, in_rate, buffer, level, stop,
+                    device_lost.clone(),
+                ) {
+                    Err(e) => {
+                        tracing::warn!("[record] capture: {e}");
+                        // Parity with the streaming path: there, a capture failure drops pcm_tx,
+                        // closes the channel, and drives a StreamEvent::Closed → "stream://status:
+                        // closed", so the chip settles back to idle. The batch path has no such
+                        // channel loop, so without this the chip strands on "listening" over a dead
+                        // mic with no error and no recovery but a manual cancel. Emit the same close
+                        // (committedDoc is empty pre-transcription, so the frontend just returns to
+                        // idle, exactly as the streaming path does).
+                        emit_if_active(&app, epoch, "stream://status", "closed");
+                    }
+                    // A mid-capture device disconnect trips `stop` like a normal stop and returns Ok,
+                    // but with `device_lost` set. The streaming path settles via its channel close;
+                    // the batch path has none, so emit the same "closed" here to unstick the chip.
+                    // finish() (the user stop) never sets `device_lost`, so its final still lands.
+                    Ok(()) if device_lost.load(Ordering::SeqCst) => {
+                        emit_if_active(&app, epoch, "stream://status", "closed");
+                    }
+                    Ok(()) => {}
                 }
             })
             .map_err(|e| e.to_string())?
@@ -774,6 +806,7 @@ fn run_record_capture(
     buffer: Arc<Mutex<Vec<u8>>>,
     level: Arc<AtomicU32>,
     stop: Arc<AtomicBool>,
+    device_lost: Arc<AtomicBool>,
 ) -> Result<(), String> {
     // One resampler, shared with the `move` capture closure via Arc<Mutex>, so we can flush its
     // buffered tail after capture stops (the closure owns nothing else we could reach).
@@ -798,7 +831,7 @@ fn run_record_capture(
                         }
                     }
                 },
-                err_cb_with_stop(stop.clone()),
+                err_cb_with_lost(stop.clone(), device_lost.clone()),
                 None,
             )
         }
@@ -821,7 +854,7 @@ fn run_record_capture(
                         }
                     }
                 },
-                err_cb_with_stop(stop.clone()),
+                err_cb_with_lost(stop.clone(), device_lost.clone()),
                 None,
             )
         }
@@ -844,7 +877,7 @@ fn run_record_capture(
                         }
                     }
                 },
-                err_cb_with_stop(stop.clone()),
+                err_cb_with_lost(stop.clone(), device_lost.clone()),
                 None,
             )
         }
