@@ -112,7 +112,11 @@ export async function initOverlayController(): Promise<void> {
         // warn-tinted hint. Empty when the feature's off, no app is known, or the session's idle.
         targetTitle: tgt?.title ?? "",
         targetSkip: tgt ? (state.targetSkip ?? "") : "",
-        targetOnlySpeaking: rec.showTargetOnlySpeaking,
+        // AND with the parent like the other hover flags below: in "On hover" mode the
+        // "Only while speaking" control is disabled, but a `true` set earlier in "Always" mode
+        // persists and would gate the target on `expanded` (never true while armed-but-silent),
+        // so hovering could never reveal it — defeating the user's "On hover" choice.
+        targetOnlySpeaking: !rec.showTargetOnHover && rec.showTargetOnlySpeaking,
         // When on, the chip reveals the target only while hovered (vs. always shown).
         targetOnHover: rec.showTargetOnOverlay && rec.showTargetOnHover,
         // P19: per-phrase "inserted" pulse + truthful end-of-session done marker. Sent
