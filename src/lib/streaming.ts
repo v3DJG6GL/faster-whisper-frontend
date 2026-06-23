@@ -851,6 +851,11 @@ async function ensureListeners(): Promise<void> {
   });
 
   await listen<string>("stream://error", (e) => {
+    // Drop a cancelled/stopped session's detached-drain late error: stop/cancel don't bump
+    // ACTIVE_EPOCH, so a finish()-detached drain that errors after a stop→cancel still passes
+    // emit_if_active and would flashError a spurious red chip over the idle chip the user cleared.
+    // The first real session error always arrives while busy. Mirrors partial/final/boundary/overrides.
+    if (!inSession()) return;
     clearStuckWatchdog();
     stopTargetPoll();
     // Reconcile the warm-up gate, like every other terminal path (stop/cancel/closed): an error
