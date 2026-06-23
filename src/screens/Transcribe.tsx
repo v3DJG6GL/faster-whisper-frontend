@@ -49,6 +49,13 @@ export default function Transcribe() {
     setResult(null);
     setError(null);
     setBusy(false);
+    // Also clear the "Copied" confirmation (+ its timer): else a new transcript can mount with the
+    // Copy button still showing "Copied" within the residual ~1.5s window — a false confirmation.
+    setCopied(false);
+    if (copyTimer.current) {
+      window.clearTimeout(copyTimer.current);
+      copyTimer.current = undefined;
+    }
   };
 
   const choose = async () => {
@@ -79,6 +86,7 @@ export default function Transcribe() {
     setBusy(true);
     setError(null);
     setResult(null);
+    setCopied(false); // an unchanged-inputs re-run also invalidates a prior "Copied"
     try {
       const res = await transcribeFile({
         serverUrl: backend.serverUrl,
