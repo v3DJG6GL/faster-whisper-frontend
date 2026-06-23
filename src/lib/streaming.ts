@@ -379,7 +379,6 @@ function commonPrefixLen(a: string, b: string): number {
 
 async function ensureListeners(): Promise<void> {
   if (wired || !isTauri) return;
-  wired = true;
   const { listen } = await import("@tauri-apps/api/event");
   const setDictation = useApp.getState().setDictation;
 
@@ -870,6 +869,10 @@ async function ensureListeners(): Promise<void> {
             );
             return;
           }
+          // A cancel (insertCfg→null) or a fresh session (insertCfg→a new object) that landed during
+          // the awaited injectText must not stamp this finished session's outcome onto the idled/next
+          // session's globals — mirrors the live per-phrase tasks' post-inject guard.
+          if (insertCfg !== cfg) return;
           // Single end-of-session insert — record the outcome for the done marker (no separate
           // per-phrase pulse; this IS the whole session).
           if (!t.isSelf) {
@@ -935,6 +938,12 @@ async function ensureListeners(): Promise<void> {
     if (!inSession()) return;
     setDictation({ overridesIgnored: e.payload });
   });
+  // Set the once-only flag ONLY after every registration succeeded: a rejected import/listen otherwise
+  // leaves `wired` true forever, so every later startLive short-circuits here and opens a session with
+  // NO stream://* handlers (mic + system-mute open, chip stuck, no transcript, until restart). Deferring
+  // it lets the next start retry. Safe: the sole caller (startLiveInner) is serialized by startLive's
+  // startingSession guard, so this await window admits no concurrent ensureListeners (no double-register).
+  wired = true;
 }
 
 /** Merge a Backend's decode defaults with a Profile's overrides (profile wins per
