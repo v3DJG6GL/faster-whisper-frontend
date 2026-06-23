@@ -37,9 +37,16 @@ export async function initOverlayController(): Promise<void> {
   const { emit } = await import("@tauri-apps/api/event");
 
   useApp.subscribe((state, prev) => {
-    // Forward the live chip state whenever the relevant fields change.
+    const pos = state.settings.recording.indicatorPosition;
+    // Forward the live chip state whenever the relevant fields change — but only when the chip is
+    // actually enabled. With it "off" (tray-only / GNOME) the overlay webview is never shown, so this
+    // ~30Hz level-driven payload rebuild + cross-window broadcast to a hidden window is pure waste
+    // (the churn that bloats the shared WebKitGTK renderer). A position toggle flows through the
+    // `state.settings` change below, so flipping back to an edge re-emits a fresh payload in the same
+    // tick that reveals the chip — no staleness.
     if (
-      state.status !== prev.status ||
+      pos !== "off" &&
+      (state.status !== prev.status ||
       state.warming !== prev.warming || // mic warm-up gate (chip "warming up…")
       state.level !== prev.level ||
       state.partial !== prev.partial ||
@@ -52,7 +59,7 @@ export async function initOverlayController(): Promise<void> {
       state.lastInsert !== prev.lastInsert || // per-phrase "inserted" pulse trigger
       state.sessionOutcome !== prev.sessionOutcome || // end-of-session done marker
       state.usage !== prev.usage || // P28: refreshed usage stats → update the chip readout
-      state.settings !== prev.settings // theme / position / preview / show-profile toggles
+      state.settings !== prev.settings) // theme / position / preview / show-profile toggles
     ) {
       const rec = state.settings.recording;
       // Which Profile is dictating, for the chip's identity tag (+ its language /
@@ -156,7 +163,6 @@ export async function initOverlayController(): Promise<void> {
       void playCue("start");
     }
 
-    const pos = state.settings.recording.indicatorPosition;
     const persistent = state.settings.recording.persistentDock && pos !== "off";
     const active = isActiveDictation(state.status);
     const prevActive = isActiveDictation(prev.status);
