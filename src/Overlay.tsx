@@ -526,7 +526,9 @@ export default function Overlay() {
   // Match the dot + transcript during the post-speech finalize/insert phase: dictationVisual
   // maps processing to the neutral "machine working" tone, so the bars must too (else they'd
   // glow amber "ready" next to a grey dot). Mirrors Home's waveTone derivation.
-  const barTone = state.warming || processing ? "dim" : speaking ? "live" : "accent";
+  // Armed-amber only while actually listening; idle (the post-session expand-linger) reads neutral
+  // grey like the hollow idle dot + every other surface (off/idle = grey), not the amber "ready" tone.
+  const barTone = state.warming || processing ? "dim" : speaking ? "live" : state.status === "listening" ? "accent" : "dim";
 
   // Deep-idle edge-peek driver: after the chip sits undisturbed for peekTimeoutSec, tuck it to
   // the edge; ANY activity — a status change (e.g. dictation starting), speech, finishing, a
