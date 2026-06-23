@@ -795,7 +795,7 @@ export default function Overlay() {
                     width cap so its flexible child (the transcript) yields space — a w-max
                     (max-content) row stays full width and pushes the pill past the window. */}
                 <div className="flex min-w-0 items-center gap-3 pl-3">
-                  {(showProfile || showTarget) && <span className="h-4 w-px shrink-0 bg-line" aria-hidden />}
+                  {idGroups.length > 0 && <span className="h-4 w-px shrink-0 bg-line" aria-hidden />}
                   {showQuickLaunch ? (
                     <div className="flex items-center gap-2">
                       {state.quickLaunch.map((e) => {
