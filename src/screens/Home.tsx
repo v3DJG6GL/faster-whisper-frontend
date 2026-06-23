@@ -127,7 +127,10 @@ export default function Home() {
           ? "bg-accent text-accent-ink"
           : "bg-surface-2 text-dim";
   const waveTone = vis.tone === "faint" ? "dim" : vis.tone;
-  const waveProcessing = status === "transcribing" || status === "injecting";
+  // Mirror the chip (Overlay working = processing || warming): vis.state is "processing" for
+  // transcribing/injecting AND cold-mic warm-up, so the bars self-sweep during warm-up instead of
+  // sitting flat at the ~0 level a warming mic delivers — matching heroFill and the chip.
+  const waveProcessing = vis.state === "processing";
 
   // The live-transcript card is shown while a session is live (or on error), then
   // LINGERS briefly after it ends so the final transcript stays readable, before it
@@ -245,7 +248,7 @@ export default function Home() {
             </div>
           </div>
           <LiveWaveform
-            active={status === "listening"}
+            active={status === "listening" && !warming}
             processing={waveProcessing}
             tone={waveTone}
             bars={28}
@@ -281,7 +284,7 @@ export default function Home() {
             <Card className="p-5">
               <div className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-label text-faint">
                 <LiveWaveform
-                  active={status === "listening"}
+                  active={status === "listening" && !warming}
                   processing={waveProcessing}
                   bars={5}
                   variant="dots"
