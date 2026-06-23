@@ -529,7 +529,16 @@ mod imp {
                     // (Swiss-German ü, whose Shift gives è) pressing Shift would select the WRONG
                     // glyph, so flip Caps OFF for the press and use the glyph's own modifiers, then
                     // flip it back — symmetric to the lock path above (which flips it ON for a capital).
-                    let caps_affects = caps && c.is_alphabetic();
+                    // Gate on whether Caps actually case-FOLDS this char to a different single char —
+                    // not merely is_alphabetic(), which is also true for caseless-script letters and for
+                    // lowercase letters whose uppercase is multi-char (German 'ß' → "SS"). Caps doesn't
+                    // change those glyphs, so the XOR-Shift below would wrongly select their shift-level
+                    // keysym (e.g. German Shift+ß = '?', turning "Straße" into "Stra?e").
+                    let caps_affects = caps && {
+                        let lo: Vec<char> = c.to_lowercase().collect();
+                        let up: Vec<char> = c.to_uppercase().collect();
+                        lo.len() == 1 && up.len() == 1 && lo[0] != up[0]
+                    };
                     let flip_caps_off = caps_affects && !spec.caps_safe;
                     if flip_caps_off {
                         press!(KEY_CAPSLOCK);
