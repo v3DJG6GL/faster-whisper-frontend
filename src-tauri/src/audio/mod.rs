@@ -232,7 +232,11 @@ pub fn trim_silence_16k(pcm: &[u8]) -> Vec<u8> {
 /// Write the dictation transcript next to its `.wav` as a sibling `.txt` (same stem), so the
 /// recordings folder is browsable/searchable. Best-effort: logs and returns on any error.
 pub fn save_transcript_sidecar(wav_path: &Path, text: &str) {
-    let trimmed = text.trim();
+    // Sanitize like the injection + Copy paths so the saved .txt matches what was actually typed
+    // (drops control chars, keeps tab/LF) — the server text arrives here raw. A no-op for normal
+    // natural-language transcripts; only strips stray control chars if the server ever emits them.
+    let cleaned = crate::inject::sanitize_injected(text);
+    let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         return;
     }
