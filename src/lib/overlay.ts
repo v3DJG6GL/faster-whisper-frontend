@@ -184,8 +184,17 @@ export async function initOverlayController(): Promise<void> {
 
     // Inactive (and no persistent dock), or the overlay is disabled — hide it (with a
     // linger so the final transcript / error stays readable; immediately if turned off).
-    if (visible) {
+    // An error can also arrive while the chip is HIDDEN (a start-failure in the prologue before
+    // status reaches "listening", or a late drain error after the chip already hid) — neither active
+    // nor persistent, so the show gate above skipped it. Show it here first so the error linger below
+    // actually displays it, then let it tear down as usual (the 2400ms error linger is preserved).
+    if (visible || (pos !== "off" && state.status === "error")) {
       clearTimeout(hideTimer);
+      if (!visible && pos !== "off") {
+        void showOverlay(pos);
+        shownPos = pos;
+        visible = true;
+      }
       const delay = pos === "off" ? 0 : state.status === "error" ? 2400 : 1800;
       hideTimer = setTimeout(() => {
         visible = false;
