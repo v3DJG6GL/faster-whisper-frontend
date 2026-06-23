@@ -40,6 +40,7 @@ import {
   reregisterShortcutsUnlessCapturing,
 } from "./api";
 import type { ActivationKind, AppRule, Backend, DecodeOverrides, FocusedApp, GeneralSettings, InsertMethod } from "./types";
+import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
 
 let wired = false;
@@ -393,7 +394,16 @@ async function ensureListeners(): Promise<void> {
   let lastLevelAt = 0;
   let levelTimer: ReturnType<typeof setTimeout> | undefined;
   let latestLevel = 0;
-  await listen<number>("stream://level", (e) => {
+  // Register every stream://* listener through reg() so their unlisten handles are collected, and roll
+  // them ALL back if any registration rejects mid-sequence — else the survivors stay live with no
+  // handle while `wired` is still false, so the next (serialized) startLive re-registers atop them and
+  // each stream://* event gets double-handled (double inject / double cue) until restart.
+  const uns: UnlistenFn[] = [];
+  const reg = async <T>(event: string, cb: EventCallback<T>): Promise<void> => {
+    uns.push(await listen<T>(event, cb));
+  };
+  try {
+  await reg<number>("stream://level", (e) => {
     latestLevel = e.payload;
     // Mic warm-up gate (see startLive): while gating, detect the mic going live. Real
     // audio sits above the digital-silence floor for a couple of consecutive frames; a
@@ -451,7 +461,7 @@ async function ensureListeners(): Promise<void> {
     }
   });
 
-  await listen<{ committed: string; pending: string }>("stream://partial", (e) => {
+  await reg<{ committed: string; pending: string }>("stream://partial", (e) => {
     const live = e.payload.committed + e.payload.pending;
     const sep = committedDoc && live && !/\s$/.test(committedDoc) && !/^\s/.test(live) ? " " : "";
     // A partial can still arrive AFTER stopLive() — the finalize drain emits buffered
@@ -475,7 +485,7 @@ async function ensureListeners(): Promise<void> {
     if (insertCfg?.live && capturing) bumpPhraseEnd();
   });
 
-  await listen<{ committed: string; tail: string; last: boolean }>("stream://final", (e) => {
+  await reg<{ committed: string; tail: string; last: boolean }>("stream://final", (e) => {
     // A cancelled/errored session's detached drain can still emit a late `final` on the
     // un-advanced epoch (cancelLive/stopRecord don't bump ACTIVE_EPOCH, so emit_if_active
     // still passes). Don't let it resurrect the preview / re-inject after the cancel cleared
@@ -645,7 +655,7 @@ async function ensureListeners(): Promise<void> {
     }
   });
 
-  await listen<string>("stream://boundary", (e) => {
+  await reg<string>("stream://boundary", (e) => {
     // Same un-advanced-epoch path as `final`/`overrides-ignored`: a cancelled/errored session's
     // detached WS drain can still emit a late boundary. Unlike cancel, a stream://error does NOT
     // null insertCfg, so without this the separator-inject below would land in the now-refocused
@@ -713,7 +723,7 @@ async function ensureListeners(): Promise<void> {
     clipDirty = false;
   });
 
-  await listen<string>("stream://status", (e) => {
+  await reg<string>("stream://status", (e) => {
     if (e.payload === "ready") {
       // Drop a late `ready` that lands after a stop (a short PTT tap, or a stop during a cold-model
       // handshake delay): stopLive already moved us to "transcribing", and resurrecting "listening"
@@ -885,7 +895,7 @@ async function ensureListeners(): Promise<void> {
     }
   });
 
-  await listen<string>("stream://error", (e) => {
+  await reg<string>("stream://error", (e) => {
     // Drop a cancelled/stopped session's detached-drain late error: stop/cancel don't bump
     // ACTIVE_EPOCH, so a finish()-detached drain that errors after a stop→cancel still passes
     // emit_if_active and would flashError a spurious red chip over the idle chip the user cleared.
@@ -930,7 +940,7 @@ async function ensureListeners(): Promise<void> {
   // The server refused one or more decode overrides because the field is
   // admin-locked (reported in the stream `ready` frame). Non-blocking FYI;
   // cleared at the start of the next dictation.
-  await listen<string[]>("stream://overrides-ignored", (e) => {
+  await reg<string[]>("stream://overrides-ignored", (e) => {
     // Same un-advanced-epoch path as `final`: ignore a cancelled/errored session's late drain
     // emit so a stale overrides-ignored notice can't appear after the session was dropped. The
     // legitimate emit rides the `ready` frame (status already "listening") or the batch drain
@@ -938,6 +948,19 @@ async function ensureListeners(): Promise<void> {
     if (!inSession()) return;
     setDictation({ overridesIgnored: e.payload });
   });
+  } catch (e) {
+    // A mid-sequence import/listen reject: roll back every listener already registered so none are
+    // orphaned (wired stays false below → the next startLive retries with a clean single set), then
+    // rethrow so startLive's catch surfaces the failure.
+    for (const un of uns) {
+      try {
+        un();
+      } catch {
+        /* best-effort teardown */
+      }
+    }
+    throw e;
+  }
   // Set the once-only flag ONLY after every registration succeeded: a rejected import/listen otherwise
   // leaves `wired` true forever, so every later startLive short-circuits here and opens a session with
   // NO stream://* handlers (mic + system-mute open, chip stuck, no transcript, until restart). Deferring
