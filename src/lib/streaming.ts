@@ -39,7 +39,7 @@ import {
   getFocusedApp,
   reregisterShortcutsUnlessCapturing,
 } from "./api";
-import type { ActivationKind, AppRule, Backend, DecodeOverrides, FocusedApp, GeneralSettings } from "./types";
+import type { ActivationKind, AppRule, Backend, DecodeOverrides, FocusedApp, GeneralSettings, InsertMethod } from "./types";
 import { isActiveDictation } from "./dictationVisual";
 
 let wired = false;
@@ -232,11 +232,11 @@ function clearPhraseEnd(): void {
  *  global settings apply. Opt-in deep detection is positive-only (only editable===false coerces) and
  *  an explicit per-app insert method opts out — the user already decided how to inject here (e.g.
  *  "konsole → paste": a terminal isn't an editable AT-SPI field, yet the user told us to paste). */
-function resolveInjectionTarget(
+export function resolveInjectionTarget(
   targetApp: FocusedApp | null,
   appRules: AppRule[],
   g: GeneralSettings,
-): { rule: AppRule | undefined; notEditable: boolean; method: InsertCfg["method"]; pasteShortcut: string[] } {
+): { rule: AppRule | undefined; notEditable: boolean; method: InsertMethod; pasteShortcut: string[] } {
   const rule = targetApp
     ? appRules.find((r) => r.appId.toLowerCase() === targetApp.appId.toLowerCase())
     : undefined;

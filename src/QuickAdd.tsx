@@ -24,7 +24,8 @@ import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
   getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText,
 } from "@/lib/api";
-import type { AppRule, InsertMethod, PipelineFetch } from "@/lib/types";
+import { resolveInjectionTarget } from "@/lib/streaming";
+import type { AppRule, GeneralSettings, PipelineFetch } from "@/lib/types";
 
 type Target = { serverUrl: string; backendId: string; slug: string };
 type Phase = "loading" | "nopin" | "error" | "ok";
@@ -95,10 +96,10 @@ export default function QuickAdd() {
   // the current list over it and, if it changed AND it's still selected, paste the result back —
   // correcting the word in place. `pasteShortcut` is captured from config for that replace-paste.
   const originalSelectionRef = useRef<string | null>(null);
-  const pasteShortcutRef = useRef<string[]>(["ControlLeft", "KeyV"]);
-  const insertMethodRef = useRef<InsertMethod>("paste");
-  // Per-app rules, so correct-on-close honors the SOURCE app's paste shortcut (and "never type here")
-  // the same way the main injection path does — not just the global paste chord.
+  // General settings + per-app rules, so correct-on-close resolves the SOURCE app's injection target
+  // through the SAME shared resolver the main injection path uses (resolveInjectionTarget) — per-app
+  // method/paste-shortcut, "never type here", AND the deep-detection non-editable→clipboard coercion.
+  const generalRef = useRef<GeneralSettings | null>(null);
   const appRulesRef = useRef<AppRule[]>([]);
   // Generation guards so an out-of-order async resolution can't apply stale state (mirrors
   // Dictionary's selectedIdRef / Transcribe's runId). `loadGen` covers refresh()'s fetches
@@ -119,8 +120,7 @@ export default function QuickAdd() {
       if (gen !== loadGen.current) return; // superseded by a newer refresh/summon
       if (cfg) {
         document.documentElement.dataset.theme = cfg.settings.theme;
-        pasteShortcutRef.current = cfg.settings.general.pasteShortcut ?? ["ControlLeft", "KeyV"];
-        insertMethodRef.current = cfg.settings.general.insertMethod;
+        generalRef.current = cfg.settings.general;
         appRulesRef.current = cfg.appRules ?? [];
       }
       const pin = cfg?.settings.quickAddList ?? null;
@@ -304,8 +304,8 @@ export default function QuickAdd() {
     const corrected = original ? applyMap(original, rowsRef.current) : null;
     originalSelectionRef.current = null; // one-shot — don't re-correct on a later close
     void hideQuickAdd();
-    if (original && corrected && corrected !== original) {
-      void replaceSelectionAfterClose(original, corrected, pasteShortcutRef.current, insertMethodRef.current, appRulesRef.current).catch((e) =>
+    if (original && corrected && corrected !== original && generalRef.current) {
+      void replaceSelectionAfterClose(original, corrected, generalRef.current, appRulesRef.current).catch((e) =>
         console.error("correct-on-close paste failed:", e),
       );
     }
@@ -525,23 +525,21 @@ export default function QuickAdd() {
 async function replaceSelectionAfterClose(
   original: string,
   corrected: string,
-  globalPasteShortcut: string[],
-  globalInsertMethod: InsertMethod,
+  general: GeneralSettings,
   appRules: AppRule[],
 ) {
   await new Promise((r) => setTimeout(r, 250)); // let the compositor hand focus back to the source
-  // Focus is back on the source app now; read its selection AND identity together so the replace
-  // uses the SAME per-app rule the main injection path would (resolveInjectionTarget) — not just the
-  // global paste chord.
+  // Focus is back on the source app now; read its selection AND identity together, then resolve the
+  // injection target through the SAME shared resolver the main injection path uses — so per-app
+  // method / paste-shortcut AND the deep-detection non-editable→clipboard coercion all apply here too.
+  // (A live selection can sit in a NON-editable view — a read-only doc/web page — where a synthetic
+  // paste/type would misfire; the resolver coerces those to clipboard-only.)
   const [current, app] = await Promise.all([getFocusedSelection(), getFocusedApp()]);
   if (current == null || current.trim() !== original) return;
-  const rule = app ? appRules.find((r) => r.appId.toLowerCase() === app.appId.toLowerCase()) : undefined;
-  if (rule?.block) return; // the user marked this app "never type into" — don't paste a correction into it either
-  // Honor the app's insert method (clipboard-only / direct / paste), like the main injection path —
-  // not just block + paste-shortcut. Clipboard-only puts the correction on the clipboard (no keystroke
-  // into an app the user opted out of); restore the prior clipboard only for a real paste.
-  const method = rule?.insertMethod ?? globalInsertMethod;
-  const pasteShortcut = rule?.pasteShortcut ?? globalPasteShortcut; // null/undefined = inherit global
+  const { rule, method, pasteShortcut } = resolveInjectionTarget(app ?? null, appRules, general);
+  if (rule?.block) return; // the user marked this app "never type into" — don't correct into it at all (not even clipboard)
+  // Clipboard-only (explicit per-app, or coerced for a non-editable target) puts the correction on the
+  // clipboard with no keystroke; restore the prior clipboard only for a real paste.
   await injectText({ text: corrected, method, autoEnter: false, restoreClipboard: method === "paste", pasteShortcut });
 }
 
