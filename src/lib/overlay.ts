@@ -136,14 +136,16 @@ export async function initOverlayController(): Promise<void> {
         // When on, the chip reveals the Profile tag only while hovered (vs. always shown).
         profileOnHover: rec.showProfileOnOverlay && rec.showProfileOnHover,
         ...chip,
-      });
+      }).catch((e) => console.error("overlay emit failed:", e));
     }
 
     // Reflect status in the tray tooltip — the reliable status cue on chip-less platforms
     // (GNOME / non-KDE Wayland). Fire on a warming change too so the cold-mic warm-up reads
     // "warming up…" there like every other surface, instead of falsely claiming "recording…".
     if (state.status !== prev.status || state.warming !== prev.warming) {
-      void setTrayState(state.warming && state.status === "listening" ? "warming" : state.status);
+      void setTrayState(state.warming && state.status === "listening" ? "warming" : state.status).catch((e) =>
+        console.error("setTrayState failed:", e),
+      );
     }
     // Cues stay keyed on status TRANSITIONS only (not warming), so a warm-up flip can't re-fire them.
     if (state.status !== prev.status) {
@@ -151,8 +153,9 @@ export async function initOverlayController(): Promise<void> {
         // Only chime "stop" if the mic actually went live this session — a session ENDED during
         // warm-up (stopLive sets {transcribing, warming:false} in one update, mic never live) would
         // otherwise play a "stop" with no preceding "start".
-        if (state.status === "transcribing" && prev.status === "listening" && state.micLive) void playCue("stop");
-        else if (state.status === "error") void playCue("error");
+        if (state.status === "transcribing" && prev.status === "listening" && state.micLive)
+          void playCue("stop").catch((e) => console.error("playCue failed:", e));
+        else if (state.status === "error") void playCue("error").catch((e) => console.error("playCue failed:", e));
       }
     }
     // The "start" cue fires when the mic actually goes LIVE — gated on the micLive edge (real audio
@@ -160,7 +163,7 @@ export async function initOverlayController(): Promise<void> {
     // DIES during warm-up (a teardown clears warming with the mic never live) must not chime "start".
     // On a cold Bluetooth mic this is ~1–2s after arming, so the "go" lines up with real capture.
     if (state.settings.general.soundEffects && state.micLive && !prev.micLive) {
-      void playCue("start");
+      void playCue("start").catch((e) => console.error("playCue failed:", e));
     }
 
     const persistent = state.settings.recording.persistentDock && pos !== "off";
@@ -175,7 +178,7 @@ export async function initOverlayController(): Promise<void> {
       // edge-peek tuck is a pure CSS transform in the chip (Overlay.tsx), so it animates
       // reliably and can't desync with an OS window-move (which Wayland applies instantly).
       if (!visible || (active && !prevActive) || pos !== shownPos) {
-        void showOverlay(pos);
+        void showOverlay(pos).catch((e) => console.error("showOverlay failed:", e));
         shownPos = pos;
       }
       visible = true;
@@ -191,7 +194,7 @@ export async function initOverlayController(): Promise<void> {
     if (visible || (pos !== "off" && state.status === "error")) {
       clearTimeout(hideTimer);
       if (!visible && pos !== "off") {
-        void showOverlay(pos);
+        void showOverlay(pos).catch((e) => console.error("showOverlay failed:", e));
         shownPos = pos;
         visible = true;
       }
@@ -199,7 +202,7 @@ export async function initOverlayController(): Promise<void> {
       hideTimer = setTimeout(() => {
         visible = false;
         shownPos = undefined; // force a re-place (and re-anchor) on the next show
-        void hideOverlay();
+        void hideOverlay().catch((e) => console.error("hideOverlay failed:", e));
       }, delay);
     }
   });
