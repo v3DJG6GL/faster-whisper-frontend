@@ -159,7 +159,10 @@ function enqueueAutoEnter(): void {
     // A cancel landing during the awaited resolve nulled insertCfg + aborted the session — don't fire
     // a stray Enter into the now-refocused window (mirrors the live final task's guard).
     if (!insertCfg) return;
-    if (t.method === "clipboard") return;
+    // Never fire a real keystroke for a HOLD session, even after focus moved to a paste/direct window:
+    // the PTT chord is still physically held, so the Enter would fold into the held modifier (mirrors
+    // the live-final useClipboard guard). A hold session is clipboard-coerced, so nothing was typed here.
+    if (t.method === "clipboard" || insertCfg?.activation === "hold") return;
     await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
   });
 }
@@ -683,11 +686,23 @@ async function ensureListeners(): Promise<void> {
           // A cancel during the awaited resolve nulled insertCfg + aborted the session — don't fire a
           // stray separator/Enter into the refocused window (mirrors the live final task's guard).
           if (!insertCfg) return;
-          if (t.method === "clipboard") return;
+          // Hold session: same as enqueueAutoEnter — never emit a keystroke while the PTT chord is held
+          // (the held modifier would fold into the separator/Enter once focus moved to a typing window).
+          if (t.method === "clipboard" || insertCfg?.activation === "hold") return;
           if (sep.includes("\n")) {
             await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
           } else {
             await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+            // The separator paste just clobbered the clipboard with `sep` (set_clipboard + Ctrl+V) and
+            // never snapshotted. At a hard break clipDirty is normally already false (the quiet timer
+            // restored ~PHRASE_END_QUIET_MS ago), so the backstop below won't fire — leaving `sep` on
+            // the clipboard AND, once the next phrase's begin_injection re-snapshots (clipDirty cleared),
+            // permanently restoring `sep` over the user's content (where a plain set persists: X11 / a
+            // clipboard manager). Put the user's snapshot back now (served as a live owner, survives
+            // Wayland, doesn't consume — mirrors the per-phrase restore contract).
+            if (t.method === "paste" && insertCfg?.restoreClipboard && beganInjection) {
+              await restoreClipboardSnapshot();
+            }
           }
         });
       }
