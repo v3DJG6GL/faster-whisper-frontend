@@ -68,6 +68,12 @@ mod imp {
         /// type's modifiers, so KWin capitalizes the lowercase keysym under Caps Lock). The
         /// typer brackets such a keypress with a Caps Lock toggle. See `build_charmap`.
         lock: bool,
+        /// Does this key's Shift level produce the base glyph's case-inverse (a normal A–Z key)?
+        /// When a live Caps Lock capitalizes alphabetic output, the typer cancels it by pressing
+        /// Shift — but that only recovers the intended glyph on a case-pair key. On a FOUR_LEVEL key
+        /// (ü, where Shift→è) pressing Shift selects the WRONG glyph, so for `caps_safe == false`
+        /// the typer flips Caps OFF for the press instead. See the live-Caps branch in the typer.
+        caps_safe: bool,
     }
 
     fn token_path(app: &AppHandle) -> Option<PathBuf> {
@@ -143,6 +149,7 @@ mod imp {
             // — a bare keypress that types that key's LEVEL-0 glyph instead. Leaving such glyphs
             // out of the map makes them fall back to the portal path rather than mis-type.
             let levels = keymap.num_levels_for_key(key, 0).min(4);
+            let caps_safe = key_is_caps_safe(&keymap, key);
             for level in 0..levels {
                 for sym in keymap.key_get_syms_by_level(key, 0, level) {
                     let cp = xkb::keysym_to_utf32(*sym);
@@ -159,6 +166,7 @@ mod imp {
                             shift: level == 1 || level == 3,
                             altgr: level == 2 || level == 3,
                             lock: false,
+                            caps_safe,
                         });
                     }
                 }
@@ -198,10 +206,35 @@ mod imp {
 
     fn key_spec_for(c: char, map: &HashMap<char, KeySpec>) -> Option<KeySpec> {
         match c {
-            '\n' | '\r' => Some(KeySpec { keycode: KEY_ENTER, shift: false, altgr: false, lock: false }),
-            '\t' => Some(KeySpec { keycode: KEY_TAB, shift: false, altgr: false, lock: false }),
+            '\n' | '\r' => Some(KeySpec { keycode: KEY_ENTER, shift: false, altgr: false, lock: false, caps_safe: true }),
+            '\t' => Some(KeySpec { keycode: KEY_TAB, shift: false, altgr: false, lock: false, caps_safe: true }),
             _ => map.get(&c).copied(),
         }
+    }
+
+    /// Is this key a normal case-pair (its Shift level is the case-inverse of its base glyph)? Used so
+    /// the live-Caps-Lock compensation knows whether pressing Shift actually cancels KWin's
+    /// capitalization. A non-alphabetic base (digits, symbols) is unaffected by Caps → safe. A
+    /// FOUR_LEVEL letter key (Swiss-German ü, whose Shift gives è — NOT Ü) is NOT safe.
+    fn key_is_caps_safe(keymap: &xkb::Keymap, key: xkb::Keycode) -> bool {
+        let base = keymap
+            .key_get_syms_by_level(key, 0, 0)
+            .iter()
+            .filter_map(|s| char::from_u32(xkb::keysym_to_utf32(*s)))
+            .find(|c| c.is_alphabetic());
+        let Some(base) = base.filter(|c| c.is_lowercase()) else {
+            return true; // non-alphabetic (or already-uppercase) base → Caps doesn't mis-map it
+        };
+        let upper: Vec<char> = base.to_uppercase().collect();
+        if upper.len() != 1 {
+            return true; // multi-char expansion (e.g. ß) → leave to the normal/lock paths
+        }
+        // Safe iff the Shift (level 1) glyph IS that uppercase — the A–Z case-pair shape.
+        keymap
+            .key_get_syms_by_level(key, 0, 1)
+            .iter()
+            .filter_map(|s| char::from_u32(xkb::keysym_to_utf32(*s)))
+            .any(|u| u == upper[0])
     }
 
     /// Is Caps Lock currently on? Read from the keyboard's `capslock` LED in sysfs —
@@ -491,7 +524,22 @@ mod imp {
                         continue;
                     }
 
-                    let needs_shift = spec.shift ^ (caps && c.is_alphabetic());
+                    // A live Caps Lock capitalizes alphabetic output. On a normal case-pair key the
+                    // XOR below cancels it by pressing Shift; on a non-caps-safe FOUR_LEVEL key
+                    // (Swiss-German ü, whose Shift gives è) pressing Shift would select the WRONG
+                    // glyph, so flip Caps OFF for the press and use the glyph's own modifiers, then
+                    // flip it back — symmetric to the lock path above (which flips it ON for a capital).
+                    let caps_affects = caps && c.is_alphabetic();
+                    let flip_caps_off = caps_affects && !spec.caps_safe;
+                    if flip_caps_off {
+                        press!(KEY_CAPSLOCK);
+                        // Toggles OFF on press — mark flipped before the release so the cleanup tap
+                        // restores Caps even if the release errors out mid-char.
+                        caps_flipped = true;
+                        release!(KEY_CAPSLOCK);
+                        tokio::time::sleep(Duration::from_millis(6)).await;
+                    }
+                    let needs_shift = spec.shift ^ (caps_affects && spec.caps_safe);
                     if needs_shift {
                         press!(KEY_LEFTSHIFT);
                         tokio::time::sleep(Duration::from_millis(4)).await;
@@ -510,6 +558,14 @@ mod imp {
                     if needs_shift {
                         tokio::time::sleep(Duration::from_millis(4)).await;
                         release!(KEY_LEFTSHIFT);
+                    }
+                    if flip_caps_off {
+                        tokio::time::sleep(Duration::from_millis(6)).await;
+                        press!(KEY_CAPSLOCK);
+                        // Toggles Caps back ON — clear the flag before the release (symmetric to the
+                        // opening tap) so the cleanup tap doesn't re-invert it.
+                        caps_flipped = false;
+                        release!(KEY_CAPSLOCK);
                     }
                     tokio::time::sleep(Duration::from_millis(6)).await;
                 }
