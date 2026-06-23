@@ -31,6 +31,7 @@ import {
   startRecord,
   stopRecord,
   cancelRecord,
+  retireSessionEpoch,
   injectText,
   beginInjection,
   endInjection,
@@ -935,6 +936,10 @@ async function ensureListeners(): Promise<void> {
     void (endpoint === "batch" ? stopRecord() : stopStream()).catch((err) =>
       console.error("stream error teardown failed:", err),
     );
+    // Retire the epoch so the detached drain (kept, so the sidecar still writes) can't bleed a late
+    // final/closed onto a session re-triggered during the 4s error linger. Independent of the stop
+    // above so it fires even if that rejects. Mirrors the cancel-path retire.
+    void retireSessionEpoch().catch((err) => console.error("retire epoch on error failed:", err));
   });
 
   // The server refused one or more decode overrides because the field is
@@ -1021,6 +1026,9 @@ function teardownAfterFatalInject(): void {
   void (endpoint === "batch" ? stopRecord() : stopStream()).catch((err) =>
     console.error("teardown after fatal inject failed:", err),
   );
+  // Retire the epoch (drain kept → sidecar still writes) so its late final/closed can't bleed onto a
+  // session re-triggered during the error linger. Mirrors the stream://error teardown + cancel paths.
+  void retireSessionEpoch().catch((err) => console.error("retire epoch after fatal inject failed:", err));
 }
 
 /** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
@@ -1293,6 +1301,9 @@ export async function stopLive(): Promise<void> {
     clearStuckWatchdog();
     stopTargetPoll();
     activeEndpoint = null;
+    // The detached drain (if any) can still emit a late final/closed on this epoch; retire it so it
+    // can't bleed onto a session re-triggered during the error linger (mirrors stream://error).
+    void retireSessionEpoch().catch((err) => console.error("retire epoch on stop-reject failed:", err));
     // No `closed` will follow a rejected stop, so the closed handler's per-phrase teardown never
     // runs — mirror the stream://error handler: cancel the ~1.2s quiet timer so a pending live-mode
     // phrase can't fire a stray auto-Enter into the now-refocused window, and restore the user's

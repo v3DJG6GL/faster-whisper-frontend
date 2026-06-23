@@ -487,6 +487,15 @@ pub fn cancel_record(state: State<RecordState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Retire the active session epoch WITHOUT draining or aborting — for the frontend's error / fatal-
+/// inject teardown, which keeps the DRAINING stop (so the .wav/.txt sidecar still gets written) but
+/// must stop that detached drain's late final/closed from bleeding onto a session the user re-triggers
+/// during the error linger. Mirrors the cancel-path retire (see session::retire_active_epoch).
+#[tauri::command]
+pub fn retire_session_epoch() {
+    session::retire_active_epoch();
+}
+
 /// Suspend ALL hotkey backends (while the user captures a new binding) so pressing
 /// an existing profile's chord only rebinds — it must not also fire dictation. This
 /// silences both the global-shortcut plugin AND the evdev reader (which otherwise

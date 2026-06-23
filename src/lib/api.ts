@@ -374,6 +374,14 @@ export async function cancelRecord(): Promise<void> {
   await invoke("cancel_record");
 }
 
+/** Retire the active session epoch WITHOUT draining/aborting — the error/fatal-inject teardown keeps
+ *  its draining stop (sidecar still written) but uses this so the detached drain's late final/closed
+ *  can't bleed onto a session re-triggered during the error linger. */
+export async function retireSessionEpoch(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("retire_session_epoch");
+}
+
 /** Re-register global hotkeys after the bindings change (or to restore them). */
 export async function reregisterShortcuts(): Promise<void> {
   if (!isTauri) return;

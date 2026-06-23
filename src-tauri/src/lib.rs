@@ -135,6 +135,7 @@ pub fn run() {
             commands::start_record,
             commands::stop_record,
             commands::cancel_record,
+            commands::retire_session_epoch,
             commands::recordings_dir_path, // saved-recordings folder (display path)
             commands::open_recordings_dir, // open the saved-recordings folder
             commands::reregister_shortcuts,
