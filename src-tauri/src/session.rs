@@ -13,7 +13,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleFormat, StreamConfig, StreamError};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::path::PathBuf;
 use std::thread::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
@@ -580,36 +580,79 @@ enum MuteMode {
     WholeSink(bool),
 }
 
+enum MuteCmd {
+    Mute,
+    Unmute,
+}
+
+/// Apply the system mute (per-app, falling back to whole-sink) and return the mode to restore later.
+fn apply_mute() -> MuteMode {
+    // Prefer per-app muting so our own cues stay audible; fall back to the whole-sink mute only
+    // when pactl can't enumerate streams.
+    if let Some(muted) = mute_other_streams() {
+        return MuteMode::PerApp(muted);
+    }
+    let prior = get_system_mute().unwrap_or(false);
+    set_system_mute(true);
+    MuteMode::WholeSink(prior)
+}
+
+fn restore_mute(mode: &MuteMode) {
+    match mode {
+        MuteMode::None => {}
+        MuteMode::PerApp(ids) => {
+            for &id in ids {
+                set_sink_input_mute(id, false);
+            }
+        }
+        MuteMode::WholeSink(prior) => set_system_mute(*prior),
+    }
+}
+
+/// A single worker thread that runs the (blocking) pactl/wpctl mute shell-outs OFF the UI thread.
+/// SystemMuteGuard::new / Drop only SEND a Mute / Unmute message — they never block — because they
+/// run inside the SYNC Tauri commands start_stream / start_record, which execute on the GTK/UI
+/// thread: a wedged PulseAudio/PipeWire socket would otherwise freeze the whole app (overlay.rs
+/// makes the same off-thread move for its KWin shell-outs). Processing in FIFO order also means a
+/// session's Unmute always runs before the next session's Mute, so the per-app muted set can't race.
+fn mute_worker() -> &'static std::sync::mpsc::Sender<MuteCmd> {
+    static WORKER: OnceLock<std::sync::mpsc::Sender<MuteCmd>> = OnceLock::new();
+    WORKER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<MuteCmd>();
+        std::thread::spawn(move || {
+            let mut mode = MuteMode::None;
+            while let Ok(cmd) = rx.recv() {
+                // Always restore what we last muted before applying the next command, so the worker
+                // is self-correcting and never leaves an unmatched mute behind.
+                restore_mute(&mode);
+                mode = match cmd {
+                    MuteCmd::Mute => apply_mute(),
+                    MuteCmd::Unmute => MuteMode::None,
+                };
+            }
+        });
+        tx
+    })
+}
+
 struct SystemMuteGuard {
-    mode: MuteMode,
+    active: bool,
 }
 
 impl SystemMuteGuard {
     fn new(enabled: bool) -> Self {
-        if !enabled {
-            return Self { mode: MuteMode::None };
+        if enabled {
+            // Non-blocking: the worker thread does the blocking pactl/wpctl work off the UI thread.
+            let _ = mute_worker().send(MuteCmd::Mute);
         }
-        // Prefer per-app muting so our own cues stay audible; fall back to the whole-sink mute
-        // only when pactl can't enumerate streams.
-        if let Some(muted) = mute_other_streams() {
-            return Self { mode: MuteMode::PerApp(muted) };
-        }
-        let prior = get_system_mute().unwrap_or(false);
-        set_system_mute(true);
-        Self { mode: MuteMode::WholeSink(prior) }
+        Self { active: enabled }
     }
 }
 
 impl Drop for SystemMuteGuard {
     fn drop(&mut self) {
-        match &self.mode {
-            MuteMode::None => {}
-            MuteMode::PerApp(ids) => {
-                for &id in ids {
-                    set_sink_input_mute(id, false);
-                }
-            }
-            MuteMode::WholeSink(prior) => set_system_mute(*prior),
+        if self.active {
+            let _ = mute_worker().send(MuteCmd::Unmute);
         }
     }
 }
