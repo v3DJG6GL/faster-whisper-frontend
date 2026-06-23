@@ -495,11 +495,14 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
         let level = level.clone();
         let stop = capture_stop.clone();
         let device_lost = device_lost.clone();
+        // Cloned for the device-loss salvage arm below (transcribe what was captured). `p` itself is
+        // moved into the RecordSession; `buffer` is cloned into the call so the arm keeps its own Arc.
+        let params = p.clone();
         std::thread::Builder::new()
             .name("record-capture".into())
             .spawn(move || {
                 match run_record_capture(
-                    &app, device, format, channels, config, in_rate, buffer, level, stop,
+                    &app, device, format, channels, config, in_rate, buffer.clone(), level, stop,
                     device_lost.clone(),
                 ) {
                     Err(e) => {
@@ -514,11 +517,24 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
                         emit_if_active(&app, epoch, "stream://status", "closed");
                     }
                     // A mid-capture device disconnect trips `stop` like a normal stop and returns Ok,
-                    // but with `device_lost` set. The streaming path settles via its channel close;
-                    // the batch path has none, so emit the same "closed" here to unstick the chip.
-                    // finish() (the user stop) never sets `device_lost`, so its final still lands.
+                    // but with `device_lost` set. Mirror finish(): transcribe (and save, per "Keep
+                    // recordings") what was captured — exactly as the streaming drain does on the same
+                    // loss — instead of discarding it. transcribe_recording emits the final + the
+                    // trailing "closed" that unsticks the chip and writes the .wav/.txt sidecar. A
+                    // racing finish()/cancel_record joins this thread first, then takes an
+                    // already-emptied buffer → empty pcm → transcribe_recording early-returns, so there
+                    // is no double-transcribe. finish() (the user stop) never sets `device_lost`.
                     Ok(()) if device_lost.load(Ordering::SeqCst) => {
-                        emit_if_active(&app, epoch, "stream://status", "closed");
+                        let pcm = buffer
+                            .lock()
+                            .map(|mut b| std::mem::take(&mut *b))
+                            .unwrap_or_default();
+                        tauri::async_runtime::spawn(transcribe_recording(
+                            app.clone(),
+                            epoch,
+                            params,
+                            pcm,
+                        ));
                     }
                     Ok(()) => {}
                 }
