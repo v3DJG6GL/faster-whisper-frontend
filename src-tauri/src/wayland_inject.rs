@@ -266,6 +266,23 @@ mod imp {
             "MetaRight" | "OSRight" => 126,
             "KeyV" => KEY_V,
             "Insert" => 110,
+            // Any other letter (KeyA..KeyZ) so a custom paste shortcut whose main key isn't V/Insert
+            // is honored on Wayland too — the X11 path (inject.rs code_to_enigo) already maps all
+            // letters, so without this the configured key was silently dropped to a Ctrl+V fallback.
+            _ => return letter_keycode(code),
+        })
+    }
+
+    /// evdev keycode for a single-letter `KeyboardEvent.code` (KeyA..KeyZ). Physical-position Linux
+    /// input-event-codes (NOT alphabetical), mirroring evdev_hotkeys::imp::letter_key and the KEY_V
+    /// const above (V == 47).
+    fn letter_keycode(code: &str) -> Option<i32> {
+        let letter = code.strip_prefix("Key").filter(|s| s.len() == 1)?;
+        Some(match letter {
+            "Q" => 16, "W" => 17, "E" => 18, "R" => 19, "T" => 20, "Y" => 21, "U" => 22,
+            "I" => 23, "O" => 24, "P" => 25, "A" => 30, "S" => 31, "D" => 32, "F" => 33,
+            "G" => 34, "H" => 35, "J" => 36, "K" => 37, "L" => 38, "Z" => 44, "X" => 45,
+            "C" => 46, "V" => KEY_V, "B" => 48, "N" => 49, "M" => 50,
             _ => return None,
         })
     }
