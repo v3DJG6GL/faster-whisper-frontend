@@ -445,6 +445,9 @@ pub struct RecordSession {
     buffer: Arc<Mutex<Vec<u8>>>,
     capture_stop: Arc<AtomicBool>,
     capture_join: Option<JoinHandle<()>>,
+    // Set by the capture thread's err_cb on a TERMINAL device loss; finish() reads it to avoid
+    // double-transcribing (the device-loss arm already salvaged the buffer + spawned its transcribe).
+    device_lost: Arc<AtomicBool>,
     _mute: SystemMuteGuard,
 }
 
@@ -463,6 +466,14 @@ impl RecordSession {
         self.capture_stop.store(true, Ordering::SeqCst);
         if let Some(j) = self.capture_join.take() {
             let _ = j.join();
+        }
+        // On a mid-capture device loss the capture thread already salvaged the buffer and spawned its
+        // own transcribe (final + closed). Proceeding would spawn a SECOND, empty-pcm transcribe whose
+        // immediate "closed" settles the chip to idle BEFORE the salvaged final lands (which is then
+        // dropped by the idle-epoch/inSession guard) — silently losing the salvaged transcript. Bail;
+        // Drop still runs (capture_join already None → no double-join) and unmutes via SystemMuteGuard.
+        if self.device_lost.load(Ordering::SeqCst) {
+            return;
         }
         let pcm = self
             .buffer
@@ -549,6 +560,7 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
         buffer,
         capture_stop,
         capture_join: Some(capture_join),
+        device_lost,
         _mute: mute,
     })
 }
