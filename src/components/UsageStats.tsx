@@ -251,7 +251,7 @@ function TrendChart({ dense }: { dense: UsageSeriesPoint[] }) {
       <div ref={ref} className="relative px-3 pb-3 pt-1">
         {allZero ? (
           <div className="grid h-[200px] place-items-center text-[13px] text-faint">
-            No usage in the last {range} days
+            No {METRIC[metric].label} in the last {range} days
           </div>
         ) : (
           <>
