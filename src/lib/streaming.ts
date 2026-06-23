@@ -717,16 +717,21 @@ async function ensureListeners(): Promise<void> {
             await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
           } else {
             await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
-            // The separator paste just clobbered the clipboard with `sep` (set_clipboard + Ctrl+V) and
-            // never snapshotted. At a hard break clipDirty is normally already false (the quiet timer
-            // restored ~PHRASE_END_QUIET_MS ago), so the backstop below won't fire — leaving `sep` on
-            // the clipboard AND, once the next phrase's begin_injection re-snapshots (clipDirty cleared),
-            // permanently restoring `sep` over the user's content (where a plain set persists: X11 / a
-            // clipboard manager). Put the user's snapshot back now (served as a live owner, survives
-            // Wayland, doesn't consume — mirrors the per-phrase restore contract).
-            if (t.method === "paste" && insertCfg?.restoreClipboard && beganInjection) {
-              await restoreClipboardSnapshot();
-              clipHoldsOurs = false; // user's clipboard is back, not the separator/transcript
+            // The separator paste just clobbered the clipboard with `sep` (set_clipboard + Ctrl+V).
+            // (!t.isSelf: an own-window separator is Rust-guard-skipped, so the clipboard is untouched
+            // there and the boundary backstop below handles any owed restore — don't touch bookkeeping.)
+            if (t.method === "paste" && insertCfg?.restoreClipboard && !t.isSelf) {
+              if (beganInjection) {
+                // A prior paste snapshotted the user's clipboard — put it back (mirrors the per-phrase
+                // restore contract); the snapshot survives in Rust and isn't consumed.
+                await restoreClipboardSnapshot();
+                clipHoldsOurs = false;
+              } else {
+                // No prior snapshot: `sep` (OUR text) is on the clipboard. Mark clipHoldsOurs so a later
+                // phrase's begin_injection (gated on !clipHoldsOurs) won't snapshot `sep` as the user's
+                // original and then permanently restore it over their content.
+                clipHoldsOurs = true;
+              }
             }
           }
         });
@@ -860,9 +865,11 @@ async function ensureListeners(): Promise<void> {
         setDictation({ status: "injecting" });
         enqueueInject(async () => {
           const t = await resolveTarget();
-          // A cancel landing during the awaited resolve nulled insertCfg + aborted the session — don't
-          // paste the whole transcript into the now-refocused window (mirrors the live-mode tasks).
-          if (!insertCfg) return;
+          // A cancel (insertCfg→null) OR a cancel-then-fresh-session (insertCfg→a new object) landing
+          // during the awaited resolve must not paste the OLD session's whole transcript into the new/
+          // refocused window. Identity-check, mirroring the post-inject guard below + the live tasks;
+          // a normal stop keeps insertCfg===cfg so the end-of-session insert still lands.
+          if (insertCfg !== cfg) return;
           try {
             await injectText({
               text,
