@@ -144,6 +144,11 @@ let phraseDirty = false;
 // the original back. Drives per-phrase restore so the clipboard is the user's between phrases —
 // not just once at stop (which an ongoing latch session never reaches).
 let clipDirty = false;
+// Whether the clipboard currently holds OUR dictated transcript (vs the user's original). Distinct
+// from clipDirty (= restore-debt): a clipboard-only phrase clears the debt yet still leaves our text
+// on the clipboard, so the per-phrase snapshot must gate on THIS, not clipDirty — else the next paste
+// re-snapshots our own text as the user's "original" and the later restore clobbers their content.
+let clipHoldsOurs = false;
 let phraseEndTimer: ReturnType<typeof setTimeout> | null = null;
 const PHRASE_END_QUIET_MS = 1200;
 // Serialise every injection op so backspaces/types never interleave or race.
@@ -203,6 +208,7 @@ function bumpPhraseEnd(): void {
     // snapshot survives in Rust, so the next pasted phrase restores again.
     if (clipDirty && beganInjection) {
       clipDirty = false;
+      clipHoldsOurs = false; // the restore below puts the user's clipboard back
       enqueueRestoreSnapshot();
     }
     // You paused → end the current clipboard-only phrase, so the next utterance copies fresh and
@@ -225,6 +231,7 @@ function clearPhraseEnd(): void {
   clearPhraseEndTimer();
   phraseDirty = false;
   clipDirty = false;
+  clipHoldsOurs = false; // session reset — start clean
   clipBaseline = "";
 }
 
@@ -573,6 +580,9 @@ async function ensureListeners(): Promise<void> {
               // restore puts the old snapshot back over it. Covers a fast paste→clipboard-only
               // switch with no pause between, which would otherwise leave clipDirty set from the paste.
               clipDirty = false;
+              // The clipboard now holds OUR text, so a later paste must NOT re-snapshot it as the
+              // user's original (the snapshot guard keys on clipHoldsOurs, not clipDirty).
+              clipHoldsOurs = true;
             }
           }
         } else {
@@ -585,10 +595,11 @@ async function ensureListeners(): Promise<void> {
           const toType = target.slice(commonPrefixLen(injectedText, target));
           if (toType.length > 0) {
             // Snapshot the user's CURRENT clipboard right before this paste overwrites it — per phrase,
-            // not once at session start — and only when we don't already hold it (clipDirty false), so
-            // we never capture our own transcript. Fixes mid-session copies lost to a stale start-time
-            // snapshot, and sessions that start in a clipboard-coerced window then move to a paste one.
-            if (t.method === "paste" && insertCfg?.restoreClipboard && !clipDirty && !t.isSelf) {
+            // not once at session start — and only when the clipboard does NOT already hold our own text
+            // (clipHoldsOurs false), so we never capture our own transcript. Gating on clipHoldsOurs (not
+            // clipDirty) covers the clipboard-only→paste case: a clipboard-only phrase clears clipDirty
+            // but leaves our text on the clipboard, which !clipDirty would wrongly re-snapshot.
+            if (t.method === "paste" && insertCfg?.restoreClipboard && !clipHoldsOurs && !t.isSelf) {
               // !t.isSelf: when our own window is focused the Rust guard skips the paste, so there's
               // nothing to snapshot/restore — and latching beganInjection/clipDirty here would flash a
               // spurious "injecting" tail AND pin the stale own-window clipboard over a later real paste.
@@ -631,7 +642,10 @@ async function ensureListeners(): Promise<void> {
             // A real paste just clobbered the user's clipboard with the transcript → it owes a
             // restore at phrase end. Direct typing never touches the clipboard, so don't — and our own
             // window (guard-skipped, !t.isSelf) clobbered nothing either.
-            if (t.method === "paste" && !t.isSelf) clipDirty = true;
+            if (t.method === "paste" && !t.isSelf) {
+              clipDirty = true;
+              clipHoldsOurs = true;
+            }
             // Advance the TYPED baseline + pulse ONLY when the phrase actually landed (NOT our own
             // window, where the guard typed nothing): leaving it un-advanced re-types the skipped
             // text after a focus switch, and a green pulse there would be a false confirmation.
@@ -712,13 +726,19 @@ async function ensureListeners(): Promise<void> {
             // Wayland, doesn't consume — mirrors the per-phrase restore contract).
             if (t.method === "paste" && insertCfg?.restoreClipboard && beganInjection) {
               await restoreClipboardSnapshot();
+              clipHoldsOurs = false; // user's clipboard is back, not the separator/transcript
             }
           }
         });
       }
       // The phrase ended hard → restore the clipboard too, as a backstop in case the quiet
-      // timer hadn't already (the timer normally fires ~PHRASE_END_QUIET_MS before this).
-      if (clipDirty && beganInjection) enqueueRestoreSnapshot();
+      // timer hadn't already (the timer normally fires ~PHRASE_END_QUIET_MS before this). Clear
+      // clipHoldsOurs ONLY here (we restored the user's clipboard) — NOT at the unconditional
+      // clipDirty=false below, where a clipboard-only-last phrase still holds our text.
+      if (clipDirty && beganInjection) {
+        clipHoldsOurs = false;
+        enqueueRestoreSnapshot();
+      }
     }
     phraseDirty = false;
     clipDirty = false;
