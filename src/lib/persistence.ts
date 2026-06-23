@@ -73,7 +73,10 @@ export async function initConfig(): Promise<void> {
       // unless the save-gate sees it too.
       const qa = s.settings.general.quickAddHotkey;
       const conflictPeers = qa.length > 0 ? [...s.profiles, quickAddPeer(qa)] : s.profiles;
-      if (conflicts(conflictPeers).length > 0) {
+      // evdev off ⇒ the plugin backend registers and can't tell modifier sides apart, so collapse
+      // L/R for conflict detection (else two side-only-different chords pass here yet one silently
+      // never registers). Mirrors the capture-time + per-card checks.
+      if (conflicts(conflictPeers, !s.settings.general.evdevEnabled).length > 0) {
         useApp
           .getState()
           .setSaveError("A shortcut is used by two bindings — resolve the conflict to resume saving.");

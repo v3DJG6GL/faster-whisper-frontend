@@ -368,6 +368,7 @@ export default function Profiles() {
   const duplicateProfile = useApp((s) => s.duplicateProfile);
   const moveProfile = useApp((s) => s.moveProfile);
   const quickAddHotkey = useApp((s) => s.settings.general.quickAddHotkey);
+  const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Profile | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -396,7 +397,7 @@ export default function Profiles() {
   // surfaces now agree.
   const conflictPeers =
     quickAddHotkey.length > 0 ? [...profiles, quickAddPeer(quickAddHotkey)] : profiles;
-  const conflicts = conflictsByProfile(conflictPeers);
+  const conflicts = conflictsByProfile(conflictPeers, !evdevEnabled);
   const nameOf = (id: string) =>
     id === QUICK_ADD_PEER_ID ? "Quick add" : (profiles.find((p) => p.id === id)?.name ?? "another profile");
   const backendName = (id: string | null) => backends.find((b) => b.id === id)?.name ?? "No backend";

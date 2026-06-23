@@ -11,7 +11,15 @@
 // Only enabled profiles with a non-empty hotkey participate.
 
 import type { Profile } from "./types";
-import { canonicalizeCodes, sameCodes } from "./keys";
+import { canonicalizeCodes, collapseModifierSides, sameCodes } from "./keys";
+
+/** Canonicalize a chord for conflict comparison. When `collapseSides` (the plugin backend is the
+ *  registrar — evdev off), fold right-side modifiers into their left equivalent first, so two chords
+ *  differing only by modifier side compare equal (the plugin can't tell them apart; one would
+ *  silently never fire). Under evdev, sides stay distinct. */
+function conflictCodes(hotkey: string[], collapseSides: boolean): string[] {
+  return canonicalizeCodes(collapseSides ? collapseModifierSides(hotkey) : hotkey);
+}
 
 export type ConflictKind = "duplicate" | "shadow";
 
@@ -35,11 +43,12 @@ function isStrictSubset(a: string[], b: string[]): boolean {
   return a.length < b.length && a.every((c) => b.includes(c));
 }
 
-/** Find every chord conflict among the given profiles. */
-export function conflicts(profiles: Profile[]): ProfileConflict[] {
+/** Find every chord conflict among the given profiles. `collapseSides` (= plugin backend / evdev off)
+ *  folds L/R modifier sides together so a side-only difference is treated as a duplicate. */
+export function conflicts(profiles: Profile[], collapseSides = false): ProfileConflict[] {
   const active = profiles
     .filter((p) => p.enabled && p.hotkey.length > 0)
-    .map((p) => ({ id: p.id, codes: canonicalizeCodes(p.hotkey) }));
+    .map((p) => ({ id: p.id, codes: conflictCodes(p.hotkey, collapseSides) }));
 
   const out: ProfileConflict[] = [];
   for (let i = 0; i < active.length; i++) {
@@ -70,12 +79,13 @@ export function conflicts(profiles: Profile[]): ProfileConflict[] {
 export function findChordConflict(
   codes: string[],
   others: Profile[],
+  collapseSides = false,
 ): { id: string; name: string; kind: ConflictKind } | null {
-  const a = canonicalizeCodes(codes);
+  const a = conflictCodes(codes, collapseSides);
   if (a.length === 0) return null;
   for (const o of others) {
     if (!o.enabled || o.hotkey.length === 0) continue;
-    const b = canonicalizeCodes(o.hotkey);
+    const b = conflictCodes(o.hotkey, collapseSides);
     if (sameCodes(a, b)) return { id: o.id, name: o.name, kind: "duplicate" };
     if (isStrictSubset(a, b) || isStrictSubset(b, a)) return { id: o.id, name: o.name, kind: "shadow" };
   }
@@ -83,9 +93,9 @@ export function findChordConflict(
 }
 
 /** Group conflicts by the profile they're reported against (for per-card banners). */
-export function conflictsByProfile(profiles: Profile[]): Map<string, ProfileConflict[]> {
+export function conflictsByProfile(profiles: Profile[], collapseSides = false): Map<string, ProfileConflict[]> {
   const map = new Map<string, ProfileConflict[]>();
-  for (const c of conflicts(profiles)) {
+  for (const c of conflicts(profiles, collapseSides)) {
     const list = map.get(c.profileId) ?? [];
     list.push(c);
     map.set(c.profileId, list);

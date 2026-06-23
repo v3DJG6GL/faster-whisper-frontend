@@ -44,7 +44,9 @@ export function useHotkeyCapture(opts: {
     // cancelled-flag guard in useOverrideContext).
     let cancelled = false;
     const finalize = (codes: string[]) => {
-      const clash = findChordConflict(codes, ref.current.others);
+      // evdev inactive ⇒ the plugin backend collapses L/R modifier sides, so collapse them for the
+      // clash check too (a side-only-different chord would otherwise warn-free yet collide).
+      const clash = findChordConflict(codes, ref.current.others, !evdevActive);
       if (clash) {
         setWarn(
           clash.kind === "duplicate"

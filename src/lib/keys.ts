@@ -90,6 +90,23 @@ const CODE_RANK: Record<string, number> = {
   ShiftLeft: 4, ShiftRight: 5, MetaLeft: 6, MetaRight: 7,
 };
 
+const SIDE_COLLAPSE: Record<string, string> = {
+  ControlRight: "ControlLeft",
+  ShiftRight: "ShiftLeft",
+  AltRight: "AltLeft",
+  MetaRight: "MetaLeft",
+};
+
+/** Collapse right-side modifiers to their left equivalent — exactly what the global-shortcut PLUGIN
+ *  backend does (its accelerator parser can't distinguish modifier sides; see codes_to_accelerator).
+ *  Use this for conflict detection when the plugin is the registrar (evdev off), so two chords that
+ *  differ ONLY by modifier side (Ctrl-left+H vs Ctrl-right+H) are correctly seen as the same chord —
+ *  otherwise both pass conflict detection yet collide at registration and one silently never fires.
+ *  Under evdev (which DOES honour sides) callers skip this so distinct-side chords stay distinct. */
+export function collapseModifierSides(codes: string[]): string[] {
+  return codes.map((c) => SIDE_COLLAPSE[c] ?? c);
+}
+
 /** Canonical order (modifiers by type+side, key last) + de-duped, so a stored
  *  chord is independent of press order and comparable by value. */
 export function canonicalizeCodes(codes: string[]): string[] {
