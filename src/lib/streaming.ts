@@ -952,8 +952,29 @@ async function ensureListeners(): Promise<void> {
     // so the unconditional call restores exactly the sessions that snapshotted, no double-restore.
     const owed = injectChain;
     void owed.then(() => endInjection()).catch((err) => console.error("end injection on error failed:", err));
+    // Stop-timing streaming injects the WHOLE transcript only from the `closed` tail — which never runs
+    // after an error (closed bails on status "error", and we retire the epoch below). So an error mid-
+    // session would silently lose the fully-assembled transcript with no recovery, unlike every other
+    // failure path. Copy it to the clipboard (swap only, no keystroke into the refocused window) so it
+    // stays recoverable. Read synchronously before the async copy (committedDoc/bankedDoc are left
+    // intact by the error path, reset only by the next startLive). Live mode injected per-phrase → "".
+    // endInjection above is a no-op in stop mode (beganInjection false → nothing snapshotted), so no race.
+    const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
     console.error("stream error:", e.payload);
-    flashError(e.payload);
+    if (pending) {
+      void (async () => {
+        let onClipboard = false;
+        try {
+          await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [] });
+          onClipboard = true;
+        } catch (err) {
+          console.error("clipboard recovery after stream error failed:", err);
+        }
+        flashError(onClipboard ? `${e.payload} — your text is on the clipboard to paste manually.` : e.payload);
+      })();
+    } else {
+      flashError(e.payload);
+    }
     // Tear down the Rust capture session so the mic closes and system audio
     // un-mutes immediately — the dead WS task doesn't drop it, so without this the
     // mic light + speaker mute linger until the next dictation. The visible error
