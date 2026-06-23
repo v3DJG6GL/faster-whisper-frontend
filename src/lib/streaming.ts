@@ -516,6 +516,11 @@ async function ensureListeners(): Promise<void> {
         // ran before this task was queued; insertCfg is the in-task discriminator. stopLive keeps
         // insertCfg set, so a normal end-of-session phrase still lands; only a true cancel bails.
         if (!insertCfg) return;
+        // Capture the session's insert config by IDENTITY so the post-await success bookkeeping below
+        // can detect a cancel (insertCfg→null) OR a cancel-then-fresh-session (insertCfg→a new object)
+        // that landed DURING the awaited injectText, and bail instead of stamping a stale phrase's
+        // "inserted" pulse / typed baseline onto the idled or next session.
+        const cfg = insertCfg;
         // HOLD/PTT must never live-TYPE: the trigger chord is still physically held, so injected keys
         // fold into the held modifier and fire shortcuts — which is why live-in-hold is allowed only
         // when the method is clipboard. At start that's enforced; but focus can move mid-session to a
@@ -534,13 +539,18 @@ async function ensureListeners(): Promise<void> {
             try {
               await injectText({ text: phraseClip, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
             } catch (e) {
-              // Surface a failed live phrase instead of dropping it silently (mirrors the end-of-
-              // session insert hardening). flashError coalesces, so repeated phrase failures just
-              // refresh the one red state. Skip the success-only bookkeeping below.
+              // A live phrase's clipboard copy failed: surface it AND tear the session down. Once
+              // flashError sets status "error" no further phrase reaches this catch (the old "just
+              // refresh the one red state" model was wrong), so without teardown the Rust capture keeps
+              // the mic open + system muted while the rest of the speech is silently dropped.
               console.error("live clipboard insert failed:", e);
               flashError("Couldn’t copy the text to the clipboard.");
+              teardownAfterFatalInject();
               return;
             }
+            // A cancel / fresh session that landed during the awaited inject nulled or replaced
+            // insertCfg — don't stamp this discarded phrase's bookkeeping onto the idle/next session.
+            if (insertCfg !== cfg) return;
             if (!t.isSelf) {
               sessionClipboard = true;
               signalInsert("clipboard");
@@ -579,8 +589,9 @@ async function ensureListeners(): Promise<void> {
             try {
               await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
             } catch (e) {
-              // Surface a failed live phrase instead of dropping it silently (mirrors the end-of-session
-              // insert hardening), then skip the success-only pulse/clipDirty bookkeeping below.
+              // A live phrase insert failed: surface it, then tear the session down (mirrors
+              // stream://error) so the mic + system-mute don't leak — once status is "error" no
+              // further phrase reaches this catch.
               console.error("live insert failed:", e);
               if (t.method === "direct") {
                 // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
@@ -592,12 +603,18 @@ async function ensureListeners(): Promise<void> {
                   flashError("Couldn’t insert the text.");
                 }
               } else {
-                // Paste failed; the deferred end-of-session restore will put the user's clipboard back,
-                // so don't promise the transcript is sitting there.
-                flashError("Couldn’t paste the text.");
+                // Paste failed, but the Rust paste path leaves the transcript on the clipboard on
+                // failure (skip-restore-on-failed-paste) AND the teardown below drops the snapshot
+                // WITHOUT restoring, so it stays recoverable — surface that (mirrors the direct
+                // fallback above and the end-of-session insert), instead of claiming nothing landed.
+                flashError("Couldn’t paste the text — it’s on the clipboard to paste manually.");
               }
+              teardownAfterFatalInject();
               return;
             }
+            // A cancel / fresh session that landed during the awaited inject nulled or replaced
+            // insertCfg — don't stamp this discarded phrase's bookkeeping onto the idle/next session.
+            if (insertCfg !== cfg) return;
             // A real paste just clobbered the user's clipboard with the transcript → it owes a
             // restore at phrase end. Direct typing never touches the clipboard, so don't — and our own
             // window (guard-skipped, !t.isSelf) clobbered nothing either.
@@ -934,6 +951,30 @@ function mergeDecodeOverrides(
  *  while the dock is enabled, so its error hide-timer never runs). */
 const ERROR_LINGER_MS = 4000;
 let errorClearTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Tear down a live session whose per-phrase injection just failed fatally. flashError has already
+ *  set status "error", so inSession() is now false and no further phrase will land — without this the
+ *  Rust capture keeps the mic open, holds the system-audio mute, and the target poll keeps firing for
+ *  a dead session (and a HOLD/PTT chord-release "stop" is dropped, since status is no longer
+ *  listening/processing). Mirrors the stream://error teardown EXCEPT the clipboard: a failed
+ *  paste/clipboard phrase leaves the transcript on the clipboard for manual recovery (what the error
+ *  message promises), so drop the snapshot WITHOUT restoring (restoring would clobber the transcript;
+ *  clipDirty is false on a failed paste, so the end-of-session drain would discard it the same way). */
+function teardownAfterFatalInject(): void {
+  clearStuckWatchdog();
+  stopTargetPoll();
+  clearWarmTimer();
+  clearPhraseEnd();
+  const owed = injectChain;
+  void owed
+    .then(() => discardInjectionSnapshot())
+    .catch((err) => console.error("discard injection snapshot after fatal inject failed:", err));
+  const endpoint = activeEndpoint;
+  activeEndpoint = null;
+  void (endpoint === "batch" ? stopRecord() : stopStream()).catch((err) =>
+    console.error("teardown after fatal inject failed:", err),
+  );
+}
 
 /** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
  *  Guarded: if a new session starts first (status leaves "error"), the pending clear is a no-op. */
