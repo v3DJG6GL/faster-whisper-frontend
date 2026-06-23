@@ -60,11 +60,13 @@ fn emit_if_active<S: Serialize + Clone>(app: &AppHandle, epoch: u64, event: &str
 #[derive(Default)]
 pub struct StreamState(pub Mutex<Option<StreamSession>>);
 
-/// Tear down any in-flight dictation on app exit. Dropping the session aborts capture and —
-/// critically — runs `SystemMuteGuard::drop`, restoring the user's audio if a `mute_system`
-/// session was live. The tray "Quit" calls `AppHandle::exit`, which ends the process WITHOUT
-/// running destructors for managed state, so without this an explicit quit mid-dictation would
-/// strand the system muted. Takes the session out under the lock, then drops it outside (matches
+/// Tear down any in-flight dictation on app exit. Dropping the session aborts capture and runs
+/// `SystemMuteGuard::drop`, which ENQUEUES the unmute on the detached mute worker (the restore is a
+/// blocking pactl/wpctl shell-out kept off the UI thread). The tray "Quit" calls `AppHandle::exit`,
+/// which ends the process WITHOUT running destructors for managed state AND would kill the worker
+/// before it runs that unmute — so after dropping the sessions we BLOCK on a bounded flush barrier
+/// until the queued unmute completes, else an explicit quit mid-`mute_system` dictation would strand
+/// the user's other apps muted. Takes the session out under the lock, then drops it outside (matches
 /// `stop_stream`/`stop_record`, so the capture-thread join doesn't run while the state is locked).
 pub fn cleanup_for_exit(app: &AppHandle) {
     if let Some(state) = app.try_state::<StreamState>() {
@@ -75,6 +77,9 @@ pub fn cleanup_for_exit(app: &AppHandle) {
         let sess = state.0.lock().ok().and_then(|mut g| g.take());
         drop(sess);
     }
+    // The drops above only ENQUEUED the unmute on the worker; wait (bounded) for it to actually run
+    // before the process terminates, so quitting mid-dictation can't leave other apps muted.
+    flush_mute_worker(std::time::Duration::from_secs(2));
 }
 
 pub struct StartParams {
@@ -667,6 +672,9 @@ enum MuteMode {
 enum MuteCmd {
     Mute,
     Unmute,
+    /// Exit barrier: ack once the worker has drained to here, so cleanup_for_exit can block until a
+    /// just-enqueued Unmute's pactl/wpctl restore has actually run before the process terminates.
+    Flush(std::sync::mpsc::Sender<()>),
 }
 
 /// Apply the system mute (per-app, falling back to whole-sink) and return the mode to restore later.
@@ -712,11 +720,28 @@ fn mute_worker() -> &'static std::sync::mpsc::Sender<MuteCmd> {
                 mode = match cmd {
                     MuteCmd::Mute => apply_mute(),
                     MuteCmd::Unmute => MuteMode::None,
+                    MuteCmd::Flush(ack) => {
+                        // FIFO: any preceding Unmute's restore already ran above (restore_mute). Ack so
+                        // the exit barrier can proceed; nothing is left muted.
+                        let _ = ack.send(());
+                        MuteMode::None
+                    }
                 };
             }
         });
         tx
     })
+}
+
+/// Block (up to `timeout`) until the worker has drained every queued command — used on app exit so a
+/// just-enqueued Unmute's blocking pactl/wpctl restore actually completes before the process dies
+/// (AppHandle::exit skips destructors and the worker is detached / never joined). Bounded so a wedged
+/// audio socket can't hang the quit.
+fn flush_mute_worker(timeout: std::time::Duration) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    if mute_worker().send(MuteCmd::Flush(tx)).is_ok() {
+        let _ = rx.recv_timeout(timeout);
+    }
 }
 
 struct SystemMuteGuard {
