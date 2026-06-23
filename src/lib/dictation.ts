@@ -6,7 +6,7 @@
 import { useApp } from "./store";
 import { startLive, stopLive, cancelLive, requestStopIfStarting, isStarting } from "./streaming";
 import { showQuickAdd } from "./api";
-import { isActiveDictation } from "./dictationVisual";
+import { isActiveDictation, isProcessing } from "./dictationVisual";
 import type { Backend, Profile } from "./types";
 
 export type TriggerAction = "start" | "stop" | "toggle";
@@ -23,7 +23,7 @@ function isBusy(): boolean {
 function stopOrCancel(): void {
   const s = useApp.getState().status;
   if (s === "listening") void stopLive();
-  else if (s === "transcribing" || s === "injecting") void cancelLive();
+  else if (isProcessing(s)) void cancelLive();
   // idle/error but a session may be mid-START (its status not yet "listening", e.g. a fast PTT tap
   // whose chord-release "stop" landed during the start prologue) → mark it to tear down on go-live,
   // else it would wedge "listening" with the chord already released. No-op when nothing is starting.
@@ -114,7 +114,7 @@ export function runOverlayAction(kind: string): void {
       void stopLive();
       return;
     }
-    if (s.status === "transcribing" || s.status === "injecting") {
+    if (isProcessing(s.status)) {
       void cancelLive(); // force a clean idle (recover a wedged session)
       return;
     }

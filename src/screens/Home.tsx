@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Mic, Radio, Hand, Square, Pencil } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
-import { dictationVisual, isActiveDictation } from "@/lib/dictationVisual";
+import { dictationVisual, isActiveDictation, isProcessing } from "@/lib/dictationVisual";
 import { Button, Card, Notice, SectionLabel, Select, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
@@ -150,7 +150,7 @@ export default function Home() {
       void stopLive();
       return;
     }
-    if (status === "transcribing" || status === "injecting") {
+    if (isProcessing(status)) {
       void cancelLive(); // force a clean idle (and reset any stuck hotkeys)
       return;
     }

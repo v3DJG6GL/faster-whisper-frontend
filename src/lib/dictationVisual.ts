@@ -75,3 +75,13 @@ export function dictationVisual(
 export function isActiveDictation(status: DictationStatus): boolean {
   return status === "listening" || status === "transcribing" || status === "injecting";
 }
+
+/**
+ * The post-capture "processing" subset {transcribing, injecting} — finalizing → inserting,
+ * the states with no audio to react to that drive the self-animated chip/waveform motion AND
+ * the hotkey/button stop-vs-cancel branch. Centralized for the same reason as isActiveDictation:
+ * so a future post-capture status can't be silently omitted at one of the ~6 sites that hand-roll it.
+ */
+export function isProcessing(status: DictationStatus): boolean {
+  return status === "transcribing" || status === "injecting";
+}

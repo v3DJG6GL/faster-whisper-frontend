@@ -6,7 +6,7 @@ import { setChipHitRegion, emitOverlayAction, showMainAtScreen } from "@/lib/api
 import { cn } from "@/lib/cn";
 import { quickLaunchMeta } from "@/lib/screens";
 import { newSpeakMemo, stepSpeaking } from "@/lib/speaking";
-import { dictationVisual, isActiveDictation, type DictationTone } from "@/lib/dictationVisual";
+import { dictationVisual, isActiveDictation, isProcessing, type DictationTone } from "@/lib/dictationVisual";
 import type { DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
 
 interface ChipState {
@@ -243,7 +243,7 @@ export default function Overlay() {
     state.status === "error" ||
     !!state.warming ||
     (state.status === "listening" && speaking) ||
-    ((state.status === "transcribing" || state.status === "injecting") && expanded);
+    (isProcessing(state.status) && expanded);
 
   // Expand instantly when speech (or a state change) wants it; collapse only after a
   // linger, so the final words linger on screen rather than snapping shut on a pause.
@@ -417,7 +417,7 @@ export default function Overlay() {
   // being written out to the focused field. There's no audio to react to, so the chip
   // shows a self-driven processing motion (sweeping bars + a quicker pulsing dot)
   // rather than the frozen-looking bars it used to.
-  const processing = state.status === "transcribing" || state.status === "injecting";
+  const processing = isProcessing(state.status);
   // The chip dot + waveform should also self-animate during warm-up (dictationVisual maps warming to
   // a pulse + the dim "machine working" tone), else "warming up…" shows a frozen dot + flat bars while
   // every other working state moves. The cancel-✕ and transcript text-dim must NOT engage during
@@ -555,7 +555,7 @@ export default function Overlay() {
     // Already tucked + the session is wrapping up (finalize/insert): hold the tuck so a minimized
     // chip just hides from the edge instead of sliding out to flash a sub-second end state (the
     // "it pops open for a quarter second" glitch). Only affects an already-peeked chip.
-    const endFlash = peeked && (state.status === "transcribing" || state.status === "injecting");
+    const endFlash = peeked && isProcessing(state.status);
     const blocked =
       !state.overlayPeek ||
       state.position === "off" ||
