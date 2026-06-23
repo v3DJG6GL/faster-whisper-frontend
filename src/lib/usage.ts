@@ -57,6 +57,13 @@ async function refreshOne(backend: Backend): Promise<void> {
     days: TREND_DAYS,
     bucket: "day",
   });
+  // Mirror the Backends connection-test guard (+ upsertBackend's invalidation): a slow fetch against
+  // the OLD server can resolve AFTER the user edited this backend's URL/key (store dropped the stale
+  // usage) or removed it. Bail unless the backend still exists with the same target — else we'd flash
+  // the old server's counts under the edited backend, or re-add a dangling usage[removedId] the rerun
+  // (live backends only) never clears.
+  const cur = useApp.getState().backends.find((x) => x.id === backend.id);
+  if (!cur || cur.serverUrl !== backend.serverUrl || cur.hasApiKey !== backend.hasApiKey) return;
   // Keep the last-known value on a transient miss — only commit null the first
   // time. Key-presence (not truthiness) so an already-null backend isn't re-set to
   // null every poll (which would spread a fresh `usage` object and churn the

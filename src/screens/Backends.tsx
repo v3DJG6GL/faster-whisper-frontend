@@ -351,7 +351,15 @@ export default function Backends() {
     setTesting((s) => new Set(s).add(b.id));
     try {
       const info = await testConnection({ serverUrl: b.serverUrl, backendId: b.id });
-      setConnection(b.id, info);
+      // Mirror the editor's liveTarget guard (+ upsertBackend's connection invalidation): a slow/
+      // unreachable test can resolve AFTER the user edits this backend's URL/key (which drops the
+      // stale connection) or removes it. Only commit if the backend still exists with the same target,
+      // else we'd re-cache the OLD server's classification under this id (effectiveServerKind / status
+      // dot / decode gate) or re-add a dangling connection for a removed backend.
+      const cur = useApp.getState().backends.find((x) => x.id === b.id);
+      if (cur && cur.serverUrl === b.serverUrl && cur.hasApiKey === b.hasApiKey) {
+        setConnection(b.id, info);
+      }
     } finally {
       setTesting((s) => {
         const next = new Set(s);
