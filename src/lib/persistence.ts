@@ -1,5 +1,5 @@
 import { useApp } from "./store";
-import { isTauri, loadConfig, saveConfig, reregisterShortcutsUnlessCapturing } from "./api";
+import { isTauri, loadConfig, saveConfig, reregisterShortcutsUnlessCapturing, evdevStatus } from "./api";
 import { conflicts, quickAddPeer } from "./conflicts";
 
 /**
@@ -37,6 +37,18 @@ export async function initConfig(): Promise<void> {
     hydrated = true;
   }
 
+  // Whether the evdev backend is actually PERMITTED. evdev is the live hotkey backend only when
+  // enabled AND permitted; otherwise the plugin is live and collapses L/R modifier sides, so the
+  // save-gate below must mirror Rust's !(enabled && permitted) collapse decision. Default false is
+  // conservative (collapse until known, so a real side-only conflict is never missed); refreshed on
+  // the evdev toggle below.
+  let evdevPermitted = false;
+  void evdevStatus()
+    .then((st) => {
+      evdevPermitted = st.permitted;
+    })
+    .catch(() => {});
+
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pendingBindingChange = false;
   useApp.subscribe((state, prev) => {
@@ -59,6 +71,15 @@ export async function initConfig(): Promise<void> {
     ) {
       pendingBindingChange = true;
     }
+    // Toggling evdev can change whether it's PERMITTED — refresh so the save-gate's collapse decision
+    // tracks the live backend (the toggle alone doesn't carry the permitted bit).
+    if (state.settings.general.evdevEnabled !== prev.settings.general.evdevEnabled) {
+      void evdevStatus()
+        .then((st) => {
+          evdevPermitted = st.permitted;
+        })
+        .catch(() => {});
+    }
     clearTimeout(timer);
     timer = setTimeout(() => {
       const s = useApp.getState();
@@ -73,10 +94,11 @@ export async function initConfig(): Promise<void> {
       // unless the save-gate sees it too.
       const qa = s.settings.general.quickAddHotkey;
       const conflictPeers = qa.length > 0 ? [...s.profiles, quickAddPeer(qa)] : s.profiles;
-      // evdev off ⇒ the plugin backend registers and can't tell modifier sides apart, so collapse
-      // L/R for conflict detection (else two side-only-different chords pass here yet one silently
-      // never registers). Mirrors the capture-time + per-card checks.
-      if (conflicts(conflictPeers, !s.settings.general.evdevEnabled).length > 0) {
+      // evdev NOT ACTIVE (off OR enabled-but-not-permitted) ⇒ the plugin backend registers and can't
+      // tell modifier sides apart, so collapse L/R for conflict detection (else two side-only-different
+      // chords pass here yet one silently never registers). Mirrors Rust's !(enabled && permitted) and
+      // the capture-time + per-card checks.
+      if (conflicts(conflictPeers, !(s.settings.general.evdevEnabled && evdevPermitted)).length > 0) {
         useApp
           .getState()
           .setSaveError("A shortcut is used by two bindings — resolve the conflict to resume saving.");

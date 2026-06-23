@@ -369,6 +369,15 @@ export default function Profiles() {
   const moveProfile = useApp((s) => s.moveProfile);
   const quickAddHotkey = useApp((s) => s.settings.general.quickAddHotkey);
   const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
+  // evdev is the ACTIVE hotkey backend only when enabled AND permitted (same gate as the Editor +
+  // Rust's apply_bindings). When enabled-but-not-permitted the plugin is live and collapses L/R
+  // modifier sides, so the per-card conflict banner must collapse too — else a side-only-different
+  // chord shows no conflict here yet silently clobbers one binding under the plugin.
+  const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
+  useEffect(() => {
+    void evdevStatus().then(setEvdev).catch(() => {});
+  }, []);
+  const evdevActive = !!evdev?.permitted && evdevEnabled;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Profile | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -397,7 +406,7 @@ export default function Profiles() {
   // surfaces now agree.
   const conflictPeers =
     quickAddHotkey.length > 0 ? [...profiles, quickAddPeer(quickAddHotkey)] : profiles;
-  const conflicts = conflictsByProfile(conflictPeers, !evdevEnabled);
+  const conflicts = conflictsByProfile(conflictPeers, !evdevActive);
   const nameOf = (id: string) =>
     id === QUICK_ADD_PEER_ID ? "Quick add" : (profiles.find((p) => p.id === id)?.name ?? "another profile");
   const backendName = (id: string | null) => backends.find((b) => b.id === id)?.name ?? "No backend";
