@@ -4,6 +4,7 @@ import { useApp } from "@/lib/store";
 import { Button, Card, Notice, PageHeader, Select } from "@/components/ui";
 import { LANGUAGES } from "@/lib/languages";
 import { pickAudioFile, transcribeFile, isTauri } from "@/lib/api";
+import { stripControlChars } from "@/lib/sanitize";
 import type { BatchResult } from "@/lib/types";
 
 function basename(path: string): string {
@@ -99,7 +100,7 @@ export default function Transcribe() {
   const copy = async () => {
     if (!result) return;
     try {
-      await navigator.clipboard.writeText(result.text);
+      await navigator.clipboard.writeText(stripControlChars(result.text));
     } catch (e) {
       console.error("clipboard copy failed:", e); // don't flash "Copied" if the write failed
       return;
