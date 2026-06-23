@@ -356,6 +356,11 @@ mod imp {
             let v = charmap.get(&'v').map(|s| s.keycode).unwrap_or(KEY_V);
             return vec![KEY_LEFTCTRL, v];
         }
+        // A main key but no recognized modifier would press a BARE key — typing the literal char
+        // instead of pasting. Prepend Ctrl, mirroring the X11 path (inject.rs paste_keystroke).
+        if mods.is_empty() {
+            mods.push(KEY_LEFTCTRL);
+        }
         mods.extend(keys);
         mods
     }
