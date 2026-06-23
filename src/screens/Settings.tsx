@@ -157,7 +157,7 @@ function AudioTab() {
       clearTimeout(warmTimer);
       clearTimeout(maxTimer);
       unlisten?.();
-      void stopMicTest();
+      void stopMicTest().catch(() => {});
       setLevel(0);
       setMicWarming(false);
     };
@@ -185,7 +185,7 @@ function AudioTab() {
       // route navigation, but the mic-test playback is a detached Rust thread (up to ~15s) that
       // only stopMicTestPlayback() halts — the test-effect cleanup's stopMicTest() doesn't touch
       // playback. Without this the clip keeps sounding with no UI to stop it. No-op when idle.
-      void stopMicTestPlayback();
+      void stopMicTestPlayback().catch(() => {});
     };
   }, []);
 
@@ -195,7 +195,7 @@ function AudioTab() {
   const replay = useCallback(() => {
     if (clipSecsRef.current <= 0) return;
     setPlaying(true);
-    void playMicTest();
+    void playMicTest().catch(() => {});
     if (playTimerRef.current != null) clearTimeout(playTimerRef.current);
     playTimerRef.current = window.setTimeout(() => {
       setPlaying(false);
@@ -205,7 +205,7 @@ function AudioTab() {
 
   // Stop an in-flight replay — the Replay button doubles as a Stop while it's playing.
   const stopPlayback = useCallback(() => {
-    void stopMicTestPlayback();
+    void stopMicTestPlayback().catch(() => {});
     setPlaying(false);
     if (playTimerRef.current != null) {
       clearTimeout(playTimerRef.current);
@@ -220,6 +220,8 @@ function AudioTab() {
     let secs = 0;
     try {
       secs = await stopMicTest();
+    } catch (e) {
+      console.error("stop mic test failed:", e); // secs stays 0 → the replay below is correctly skipped
     } finally {
       setTesting(false);
     }
