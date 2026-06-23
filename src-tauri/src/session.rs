@@ -245,8 +245,20 @@ fn open_input(
     ))
 }
 
-fn err_cb(e: StreamError) {
-    tracing::warn!("[stream] device error: {e}");
+/// Build a cpal stream error callback that signals `stop` on a TERMINAL device error. A mid-session
+/// device disconnect surfaces as StreamError::DeviceNotAvailable and then no more data callbacks
+/// fire — without this the capture thread stays blocked in publish_levels (loops until stop), its
+/// pcm sender never drops, and the session wedges at "listening" with a frozen meter until the user
+/// cancels. Tripping stop unblocks it so the channel closes and the session drains to Closed (the
+/// same teardown a user stop triggers). A transient BackendSpecific glitch is recoverable, so it is
+/// logged but does NOT stop the session.
+fn err_cb_with_stop(stop: Arc<AtomicBool>) -> impl FnMut(StreamError) + Send + 'static {
+    move |e| {
+        if matches!(e, StreamError::DeviceNotAvailable) {
+            stop.store(true, Ordering::SeqCst);
+        }
+        tracing::warn!("[stream] device error: {e}");
+    }
 }
 
 fn downmix<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> Vec<f32> {
@@ -302,7 +314,7 @@ fn spawn_capture(
     std::thread::Builder::new()
         .name("stream-capture".into())
         .spawn(move || {
-            if let Err(e) = run_capture(&app, device, format, channels, config, pcm_tx, level, &stop) {
+            if let Err(e) = run_capture(&app, device, format, channels, config, pcm_tx, level, stop) {
                 tracing::warn!("[stream] capture: {e}");
             }
         })
@@ -318,7 +330,7 @@ fn run_capture(
     config: StreamConfig,
     pcm_tx: mpsc::UnboundedSender<Vec<f32>>,
     level: Arc<AtomicU32>,
-    stop: &AtomicBool,
+    stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let stream = match format {
         SampleFormat::F32 => {
@@ -333,7 +345,7 @@ fn run_capture(
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     let _ = tx.send(mono);
                 },
-                err_cb,
+                err_cb_with_stop(stop.clone()),
                 None,
             )
         }
@@ -349,7 +361,7 @@ fn run_capture(
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     let _ = tx.send(mono);
                 },
-                err_cb,
+                err_cb_with_stop(stop.clone()),
                 None,
             )
         }
@@ -365,7 +377,7 @@ fn run_capture(
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     let _ = tx.send(mono);
                 },
-                err_cb,
+                err_cb_with_stop(stop.clone()),
                 None,
             )
         }
@@ -466,7 +478,7 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
             .name("record-capture".into())
             .spawn(move || {
                 if let Err(e) =
-                    run_record_capture(&app, device, format, channels, config, in_rate, buffer, level, &stop)
+                    run_record_capture(&app, device, format, channels, config, in_rate, buffer, level, stop)
                 {
                     tracing::warn!("[record] capture: {e}");
                     // Parity with the streaming path: there, a capture failure drops pcm_tx,
@@ -761,7 +773,7 @@ fn run_record_capture(
     in_rate: u32,
     buffer: Arc<Mutex<Vec<u8>>>,
     level: Arc<AtomicU32>,
-    stop: &AtomicBool,
+    stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     // One resampler, shared with the `move` capture closure via Arc<Mutex>, so we can flush its
     // buffered tail after capture stops (the closure owns nothing else we could reach).
@@ -786,7 +798,7 @@ fn run_record_capture(
                         }
                     }
                 },
-                err_cb,
+                err_cb_with_stop(stop.clone()),
                 None,
             )
         }
@@ -809,7 +821,7 @@ fn run_record_capture(
                         }
                     }
                 },
-                err_cb,
+                err_cb_with_stop(stop.clone()),
                 None,
             )
         }
@@ -832,7 +844,7 @@ fn run_record_capture(
                         }
                     }
                 },
-                err_cb,
+                err_cb_with_stop(stop.clone()),
                 None,
             )
         }
