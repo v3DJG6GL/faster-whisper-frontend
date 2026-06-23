@@ -41,6 +41,16 @@ export default function Transcribe() {
 
   const backend = backends.find((b) => b.id === backendId) ?? backends[0];
 
+  // Abandon any in-flight run + clear a settled result/error so a stale transcript/error never shows
+  // against changed inputs (file, backend, language). Bumping runId makes an in-flight commit a no-op
+  // (run() commits only while runId.current === myRun).
+  const resetForInputChange = () => {
+    runId.current++;
+    setResult(null);
+    setError(null);
+    setBusy(false);
+  };
+
   const choose = async () => {
     let path: string | null;
     try {
@@ -53,20 +63,14 @@ export default function Transcribe() {
       return;
     }
     if (path) {
-      runId.current++; // a changed file abandons any in-flight run for the old file
+      resetForInputChange(); // a changed file abandons any in-flight run for the old file
       setFilePath(path);
-      setResult(null);
-      setError(null);
-      setBusy(false);
     }
   };
 
   const clearFile = () => {
-    runId.current++; // abandon any in-flight run — its result must not land against no file
+    resetForInputChange(); // abandon any in-flight run — its result must not land against no file
     setFilePath(null);
-    setResult(null);
-    setError(null); // clear any stale error Notice from a prior failed run (matches choose())
-    setBusy(false);
   };
 
   const run = async () => {
@@ -163,6 +167,9 @@ export default function Transcribe() {
           <Select
             value={backendId}
             onChange={(v) => {
+              // A backend change is an input change: abandon any in-flight run + clear a stale
+              // result/error, else the prior backend's transcript/error shows under the new selection.
+              resetForInputChange();
               setBackendId(v);
               const b = backends.find((x) => x.id === v);
               if (b) setLanguage(b.language ?? "auto");
@@ -172,7 +179,14 @@ export default function Transcribe() {
         </div>
         <div>
           <label className="mb-2 block text-[12px] font-medium text-dim">Language</label>
-          <Select value={language} onChange={setLanguage} options={LANGUAGES} />
+          <Select
+            value={language}
+            onChange={(v) => {
+              resetForInputChange();
+              setLanguage(v);
+            }}
+            options={LANGUAGES}
+          />
         </div>
       </div>
 
