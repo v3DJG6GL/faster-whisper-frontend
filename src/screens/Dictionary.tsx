@@ -751,7 +751,7 @@ export default function Dictionary() {
           </p>
         </div>
         {backend && (
-          <Button variant="ghost" size="sm" onClick={() => load(backend)} disabled={loading} title="Reload from server">
+          <Button variant="ghost" size="sm" onClick={() => load(backend)} disabled={loading || saving} title="Reload from server">
             <RefreshCw className={cn("size-4", loading && "animate-spin")} /> Refresh
           </Button>
         )}
