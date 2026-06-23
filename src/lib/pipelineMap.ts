@@ -66,9 +66,6 @@ export function applyMap(text: string, rows: MapRow[]): string {
   const map = new Map<string, string>();
   for (const r of rows) if (r.k.trim() && !map.has(r.k)) map.set(r.k, r.v); // newest-shown row wins on a dup
   if (map.size === 0) return text;
-  // case-insensitive: lower-cased key → value (matches the backend's lowercased lookup dict)
-  const lookup = new Map<string, string>();
-  for (const [k, v] of map) lookup.set(k.toLowerCase(), v);
   const keys = [...map.keys()].sort((a, b) => b.length - a.length); // longest first → phrases win
 
   let out = "";
@@ -90,7 +87,7 @@ export function applyMap(text: string, rows: MapRow[]): string {
       }
     }
     if (hit) {
-      out += lookup.get(hit.toLowerCase()) ?? hit;
+      out += map.get(hit) ?? hit; // hit is always a real key → the matched (newest) key's own value
       i += hit.length;
     } else {
       out += text[i];
