@@ -247,22 +247,24 @@ function Editor({
               canCustomize={caps?.can_request_decode_overrides}
             />
           </div>
-          {backend && (
-            <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
-              <div className="mb-3 text-[12px] font-medium text-dim">
-                Server override profile <span className="text-faint">· empty inherits the backend</span>
-              </div>
-              <OverrideProfilePicker
-                serverUrl={backend.serverUrl}
-                backendId={backend.id}
-                serverKind={serverKind}
-                canRequest={caps?.can_request_override_profile}
-                value={p.overrideProfile ?? ""}
-                inheritLabel="(inherit backend)"
-                onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
-              />
+          {/* Render unconditionally like the sibling Language/Decode blocks (disable-not-hide): if the
+              bound backend was deleted (backendId cleared), a stored overrideProfile still applies to
+              the fallback backend at dictation time, so the user must be able to SEE and clear it. With
+              no resolvable backend the picker degrades to its free-text path (serverKind "unknown"). */}
+          <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
+            <div className="mb-3 text-[12px] font-medium text-dim">
+              Server override profile <span className="text-faint">· empty inherits the backend</span>
             </div>
-          )}
+            <OverrideProfilePicker
+              serverUrl={backend?.serverUrl ?? ""}
+              backendId={backend?.id ?? ""}
+              serverKind={serverKind}
+              canRequest={caps?.can_request_override_profile}
+              value={p.overrideProfile ?? ""}
+              inheritLabel="(inherit backend)"
+              onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
+            />
+          </div>
         </>
       )}
 
