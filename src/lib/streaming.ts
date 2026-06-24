@@ -529,18 +529,18 @@ async function ensureListeners(): Promise<void> {
       // regardless of whether/where the phrase actually typed.
       const grew = commonPrefixLen(seenDoc, target) < target.length;
       seenDoc = target;
+      // Capture the session token SYNCHRONOUSLY (before the task's awaited resolveTarget) so the task
+      // bails on BOTH a cancel (insertCfg→null) AND a cancel-then-fresh-restart (insertCfg→a NEW object)
+      // landing during EITHER await — mirrors the stop-timing task (cfg captured before its enqueue).
+      // Within a session insertCfg keeps a stable identity, so a normal phrase still injects.
+      const cfg = insertCfg;
       enqueueInject(async () => {
         const t = await resolveTarget();
-        // A cancel that landed during the (awaited) target resolve nulled insertCfg and aborted the
-        // session — don't inject the phrase it was meant to discard. The outer status gate (above)
-        // ran before this task was queued; insertCfg is the in-task discriminator. stopLive keeps
-        // insertCfg set, so a normal end-of-session phrase still lands; only a true cancel bails.
-        if (!insertCfg) return;
-        // Capture the session's insert config by IDENTITY so the post-await success bookkeeping below
-        // can detect a cancel (insertCfg→null) OR a cancel-then-fresh-session (insertCfg→a new object)
-        // that landed DURING the awaited injectText, and bail instead of stamping a stale phrase's
-        // "inserted" pulse / typed baseline onto the idled or next session.
-        const cfg = insertCfg;
+        // Discard a cancelled/superseded session's phrase — don't inject it into the new/refocused
+        // window, and don't let the bookkeeping/catches below touch the next session (insertCfg!==cfg
+        // catches both a cancel→null and a cancel-then-restart→new object; stopLive keeps cfg, so a
+        // normal end-of-session phrase still lands).
+        if (insertCfg !== cfg) return;
         // HOLD/PTT must never live-TYPE: the trigger chord is still physically held, so injected keys
         // fold into the held modifier and fire shortcuts — which is why live-in-hold is allowed only
         // when the method is clipboard. At start that's enforced; but focus can move mid-session to a
@@ -564,6 +564,9 @@ async function ensureListeners(): Promise<void> {
               // refresh the one red state" model was wrong), so without teardown the Rust capture keeps
               // the mic open + system muted while the rest of the speech is silently dropped.
               console.error("live clipboard insert failed:", e);
+              // A cancel / fresh session landed during the await — this reject is the DISCARDED
+              // session's, so don't flash a red error or tear down the freshly-started session B.
+              if (insertCfg !== cfg) return;
               flashError("Couldn’t copy the text to the clipboard.");
               teardownAfterFatalInject();
               return;
@@ -617,6 +620,9 @@ async function ensureListeners(): Promise<void> {
               // stream://error) so the mic + system-mute don't leak — once status is "error" no
               // further phrase reaches this catch.
               console.error("live insert failed:", e);
+              // A cancel / fresh session landed during the await — this reject is the DISCARDED
+              // session's, so don't recover/flash/teardown the freshly-started session B.
+              if (insertCfg !== cfg) return;
               if (t.method === "direct") {
                 // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
                 try {
@@ -705,12 +711,13 @@ async function ensureListeners(): Promise<void> {
       if (insertCfg.autoEnter) {
         if (phraseDirty) enqueueAutoEnter();
       } else if (sep) {
+        // Capture the session token synchronously (mirrors the live/stop tasks) so a cancel-then-restart
+        // during resolveTarget OR the paste below bails — don't fire a stray separator/Enter into the
+        // new/refocused window, nor stamp the old session's clipboard bookkeeping onto session B.
+        const cfg = insertCfg;
         enqueueInject(async () => {
           const t = await resolveTarget();
-          // A cancel during the awaited resolve nulled insertCfg + aborted the session — don't fire a
-          // stray separator/Enter into the refocused window (mirrors the live final task's guard).
-          if (!insertCfg) return;
-          const cfg = insertCfg; // re-checked after the paste await below (mirrors the other inject tasks)
+          if (insertCfg !== cfg) return;
           // Hold session: same as enqueueAutoEnter — never emit a keystroke while the PTT chord is held
           // (the held modifier would fold into the separator/Enter once focus moved to a typing window).
           if (t.method === "clipboard" || insertCfg?.activation === "hold") return;
@@ -890,6 +897,10 @@ async function ensureListeners(): Promise<void> {
             // (the Rust skip-restore-on-failed-paste), clipboard-only already put it there, so only
             // direct typing (which never touches the clipboard) needs an explicit copy.
             console.error("end-of-session insert failed:", e);
+            // A cancel (insertCfg→null) or a fresh session (insertCfg→a new object) that landed during
+            // the awaited injectText must not recover this discarded session's transcript to the
+            // clipboard nor flash its error onto the idled/next session (mirrors the success guard below).
+            if (insertCfg !== cfg) return;
             // Did the transcript actually end up on the clipboard? paste leaves it there on a failed
             // paste (Rust skip-restore-on-failed-paste) and clipboard-only already put it there; only
             // direct typing needs an explicit copy — and that copy can ALSO fail. Tell the truth
