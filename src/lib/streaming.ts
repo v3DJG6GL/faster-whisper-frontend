@@ -710,6 +710,7 @@ async function ensureListeners(): Promise<void> {
           // A cancel during the awaited resolve nulled insertCfg + aborted the session — don't fire a
           // stray separator/Enter into the refocused window (mirrors the live final task's guard).
           if (!insertCfg) return;
+          const cfg = insertCfg; // re-checked after the paste await below (mirrors the other inject tasks)
           // Hold session: same as enqueueAutoEnter — never emit a keystroke while the PTT chord is held
           // (the held modifier would fold into the separator/Enter once focus moved to a typing window).
           if (t.method === "clipboard" || insertCfg?.activation === "hold") return;
@@ -717,6 +718,9 @@ async function ensureListeners(): Promise<void> {
             await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
           } else {
             await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+            // A cancel-then-fresh-start during the paste await must not stamp the OLD session's clipboard
+            // bookkeeping (clipHoldsOurs / a restore) onto the new one — mirrors the inject tasks' guard.
+            if (insertCfg !== cfg) return;
             // The separator paste just clobbered the clipboard with `sep` (set_clipboard + Ctrl+V).
             // (!t.isSelf: an own-window separator is Rust-guard-skipped, so the clipboard is untouched
             // there and the boundary backstop below handles any owed restore — don't touch bookkeeping.)
@@ -1361,7 +1365,25 @@ export async function stopLive(): Promise<void> {
     const owed = injectChain;
     void owed.then(() => endInjection()).catch((err) => console.error("end injection on stop failed:", err));
     console.error("stop dictation failed:", e);
-    flashError(String(e));
+    // Mirror the stream://error recovery: no `closed` follows a rejected stop (epoch retired above +
+    // closed bails on "error"), so the stop-timing transcript would be silently lost. Copy the
+    // assembled committedDoc+bankedDoc to the clipboard. endInjection above is a no-op in stop mode
+    // (nothing snapshotted), so there's no clobber race; committedDoc/bankedDoc aren't reset by stopLive.
+    const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
+    if (pending) {
+      void (async () => {
+        let onClipboard = false;
+        try {
+          await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [] });
+          onClipboard = true;
+        } catch (err) {
+          console.error("clipboard recovery after stop reject failed:", err);
+        }
+        flashError(onClipboard ? `${String(e)} — your text is on the clipboard to paste manually.` : String(e));
+      })();
+    } else {
+      flashError(String(e));
+    }
   }
 }
 
