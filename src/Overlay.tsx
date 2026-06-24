@@ -480,16 +480,6 @@ export default function Overlay() {
     }
   }, [state.sessionOutcome]);
 
-  const label = state.warming
-    ? "warming up…"
-    : state.status === "transcribing"
-      ? "finalizing…"
-      : state.status === "injecting"
-        ? "inserting…"
-        : state.status === "listening"
-          ? "listening"
-          : ""; // idle (post-session linger) — never fall back to a stale "listening"
-
   // Status dot colour (NEVER red while listening) via the SHARED dictationVisual()
   // mapping — so the chip, sidebar dot, Home button + waveforms all agree. The chip
   // layers its own presentation on top: a tucked (peeked) dot is SOLID so its visible
@@ -497,6 +487,10 @@ export default function Overlay() {
   // docked standby dot at rest is a hollow ring. Active states (error / speaking /
   // finishing) keep their tone even while tucked.
   const vis = dictationVisual(state.status, speaking, state.warming);
+  // The pill's status WORD comes from the SAME SSOT as the dot, so it can't drift from the dot / Home.
+  // idle (post-session linger) → "" placeholder, never a stale "listening". Error's vis.label is unused
+  // (the error branch renders dictationError instead).
+  const label = state.status === "idle" ? "" : vis.label;
   const dotColorClass =
     vis.state === "error" || vis.state === "speaking" || vis.state === "processing"
       ? TONE_BG[vis.tone]
