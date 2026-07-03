@@ -827,7 +827,7 @@ export default function Dictionary() {
       ) : (
         <Stack gap={4}>
           {/* result banner */}
-          {result && <SaveBanner result={result} onReload={() => backend && load(backend)} />}
+          {result && <SaveBanner result={result} reloadDisabled={dirty.length > 0} onReload={() => backend && load(backend)} />}
 
           {/* unsaved-changes bar */}
           {dirty.length > 0 && (
@@ -928,7 +928,7 @@ function describeFetchError(fetch: PipelineFetch, name: string): { title: string
   }
 }
 
-function SaveBanner({ result, onReload }: { result: PipelineSaveResult; onReload: () => void }) {
+function SaveBanner({ result, reloadDisabled, onReload }: { result: PipelineSaveResult; reloadDisabled: boolean; onReload: () => void }) {
   // Validation failure — keep the user's edits so they can fix them. `errors` is opaque server JSON:
   // a non-array value (e.g. a bare string from a buggy/old/proxied server) passes a plain `.length`
   // truthy check and then crashes `.slice().map()`, white-screening the route. Coerce to an array
@@ -977,7 +977,15 @@ function SaveBanner({ result, onReload }: { result: PipelineSaveResult; onReload
         <Notice>
           {conflicts} {conflicts === 1 ? "rule" : "rules"} changed on the server and {conflicts === 1 ? "was" : "were"} not saved.
           The latest version has been reloaded.{" "}
-          <button type="button" className="ring-signal underline hover:text-text" onClick={onReload}>Reload again</button>
+          <button
+            type="button"
+            disabled={reloadDisabled}
+            title={reloadDisabled ? "Discard or save your changes first — Reload replaces them with the server's version" : undefined}
+            className="ring-signal underline hover:text-text disabled:no-underline disabled:opacity-40"
+            onClick={onReload}
+          >
+            Reload again
+          </button>
         </Notice>
       )}
     </div>
