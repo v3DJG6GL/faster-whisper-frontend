@@ -14,16 +14,21 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// evdev keycodes (input-event-codes.h) for the shortcut-forming modifiers — left/
-/// right Ctrl, Alt, Meta, plus AltGr. Shift is intentionally excluded: it can't form
-/// an app shortcut, and the virtual-keyboard typing path is immune to it anyway.
-pub const SHORTCUT_MOD_CODES: [u16; 6] = [
+/// evdev keycodes (input-event-codes.h) for the modifiers whose physical release the pre-injection
+/// gate waits for — left/right Ctrl, Alt, Meta, AltGr, and Shift. Shift is included because on the
+/// primary KWin target direct typing falls back to the portal (no zwp_virtual_keyboard) and paste
+/// always uses the portal, both of which resolve injected keycodes under the LIVE seat state: a
+/// still-held trigger Shift folds into the keys — turning Ctrl+V into Ctrl+Shift+V, an auto-Enter into
+/// Shift+Enter, and mis-casing directly-typed letters. Only the zwp_virtual_keyboard path is Shift-immune.
+pub const SHORTCUT_MOD_CODES: [u16; 8] = [
     29,  // KEY_LEFTCTRL
     97,  // KEY_RIGHTCTRL
     56,  // KEY_LEFTALT
     100, // KEY_RIGHTALT (AltGr / ISO_Level3_Shift)
     125, // KEY_LEFTMETA
     126, // KEY_RIGHTMETA
+    42,  // KEY_LEFTSHIFT
+    54,  // KEY_RIGHTSHIFT
 ];
 
 /// Shared, cheaply-clonable handle to the held-key refcount map. Managed by Tauri as
