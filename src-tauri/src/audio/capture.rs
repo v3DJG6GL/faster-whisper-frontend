@@ -154,6 +154,17 @@ fn run(
     stop: Arc<AtomicBool>,
     clip: Arc<Mutex<MicClip>>,
 ) -> Result<(), String> {
+    // Reset the shared clip BEFORE the fallible device open below. Otherwise a failed pick_device /
+    // default_input_config (busy/unplugged/denied mic) leaves the PREVIOUS successful test's samples
+    // in place, and stop_mic_test then reads the stale rate/len and auto-replays that old audio as if
+    // freshly captured on the now-broken device. sample_rate=0 makes stop_mic_test's `sample_rate > 0`
+    // guard false → it returns 0s → the frontend correctly skips the replay. Safe from a torn write:
+    // start_mic_test drops/joins the prior capture handle (`*guard = None`) before spawning this thread.
+    if let Ok(mut c) = clip.lock() {
+        c.samples.clear();
+        c.sample_rate = 0;
+    }
+
     let device = pick_device(device_id)?;
     let supported = device.default_input_config().map_err(|e| e.to_string())?;
     let sample_format = supported.sample_format();
@@ -162,9 +173,8 @@ fn run(
     let sample_rate = config.sample_rate.0;
     let cap = MAX_CLIP_SECS * sample_rate as usize;
 
-    // Fresh capture: reset the shared clip and stamp its rate for playback.
+    // Device opened — stamp its rate for playback (samples were cleared above).
     if let Ok(mut c) = clip.lock() {
-        c.samples.clear();
         c.sample_rate = sample_rate;
     }
 
