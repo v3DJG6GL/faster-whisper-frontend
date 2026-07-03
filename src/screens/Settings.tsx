@@ -946,6 +946,7 @@ export default function Settings() {
                 <div className="flex items-center gap-2">
                   <span className="text-[12px] text-dim">{s.general.evdevEnabled ? "On" : "Off"}</span>
                   <Toggle
+                    ariaLabel="Hardware hotkeys (evdev)"
                     checked={s.general.evdevEnabled}
                     onChange={(v) => updateGeneral({ evdevEnabled: v })}
                   />
