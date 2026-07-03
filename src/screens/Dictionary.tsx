@@ -751,7 +751,13 @@ export default function Dictionary() {
           </p>
         </div>
         {backend && (
-          <Button variant="ghost" size="sm" onClick={() => load(backend)} disabled={loading || saving} title="Reload from server">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => load(backend)}
+            disabled={loading || saving || dirty.length > 0}
+            title={dirty.length > 0 ? "Discard your changes first (Refresh reloads from the server)" : "Reload from server"}
+          >
             <RefreshCw className={cn("size-4", loading && "animate-spin")} /> Refresh
           </Button>
         )}
@@ -768,7 +774,11 @@ export default function Dictionary() {
                   key={b.id}
                   type="button"
                   aria-pressed={active}
-                  disabled={saving}
+                  // Gray out an INACTIVE backend while there are unsaved edits (disable-not-hide):
+                  // switching reloads that backend's rules and wholesale-replaces the edits map, silently
+                  // discarding pending edits despite the "N unsaved changes" bar. Discard/Save first.
+                  disabled={saving || (dirty.length > 0 && !active)}
+                  title={dirty.length > 0 && !active ? "Save or discard your changes before switching backend" : undefined}
                   onClick={() => {
                     setSelectedId(b.id);
                     setLoading(true); // show the spinner on switch, not the prior backend's rules
