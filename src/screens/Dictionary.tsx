@@ -780,6 +780,11 @@ export default function Dictionary() {
                   disabled={saving || (dirty.length > 0 && !active)}
                   title={dirty.length > 0 && !active ? "Save or discard your changes before switching backend" : undefined}
                   onClick={() => {
+                    // Clicking the ACTIVE pill is a no-op switch: setSelectedId is unchanged so the
+                    // load-on-change effect (keyed on [id, serverUrl]) never re-runs and never clears
+                    // loading — setting it true here would strand the "Loading rules…" spinner forever
+                    // (Refresh is disabled while loading, so there's no recovery). Bail early.
+                    if (b.id === selectedId) return;
                     setSelectedId(b.id);
                     setLoading(true); // show the spinner on switch, not the prior backend's rules
                   }}
