@@ -89,7 +89,11 @@ export function useHotkeyCapture(opts: {
       if (MODIFIER_CODES.has(e.code)) {
         pressed.add(e.code);
         const cur = canonicalizeCodes([...pressed]);
-        if (cur.length > peak.length) peak = cur;
+        // >= (not >) so a LATER equal-length modifier set wins the tie: on a same-count swap mid-capture
+        // (release LeftShift, press LeftAlt while LeftCtrl stays down) peak must track the most-recent
+        // maximal set the pill shows (setHeldCodes(cur)), else the keyup fallback commits the abandoned
+        // earlier combo. Safe: peak is cleared on real-key press / conflicting retry / blur.
+        if (cur.length >= peak.length) peak = cur;
         setHeldCodes(cur);
         return;
       }
