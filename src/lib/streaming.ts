@@ -1434,6 +1434,12 @@ export async function stopLive(): Promise<void> {
     // assembled committedDoc+bankedDoc to the clipboard. endInjection above is a no-op in stop mode
     // (nothing snapshotted), so there's no clobber race; committedDoc/bankedDoc aren't reset by stopLive.
     const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
+    // Null insertCfg (AFTER reading it for `pending`) so a LIVE phrase still queued behind the rejected
+    // stop can't type/paste into the now-refocused window and pulse a green/amber "inserted" onto the
+    // red error chip — the 4th sibling of stream://error / teardownAfterFatalInject / cancelLive, which
+    // all null it (this catch mirrored every OTHER teardown step but missed this one). endInjection is
+    // chained on `owed` above, so any snapshot still restores; the recovery below doesn't read insertCfg.
+    insertCfg = null;
     if (pending) {
       void (async () => {
         let onClipboard = false;
