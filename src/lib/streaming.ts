@@ -346,11 +346,16 @@ function inSession(): boolean {
 // Return to idle once the injection queue has fully drained (the text has landed in
 // the focused field) — but never before MIN_INJECT_VISIBLE_MS, and never over a status
 // that has moved on (a fresh session, or an error that arrived meanwhile).
-function settleToIdleAfterInjection(startedAt: number): void {
+function settleToIdleAfterInjection(startedAt: number, cfg: InsertCfg | null): void {
   void injectChain.then(() => {
     const wait = Math.max(0, MIN_INJECT_VISIBLE_MS - (performance.now() - startedAt));
     setTimeout(() => {
-      if (useApp.getState().status === "injecting") {
+      // Identity-check the session, not just the status: this `.then` was attached to THIS session's
+      // injectChain, but a slow/stuck paste can keep it pending until after a cancel + a fresh session
+      // B has independently reached "injecting" — settling on status alone would idle B mid-injection
+      // (and stamp its outcome wrong). A normal end keeps insertCfg===cfg; a cancel (→null) or restart
+      // (→new object) makes this a no-op. Mirrors the inject tasks' `insertCfg !== cfg` guard.
+      if (insertCfg === cfg && useApp.getState().status === "injecting") {
         settleIdle();
       }
     }, wait);
@@ -883,6 +888,12 @@ async function ensureListeners(): Promise<void> {
           // glyph/✓ never shows. If a late paste set beganInjection after this sync check, honor its
           // final clipboard restore too (can't double-fire: the injecting branch handles the rest).
           void injectChain.then(() => {
+            // Same stale-callback guard as settleToIdleAfterInjection: if a cancel + fresh session B
+            // landed while this session's queue was draining, bail — else finalClip reads/clobbers B's
+            // beganInjection/clipDirty and settleIdle wrongly idles B from "transcribing" (after which
+            // B's own `closed` bails on status "idle" and never injects B's transcript). A's snapshot is
+            // already restored by cancelLive's chained endInjection.
+            if (insertCfg !== cfg) return;
             void finalClip().catch((e) => console.error("final clip failed:", e));
             if (useApp.getState().status === "transcribing") {
               settleIdle();
@@ -895,7 +906,7 @@ async function ensureListeners(): Promise<void> {
         // Restore/discard once the queue drains (finalClip): restore only if we still owe one, else
         // keep a final clipboard-only transcript on the clipboard (and drop the snapshot).
         enqueueInject(finalClip);
-        settleToIdleAfterInjection(startedAt);
+        settleToIdleAfterInjection(startedAt, cfg);
       } else {
         // "stop" (and "live" on a batch profile): insert the whole transcript once, into the
         // window focused NOW (resolved in-queue) — not whatever was focused at start.
@@ -965,7 +976,7 @@ async function ensureListeners(): Promise<void> {
             else sessionTyped = true;
           }
         });
-        settleToIdleAfterInjection(startedAt);
+        settleToIdleAfterInjection(startedAt, cfg);
       }
     }
   });
@@ -1007,6 +1018,10 @@ async function ensureListeners(): Promise<void> {
     // intact by the error path, reset only by the next startLive). Live mode injected per-phrase → "".
     // endInjection above is a no-op in stop mode (beganInjection false → nothing snapshotted), so no race.
     const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
+    // Null insertCfg (AFTER reading it for `pending`) so a live phrase still queued behind the error
+    // can't type/paste into the now-refocused window after the session errored — mirrors cancelLive /
+    // teardownAfterFatalInject. endInjection is chained on `owed` above, so any snapshot still restores.
+    insertCfg = null;
     console.error("stream error:", e.payload);
     if (pending) {
       void (async () => {
@@ -1112,6 +1127,12 @@ function teardownAfterFatalInject(): void {
   stopTargetPoll();
   clearWarmTimer();
   clearPhraseEnd();
+  // Null insertCfg (like cancelLive) so any inject task still QUEUED behind the failed one bails on
+  // its `insertCfg !== cfg` guard — its only gate — instead of typing/pasting a phrase and firing a
+  // green "inserted" pulse onto the now-red error chip. Safe: the failing task `return`s without
+  // re-reading insertCfg, and the late drain `closed` bails on status "error"/"idle" before it would
+  // read insertCfg at the tail. endInjection is still chained on `owed` below, so snapshots restore.
+  insertCfg = null;
   const owed = injectChain;
   void owed
     .then(() => discardInjectionSnapshot())
