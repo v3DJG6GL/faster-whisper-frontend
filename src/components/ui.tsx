@@ -155,6 +155,7 @@ export function DisclosureToggle({
     <button
       type="button"
       onClick={onToggle}
+      aria-expanded={open}
       className={cn(
         "ring-signal inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium text-dim hover:text-text",
         className,
