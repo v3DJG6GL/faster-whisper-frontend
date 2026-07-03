@@ -240,6 +240,7 @@ export default function Home() {
                   onChange={(v) => updateSettings({ homeProfileId: v })}
                   options={enabled.map((p) => ({ value: p.id, label: p.name }))}
                   className="w-40"
+                  ariaLabel="Profile the Home button dictates with"
                 />
               </div>
             )}

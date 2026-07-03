@@ -169,10 +169,27 @@ export function DisclosureToggle({
 
 /** A form field with a small dim label above its control. */
 export function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  // Like SettingRow, the caption is a sibling <label> with no htmlFor (and doesn't wrap the child),
+  // so a direct Select/TextInput child has NO accessible name — a screen reader announces only
+  // "combobox" + value. Auto-label it from `label` unless one is already set. Select takes an
+  // `ariaLabel` prop; TextInput forwards native `aria-label`. Composite children (e.g. an API-key
+  // input + reveal button wrapped in a div) fail the type check and pass through untouched.
+  let control: ReactNode = children;
+  if (isValidElement(children)) {
+    if (children.type === Select) {
+      control = cloneElement(children as ReactElement<{ ariaLabel?: string }>, {
+        ariaLabel: (children.props as { ariaLabel?: string }).ariaLabel ?? label,
+      });
+    } else if (children.type === TextInput) {
+      control = cloneElement(children as ReactElement<{ "aria-label"?: string }>, {
+        "aria-label": (children.props as { "aria-label"?: string })["aria-label"] ?? label,
+      });
+    }
+  }
   return (
     <div className={className}>
       <label className="mb-2 block text-[12px] font-medium text-dim">{label}</label>
-      {children}
+      {control}
     </div>
   );
 }
