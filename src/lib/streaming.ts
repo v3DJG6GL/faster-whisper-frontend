@@ -403,7 +403,10 @@ function armStuckWatchdog(): void {
           } catch (err) {
             console.error("clipboard recovery after stuck-finalize failed:", err);
           }
-          if (onClipboard) flashError("Connection lost — your text is on the clipboard to paste manually.");
+          // Notify in BOTH branches, mirroring the stream://error / stopLive-reject siblings: on a
+          // double failure (link died AND the clipboard copy threw) the text is genuinely lost, so
+          // surface it rather than silently idling. (No error payload here — it's a watchdog timeout.)
+          flashError(onClipboard ? "Connection lost — your text is on the clipboard to paste manually." : "Connection lost — couldn't recover your text.");
         })();
       }
     }
