@@ -405,7 +405,6 @@ mod imp {
     /// on it. Returns (ending the task) when the channel closes or the session
     /// dies — `type_text` then restarts it on the next request.
     async fn session_loop(app: &AppHandle, mut rx: mpsc::Receiver<Job>) -> Result<(), String> {
-        let charmap = build_charmap().ok_or("could not build a keymap for the active layout")?;
         let token = load_token(app);
 
         let proxy = RemoteDesktop::new().await.map_err(|e| e.to_string())?;
@@ -433,6 +432,20 @@ mod imp {
         tracing::info!("[wayland-inject] persistent portal session ready");
 
         while let Some(job) = rx.recv().await {
+            // Rebuild the charmap PER JOB, not once per session: a KDE keyboard-layout switch
+            // mid-run (e.g. us→de) would otherwise leave a stale group-0 snapshot and garble
+            // direct-typed text (y↔z, symbols) until an app restart. build_charmap is a cheap
+            // setxkbmap + libxkbcommon compile (ms) next to a multi-second utterance, and the
+            // persistent portal session stays open, so this adds no consent re-prompt. (Reading
+            // the ACTIVE XKB group index — for a multi-layout `us,de` with group 1 active — is a
+            // separate, larger change and stays a follow-up.)
+            let charmap = match build_charmap() {
+                Some(m) => m,
+                None => {
+                    let _ = job.reply.send(Err("could not build a keymap for the active layout".into()));
+                    continue;
+                }
+            };
             // Every keycode we press is recorded here so we can GUARANTEE a matching
             // release even if a portal call fails mid-chord. Without this, a failure
             // after `Ctrl↓`/`Shift↓` leaves that modifier logically DOWN system-wide
