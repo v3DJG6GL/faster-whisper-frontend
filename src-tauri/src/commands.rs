@@ -749,8 +749,14 @@ pub fn end_injection(snap: State<ClipboardSnapshot>) {
 pub fn restore_clipboard_snapshot(snap: State<ClipboardSnapshot>) {
     let prev = snap.0.lock().ok().and_then(|g| g.clone());
     if let Some(prev) = prev {
-        tracing::info!("[clip] restore_clipboard_snapshot: {} chars", prev.len());
-        crate::inject::set_clipboard_persistent(&prev);
+        tracing::info!("[clip] restore_clipboard_snapshot: {} chars (delayed)", prev.len());
+        // Serve after the same ~400ms margin as end_injection / the paste path (via
+        // restore_clipboard_later), NOT an immediate set_clipboard_persistent: the boundary-
+        // separator restore (streaming.ts) runs synchronously right after its OWN separator
+        // paste, so an immediate serve races the target's async selection read and could hand
+        // back the user's old clipboard instead of the separator. The per-phrase restore fires
+        // on the ~1.2s quiet timer, so the extra 400ms delay is immaterial there.
+        crate::inject::restore_clipboard_later(Some(prev));
     }
 }
 
