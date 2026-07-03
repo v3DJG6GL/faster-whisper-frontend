@@ -259,7 +259,7 @@ function TrendChart({ dense }: { dense: UsageSeriesPoint[] }) {
               viewBox={`0 0 ${w} ${H}`}
               width="100%"
               height={H}
-              className="block focus:outline-none"
+              className="ring-signal block"
               tabIndex={0}
               role="img"
               aria-label={`Usage over time — ${METRIC[metric].label} per day, last ${range} days. Peak ${tick(metric, peak)}, average ${tick(metric, avg)}.`}
