@@ -93,16 +93,20 @@ const CODE_RANK: Record<string, number> = {
 const SIDE_COLLAPSE: Record<string, string> = {
   ControlRight: "ControlLeft",
   ShiftRight: "ShiftLeft",
-  AltRight: "AltLeft",
   MetaRight: "MetaLeft",
+  // AltRight (AltGr) is deliberately NOT collapsed: the plugin's accelerator parser REJECTS it outright
+  // (codes_to_accelerator returns None — "AltGr — evdev-only"), it does NOT fold it to Alt. Collapsing it
+  // would make AltGr+X read as a duplicate of Alt+X and FREEZE saving, when really AltGr+X just can't
+  // register under the plugin — a non-blocking condition already surfaced by the "needs evdev" hint.
 };
 
-/** Collapse right-side modifiers to their left equivalent — exactly what the global-shortcut PLUGIN
- *  backend does (its accelerator parser can't distinguish modifier sides; see codes_to_accelerator).
+/** Collapse right-side modifiers to their left equivalent — matching what the global-shortcut PLUGIN
+ *  backend does (its accelerator parser can't distinguish Ctrl/Shift/Super sides; see codes_to_accelerator).
  *  Use this for conflict detection when the plugin is the registrar (evdev off), so two chords that
  *  differ ONLY by modifier side (Ctrl-left+H vs Ctrl-right+H) are correctly seen as the same chord —
  *  otherwise both pass conflict detection yet collide at registration and one silently never fires.
- *  Under evdev (which DOES honour sides) callers skip this so distinct-side chords stay distinct. */
+ *  AltGr (AltRight) is excluded: the plugin rejects it rather than folding it, so it must stay a distinct
+ *  token (see SIDE_COLLAPSE). Under evdev (which DOES honour sides) callers skip this entirely. */
 export function collapseModifierSides(codes: string[]): string[] {
   return codes.map((c) => SIDE_COLLAPSE[c] ?? c);
 }
