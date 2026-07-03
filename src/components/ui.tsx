@@ -280,18 +280,21 @@ export function Select<T extends string>({
   options,
   className,
   disabled,
+  ariaLabel,
 }: {
   value: T;
   onChange: (v: T) => void;
   options: { value: T; label: string }[];
   className?: string;
   disabled?: boolean;
+  ariaLabel?: string;
 }) {
   return (
     <div className={cn("relative", className)}>
       <select
         value={value}
         disabled={disabled}
+        aria-label={ariaLabel}
         onChange={(e) => onChange(e.target.value as T)}
         className={cn(
           "ring-signal h-10 w-full appearance-none rounded-xl border border-line bg-surface-2 pl-3.5 pr-9 text-[13px] text-text",
@@ -623,11 +626,13 @@ export function SettingRow({
   last?: boolean;
   disabled?: boolean;
 }) {
-  // A bare role="switch" Toggle has no accessible name (the title is a sibling <div>). Auto-label a
-  // direct Toggle child with the row title so a screen reader announces what it controls; respects an
-  // explicit ariaLabel and leaves other control types untouched.
+  // A bare role="switch" Toggle or an unlabeled <select> has no accessible name (the title is a
+  // sibling <div>, not a <label htmlFor>). Auto-label a direct Toggle OR Select child with the row
+  // title so a screen reader announces what it controls; respects an explicit ariaLabel and leaves
+  // other control types untouched. (A control wrapped in its own <div> — e.g. the mic select with its
+  // Refresh button — isn't a direct child, so those pass ariaLabel at the call site instead.)
   const control =
-    isValidElement(children) && children.type === Toggle
+    isValidElement(children) && (children.type === Toggle || children.type === Select)
       ? cloneElement(children as ReactElement<{ ariaLabel?: string }>, {
           ariaLabel: (children.props as { ariaLabel?: string }).ariaLabel ?? title,
         })

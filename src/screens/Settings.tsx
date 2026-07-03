@@ -265,6 +265,7 @@ function AudioTab() {
             onChange={(v) => updateSettings({ microphoneId: v === "default" ? null : v })}
             options={options}
             className="w-56"
+            ariaLabel="Microphone"
             // Locked during a test: switching the device mid-test re-runs the capture effect,
             // racing the old fire-and-forget stop against the new start (the late stop could tear
             // down the freshly-opened device → dead meter). Stop the test to change the mic.
@@ -408,6 +409,7 @@ function QuickLaunchEditor({
             value={pick}
             onChange={setPick}
             options={[{ value: "", label: "Add a button…" }, ...addable]}
+            ariaLabel="Add a quick-launch button"
             disabled={disabled}
           />
           <Button size="sm" onClick={add} disabled={disabled || !pick}>
