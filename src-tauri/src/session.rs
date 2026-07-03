@@ -243,11 +243,19 @@ fn open_input(
 ) -> Result<(Device, SampleFormat, usize, StreamConfig, u32), String> {
     let host = cpal::default_host();
     let device = match device_id {
+        // The persisted mic is stored by NAME, which isn't stable across reconnect / rename / reboot
+        // (Bluetooth/USB re-enumerate), so a pinned id often stops resolving. Fall back to the default
+        // input rather than hard-failing ALL dictation — a working default mic beats a cryptic
+        // "input device not found" that breaks dictation until the user re-picks in Settings.
         Some(id) => host
             .input_devices()
             .map_err(|e| e.to_string())?
             .find(|d| d.name().map(|n| n == id).unwrap_or(false))
-            .ok_or_else(|| format!("input device not found: {id}"))?,
+            .or_else(|| {
+                tracing::warn!("[audio] microphone '{id}' not found; falling back to the default input");
+                host.default_input_device()
+            })
+            .ok_or_else(|| "no default input device".to_string())?,
         None => host
             .default_input_device()
             .ok_or_else(|| "no default input device".to_string())?,

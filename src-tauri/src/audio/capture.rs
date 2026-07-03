@@ -130,11 +130,18 @@ pub fn start_level_meter(
 fn pick_device(device_id: Option<String>) -> Result<Device, String> {
     let host = cpal::default_host();
     match device_id {
+        // Fall back to the default input when a persisted mic name no longer resolves (reconnect /
+        // rename / reboot re-enumerates it) — mirrors open_input, so the mic test never hard-fails on
+        // a stale pin while a working default exists.
         Some(id) => host
             .input_devices()
             .map_err(|e| e.to_string())?
             .find(|d| d.name().map(|n| n == id).unwrap_or(false))
-            .ok_or_else(|| format!("input device not found: {id}")),
+            .or_else(|| {
+                tracing::warn!("[audio] microphone '{id}' not found; falling back to the default input");
+                host.default_input_device()
+            })
+            .ok_or_else(|| "no default input device".to_string()),
         None => host
             .default_input_device()
             .ok_or_else(|| "no default input device".to_string()),
