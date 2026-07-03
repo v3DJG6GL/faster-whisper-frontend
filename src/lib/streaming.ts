@@ -380,7 +380,27 @@ function armStuckWatchdog(): void {
       console.warn(
         `[dictation] no stream close within ${STUCK_FINALIZE_MS}ms — forcing idle (connection lost?)`,
       );
+      // Same "no `closed` will ever arrive" condition as stream://error and the stopLive reject: in
+      // stop-timing mode the whole transcript lives only in committedDoc/bankedDoc until the `closed`
+      // tail injects it. Read it BEFORE cancelLive() clears those globals, then copy it to the
+      // clipboard so a lost connection doesn't silently drop the transcript — the (N+1)th sibling of
+      // those two recovery paths. Live mode injected per-phrase already → "". endInjection (chained by
+      // cancelLive) is a no-op in stop mode (nothing snapshotted), so there's no clobber race, and
+      // cancelLive sets status "idle" synchronously and never re-touches it, so the flashError wins.
+      const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
       void cancelLive();
+      if (pending) {
+        void (async () => {
+          let onClipboard = false;
+          try {
+            await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [] });
+            onClipboard = true;
+          } catch (err) {
+            console.error("clipboard recovery after stuck-finalize failed:", err);
+          }
+          if (onClipboard) flashError("Connection lost — your text is on the clipboard to paste manually.");
+        })();
+      }
     }
   }, STUCK_FINALIZE_MS);
 }
