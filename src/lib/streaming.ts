@@ -161,15 +161,21 @@ function enqueueInject(fn: () => Promise<void>): void {
  *  path (no clipboard), so the per-phrase Enter never clobbers the clipboard. Clipboard-only
  *  types nothing, so it no-ops there. */
 function enqueueAutoEnter(): void {
+  // Capture the session token SYNCHRONOUSLY (before the queued task's awaited resolveTarget) so the
+  // task bails on BOTH a cancel (insertCfg→null) AND a cancel-then-fresh-restart (insertCfg→a NEW
+  // object) landing during the await — a plain `!insertCfg` catches only the null case, so a
+  // cancel-then-restart would fire a stray Enter into the next session's window. Mirrors the live
+  // final / boundary-separator / stop tasks (all capture cfg before their enqueue). Within a session
+  // insertCfg keeps a stable identity, and stopLive leaves it intact, so a normal end-of-session
+  // Enter still fires.
+  const cfg = insertCfg;
   enqueueInject(async () => {
     const t = await resolveTarget();
-    // A cancel landing during the awaited resolve nulled insertCfg + aborted the session — don't fire
-    // a stray Enter into the now-refocused window (mirrors the live final task's guard).
-    if (!insertCfg) return;
+    if (insertCfg !== cfg) return;
     // Never fire a real keystroke for a HOLD session, even after focus moved to a paste/direct window:
     // the PTT chord is still physically held, so the Enter would fold into the held modifier (mirrors
     // the live-final useClipboard guard). A hold session is clipboard-coerced, so nothing was typed here.
-    if (t.method === "clipboard" || insertCfg?.activation === "hold") return;
+    if (t.method === "clipboard" || cfg?.activation === "hold") return;
     await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
   });
 }
