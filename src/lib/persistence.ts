@@ -23,8 +23,18 @@ export async function initConfig(): Promise<void> {
   // saved config safe, but you still must restart the app to see your config again.)
   let hydrated = false;
   try {
-    const cfg = await loadConfig();
-    if (cfg) useApp.getState().hydrate(cfg);
+    const loaded = await loadConfig();
+    if (loaded) {
+      useApp.getState().hydrate(loaded.config);
+      // Rust recovered from an unreadable / corrupt / forward-incompatible config by backing it up to
+      // config.json.bak and loading defaults — surface that so the user knows their settings were reset
+      // (and where the backup is), instead of a silent wipe the armed auto-save below then persists.
+      if (loaded.recovered) {
+        useApp
+          .getState()
+          .setSaveError("Your saved settings couldn’t be read and were reset — a backup was kept at config.json.bak.");
+      }
+    }
   } catch (e) {
     console.error("loadConfig failed", e);
     // The load failed at the IPC level (Rust load() itself returns a valid config and backs up an

@@ -116,7 +116,7 @@ export default function QuickAdd() {
   const refresh = useCallback(async () => {
     const gen = ++loadGen.current;
     try {
-      const cfg = await loadConfig();
+      const cfg = (await loadConfig())?.config ?? null; // the recovered-flag banner is the main window's job
       if (gen !== loadGen.current) return; // superseded by a newer refresh/summon
       if (cfg) {
         document.documentElement.dataset.theme = cfg.settings.theme;

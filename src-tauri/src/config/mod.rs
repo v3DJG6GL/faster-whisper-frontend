@@ -685,45 +685,54 @@ fn read_config_text(path: &Path) -> std::io::Result<Option<String>> {
     }
 }
 
-/// Load config from `<dir>/config.json`, falling back to defaults if missing or
-/// invalid. A legacy (pre-v2) config is migrated losslessly and re-saved so the
-/// next load takes the fast path.
-pub fn load(dir: &Path) -> Config {
+/// Load config from `<dir>/config.json`, falling back to defaults if missing or invalid. A legacy
+/// (pre-v2) config is migrated losslessly and re-saved so the next load takes the fast path.
+///
+/// Returns `(config, recovered)`: `recovered` is true ONLY when a PRESENT-but-unreadable/unparseable
+/// config was backed up to `.json.bak` and replaced with defaults — so the frontend can warn the user
+/// their settings were reset (and where the backup is) instead of silently losing them. It is false
+/// for a clean load, a migration, and a genuine first-run (absent file).
+pub fn load_outcome(dir: &Path) -> (Config, bool) {
     let path = config_path(dir);
     let text = match read_config_text(&path) {
         Ok(Some(text)) => text,
-        Ok(None) => return Config::default(), // first run / file genuinely absent
+        Ok(None) => return (Config::default(), false), // first run / file genuinely absent
         Err(e) => {
             // The file EXISTS but stayed unreadable across retries (bad permissions, a non-transient
             // lock). Don't silently fall back to defaults that the frontend's auto-save would then
             // write OVER the real config — back it up first (mirrors the parse-failure path below) so
-            // it stays recoverable.
+            // it stays recoverable, and report `recovered` so the frontend surfaces the reset.
             tracing::warn!("config read failed ({e}); backing up + using defaults");
             let _ = std::fs::rename(&path, path.with_extension("json.bak"));
-            return Config::default();
+            return (Config::default(), true);
         }
     };
     // Fast path: already the current (v2) shape.
     if let Ok(cfg) = serde_json::from_str::<Config>(&text) {
-        return cfg;
+        return (cfg, false);
     }
     // Migration path: a legacy `profiles`/`modes` config (no `backends`).
     match migrate_legacy(&text) {
         Some(cfg) => {
             tracing::info!("[config] migrated legacy backends/profiles → v2");
             let _ = save(dir, &cfg);
-            cfg
+            (cfg, false)
         }
         None => {
-            tracing::warn!("config parse failed; using defaults");
+            tracing::warn!("config parse failed; backing up + using defaults");
             // Don't silently discard a config we couldn't parse — the frontend arms auto-save
             // after load, so the next save would overwrite it with defaults and lose the user's
             // backends/profiles/settings for good. Stash the unparseable file so a corrupt,
-            // hand-edited, or forward-incompatible config stays recoverable.
+            // hand-edited, or forward-incompatible config stays recoverable, and report `recovered`.
             let _ = std::fs::rename(&path, path.with_extension("json.bak"));
-            Config::default()
+            (Config::default(), true)
         }
     }
+}
+
+/// Convenience wrapper for callers that don't need the `recovered` flag.
+pub fn load(dir: &Path) -> Config {
+    load_outcome(dir).0
 }
 
 /// Persist config atomically to `<dir>/config.json`.

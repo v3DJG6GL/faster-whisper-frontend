@@ -22,9 +22,16 @@ import type {
 export const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-export async function loadConfig(): Promise<Config | null> {
+/** The config plus whether Rust had to RECOVER it (backed up an unreadable/corrupt file to
+ *  config.json.bak and returned defaults) — so the UI can warn the settings were reset. */
+export interface LoadedConfig {
+  config: Config;
+  recovered: boolean;
+}
+
+export async function loadConfig(): Promise<LoadedConfig | null> {
   if (!isTauri) return null;
-  return invoke<Config>("load_config");
+  return invoke<LoadedConfig>("load_config");
 }
 
 export async function saveConfig(config: Config): Promise<void> {

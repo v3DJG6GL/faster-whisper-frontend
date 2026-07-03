@@ -64,11 +64,28 @@ fn resolve_key(explicit: Option<String>, backend_id: Option<String>) -> Option<S
     backend_id.and_then(|id| config::keys::get(&id))
 }
 
+/// Frontend-facing config load: the config plus whether Rust had to RECOVER it (backed up a
+/// present-but-unreadable/corrupt file to .json.bak and returned defaults), so the frontend can warn
+/// the user their settings were reset instead of the armed auto-save silently persisting the wipe.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadedConfig {
+    pub config: Config,
+    pub recovered: bool,
+}
+
 #[tauri::command]
-pub fn load_config(app: AppHandle) -> Config {
+pub fn load_config(app: AppHandle) -> LoadedConfig {
     match config_dir(&app) {
-        Ok(dir) => config::load(&dir),
-        Err(_) => Config::default(),
+        Ok(dir) => {
+            let (config, recovered) = config::load_outcome(&dir);
+            LoadedConfig { config, recovered }
+        }
+        // No config dir at all (can't happen in practice) — clean defaults, nothing was backed up.
+        Err(_) => LoadedConfig {
+            config: Config::default(),
+            recovered: false,
+        },
     }
 }
 
