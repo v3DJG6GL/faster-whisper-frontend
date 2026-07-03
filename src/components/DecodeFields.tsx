@@ -114,6 +114,7 @@ export function DecodeFields({
       return (
         <Segmented
           value={v}
+          ariaLabel={f.label}
           disabled={gated}
           onChange={(nv) => setField(f.key, nv === "inherit" ? undefined : nv === "on")}
           options={[
@@ -129,6 +130,7 @@ export function DecodeFields({
       return (
         <TextInput
           type="number"
+          aria-label={f.label}
           disabled={gated}
           min={f.min}
           max={f.max}
@@ -148,6 +150,7 @@ export function DecodeFields({
     }
     return (
       <TextInput
+        aria-label={f.label}
         disabled={gated}
         value={cur === undefined ? "" : String(cur)}
         // An explicit empty string is a real override ("clear this — send empty",

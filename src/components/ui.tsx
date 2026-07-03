@@ -236,14 +236,20 @@ export function Segmented<T extends string>({
   onChange,
   options,
   disabled,
+  ariaLabel,
 }: {
   value: T;
   onChange: (v: T) => void;
   options: { value: T; label: string }[];
   disabled?: boolean;
+  ariaLabel?: string;
 }) {
   return (
     <div
+      // Name the group so a screen reader can tell otherwise-identical Inherit/On/Off triplets apart
+      // (e.g. the decode-override bools). Harmless when omitted — no name, same as before.
+      role="group"
+      aria-label={ariaLabel}
       className={cn(
         "inline-flex rounded-pill border border-line bg-surface-2 p-[3px]",
         disabled && "opacity-40",
