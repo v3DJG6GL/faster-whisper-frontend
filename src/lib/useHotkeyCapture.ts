@@ -121,7 +121,15 @@ export function useHotkeyCapture(opts: {
       if (!done && pressed.size === 0 && peak.length > 0) {
         if (evdevActive) {
           done = true;
-          finalize(peak);
+          // Consume `peak` before finalizing: on a CONFLICTING modifier-only chord, finalize sets
+          // done=false and keeps capture open, but `peak` (a monotonic high-water mark) would stay —
+          // so a retry with an equal-or-shorter modifier-only chord (never exceeds peak.length, so
+          // line ~92 doesn't update it) would re-finalize the OLD stale chord. Clear it so the next
+          // attempt rebuilds from scratch; on a successful commit capture ends anyway, so clearing is
+          // harmless. (Complements the real-key-press clear — this is the modifier-only sibling.)
+          const chord = peak;
+          peak = [];
+          finalize(chord);
         } else {
           setWarn("Modifier-only chords need the evdev backend (Settings → Permissions)");
         }
