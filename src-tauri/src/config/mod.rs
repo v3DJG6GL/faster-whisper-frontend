@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 const KEYRING_SERVICE: &str = "faster-whisper-frontend";
 
@@ -693,10 +694,25 @@ fn read_config_text(path: &Path) -> std::io::Result<Option<String>> {
 /// their settings were reset (and where the backup is) instead of silently losing them. It is false
 /// for a clean load, a migration, and a genuine first-run (absent file).
 pub fn load_outcome(dir: &Path) -> (Config, bool) {
+    // Sticky for the process: once a corrupt config is backed up + reset, EVERY later load this
+    // session reports `recovered` — even the caller that lost the startup race. Two webviews load
+    // config concurrently at launch (the main window's initConfig and the prewarmed hidden quick-add
+    // window), both hitting the unsynchronized `load_config` command. Without this, if quick-add wins
+    // it renames config.json → .bak, then the main window's read sees NotFound → `(default, false)`,
+    // so the reset banner (surfaced ONLY by the main window's initConfig on `recovered`) never shows
+    // and its armed auto-save silently persists the seeded defaults over the user's backed-up config.
+    static RECOVERED_THIS_SESSION: Mutex<bool> = Mutex::new(false);
+    // Held across the whole read+rename so the two concurrent startup loads can't interleave the
+    // destructive recovery (contended only at launch, by exactly those two callers).
+    let mut recovered = RECOVERED_THIS_SESSION
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let path = config_path(dir);
     let text = match read_config_text(&path) {
         Ok(Some(text)) => text,
-        Ok(None) => return (Config::default(), false), // first run / file genuinely absent
+        // First run / file genuinely absent — UNLESS a prior load this session already recovered
+        // (the file was renamed out from under us), in which case keep reporting the reset.
+        Ok(None) => return (Config::default(), *recovered),
         Err(e) => {
             // The file EXISTS but stayed unreadable across retries (bad permissions, a non-transient
             // lock). Don't silently fall back to defaults that the frontend's auto-save would then
@@ -704,6 +720,7 @@ pub fn load_outcome(dir: &Path) -> (Config, bool) {
             // it stays recoverable, and report `recovered` so the frontend surfaces the reset.
             tracing::warn!("config read failed ({e}); backing up + using defaults");
             let _ = std::fs::rename(&path, path.with_extension("json.bak"));
+            *recovered = true;
             return (Config::default(), true);
         }
     };
@@ -725,6 +742,7 @@ pub fn load_outcome(dir: &Path) -> (Config, bool) {
             // backends/profiles/settings for good. Stash the unparseable file so a corrupt,
             // hand-edited, or forward-incompatible config stays recoverable, and report `recovered`.
             let _ = std::fs::rename(&path, path.with_extension("json.bak"));
+            *recovered = true;
             (Config::default(), true)
         }
     }
