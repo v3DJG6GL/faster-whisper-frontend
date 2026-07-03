@@ -3,6 +3,7 @@ import { UploadCloud, FileAudio, X, Loader2, Copy, Check } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Notice, PageHeader, Select } from "@/components/ui";
 import { LANGUAGES } from "@/lib/languages";
+import { fmtDuration } from "@/lib/format";
 import { pickAudioFile, transcribeFile, isTauri } from "@/lib/api";
 import { stripControlChars } from "@/lib/sanitize";
 import type { BatchResult } from "@/lib/types";
@@ -216,7 +217,9 @@ export default function Transcribe() {
             <div className="font-mono text-[11px] uppercase tracking-label text-faint">
               transcript
               {result.language ? ` · ${result.language}` : ""}
-              {result.duration ? ` · ${result.duration.toFixed(1)}s` : ""}
+              {result.duration
+                ? ` · ${result.duration < 60 ? `${result.duration.toFixed(1)}s` : fmtDuration(result.duration)}`
+                : ""}
             </div>
             <Button variant="ghost" size="sm" onClick={copy}>
               {copied ? <Check className="size-4 text-ok" /> : <Copy className="size-4" />}
