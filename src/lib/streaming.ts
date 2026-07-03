@@ -619,6 +619,12 @@ async function ensureListeners(): Promise<void> {
                 console.error("beginInjection failed:", e);
               }
             }
+            // A cancel (insertCfg→null) OR cancel-then-restart (insertCfg→a new object) landing during
+            // the awaited beginInjection above must not paste this discarded phrase into the now-
+            // refocused / next session's window — mirrors the post-resolveTarget (549) and injectText-
+            // catch (631) guards; beginInjection was the lone await between guard and paste left open.
+            // Any snapshot taken is restored by cancelLive's unconditional chained endInjection.
+            if (insertCfg !== cfg) return;
             try {
               await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
             } catch (e) {
