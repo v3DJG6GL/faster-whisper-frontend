@@ -174,6 +174,7 @@ export default function Transcribe() {
         <div>
           <label className="mb-2 block text-[12px] font-medium text-dim">Backend</label>
           <Select
+            ariaLabel="Backend"
             value={backendId}
             onChange={(v) => {
               // A backend change is an input change: abandon any in-flight run + clear a stale
@@ -189,6 +190,7 @@ export default function Transcribe() {
         <div>
           <label className="mb-2 block text-[12px] font-medium text-dim">Language</label>
           <Select
+            ariaLabel="Language"
             value={language}
             onChange={(v) => {
               resetForInputChange();
