@@ -96,6 +96,12 @@ export function useHotkeyCapture(opts: {
       // The user is holding modifiers here, so the passive learner skipped this key;
       // learn its layout label now so the committed chip shows the right keycap.
       learnLetter(e.code, e.key);
+      // A real (non-modifier) key was attempted this hold, so this is no longer a modifier-only
+      // chord. Clear `peak` (only ever consumed by the keyup fallback below, which never holds
+      // non-modifier keys) so that if this key is rejected as unmappable OR conflicts — leaving
+      // `done` false — a later modifier release can't fall into the keyup modifier-only path and
+      // silently commit the leftover bare modifier (e.g. Ctrl+Backquote rejected → bare Ctrl bound).
+      peak = [];
       // Reject an unmappable key (Backquote, Minus, ContextMenu, …) in BOTH modes. The evdev branch
       // of finalize() commits with no validateCodes gate, so without this an unmappable key under
       // evdev would commit a binding that can never fire. Safe: evdev's non-modifier mappable set
