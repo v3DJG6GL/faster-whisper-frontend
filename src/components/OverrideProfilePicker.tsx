@@ -27,6 +27,7 @@ export function OverrideProfilePicker({
   value,
   inheritLabel,
   onChange,
+  ariaLabel = "Server override profile",
 }: {
   serverUrl: string;
   backendId: string;
@@ -38,6 +39,10 @@ export function OverrideProfilePicker({
   value: string; // "" = inherit / server default · NO_OVERRIDE_PROFILE = no profile · else a name
   inheritLabel: string;
   onChange: (v: string) => void;
+  /** Accessible name for the rendered control(s). Both call sites label this "Server override
+   *  profile"; a bare <select> has no placeholder fallback, and this composite component slips past
+   *  Labeled's auto-aria-label (which only clones onto a direct Select/TextInput child). */
+  ariaLabel?: string;
 }) {
   const [names, setNames] = useState<string[]>([]);
   const [showCustom, setShowCustom] = useState(false);
@@ -87,7 +92,7 @@ export function OverrideProfilePicker({
     const options = [{ value: "", label: inheritLabel }, noneOpt, ...names.map((n) => ({ value: n, label: n }))];
     if (value && value !== NO_OVERRIDE_PROFILE && !names.includes(value))
       options.push({ value, label: `${value} · not on server` });
-    return <Select value={value} onChange={onChange} options={options} />;
+    return <Select value={value} onChange={onChange} options={options} ariaLabel={ariaLabel} />;
   }
 
   // Server enumerated no names (not a full backend yet, or empty list): still
@@ -97,6 +102,7 @@ export function OverrideProfilePicker({
   return (
     <div className="space-y-2">
       <Select
+        ariaLabel={ariaLabel}
         value={custom ? CUSTOM : value}
         onChange={(v) => {
           if (v === CUSTOM) {
@@ -111,6 +117,7 @@ export function OverrideProfilePicker({
       />
       {custom && (
         <TextInput
+          aria-label={ariaLabel}
           value={isCustomValue ? value : ""}
           onChange={(e) => onChange(e.target.value)}
           placeholder="profile name (e.g. clinic-de)"
