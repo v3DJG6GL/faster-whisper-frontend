@@ -436,6 +436,7 @@ function RuleCard({
               <div>
                 <FieldLabel>Match (regex)</FieldLabel>
                 <TextInput
+                  aria-label="Match (regex)"
                   value={edit.pattern ?? ""}
                   disabled={inputsDisabled}
                   spellCheck={false}
@@ -446,6 +447,7 @@ function RuleCard({
               <div>
                 <FieldLabel>Word list — one per line ({wordCount(edit.words)})</FieldLabel>
                 <textarea
+                  aria-label="Word list — one per line"
                   value={edit.words ?? ""}
                   disabled={inputsDisabled}
                   spellCheck={false}
@@ -462,6 +464,7 @@ function RuleCard({
             <div>
               <FieldLabel>Match (regex)</FieldLabel>
               <TextInput
+                aria-label="Match (regex)"
                 value={edit.pattern ?? ""}
                 disabled={inputsDisabled}
                 spellCheck={false}
