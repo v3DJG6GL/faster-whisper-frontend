@@ -43,16 +43,21 @@ function HoverModeSegmented({
   visibleKey,
   hoverKey,
   disabled,
+  ariaLabel,
 }: {
   visibleKey: ChipVisKey;
   hoverKey: ChipVisKey;
   disabled?: boolean;
+  // Names the role="group" so a screen reader can tell the four identical Off/Always/On-hover
+  // triplets apart (SettingRow auto-labels only a direct Toggle/Select child, not this composite).
+  ariaLabel?: string;
 }) {
   const visible = useApp((st) => st.settings.recording[visibleKey]);
   const onHover = useApp((st) => st.settings.recording[hoverKey]);
   const updateRecording = useApp((st) => st.updateRecording);
   return (
     <Segmented
+      ariaLabel={ariaLabel}
       value={!visible ? "off" : onHover ? "hover" : "always"}
       onChange={(v) =>
         updateRecording(
@@ -812,6 +817,7 @@ export default function Settings() {
               disabled={chipOff}
             >
               <HoverModeSegmented
+                ariaLabel="Live transcript visibility"
                 visibleKey="realtimePreview"
                 hoverKey="realtimePreviewOnHover"
                 disabled={chipOff}
@@ -823,6 +829,7 @@ export default function Settings() {
               disabled={chipOff}
             >
               <HoverModeSegmented
+                ariaLabel="Active-profile visibility"
                 visibleKey="showProfileOnOverlay"
                 hoverKey="showProfileOnHover"
                 disabled={chipOff}
@@ -834,6 +841,7 @@ export default function Settings() {
               disabled={chipOff}
             >
               <HoverModeSegmented
+                ariaLabel="Usage-on-chip visibility"
                 visibleKey="showStatsOnOverlay"
                 hoverKey="overlayStatsOnHover"
                 disabled={chipOff}
@@ -861,6 +869,7 @@ export default function Settings() {
               disabled={chipOff}
             >
               <HoverModeSegmented
+                ariaLabel="Injection-target visibility"
                 visibleKey="showTargetOnOverlay"
                 hoverKey="showTargetOnHover"
                 disabled={chipOff}
