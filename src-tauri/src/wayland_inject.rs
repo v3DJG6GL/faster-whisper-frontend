@@ -127,9 +127,74 @@ mod imp {
         (rules, model, layout, variant)
     }
 
+    /// The compositor's currently-ACTIVE XKB group index — 0 for a single layout, 1+ for the Nth
+    /// layout of a multi-layout `us,de,…` config. The portal injects raw keycodes that KWin resolves
+    /// under the LIVE active group, so `build_charmap` must look glyphs up in THIS group, not always
+    /// group 0. Queried via X11 `XkbGetState` (KWin keeps XWayland's XKB state in sync with the
+    /// Wayland layout). Defensive and best-effort: returns 0 on no X display / no XKB / any failure,
+    /// so a single-layout machine — and every failure path — behaves exactly as before (group 0).
+    /// libX11 is loaded with `dlopen`, so it's an OPTIONAL runtime dep, never a build/link requirement.
+    fn active_xkb_group() -> u32 {
+        use libc::{c_char, c_int, c_uint, c_void};
+        unsafe {
+            let lib = libc::dlopen(b"libX11.so.6\0".as_ptr() as *const c_char, libc::RTLD_NOW);
+            if lib.is_null() {
+                return 0;
+            }
+            let open = libc::dlsym(lib, b"XOpenDisplay\0".as_ptr() as *const c_char);
+            let close = libc::dlsym(lib, b"XCloseDisplay\0".as_ptr() as *const c_char);
+            let query = libc::dlsym(lib, b"XkbQueryExtension\0".as_ptr() as *const c_char);
+            let state_fn = libc::dlsym(lib, b"XkbGetState\0".as_ptr() as *const c_char);
+            if open.is_null() || close.is_null() || query.is_null() || state_fn.is_null() {
+                libc::dlclose(lib);
+                return 0;
+            }
+            let open: extern "C" fn(*const c_char) -> *mut c_void = std::mem::transmute(open);
+            let close: extern "C" fn(*mut c_void) -> c_int = std::mem::transmute(close);
+            let query: extern "C" fn(
+                *mut c_void,
+                *mut c_int,
+                *mut c_int,
+                *mut c_int,
+                *mut c_int,
+                *mut c_int,
+            ) -> c_int = std::mem::transmute(query);
+            let get_state: extern "C" fn(*mut c_void, c_uint, *mut u8) -> c_int =
+                std::mem::transmute(state_fn);
+
+            let dpy = open(std::ptr::null());
+            if dpy.is_null() {
+                libc::dlclose(lib);
+                return 0;
+            }
+            let mut group: u32 = 0;
+            // XkbGetState needs the XKB extension initialised on this display first; pass the 1.0
+            // version we rely on (in/out args, the rest are ignored).
+            let (mut op, mut ev, mut err, mut major, mut minor): (c_int, c_int, c_int, c_int, c_int) =
+                (0, 0, 0, 1, 0);
+            if query(dpy, &mut op, &mut ev, &mut err, &mut major, &mut minor) != 0 {
+                // XkbStateRec begins with `unsigned char group;`. Read the first byte of an 8-aligned
+                // buffer sized well past the struct (~16 bytes). XkbGetState returns Success (0).
+                let mut buf = [0u64; 8];
+                let ptr = buf.as_mut_ptr() as *mut u8;
+                if get_state(dpy, 0x0100 /* XkbUseCoreKbd */, ptr) == 0 {
+                    group = u32::from(*ptr);
+                }
+            }
+            close(dpy);
+            libc::dlclose(lib);
+            group
+        }
+    }
+
     /// Build a character → (keycode, modifiers) map for the active layout.
     fn build_charmap() -> Option<HashMap<char, KeySpec>> {
         let (rules, model, layout, variant) = query_layout();
+        // Look glyphs up in the ACTIVE layout group, not always group 0: with a multi-layout config
+        // (us,de,…) the portal injects raw keycodes KWin resolves under the live group, so a group-0
+        // charmap mistypes (y↔z, missing AltGr glyphs) whenever a non-first layout is active. 0 on a
+        // single layout / any query failure ⇒ identical to the previous group-0-only behavior.
+        let group = active_xkb_group();
         let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
         let keymap = xkb::Keymap::new_from_names(
             &ctx,
@@ -144,18 +209,22 @@ mod imp {
         let mut map: HashMap<char, KeySpec> = HashMap::new();
         for kc in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
             let key = xkb::Keycode::new(kc);
-            if keymap.num_layouts_for_key(key) == 0 {
+            let num_layouts = keymap.num_layouts_for_key(key);
+            if num_layouts == 0 {
                 continue;
             }
+            // Scan the active group for this key; clamp to 0 if the key defines fewer groups than the
+            // active index (a rare mixed-group key — matches XKB wrapping the group back into range).
+            let g = if group < num_layouts { group } else { 0 };
             // Only the 4 standard levels are encoded below (none / Shift / AltGr / Shift+AltGr).
             // Cap the scan: an ISO_Level5 layout (Neo, intl-extended) exposes 6-8 levels, and a
             // glyph reachable ONLY at level 4+ would be registered as `shift=false, altgr=false`
             // — a bare keypress that types that key's LEVEL-0 glyph instead. Leaving such glyphs
             // out of the map makes them fall back to the portal path rather than mis-type.
-            let levels = keymap.num_levels_for_key(key, 0).min(4);
-            let caps_safe = key_is_caps_safe(&keymap, key);
+            let levels = keymap.num_levels_for_key(key, g).min(4);
+            let caps_safe = key_is_caps_safe(&keymap, key, g);
             for level in 0..levels {
-                for sym in keymap.key_get_syms_by_level(key, 0, level) {
+                for sym in keymap.key_get_syms_by_level(key, g, level) {
                     let cp = xkb::keysym_to_utf32(*sym);
                     if cp == 0 {
                         continue;
@@ -220,9 +289,9 @@ mod imp {
     /// the live-Caps-Lock compensation knows whether pressing Shift actually cancels KWin's
     /// capitalization. A non-alphabetic base (digits, symbols) is unaffected by Caps → safe. A
     /// FOUR_LEVEL letter key (Swiss-German ü, whose Shift gives è — NOT Ü) is NOT safe.
-    fn key_is_caps_safe(keymap: &xkb::Keymap, key: xkb::Keycode) -> bool {
+    fn key_is_caps_safe(keymap: &xkb::Keymap, key: xkb::Keycode, group: u32) -> bool {
         let base = keymap
-            .key_get_syms_by_level(key, 0, 0)
+            .key_get_syms_by_level(key, group, 0)
             .iter()
             .filter_map(|s| char::from_u32(xkb::keysym_to_utf32(*s)))
             .find(|c| c.is_alphabetic());
@@ -235,7 +304,7 @@ mod imp {
         }
         // Safe iff the Shift (level 1) glyph IS that uppercase — the A–Z case-pair shape.
         keymap
-            .key_get_syms_by_level(key, 0, 1)
+            .key_get_syms_by_level(key, group, 1)
             .iter()
             .filter_map(|s| char::from_u32(xkb::keysym_to_utf32(*s)))
             .any(|u| u == upper[0])
@@ -433,12 +502,12 @@ mod imp {
 
         while let Some(job) = rx.recv().await {
             // Rebuild the charmap PER JOB, not once per session: a KDE keyboard-layout switch
-            // mid-run (e.g. us→de) would otherwise leave a stale group-0 snapshot and garble
-            // direct-typed text (y↔z, symbols) until an app restart. build_charmap is a cheap
-            // setxkbmap + libxkbcommon compile (ms) next to a multi-second utterance, and the
-            // persistent portal session stays open, so this adds no consent re-prompt. (Reading
-            // the ACTIVE XKB group index — for a multi-layout `us,de` with group 1 active — is a
-            // separate, larger change and stays a follow-up.)
+            // mid-run (e.g. us→de) would otherwise leave a stale snapshot and garble direct-typed
+            // text (y↔z, symbols) until an app restart. build_charmap is a cheap setxkbmap +
+            // libxkbcommon compile (ms) next to a multi-second utterance, and the persistent portal
+            // session stays open, so this adds no consent re-prompt. It resolves the ACTIVE XKB
+            // group per job (active_xkb_group), so a multi-layout `us,de` with group 1 active types
+            // correctly too — the group snapshot is re-read here every job alongside the rebuild.
             let charmap = match build_charmap() {
                 Some(m) => m,
                 None => {

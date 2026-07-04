@@ -1326,6 +1326,7 @@ dependencies = [
  "futures-util",
  "gtk",
  "keyring",
+ "libc",
  "memfd",
  "parking_lot",
  "reqwest 0.12.28",
