@@ -799,7 +799,14 @@ pub async fn get_focused_app(
         }));
     }
     let focused = crate::atspi_guard::focused_app(guard.inner()).await;
-    tracing::info!("[focused-app] {focused:?}");
+    // The window TITLE can carry sensitive data (open document / email subject / private tab names)
+    // and this is polled ~every 700ms during a session, so keep it OUT of the default-on `info` line —
+    // log only app_id + editable there; the full record (incl. title) goes to `debug` (off by default).
+    match &focused {
+        Some(f) => tracing::info!("[focused-app] id={} editable={:?}", f.app_id, f.editable),
+        None => tracing::info!("[focused-app] none"),
+    }
+    tracing::debug!("[focused-app] {focused:?}");
     Ok(focused)
 }
 
@@ -812,7 +819,13 @@ pub async fn get_focused_other_app(
     guard: State<'_, crate::atspi_guard::AtspiGuard>,
 ) -> Result<Option<crate::atspi_guard::FocusedApp>, String> {
     let focused = crate::atspi_guard::focused_app(guard.inner()).await;
-    tracing::info!("[focused-other-app] {focused:?}");
+    // Keep the window title out of the default-on `info` line (see get_focused_app) — it can hold
+    // sensitive data; log app_id + editable at info, the full record at `debug` (off by default).
+    match &focused {
+        Some(f) => tracing::info!("[focused-other-app] id={} editable={:?}", f.app_id, f.editable),
+        None => tracing::info!("[focused-other-app] none"),
+    }
+    tracing::debug!("[focused-other-app] {focused:?}");
     Ok(focused)
 }
 
