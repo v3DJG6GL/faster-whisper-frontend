@@ -199,6 +199,10 @@ interface AppState {
    *  may be lost on restart. null = last save succeeded. Runtime-only; set by the persistence
    *  auto-save, cleared on the next successful save. */
   saveError: string | null;
+  // What KIND of notice saveError holds, so the banner can frame it correctly: "save" = an actual
+  // write/conflict failure ("Couldn't save…"), "load" = a startup load-recovery / load-failure notice
+  // (which is self-contained and must NOT show the save-failure framing). null when saveError is null.
+  saveErrorKind: "save" | "load" | null;
 
   setTheme: (t: ThemeName) => void;
   updateSettings: (patch: Partial<AppSettings>) => void;
@@ -228,7 +232,7 @@ interface AppState {
   setUsageViewBackend: (id: string | null) => void;
 
   /** Set (or clear, with null) the config-save error banner. */
-  setSaveError: (msg: string | null) => void;
+  setSaveError: (msg: string | null, kind?: "save" | "load") => void;
 
   /** Update live dictation runtime (status / level / partial transcript). */
   setDictation: (
@@ -285,6 +289,7 @@ export const useApp = create<AppState>((set) => ({
   usage: {},
   usageViewBackendId: null,
   saveError: null,
+  saveErrorKind: null,
 
   setTheme: (t) => {
     document.documentElement.dataset.theme = t;
@@ -421,7 +426,7 @@ export const useApp = create<AppState>((set) => ({
 
   setUsageViewBackend: (id) => set({ usageViewBackendId: id }),
 
-  setSaveError: (msg) => set({ saveError: msg }),
+  setSaveError: (msg, kind = "save") => set({ saveError: msg, saveErrorKind: msg ? kind : null }),
 
   setDictation: (patch) =>
     set((s) => {

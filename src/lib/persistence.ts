@@ -32,7 +32,10 @@ export async function initConfig(): Promise<void> {
       if (loaded.recovered) {
         useApp
           .getState()
-          .setSaveError("Your saved settings couldn’t be read and were reset — a backup was kept at config.json.bak.");
+          .setSaveError(
+            "Your saved settings couldn’t be read and were reset — a backup was kept at config.json.bak.",
+            "load",
+          );
       }
     }
   } catch (e) {
@@ -42,7 +45,7 @@ export async function initConfig(): Promise<void> {
     // saved settings couldn't be loaded and saving now may overwrite them.
     useApp
       .getState()
-      .setSaveError("Couldn’t load your saved settings — saving now may overwrite them. Restart to retry.");
+      .setSaveError("Couldn’t load your saved settings — saving now may overwrite them. Restart to retry.", "load");
   } finally {
     hydrated = true;
   }

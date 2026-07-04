@@ -60,12 +60,14 @@ function NavigationBridge() {
 }
 
 // Surfaces a config auto-save failure (disk full / read-only / IPC) OR a refused save (two
-// profiles share a shortcut, so the conflicting set is held back). The app otherwise saves
-// settings/backends/profiles silently (debounced), so without this a non-write is invisible
-// and the user's changes vanish on the next launch. Both self-heal — the next successful save
-// clears the banner. Dismissible.
+// profiles share a shortcut, so the conflicting set is held back) — kind "save". Also carries the
+// startup load-time notices (config reset from a corrupt file, or a failed load) — kind "load" —
+// which are self-contained and must NOT wear the save-failure framing (they'd read as a lie: nothing
+// failed to save). The app otherwise saves settings/backends/profiles silently (debounced), so
+// without this a non-write is invisible. Self-heals — the next successful save clears it. Dismissible.
 function SaveErrorBanner() {
   const saveError = useApp((s) => s.saveError);
+  const saveErrorKind = useApp((s) => s.saveErrorKind);
   const setSaveError = useApp((s) => s.setSaveError);
   if (!saveError) return null;
   return (
@@ -76,8 +78,15 @@ function SaveErrorBanner() {
       >
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
         <div className="flex-1">
-          <span className="font-semibold">Couldn’t save your settings.</span> Recent changes may be
-          lost when you restart the app. <span className="text-warn/80">{saveError}</span>
+          {saveErrorKind === "load" ? (
+            // Load-time notice — self-contained; no "Couldn't save / changes lost on restart" framing.
+            saveError
+          ) : (
+            <>
+              <span className="font-semibold">Couldn’t save your settings.</span> Recent changes may
+              be lost when you restart the app. <span className="text-warn/80">{saveError}</span>
+            </>
+          )}
         </div>
         <button
           type="button"
