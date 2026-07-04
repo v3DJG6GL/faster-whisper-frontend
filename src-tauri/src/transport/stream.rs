@@ -45,12 +45,21 @@ pub struct StreamParams {
     pub trim_silence: bool, // when saving: keep only spoken spans (drop silence) in the .wav
 }
 
-/// Derive the streaming WS URL from a profile's http(s) server URL.
+/// Case-insensitive `strip_prefix` for an ASCII prefix. `s.get(..len)` returns None on a
+/// non-char-boundary, so this can't panic.
+fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = s.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix).then(|| &s[prefix.len()..])
+}
+
+/// Derive the streaming WS URL from a profile's http(s) server URL. The scheme match is
+/// case-insensitive to mirror reqwest/url's scheme handling: an "HTTP://…" that Test Connection
+/// (via reqwest) accepts must yield a valid "ws://…" here, not a malformed "ws://HTTP://…".
 pub fn http_to_ws(server_url: &str) -> String {
     let s = server_url.trim().trim_end_matches('/');
-    let scheme_swapped = if let Some(rest) = s.strip_prefix("https://") {
+    let scheme_swapped = if let Some(rest) = strip_prefix_ci(s, "https://") {
         format!("wss://{rest}")
-    } else if let Some(rest) = s.strip_prefix("http://") {
+    } else if let Some(rest) = strip_prefix_ci(s, "http://") {
         format!("ws://{rest}")
     } else {
         format!("ws://{s}")
