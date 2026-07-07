@@ -1,0 +1,61 @@
+# Per-push checks on both target platforms. The Windows leg exists to keep the
+# "compiles on Windows" guarantee honest — the Linux-only crates are target-gated
+# and none of those paths are ever compiled on a Linux machine, so only this job
+# catches a break. Installer builds live in release.yml.
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4 # version comes from package.json "packageManager"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # webkit/gtk for tauri itself; appindicator for the tray; asound for cpal;
+      # xkbcommon for the Wayland virtual keyboard.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            libasound2-dev libxkbcommon-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      # tsc + vite; tauri::generate_context! embeds dist/, so cargo needs this first.
+      - run: pnpm build
+
+      # --locked also protects the time-0.3.47 pin (see Cargo.toml) from drifting.
+      - name: cargo check
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+
+      # The unit tests live mostly in Linux-gated modules; the Windows leg's job
+      # is the compile check above.
+      - name: cargo test
+        if: runner.os == 'Linux'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
