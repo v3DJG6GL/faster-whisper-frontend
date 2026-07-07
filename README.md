@@ -1,4 +1,7 @@
-<h1>faster-whisper-frontend</h1>
+<p align="center">
+  <img src="src-tauri/icons/icon.svg" width="112" alt="faster-whisper-frontend — five-bar level-meter logo">
+</p>
+<h1 align="center">faster-whisper-frontend</h1>
 
 A FOSS, cross-platform **dictation client** for a self-hosted
 [faster-whisper-backend](https://github.com/v3DJG6GL/faster-whisper-backend)
