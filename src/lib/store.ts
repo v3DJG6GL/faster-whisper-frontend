@@ -13,6 +13,7 @@ import type {
 } from "./types";
 import { newSpeakMemo, stepSpeaking } from "./speaking";
 import { swap } from "./arr";
+import { applyTheme } from "./theme";
 
 // Derives `speaking` (green vs amber) from the RMS level stream centrally, so the
 // main-window surfaces (Home button, sidebar dot, waveforms) all agree with the chip
@@ -42,7 +43,7 @@ const DEFAULT_BACKEND: Backend = {
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
-  theme: "dark",
+  theme: "auto", // follow the OS scheme until the user picks a side (Sidebar toggle)
   microphoneId: null,
   homeProfileId: null,
   quickAddList: null,
@@ -292,7 +293,7 @@ export const useApp = create<AppState>((set) => ({
   saveErrorKind: null,
 
   setTheme: (t) => {
-    document.documentElement.dataset.theme = t;
+    applyTheme(t);
     set((s) => ({ settings: { ...s.settings, theme: t } }));
   },
   updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),

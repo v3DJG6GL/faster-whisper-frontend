@@ -11,6 +11,7 @@ import App from "./App";
 import Overlay from "./Overlay";
 import QuickAdd from "./QuickAdd";
 import { initKeyboardLayout } from "./lib/keyboardLayout";
+import { applyTheme } from "./lib/theme";
 
 type WindowLabel = "main" | "overlay" | "quickadd";
 
@@ -35,9 +36,11 @@ document.body.dataset.window = label;
 // their keycaps, not the physical US-QWERTY positions event.code reports.
 initKeyboardLayout();
 if (label === "overlay" || label === "quickadd") {
-  // Initial default; the chip then follows the theme broadcast on `dictation://update`
-  // (Overlay.tsx), and the quick-add window sets it from the loaded config (QuickAdd.tsx).
-  document.documentElement.dataset.theme = "dark";
+  // Initial guess before any data arrives: resolve "auto" against the OS scheme (the
+  // config isn't loaded yet). The chip then follows the theme broadcast on
+  // `dictation://update` (Overlay.tsx); the quick-add window applies the loaded
+  // config's setting on every summon (QuickAdd.tsx).
+  applyTheme("auto");
 }
 
 const Root = label === "overlay" ? <Overlay /> : label === "quickadd" ? <QuickAdd /> : <App />;

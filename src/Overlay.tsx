@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import { quickLaunchMeta } from "@/lib/screens";
 import { newSpeakMemo, stepSpeaking } from "@/lib/speaking";
 import { dictationVisual, isActiveDictation, isProcessing, type DictationTone } from "@/lib/dictationVisual";
+import { applyTheme, watchSystemTheme } from "@/lib/theme";
 import type { DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
 
 interface ChipState {
@@ -138,9 +139,10 @@ export default function Overlay() {
     import("@tauri-apps/api/event")
       .then(({ listen }) =>
         listen<ChipState>("dictation://update", (e) => {
-          const theme = e.payload.theme ?? "dark";
-          // Follow the app's dark/light theme (the chip is a separate webview).
-          document.documentElement.dataset.theme = theme;
+          const theme = e.payload.theme ?? "auto";
+          // Follow the app's theme (the chip is a separate webview); "auto" resolves
+          // against this webview's own prefers-color-scheme — same OS, same answer.
+          applyTheme(theme);
           setState({
             ...e.payload,
             warming: e.payload.warming ?? false,
@@ -178,6 +180,10 @@ export default function Overlay() {
       unlisten?.();
     };
   }, []);
+
+  // Track live OS scheme flips while the app theme is "auto" — the chip is long-lived
+  // and would otherwise only pick the change up on its next dictation://update.
+  useEffect(() => watchSystemTheme(() => state.theme), [state.theme]);
 
   // Standalone demo animation (browser preview only).
   const raf = useRef(0);

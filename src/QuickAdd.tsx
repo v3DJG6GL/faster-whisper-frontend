@@ -26,7 +26,8 @@ import {
 } from "@/lib/api";
 import { resolveInjectionTarget } from "@/lib/streaming";
 import { IS_WINDOWS } from "@/lib/platform";
-import type { AppRule, GeneralSettings, PipelineFetch } from "@/lib/types";
+import { applyTheme, watchSystemTheme } from "@/lib/theme";
+import type { AppRule, GeneralSettings, PipelineFetch, ThemeName } from "@/lib/types";
 
 type Target = { serverUrl: string; backendId: string; slug: string };
 type Phase = "loading" | "nopin" | "error" | "ok";
@@ -102,6 +103,11 @@ export default function QuickAdd() {
   // method/paste-shortcut, "never type here", AND the deep-detection non-editable→clipboard coercion.
   const generalRef = useRef<GeneralSettings | null>(null);
   const appRulesRef = useRef<AppRule[]>([]);
+  // The loaded theme setting, kept for the OS-scheme watcher ("auto" must re-resolve live).
+  const themeRef = useRef<ThemeName>("auto");
+  // Track live OS scheme flips while on "auto" — this window is prewarmed/long-lived;
+  // refresh() re-applies the setting itself on every summon.
+  useEffect(() => watchSystemTheme(() => themeRef.current), []);
   // Generation guards so an out-of-order async resolution can't apply stale state (mirrors
   // Dictionary's selectedIdRef / Transcribe's runId). `loadGen` covers refresh()'s fetches
   // (a re-pin between rapid summons); `summonGen` covers the per-summon selection seed.
@@ -120,7 +126,8 @@ export default function QuickAdd() {
       const cfg = (await loadConfig())?.config ?? null; // the recovered-flag banner is the main window's job
       if (gen !== loadGen.current) return; // superseded by a newer refresh/summon
       if (cfg) {
-        document.documentElement.dataset.theme = cfg.settings.theme;
+        themeRef.current = cfg.settings.theme;
+        applyTheme(cfg.settings.theme);
         generalRef.current = cfg.settings.general;
         appRulesRef.current = cfg.appRules ?? [];
       }

@@ -10,6 +10,7 @@ import { onTrigger, onSystemResumed, onOverlayAction, onAppNavigate } from "@/li
 import { dictate, runOverlayAction } from "@/lib/dictation";
 import { cancelLive, requestStopIfStarting } from "@/lib/streaming";
 import { SCREEN_PATH } from "@/lib/screens";
+import { applyTheme, watchSystemTheme } from "@/lib/theme";
 import Home from "@/screens/Home";
 import Transcribe from "@/screens/Transcribe";
 import Profiles from "@/screens/Profiles";
@@ -134,7 +135,9 @@ export default function App() {
   );
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    applyTheme(theme);
+    // While on "auto", track live OS scheme flips (Windows app-mode / desktop setting).
+    return watchSystemTheme(() => useApp.getState().settings.theme);
   }, [theme]);
 
   return (

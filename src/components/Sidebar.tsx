@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { Settings as SettingsIcon, Moon, Sun } from "lucide-react";
+import { Settings as SettingsIcon, Moon, Sun, SunMoon } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
 import { appVersion } from "@/lib/api";
@@ -113,11 +113,18 @@ export function Sidebar() {
           </NavLink>
           <button
             type="button"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            title="Toggle theme"
+            // Three-way cycle; "auto" follows the OS scheme (the default on fresh installs).
+            onClick={() => setTheme(theme === "auto" ? "dark" : theme === "dark" ? "light" : "auto")}
+            title={theme === "auto" ? "Theme: auto (follows the system)" : theme === "dark" ? "Theme: dark" : "Theme: light"}
             className="ring-signal grid size-9 place-items-center rounded-xl text-dim hover:bg-surface-2 hover:text-text"
           >
-            {theme === "dark" ? <Sun className="size-[17px]" /> : <Moon className="size-[17px]" />}
+            {theme === "auto" ? (
+              <SunMoon className="size-[17px]" />
+            ) : theme === "dark" ? (
+              <Moon className="size-[17px]" />
+            ) : (
+              <Sun className="size-[17px]" />
+            )}
           </button>
         </div>
 

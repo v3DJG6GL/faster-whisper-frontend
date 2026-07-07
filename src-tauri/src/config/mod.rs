@@ -97,6 +97,8 @@ pub enum IndicatorPosition {
 pub enum ThemeName {
     Dark,
     Light,
+    /// Follow the OS scheme (resolved in the webviews via prefers-color-scheme).
+    Auto,
 }
 
 /// Which usage figure the chip's optional readout shows (today's value).
@@ -502,7 +504,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             settings: AppSettings {
-                theme: ThemeName::Dark,
+                theme: ThemeName::Auto,
                 microphone_id: None,
                 home_profile_id: None,
                 quick_add_list: None,

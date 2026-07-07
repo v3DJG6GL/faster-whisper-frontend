@@ -108,7 +108,8 @@ export type InsertMethod = "paste" | "direct" | "clipboard";
 /** When the transcription is inserted: never / once on stop / live as you speak. */
 export type InsertTiming = "off" | "stop" | "live";
 export type IndicatorPosition = "top" | "bottom" | "off";
-export type ThemeName = "dark" | "light";
+/** "auto" follows the OS scheme (prefers-color-scheme); see lib/theme.ts. */
+export type ThemeName = "dark" | "light" | "auto";
 /** Which usage figure the chip's optional readout shows (today's value). */
 export type OverlayStatsMetric = "words" | "audio" | "both";
 /** A navigable app screen, referenced by the sidebar, the overlay quick-launch,
