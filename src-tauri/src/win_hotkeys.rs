@@ -580,21 +580,24 @@ mod imp {
 
     /// KBDLLHOOKSTRUCT → the same chord id space as `key_id` (the raw decoder).
     /// The hook layer already reports left/right-resolved modifier VKs and
-    /// NumLock-translated numpad VKs; only AltGr's fake-LCtrl companion and the
+    /// NumLock-translated numpad VKs; only the kbd-layer phantoms and the
     /// Enter/NumpadEnter split need handling (plus a defensive generic-VK
     /// resolve, mirroring the raw path, in case a driver reports them).
     fn ll_key_id(vk: u32, scan: u32, flags: u32) -> Option<u16> {
+        // Keyboard-layer PHANTOMS carry the kbd.h SCANCODE_SIMULATED bit (0x200):
+        // AltGr's fake LCtrl (0x21D, German/Swiss layouts — must never read as
+        // "Ctrl held" to a chord or the HeldKeys gate) and the fake Shift break/
+        // make pair wrapped around NumLock-overridden numpad keys (0x22A/0x236 —
+        // forwarding those would release a held Ctrl+Shift PTT mid-dictation the
+        // moment a numpad key is typed). Never physical; the raw feed reports
+        // these with VKey 0xFF, which it already drops.
+        if scan & 0x200 != 0 {
+            return None;
+        }
         let extended = flags & LLKHF_EXTENDED != 0;
         Some(match vk as u16 {
             // Overrun/prefix marker — also mstsc's synthetic activation marker.
             0xFF => return None,
-            // AltGr's message-layer companion: a fake LCtrl with scan 0x21D
-            // (0x1D | the KBDEXT-era 0x200 marker — what AHK's KeyHistory shows
-            // as sc021D). The raw feed never sees it; drop it here too — whether
-            // it arrives as the specific or the generic VK — so both feeds agree
-            // that AltGr is a lone RAlt (a German-layout AltGr must never read as
-            // "Ctrl held" to a chord or to the HeldKeys inject gate).
-            0xA2 | 0x11 if scan == 0x21D => return None,
             0x10 => {
                 if scan == 0x36 {
                     0xA1 // VK_RSHIFT
