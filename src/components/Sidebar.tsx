@@ -1,7 +1,9 @@
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { Settings as SettingsIcon, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
+import { appVersion } from "@/lib/api";
 import { VISIBLE_SCREENS } from "@/lib/screens";
 import { PRIDE_FLAG_URI } from "@/lib/prideFlag";
 import { dictationVisual } from "@/lib/dictationVisual";
@@ -42,6 +44,13 @@ export function Sidebar() {
   const warming = useApp((s) => s.warming);
   const speaking = useApp((s) => s.speaking);
   const vis = dictationVisual(status, speaking, warming);
+  // Build-time app version (from tauri.conf.json), shown next to the brand label.
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    void appVersion()
+      .then(setVersion)
+      .catch(() => {}); // best-effort: a missing version just hides the readout
+  }, []);
 
   return (
     <aside className="relative z-10 flex w-[228px] shrink-0 flex-col border-r border-line bg-panel/60">
@@ -52,7 +61,7 @@ export function Sidebar() {
             faster<span className="text-accent">whisper</span>
           </div>
           <div className="mt-1 font-mono text-[10px] uppercase tracking-label text-faint">
-            dictation
+            dictation{version && <span className="normal-case"> · v{version}</span>}
           </div>
         </div>
       </div>

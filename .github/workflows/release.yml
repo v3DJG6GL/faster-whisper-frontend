@@ -1,22 +1,72 @@
 # Installer builds: deb + AppImage on Linux, MSI + NSIS on Windows.
 #
-#   - push a "v*" tag        → build both platforms and attach everything to a
-#                               DRAFT GitHub release (publish it by hand after a
-#                               smoke test — the Windows installers especially
-#                               have never been exercised on real hardware)
-#   - manual (workflow_dispatch) → build only; installers land as run artifacts
+#   - manual run (workflow_dispatch) → pick a version bump (patch/minor/major):
+#       the version job bumps package.json + Cargo.toml/lock + tauri.conf.json via
+#       scripts/version.mjs, commits "release: vX.Y.Z", tags, pushes, and the build
+#       jobs attach the installers to a DRAFT GitHub release for that tag.
+#       Pick "build-only" to just compile installers as run artifacts (no version
+#       change, no release).
+#   - push a "v*" tag by hand → same DRAFT release path, no version bump.
 #
-# Installers are unsigned (no code-signing cert — acceptable for a FOSS tool;
-# Windows will show the SmartScreen warning).
+#   Drafts are published by hand after a smoke test. Installers are unsigned (no
+#   code-signing cert — acceptable for a FOSS tool; Windows shows SmartScreen).
+#
+#   NOTE: the version job pushes with GITHUB_TOKEN, which deliberately does NOT
+#   trigger other workflows — that's why the build runs in this same workflow run.
 name: release
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump for this release"
+        type: choice
+        default: patch
+        options: [patch, minor, major, build-only]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  # Bump + commit + tag (dispatch runs only, unless "build-only").
+  version:
+    if: github.event_name == 'workflow_dispatch' && inputs.bump != 'build-only'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bump version, commit, tag, push
+        id: bump
+        run: |
+          current="$(node scripts/version.mjs)"
+          IFS=. read -r MA MI PA <<< "$current"
+          case "${{ inputs.bump }}" in
+            major) new="$((MA+1)).0.0" ;;
+            minor) new="$MA.$((MI+1)).0" ;;
+            patch) new="$MA.$MI.$((PA+1))" ;;
+          esac
+          echo "bumping $current -> $new"
+          node scripts/version.mjs "$new"
+          # Sync the workspace member's entry in Cargo.lock (deps stay untouched).
+          cargo update --workspace --manifest-path src-tauri/Cargo.toml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "release: v$new"
+          git tag "v$new"
+          git push origin "HEAD:$GITHUB_REF_NAME" "v$new"
+          echo "tag=v$new" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: version
+    # Run when version succeeded OR was skipped (tag push / build-only dispatch).
+    if: ${{ !cancelled() && needs.version.result != 'failure' }}
     strategy:
       fail-fast: false
       matrix:
@@ -26,6 +76,22 @@ jobs:
       contents: write # create the draft release + upload assets
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On a bump run, build the tagged commit (not the pre-bump dispatch ref).
+          ref: ${{ needs.version.outputs.tag || github.ref }}
+
+      # The release tag this run builds for — empty means build-only (artifacts).
+      - name: Resolve release tag
+        id: rel
+        shell: bash
+        run: |
+          if [ -n "${{ needs.version.outputs.tag }}" ]; then
+            echo "tag=${{ needs.version.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: pnpm/action-setup@v4 # version comes from package.json "packageManager"
 
@@ -52,29 +118,29 @@ jobs:
 
       # Don't ship a release whose tag disagrees with the in-app version readout.
       - name: Verify the tag matches the app version
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.rel.outputs.tag != ''
         shell: bash
         run: |
           node scripts/version.mjs --check
           app="$(node scripts/version.mjs)"
-          tag="${GITHUB_REF_NAME#v}"
-          if [ "$app" != "$tag" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match app version $app — run: pnpm set-version $tag"
+          tag="${{ steps.rel.outputs.tag }}"
+          if [ "$app" != "${tag#v}" ]; then
+            echo "::error::tag $tag does not match app version $app — run: pnpm set-version ${tag#v}"
             exit 1
           fi
 
-      # With an empty tagName (manual runs) tauri-action only builds; on a tag it
+      # With an empty tagName (build-only) tauri-action only builds; otherwise it
       # also creates/updates the draft release and attaches the installers.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('faster-whisper-frontend {0}', github.ref_name) || '' }}
+          tagName: ${{ steps.rel.outputs.tag }}
+          releaseName: ${{ steps.rel.outputs.tag && format('faster-whisper-frontend {0}', steps.rel.outputs.tag) || '' }}
           releaseDraft: true
 
-      - name: Upload installers as run artifacts (manual run)
-        if: "!startsWith(github.ref, 'refs/tags/')"
+      - name: Upload installers as run artifacts (build-only run)
+        if: steps.rel.outputs.tag == ''
         uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.platform }}
