@@ -1,7 +1,11 @@
 // Shared hotkey-capture hook. Tracks held modifiers live; finalizes on the first
-// real key (or, with evdev active, on release of a modifier-only chord). Warns
-// (never silently drops) on a clash with another binding or a non-registerable
-// chord. Suspends global hotkeys for the duration so a press only rebinds.
+// real key (or, with a low-level backend active, on release of a modifier-only
+// chord). Warns (never silently drops) on a clash with another binding or a
+// non-registerable chord. Suspends global hotkeys for the duration so a press only
+// rebinds. `lowLevelActive` = the platform's raw-key backend owns the chords
+// (Linux evdev when enabled+permitted; the always-on Windows keyboard hook), which
+// distinguishes modifier sides and accepts modifier-only / AltGr chords — when
+// false the plugin registers, so chords are validated against its accelerators.
 //
 // Used by the Profiles editor (dictation chords) and the Settings "quick-add
 // shortcut" row, so both behave identically. `others` is the set of bindings to
@@ -16,12 +20,12 @@ import type { Profile } from "./types";
 
 export function useHotkeyCapture(opts: {
   capturing: boolean;
-  evdevActive: boolean;
+  lowLevelActive: boolean;
   others: Profile[];
   onCommit: (codes: string[]) => void;
   onCancel: () => void;
 }): { heldCodes: string[]; warn: string | null } {
-  const { capturing, evdevActive } = opts;
+  const { capturing, lowLevelActive } = opts;
   const [heldCodes, setHeldCodes] = useState<string[]>([]);
   const [warn, setWarn] = useState<string | null>(null);
   // Keep the latest callbacks/others without retriggering the capture effect
@@ -44,9 +48,9 @@ export function useHotkeyCapture(opts: {
     // cancelled-flag guard in useOverrideContext).
     let cancelled = false;
     const finalize = (codes: string[]) => {
-      // evdev inactive ⇒ the plugin backend collapses L/R modifier sides, so collapse them for the
-      // clash check too (a side-only-different chord would otherwise warn-free yet collide).
-      const clash = findChordConflict(codes, ref.current.others, !evdevActive);
+      // No low-level backend ⇒ the plugin registers and collapses L/R modifier sides, so collapse
+      // them for the clash check too (a side-only-different chord would otherwise warn-free yet collide).
+      const clash = findChordConflict(codes, ref.current.others, !lowLevelActive);
       if (clash) {
         setWarn(
           clash.kind === "duplicate"
@@ -56,7 +60,7 @@ export function useHotkeyCapture(opts: {
         done = false;
         return;
       }
-      if (evdevActive) {
+      if (lowLevelActive) {
         ref.current.onCommit(codes);
       } else {
         void validateCodes(codes)
@@ -123,7 +127,7 @@ export function useHotkeyCapture(opts: {
       pressed.delete(e.code);
       setHeldCodes(canonicalizeCodes([...pressed]));
       if (!done && pressed.size === 0 && peak.length > 0) {
-        if (evdevActive) {
+        if (lowLevelActive) {
           done = true;
           // Consume `peak` before finalizing: on a CONFLICTING modifier-only chord, finalize sets
           // done=false and keeps capture open, but `peak` (a monotonic high-water mark) would stay —
@@ -157,7 +161,7 @@ export function useHotkeyCapture(opts: {
       window.removeEventListener("blur", onBlur);
       void reregisterShortcuts().catch((e) => console.error("reregisterShortcuts failed", e));
     };
-  }, [capturing, evdevActive]);
+  }, [capturing, lowLevelActive]);
 
   return { heldCodes, warn };
 }

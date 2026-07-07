@@ -5,7 +5,7 @@ import { swap } from "@/lib/arr";
 import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screens";
-import { IS_LINUX } from "@/lib/platform";
+import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import {
   listAudioDevices,
@@ -428,15 +428,16 @@ function QuickLaunchEditor({
 
 /** Capture row for the global "open the quick-add window" hotkey. Reuses the shared
  *  useHotkeyCapture hook (same as the Profiles editor); conflicts are checked against
- *  the Profile chords. On Wayland the chord registers via the evdev backend. */
-function QuickAddShortcutRow({ evdevActive }: { evdevActive: boolean }) {
+ *  the Profile chords. On Wayland the chord registers via the evdev backend; on
+ *  Windows via the always-on hook backend. */
+function QuickAddShortcutRow({ lowLevelActive }: { lowLevelActive: boolean }) {
   const codes = useApp((st) => st.settings.general.quickAddHotkey);
   const profiles = useApp((st) => st.profiles);
   const updateGeneral = useApp((st) => st.updateGeneral);
   const [capturing, setCapturing] = useState(false);
   const { heldCodes, warn } = useHotkeyCapture({
     capturing,
-    evdevActive,
+    lowLevelActive,
     others: profiles,
     onCommit: (c) => {
       updateGeneral({ quickAddHotkey: c });
@@ -480,9 +481,10 @@ export default function Settings() {
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
   const [evdevMsg, setEvdevMsg] = useState<string | null>(null);
   const [evdevBusy, setEvdevBusy] = useState(false);
-  // evdev is the active hotkey backend only when enabled AND permitted — drives whether
-  // the quick-add capture accepts modifier-only / AltGr chords (else plugin validation).
-  const evdevActive = !!evdev?.permitted && s.general.evdevEnabled;
+  // A low-level backend owns the chords when evdev is enabled AND permitted (Linux) or always
+  // on Windows (the hook backend) — drives whether the quick-add capture accepts modifier-only /
+  // AltGr chords (else plugin validation).
+  const lowLevelActive = IS_WINDOWS || (!!evdev?.permitted && s.general.evdevEnabled);
 
   useEffect(() => {
     void evdevStatus().then(setEvdev).catch(() => {}); // match the file's other chains; ignore an IPC reject
@@ -640,7 +642,7 @@ export default function Settings() {
             <SettingRow title="Sound cues" desc="A short tone when dictation starts and stops.">
               <Toggle checked={s.general.soundEffects} onChange={(v) => updateGeneral({ soundEffects: v })} />
             </SettingRow>
-            <QuickAddShortcutRow evdevActive={evdevActive} />
+            <QuickAddShortcutRow lowLevelActive={lowLevelActive} />
           </Card>
         )}
 

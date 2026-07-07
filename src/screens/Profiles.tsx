@@ -12,7 +12,7 @@ import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { conflictsByProfile, quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/conflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { evdevStatus, type EvdevStatus } from "@/lib/api";
-import { IS_LINUX } from "@/lib/platform";
+import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -45,15 +45,16 @@ function Editor({
   const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
   const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
-  // evdev is the active hotkey backend only when enabled AND permitted — same gate as the Settings
-  // quick-add row, so both rebind surfaces accept the same chords (useHotkeyCapture commits
-  // modifier-only / AltGr chords ONLY when evdev is active). Gating on `evdevEnabled` alone would
-  // let this editor accept a chord that can't fire when evdev is toggled on but not permitted.
+  // A low-level backend owns the chords when evdev is enabled AND permitted (Linux) or always on
+  // Windows (the hook backend) — same gate as the Settings quick-add row, so both rebind surfaces
+  // accept the same chords (useHotkeyCapture commits modifier-only / AltGr chords ONLY then).
+  // Gating on `evdevEnabled` alone would let this editor accept a chord that can't fire when
+  // evdev is toggled on but not permitted.
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
   useEffect(() => {
     void evdevStatus().then(setEvdev).catch(() => {}); // match Settings' chain; ignore an IPC reject
   }, []);
-  const evdevActive = !!evdev?.permitted && evdevEnabled;
+  const lowLevelActive = IS_WINDOWS || (!!evdev?.permitted && evdevEnabled);
   const [p, setP] = useState<Profile>(initial);
   const [capturing, setCapturing] = useState(false);
   const [showOverrides, setShowOverrides] = useState(
@@ -87,7 +88,7 @@ function Editor({
 
   const { heldCodes, warn } = useHotkeyCapture({
     capturing,
-    evdevActive,
+    lowLevelActive,
     others,
     onCommit: (codes) => {
       set({ hotkey: codes });
@@ -278,8 +279,8 @@ function Editor({
           </>
         ) : (
           <>
-            Push-to-talk, latch, and normal chords register as global hotkeys. Modifier-only chords (a lone
-            Ctrl / AltGr tap) and left/right-specific modifiers aren’t available on Windows.
+            Every chord type works globally on Windows — push-to-talk, latch, modifier-only (like
+            Ctrl+Shift), and left/right-specific modifiers.
           </>
         )}
       </div>
@@ -381,15 +382,15 @@ export default function Profiles() {
   const moveProfile = useApp((s) => s.moveProfile);
   const quickAddHotkey = useApp((s) => s.settings.general.quickAddHotkey);
   const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
-  // evdev is the ACTIVE hotkey backend only when enabled AND permitted (same gate as the Editor +
-  // Rust's apply_bindings). When enabled-but-not-permitted the plugin is live and collapses L/R
-  // modifier sides, so the per-card conflict banner must collapse too — else a side-only-different
-  // chord shows no conflict here yet silently clobbers one binding under the plugin.
+  // A low-level backend is live when evdev is enabled AND permitted (Linux) or always on Windows
+  // (same gate as the Editor + Rust's apply_bindings). When only the plugin is live it collapses
+  // L/R modifier sides, so the per-card conflict banner must collapse too — else a side-only-
+  // different chord shows no conflict here yet silently clobbers one binding under the plugin.
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
   useEffect(() => {
     void evdevStatus().then(setEvdev).catch(() => {});
   }, []);
-  const evdevActive = !!evdev?.permitted && evdevEnabled;
+  const lowLevelActive = IS_WINDOWS || (!!evdev?.permitted && evdevEnabled);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Profile | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -418,7 +419,7 @@ export default function Profiles() {
   // surfaces now agree.
   const conflictPeers =
     quickAddHotkey.length > 0 ? [...profiles, quickAddPeer(quickAddHotkey)] : profiles;
-  const conflicts = conflictsByProfile(conflictPeers, !evdevActive);
+  const conflicts = conflictsByProfile(conflictPeers, !lowLevelActive);
   const nameOf = (id: string) =>
     id === QUICK_ADD_PEER_ID ? "Quick add" : (profiles.find((p) => p.id === id)?.name ?? "another profile");
   const backendName = (id: string | null) => backends.find((b) => b.id === id)?.name ?? "No backend";

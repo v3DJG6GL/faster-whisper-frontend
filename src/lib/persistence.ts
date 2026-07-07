@@ -1,6 +1,7 @@
 import { useApp } from "./store";
 import { isTauri, loadConfig, saveConfig, reregisterShortcutsUnlessCapturing, evdevStatus } from "./api";
 import { conflicts, quickAddPeer } from "./conflicts";
+import { IS_WINDOWS } from "./platform";
 
 /**
  * Load persisted config on startup, then auto-save (debounced) whenever
@@ -107,11 +108,12 @@ export async function initConfig(): Promise<void> {
       // unless the save-gate sees it too.
       const qa = s.settings.general.quickAddHotkey;
       const conflictPeers = qa.length > 0 ? [...s.profiles, quickAddPeer(qa)] : s.profiles;
-      // evdev NOT ACTIVE (off OR enabled-but-not-permitted) ⇒ the plugin backend registers and can't
-      // tell modifier sides apart, so collapse L/R for conflict detection (else two side-only-different
-      // chords pass here yet one silently never registers). Mirrors Rust's !(enabled && permitted) and
-      // the capture-time + per-card checks.
-      if (conflicts(conflictPeers, !(s.settings.general.evdevEnabled && evdevPermitted)).length > 0) {
+      // No low-level backend (Linux with evdev off OR enabled-but-not-permitted) ⇒ the plugin
+      // registers and can't tell modifier sides apart, so collapse L/R for conflict detection (else
+      // two side-only-different chords pass here yet one silently never registers). Mirrors Rust's
+      // apply_bindings branch and the capture-time + per-card checks. On Windows the hook backend
+      // always distinguishes sides — never collapse.
+      if (conflicts(conflictPeers, !IS_WINDOWS && !(s.settings.general.evdevEnabled && evdevPermitted)).length > 0) {
         useApp
           .getState()
           .setSaveError("A shortcut is used by two bindings — resolve the conflict to resume saving.");
