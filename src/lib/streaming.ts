@@ -39,6 +39,7 @@ import {
   discardInjectionSnapshot,
   getFocusedApp,
   reregisterShortcutsUnlessCapturing,
+  shortcutModsHeld,
 } from "./api";
 import type { ActivationKind, AppRule, Backend, DecodeOverrides, FocusedApp, GeneralSettings, InsertMethod } from "./types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
@@ -330,11 +331,46 @@ function stopTargetPoll(): void {
 // the instant you stop — which is the very thing we're fixing.
 const MIN_INJECT_VISIBLE_MS = 450;
 
+// A hold PRESS that landed while the previous session was still "finalizing…"/"inserting…"
+// (the fast re-press — dictation.ts queues it instead of dropping it). Consumed when the
+// session settles: if the chord is still physically held (Rust HeldKeys), the start fires
+// and dictation resumes the moment the previous text lands — no second press needed. If the
+// user already released, it's dropped (starting then would wedge "listening" with nothing
+// left to stop it). Speech during the finalize gap itself is not captured (the mic was closed).
+const PENDING_START_MAX_AGE_MS = 15_000;
+let pendingHoldStart: { profileId: string; at: number } | null = null;
+let pendingStartRunner: ((profileId: string) => void) | null = null;
+
+export function queuePendingHoldStart(profileId: string): void {
+  pendingHoldStart = { profileId, at: performance.now() };
+}
+
+/** dictation.ts registers its start entry point here (a direct import would be a cycle). */
+export function registerPendingStartRunner(run: (profileId: string) => void): void {
+  pendingStartRunner = run;
+}
+
+function consumePendingHoldStart(): void {
+  const pending = pendingHoldStart;
+  pendingHoldStart = null;
+  const run = pendingStartRunner;
+  if (!pending || !run) return;
+  if (performance.now() - pending.at > PENDING_START_MAX_AGE_MS) return;
+  void shortcutModsHeld()
+    .then((held) => {
+      if (held && useApp.getState().status === "idle") run(pending.profileId);
+    })
+    .catch(() => {}); // plugin-only backend / IPC failure → treat as released
+}
+
 /** Settle the chip to idle, stamping the session's insert outcome (typed/clipboard/none) and
  *  clearing the active profile — the single definition of the end-of-session contract so its
- *  four call sites can't drift. */
+ *  four call sites can't drift. Also drops the dead session's preview text (`partial`): it's
+ *  only rendered again once a session is live, but holding it would let a stale transcript
+ *  flash if any future path exposed it. Fires a queued fast re-press start last. */
 function settleIdle(): void {
-  useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
+  useApp.getState().setDictation({ status: "idle", partial: "", sessionOutcome: endOutcome(), activeProfile: null });
+  consumePendingHoldStart();
 }
 
 /** A stream-event handler should fold in / act on a late emit only while genuinely busy — a
@@ -367,7 +403,7 @@ function settleToIdleAfterInjection(startedAt: number, cfg: InsertCfg | null): v
 // link) that event may never arrive, leaving the chip stuck. After this long with no
 // resolution we force a clean idle. Streaming only — a batch transcription can take a
 // while legitimately (bounded by the HTTP client's own 120 s timeout), and the Rust
-// drain deadline (~6 s) normally resolves a live stream well before this fires.
+// drain deadline (10 s) normally resolves a live stream just before this fires.
 const STUCK_FINALIZE_MS = 12_000;
 let stuckTimer: ReturnType<typeof setTimeout> | null = null;
 function clearStuckWatchdog(): void {
@@ -1153,6 +1189,7 @@ function teardownAfterFatalInject(): void {
 /** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
  *  Guarded: if a new session starts first (status leaves "error"), the pending clear is a no-op. */
 function flashError(message: string): void {
+  pendingHoldStart = null; // don't chain a queued start onto a failed session
   // Clear the live preview too (like level:0 freezes the meter): the error supersedes it, and
   // otherwise the stale `partial` lingers in the store — when the error auto-clears to idle the
   // Home transcript card (which lingers longer than the error) would flip from the red message to
@@ -1469,6 +1506,7 @@ export async function stopLive(): Promise<void> {
  *  recovers both the recording state AND the shortcuts. */
 export async function cancelLive(): Promise<void> {
   autoStopMs = 0; // disarm latch auto-stop
+  pendingHoldStart = null; // a deliberate cancel also voids a queued fast re-press
   clearWarmTimer();
   clearStuckWatchdog();
   stopTargetPoll();

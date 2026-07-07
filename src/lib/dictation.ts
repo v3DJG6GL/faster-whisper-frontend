@@ -4,7 +4,10 @@
 // affordances.
 
 import { useApp } from "./store";
-import { startLive, stopLive, cancelLive, requestStopIfStarting, isStarting } from "./streaming";
+import {
+  startLive, stopLive, cancelLive, requestStopIfStarting, isStarting,
+  queuePendingHoldStart, registerPendingStartRunner,
+} from "./streaming";
 import { showQuickAdd } from "./api";
 import { isActiveDictation, isProcessing } from "./dictationVisual";
 import type { Backend, Profile } from "./types";
@@ -17,13 +20,22 @@ function isBusy(): boolean {
   return isActiveDictation(useApp.getState().status);
 }
 
-// Graceful stop while still capturing ("listening"); a hard reset for the wedge-prone
-// post-speech states ("finalizing…"/"inserting…"), so a hotkey can recover a stuck
-// session the same way the in-app button does.
-function stopOrCancel(): void {
+// Graceful stop while still capturing ("listening"). During the post-speech states
+// ("finalizing…"/"inserting…") the transcript is pending but not yet delivered, so what
+// happens there depends on the gesture:
+//   • `hard` (a deliberate latch TOGGLE — a re-press saying "kill it"): cancel, the
+//     explicit recovery for a wedged session, same as the in-app button.
+//   • not `hard` (a HOLD chord release): do NOTHING. A release lands here only in the
+//     fast re-press flow — its matching press was swallowed by the busy gate (and
+//     queued, see dictate) — so it pairs with NO session; cancelling would discard the
+//     previous dictation's still-draining transcript (the "re-press eats my last
+//     sentence" bug found in on-Windows testing over a slow VPN link).
+function stopOrCancel(hard: boolean): void {
   const s = useApp.getState().status;
   if (s === "listening") void stopLive();
-  else if (isProcessing(s)) void cancelLive();
+  else if (isProcessing(s)) {
+    if (hard) void cancelLive();
+  }
   // idle/error but a session may be mid-START (its status not yet "listening", e.g. a fast PTT tap
   // whose chord-release "stop" landed during the start prologue) → mark it to tear down on go-live,
   // else it would wedge "listening" with the chord already released. No-op when nothing is starting.
@@ -39,12 +51,12 @@ export function dictate(profileId: string, action: TriggerAction): void {
   // emitted precisely to avoid a stranded session) would otherwise be dropped, wedging
   // the session listening forever. Handle it before resolving the Profile.
   if (action === "stop") {
-    stopOrCancel();
+    stopOrCancel(false);
     return;
   }
   if (action === "toggle") {
     if (isBusy()) {
-      stopOrCancel();
+      stopOrCancel(true);
       return;
     }
     // A toggle-off that lands during the start prologue (status still "idle", session mid-start)
@@ -64,13 +76,25 @@ export function dictate(profileId: string, action: TriggerAction): void {
   // the in-flight session's activeProfile — mislabeling its chip identity + usage attribution — and
   // then silently no-op on startLive's startingSession guard. The toggle entry-points already guard
   // the prologue via requestStopIfStarting; this is the START path's equivalent.
-  if (isBusy() || isStarting()) return;
+  if (isBusy() || isStarting()) {
+    // …except a hold PRESS during "finalizing…"/"inserting…" — the fast re-press. Don't
+    // drop it: queue it, and streaming fires it on settle IF the chord is still held
+    // (checked against Rust's HeldKeys), so the next sentence starts the moment the
+    // previous text lands, without another press. Its release is a no-op (stopOrCancel).
+    if (action === "start" && isProcessing(s.status)) queuePendingHoldStart(profileId);
+    return;
+  }
 
   s.setDictation({ activeProfile: profileId });
   // startLive resolves the effective language / prompt / decode overrides
   // (the Profile's set fields win over the Backend's defaults).
   void startLive(backend, s.settings.microphoneId, profile.activation, profile);
 }
+
+// Wire the queued-start consumer: streaming.ts owns settleIdle but can't import us
+// (module cycle), so it calls back into dictate here. A queued press re-enters through
+// the full gate chain — profile still enabled, status now idle — like a fresh press.
+registerPendingStartRunner((profileId) => dictate(profileId, "start"));
 
 /** The Backend a Profile dictates through: its configured `backendId`, falling back to
  *  the first Backend (undefined only when there are no Backends at all). The single home

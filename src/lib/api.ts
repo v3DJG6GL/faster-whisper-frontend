@@ -488,6 +488,15 @@ export async function getFocusedApp(): Promise<FocusedApp | null> {
   return (await invoke<FocusedApp | null>("get_focused_app")) ?? null;
 }
 
+/** Whether any shortcut modifier is physically held right now, per the low-level hotkey
+ *  backends' shared HeldKeys signal (evdev / win_hotkeys; always false when only the
+ *  plugin backend runs). Consumer: the queued fast re-press start — fire only while the
+ *  chord is still down. */
+export async function shortcutModsHeld(): Promise<boolean> {
+  if (!isTauri) return false;
+  return await invoke<boolean>("shortcut_mods_held");
+}
+
 /** Like getFocusedApp but skips the own-window self short-circuit — returns the previously
  *  focused OTHER app. For the App-rules "Use current" button, which is always clicked while
  *  our own window holds focus (so getFocusedApp would always report "this app"). */
