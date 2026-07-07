@@ -112,6 +112,18 @@ memfd = "0.6"
 atspi = { version = "0.30", default-features = false, features = ["proxies", "wrappers", "tokio", "zbus"] }
 atspi-connection = { version = "0.14", default-features = false, features = ["wrappers"] }
 
+# Windows-only: the WH_KEYBOARD_LL hotkey backend (win_hotkeys.rs) — modifier-only,
+# left/right-specific, and N-key chords the global-shortcut plugin can't register.
+# windows-sys 0.60 is already in the dependency tree (via Tauri), so this adds no
+# new crate version.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 # NOTE: `time` is pinned to 0.3.47 in Cargo.lock. time 0.3.48 introduced a trait
 # impl that collides (E0119) with `cookie` 0.18.1 (a transitive Tauri dep). Do not
 # `cargo update -p time` past 0.3.47 until Tauri bumps `cookie`.

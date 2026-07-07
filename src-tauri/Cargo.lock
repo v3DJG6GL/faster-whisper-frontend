@@ -1349,6 +1349,7 @@ dependencies = [
  "uuid",
  "wayland-client",
  "wayland-protocols-misc",
+ "windows-sys 0.60.2",
  "xkbcommon",
 ]
 

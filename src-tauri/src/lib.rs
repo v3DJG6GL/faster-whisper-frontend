@@ -16,6 +16,7 @@ mod tray;
 mod triggers;
 mod virtual_keyboard;
 mod wayland_inject;
+mod win_hotkeys;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -51,6 +52,7 @@ pub fn run() {
         .manage(wayland_inject::WaylandTyper::default())
         .manage(commands::ClipboardSnapshot::default())
         .manage(evdev_hotkeys::EvdevState::default())
+        .manage(win_hotkeys::WinHookState::default())
         .manage(held_keys::HeldKeys::default())
         .manage(virtual_keyboard::VirtualKeyboard::default())
         .manage(atspi_guard::AtspiGuard::default())

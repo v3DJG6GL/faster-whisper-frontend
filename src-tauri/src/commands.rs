@@ -531,6 +531,9 @@ pub fn suspend_shortcuts(app: AppHandle) {
     crate::triggers::unregister_all(&app);
     let state = app.state::<crate::evdev_hotkeys::EvdevState>();
     crate::evdev_hotkeys::stop(&state);
+    // Windows twin of the evdev teardown (no-op elsewhere): the hook backend is the
+    // always-on low-level listener there and must fall silent during capture too.
+    crate::win_hotkeys::stop(&app.state::<crate::win_hotkeys::WinHookState>());
     // stop() aborts the reader tasks, which skips their post-loop cleanup, so compensate for both:
     // (1) the held-KEY counts — a modifier held now would leave a phantom count and make the next
     // inject_text wait the full gate timeout; restore held_keys' "not running ⇒ empty".
@@ -538,6 +541,7 @@ pub fn suspend_shortcuts(app: AppHandle) {
     // (2) the held-SESSION "stop" — a PTT chord held while a rebind capture starts would otherwise
     // wedge "listening" until manual cancel (the release reaches no reader). No-op when none held.
     crate::evdev_hotkeys::stop_held_sessions(&app);
+    crate::win_hotkeys::stop_held_sessions(&app);
 }
 
 /// Apply the current bindings to the right backend: when the evdev backend is
@@ -556,23 +560,39 @@ pub fn apply_bindings(app: &AppHandle) {
 
     let Ok(dir) = config_dir(app) else { return };
     let cfg = config::load(&dir);
-    let state = app.state::<crate::evdev_hotkeys::EvdevState>();
     let quick_add = &cfg.settings.general.quick_add_hotkey;
     // Re-registering aborts the evdev reader tasks, which skips their post-loop "stop" for any
     // PTT chord held right now — so a session held across this restart (e.g. editing a profile
     // while holding push-to-talk) would wedge "listening". Emit those stops first. No-op when
-    // nothing is held.
+    // nothing is held. (The Windows hook worker exits gracefully and normally emits its own
+    // stops, but claim-based: whichever side runs first wins — see win_hotkeys::take_hold.)
     crate::evdev_hotkeys::stop_held_sessions(app);
-    if cfg.settings.general.evdev_enabled && crate::evdev_hotkeys::permitted() {
+    crate::win_hotkeys::stop_held_sessions(app);
+    #[cfg(windows)]
+    {
+        // Windows: the low-level hook backend owns ALL chords — it registers everything
+        // the plugin can, plus the modifier-only / left-right / N-key chords it can't
+        // (the default Ctrl+Shift PTT). The plugin stays silent, mirroring the
+        // evdev-XOR-plugin invariant below.
         crate::triggers::unregister_all(app);
-        crate::evdev_hotkeys::start(app, &state, &cfg.profiles, quick_add);
-        tracing::info!("[bindings] evdev backend active (plugin silenced)");
-    } else {
-        crate::evdev_hotkeys::stop(&state);
-        // Aborting the reader skips its held-key cleanup; drop any stale counts so the
-        // inject gate isn't wedged on a phantom modifier while evdev stays off.
-        app.state::<crate::held_keys::HeldKeys>().clear();
-        crate::triggers::register_from_config(app, &cfg.profiles, quick_add);
+        let hook = app.state::<crate::win_hotkeys::WinHookState>();
+        crate::win_hotkeys::start(app, &hook, &cfg.profiles, quick_add);
+        tracing::info!("[bindings] windows hook backend active (plugin silenced)");
+    }
+    #[cfg(not(windows))]
+    {
+        let state = app.state::<crate::evdev_hotkeys::EvdevState>();
+        if cfg.settings.general.evdev_enabled && crate::evdev_hotkeys::permitted() {
+            crate::triggers::unregister_all(app);
+            crate::evdev_hotkeys::start(app, &state, &cfg.profiles, quick_add);
+            tracing::info!("[bindings] evdev backend active (plugin silenced)");
+        } else {
+            crate::evdev_hotkeys::stop(&state);
+            // Aborting the reader skips its held-key cleanup; drop any stale counts so the
+            // inject gate isn't wedged on a phantom modifier while evdev stays off.
+            app.state::<crate::held_keys::HeldKeys>().clear();
+            crate::triggers::register_from_config(app, &cfg.profiles, quick_add);
+        }
     }
 }
 
@@ -677,14 +697,24 @@ pub async fn evdev_setup() -> Result<String, String> {
     crate::evdev_hotkeys::setup().await
 }
 
-/// Whether a code-list chord can be registered via the global-shortcut plugin.
-/// Modifier-only / AltGr chords return false — those need the evdev backend.
+/// Whether a code-list chord can be registered by the platform's registrar. On
+/// Windows that's the always-on hook backend (anything mappable, incl. modifier-only
+/// / AltGr / left-right). Elsewhere it's the global-shortcut plugin — modifier-only /
+/// AltGr chords return false there; those need the evdev backend. (The capture UI
+/// only consults this in plugin mode, but keep the answer truthful per platform.)
 #[tauri::command]
 pub fn validate_codes(codes: Vec<String>) -> bool {
-    use std::str::FromStr;
-    crate::config::codes_to_accelerator(&codes)
-        .map(|a| tauri_plugin_global_shortcut::Shortcut::from_str(&a).is_ok())
-        .unwrap_or(false)
+    #[cfg(windows)]
+    {
+        !codes.is_empty() && codes.iter().all(|c| crate::win_hotkeys::code_valid(c))
+    }
+    #[cfg(not(windows))]
+    {
+        use std::str::FromStr;
+        crate::config::codes_to_accelerator(&codes)
+            .map(|a| tauri_plugin_global_shortcut::Shortcut::from_str(&a).is_ok())
+            .unwrap_or(false)
+    }
 }
 
 /// Snapshot of the clipboard taken before a live (per-segment) paste dictation, so
