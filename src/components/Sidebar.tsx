@@ -121,14 +121,12 @@ export function Sidebar() {
           </button>
         </div>
 
-        {/* Footer slot: version readout at rest; hovering reveals the year-round
-            solidarity mark (the flag flickers into full colour). The version sits in
+        {/* Footer slot: version readout at rest; DWELLING on it for 2s reveals the
+            year-round solidarity mark (the flag flickers into full colour). No
+            title attr — a native tooltip would spoil the egg. The version sits in
             an absolute layer so the swap never shifts the layout. Decorative
             (aria-hidden flag); the slogan carries the meaning. */}
-        <div
-          className="pride-mark relative mt-3 flex items-center justify-center gap-2.5 px-3"
-          title="sometimes antisocial · always antifascist"
-        >
+        <div className="pride-mark relative mt-3 flex items-center justify-center gap-2.5 px-3">
           {version && (
             <span className="version-readout absolute inset-0 grid place-items-center font-mono text-[10px] tracking-label text-faint">
               v{version}

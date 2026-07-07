@@ -274,14 +274,16 @@ textarea {
   }
 }
 
-/* Sidebar footer: the version readout at rest; hovering swaps in the Pride mark —
-   the flag FLICKERS into full colour (like a tube warming up), the slogan follows. */
+/* Sidebar footer: the version readout at rest; DWELLING on it for 2s swaps in the
+   Pride mark — the flag FLICKERS into full colour (like a tube warming up), the
+   slogan follows. Leaving early snaps everything back with no delay. */
 .pride-mark .version-readout {
   opacity: 1;
   transition: opacity 0.2s;
 }
 .pride-mark:hover .version-readout {
   opacity: 0;
+  transition-delay: 2s; /* hold the version until the egg is earned */
 }
 .pride-mark .pride-flag {
   opacity: 0;
@@ -294,14 +296,14 @@ textarea {
 }
 .pride-mark:hover .pride-flag {
   filter: none;
-  animation: pride-flicker 0.7s both;
+  animation: pride-flicker 0.7s 2s both; /* 2s dwell, then the warm-up */
 }
 .pride-mark:hover .pride-slogan {
   opacity: 0.9;
-  transition-delay: 0.42s;
+  transition-delay: 2.42s;
 }
 @keyframes pride-flicker {
-  0% { opacity: 0.16; }
+  0% { opacity: 0; } /* `both` fill keeps this during the 2s dwell — fully hidden */
   8% { opacity: 0.85; }
   11% { opacity: 0.12; }
   19% { opacity: 0.95; }
@@ -316,5 +318,6 @@ textarea {
   .pride-mark:hover .pride-flag {
     animation: none;
     opacity: 1;
+    transition-delay: 2s; /* same dwell, plain fade instead of the flicker */
   }
 }
