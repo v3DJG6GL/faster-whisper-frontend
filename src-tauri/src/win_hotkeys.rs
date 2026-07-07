@@ -19,10 +19,12 @@
 //! activates (v0.1.4); and swallowed keys turned out not to reach raw-input
 //! sinks either (v0.1.5, user-verified — delivery order vs. the LL chain is
 //! undocumented and this is the empirical answer). The fix is the AutoHotkey
-//! community's: RE-INSTALL our hook whenever the foreground changes (and on a
-//! slow timer as watchdog insurance), so it always sits ABOVE mstsc's and sees
-//! keys before they're swallowed. Raw input stays as the primary feed: it has no
-//! watchdog, needs no re-arming, and covers the µs re-arm gaps.
+//! community's: RE-INSTALL our hook whenever the foreground changes — plus a
+//! short per-tick BURST after each change (the foreground event can fire before
+//! the activated app installs its own hook) and a slow watchdog re-arm (the OS
+//! silently removes hooks it deems slow) — so it always sits ABOVE mstsc's and
+//! sees keys before they're swallowed. Raw input stays as the primary feed: it
+//! has no watchdog, needs no re-arming, and covers the µs re-arm gaps.
 //!
 //! The two feeds also patch each other's blind spots: raw input drops
 //! `hDevice == 0` events, which besides SendInput can be a precision touchpad or
@@ -424,7 +426,7 @@ mod imp {
                 0,
                 WINEVENT_OUTOFCONTEXT,
             );
-            let timer = SetTimer(std::ptr::null_mut(), 0, REARM_MS, None);
+            let timer = SetTimer(std::ptr::null_mut(), 0, TICK_MS, None);
             let _ = ready.send(Some(GetCurrentThreadId()));
             // WM_INPUT arrives here and is routed to wndproc by DispatchMessageW.
             // Returns 0 on the WM_QUIT posted by shutdown(), -1 on error.
@@ -433,7 +435,7 @@ mod imp {
                 // The re-arm timer targets no window (thread message) — handle it
                 // here; DispatchMessageW would drop it.
                 if msg.message == WM_TIMER && msg.hwnd.is_null() {
-                    arm_ll_hook();
+                    on_rearm_tick();
                     continue;
                 }
                 DispatchMessageW(&msg);
@@ -451,10 +453,16 @@ mod imp {
         }
     }
 
-    /// Watchdog cadence for re-installing the LL hook: covers both a silent
-    /// OS removal (the slow-hook timeout) and any hook that slipped above ours
-    /// without a foreground change. Unhook+rehook is two cheap syscalls.
-    const REARM_MS: u32 = 3000;
+    /// Re-arm scheduling. The timer ticks every TICK_MS; normally we only re-arm
+    /// every WATCHDOG_TICKS ticks (silent-removal insurance — each re-arm has a
+    /// µs blind gap, so steady-state re-arms are kept rare). A foreground change
+    /// arms immediately AND starts a BURST of per-tick re-arms: the
+    /// EVENT_SYSTEM_FOREGROUND callback can run BEFORE the newly-activated app
+    /// (mstsc) finishes installing its own capture hook, so the immediate re-arm
+    /// alone can lose the newest-hook race — the burst covers the late install.
+    const TICK_MS: u32 = 250;
+    const BURST_TICKS: u32 = 6; // per-tick re-arms for 1.5 s after a fg change
+    const WATCHDOG_TICKS: u32 = 12; // steady-state re-arm every 3 s
 
     thread_local! {
         /// The LL hook installed by THIS thread (0 = none). Thread-local, not a
@@ -462,25 +470,60 @@ mod imp {
         /// cleanup must not tear down the hook the new thread just armed. A hook
         /// only fires while its owning thread pumps, so each thread manages its own.
         static LL_HOOK: Cell<isize> = const { Cell::new(0) };
+        /// Remaining burst re-arms (set by fg_changed, consumed per tick).
+        static BURST: Cell<u32> = const { Cell::new(0) };
+        /// Ticks since the last steady-state re-arm.
+        static TICKS: Cell<u32> = const { Cell::new(0) };
+    }
+
+    /// One timer tick: burst re-arm after a recent foreground change, else the
+    /// slow watchdog re-arm.
+    fn on_rearm_tick() {
+        let bursting = BURST.with(|b| {
+            let v = b.get();
+            if v > 0 {
+                b.set(v - 1);
+            }
+            v > 0
+        });
+        if bursting {
+            arm_ll_hook();
+            return;
+        }
+        let due = TICKS.with(|t| {
+            let v = t.get() + 1;
+            if v >= WATCHDOG_TICKS {
+                t.set(0);
+                true
+            } else {
+                t.set(v);
+                false
+            }
+        });
+        if due {
+            arm_ll_hook();
+        }
     }
 
     /// (Re-)install the observation hook so it is the NEWEST — LL hooks run
     /// newest-first, and mstsc's capture hook (installed when its window
-    /// activates) swallows keys from every hook below it. The µs unhook→rehook
-    /// gap is covered by the raw-input feed.
+    /// activates) swallows keys from every hook below it. Gapless: the new hook
+    /// goes in BEFORE the old one comes out — during RDP capture the raw feed is
+    /// silenced, so an unhook→rehook gap would drop keys with no cover; the brief
+    /// double-hook overlap only duplicates events, which the worker's held-set
+    /// collapses anyway.
     fn arm_ll_hook() {
         LL_HOOK.with(|h| unsafe {
-            let prev = h.replace(0);
-            if prev != 0 {
-                UnhookWindowsHookEx(prev as HHOOK);
-            }
             let hook = SetWindowsHookExW(
                 WH_KEYBOARD_LL,
                 Some(ll_hook_proc),
                 GetModuleHandleW(std::ptr::null()),
                 0,
             );
-            h.set(hook as isize);
+            let prev = h.replace(hook as isize);
+            if prev != 0 {
+                UnhookWindowsHookEx(prev as HHOOK);
+            }
         });
     }
 
@@ -493,8 +536,10 @@ mod imp {
         });
     }
 
-    /// EVENT_SYSTEM_FOREGROUND → re-arm, so whatever hook the newly-activated app
-    /// installs (mstsc's capture hook) ends up BELOW ours.
+    /// EVENT_SYSTEM_FOREGROUND → re-arm now so whatever hook the newly-activated
+    /// app installs (mstsc's capture hook) ends up BELOW ours — and start the
+    /// burst, because this callback can beat the app's own hook install (see
+    /// the scheduling constants).
     unsafe extern "system" fn fg_changed(
         _hook: HWINEVENTHOOK,
         _event: u32,
@@ -505,6 +550,8 @@ mod imp {
         _time: u32,
     ) {
         arm_ll_hook();
+        BURST.with(|b| b.set(BURST_TICKS));
+        TICKS.with(|t| t.set(0));
     }
 
     /// The observation hook: forward physical transitions to the worker (same
@@ -541,11 +588,13 @@ mod imp {
         Some(match vk as u16 {
             // Overrun/prefix marker — also mstsc's synthetic activation marker.
             0xFF => return None,
-            // AltGr's message-layer companion: a fake LCtrl with scan 0x21D. The
-            // raw feed never sees it; drop it here too so both feeds agree that
-            // AltGr is a lone RAlt (a German-layout AltGr must never read as
+            // AltGr's message-layer companion: a fake LCtrl with scan 0x21D
+            // (0x1D | the KBDEXT-era 0x200 marker — what AHK's KeyHistory shows
+            // as sc021D). The raw feed never sees it; drop it here too — whether
+            // it arrives as the specific or the generic VK — so both feeds agree
+            // that AltGr is a lone RAlt (a German-layout AltGr must never read as
             // "Ctrl held" to a chord or to the HeldKeys inject gate).
-            0xA2 if scan == 0x21D => return None,
+            0xA2 | 0x11 if scan == 0x21D => return None,
             0x10 => {
                 if scan == 0x36 {
                     0xA1 // VK_RSHIFT
