@@ -1,26 +1,26 @@
 # M9 — Packaging + CI, and the Windows Port
 
-> Status snapshot: **2026-06-18**. Research-only document — nothing here is implemented yet.
-> Captures everything found while assessing what it takes to ship a packaged build and a
-> working Windows release. Written so a fresh session can pick up without re-investigating.
+> Status snapshot: **2026-07-07**. Originally a research-only doc (2026-06-18); the **core
+> port + M9 work (§8) is now implemented** — see the checklist there. What remains is
+> on-Windows testing and the optional parity polish.
 
 ---
 
 ## TL;DR
 
-- **Packaging is ~mostly configured already** (from the M0 scaffold). The real gaps are: no CI,
-  no Windows-specific bundle block, and we've **never actually run `pnpm tauri build`** to confirm
-  installers come out clean.
+- **M9 is implemented** (2026-07-07): `bundle.windows` block, `.deb` runtime deps, Linux-only UI
+  platform-gated, GitHub Actions CI (Linux **and** Windows checks per push, tag-driven installer
+  releases). `pnpm tauri build` has been run on Linux — **deb + AppImage bundle clean** (9.4 MB /
+  87 MB), control file verified.
 - **A Windows build compiles and the core dictation loop runs out-of-the-box.** Every Linux-only
   crate is target-gated; every Linux module has a non-Linux stub. No porting work is needed just to
-  get a running app.
+  get a running app. CI's `windows-latest` leg now keeps that claim honest on every push.
 - **What does NOT auto-port** is the Linux/Wayland *input-plumbing niceties* (advanced evdev
   hotkeys, AT-SPI app/field detection, chip input-region shaping, Caps-Lock LED). All of these are
   **"needs a Windows implementation," not dead-ends** — Win32 / UI Automation / the Ctrl+C trick
   cover the equivalents. None block the core loop.
-- Recommended sequence: **finish small features → run code reviews on Linux → then port.** A Linux
-  review will NOT catch Windows-specific issues (those paths aren't compiled/run here), so the port
-  still needs its own on-Windows testing.
+- Remaining before a Windows release: run the release workflow (or a local Windows build), smoke
+  test the MSI/NSIS installers + the chip on real Windows (§6), then decide on the parity polish.
 
 ---
 
@@ -39,13 +39,22 @@ There was never a written spec for M9 — it was only a milestone *title* parked
 - WebView2 support is compiled in (the `webview2-com` dependency is pulled by Tauri).
 - `README.md` already documents Windows 10/11 + Linux (x64) as target platforms.
 
-### Missing
+### Missing — all resolved 2026-07-07
 
-- **No CI at all** — there is no `.github/workflows/` directory; nothing builds automatically.
-- **No `bundle.windows` block** — no WebView2 runtime install strategy, no NSIS config, no
-  code-signing certificate config.
-- **Unverified local build** — `pnpm tauri build` has never been run; installer output is unconfirmed.
-- **Linux `.deb` runtime deps** — should declare evdev / AT-SPI / GTK runtime dependencies; needs checking.
+- ~~No CI at all~~ → `.github/workflows/ci.yml` (per-push `pnpm build` + `cargo check --locked` on
+  ubuntu **and** windows runners, `cargo test` on Linux) and `release.yml` (tauri-action installer
+  builds; `v*` tag → draft release gated on a `version.mjs` tag-vs-app-version check; manual run →
+  artifacts). `packageManager` pinned in package.json for `pnpm/action-setup`.
+- ~~No `bundle.windows` block~~ → WebView2 `downloadBootstrapper` (silent) + `nsis` target
+  (per-user install) added; code-signing intentionally skipped (§8.3).
+- ~~Unverified local build~~ → run on Linux 2026-07-07: **deb + AppImage bundle clean** on the
+  first try. deb control verified (`Depends: libasound2, libxkbcommon0, libayatana-appindicator3-1,
+  libwebkit2gtk-4.1-0, libgtk-3-0`; desktop file + hicolor icons in place). MSI/NSIS are skipped on
+  Linux, as expected — the Windows leg of `release.yml` covers them (not yet exercised).
+- ~~Linux `.deb` runtime deps~~ → declared `libasound2` (cpal) + `libxkbcommon0` (xkbcommon).
+  Everything else in the dep tree is pure Rust (no libxdo — enigo 0.6 uses x11rb; no OpenSSL —
+  rustls everywhere; evdev/AT-SPI/Wayland crates are syscall/zbus/pure-Rust). The bundler auto-adds
+  webkit2gtk, gtk3, and (for the tray) libayatana-appindicator3-1 — don't re-declare those.
 
 ---
 
@@ -161,15 +170,21 @@ from the desktop behind it.** Likely a small tweak, but it's the chip's one genu
 
 ---
 
-## 7. Frontend / UI copy gaps (Windows users would see Linux jargon)
+## 7. Frontend / UI copy gaps — resolved 2026-07-07
 
-- `src/screens/Settings.tsx:477` — "Deep field detection" ("uses accessibility"), no platform qualifier.
-- `src/screens/Settings.tsx:791–792` — "Hardware hotkeys (evdev)" mentions `/dev/input` + "input
-  group" (shows a "Linux only" badge, at least).
-- `src/screens/Settings.tsx:343` — quick-add shortcut help references evdev/Wayland.
-- `src/screens/Profiles.tsx:265` — "On Wayland… need the evdev backend" note.
-- Good news: **no hardcoded Linux paths** in the frontend, **no** `navigator.platform` checks.
-- The per-app-rules screen would be inert on Windows → should be gated/hidden.
+All gated on a new `src/lib/platform.ts` (`IS_LINUX`, synchronous UA sniff — WebKitGTK vs
+WebView2 — so there's no first-paint flash):
+
+- ~~Deep field detection~~ → row hidden off Linux (AT-SPI-backed, would be a dead switch).
+- ~~Hardware hotkeys (evdev)~~ → the whole Permissions block hidden off Linux (`/dev/input` can
+  never exist there); the on-Linux unavailable badge now reads "Unavailable".
+- ~~Quick-add shortcut help~~ → the Wayland/evdev sentence renders only on Linux.
+- ~~Profiles Wayland note~~ → Linux keeps the evdev guidance; Windows gets what actually registers
+  (hold/latch/chords work; modifier-only + left/right-specific don't).
+- ~~Per-app-rules screen~~ → `linuxOnly` flag on its `ScreenDef`; `VISIBLE_SCREENS` filters it out
+  of the Sidebar + quick-launch picker. `SCREENS` stays complete so paths/labels of entries saved
+  on another OS still resolve. The chip's "→ app" readout needs no gate — the `atspi_guard` stub
+  returns `None` off Linux, so it simply never renders.
 
 ---
 
@@ -177,15 +192,15 @@ from the desktop behind it.** Likely a small tweak, but it's the chip's one genu
 
 ### Core port + M9 (gets a shippable Windows build)
 
-1. **Build & verify** — run `pnpm tauri build` on Windows (or cross/CI); confirm the MSI (and/or
-   NSIS) produce a working installer. *(Biggest unknown — never done.)*
-2. **`bundle.windows` block** in `tauri.conf.json` — WebView2 install mode (+ optional NSIS target). *(Small.)*
-3. **Code-signing (optional)** — unsigned → Windows SmartScreen warning. Needs a cert; skipping is
-   acceptable for a FOSS tool.
-4. **UI copy gating** — hide/qualify the Linux-only controls (evdev options, deep field detection,
-   per-app rules) on Windows so users don't see dead switches.
-5. **CI** — GitHub Actions: `windows-latest` (+ `ubuntu-latest`) runners to build installers,
-   optionally publish them on a version tag. *(This is the "CI" half of M9.)*
+1. **Build & verify** — ◐ Linux half done 2026-07-07 (deb + AppImage clean, first try; see §1).
+   The Windows half runs via `release.yml` — **still needs a first run + an installer smoke test
+   on real Windows.**
+2. **`bundle.windows` block** — ✅ done (WebView2 silent downloadBootstrapper, NSIS per-user).
+3. **Code-signing** — ⏭ skipped deliberately: unsigned → SmartScreen warning, acceptable for a
+   FOSS tool. Revisit only if it ever matters.
+4. **UI copy gating** — ✅ done (see §7).
+5. **CI** — ✅ done (`ci.yml` + `release.yml`; see §1). Not yet exercised on GitHub — first push
+   / tag will tell.
 
 ### Optional Windows-parity polish (after the basic port runs)
 
@@ -201,6 +216,7 @@ from the desktop behind it.** Likely a small tweak, but it's the chip's one genu
   here. The port needs its own on-Windows testing.
 - `/code-review ultra` is user-triggered and billed; the assistant cannot launch it (it can run a
   plain multi-agent review instead).
-- Verification state of this doc: Cargo target-gating confirmed by reading `Cargo.toml`; `cargo
-  check` passes on Linux; module gating confirmed by source audit. The Windows *build itself* is
-  still unverified.
+- Verification state of this doc: Cargo target-gating confirmed by reading `Cargo.toml`; module
+  gating confirmed by source audit; Linux release build + deb/AppImage bundling verified locally
+  (2026-07-07). The Windows *build itself* is still unverified — `ci.yml`'s `windows-latest`
+  `cargo check` and `release.yml`'s installer job will settle it on the first push/tag.
