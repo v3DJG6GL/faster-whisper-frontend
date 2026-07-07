@@ -66,7 +66,7 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libasound2", "libxkbcommon0", "libayatana-appindicator3-1"]
+        "depends": ["libasound2", "libxkbcommon0"]
       }
     },
     "category": "Utility",
