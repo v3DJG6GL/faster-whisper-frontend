@@ -12,6 +12,7 @@ import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { conflictsByProfile, quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/conflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { evdevStatus, type EvdevStatus } from "@/lib/api";
+import { IS_LINUX } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -270,8 +271,17 @@ function Editor({
 
       <div className="mt-5 flex items-start gap-2 text-[12px] text-faint">
         <Info className="mt-0.5 size-3.5 shrink-0" />
-        On Wayland, push-to-talk (and modifier-only / AltGr chords) need the evdev backend (Settings → Permissions).
-        Latch works everywhere; you can also bind it in your desktop’s shortcut settings.
+        {IS_LINUX ? (
+          <>
+            On Wayland, push-to-talk (and modifier-only / AltGr chords) need the evdev backend (Settings →
+            Permissions). Latch works everywhere; you can also bind it in your desktop’s shortcut settings.
+          </>
+        ) : (
+          <>
+            Push-to-talk, latch, and normal chords register as global hotkeys. Modifier-only chords (a lone
+            Ctrl / AltGr tap) and left/right-specific modifiers aren’t available on Windows.
+          </>
+        )}
       </div>
 
       <div className="mt-6 flex items-center justify-between">

@@ -6,6 +6,7 @@
 import { Home, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindow, BookA, BarChart3, Plus } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { OverlayScreen, OverlayActionKind, OverlayQuickAction } from "./types";
+import { IS_LINUX } from "./platform";
 
 export interface ScreenDef {
   id: OverlayScreen;
@@ -13,6 +14,7 @@ export interface ScreenDef {
   path: string; // router path (HashRouter)
   icon: LucideIcon;
   end?: boolean; // exact-match the index route
+  linuxOnly?: boolean; // backed by a Linux-only detector (AT-SPI) — hidden elsewhere
 }
 
 export const SCREENS: ScreenDef[] = [
@@ -22,9 +24,13 @@ export const SCREENS: ScreenDef[] = [
   { id: "profiles", label: "Profiles", path: "/profiles", icon: Command },
   { id: "backends", label: "Backends", path: "/backends", icon: Server },
   { id: "dictionary", label: "Dictionary", path: "/dictionary", icon: BookA },
-  { id: "app-rules", label: "App rules", path: "/app-rules", icon: AppWindow },
+  { id: "app-rules", label: "App rules", path: "/app-rules", icon: AppWindow, linuxOnly: true },
   { id: "settings", label: "Settings", path: "/settings", icon: Settings },
 ];
+
+/** Screens to offer in navigation / pickers on THIS platform. Lookups (paths,
+ *  quick-launch labels for entries saved on another OS) keep using SCREENS. */
+export const VISIBLE_SCREENS: ScreenDef[] = SCREENS.filter((s) => IS_LINUX || !s.linuxOnly);
 
 /** Screen id → router path, for the navigate bridge. */
 export const SCREEN_PATH = Object.fromEntries(SCREENS.map((s) => [s.id, s.path])) as Record<

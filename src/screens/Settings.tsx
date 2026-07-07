@@ -4,7 +4,8 @@ import { useApp } from "@/lib/store";
 import { swap } from "@/lib/arr";
 import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
-import { SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screens";
+import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screens";
+import { IS_LINUX } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import {
   listAudioDevices,
@@ -343,7 +344,7 @@ function QuickLaunchEditor({
   const [pick, setPick] = useState("");
   const used = new Set(items.map((e) => `${e.kind}:${e.target}`));
   const addable = [
-    ...SCREENS.map((s) => ({ value: `screen:${s.id}`, label: `Screen · ${s.label}` })),
+    ...VISIBLE_SCREENS.map((s) => ({ value: `screen:${s.id}`, label: `Screen · ${s.label}` })),
     ...OVERLAY_ACTIONS.map((a) => ({ value: `action:${a.id}`, label: `Action · ${a.label}` })),
   ].filter((o) => !used.has(o.value));
 
@@ -448,9 +449,14 @@ function QuickAddShortcutRow({ evdevActive }: { evdevActive: boolean }) {
     <div className="py-4">
       <div className="text-[14px] font-medium text-text">Quick-add shortcut</div>
       <div className="mb-3 mt-0.5 max-w-xl text-[12.5px] leading-snug text-dim">
-        A global hotkey that opens the quick-add window. On Wayland this needs the evdev backend
-        (Permissions); otherwise bind a desktop shortcut to{" "}
-        <span className="font-mono text-[11px] text-faint">app --quick-add</span>.
+        A global hotkey that opens the quick-add window.
+        {IS_LINUX && (
+          <>
+            {" "}
+            On Wayland this needs the evdev backend (Permissions); otherwise bind a desktop shortcut
+            to <span className="font-mono text-[11px] text-faint">app --quick-add</span>.
+          </>
+        )}
       </div>
       <HotkeyCaptureControl
         codes={codes}
@@ -602,18 +608,21 @@ export default function Settings() {
                 disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
               />
             </SettingRow>
-            <SettingRow
-              title="Deep field detection"
-              desc="Skip typing when the focused element isn’t a text field — the transcript goes to the clipboard instead. Uses accessibility to cover most apps including browsers and Electron (may raise their memory use); games and the desktop are never blocked."
-            >
-              <Toggle
-                checked={s.general.deepFieldDetection}
-                onChange={(v) => {
-                  updateGeneral({ deepFieldDetection: v });
-                  void setDeepFieldDetection(v).catch((e) => console.error("set deep field detection:", e));
-                }}
-              />
-            </SettingRow>
+            {IS_LINUX && (
+              // AT-SPI-backed — the guard is inert off Linux, so don't show a dead switch there.
+              <SettingRow
+                title="Deep field detection"
+                desc="Skip typing when the focused element isn’t a text field — the transcript goes to the clipboard instead. Uses accessibility to cover most apps including browsers and Electron (may raise their memory use); games and the desktop are never blocked."
+              >
+                <Toggle
+                  checked={s.general.deepFieldDetection}
+                  onChange={(v) => {
+                    updateGeneral({ deepFieldDetection: v });
+                    void setDeepFieldDetection(v).catch((e) => console.error("set deep field detection:", e));
+                  }}
+                />
+              </SettingRow>
+            )}
             <SettingRow
               title="Press Enter after"
               desc="Send a Return key once the text is inserted."
@@ -941,38 +950,43 @@ export default function Settings() {
 
         {tab === "Permissions" && (
           <Card className="px-6">
-            <SettingRow title="Microphone access" desc="Required to capture your voice.">
+            <SettingRow title="Microphone access" desc="Required to capture your voice." last={!IS_LINUX}>
               <span className="inline-flex items-center gap-1.5 text-[12.5px] text-ok">
                 <StatusDot tone="ok" /> Granted
               </span>
             </SettingRow>
-            <SettingRow
-              title="Hardware hotkeys (evdev)"
-              desc="Reliable hold-to-talk + left/right modifiers + AltGr on Wayland by reading /dev/input. Reads all keyboard input — strictly opt-in, and needs the 'input' group."
-              last
-            >
-              {evdev && !evdev.available ? (
-                <span className="text-[12.5px] text-faint">Linux only</span>
-              ) : evdev && evdev.permitted ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-[12px] text-dim">{s.general.evdevEnabled ? "On" : "Off"}</span>
-                  <Toggle
-                    ariaLabel="Hardware hotkeys (evdev)"
-                    checked={s.general.evdevEnabled}
-                    onChange={(v) => updateGeneral({ evdevEnabled: v })}
-                  />
-                </div>
-              ) : (
-                <Button variant="default" size="sm" onClick={runEvdevSetup} disabled={evdevBusy}>
-                  <Mic className="size-4" /> {evdevBusy ? "Authorizing…" : "Set up"}
-                </Button>
-              )}
-            </SettingRow>
-            {evdevMsg && <div className="px-1 pt-3 text-[12px] text-dim">{evdevMsg}</div>}
-            {evdev && evdev.permitted && (
-              <div className="px-1 pt-3 text-[12px] text-faint">
-                Profiles using AltGr or a specific left/right modifier only fire while this is on.
-              </div>
+            {IS_LINUX && (
+              // The evdev backend can never exist off Linux (/dev/input) — hide, don't dead-switch.
+              <>
+                <SettingRow
+                  title="Hardware hotkeys (evdev)"
+                  desc="Reliable hold-to-talk + left/right modifiers + AltGr on Wayland by reading /dev/input. Reads all keyboard input — strictly opt-in, and needs the 'input' group."
+                  last
+                >
+                  {evdev && !evdev.available ? (
+                    <span className="text-[12.5px] text-faint">Unavailable</span>
+                  ) : evdev && evdev.permitted ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[12px] text-dim">{s.general.evdevEnabled ? "On" : "Off"}</span>
+                      <Toggle
+                        ariaLabel="Hardware hotkeys (evdev)"
+                        checked={s.general.evdevEnabled}
+                        onChange={(v) => updateGeneral({ evdevEnabled: v })}
+                      />
+                    </div>
+                  ) : (
+                    <Button variant="default" size="sm" onClick={runEvdevSetup} disabled={evdevBusy}>
+                      <Mic className="size-4" /> {evdevBusy ? "Authorizing…" : "Set up"}
+                    </Button>
+                  )}
+                </SettingRow>
+                {evdevMsg && <div className="px-1 pt-3 text-[12px] text-dim">{evdevMsg}</div>}
+                {evdev && evdev.permitted && (
+                  <div className="px-1 pt-3 text-[12px] text-faint">
+                    Profiles using AltGr or a specific left/right modifier only fire while this is on.
+                  </div>
+                )}
+              </>
             )}
           </Card>
         )}

@@ -2,7 +2,7 @@ import { NavLink } from "react-router-dom";
 import { Settings as SettingsIcon, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
-import { SCREENS } from "@/lib/screens";
+import { VISIBLE_SCREENS } from "@/lib/screens";
 import { PRIDE_FLAG_URI } from "@/lib/prideFlag";
 import { dictationVisual } from "@/lib/dictationVisual";
 import { StatusDot } from "./ui";
@@ -45,7 +45,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-0.5 px-3">
-        {SCREENS.filter((s) => s.id !== "settings").map(({ path, label, icon: Icon, end }) => (
+        {VISIBLE_SCREENS.filter((s) => s.id !== "settings").map(({ path, label, icon: Icon, end }) => (
           <NavLink
             key={path}
             to={path}
