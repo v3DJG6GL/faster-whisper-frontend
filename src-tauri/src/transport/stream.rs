@@ -107,7 +107,9 @@ pub async fn run<F>(
     // On any setup failure, surface the error AND a terminal Closed, then bail.
     macro_rules! fail {
         ($msg:expr) => {{
-            on_event(StreamEvent::Error($msg));
+            let m = $msg;
+            tracing::warn!("[stream] {m}");
+            on_event(StreamEvent::Error(m));
             on_event(StreamEvent::Closed);
             return;
         }};
@@ -161,6 +163,7 @@ pub async fn run<F>(
         }
     };
     let (mut write, mut read) = ws.split();
+    tracing::info!("[stream] ws connected");
 
     let lang = if params.language.is_empty() || params.language == "auto" {
         String::new()
@@ -217,6 +220,11 @@ pub async fn run<F>(
     // of silence. The detector itself lives in `crate::audio::SpeechGate` (shared with the batch
     // record save so both paths trim identically); here it's fed chunk-by-chunk as audio arrives.
     let mut gate = crate::audio::SpeechGate::new();
+    // Live-phase telemetry, reported once at drain entry: "sent 0 frames" instantly
+    // separates a dead mic from a server that got audio and answered nothing.
+    let mut frames_sent: u64 = 0;
+    let mut bytes_sent: u64 = 0;
+    let mut partials_seen: u32 = 0;
 
     // Bound on a single WS send. The server now decodes off its receive loop (it no
     // longer freezes mid-utterance), so a stalled send means a genuinely dead/half-
@@ -247,11 +255,15 @@ pub async fn run<F>(
                         break;
                     }
                 }
-                Some(Ok(Message::Close(_))) | None => break,
+                Some(Ok(Message::Close(_))) | None => {
+                    tracing::info!("[stream] ws reader: close/eof");
+                    break;
+                }
                 // Ping/Pong/Binary: ignored here. The PONG to a server PING is queued
                 // by tungstenite and flushed by this very read poll — that's the point.
                 Some(Ok(_)) => {}
                 Some(Err(e)) => {
+                    tracing::warn!("[stream] ws read error: {e}");
                     let _ = evt_tx.send(FromReader::Event(StreamEvent::Error(e.to_string())));
                     break;
                 }
@@ -287,17 +299,26 @@ pub async fn run<F>(
                             } else if saving {
                                 saved.extend_from_slice(&bytes);
                             }
+                            let n = bytes.len() as u64;
                             match tokio::time::timeout(
                                 SEND_TIMEOUT,
                                 write.send(Message::Binary(bytes.into())),
                             )
                             .await
                             {
-                                Ok(Ok(())) => {}
-                                Ok(Err(_)) => break, // socket closed/errored → finish + Closed
+                                Ok(Ok(())) => {
+                                    frames_sent += 1;
+                                    bytes_sent += n;
+                                }
+                                Ok(Err(e)) => {
+                                    // socket closed/errored → finish + Closed
+                                    tracing::warn!("[stream] audio send failed: {e}");
+                                    break;
+                                }
                                 Err(_) => {
                                     // Stalled send → the connection is gone. Surface it and
                                     // close so the UI returns to idle instead of hanging.
+                                    tracing::warn!("[stream] audio send timed out — connection lost");
                                     on_event(StreamEvent::Error(
                                         "stream connection lost (send timed out)".into(),
                                     ));
@@ -312,20 +333,29 @@ pub async fn run<F>(
             from = evt_rx.recv() => {
                 match from {
                     Some(FromReader::Event(e)) => {
+                        if matches!(e, StreamEvent::Partial { .. }) { partials_seen += 1; }
                         if saving { accumulate_transcript(&e, &mut transcript_docs, &mut transcript_cur); }
                         on_event(e);
                     }
                     // Server closed the socket (or the read errored, already surfaced
                     // above) — stop now; not draining, so fall through to Closed.
-                    Some(FromReader::Closed) | None => break,
+                    Some(FromReader::Closed) | None => {
+                        tracing::warn!("[stream] ws ended mid-session (live phase)");
+                        break;
+                    }
                 }
             }
             _ = keepalive.tick() => {
                 match tokio::time::timeout(SEND_TIMEOUT, write.send(Message::Ping(Vec::<u8>::new().into()))).await {
                     Ok(Ok(())) => {}
-                    Ok(Err(_)) => break, // socket closed/errored → finish + Closed (reader surfaces it)
+                    Ok(Err(e)) => {
+                        // socket closed/errored → finish + Closed (reader surfaces it)
+                        tracing::warn!("[stream] keepalive send failed: {e}");
+                        break;
+                    }
                     Err(_) => {
                         // Stalled send → the connection is gone. Surface it and close.
+                        tracing::warn!("[stream] keepalive timed out — connection lost");
                         on_event(StreamEvent::Error(
                             "stream connection lost (keepalive timed out)".into(),
                         ));
@@ -337,14 +367,20 @@ pub async fn run<F>(
     }
 
     if draining {
+        tracing::info!(
+            "[stream] draining: sent {frames_sent} frames / {bytes_sent} B, saw {partials_seen} partial(s)"
+        );
         // Finalize the current utterance and ask the server to close, then read the
         // remaining finals (delivered by the reader task) so the last words aren't
         // lost. The WHOLE block is bounded by one deadline: the flush/stop writes are
         // inside it too, so a half-open socket (suspend / dropped link) can't park
-        // them indefinitely — we always fall through to the terminal `Closed` below
-        // within a few seconds.
-        const DRAIN_DEADLINE: Duration = Duration::from_secs(6);
-        let _ = tokio::time::timeout(DRAIN_DEADLINE, async {
+        // them indefinitely — we always fall through to the terminal `Closed` below.
+        // The deadline must comfortably exceed a slow finalize decode (VPN latency +
+        // a busy GPU queue can push it past the old 6 s, which silently DISCARDED the
+        // finished transcript) while staying under the frontend's 12 s stuck-finalize
+        // watchdog, which force-idles the UI if `Closed` never lands.
+        const DRAIN_DEADLINE: Duration = Duration::from_secs(10);
+        let timed_out = tokio::time::timeout(DRAIN_DEADLINE, async {
             // Drain the PCM the capture thread queued but the main loop hadn't consumed when the stop
             // signal won the (non-biased) select — push it through the resampler and send it, so the
             // final tens of ms aren't silently dropped from the transcript. `recv().await` (not a
@@ -384,7 +420,17 @@ pub async fn run<F>(
                 }
             }
         })
-        .await;
+        .await
+        .is_err();
+        if timed_out {
+            // The one silent-transcript-loss path left: the server never sent its
+            // finals (or its close) within the deadline. Say so loudly — this line
+            // is the difference between a diagnosable report and a mystery.
+            tracing::warn!(
+                "[stream] drain deadline ({}s) hit — no final/close from the server; pending transcript discarded",
+                DRAIN_DEADLINE.as_secs()
+            );
+        }
     }
 
     // We own the write half; the reader owns the read half. Once draining is done,

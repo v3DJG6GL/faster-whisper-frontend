@@ -101,6 +101,7 @@ pub struct StartParams {
 }
 
 pub struct StreamSession {
+    epoch: u64,
     capture_stop: Arc<AtomicBool>,
     capture_join: Option<JoinHandle<()>>,
     ws_stop: watch::Sender<bool>,
@@ -120,7 +121,7 @@ impl StreamSession {
             let _ = j.join();
         }
         drop(self.ws_task.take()); // detach → drains to completion on its own
-        tracing::info!("[stream] session finished (draining)");
+        tracing::info!("[stream] session {} finished (draining)", self.epoch);
     }
 }
 
@@ -132,10 +133,12 @@ impl Drop for StreamSession {
             let _ = j.join();
         }
         // Abort the WS task immediately (no drain). This path runs when a session
-        // is REPLACED by a new one; draining a stale session would keep emitting
-        // finals/closed and spam the UI. The explicit-stop path (`finish`) drains.
+        // is cancelled or REPLACED by a new one; draining a stale session would keep
+        // emitting finals/closed and spam the UI. The explicit-stop path (`finish`)
+        // drains — it took the task, so this abort is a no-op after a normal stop.
         if let Some(task) = self.ws_task.take() {
             task.abort();
+            tracing::info!("[stream] session {} cancelled (no drain)", self.epoch);
         }
     }
 }
@@ -206,7 +209,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         }
         StreamEvent::Final { committed, tail, last } => {
             tracing::info!(
-                "[stream] final committed={} tail={} last={}",
+                "[stream] session {epoch} final committed={} tail={} last={}",
                 committed.len(),
                 tail.len(),
                 last
@@ -214,22 +217,28 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             emit_if_active(&appc, epoch, "stream://final", FinalPayload { committed, tail, last });
         }
         StreamEvent::Boundary { separator } => {
-            tracing::info!("[stream] boundary (hard break)");
+            tracing::info!("[stream] session {epoch} boundary (hard break)");
             emit_if_active(&appc, epoch, "stream://boundary", separator);
         }
         StreamEvent::Error(m) => {
+            // Log it here (not just emit): a superseded session's error is epoch-
+            // suppressed from the UI and would otherwise vanish entirely.
+            tracing::warn!("[stream] session {epoch} error: {m}");
             emit_if_active(&appc, epoch, "stream://error", m);
         }
         StreamEvent::Closed => {
+            tracing::info!("[stream] session {epoch} closed");
             emit_if_active(&appc, epoch, "stream://status", "closed");
         }
     };
 
+    tracing::info!("[stream] session {epoch} start (mic rate {in_rate} Hz)");
     let ws_task = tauri::async_runtime::spawn(async move {
         stream::run(params, pcm_rx, ws_stop_rx, on_event).await;
     });
 
     Ok(StreamSession {
+        epoch,
         capture_stop,
         capture_join: Some(capture_join),
         ws_stop: ws_stop_tx,
