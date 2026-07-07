@@ -25,6 +25,7 @@ import {
   getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText,
 } from "@/lib/api";
 import { resolveInjectionTarget } from "@/lib/streaming";
+import { IS_WINDOWS } from "@/lib/platform";
 import type { AppRule, GeneralSettings, PipelineFetch } from "@/lib/types";
 
 type Target = { serverUrl: string; backendId: string; slug: string };
@@ -528,7 +529,10 @@ async function replaceSelectionAfterClose(
   general: GeneralSettings,
   appRules: AppRule[],
 ) {
-  await new Promise((r) => setTimeout(r, 250)); // let the compositor hand focus back to the source
+  // Let the WM hand focus back to the source app. Windows gets extra headroom: there the
+  // selection re-read TYPES a copy-chord into whatever is focused, so firing early doesn't
+  // just miss — it silently drops the correction (unchanged clipboard reads as "gone").
+  await new Promise((r) => setTimeout(r, IS_WINDOWS ? 400 : 250));
   // Focus is back on the source app now; read its selection AND identity together, then resolve the
   // injection target through the SAME shared resolver the main injection path uses — so per-app
   // method / paste-shortcut AND the deep-detection non-editable→clipboard coercion all apply here too.

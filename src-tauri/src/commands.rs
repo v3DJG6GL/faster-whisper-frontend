@@ -922,16 +922,39 @@ pub async fn get_quickadd_seed(
 /// to exist, so we read its rendered text from PRIMARY. `Empty`/`Unavailable` return `None` — we
 /// can't confirm the word is still selected, so we never paste blindly (and never consult PRIMARY,
 /// which would be stale). This keeps the "check first, then replace" guarantee in rich-text editors.
+///
+/// Windows has no a11y selection read: RE-GRAB via the same copy-chord + clipboard-diff as the
+/// summon seed (`quickadd::win_seed`), which lands in the source app since focus is back there.
+/// An unchanged clipboard (selection gone / collapsed) reads as `None` — same check-first
+/// guarantee, verified against the live app rather than a cache.
 #[tauri::command]
 pub async fn get_focused_selection(
+    app: tauri::AppHandle,
     guard: State<'_, crate::atspi_guard::AtspiGuard>,
 ) -> Result<Option<String>, String> {
-    use crate::atspi_guard::SelRead;
-    Ok(match crate::atspi_guard::focused_selection(guard.inner()).await {
-        SelRead::Text(s) => Some(s),
-        SelRead::Opaque => read_primary_now().await,
-        SelRead::Empty | SelRead::Unavailable => None,
-    })
+    #[cfg(windows)]
+    {
+        let _ = &guard;
+        let sel = tauri::async_runtime::spawn_blocking(move || crate::quickadd::win_seed::grab(&app))
+            .await
+            .ok()
+            .flatten();
+        tracing::info!(
+            "[quickadd-close] windows re-grab -> {} chars",
+            sel.as_deref().map_or(0, str::len)
+        );
+        Ok(sel)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = &app;
+        use crate::atspi_guard::SelRead;
+        Ok(match crate::atspi_guard::focused_selection(guard.inner()).await {
+            SelRead::Text(s) => Some(s),
+            SelRead::Opaque => read_primary_now().await,
+            SelRead::Empty | SelRead::Unavailable => None,
+        })
+    }
 }
 
 /// Read the Wayland PRIMARY ("highlight") selection off the UI thread, time-bounded — the same

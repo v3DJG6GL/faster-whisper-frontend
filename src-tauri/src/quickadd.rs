@@ -134,16 +134,17 @@ pub fn hide_quick_add(app: AppHandle) {
     hide(&app);
 }
 
-/// Windows selection grab for the quick-add seed: neither AT-SPI nor a PRIMARY
-/// selection exists there, so the pragmatic path is "make the source app copy its
-/// selection, diff the clipboard, put the clipboard back". Must run while the SOURCE
-/// app still has focus (i.e. before `show_now`).
+/// Windows selection grab: neither AT-SPI nor a PRIMARY selection exists there,
+/// so the pragmatic path is "make the source app copy its selection, diff the
+/// clipboard, put the clipboard back". Must run while the SOURCE app has focus —
+/// before `show_now` for the summon seed, or after the window hid for the
+/// correct-on-close re-read (`commands::get_focused_selection`).
 ///
 /// Uses only cross-platform APIs (enigo / arboard / HeldKeys), so it compiles on
-/// every platform and the Linux dev loop type-checks it — only the `show()` call
-/// site is `#[cfg(windows)]`.
+/// every platform and the Linux dev loop type-checks it — only the call sites
+/// are `#[cfg(windows)]`.
 #[cfg_attr(not(windows), allow(dead_code))]
-mod win_seed {
+pub(crate) mod win_seed {
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
     use std::time::{Duration, Instant};
     use tauri::{AppHandle, Manager};
