@@ -57,7 +57,18 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage", "msi"],
+    "targets": ["deb", "appimage", "msi", "nsis"],
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libasound2", "libxkbcommon0", "libayatana-appindicator3-1"]
+      }
+    },
     "category": "Utility",
     "shortDescription": "Dictation client for a self-hosted faster-whisper server",
     "longDescription": "A FOSS cross-platform (Windows + Linux) push-to-talk and hands-free dictation client that streams microphone audio to a self-hosted faster-whisper / OpenAI-compatible transcription server and types the result into the focused field of any application.",
