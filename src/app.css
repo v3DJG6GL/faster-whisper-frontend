@@ -274,15 +274,22 @@ textarea {
   }
 }
 
-/* Sidebar Pride footer mark: a faint ghost at rest that FLICKERS into full colour on
-   hover (like a tube warming up); the slogan brightens just after. Always present. */
+/* Sidebar footer: the version readout at rest; hovering swaps in the Pride mark —
+   the flag FLICKERS into full colour (like a tube warming up), the slogan follows. */
+.pride-mark .version-readout {
+  opacity: 1;
+  transition: opacity 0.2s;
+}
+.pride-mark:hover .version-readout {
+  opacity: 0;
+}
 .pride-mark .pride-flag {
-  opacity: 0.16;
+  opacity: 0;
   filter: saturate(0.15);
   transition: opacity 0.2s, filter 0.2s;
 }
 .pride-mark .pride-slogan {
-  opacity: 0.4;
+  opacity: 0;
   transition: opacity 0.25s;
 }
 .pride-mark:hover .pride-flag {

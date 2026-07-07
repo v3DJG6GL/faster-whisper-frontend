@@ -130,14 +130,16 @@ jobs:
           fi
 
       # With an empty tagName (build-only) tauri-action only builds; otherwise it
-      # also creates/updates the draft release and attaches the installers.
+      # also creates/updates the release and attaches the installers. Published
+      # immediately (not a draft) — installers are what the build made, and a bad
+      # release can always be deleted or re-cut with another bump.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ steps.rel.outputs.tag }}
           releaseName: ${{ steps.rel.outputs.tag && format('faster-whisper-frontend {0}', steps.rel.outputs.tag) || '' }}
-          releaseDraft: true
+          releaseDraft: false
 
       - name: Upload installers as run artifacts (build-only run)
         if: steps.rel.outputs.tag == ''

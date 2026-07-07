@@ -61,7 +61,7 @@ export function Sidebar() {
             faster<span className="text-accent">whisper</span>
           </div>
           <div className="mt-1 font-mono text-[10px] uppercase tracking-label text-faint">
-            dictation{version && <span className="normal-case"> · v{version}</span>}
+            dictation
           </div>
         </div>
       </div>
@@ -121,12 +121,19 @@ export function Sidebar() {
           </button>
         </div>
 
-        {/* A small, year-round solidarity mark: a faint flag that flickers into full
-            colour on hover. Decorative (aria-hidden); the slogan carries the meaning. */}
+        {/* Footer slot: version readout at rest; hovering reveals the year-round
+            solidarity mark (the flag flickers into full colour). The version sits in
+            an absolute layer so the swap never shifts the layout. Decorative
+            (aria-hidden flag); the slogan carries the meaning. */}
         <div
-          className="pride-mark mt-3 flex items-center justify-center gap-2.5 px-3"
+          className="pride-mark relative mt-3 flex items-center justify-center gap-2.5 px-3"
           title="sometimes antisocial · always antifascist"
         >
+          {version && (
+            <span className="version-readout absolute inset-0 grid place-items-center font-mono text-[10px] tracking-label text-faint">
+              v{version}
+            </span>
+          )}
           <img src={PRIDE_FLAG_URI} alt="" aria-hidden className="pride-flag h-3 w-[19px] shrink-0 rounded-[2px]" />
           <span className="pride-slogan font-mono text-[9px] uppercase leading-[1.35] tracking-[0.12em] text-faint">
             sometimes antisocial
