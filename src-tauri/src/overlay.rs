@@ -100,6 +100,17 @@ pub fn show_overlay(app: AppHandle, position: String) {
     ignore_cursor(&win);
     #[cfg(target_os = "linux")]
     reapply_last_hit_region(&win);
+    // Windows has no per-region input shape — the whole window stays click-through
+    // and a poller flips cursor pass-through while the global cursor sits over the
+    // chip rect (see win_hover). Clicking the now-interactive chip must not
+    // ACTIVATE the window either (focus would break injection into the previously
+    // focused app — the job KWin's acceptfocus=false rule does on Linux):
+    // set_focusable(false) maps to WS_EX_NOACTIVATE.
+    #[cfg(windows)]
+    {
+        let _ = win.set_focusable(false);
+        win_hover::on_show(&app);
+    }
 }
 
 // The edge-peek never moves the window. The window is anchored FLUSH against the screen edge
@@ -123,6 +134,8 @@ pub fn hide_overlay(app: AppHandle) {
     if let Some(win) = app.get_webview_window("overlay") {
         let _ = win.hide();
     }
+    #[cfg(windows)]
+    win_hover::on_hide();
 }
 
 /// Shape the chip window's *input* region to a single rectangle = the visible chip
@@ -132,8 +145,10 @@ pub fn hide_overlay(app: AppHandle) {
 /// Profile's language/mode) without the window swallowing clicks meant for apps
 /// beneath it.
 ///
-/// Linux/GDK only. On any failure — or other platforms — it falls back to full
-/// click-through (`set_ignore_cursor_events(true)`), i.e. today's behavior: the
+/// Linux applies it as a GDK input shape; Windows has no input-shape API, so the
+/// rect instead feeds the `win_hover` poller, which flips whole-window cursor
+/// pass-through at the rect's boundary. On any failure — or other platforms — it
+/// falls back to full click-through (`set_ignore_cursor_events(true)`), i.e. the
 /// persistent tag still shows, only hover-reveal is unavailable. Never panics.
 #[tauri::command]
 pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64, persist: bool) {
@@ -163,7 +178,12 @@ pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64, persi
         // (the same hazard `show_overlay` documents). The window was already made
         // click-through at show time, so doing nothing is safe.
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        let _ = &win;
+        win_hover::set_region(x, y, w, h, persist);
+    }
+    #[cfg(all(not(target_os = "linux"), not(windows)))]
     {
         let _ = (&win, x, y, w, h, persist);
     }
@@ -218,6 +238,109 @@ fn apply_hit_region(win: &WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> Opti
     let region = gtk::cairo::Region::create_rectangle(&rect);
     gdk_win.input_shape_combine_region(&region, 0, 0);
     Some(())
+}
+
+/// Windows stand-in for the GDK input shape: tao's only click-through control there
+/// is whole-window `set_ignore_cursor_events`, so the chip would be either fully
+/// click-through (never hoverable/clickable — the pre-fix behavior) or an
+/// 820×132 click-stealing strip. Instead the window STAYS click-through and a
+/// poller watches the global cursor against the webview-reported chip rect,
+/// enabling cursor events exactly while the cursor is over the chip — so
+/// hover-reveal and the quick-launch buttons work, while clicks anywhere else on
+/// the transparent strip keep reaching the app beneath.
+///
+/// Pure tauri + std (no Win32 types), so it compiles on every platform and the
+/// Linux dev loop type-checks it — only the call sites are `#[cfg(windows)]`.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod win_hover {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+    use tauri::{AppHandle, Manager};
+
+    /// Chip visibility as driven by the show/hide commands, so the poller idles
+    /// without touching window getters while the chip is hidden.
+    static VISIBLE: AtomicBool = AtomicBool::new(false);
+    /// One poller thread for the app's lifetime (spawned on the first show).
+    static POLLER: AtomicBool = AtomicBool::new(false);
+    /// Latest webview-reported hit rect (window-logical px), INCLUDING transient
+    /// persist=false hover holds, and the persistent rect a (re)show resets to —
+    /// mirroring LAST_HIT_REGION's persist semantics on Linux.
+    static REGION: Mutex<Option<(f64, f64, f64, f64)>> = Mutex::new(None);
+    static PERSIST: Mutex<Option<(f64, f64, f64, f64)>> = Mutex::new(None);
+
+    pub fn set_region(x: f64, y: f64, w: f64, h: f64, persist: bool) {
+        if let Ok(mut r) = REGION.lock() {
+            *r = Some((x, y, w, h));
+        }
+        if persist {
+            if let Ok(mut p) = PERSIST.lock() {
+                *p = Some((x, y, w, h));
+            }
+        }
+    }
+
+    pub fn on_show(app: &AppHandle) {
+        // A transient hover hold must not survive a re-show (it would make the whole
+        // strip hover-activate) — reset to the persistent rect, like
+        // reapply_last_hit_region does on Linux.
+        if let (Ok(mut r), Ok(p)) = (REGION.lock(), PERSIST.lock()) {
+            *r = *p;
+        }
+        VISIBLE.store(true, Ordering::SeqCst);
+        if !POLLER.swap(true, Ordering::SeqCst) {
+            let app = app.clone();
+            let _ = std::thread::Builder::new()
+                .name("chip-hover-poll".into())
+                .spawn(move || run(app));
+        }
+    }
+
+    pub fn on_hide() {
+        VISIBLE.store(false, Ordering::SeqCst);
+    }
+
+    fn run(app: AppHandle) {
+        // Whether the window currently RECEIVES cursor events (= !ignore_cursor_events).
+        let mut interactive = false;
+        loop {
+            let visible = VISIBLE.load(Ordering::SeqCst);
+            // 50 ms tracks hover-enter/leave comfortably (GetCursorPos + GetWindowRect
+            // are cheap syscalls); idle slowly while hidden.
+            std::thread::sleep(std::time::Duration::from_millis(if visible { 50 } else { 250 }));
+            let want = visible && cursor_in_chip(&app).unwrap_or(false);
+            if want != interactive {
+                interactive = want;
+                // Window mutations go through the main thread, matching the rest of
+                // the codebase (show_overlay's own GTK-hazard note).
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    if let Some(win) = handle.get_webview_window("overlay") {
+                        let _ = win.set_ignore_cursor_events(!want);
+                    }
+                });
+            }
+        }
+    }
+
+    /// Is the global cursor inside the chip rect? Webview-logical rect → physical px
+    /// (same 10 px forgiveness pad as the GDK shape). None (no rect yet / any getter
+    /// failure) reads as "outside" — the window stays click-through.
+    fn cursor_in_chip(app: &AppHandle) -> Option<bool> {
+        let (x, y, w, h) = (*REGION.lock().ok()?)?;
+        let win = app.get_webview_window("overlay")?;
+        let cur = app.cursor_position().ok()?;
+        let pos = win.outer_position().ok()?;
+        let scale = win.scale_factor().ok()?;
+        let pad = 10.0 * scale;
+        let rx = pos.x as f64 + x * scale - pad;
+        let ry = pos.y as f64 + y * scale - pad;
+        Some(
+            cur.x >= rx
+                && cur.x < rx + w * scale + 2.0 * pad
+                && cur.y >= ry
+                && cur.y < ry + h * scale + 2.0 * pad,
+        )
+    }
 }
 
 /// KDE-specific overlay placement via a KWin window rule. On native Wayland a

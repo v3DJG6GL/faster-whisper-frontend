@@ -138,7 +138,11 @@ pub fn hide_quick_add(app: AppHandle) {
 /// selection exists there, so the pragmatic path is "make the source app copy its
 /// selection, diff the clipboard, put the clipboard back". Must run while the SOURCE
 /// app still has focus (i.e. before `show_now`).
-#[cfg(windows)]
+///
+/// Uses only cross-platform APIs (enigo / arboard / HeldKeys), so it compiles on
+/// every platform and the Linux dev loop type-checks it — only the `show()` call
+/// site is `#[cfg(windows)]`.
+#[cfg_attr(not(windows), allow(dead_code))]
 mod win_seed {
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
     use std::time::{Duration, Instant};
