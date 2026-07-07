@@ -1,44 +1,56 @@
-//! Windows hotkey backend — the Windows twin of `evdev_hotkeys`, built on a
-//! `WH_KEYBOARD_LL` low-level keyboard hook.
+//! Windows hotkey backend — the Windows twin of `evdev_hotkeys`, built on **Raw
+//! Input** (`RIDEV_INPUTSINK` on a message-only window).
 //!
 //! The `global-shortcut` plugin can't register modifier-only chords (the default
 //! Ctrl+Shift push-to-talk), left/right-specific modifiers (R-Ctrl), or N-key
-//! chords — its accelerators are "modifiers + exactly one key". A low-level hook
+//! chords — its accelerators are "modifiers + exactly one key". Raw input
 //! observes every physical key transition system-wide and can match all of them,
 //! with no permissions needed. It is therefore ALWAYS the active backend on
-//! Windows (the plugin stays silent — the hook does everything it can and more),
-//! mirroring the evdev-XOR-plugin invariant on Linux.
+//! Windows (the plugin stays silent — it does everything the plugin can and
+//! more), mirroring the evdev-XOR-plugin invariant on Linux.
 //!
-//! Split into two threads because the OS enforces a watchdog on hook callbacks
-//! (silently removing a hook that stalls): `hook_proc` only forwards `(key, down)`
-//! transitions over a channel, and a worker thread owns the chord-matching state
-//! machine — a direct port of `evdev_hotkeys::run_device` — emitting the same
-//! `trigger` events. Like evdev, we react only to the configured chords, never
-//! swallow keys (always `CallNextHookEx`), and never persist or transmit keys.
+//! Raw input, NOT a `WH_KEYBOARD_LL` hook (the first implementation): when an RDP
+//! client window is focused, mstsc installs its own low-level hook and swallows
+//! the keys it forwards to the remote session — LL hooks run newest-first, so
+//! every hook installed before mstsc's (ours) goes silent while RDP has focus.
+//! Raw input is delivered independently of the hook chain (`RIDEV_INPUTSINK`
+//! receives input regardless of foreground), so local chords keep firing while
+//! the user works inside an RDP session. It also has no hook watchdog, and AltGr
+//! arrives as a lone RAlt — the message-layer fake LCtrl never reaches raw input,
+//! matching evdev semantics for free.
 //!
-//! Injected events (`LLKHF_INJECTED` — which includes our own enigo `SendInput`
-//! typing) are ignored: we track PHYSICAL key state, mirroring evdev. The worker
-//! also feeds the shared [`crate::held_keys::HeldKeys`] gate, so `inject_text`'s
-//! wait-for-modifier-release works on Windows exactly as it does under evdev.
+//! The receiver thread only decodes + forwards `(key, down)` transitions over a
+//! channel; a worker thread owns the chord-matching state machine — a direct port
+//! of `evdev_hotkeys::run_device` — emitting the same `trigger` events. Like
+//! evdev, we react only to the configured chords, never swallow keys (raw input
+//! is observation-only by design), and never persist or transmit keys.
+//!
+//! Injected events (header `hDevice == 0` — which includes our own enigo
+//! `SendInput` typing) are ignored: we track PHYSICAL key state, mirroring evdev.
+//! The worker also feeds the shared [`crate::held_keys::HeldKeys`] gate, so
+//! `inject_text`'s wait-for-modifier-release works on Windows exactly as it does
+//! under evdev.
 
-/// Live listener: the hook thread's native id (to post it `WM_QUIT`). Dropping it
-/// stops forwarding (the worker then drains + cleans up) and unhooks.
+/// Live listener: the receiver thread's native id (to post it `WM_QUIT`). Dropping
+/// it stops forwarding (the worker then drains + cleans up) and tears down the
+/// raw-input window.
 pub struct Running {
     #[cfg(windows)]
-    hook_thread_id: u32,
+    input_thread_id: u32,
 }
 
 impl Drop for Running {
     fn drop(&mut self) {
         #[cfg(windows)]
-        imp::shutdown(self.hook_thread_id);
+        imp::shutdown(self.input_thread_id);
     }
 }
 
 #[derive(Default)]
 pub struct WinHookState(pub std::sync::Mutex<Option<Running>>);
 
-/// Stop the listener (drops Running → stops the worker + unhooks). No-op off Windows.
+/// Stop the listener (drops Running → stops the worker + the raw-input window).
+/// No-op off Windows.
 pub fn stop(state: &WinHookState) {
     if let Ok(mut g) = state.0.lock() {
         *g = None;
@@ -58,9 +70,9 @@ pub fn stop_held_sessions(_app: &tauri::AppHandle) {}
 // Compiled on every platform (plain data, no Win32 types) so the bindability test
 // below runs in the Linux CI leg — the Windows CI leg only does `cargo check`.
 
-/// NumpadEnter shares `VK_RETURN` with the main Enter; the hook tells them apart by
-/// the extended-key flag, which we fold into a synthetic id above the 8-bit VK range
-/// so a bound "NumpadEnter" can't fire on plain Enter (and vice versa).
+/// NumpadEnter shares `VK_RETURN` with the main Enter; the receiver tells them apart
+/// by the extended-key flag, which we fold into a synthetic id above the 8-bit VK
+/// range so a bound "NumpadEnter" can't fire on plain Enter (and vice versa).
 #[cfg_attr(not(windows), allow(dead_code))]
 const NUMPAD_ENTER: u16 = 0x0D | 0x0100;
 
@@ -174,13 +186,18 @@ mod imp {
     use std::sync::mpsc::{channel, Receiver, Sender};
     use std::sync::Mutex;
     use tauri::{AppHandle, Emitter, Manager};
-    use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
+    use windows_sys::Win32::UI::Input::{
+        GetRawInputData, RegisterRawInputDevices, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE,
+        RAWINPUTHEADER, RIDEV_INPUTSINK, RID_INPUT, RIM_TYPEKEYBOARD,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
-        UnhookWindowsHookEx, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED,
-        MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
+        PostThreadMessageW, RegisterClassW, HWND_MESSAGE, MSG, RI_KEY_BREAK, RI_KEY_E0,
+        RI_KEY_E1, WM_INPUT, WM_QUIT, WNDCLASSW,
     };
 
     /// What a matched chord does (mirrors evdev_hotkeys::ChordAction).
@@ -202,7 +219,7 @@ mod imp {
         down: bool,
     }
 
-    /// The hook→worker channel. `hook_proc` is a bare `extern "system"` fn with no
+    /// The receiver→worker channel. `wndproc` is a bare `extern "system"` fn with no
     /// captures, so it reaches the current sender through this global; start()/
     /// shutdown() swap it. Locked per keystroke — uncontended in steady state.
     static TX: Mutex<Option<Sender<KeyEv>>> = Mutex::new(None);
@@ -295,15 +312,15 @@ mod imp {
 
         let (ready_tx, ready_rx) = channel::<Option<u32>>();
         let _ = std::thread::Builder::new()
-            .name("win-hotkeys-hook".into())
-            .spawn(move || hook_thread(&ready_tx));
+            .name("win-hotkeys-input".into())
+            .spawn(move || input_thread(&ready_tx));
         match ready_rx.recv_timeout(std::time::Duration::from_secs(2)) {
             Ok(Some(tid)) => {
-                tracing::info!("[winhook] keyboard hook installed ({n_chords} chord(s))");
-                *g = Some(Running { hook_thread_id: tid });
+                tracing::info!("[winhook] raw-input listener up ({n_chords} chord(s))");
+                *g = Some(Running { input_thread_id: tid });
             }
             Ok(None) | Err(_) => {
-                tracing::warn!("[winhook] couldn't install the low-level keyboard hook — hotkeys are OFF");
+                tracing::warn!("[winhook] couldn't register for raw keyboard input — hotkeys are OFF");
                 if let Ok(mut t) = TX.lock() {
                     *t = None; // ends the worker
                 }
@@ -313,64 +330,193 @@ mod imp {
 
     /// Stop this backend: stop forwarding (the worker drains its backlog, releases
     /// its HeldKeys contributions, and stops any still-held PTT session), then wake
-    /// the hook thread's GetMessageW so it unhooks and exits. Called from
+    /// the receiver's GetMessageW so it destroys its window and exits. Called from
     /// Running::drop. Not joined: the residual double-forwarding window is µs-scale
     /// and idempotent (see start()).
-    pub(super) fn shutdown(hook_thread_id: u32) {
+    pub(super) fn shutdown(input_thread_id: u32) {
         if let Ok(mut t) = TX.lock() {
             *t = None;
         }
         unsafe {
-            PostThreadMessageW(hook_thread_id, WM_QUIT, 0, 0);
+            PostThreadMessageW(input_thread_id, WM_QUIT, 0, 0);
         }
     }
 
-    fn hook_thread(ready: &Sender<Option<u32>>) {
+    /// The raw-input receiver: a message-only window registered for keyboard raw
+    /// input with `RIDEV_INPUTSINK` (delivery regardless of foreground — this is
+    /// what keeps chords alive while an RDP client is focused; see module docs),
+    /// pumping messages until shutdown posts WM_QUIT.
+    fn input_thread(ready: &Sender<Option<u32>>) {
         unsafe {
-            let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), GetModuleHandleW(std::ptr::null()), 0);
-            if hook.is_null() {
+            let class_name: Vec<u16> = "fwf-raw-input\0".encode_utf16().collect();
+            let hinstance = GetModuleHandleW(std::ptr::null());
+            // Idempotent across backend restarts in one process: re-registering the
+            // same class fails harmlessly (CreateWindowExW then uses the existing one).
+            let wc = WNDCLASSW {
+                style: 0,
+                lpfnWndProc: Some(wndproc),
+                cbClsExtra: 0,
+                cbWndExtra: 0,
+                hInstance: hinstance,
+                hIcon: std::ptr::null_mut(),
+                hCursor: std::ptr::null_mut(),
+                hbrBackground: std::ptr::null_mut(),
+                lpszMenuName: std::ptr::null(),
+                lpszClassName: class_name.as_ptr(),
+            };
+            let _ = RegisterClassW(&wc);
+            let hwnd = CreateWindowExW(
+                0,
+                class_name.as_ptr(),
+                class_name.as_ptr(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                HWND_MESSAGE, // message-only: never visible, no taskbar, just a raw-input sink
+                std::ptr::null_mut(),
+                hinstance,
+                std::ptr::null_mut(),
+            );
+            if hwnd.is_null() {
+                let _ = ready.send(None);
+                return;
+            }
+            let rid = RAWINPUTDEVICE {
+                usUsagePage: 0x01, // Generic Desktop
+                usUsage: 0x06,     // Keyboard
+                dwFlags: RIDEV_INPUTSINK,
+                hwndTarget: hwnd,
+            };
+            if RegisterRawInputDevices(&rid, 1, std::mem::size_of::<RAWINPUTDEVICE>() as u32) == 0 {
+                DestroyWindow(hwnd);
                 let _ = ready.send(None);
                 return;
             }
             let _ = ready.send(Some(GetCurrentThreadId()));
-            // No window — this loop exists only to keep the hook alive (LL hook
-            // callbacks are delivered while blocked in GetMessageW) and to exit on
-            // the WM_QUIT posted by shutdown(). Returns 0 on WM_QUIT, -1 on error.
+            // WM_INPUT arrives here and is routed to wndproc by DispatchMessageW.
+            // Returns 0 on the WM_QUIT posted by shutdown(), -1 on error.
             let mut msg: MSG = std::mem::zeroed();
-            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {}
-            UnhookWindowsHookEx(hook);
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+                DispatchMessageW(&msg);
+            }
+            // Destroying the target window ends raw-input delivery; the class is
+            // left registered for the next start (see above).
+            DestroyWindow(hwnd);
         }
     }
 
-    /// The LL hook callback. MUST stay tiny (OS watchdog — see module docs): decode
-    /// the transition, forward it, pass the event on unmodified.
-    unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if code == HC_ACTION as i32 {
-            let kb = &*(lparam as *const KBDLLHOOKSTRUCT);
-            let down = matches!(wparam as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
-            let up = matches!(wparam as u32, WM_KEYUP | WM_SYSKEYUP);
-            // Skip injected events — that's our own enigo SendInput typing (and other
-            // software synthesis): tracking those could break a live chord mid-inject
-            // or wedge the HeldKeys gate. Physical keys only, mirroring evdev.
-            let injected = kb.flags & LLKHF_INJECTED != 0;
-            // AltGr presses synthesize a companion LCtrl (scan code 0x21D). Drop it for
-            // evdev parity — there AltGr is a lone KEY_RIGHTALT — so AltGr can't falsely
-            // fire bare-Ctrl chords or block an AltGr-only binding.
-            let altgr_companion = kb.vkCode == 0xA2 && kb.scanCode == 0x21D;
-            if (down || up) && !injected && !altgr_companion {
-                let id = if kb.vkCode == 0x0D && kb.flags & LLKHF_EXTENDED != 0 {
-                    NUMPAD_ENTER
-                } else {
-                    kb.vkCode as u16
-                };
-                if let Ok(g) = TX.lock() {
-                    if let Some(tx) = g.as_ref() {
-                        let _ = tx.send(KeyEv { id, down });
+    unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if msg == WM_INPUT {
+            let mut raw: RAWINPUT = std::mem::zeroed();
+            let mut size = std::mem::size_of::<RAWINPUT>() as u32;
+            let got = GetRawInputData(
+                lparam as HRAWINPUT,
+                RID_INPUT,
+                &mut raw as *mut RAWINPUT as *mut core::ffi::c_void,
+                &mut size,
+                std::mem::size_of::<RAWINPUTHEADER>() as u32,
+            );
+            if got != u32::MAX && raw.header.dwType == RIM_TYPEKEYBOARD {
+                // hDevice == 0 marks INJECTED input (SendInput — incl. our own enigo
+                // typing): tracking it could break a live chord mid-inject or wedge
+                // the HeldKeys gate. Physical keys only, mirroring evdev.
+                if !raw.header.hDevice.is_null() {
+                    let kb = raw.data.keyboard;
+                    if let Some(id) = key_id(kb.VKey, kb.MakeCode, kb.Flags as u32) {
+                        let down = kb.Flags as u32 & RI_KEY_BREAK == 0;
+                        if let Ok(g) = TX.lock() {
+                            if let Some(tx) = g.as_ref() {
+                                let _ = tx.send(KeyEv { id, down });
+                            }
+                        }
                     }
                 }
             }
+            // Fall through to DefWindowProc for cleanup (raw input is observation-
+            // only: nothing we do here can swallow the key from the focused app).
         }
-        CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam)
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    /// RAWKEYBOARD → the chord id space of `code_to_vk` (left/right-specific VKs,
+    /// NUMPAD_ENTER synthetic). None = not a key transition we track.
+    fn key_id(vkey: u16, make_code: u16, flags: u32) -> Option<u16> {
+        let e0 = flags & RI_KEY_E0 as u32 != 0;
+        Some(match vkey {
+            // Overrun / prefix marker — never a real key.
+            0xFF => return None,
+            // Raw input reports the GENERIC modifier VKs; resolve the side from the
+            // scan code (Shift) or the E0 flag (Ctrl/Alt), per RAWKEYBOARD docs.
+            0x10 => {
+                if make_code == 0x36 {
+                    0xA1 // VK_RSHIFT
+                } else {
+                    0xA0 // VK_LSHIFT
+                }
+            }
+            0x11 => {
+                // Defensive: if a message-layer fake AltGr companion ever shows up in
+                // raw input it carries the 0x21D scan / E1 marking — drop it (AltGr
+                // must be a lone RAlt, evdev parity; normally it never reaches here).
+                if make_code == 0x21D || flags & RI_KEY_E1 as u32 != 0 {
+                    return None;
+                }
+                if e0 {
+                    0xA3 // VK_RCONTROL
+                } else {
+                    0xA2 // VK_LCONTROL
+                }
+            }
+            0x12 => {
+                if e0 {
+                    0xA5 // VK_RMENU (AltGr)
+                } else {
+                    0xA4 // VK_LMENU
+                }
+            }
+            // Enter vs NumpadEnter share VK_RETURN; the numpad one is E0.
+            0x0D => {
+                if e0 {
+                    NUMPAD_ENTER
+                } else {
+                    0x0D
+                }
+            }
+            // Numpad digits: some driver stacks report the NAV VKey for numpad keys
+            // even with NumLock ON (raw input is pre-translation). E0 CLEAR = the key
+            // is physically on the numpad — map it to VK_NUMPADx / VK_DECIMAL when
+            // NumLock is on, so a "Numpad4" binding fires like it does under a browser
+            // capture. E0 set = the dedicated nav key — keep it. NumLock off keeps the
+            // nav VKey (numpad digits are then unbindable-by-design; the capture UI
+            // records the same nav code).
+            0x0C | 0x21..=0x28 | 0x2D | 0x2E if !e0 && numlock_on() => numpad_from_scan(make_code)?,
+            other => other,
+        })
+    }
+
+    /// NumLock toggle state (low bit of GetKeyState is the toggle).
+    fn numlock_on() -> bool {
+        unsafe { GetKeyState(0x90) & 1 != 0 } // VK_NUMLOCK
+    }
+
+    /// Numpad scan codes (E0 clear) → VK_NUMPAD0..9 / VK_DECIMAL.
+    fn numpad_from_scan(make_code: u16) -> Option<u16> {
+        Some(match make_code {
+            0x52 => 0x60, // KP0
+            0x4F => 0x61, // KP1
+            0x50 => 0x62, // KP2
+            0x51 => 0x63, // KP3
+            0x4B => 0x64, // KP4
+            0x4C => 0x65, // KP5
+            0x4D => 0x66, // KP6
+            0x47 => 0x67, // KP7
+            0x48 => 0x68, // KP8
+            0x49 => 0x69, // KP9
+            0x53 => 0x6E, // KP. (VK_DECIMAL)
+            _ => return None,
+        })
     }
 
     fn emit(app: &AppHandle, profile_id: &str, action: &str) {

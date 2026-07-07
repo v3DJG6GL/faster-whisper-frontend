@@ -112,15 +112,19 @@ memfd = "0.6"
 atspi = { version = "0.30", default-features = false, features = ["proxies", "wrappers", "tokio", "zbus"] }
 atspi-connection = { version = "0.14", default-features = false, features = ["wrappers"] }
 
-# Windows-only: the WH_KEYBOARD_LL hotkey backend (win_hotkeys.rs) — modifier-only,
-# left/right-specific, and N-key chords the global-shortcut plugin can't register.
-# windows-sys 0.60 is already in the dependency tree (via Tauri), so this adds no
-# new crate version.
+# Windows-only: the raw-input hotkey backend (win_hotkeys.rs) — modifier-only,
+# left/right-specific, and N-key chords the global-shortcut plugin can't register,
+# delivered independently of the LL-hook chain (so chords survive a focused RDP
+# client). windows-sys 0.60 is already in the dependency tree (via Tauri), so this
+# adds no new crate version.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_System_LibraryLoader",
     "Win32_System_Threading",
+    "Win32_UI_Input",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
