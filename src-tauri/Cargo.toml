@@ -1,6 +1,6 @@
 [package]
 name = "faster-whisper-frontend"
-version = "0.1.6"
+version = "0.1.7"
 description = "A FOSS cross-platform dictation client for a self-hosted faster-whisper server"
 authors = ["faster-whisper-frontend contributors"]
 license = "AGPL-3.0-or-later"
