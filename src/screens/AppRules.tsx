@@ -4,8 +4,18 @@ import { useApp } from "@/lib/store";
 import { Button, Card, Labeled, ListScreenHeader, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { getFocusedOtherApp } from "@/lib/api";
 import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
+import { IS_WINDOWS } from "@/lib/platform";
 import type { AppRule, InsertMethod } from "@/lib/types";
 import { cn } from "@/lib/cn";
+
+// App ids differ per platform: AT-SPI application names on Linux, lowercased exe
+// basenames on Windows — show examples the local detector will actually produce.
+const APP_ID_PLACEHOLDER = IS_WINDOWS
+  ? "e.g. chrome, code, notepad"
+  : "e.g. org.kde.konsole, signal, code";
+const DETECT_FAILED_MSG = IS_WINDOWS
+  ? "Couldn’t detect a focused app yet. Click into the target app once, come back, and retry — or type the id manually."
+  : "Couldn’t detect a focused app (needs KWin/Plasma). Type the id manually.";
 
 const METHOD_OPTIONS: { value: string; label: string }[] = [
   { value: "inherit", label: "Inherit global" },
@@ -40,8 +50,9 @@ function Editor({
   const lastAutoName = useRef<string | undefined>(undefined);
   const set = (patch: Partial<AppRule>) => setR((x) => ({ ...x, ...patch }));
 
-  // Fill appId (and a label) from the currently-focused window — exercises the KWin
-  // active-window detection. Returns null on non-KWin / nothing focused.
+  // Fill appId (and a label) from the most recently focused OTHER window (ours took
+  // focus when the user clicked here) — AT-SPI on Linux, win_focus on Windows.
+  // Returns null when the detector has seen nothing yet.
   const captureCurrent = async () => {
     setCapturing(true);
     setCaptureMsg(null);
@@ -60,7 +71,7 @@ function Editor({
         }));
         lastAutoName.current = autoLabel;
       } else {
-        setCaptureMsg("Couldn’t detect a focused app (needs KWin/Plasma). Type the id manually.");
+        setCaptureMsg(DETECT_FAILED_MSG);
       }
     } catch {
       setCaptureMsg("Couldn’t detect a focused app. Type the id manually.");
@@ -82,7 +93,7 @@ function Editor({
     <Card className="p-6">
       <Labeled label="Application id">
         <div className="flex gap-2">
-          <TextInput value={r.appId} onChange={(e) => set({ appId: e.target.value })} placeholder="e.g. org.kde.konsole, signal, code" />
+          <TextInput value={r.appId} onChange={(e) => set({ appId: e.target.value })} placeholder={APP_ID_PLACEHOLDER} />
           <Button variant="ghost" onClick={captureCurrent} disabled={capturing} title="Use the currently focused app">
             <Crosshair className="size-4" /> {capturing ? "Detecting…" : "Use current"}
           </Button>
