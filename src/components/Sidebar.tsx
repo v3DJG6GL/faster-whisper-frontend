@@ -8,15 +8,28 @@ import { dictationVisual } from "@/lib/dictationVisual";
 import { StatusDot } from "./ui";
 
 function BrandMark() {
-  // A forward-leaning level meter — "signal in motion". Distinct amber identity.
+  // The unified app mark — the same artwork as src-tauri/icons/icon.svg (five-bar
+  // level meter on the warm-dark Signal tile); keep the two in sync. Colors are
+  // fixed on purpose: it's the logo, identical in both themes and on the desktop.
   return (
-    <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden>
-      <rect width="26" height="26" rx="7" fill="var(--c-accent)" fillOpacity="0.14" />
-      <g fill="var(--c-accent)">
-        <rect x="6" y="11" width="2.6" height="4" rx="1.3" transform="skewX(-8)" />
-        <rect x="10" y="8" width="2.6" height="10" rx="1.3" transform="skewX(-8)" />
-        <rect x="14" y="5.5" width="2.6" height="15" rx="1.3" transform="skewX(-8)" />
-        <rect x="18" y="9.5" width="2.6" height="7" rx="1.3" transform="skewX(-8)" />
+    <svg width="26" height="26" viewBox="0 0 1024 1024" fill="none" aria-hidden>
+      <defs>
+        <linearGradient id="bm-tile" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#262019" />
+          <stop offset="1" stopColor="#0e0d0b" />
+        </linearGradient>
+        <linearGradient id="bm-bar" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ffb95e" />
+          <stop offset="1" stopColor="#ff9e2c" />
+        </linearGradient>
+      </defs>
+      <rect width="1024" height="1024" rx="224" fill="url(#bm-tile)" />
+      <g fill="url(#bm-bar)">
+        <rect x="152" y="392" width="104" height="240" rx="52" />
+        <rect x="308" y="292" width="104" height="440" rx="52" />
+        <rect x="464" y="192" width="104" height="640" rx="52" />
+        <rect x="620" y="332" width="104" height="360" rx="52" />
+        <rect x="776" y="432" width="104" height="160" rx="52" />
       </g>
     </svg>
   );
