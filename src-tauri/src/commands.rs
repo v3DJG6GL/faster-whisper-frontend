@@ -544,6 +544,18 @@ pub fn suspend_shortcuts(app: AppHandle) {
     crate::win_hotkeys::stop_held_sessions(&app);
 }
 
+/// Whether any of the eight shortcut modifiers is physically held RIGHT NOW, per the
+/// low-level backends' shared HeldKeys signal (evdev on Linux, win_hotkeys on Windows;
+/// always false when only the plugin backend runs — it can't see raw key state).
+/// Consumer: the frontend's queued-start path — a PTT press that landed during
+/// "finalizing…" auto-starts once the session settles, but only if the chord is still
+/// held; starting after the release would wedge "listening" with nothing to stop it.
+#[tauri::command]
+pub fn shortcut_mods_held(app: AppHandle) -> bool {
+    app.state::<crate::held_keys::HeldKeys>()
+        .any_held(&crate::held_keys::SHORTCUT_MOD_CODES)
+}
+
 /// Apply the current bindings to the right backend: when the evdev backend is
 /// enabled AND permitted it owns the Profiles' chords and the global-shortcut
 /// plugin is silenced (mutual exclusion); otherwise the plugin registers and evdev stops.

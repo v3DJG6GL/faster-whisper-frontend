@@ -174,6 +174,7 @@ pub fn run() {
             commands::reregister_shortcuts,
             commands::reregister_shortcuts_unless_capturing,
             commands::suspend_shortcuts,
+            commands::shortcut_mods_held,
             commands::validate_codes,
             commands::evdev_status,
             commands::evdev_setup,
