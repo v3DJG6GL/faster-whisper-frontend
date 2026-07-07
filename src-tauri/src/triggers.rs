@@ -5,7 +5,8 @@
 //!     path, esp. for Wayland where a DE shortcut runs
 //!     `app --profile <id> --action toggle` (or the zero-arg `app --toggle`,
 //!     which targets the first enabled latch Profile).
-//!   * In-app global hotkeys (Windows / X11) — added separately.
+//!   * In-app global hotkeys — the plugin below (Linux-X11), the evdev backend
+//!     (Linux, opt-in), or the win_hotkeys hook backend (Windows, always on).
 
 use crate::config::{ActivationType, Profile};
 use serde::Serialize;
@@ -117,10 +118,12 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
     }
 }
 
-// ── In-app global hotkeys (Windows / Linux-X11) ─────────────────────────────
-// Native Wayland is X11-only here (the plugin can't register), and modifier-only
-// chords like "Ctrl+Shift" aren't registerable anywhere — those rely on the CLI
-// path (a DE shortcut → `app --toggle`). The GlobalShortcuts portal is M7.
+// ── In-app global hotkeys via the global-shortcut plugin (Linux-X11) ─────────
+// Native Wayland can't register here, and modifier-only chords like "Ctrl+Shift"
+// aren't registerable as plugin accelerators — those rely on the evdev backend or
+// the CLI path (a DE shortcut → `app --toggle`). On Windows the plugin is never
+// the registrar: the win_hotkeys hook backend owns all chords (apply_bindings).
+// The GlobalShortcuts portal is M7.
 
 #[derive(Clone)]
 enum ShortcutTarget {
@@ -267,7 +270,7 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
                     tracing::warn!("[hotkey] '{accel}' is bound by more than one profile; last wins");
                 }
             }
-            Err(e) => tracing::warn!("[hotkey] could not register '{accel}' (Windows/X11 only): {e}"),
+            Err(e) => tracing::warn!("[hotkey] could not register '{accel}' (X11 only): {e}"),
         }
     }
 
@@ -280,7 +283,7 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
                         tracing::info!("[hotkey] registered '{accel}' → quick-add");
                         map.insert(shortcut, ShortcutTarget::OpenQuickAdd);
                     }
-                    Err(e) => tracing::warn!("[hotkey] could not register quick-add '{accel}' (Windows/X11 only): {e}"),
+                    Err(e) => tracing::warn!("[hotkey] could not register quick-add '{accel}' (X11 only): {e}"),
                 },
                 Err(_) => tracing::warn!("[hotkey] quick-add '{accel}' is not a registerable global shortcut"),
             },
