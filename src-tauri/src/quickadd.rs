@@ -39,9 +39,52 @@ fn center(win: &WebviewWindow) {
     let _ = win.set_position(PhysicalPosition::new(x, y));
 }
 
+/// The selection grabbed from the source app just before the window was shown, served
+/// to the webview via `get_quickadd_seed`. Windows-only writer (see `win_seed`): there
+/// the seed must be captured BEFORE our window takes focus, while on Linux the AT-SPI /
+/// PRIMARY reads are focus-independent and happen after. `take`-semantics at read so a
+/// summon can never see a previous summon's leftover.
+#[derive(Default)]
+pub struct SeedStash(
+    // Writer (win_seed) and reader (get_quickadd_seed's Windows branch) are both
+    // Windows-only; off Windows the managed state simply sits unread.
+    #[cfg_attr(not(windows), allow(dead_code))] pub std::sync::Mutex<Option<String>>,
+);
+
 /// Show + focus the quick-add window and signal the webview to (re)focus its
 /// field and refresh the list. Safe to call repeatedly (each summon re-centers).
+///
+/// Windows first grabs the source app's selection (copy-chord + clipboard diff —
+/// `win_seed`) BEFORE the window takes focus, off the calling thread and time-bounded
+/// so a wedged clipboard can never keep the window from opening.
 pub fn show(app: &AppHandle) {
+    #[cfg(windows)]
+    {
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let grabber = handle.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(win_seed::grab(&grabber));
+            });
+            // Generous vs grab's internal bounds (~1s worst case); on timeout the
+            // grabber thread is abandoned and the window opens seedless.
+            let seed = rx
+                .recv_timeout(std::time::Duration::from_millis(1500))
+                .ok()
+                .flatten();
+            if let Ok(mut s) = handle.state::<SeedStash>().0.lock() {
+                *s = seed;
+            }
+            show_now(&handle);
+        });
+        return;
+    }
+    #[cfg(not(windows))]
+    show_now(app);
+}
+
+fn show_now(app: &AppHandle) {
     // Callable from any context — the chip command (main thread), the global-shortcut
     // handler, the single-instance CLI callback, or an evdev reader task — so hop to the
     // main thread for the GTK window ops.
@@ -89,6 +132,70 @@ pub fn show_quick_add(app: AppHandle) {
 #[tauri::command]
 pub fn hide_quick_add(app: AppHandle) {
     hide(&app);
+}
+
+/// Windows selection grab for the quick-add seed: neither AT-SPI nor a PRIMARY
+/// selection exists there, so the pragmatic path is "make the source app copy its
+/// selection, diff the clipboard, put the clipboard back". Must run while the SOURCE
+/// app still has focus (i.e. before `show_now`).
+#[cfg(windows)]
+mod win_seed {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+    use std::time::{Duration, Instant};
+    use tauri::{AppHandle, Manager};
+
+    /// Best-effort: any failure or an unchanged clipboard (= nothing selected; apps
+    /// no-op the copy) → None. The user's clipboard TEXT is restored afterwards;
+    /// non-text content (an image) can't be snapshotted via arboard's text API and
+    /// is lost only when the copy actually replaced it (logged).
+    pub fn grab(app: &AppHandle) -> Option<String> {
+        // The summoning chord's modifiers must be UP before injecting: a still-held
+        // Shift would mutate the copy chord (Ctrl+Shift+Insert is PASTE in many
+        // terminals). Mirrors inject_text's release gate, except on timeout we SKIP
+        // entirely — a seed is optional, firing a mutated chord into the source app
+        // is not worth the risk. The win_hotkeys worker feeds this held-set.
+        let held = app.state::<crate::held_keys::HeldKeys>().inner().clone();
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while held.any_held(&crate::held_keys::SHORTCUT_MOD_CODES) {
+            if Instant::now() >= deadline {
+                tracing::info!("[quickadd-seed] chord modifiers still held; skipping the copy grab");
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        let mut cb = arboard::Clipboard::new().ok()?;
+        let prev = cb.get_text().ok(); // None = empty or non-text (image/files)
+        // Ctrl+Insert, the CUA copy chord — Win32 edit controls, browsers, Office, Qt,
+        // and terminals all honor it, and unlike Ctrl+C it is never a terminal
+        // interrupt. Injected events are skipped by our own keyboard hook
+        // (LLKHF_INJECTED), so this can't disturb chord matching.
+        let mut enigo = Enigo::new(&Settings::default()).ok()?;
+        enigo.key(Key::Control, Direction::Press).ok()?;
+        let copied = enigo.key(Key::Insert, Direction::Click);
+        let _ = enigo.key(Key::Control, Direction::Release); // release even if the click failed
+        copied.ok()?;
+        // The copy lands asynchronously in the source app — poll briefly for the
+        // clipboard to change. Still unchanged at the deadline ⇒ no selection. (A
+        // selection that exactly equals the prior clipboard text also reads as
+        // "unchanged" and seeds nothing — accepted corner.)
+        let deadline = Instant::now() + Duration::from_millis(400);
+        loop {
+            std::thread::sleep(Duration::from_millis(25));
+            let now = cb.get_text().ok();
+            if now != prev {
+                match prev {
+                    Some(prev) => {
+                        let _ = cb.set_text(prev); // put the user's clipboard back
+                    }
+                    None => tracing::info!("[quickadd-seed] non-text clipboard was replaced by the copy grab"),
+                }
+                return now;
+            }
+            if Instant::now() >= deadline {
+                return None; // clipboard untouched — nothing to restore
+            }
+        }
+    }
 }
 
 /// KDE-Wayland keep-above for the quick-add window via a KWin window rule — the focus-ALLOWED

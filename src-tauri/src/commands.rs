@@ -870,27 +870,47 @@ pub async fn get_focused_other_app(
 #[tauri::command]
 pub async fn get_quickadd_seed(
     guard: State<'_, crate::atspi_guard::AtspiGuard>,
+    stash: State<'_, crate::quickadd::SeedStash>,
 ) -> Result<Option<String>, String> {
-    use crate::atspi_guard::SelRead;
-    match crate::atspi_guard::focused_selection(guard.inner()).await {
-        SelRead::Text(s) => {
-            let seed = sanitize_seed(&s);
-            tracing::info!("[quickadd-seed] atspi selection {} chars -> seed {} chars", s.len(), seed.as_deref().map_or(0, str::len));
-            Ok(seed)
-        }
-        SelRead::Empty => {
-            tracing::info!("[quickadd-seed] atspi: nothing selected -> no seed");
-            Ok(None)
-        }
-        // Opaque (rich-text ￼) or no Text interface at all → the real word lives in PRIMARY.
-        SelRead::Opaque | SelRead::Unavailable => {
-            let raw = match read_primary_now().await {
-                Some(s) => s,
-                None => return Ok(None),
-            };
-            let seed = sanitize_seed(&raw);
-            tracing::info!("[quickadd-seed] primary fallback {} chars -> seed {} chars", raw.len(), seed.as_deref().map_or(0, str::len));
-            Ok(seed)
+    // Windows: no AT-SPI / PRIMARY — the seed was grabbed BEFORE the window took focus
+    // (quickadd::show → win_seed copy-chord + clipboard diff) and stashed; serve (and
+    // consume) it here. Same sanitizer as the Linux paths.
+    #[cfg(windows)]
+    {
+        let _ = &guard;
+        let raw = stash.0.lock().ok().and_then(|mut s| s.take());
+        let seed = raw.as_deref().and_then(sanitize_seed);
+        tracing::info!(
+            "[quickadd-seed] windows copy grab {} chars -> seed {} chars",
+            raw.as_deref().map_or(0, str::len),
+            seed.as_deref().map_or(0, str::len)
+        );
+        return Ok(seed);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = &stash;
+        use crate::atspi_guard::SelRead;
+        match crate::atspi_guard::focused_selection(guard.inner()).await {
+            SelRead::Text(s) => {
+                let seed = sanitize_seed(&s);
+                tracing::info!("[quickadd-seed] atspi selection {} chars -> seed {} chars", s.len(), seed.as_deref().map_or(0, str::len));
+                Ok(seed)
+            }
+            SelRead::Empty => {
+                tracing::info!("[quickadd-seed] atspi: nothing selected -> no seed");
+                Ok(None)
+            }
+            // Opaque (rich-text ￼) or no Text interface at all → the real word lives in PRIMARY.
+            SelRead::Opaque | SelRead::Unavailable => {
+                let raw = match read_primary_now().await {
+                    Some(s) => s,
+                    None => return Ok(None),
+                };
+                let seed = sanitize_seed(&raw);
+                tracing::info!("[quickadd-seed] primary fallback {} chars -> seed {} chars", raw.len(), seed.as_deref().map_or(0, str::len));
+                Ok(seed)
+            }
         }
     }
 }

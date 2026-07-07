@@ -56,6 +56,7 @@ pub fn run() {
         .manage(held_keys::HeldKeys::default())
         .manage(virtual_keyboard::VirtualKeyboard::default())
         .manage(atspi_guard::AtspiGuard::default())
+        .manage(quickadd::SeedStash::default())
         // Close-to-tray for the MAIN window. Its webview hosts the dictation state machine and the
         // trigger/chip action listeners; destroying it mid-session would leave the Rust audio
         // stream running with NOTHING able to stop it (both the global shortcut and the chip route
