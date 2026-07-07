@@ -18,14 +18,44 @@ mod virtual_keyboard;
 mod wayland_inject;
 mod win_hotkeys;
 
+fn env_filter() -> tracing_subscriber::EnvFilter {
+    tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "faster_whisper_frontend_lib=info,info".into())
+}
+
+/// Console logging everywhere except Windows release use: the bundled app runs
+/// under the `windows` subsystem (stdout goes nowhere, and users can't attach a
+/// terminal), so there the log goes to
+/// `%LOCALAPPDATA%\faster-whisper-frontend\logs\fwf.log` — current run plus one
+/// previous (`fwf.prev.log`) — making "send me the log" possible at all.
+fn init_tracing() {
+    #[cfg(windows)]
+    if let Some(file) = windows_log_file() {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter())
+            .with_writer(std::sync::Mutex::new(file))
+            .with_ansi(false)
+            .init();
+        tracing::info!("faster-whisper-frontend v{}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+    tracing_subscriber::fmt().with_env_filter(env_filter()).init();
+}
+
+#[cfg(windows)]
+fn windows_log_file() -> Option<std::fs::File> {
+    let dir = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?)
+        .join("faster-whisper-frontend")
+        .join("logs");
+    std::fs::create_dir_all(&dir).ok()?;
+    let cur = dir.join("fwf.log");
+    let _ = std::fs::rename(&cur, dir.join("fwf.prev.log"));
+    std::fs::File::create(cur).ok()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "faster_whisper_frontend_lib=info,info".into()),
-        )
-        .init();
+    init_tracing();
 
     tauri::Builder::default()
         // single-instance MUST be the first plugin registered.
