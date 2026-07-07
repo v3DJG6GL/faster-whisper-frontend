@@ -199,8 +199,9 @@ WebView2 — so there's no first-paint flash):
 3. **Code-signing** — ⏭ skipped deliberately: unsigned → SmartScreen warning, acceptable for a
    FOSS tool. Revisit only if it ever matters.
 4. **UI copy gating** — ✅ done (see §7).
-5. **CI** — ✅ done (`ci.yml` + `release.yml`; see §1). Not yet exercised on GitHub — first push
-   / tag will tell.
+5. **CI** — ✅ done (`ci.yml` + `release.yml`; see §1). First `ci.yml` run (2026-07-07, run
+   28873617044): **both legs green** — windows-latest 7m18s, ubuntu-latest 9m36s. `release.yml`
+   still unexercised (needs a tag or manual dispatch).
 
 ### Optional Windows-parity polish (after the basic port runs)
 
@@ -218,5 +219,7 @@ WebView2 — so there's no first-paint flash):
   plain multi-agent review instead).
 - Verification state of this doc: Cargo target-gating confirmed by reading `Cargo.toml`; module
   gating confirmed by source audit; Linux release build + deb/AppImage bundling verified locally
-  (2026-07-07). The Windows *build itself* is still unverified — `ci.yml`'s `windows-latest`
-  `cargo check` and `release.yml`'s installer job will settle it on the first push/tag.
+  (2026-07-07). **The "compiles on Windows" claim is now machine-verified** — `ci.yml`'s
+  `windows-latest` leg (MSVC `cargo check --locked` against the real `dist/`) passed on its first
+  run (2026-07-07). Still unverified: the MSI/NSIS *installers* (first `release.yml` run) and the
+  Windows *runtime* (needs real hardware — §6 chip click-through especially).
