@@ -16,8 +16,10 @@
 //! whitelisted as typable. Apps that expose nothing (games, no a11y) → `editable = None`
 //! → callers type anyway (the guard is positive-only).
 //!
-//! Non-Linux builds compile to no-op stubs: the snapshot stays empty, `focused_app`
-//! returns `None`, and callers degrade to today's behavior.
+//! On Windows the same snapshot is fed by `win_focus` (a `#[path]` child module:
+//! foreground-window tracking via WinEvent hook + poll, exe-basename identity,
+//! `editable` always unknown). Everything else compiles to no-op stubs: the
+//! snapshot stays empty, `focused_app` returns `None`, and callers degrade.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -138,7 +140,21 @@ pub fn start(g: &AtspiGuard) {
             }
         });
     }
-    #[cfg(not(target_os = "linux"))]
+    // Windows: the foreground tracker owns a Win32 message pump, so it gets a
+    // plain thread (not the async runtime). It feeds the same snapshot.
+    #[cfg(windows)]
+    {
+        let mut started = g.started.lock();
+        if *started {
+            return;
+        }
+        *started = true;
+        let snapshot = g.snapshot.clone();
+        let _ = std::thread::Builder::new()
+            .name("win-focus".into())
+            .spawn(move || win_focus::run(snapshot));
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = g;
     }
@@ -198,6 +214,12 @@ pub async fn focused_selection(g: &AtspiGuard) -> SelRead {
         SelRead::Unavailable
     }
 }
+
+// The Windows tracker lives in its own file but stays a CHILD of this module so
+// it can fold into the private `Snapshot` with the exact `set_current` semantics.
+#[cfg(windows)]
+#[path = "win_focus.rs"]
+mod win_focus;
 
 #[cfg(target_os = "linux")]
 mod imp {
