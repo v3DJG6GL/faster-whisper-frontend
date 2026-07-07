@@ -11,8 +11,7 @@ Hold a hotkey (or toggle hands-free), speak into the focused field of **any**
 application, and your words are transcribed by your own server and inserted in
 place — with a floating "chip" overlay showing live voice activity.
 
-> Status: **early development.** Inspired by [Vowen](https://vowen.ai)'s UX, but
-> Whisper-only, no AI/LLM features, no paywall.
+> Status: **early development.** Whisper-only, no AI/LLM features, no paywall.
 
 ## Highlights
 
