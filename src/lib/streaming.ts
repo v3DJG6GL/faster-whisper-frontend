@@ -356,7 +356,12 @@ function consumePendingHoldStart(): void {
   const run = pendingStartRunner;
   if (!pending || !run) return;
   if (performance.now() - pending.at > PENDING_START_MAX_AGE_MS) return;
-  void shortcutModsHeld()
+  // Check THE PRESSED PROFILE's chord (its modifier subset — non-modifier keys aren't
+  // observable, and a modifier-less chord reads false = never auto-start). Testing the
+  // specific chord, not "any modifier", keeps an unrelated held Shift from starting a
+  // hold session whose release would never come.
+  const chord = useApp.getState().profiles.find((p) => p.id === pending.profileId)?.hotkey ?? [];
+  void shortcutModsHeld(chord)
     .then((held) => {
       if (held && useApp.getState().status === "idle") run(pending.profileId);
     })
@@ -365,11 +370,11 @@ function consumePendingHoldStart(): void {
 
 /** Settle the chip to idle, stamping the session's insert outcome (typed/clipboard/none) and
  *  clearing the active profile — the single definition of the end-of-session contract so its
- *  four call sites can't drift. Also drops the dead session's preview text (`partial`): it's
- *  only rendered again once a session is live, but holding it would let a stale transcript
- *  flash if any future path exposed it. Fires a queued fast re-press start last. */
+ *  four call sites can't drift. `partial` is deliberately NOT cleared here: the chip's 2 s
+ *  collapse linger and Home's 10 s "done" card both keep showing the finished transcript
+ *  after settle (the next startLive clears it). Fires a queued fast re-press start last. */
 function settleIdle(): void {
-  useApp.getState().setDictation({ status: "idle", partial: "", sessionOutcome: endOutcome(), activeProfile: null });
+  useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
   consumePendingHoldStart();
 }
 

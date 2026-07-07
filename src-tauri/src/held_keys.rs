@@ -31,6 +31,25 @@ pub const SHORTCUT_MOD_CODES: [u16; 8] = [
     54,  // KEY_RIGHTSHIFT
 ];
 
+/// A binding's `event.code` → the evdev keycode of that SHORTCUT modifier, or None
+/// for any non-modifier key (which this signal can't observe — the backends feed only
+/// the eight modifiers). Projects a chord onto its observable subset, so the
+/// queued-start held check tests THE CHORD's modifiers rather than any modifier
+/// (holding an unrelated Shift must not read as "chord still held").
+pub fn modifier_code(code: &str) -> Option<u16> {
+    Some(match code {
+        "ControlLeft" => 29,
+        "ControlRight" => 97,
+        "AltLeft" => 56,
+        "AltRight" => 100,
+        "MetaLeft" => 125,
+        "MetaRight" => 126,
+        "ShiftLeft" => 42,
+        "ShiftRight" => 54,
+        _ => return None,
+    })
+}
+
 /// Shared, cheaply-clonable handle to the held-key refcount map. Managed by Tauri as
 /// app state; the evdev reader tasks and `inject_text` each clone a handle.
 #[derive(Clone, Default)]
@@ -57,6 +76,17 @@ impl HeldKeys {
             .lock()
             .map(|m| codes.iter().any(|c| m.contains_key(c)))
             .unwrap_or(false)
+    }
+
+    /// Are ALL of `codes` currently held? False for an empty slice — "nothing to
+    /// check" must never read as "held"; the queued-start gate depends on that.
+    pub fn all_held(&self, codes: &[u16]) -> bool {
+        !codes.is_empty()
+            && self
+                .0
+                .lock()
+                .map(|m| codes.iter().all(|c| m.contains_key(c)))
+                .unwrap_or(false)
     }
 
     /// Forget all held keys — called when the listener (re)starts, so a stale count
