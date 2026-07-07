@@ -1,7 +1,9 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.svg" width="112" alt="faster-whisper-frontend — five-bar level-meter logo">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup-dark.png">
+    <img src="docs/brand/lockup-light.png" width="260" alt="fasterwhisper — dictation">
+  </picture>
 </p>
-<h1 align="center">faster-whisper-frontend</h1>
 
 A FOSS, cross-platform **dictation client** for a self-hosted
 [faster-whisper-backend](https://github.com/v3DJG6GL/faster-whisper-backend)

@@ -1,0 +1,80 @@
+<!doctype html>
+<!-- Brand lockup source — the Sidebar header (BrandMark + wordmark) at 4× scale,
+     using the app's own variable fonts from node_modules. Regenerate the README
+     PNGs with (from the repo root; snap chromium can't read /tmp, keep paths in $HOME):
+
+       chromium --headless=new --screenshot=docs/brand/lockup-dark.png  --window-size=900,240 \
+         --default-background-color=00000000 --hide-scrollbars "file://$PWD/docs/brand/lockup.html"
+       chromium --headless=new --screenshot=docs/brand/lockup-light.png --window-size=900,240 \
+         --default-background-color=00000000 --hide-scrollbars "file://$PWD/docs/brand/lockup.html?light"
+
+     then autocrop both (PIL: crop to alpha bbox). Tokens mirror src/app.css. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face {
+    font-family: "Hubot Sans Variable";
+    font-style: normal;
+    font-display: block;
+    font-weight: 200 900;
+    src: url(../../node_modules/@fontsource-variable/hubot-sans/files/hubot-sans-latin-wght-normal.woff2) format("woff2-variations");
+  }
+  @font-face {
+    font-family: "Geist Mono Variable";
+    font-style: normal;
+    font-display: block;
+    font-weight: 100 900;
+    src: url(../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2) format("woff2-variations");
+  }
+  :root { --text: #f3eee6; --accent: #ff9e2c; --faint: #6f675c; }
+  :root[data-theme="light"] { --text: #221b13; --accent: #bf6f12; --faint: #9a9082; }
+  html, body { margin: 0; background: transparent; }
+  /* Sidebar lockup at 4×: 26px icon / 10px gap / 15px 600 tracking-tight title /
+     4px margin / 10px mono uppercase 0.14em subtitle */
+  .lockup { display: inline-flex; align-items: center; gap: 40px; padding: 10px; }
+  .lockup svg { width: 104px; height: 104px; flex: none; }
+  .text { line-height: 1; }
+  .title {
+    font: 600 60px/1 "Hubot Sans Variable", system-ui, sans-serif;
+    letter-spacing: -0.025em; color: var(--text);
+  }
+  .title .accent { color: var(--accent); }
+  .sub {
+    margin-top: 16px; font: 400 40px/1 "Geist Mono Variable", monospace;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint);
+  }
+</style>
+<script>
+  if (location.search.includes("light")) document.documentElement.dataset.theme = "light";
+</script>
+</head>
+<body>
+  <div class="lockup">
+    <svg viewBox="0 0 1024 1024" fill="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="lk-tile" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#262019"/>
+          <stop offset="1" stop-color="#0e0d0b"/>
+        </linearGradient>
+        <linearGradient id="lk-bar" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffb95e"/>
+          <stop offset="1" stop-color="#ff9e2c"/>
+        </linearGradient>
+      </defs>
+      <rect width="1024" height="1024" rx="224" fill="url(#lk-tile)"/>
+      <g fill="url(#lk-bar)">
+        <rect x="152" y="392" width="104" height="240" rx="52"/>
+        <rect x="308" y="292" width="104" height="440" rx="52"/>
+        <rect x="464" y="192" width="104" height="640" rx="52"/>
+        <rect x="620" y="332" width="104" height="360" rx="52"/>
+        <rect x="776" y="432" width="104" height="160" rx="52"/>
+      </g>
+    </svg>
+    <div class="text">
+      <div class="title">faster<span class="accent">whisper</span></div>
+      <div class="sub">dictation</div>
+    </div>
+  </div>
+</body>
+</html>
