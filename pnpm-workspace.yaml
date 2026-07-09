@@ -1,0 +1,15 @@
+# pnpm 11 turns "a dependency wanted to run an install script and we ignored it"
+# from a warning into a hard error (ERR_PNPM_IGNORED_BUILDS), so every such
+# package has to be answered for explicitly or `pnpm install` exits 1.
+#
+# esbuild (transitive, via vite) is the only one. Its postinstall just resolves
+# the platform binary that the @esbuild/* optionalDependencies already provide,
+# and CI has been building green on Linux and Windows with this script ignored
+# since pnpm 10 started skipping it by default -- so deny it rather than approve
+# it, and keep the lifecycle script switched off.
+#
+# The setting was `onlyBuiltDependencies` (a list) in pnpm 10 and is `allowBuilds`
+# (a map) in pnpm 11. pnpm 10 ignores the unknown key, so this file is inert until
+# the pnpm 11 bump lands.
+allowBuilds:
+  esbuild: false
