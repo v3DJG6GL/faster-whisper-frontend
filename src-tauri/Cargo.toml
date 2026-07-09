@@ -86,7 +86,7 @@ xkbcommon = "0.9.0"
 # live layout, not always group 0. libX11 stays an OPTIONAL runtime dep (never a build/link requirement).
 libc = "0.2"
 # Opt-in hardware hotkey backend (reads /dev/input; needs the `input` group).
-evdev = { version = "0.12", features = ["tokio"] }
+evdev = { version = "0.13", features = ["tokio"] }
 # Reach the overlay's GDK window to shape its mouse input region to just the
 # visible chip (so the rest of the transparent strip stays click-through while
 # the chip itself becomes hoverable). Pinned to tao/wry's gtk; use its `gdk` /

@@ -60,7 +60,8 @@ mod imp {
     use super::{EvdevState, Running};
     use crate::config::{ActivationType, Profile};
     use crate::triggers::TriggerPayload;
-    use evdev::{Device, EventType, Key};
+    // evdev 0.13 renamed `Key` to `KeyCode` (same KEY_* constants, same .code()).
+    use evdev::{Device, EventType, KeyCode as Key};
     use std::collections::HashSet;
     use std::sync::Arc;
     use tauri::{AppHandle, Emitter, Manager};
