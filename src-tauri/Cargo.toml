@@ -125,7 +125,7 @@ atspi-connection = { version = "0.14", default-features = false, features = ["wr
 # where SetWinEventHook lives). windows-sys 0.60 is already in the dependency
 # tree (via Tauri), so this adds no new crate version.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.60", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_System_LibraryLoader",
