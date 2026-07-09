@@ -61,7 +61,16 @@ fn resolve_key(explicit: Option<String>, backend_id: Option<String>) -> Option<S
             return Some(k);
         }
     }
-    backend_id.and_then(|id| config::keys::get(&id))
+    let key = backend_id.as_deref().and_then(config::keys::get);
+    if key.is_none() {
+        // A keyless backend is legal, but when the server DOES require a key the
+        // failure mode is an opaque 403 on connect — make "we are about to go out
+        // without an Authorization header" visible in the log.
+        tracing::warn!(
+            "[keys] no API key resolved (backend_id={backend_id:?}) — connecting unauthenticated"
+        );
+    }
+    key
 }
 
 /// Frontend-facing config load: the config plus whether Rust had to RECOVER it (backed up a
@@ -331,9 +340,10 @@ pub fn play_mic_test(
         'play: {
             // Keep `sink` (it owns the device stream) alive until playback finishes
             // (dropping it cuts audio).
-            let Ok(sink) = rodio::DeviceSinkBuilder::open_default_sink() else {
+            let Ok(mut sink) = rodio::DeviceSinkBuilder::open_default_sink() else {
                 break 'play; // no output device / audio server down — fall through to signal "ended"
             };
+            sink.log_on_drop(false); // every replay would otherwise print "Dropping DeviceSink..." on stderr
             // Guarded by the sample_rate == 0 early-return above; still no unwrap on runtime data.
             let Some(rate) = std::num::NonZero::new(sample_rate) else {
                 break 'play;

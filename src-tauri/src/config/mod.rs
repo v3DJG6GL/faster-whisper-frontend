@@ -790,7 +790,18 @@ pub mod keys {
     }
 
     pub fn get(backend_id: &str) -> Option<String> {
-        entry(backend_id).ok()?.get_password().ok()
+        match entry(backend_id).and_then(|e| e.get_password()) {
+            Ok(k) => Some(k),
+            // Simply not stored — the caller treats the backend as keyless.
+            Err(keyring::Error::NoEntry) => None,
+            // Anything else (Ambiguous duplicate items, a store/platform failure) means a
+            // key may EXIST but cannot be read — the visible symptom is an opaque 403 on
+            // connect, so say what actually happened.
+            Err(e) => {
+                tracing::warn!("[keys] keyring read failed for backend {backend_id}: {e}");
+                None
+            }
+        }
     }
 
     pub fn delete(backend_id: &str) -> anyhow::Result<()> {

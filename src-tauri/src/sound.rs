@@ -75,9 +75,10 @@ pub fn play_cue(kind: String) {
     std::thread::spawn(move || {
         // Keep `sink` (it owns the device stream) alive until the tone
         // finishes — dropping it cuts audio.
-        let Ok(sink) = rodio::DeviceSinkBuilder::open_default_sink() else {
+        let Ok(mut sink) = rodio::DeviceSinkBuilder::open_default_sink() else {
             return;
         };
+        sink.log_on_drop(false); // every cue would otherwise print "Dropping DeviceSink..." on stderr
         let player = rodio::Player::connect_new(sink.mixer());
         player.append(rodio::buffer::SamplesBuffer::new(
             std::num::NonZero::new(1).unwrap(), // mono
