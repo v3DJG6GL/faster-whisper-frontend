@@ -82,6 +82,11 @@
       "matchPackageNames": ["cpal", "rodio"]
     },
     {
+      "description": "Hold rubato on the 0.x line. 3.0 is a full API rewrite -- SincFixedIn is gone, replaced by an `Async` resampler driven through buffer adapters (SequentialSliceOfVecs) and an `Indexing` struct -- and it would mean rewriting the live mic->16kHz resampling path for no capability this app needs (simple fixed-input mono sinc). 0.16 serves that with zero code change. Drop this rule and port audio/resample.rs if a 3.x feature is ever actually required.",
+      "matchPackageNames": ["rubato"],
+      "allowedVersions": "<1.0.0"
+    },
+    {
       "description": "react and react-dom must ship the identical version, and their @types track the same major.",
       "groupName": "react",
       "matchPackageNames": [
