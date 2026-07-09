@@ -30,12 +30,14 @@ pub struct VkError {
 }
 
 /// One typing request handed to the virtual-keyboard thread.
+#[cfg_attr(windows, allow(dead_code))] // the consuming worker is Linux-only (zwp_virtual_keyboard)
 pub struct VkJob {
     text: String,
     auto_enter: bool,
     reply: oneshot::Sender<Result<(), VkError>>,
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Active is only constructed by the Linux worker startup
 enum VkChannel {
     Unstarted,
     Active(mpsc::UnboundedSender<VkJob>),

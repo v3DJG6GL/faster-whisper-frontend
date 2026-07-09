@@ -48,6 +48,7 @@ pub fn permitted() -> bool {
 #[cfg(not(target_os = "linux"))]
 pub fn stop_held_sessions(_app: &tauri::AppHandle) {}
 #[cfg(not(target_os = "linux"))]
+#[cfg_attr(windows, allow(dead_code))] // Windows never starts evdev (win_hotkeys owns all chords); stub kept for the shared signature
 pub fn start(_app: &tauri::AppHandle, _state: &EvdevState, _profiles: &[crate::config::Profile], _quick_add_hotkey: &[String]) {}
 #[cfg(not(target_os = "linux"))]
 pub async fn setup() -> Result<String, String> {

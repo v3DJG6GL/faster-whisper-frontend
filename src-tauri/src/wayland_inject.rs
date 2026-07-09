@@ -18,6 +18,7 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// One typing request handed to the persistent typer task: type `text`, then an
 /// optional Enter; `reply` carries the result back to the awaiting command.
+#[cfg_attr(windows, allow(dead_code))] // the consuming typer task is Linux-only (RemoteDesktop portal)
 pub struct Job {
     text: String, // characters to type (empty for a paste chord)
     paste: bool,  // true → synthesize the paste chord instead of typing `text`
@@ -34,6 +35,7 @@ pub struct Job {
 /// direct-typing injection). Reusing one portal session across utterances is what
 /// stops KDE from re-prompting for "Control input devices" on every segment.
 #[derive(Default)]
+#[cfg_attr(windows, allow(dead_code))] // only the Linux portal path reads the sender; managed state on all platforms
 pub struct WaylandTyper(pub Mutex<Option<mpsc::Sender<Job>>>);
 
 #[cfg(target_os = "linux")]

@@ -48,6 +48,7 @@ pub struct FocusedApp {
 /// rendered text from PRIMARY; `Unavailable` = no Text interface / proxy error (terminals, canvases,
 /// asleep trees) → can't even confirm a selection exists → the seed falls back to PRIMARY, but the
 /// correct-on-close guard treats it as "don't touch" (it can't verify the word is still selected).
+#[cfg_attr(windows, allow(dead_code))] // selection reads are AT-SPI (Linux); Windows seeds via win_seed
 pub enum SelRead {
     Text(String),
     Empty,
@@ -67,6 +68,7 @@ struct Snapshot {
     /// Element focus is accepted only from this app (or when it's `None` — the moment after a
     /// switch, incl. into an Electron app that never emits `window:activate`). This is what stops
     /// a background Electron app's stray focus from hijacking detection (the "chromium ghost").
+    #[cfg_attr(windows, allow(dead_code))] // only the Linux AT-SPI listener filters on it
     active_app: Option<String>,
     /// The focused TEXT element behind `current` / `last_other`, retained so a lazy command can
     /// read its current selection via the AT-SPI Text interface WITHOUT walking the tree — the
@@ -193,6 +195,7 @@ pub async fn focused_app(g: &AtspiGuard) -> Option<FocusedApp> {
 /// reports. Lazy + time-bounded; this is a one-shot query to a single RETAINED element ref, never
 /// a per-event tree walk (which froze apps). Used to seed Quick-Add from the live selection and to
 /// confirm, on close, that the same text is still selected before correcting it.
+#[cfg_attr(windows, allow(dead_code))] // AT-SPI (Linux) path; Windows seeds via win_seed's copy grab
 pub async fn focused_selection(g: &AtspiGuard) -> SelRead {
     start(g);
     #[cfg(target_os = "linux")]

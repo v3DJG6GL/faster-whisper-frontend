@@ -127,6 +127,7 @@ pub fn inject(
 /// window has taken focus. BLOCKING (a Wayland round-trip to the selection's owner) — always
 /// call from a time-bounded `spawn_blocking`, never on the UI thread (same freeze hazard as
 /// `begin_injection`'s clipboard read).
+#[cfg_attr(windows, allow(dead_code))] // PRIMARY is a Linux concept; Windows seeds via win_seed
 pub fn read_primary_selection() -> Option<String> {
     #[cfg(target_os = "linux")]
     {

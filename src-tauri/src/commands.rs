@@ -1050,6 +1050,7 @@ pub async fn get_focused_selection(
 
 /// Read the Wayland PRIMARY ("highlight") selection off the UI thread, time-bounded — the same
 /// hazard guard as `begin_injection` (a hung clipboard owner must not stall the caller).
+#[cfg_attr(windows, allow(dead_code))] // PRIMARY is a Linux concept; Windows seeds via win_seed
 async fn read_primary_now() -> Option<String> {
     read_selection_bounded(crate::inject::read_primary_selection).await
 }

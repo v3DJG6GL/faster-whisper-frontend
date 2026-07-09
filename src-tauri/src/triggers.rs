@@ -126,6 +126,7 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
 // The GlobalShortcuts portal is M7.
 
 #[derive(Clone)]
+#[cfg_attr(windows, allow(dead_code))] // see module header: on Windows the plugin is never the registrar
 enum ShortcutTarget {
     Dictate { profile_id: String, activation: ActivationType },
     OpenQuickAdd,
@@ -218,6 +219,7 @@ pub fn unregister_all(app: &AppHandle) {
 
 /// (Re)register global shortcuts for the enabled Profiles. Unregisterable hotkeys
 /// (modifier-only / Wayland) are skipped with a log — the CLI path covers them.
+#[cfg_attr(windows, allow(dead_code))] // see module header: on Windows the plugin is never the registrar
 pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hotkey: &[String]) {
     // Flush any held PTT chord's "stop" before tearing down the old registrations (a rebind mid-hold
     // would otherwise lose the release-stop and wedge "listening"). Mirrors evdev's stop_held_sessions.
