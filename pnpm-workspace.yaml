@@ -13,3 +13,16 @@
 # the pnpm 11 bump lands.
 allowBuilds:
   esbuild: false
+
+# pnpm 11 also ships a default 1-day `minimumReleaseAge`: `pnpm install
+# --frozen-lockfile` hard-rejects any dependency published in the last 24h
+# (ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION). On CI that turns every bump to a
+# same-day release red until it ages out -- vite@8.1.4 hit exactly this. The
+# gate is a blunt instrument here: it fires per-install, can't distinguish a
+# routine bump from a security fix, and produces a broken build rather than a
+# held update. We turn it off so CI is deterministic, and relocate the
+# release-age protection to Renovate (.github/renovate.json: minimumReleaseAge
+# "3 days"), which holds updates BEFORE the PR/CI exists and can exempt
+# security fixes. Renovate is the only path that introduces new versions here,
+# so nothing reaches the lockfile without passing that gate first.
+minimumReleaseAge: 0

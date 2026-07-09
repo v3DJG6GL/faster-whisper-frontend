@@ -17,6 +17,12 @@
 
   "lockFileMaintenance": { "enabled": false },
 
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
+  "vulnerabilityAlerts": {
+    "minimumReleaseAge": null
+  },
+
   "ignoreDeps": ["gtk"],
 
   "packageRules": [
@@ -89,6 +95,11 @@
       "description": "@tailwindcss/vite is versioned in lockstep with the tailwindcss v4 core.",
       "groupName": "tailwind",
       "matchPackageNames": ["tailwindcss", "@tailwindcss/vite"]
+    },
+    {
+      "description": "@vitejs/plugin-react major-peer-depends on a matching vite major (v6 requires vite ^8 and imports vite's `./internal` subpath, which vite 7 does not export). A lone bump of either strands the other on an incompatible peer, so neither PR can ever go green alone -- they must bump as a pair.",
+      "groupName": "vite",
+      "matchPackageNames": ["vite", "@vitejs/plugin-react"]
     },
     {
       "description": "The three variable fonts release together - one PR instead of three.",
