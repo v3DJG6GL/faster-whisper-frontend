@@ -82,6 +82,11 @@
       "matchPackageNames": ["cpal", "rodio"]
     },
     {
+      "description": "Cap cpal at rodio's ceiling. Every rodio release up to 0.22.2 requires cpal ^0.17, so a cpal 0.18 bump -- even inside the group -- links a second complete audio backend (double ALSA/WASAPI stacks) next to the one rodio uses. Raise this cap in lockstep with a rodio release that accepts the newer cpal.",
+      "matchPackageNames": ["cpal"],
+      "allowedVersions": "<0.18.0"
+    },
+    {
       "description": "Hold rubato on the 0.x line. 3.0 is a full API rewrite -- SincFixedIn is gone, replaced by an `Async` resampler driven through buffer adapters (SequentialSliceOfVecs) and an `Indexing` struct -- and it would mean rewriting the live mic->16kHz resampling path for no capability this app needs (simple fixed-input mono sinc). 0.16 serves that with zero code change. Drop this rule and port audio/resample.rs if a 3.x feature is ever actually required.",
       "matchPackageNames": ["rubato"],
       "allowedVersions": "<1.0.0"
