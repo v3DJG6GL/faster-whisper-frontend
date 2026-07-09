@@ -74,15 +74,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 parking_lot = "0.12"
 
-# Secure API-key storage in the OS secret store. keyring 4 split into keyring-core
-# plus per-platform store crates; the `v1` feature is the drop-in compat layer that
-# keeps the old synchronous Entry API (new/get/set/delete) and auto-registers the
-# platform store on first use, so no code change was needed. On Linux it wires
-# zbus-secret-service-keyring-store (pure-Rust zbus + RustCrypto AES/CBC/SHA2), so
-# there is genuinely no system libdbus or openssl -- unlike keyring 3's
-# `sync-secret-service`, which pulled dbus-secret-service -> libdbus-sys. Native
-# stores (Keychain / Windows credential manager) elsewhere.
-keyring = { version = "4", features = ["v1"] }
+# Secure API-key storage in the OS secret store. HELD AT 3 (see renovate.json):
+# the keyring 4 "v1" migration broke API-key reads INSIDE the running app on
+# KDE/Plasma -- every streaming connect went out without Authorization and the
+# backend 403'd (shipped broken as v0.1.10, reverted in v0.1.11). Subtle part:
+# a standalone test binary read the same wallet entries fine, so the failure is
+# specific to the app's async environment (atspi switches zbus to the tokio
+# reactor process-wide; keyring 4's Linux store is zbus-based, while keyring 3's
+# sync-secret-service speaks libdbus directly and is immune). Before retrying 4:
+# reproduce a keys::get() inside a running tokio runtime + spawn_blocking, and
+# consider pinning the store's rt-tokio feature. Costs of staying on 3:
+# dbus-secret-service -> libdbus-sys (a system lib) stays in the Linux tree.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 enigo = "0.6.1"
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 

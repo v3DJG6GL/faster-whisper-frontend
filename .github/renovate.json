@@ -87,6 +87,11 @@
       "allowedVersions": "<0.18.0"
     },
     {
+      "description": "Hold keyring on 3. The v4 'v1' compat layer broke API-key reads inside the running app on KDE (streaming connects went out unauthenticated -> 403; shipped broken as v0.1.10, reverted in v0.1.11) while a standalone test binary read the same wallet entries fine -- an async-environment interaction between keyring 4's zbus-based store and the app's tokio-reactor zbus (atspi). Lift only after reproducing keys::get() under a running tokio runtime + spawn_blocking and verifying a real dictation round-trip on Plasma.",
+      "matchPackageNames": ["keyring"],
+      "allowedVersions": "<4"
+    },
+    {
       "description": "Hold rubato on the 0.x line. 3.0 is a full API rewrite -- SincFixedIn is gone, replaced by an `Async` resampler driven through buffer adapters (SequentialSliceOfVecs) and an `Indexing` struct -- and it would mean rewriting the live mic->16kHz resampling path for no capability this app needs (simple fixed-input mono sinc). 0.16 serves that with zero code change. Drop this rule and port audio/resample.rs if a 3.x feature is ever actually required.",
       "matchPackageNames": ["rubato"],
       "allowedVersions": "<1.0.0"
