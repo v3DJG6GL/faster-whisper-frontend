@@ -16,7 +16,7 @@ import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import type { EndpointKind, Profile } from "@/lib/types";
+import type { Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
 const ACTIVATION = {
@@ -195,11 +195,13 @@ function Editor({
             </Labeled>
             <div>
               <Labeled label="Endpoint">
-                <Select
-                  value={p.endpoint ?? ""}
-                  onChange={(v) => set({ endpoint: v ? (v as EndpointKind) : undefined })}
+                {/* Same switch as the Backends editor, plus the tri-state "Inherit" the other
+                    overrides have — mirroring the Server-type Segmented's Auto sentinel. */}
+                <Segmented
+                  value={p.endpoint ?? "inherit"}
+                  onChange={(v) => set({ endpoint: v === "inherit" ? undefined : v })}
                   options={[
-                    { value: "", label: `Inherit from backend${backend ? ` (${backend.endpoint})` : ""}` },
+                    { value: "inherit", label: "Inherit" },
                     { value: "stream", label: "Streaming" },
                     { value: "batch", label: "Batch" },
                   ]}
