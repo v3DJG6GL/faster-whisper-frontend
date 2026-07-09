@@ -41,7 +41,7 @@ import {
   reregisterShortcutsUnlessCapturing,
   shortcutModsHeld,
 } from "./api";
-import type { ActivationKind, AppRule, Backend, DecodeOverrides, FocusedApp, GeneralSettings, InsertMethod } from "./types";
+import type { ActivationKind, AppRule, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertMethod } from "./types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
 
@@ -1267,7 +1267,7 @@ export async function startLive(
   backend: Backend,
   deviceId: string | null,
   activation: ActivationKind,
-  pov?: { language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; overrideProfile?: string },
+  pov?: { language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; overrideProfile?: string; endpoint?: EndpointKind },
 ): Promise<void> {
   if (startingSession) return;
   startingSession = true;
@@ -1300,7 +1300,7 @@ async function startLiveInner(
   backend: Backend,
   deviceId: string | null,
   activation: ActivationKind,
-  pov?: { language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; overrideProfile?: string },
+  pov?: { language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; overrideProfile?: string; endpoint?: EndpointKind },
 ): Promise<void> {
   await ensureListeners();
   const setDictation = useApp.getState().setDictation;
@@ -1323,6 +1323,8 @@ async function startLiveInner(
   const decodeOverrides = mergeDecodeOverrides(backend.decodeOverrides, pov?.decodeOverrides);
   // A set per-Profile override-profile name wins; else inherit the Backend's.
   const overrideProfile = pov?.overrideProfile?.trim() ? pov.overrideProfile.trim() : backend.overrideProfile;
+  // A set per-Profile endpoint wins; else inherit the Backend's (stream vs batch transport).
+  const endpoint = pov?.endpoint ?? backend.endpoint;
 
   // Per-app rule (P16): the focused app at start decides block/method/paste-shortcut. Resolved
   // once here — you dictate into the app you triggered from — via the shared resolveInjectionTarget
@@ -1351,7 +1353,7 @@ async function startLiveInner(
     // nothing, so it can run live in any activation — it just refreshes the clipboard per segment.
     live:
       g.insertTiming === "live" &&
-      backend.endpoint === "stream" &&
+      endpoint === "stream" &&
       (method === "clipboard" || activation !== "hold"),
   };
   committedDoc = "";
@@ -1395,7 +1397,7 @@ async function startLiveInner(
     // mic should still cue), so micLive lets the start cue fire here too.
     useApp.getState().setDictation({ warming: false, micLive: true });
   }, MIC_WARM_TIMEOUT_MS);
-  activeEndpoint = backend.endpoint;
+  activeEndpoint = endpoint;
   startTargetPoll(); // keep the chip's target readout live as focus moves during the session
 
   // The clipboard snapshot for "restore after" is taken PER PHRASE now, just before each paste
@@ -1404,7 +1406,7 @@ async function startLiveInner(
   // it pastes. beginInjection is no longer called at session start.
 
   try {
-    if (backend.endpoint === "batch") {
+    if (endpoint === "batch") {
       await startRecord({
         serverUrl: backend.serverUrl,
         backendId: backend.id,

@@ -79,7 +79,8 @@ export async function initOverlayController(): Promise<void> {
           profileTag: chipTagFor(chipProfile),
           // Effective language: a set per-Profile override wins; else the Backend's.
           language: chipProfile.language?.trim() ? chipProfile.language : backend?.language,
-          mode: backend?.endpoint,
+          // Effective endpoint likewise (a Profile may override stream/batch).
+          mode: chipProfile.endpoint ?? backend?.endpoint,
         };
       }
       // P28: a tiny usage readout (today's words/minutes) for the chip, gated by the

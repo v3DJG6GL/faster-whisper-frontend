@@ -173,6 +173,9 @@ pub struct Profile {
     /// Short label for the overlay chip; None/empty = derive from `name`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
+    /// Override the Backend's endpoint (stream vs batch); None = inherit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<EndpointKind>,
     /// Override the Backend's language; None/empty = inherit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
@@ -570,6 +573,7 @@ impl Default for Config {
                     hotkey: vec!["ControlLeft".into(), "ShiftLeft".into()],
                     backend_id: Some("default".into()),
                     tag: None,
+                    endpoint: None,
                     language: None,
                     prompt: None,
                     decode_overrides: None,
@@ -583,6 +587,7 @@ impl Default for Config {
                     hotkey: vec!["ControlLeft".into(), "KeyH".into()],
                     backend_id: Some("default".into()),
                     tag: None,
+                    endpoint: None,
                     language: None,
                     prompt: None,
                     decode_overrides: None,
@@ -652,6 +657,7 @@ fn migrate_legacy(text: &str) -> Option<Config> {
                 hotkey: m.hotkey,
                 backend_id: m.profile_id,
                 tag: None,
+                endpoint: None,
                 language: None,
                 prompt: None,
                 decode_overrides: None,

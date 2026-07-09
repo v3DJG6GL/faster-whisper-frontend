@@ -62,7 +62,7 @@ function ProfileCard({ p }: { p: Profile }) {
       <div className="mt-5 flex items-center justify-between">
         <HotkeyChips codes={p.hotkey} />
         <div className="text-right">
-          <div className="font-mono text-[11px] uppercase tracking-label text-faint">{backend?.endpoint ?? "—"}</div>
+          <div className="font-mono text-[11px] uppercase tracking-label text-faint">{p.endpoint ?? backend?.endpoint ?? "—"}</div>
           <div className="text-[12.5px] text-dim">{backend?.name ?? "No backend"}</div>
         </div>
       </div>
@@ -260,7 +260,7 @@ export default function Home() {
         </div>
         <div className="grid grid-cols-3 border-t border-line font-mono text-[12px]">
           <Readout label="model" value={shownBackend?.model ?? "—"} />
-          <Readout label="endpoint" value={shownBackend?.endpoint ?? "—"} accent />
+          <Readout label="endpoint" value={shown?.endpoint ?? shownBackend?.endpoint ?? "—"} accent />
           <Readout
             label="language"
             value={shown?.language?.trim() ? shown.language : (shownBackend?.language ?? "auto")}

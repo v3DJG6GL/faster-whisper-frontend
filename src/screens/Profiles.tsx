@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
+import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { DecodeFields } from "@/components/DecodeFields";
@@ -16,7 +16,7 @@ import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import type { Profile } from "@/lib/types";
+import type { EndpointKind, Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
 const ACTIVATION = {
@@ -60,7 +60,7 @@ function Editor({
   const [showOverrides, setShowOverrides] = useState(
     // prompt is tri-state: `!== undefined` so an explicit clear ("") still counts
     // as a set override (a truthy check would treat clear as "inherit").
-    !!(initial.language || initial.prompt !== undefined || initial.overrideProfile ||
+    !!(initial.language || initial.endpoint || initial.prompt !== undefined || initial.overrideProfile ||
       (initial.decodeOverrides && Object.keys(initial.decodeOverrides).length)),
   );
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
@@ -176,7 +176,7 @@ function Editor({
 
       <DisclosureToggle open={showOverrides} onToggle={() => setShowOverrides((v) => !v)} className="mt-5">
         Overrides{" "}
-        {p.language || p.prompt !== undefined || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) ? (
+        {p.language || p.endpoint || p.prompt !== undefined || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) ? (
           <span className="text-accent">· set</span>
         ) : (
           <span className="text-faint">· inherit backend</span>
@@ -193,6 +193,27 @@ function Editor({
                 options={[{ value: "", label: "Inherit from backend" }, ...LANGUAGES]}
               />
             </Labeled>
+            <div>
+              <Labeled label="Endpoint">
+                <Select
+                  value={p.endpoint ?? ""}
+                  onChange={(v) => set({ endpoint: v ? (v as EndpointKind) : undefined })}
+                  options={[
+                    { value: "", label: `Inherit from backend${backend ? ` (${backend.endpoint})` : ""}` },
+                    { value: "stream", label: "Streaming" },
+                    { value: "batch", label: "Batch" },
+                  ]}
+                />
+              </Labeled>
+              {/* Mirror the Backends editor's standard-server warning for a PROFILE-forced stream
+                  (an inherited stream endpoint already warns over there). */}
+              {p.endpoint === "stream" && serverKind === "standard" && (
+                <Notice className="mt-2">
+                  A standard Whisper server has no streaming endpoint — this override won’t work on{" "}
+                  <span className="font-medium">{backend?.name ?? "this backend"}</span>.
+                </Notice>
+              )}
+            </div>
             <div>
               <div className="mb-2 flex items-center gap-1.5">
                 {promptOverridden && (
@@ -341,6 +362,7 @@ function ProfileRow({
             {p.tag?.trim() && <Badge tone="accent">{p.tag.trim()}</Badge>}
             <Badge>{meta.label}</Badge>
             {p.language && <Badge>{languageLabel(p.language)}</Badge>}
+            {p.endpoint && <Badge>{p.endpoint}</Badge>}
           </div>
           <div className="mt-1.5 flex items-center gap-3">
             <HotkeyChips codes={p.hotkey} />
