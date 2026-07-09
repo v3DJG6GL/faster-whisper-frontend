@@ -365,10 +365,18 @@ pub fn stop_mic_test_playback(playback: State<MicPlayback>) {
     playback.0.fetch_add(1, Ordering::SeqCst);
 }
 
+// The six session commands below are ASYNC + spawn_blocking, NOT bare sync fns: their bodies do
+// genuinely blocking work — the keyring read (resolve_key → D-Bus), joining the previous/current
+// capture thread (StreamSession/RecordSession finish + Drop), and above all cpal's device open
+// (open_input), which on a Bluetooth mic stalls ~1-2s while the headset switches its profile
+// (A2DP → HFP) before it can capture at all. As sync commands all of that ran on the GTK/UI
+// thread — the same freeze family as the kwin/arboard gotchas — janking the whole UI on every
+// BT dictation start. State is resolved inside the closure via app.state() (a State<'_> param
+// can't cross into spawn_blocking); the state Mutex still serializes concurrent starts/stops.
 #[tauri::command]
-pub fn start_stream(
+#[allow(clippy::too_many_arguments)]
+pub async fn start_stream(
     app: AppHandle,
-    state: State<StreamState>,
     server_url: String,
     backend_id: Option<String>,
     api_key: Option<String>,
@@ -385,42 +393,52 @@ pub fn start_stream(
     trim_silence: bool,
     mute_system: bool,
 ) -> Result<(), String> {
-    let key = resolve_key(api_key, backend_id);
-    let save_dir = if save {
-        resolve_recordings_dir(&app, recordings_dir)
-    } else {
-        None
-    };
-    let mut guard = state.0.lock().map_err(|_| "stream state poisoned")?;
-    *guard = None; // stop any previous session first (Drop joins capture, drains WS)
-    let sess = session::start(
-        app,
-        StartParams {
-            server_url,
-            api_key: key,
-            model,
-            language,
-            response_format,
-            prompt,
-            decode_overrides,
-            override_profile,
-            device_id,
-            save_dir,
-            trim_silence,
-            mute_system,
-        },
-    )?;
-    *guard = Some(sess);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        let key = resolve_key(api_key, backend_id);
+        let save_dir = if save {
+            resolve_recordings_dir(&app, recordings_dir)
+        } else {
+            None
+        };
+        let state = app.state::<StreamState>();
+        let mut guard = state.0.lock().map_err(|_| "stream state poisoned".to_string())?;
+        *guard = None; // stop any previous session first (Drop joins capture, drains WS)
+        let sess = session::start(
+            app.clone(),
+            StartParams {
+                server_url,
+                api_key: key,
+                model,
+                language,
+                response_format,
+                prompt,
+                decode_overrides,
+                override_profile,
+                device_id,
+                save_dir,
+                trim_silence,
+                mute_system,
+            },
+        )?;
+        *guard = Some(sess);
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn stop_stream(state: State<StreamState>) -> Result<(), String> {
-    let sess = state.0.lock().map_err(|_| "stream state poisoned")?.take();
-    if let Some(s) = sess {
-        s.finish(); // drain in the background to deliver the last utterance
-    }
-    Ok(())
+pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<StreamState>();
+        let sess = state.0.lock().map_err(|_| "stream state poisoned".to_string())?.take();
+        if let Some(s) = sess {
+            s.finish(); // drain in the background to deliver the last utterance
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Hard-ABORT the stream session: take it out and let `Drop` run (stops capture, aborts the WS task
@@ -429,17 +447,24 @@ pub fn stop_stream(state: State<StreamState>) -> Result<(), String> {
 /// teardown the frontend's `closed` handler calls to release a parked session (capture-thread death /
 /// server-initiated close that never went through stop_stream): a no-op when already taken.
 #[tauri::command]
-pub fn cancel_stream(state: State<StreamState>) -> Result<(), String> {
-    let sess = state.0.lock().map_err(|_| "stream state poisoned")?.take();
-    drop(sess); // Drop (not finish) runs OUTSIDE the lock — the guard released on the line above
-    session::retire_active_epoch(); // discarded session (+ any detached drain) must never emit again
-    Ok(())
+pub async fn cancel_stream(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<StreamState>();
+        let sess = state.0.lock().map_err(|_| "stream state poisoned".to_string())?.take();
+        drop(sess); // Drop (not finish) runs OUTSIDE the lock — the guard released on the line above
+        session::retire_active_epoch(); // discarded session (+ any detached drain) must never emit again
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
+// Async + spawn_blocking for the same reasons as start_stream (keyring read, previous-session
+// capture join, and the BT-profile-switch stall inside cpal's open_input).
 #[tauri::command]
-pub fn start_record(
+#[allow(clippy::too_many_arguments)]
+pub async fn start_record(
     app: AppHandle,
-    state: State<RecordState>,
     server_url: String,
     backend_id: Option<String>,
     api_key: Option<String>,
@@ -455,41 +480,51 @@ pub fn start_record(
     trim_silence: bool,
     mute_system: bool,
 ) -> Result<(), String> {
-    let key = resolve_key(api_key, backend_id);
-    let save_dir = if save {
-        resolve_recordings_dir(&app, recordings_dir)
-    } else {
-        None
-    };
-    let mut guard = state.0.lock().map_err(|_| "record state poisoned")?;
-    *guard = None;
-    let sess = session::start_record(
-        app,
-        RecordParams {
-            server_url,
-            api_key: key,
-            model,
-            language,
-            prompt,
-            decode_overrides,
-            override_profile,
-            device_id,
-            save_dir,
-            trim_silence,
-            mute_system,
-        },
-    )?;
-    *guard = Some(sess);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        let key = resolve_key(api_key, backend_id);
+        let save_dir = if save {
+            resolve_recordings_dir(&app, recordings_dir)
+        } else {
+            None
+        };
+        let state = app.state::<RecordState>();
+        let mut guard = state.0.lock().map_err(|_| "record state poisoned".to_string())?;
+        *guard = None;
+        let sess = session::start_record(
+            app.clone(),
+            RecordParams {
+                server_url,
+                api_key: key,
+                model,
+                language,
+                prompt,
+                decode_overrides,
+                override_profile,
+                device_id,
+                save_dir,
+                trim_silence,
+                mute_system,
+            },
+        )?;
+        *guard = Some(sess);
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn stop_record(state: State<RecordState>) -> Result<(), String> {
-    let sess = state.0.lock().map_err(|_| "record state poisoned")?.take();
-    if let Some(s) = sess {
-        s.finish();
-    }
-    Ok(())
+pub async fn stop_record(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<RecordState>();
+        let sess = state.0.lock().map_err(|_| "record state poisoned".to_string())?.take();
+        if let Some(s) = sess {
+            s.finish();
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Hard-ABORT the record session: take it out and let `Drop` run (stops capture + joins WITHOUT
@@ -497,11 +532,16 @@ pub fn stop_record(state: State<RecordState>) -> Result<(), String> {
 /// transcribe POST — a cancel should discard the clip, not fire a wasted server transcription. Also
 /// the idempotent teardown the `closed` handler calls to release a parked session on capture death.
 #[tauri::command]
-pub fn cancel_record(state: State<RecordState>) -> Result<(), String> {
-    let sess = state.0.lock().map_err(|_| "record state poisoned")?.take();
-    drop(sess); // Drop (not finish) runs OUTSIDE the lock — no transcription POST, releases the mute
-    session::retire_active_epoch(); // discarded session (+ any in-flight transcribe POST) must never emit again
-    Ok(())
+pub async fn cancel_record(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<RecordState>();
+        let sess = state.0.lock().map_err(|_| "record state poisoned".to_string())?.take();
+        drop(sess); // Drop (not finish) runs OUTSIDE the lock — no transcription POST, releases the mute
+        session::retire_active_epoch(); // discarded session (+ any in-flight transcribe POST) must never emit again
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Retire the active session epoch WITHOUT draining or aborting — for the frontend's error / fatal-
