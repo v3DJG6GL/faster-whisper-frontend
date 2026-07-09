@@ -65,9 +65,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 parking_lot = "0.12"
 
-# Secure API-key storage in the OS secret store. Pure-Rust crypto + zbus-based
-# Secret Service on Linux (no system libdbus/openssl needed); native stores elsewhere.
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+# Secure API-key storage in the OS secret store. keyring 4 split into keyring-core
+# plus per-platform store crates; the `v1` feature is the drop-in compat layer that
+# keeps the old synchronous Entry API (new/get/set/delete) and auto-registers the
+# platform store on first use, so no code change was needed. On Linux it wires
+# zbus-secret-service-keyring-store (pure-Rust zbus + RustCrypto AES/CBC/SHA2), so
+# there is genuinely no system libdbus or openssl -- unlike keyring 3's
+# `sync-secret-service`, which pulled dbus-secret-service -> libdbus-sys. Native
+# stores (Keychain / Windows credential manager) elsewhere.
+keyring = { version = "4", features = ["v1"] }
 enigo = "0.6.1"
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 
