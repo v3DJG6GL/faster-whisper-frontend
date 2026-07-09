@@ -47,7 +47,7 @@ cpal = "0.15"
 rodio = { version = "0.20", default-features = false }
 
 # Streaming dictation: resample to 16 kHz + WebSocket to the backend.
-rubato = "0.15"
+rubato = "0.16"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
