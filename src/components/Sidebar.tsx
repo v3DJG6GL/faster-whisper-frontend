@@ -62,7 +62,7 @@ export function Sidebar() {
         <div className="leading-none">
           {/* Family wordmark grammar (shared with faster-whisper-backend): light "faster"
               in ink + bold "whisper" in accent, and an accent "&gt;" prompt before the
-              role label. Mirrored in docs/brand/lockup.html — keep the two in sync. */}
+              role label. Mirrored in docs/brand/logo.html — keep the two in sync. */}
           <div className="font-display text-[20px] font-[430] tracking-tight text-text">
             faster<span className="font-[730] text-accent">whisper</span>
           </div>
