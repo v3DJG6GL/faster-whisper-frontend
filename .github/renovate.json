@@ -1,0 +1,105 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":dependencyDashboard"
+  ],
+  "timezone": "Etc/UTC",
+  "labels": ["dependencies"],
+  "rangeStrategy": "bump",
+  "automerge": true,
+  "automergeStrategy": "squash",
+
+  "platformAutomerge": false,
+
+  "osvVulnerabilityAlerts": true,
+
+  "lockFileMaintenance": { "enabled": false },
+
+  "ignoreDeps": ["gtk"],
+
+  "packageRules": [
+    {
+      "description": "Group all GitHub Actions bumps into one PR.",
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions"
+    },
+    {
+      "description": "The github-actions manager also extracts `node-version: 22` from actions/setup-node and wants to rewrite it to the exact current patch (22.23.1). That pin is deliberately floating - the runner should pick up 22.x security patches on its own - so suppress everything below a major. A move to Node 24 still surfaces on the Dependency Dashboard via the major rule at the bottom.",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["node"],
+      "matchUpdateTypes": ["pin", "pinDigest", "digest", "patch", "minor"],
+      "enabled": false
+    },
+    {
+      "description": "Cargo.toml declares loose requirements on purpose (`tauri = \"2\"`, `cpal = \"0.15\"`). The global `bump` strategy would rewrite each of those to an exact minor on every release, churning the manifest for no gain. `update-lockfile` instead moves Cargo.lock for in-range updates and only edits Cargo.toml when the new version falls outside the existing requirement. ci.yml runs `cargo check --locked`, so the refreshed lock is exactly what gets verified.",
+      "matchManagers": ["cargo"],
+      "rangeStrategy": "update-lockfile"
+    },
+    {
+      "description": "Cargo treats a bump of the leftmost non-zero component as breaking: cpal 0.15 -> 0.16 or windows-sys 0.60 -> 0.61 is a semver-MAJOR change. Renovate's cargo versioning is plain semver 2.0, so it labels these updateType `minor` and the major rule at the bottom never sees them. Open the PR and let CI compile both targets, but never automerge: several of these crates are ABI-coupled to something outside their own version (windows-sys must stay on the version Tauri already resolves, or the binary carries two copies; gtk is ignored outright for the same reason).",
+      "matchManagers": ["cargo"],
+      "matchCurrentVersion": "<1.0.0",
+      "matchUpdateTypes": ["minor"],
+      "automerge": false
+    },
+    {
+      "description": "Tauri's Rust crates and its JS packages are released in lockstep, and a mismatch between them surfaces as an IPC/type error at runtime rather than a compile error - so they must land in a single PR. This is the one grouping Dependabot structurally cannot express, since its groups never span two ecosystems. Not automerged: ci.yml only runs `cargo check` + `vite build` and never launches the app, so a regression in the tray-icon / global-shortcut / autostart plugins would pass green.",
+      "groupName": "tauri",
+      "matchPackageNames": [
+        "tauri",
+        "tauri-build",
+        "tauri-plugin-*",
+        "@tauri-apps/**"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "The text-injection stack: clipboard (arboard), synthetic typing (enigo), XDG RemoteDesktop portal (ashpd). These sit on the paths the clipboard-restore and modifier-release fixes hardened, and ci.yml never injects a keystroke - so even a patch release here can change behaviour invisibly to a green build. Always gets a human.",
+      "matchPackageNames": ["arboard", "enigo", "ashpd"],
+      "automerge": false
+    },
+    {
+      "description": "atspi re-exports atspi-connection's types; the two versions must be compatible or the a11y-bus listener fails to build. Their feature flags are hand-tuned at the declaration site (p2p is deliberately off) - re-read that comment before merging.",
+      "groupName": "atspi",
+      "matchPackageNames": ["atspi", "atspi-connection"]
+    },
+    {
+      "description": "wayland-protocols-misc is built against a specific wayland-client; bump them together.",
+      "groupName": "wayland",
+      "matchPackageNames": ["wayland-client", "wayland-protocols-misc"]
+    },
+    {
+      "description": "rodio plays through cpal's backend and pins a cpal version; a lone bump of either duplicates the audio backend.",
+      "groupName": "cpal and rodio",
+      "matchPackageNames": ["cpal", "rodio"]
+    },
+    {
+      "description": "react and react-dom must ship the identical version, and their @types track the same major.",
+      "groupName": "react",
+      "matchPackageNames": [
+        "react",
+        "react-dom",
+        "@types/react",
+        "@types/react-dom"
+      ]
+    },
+    {
+      "description": "@tailwindcss/vite is versioned in lockstep with the tailwindcss v4 core.",
+      "groupName": "tailwind",
+      "matchPackageNames": ["tailwindcss", "@tailwindcss/vite"]
+    },
+    {
+      "description": "The three variable fonts release together - one PR instead of three.",
+      "groupName": "fontsource",
+      "matchPackageNames": ["@fontsource-variable/**"]
+    },
+    {
+      "description": "Major bumps require manual review - surface as checkboxes on the Dependency Dashboard, do not open the PR automatically, do not automerge. Minor/patch still flow through automerge gated by ci.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "dependencyDashboardApproval": true
+    }
+  ]
+}
