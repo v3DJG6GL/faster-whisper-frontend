@@ -14,8 +14,8 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
-    /* Path alias */
-    "baseUrl": ".",
+    /* Path alias (bundler resolution resolves `paths` relative to this file,
+       so no `baseUrl` — which TS 6 deprecates and TS 7 removes). */
     "paths": { "@/*": ["./src/*"] },
 
     /* Linting */
