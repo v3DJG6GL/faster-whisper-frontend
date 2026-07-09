@@ -40,7 +40,7 @@ jobs:
     outputs:
       tag: ${{ steps.bump.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Bump version, commit, tag, push
         id: bump
@@ -75,7 +75,7 @@ jobs:
     permissions:
       contents: write # create the draft release + upload assets
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # On a bump run, build the tagged commit (not the pre-bump dispatch ref).
           ref: ${{ needs.version.outputs.tag || github.ref }}
@@ -93,11 +93,11 @@ jobs:
             echo "tag=" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: pnpm/action-setup@v4 # version comes from package.json "packageManager"
+      - uses: pnpm/action-setup@v6 # version comes from package.json "packageManager"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24.18.0
           cache: pnpm
 
       # ci.yml's list + librsvg/patchelf, which only the AppImage bundling needs.
@@ -135,7 +135,7 @@ jobs:
       # create 403s ("Resource not accessible by integration") — and a draft also
       # keeps the release invisible until BOTH platforms uploaded. The publish job
       # below flips it live once everything is attached.
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -145,7 +145,7 @@ jobs:
 
       - name: Upload installers as run artifacts (build-only run)
         if: steps.rel.outputs.tag == ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: installers-${{ matrix.platform }}
           if-no-files-found: error
