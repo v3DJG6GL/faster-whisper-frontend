@@ -14,7 +14,7 @@ function BrandMark() {
   // level meter on the warm-dark Signal tile); keep the two in sync. Colors are
   // fixed on purpose: it's the logo, identical in both themes and on the desktop.
   return (
-    <svg width="26" height="26" viewBox="0 0 1024 1024" fill="none" aria-hidden>
+    <svg width="32" height="32" viewBox="0 0 1024 1024" fill="none" aria-hidden>
       <defs>
         <linearGradient id="bm-tile" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#262019" />
@@ -63,10 +63,10 @@ export function Sidebar() {
           {/* Family wordmark grammar (shared with faster-whisper-backend): light "faster"
               in ink + bold "whisper" in accent, and an accent "&gt;" prompt before the
               role label. Mirrored in docs/brand/lockup.html — keep the two in sync. */}
-          <div className="font-display text-[15px] font-[430] tracking-tight text-text">
+          <div className="font-display text-[18px] font-[430] tracking-tight text-text">
             faster<span className="font-[730] text-accent">whisper</span>
           </div>
-          <div className="mt-1 font-mono text-[10px] uppercase tracking-label text-faint">
+          <div className="mt-1 font-mono text-[11px] uppercase tracking-label text-faint">
             <span className="font-bold text-accent">&gt;</span> frontend
           </div>
         </div>
