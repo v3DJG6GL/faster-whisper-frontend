@@ -62,6 +62,7 @@ const TONE_BG: Record<DictationTone, string> = {
   live: "bg-live",
   dim: "bg-dim",
   rec: "bg-rec",
+  think: "bg-think",
 };
 
 // After speech stops, the pill stays expanded this long before collapsing back to
@@ -317,6 +318,7 @@ export default function Overlay() {
   // the window's top-left (= the webview viewport), which maps to GDK's logical
   // coordinate space. No-op outside Tauri.
   const chipRef = useRef<HTMLDivElement>(null);
+  const dotRef = useRef<HTMLSpanElement>(null);
   const reportBounds = useCallback(() => {
     // While hovering, hold the input region at the FULL window instead of the chip's
     // live bounds. WebKitGTK turns a GDK leave into a synthesized mouse-move and clears
@@ -338,14 +340,20 @@ export default function Overlay() {
       );
       return;
     }
-    const el = chipRef.current;
+    // Tucked: only the status dot's outer half is visible, but the pill element still spans
+    // its full ~38×42px box (padding + height) — reporting THAT (plus the 10px forgiveness
+    // pad Rust adds) left an invisible ~58×31px block around the half-dot swallowing clicks
+    // meant for the app beneath (e.g. a browser's menu bar right under the top edge). Report
+    // just the dot's rect instead: the padded region stays a comfortable hover target for
+    // un-tucking while clicks a few px away pass through again.
+    const el = (peeked ? dotRef.current : null) ?? chipRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
     if (r.width > 0 && r.height > 0)
       void setChipHitRegion(r.x, r.y, r.width, r.height).catch((e) =>
         console.error("set chip hit region failed:", e),
       );
-  }, [hovering]);
+  }, [hovering, peeked]);
   // Report bounds ONLY at settled moments — never mid-morph. A region that resizes
   // out from under the cursor causes hover enter/leave thrash (chip flickering
   // open/closed, "stuck" open, needing a click to wake). So updates come only from
@@ -513,7 +521,7 @@ export default function Overlay() {
       : vis.state === "speaking"
         ? "0 0 12px rgba(54,208,122,0.5)"
         : vis.state === "processing"
-          ? "0 0 8px rgba(168,159,147,0.35)" // finishing: faint neutral
+          ? "0 0 10px rgba(111,174,217,0.45)" // finishing/warm-up: cool "working" blue
           : peeked
             ? standby
               ? "0 0 10px rgba(168,159,147,0.5)" // tucked idle: soft neutral halo
@@ -524,11 +532,11 @@ export default function Overlay() {
                 ? "0 0 12px rgba(255,158,44,0.55)" // calm breathing ember
                 : "0 0 8px rgba(255,158,44,0.4)";
   // Match the dot + transcript during the post-speech finalize/insert phase: dictationVisual
-  // maps processing to the neutral "machine working" tone, so the bars must too (else they'd
-  // glow amber "ready" next to a grey dot). Mirrors Home's waveTone derivation.
+  // maps processing to the blue "machine working" tone, so the bars must too (else they'd
+  // glow amber "ready" next to a blue dot). Mirrors Home's waveTone derivation.
   // Armed-amber only while actually listening; idle (the post-session expand-linger) reads neutral
   // grey like the hollow idle dot + every other surface (off/idle = grey), not the amber "ready" tone.
-  const barTone = state.warming || processing ? "dim" : speaking ? "live" : state.status === "listening" ? "accent" : "dim";
+  const barTone = state.warming || processing ? "think" : speaking ? "live" : state.status === "listening" ? "accent" : "dim";
 
   // Deep-idle edge-peek driver: after the chip sits undisturbed for peekTimeoutSec, tuck it to
   // the edge; ANY activity — a status change (e.g. dictation starting), speech, finishing, a
@@ -744,6 +752,7 @@ export default function Overlay() {
               the clipboard — both per phrase and as the end-of-session confirmation. No distinct
               icons. The rest of the time it shows the steady status fill / breathing. */}
           <span
+            ref={dotRef}
             style={{ boxShadow: dotGlow }}
             className={cn(
               "size-2.5 shrink-0 rounded-full transition-colors duration-300",

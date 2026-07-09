@@ -65,7 +65,7 @@ export function Waveform({
   processing?: boolean;
   bars?: number;
   variant?: "bars" | "dots";
-  tone?: "accent" | "rec" | "dim" | "live";
+  tone?: "accent" | "rec" | "dim" | "live" | "think";
   /** Reveal the Pride flag through the bars while hovered (see component note). */
   pride?: boolean;
   className?: string;
@@ -299,9 +299,11 @@ export function Waveform({
           ? "text-rec"
           : tone === "live"
             ? "text-live"
-            : tone === "dim"
-              ? "text-faint"
-              : "text-accent",
+            : tone === "think"
+              ? "text-think"
+              : tone === "dim"
+                ? "text-faint"
+                : "text-accent",
         className,
       )}
     />

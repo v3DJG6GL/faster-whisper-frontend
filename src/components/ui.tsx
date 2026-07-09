@@ -577,6 +577,7 @@ const DOT_BG: Record<string, string> = {
   accent: "bg-accent",
   live: "bg-live",
   dim: "bg-dim",
+  think: "bg-think",
 };
 /** A small state dot. The dictation surfaces drive `tone`/`filled`/`pulse` from
  *  `dictationVisual()` so colour + shape + motion all match the overlay chip; off
@@ -588,7 +589,7 @@ export function StatusDot({
   filled = true,
   title,
 }: {
-  tone?: "ok" | "warn" | "rec" | "idle" | "faint" | "accent" | "live" | "dim";
+  tone?: "ok" | "warn" | "rec" | "idle" | "faint" | "accent" | "live" | "dim" | "think";
   pulse?: boolean;
   filled?: boolean;
   title?: string;

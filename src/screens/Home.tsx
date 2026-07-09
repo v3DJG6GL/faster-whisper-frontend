@@ -122,7 +122,7 @@ export default function Home() {
     vis.state === "speaking"
       ? "bg-live text-white"
       : vis.state === "processing"
-        ? "bg-dim text-white"
+        ? "bg-think text-white"
         : vis.state === "armed"
           ? "bg-accent text-accent-ink"
           : "bg-surface-2 text-dim";

@@ -9,7 +9,13 @@ import type { DictationStatus } from "./types";
  * It mirrors the overlay chip's long-standing palette, which is the design intent:
  *   • green  (live)   — actively speaking
  *   • amber  (accent) — armed but silent ("ready to speak"; the OS mic-in-use cue)
- *   • neutral (dim)   — finalizing / inserting (machine working)
+ *   • blue   (think)  — finalizing / inserting / mic warm-up (machine working). Was
+ *                       neutral-grey (dim), but grey-working was indistinguishable
+ *                       from grey-off — literally identical on the tucked edge-dot,
+ *                       whose colour is its ONLY channel (no shape/motion legibility
+ *                       at half-dot size). A cool hue can't be confused with any of
+ *                       the warm states, and deliberately is NOT amber: the mic is
+ *                       closed while finalizing, so "ready to speak" would lie.
  *   • red    (rec)    — error
  *   • grey   (faint)  — off / idle, rendered HOLLOW
  *
@@ -25,7 +31,7 @@ import type { DictationStatus } from "./types";
 export type DictationVisualState = "off" | "armed" | "speaking" | "processing" | "error";
 
 /** Colour-token key — maps 1:1 to an `app.css` --c-* token / Tailwind `bg-*`/`text-*` utility. */
-export type DictationTone = "faint" | "accent" | "live" | "dim" | "rec";
+export type DictationTone = "faint" | "accent" | "live" | "dim" | "rec" | "think";
 
 export interface DictationVisual {
   state: DictationVisualState;
@@ -44,18 +50,18 @@ export function dictationVisual(
   warming = false,
 ): DictationVisual {
   // Mic opening but not yet delivering audio (e.g. a Bluetooth headset switching into
-  // its mic profile). Read as neutral "working" — NOT the amber "ready to speak" — so
+  // its mic profile). Read as blue "working" — NOT the amber "ready to speak" — so
   // the user doesn't start talking before the mic is actually capturing.
   if (warming && status === "listening") {
-    return { state: "processing", tone: "dim", label: "warming up…", pulse: true, filled: true };
+    return { state: "processing", tone: "think", label: "warming up…", pulse: true, filled: true };
   }
   switch (status) {
     case "error":
       return { state: "error", tone: "rec", label: "error", pulse: true, filled: true };
     case "transcribing":
-      return { state: "processing", tone: "dim", label: "finalizing…", pulse: true, filled: true };
+      return { state: "processing", tone: "think", label: "finalizing…", pulse: true, filled: true };
     case "injecting":
-      return { state: "processing", tone: "dim", label: "inserting…", pulse: true, filled: true };
+      return { state: "processing", tone: "think", label: "inserting…", pulse: true, filled: true };
     case "listening":
       return speaking
         ? { state: "speaking", tone: "live", label: "listening", pulse: true, filled: true }
