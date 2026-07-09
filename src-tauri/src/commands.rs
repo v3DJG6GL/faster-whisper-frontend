@@ -797,6 +797,16 @@ async fn read_selection_bounded(
     }
 }
 
+/// True when the currently-focused app is a remote-desktop client (mstsc & co, see
+/// inject::is_remote_desktop_app). Clipboard RESTORES are skipped for those targets: their
+/// clipboard sync is asynchronous (RDP delayed rendering fetches the data only when the remote
+/// app pastes), so a restored value can be what a still-pending remote paste actually receives.
+fn focused_remote_target(guard: &crate::atspi_guard::AtspiGuard) -> bool {
+    crate::atspi_guard::focused_app_now(guard)
+        .map(|f| crate::inject::is_remote_desktop_app(&f.app_id))
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), String> {
     // Read the clipboard OFF the GTK main thread, time-bounded (see read_selection_bounded). This is
@@ -804,6 +814,13 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
     // freezes the whole app. On timeout/empty we KEEP the prior snapshot: that path means we still hold
     // the clipboard ourselves (the user copied nothing new), so the existing snapshot already has it.
     match read_selection_bounded(|| arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())).await {
+        // The clipboard still holds OUR last transcript (a restore was skipped or failed silently)
+        // — that is NOT the user's clipboard, and snapshotting it would resurrect stale dictation
+        // at the end-of-session restore. Same reasoning as the None arm: the user copied nothing
+        // new, so the existing snapshot (if any) already has the real thing.
+        Some(text) if crate::inject::is_own_injected(&text) => {
+            tracing::info!("[clip] begin_injection: clipboard holds our own transcript — keeping prior snapshot");
+        }
         Some(text) => {
             tracing::info!("[clip] begin_injection: snapshot {} chars", text.len());
             if let Ok(mut g) = snap.0.lock() {
@@ -817,9 +834,16 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
 
 /// Restore the clipboard snapshot taken by `begin_injection` (end of a live session).
 #[tauri::command]
-pub fn end_injection(snap: State<ClipboardSnapshot>) {
+pub fn end_injection(snap: State<ClipboardSnapshot>, guard: State<crate::atspi_guard::AtspiGuard>) {
     let prev = snap.0.lock().ok().and_then(|mut g| g.take());
     if let Some(prev) = prev {
+        // Remote-desktop target: skip the restore (same contract as the per-paste path) — the
+        // restored value can be what the remote's still-pending paste fetches. The snapshot is
+        // already consumed above, so it can't leak into a later session either way.
+        if focused_remote_target(guard.inner()) {
+            tracing::info!("[clip] end_injection: remote-desktop target — restore skipped");
+            return;
+        }
         tracing::info!("[clip] end_injection: restore {} chars (delayed)", prev.len());
         // Persist on Wayland: a plain set_text that drops immediately doesn't stick, which
         // is why the clipboard was "never restored". Serve it from a live owner — and after a
@@ -834,9 +858,18 @@ pub fn end_injection(snap: State<ClipboardSnapshot>) {
 /// snapshot stays for the next phrase to restore again). Served from a live owner so it
 /// persists on Wayland; no-op when no snapshot was taken (restore off / non-paste session).
 #[tauri::command]
-pub fn restore_clipboard_snapshot(snap: State<ClipboardSnapshot>) {
+pub fn restore_clipboard_snapshot(
+    snap: State<ClipboardSnapshot>,
+    guard: State<crate::atspi_guard::AtspiGuard>,
+) {
     let prev = snap.0.lock().ok().and_then(|g| g.clone());
     if let Some(prev) = prev {
+        // Remote-desktop target: skip the per-phrase restore (see end_injection) — the snapshot
+        // stays untouched for later phrases / a later non-remote end-of-session restore.
+        if focused_remote_target(guard.inner()) {
+            tracing::info!("[clip] restore_clipboard_snapshot: remote-desktop target — restore skipped");
+            return;
+        }
         tracing::info!("[clip] restore_clipboard_snapshot: {} chars (delayed)", prev.len());
         // Serve after the same ~400ms margin as end_injection / the paste path (via
         // restore_clipboard_later), NOT an immediate set_clipboard_persistent: the boundary-
@@ -1056,6 +1089,7 @@ pub async fn inject_text(
     app: AppHandle,
     typer: State<'_, WaylandTyper>,
     vkbd: State<'_, crate::virtual_keyboard::VirtualKeyboard>,
+    guard: State<'_, crate::atspi_guard::AtspiGuard>,
     text: String,
     method: String,
     auto_enter: bool,
@@ -1101,6 +1135,24 @@ pub async fn inject_text(
     if text.is_empty() && !auto_enter {
         return Ok(());
     }
+    // Pasting into a remote-desktop client (mstsc & co) needs different clipboard handling: the
+    // local clipboard reaches the remote host ASYNCHRONOUSLY, so the paste gets a longer settle
+    // before Ctrl+V (the new content must cross the network before the forwarded keystroke) and
+    // NEVER restores the previous clipboard afterwards (with RDP delayed rendering, the restored
+    // value can be what the remote's paste actually fetches — this is how a 7-minute-old
+    // transcript once landed instead of the fresh one). Direct typing never touches the
+    // clipboard, so it doesn't care.
+    let remote_target = method != "direct"
+        && match crate::atspi_guard::focused_app_now(guard.inner()) {
+            Some(f) if crate::inject::is_remote_desktop_app(&f.app_id) => {
+                tracing::info!(
+                    "[inject] remote-desktop target ({}) — longer clipboard settle, restore skipped",
+                    f.app_id
+                );
+                true
+            }
+            _ => false,
+        };
     // Wait briefly for the trigger chord's shortcut modifiers (Ctrl/Alt/Meta) to be
     // physically released before typing — otherwise the injected keys fold into the
     // still-held modifier and fire shortcuts in the focused app (worst with a latch
@@ -1163,12 +1215,22 @@ pub async fn inject_text(
             // caller) could wedge at "injecting" forever (the stuck-finalize watchdog is stream-only).
             // Read prev separately (400ms cap; None on timeout → skip the restore), then set the
             // clipboard so the set_text still lands regardless of the prev-read result.
-            let prev = if restore_clipboard {
-                let p = read_selection_bounded(|| arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())).await;
-                if p.is_none() {
-                    tracing::info!("[clip] paste: prev-clipboard read empty/timeout — skipping restore");
+            // remote_target skips the capture entirely — see its resolution above.
+            let prev = if restore_clipboard && !remote_target {
+                match read_selection_bounded(|| arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())).await {
+                    None => {
+                        tracing::info!("[clip] paste: prev-clipboard read empty/timeout — skipping restore");
+                        None
+                    }
+                    // Never adopt OUR OWN last transcript as "the user's previous clipboard" —
+                    // it lingers after a failed/skipped restore, and restoring it would resurrect
+                    // stale dictation on every future paste (mirrors the Windows/X11 paste guard).
+                    Some(t) if crate::inject::is_own_injected(&t) => {
+                        tracing::info!("[clip] paste: prior clipboard is our own transcript — skipping restore");
+                        None
+                    }
+                    some => some,
                 }
-                p
             } else {
                 None
             };
@@ -1176,7 +1238,8 @@ pub async fn inject_text(
                 .await
                 .map_err(|e| e.to_string())?;
             set_res?; // propagate a set_text failure; prev was captured (time-bounded) above
-            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+            // Longer settle for a remote-desktop target (content must cross the network first).
+            tokio::time::sleep(std::time::Duration::from_millis(if remote_target { 300 } else { 60 })).await;
             let r = crate::wayland_inject::paste(&app, typer.inner(), paste_shortcut, auto_enter).await;
             // Restore the user's prior clipboard only if the paste actually landed. If it failed,
             // leave the transcript on the clipboard so it's recoverable (the user can paste it
@@ -1188,7 +1251,7 @@ pub async fn inject_text(
         }
     } else {
         tokio::task::spawn_blocking(move || {
-            crate::inject::inject(&text, &method, auto_enter, restore_clipboard, &paste_shortcut)
+            crate::inject::inject(&text, &method, auto_enter, restore_clipboard, &paste_shortcut, remote_target)
         })
         .await
         .map_err(|e| e.to_string())?

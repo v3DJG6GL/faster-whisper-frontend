@@ -169,21 +169,24 @@ pub fn set_deep(g: &AtspiGuard, enabled: bool) {
 
 /// The focused app (its id + title + editability), or `None` when nothing is known yet
 /// (cold listener / no a11y). Reports the most recent NON-self focused app.
-pub async fn focused_app(g: &AtspiGuard) -> Option<FocusedApp> {
+/// Synchronous — it's a cached-snapshot read, no a11y round-trip — so SYNC commands
+/// (the clipboard-restore gating) can use it too; `focused_app` is the async wrapper.
+pub fn focused_app_now(g: &AtspiGuard) -> Option<FocusedApp> {
     start(g);
-    let result = {
-        let snap = g.snapshot.lock();
-        // Prefer the app focused RIGHT NOW. Only when our own window (or the shell) holds
-        // focus — e.g. clicking "use current", or triggering dictation from our UI — fall
-        // back to the app focused just before us. This (with update_snapshot setting
-        // last_other only at the transition into our window) is what stops detection from
-        // sticking on a stale app.
-        match &snap.current {
-            Some(c) if !is_noise(&c.app_id) => Some(c.clone()),
-            _ => snap.last_other.clone(),
-        }
-    };
-    result
+    let snap = g.snapshot.lock();
+    // Prefer the app focused RIGHT NOW. Only when our own window (or the shell) holds
+    // focus — e.g. clicking "use current", or triggering dictation from our UI — fall
+    // back to the app focused just before us. This (with update_snapshot setting
+    // last_other only at the transition into our window) is what stops detection from
+    // sticking on a stale app.
+    match &snap.current {
+        Some(c) if !is_noise(&c.app_id) => Some(c.clone()),
+        _ => snap.last_other.clone(),
+    }
+}
+
+pub async fn focused_app(g: &AtspiGuard) -> Option<FocusedApp> {
+    focused_app_now(g)
 }
 
 /// Read the CURRENT text selection of the focused element of the same non-self app `focused_app`
