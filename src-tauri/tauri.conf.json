@@ -47,6 +47,7 @@
         "skipTaskbar": true,
         "resizable": false,
         "focus": true,
+        "shadow": false,
         "visible": false
       }
     ],
