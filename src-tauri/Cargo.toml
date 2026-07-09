@@ -35,7 +35,13 @@ serde_json = "1"
 
 # HTTP client for the backend (batch transcription + model discovery). rustls to
 # avoid a system OpenSSL dependency.
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls-no-provider"] }
+# reqwest 0.13 renamed `rustls-tls` -> `rustls`, and that new feature brings the
+# aws-lc-rs provider (a C/NASM native build the Windows runner lacks, and a second
+# crypto stack beside the ring that tokio-tungstenite already uses). So: TLS with
+# NO bundled provider, plus an explicit direct dep on rustls/ring; lib.rs installs
+# ring as the process-wide provider at startup. One provider, no native toolchain.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 # Microphone capture (ALSA/PipeWire on Linux, WASAPI on Windows).
 cpal = "0.15"

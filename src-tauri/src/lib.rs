@@ -57,6 +57,12 @@ fn windows_log_file() -> Option<std::fs::File> {
 pub fn run() {
     init_tracing();
 
+    // reqwest 0.13's `rustls-no-provider` ships no TLS crypto provider; install
+    // ring as the process-wide default (the same provider tokio-tungstenite's
+    // rustls already uses) so HTTPS never depends on which crate features happen
+    // to be enabled elsewhere in the tree. Err = already installed, which is fine.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tauri::Builder::default()
         // single-instance MUST be the first plugin registered.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
