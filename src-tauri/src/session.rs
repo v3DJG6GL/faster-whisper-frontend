@@ -344,6 +344,46 @@ fn rms(samples: &[f32]) -> f32 {
     (sum / samples.len() as f32).sqrt()
 }
 
+/// RAW-audio floor above which a chunk counts as the mic actually delivering signal. A live mic's
+/// noise floor always clears this (measured ~2.4e-5 RMS on the QUIETEST resting chunk of a laptop
+/// mic at low gain) while a still-warming device delivers exact digital zeros — so the gap is wide
+/// on both sides. Deliberately checked on the RAW chunk RMS, NOT the smoothed+gained meter level:
+/// that one passes through chip_level's clamp and a 0-seeded EMA against a threshold
+/// (streaming.ts MIC_LIVE_LEVEL) that quiet mics only hover AT, which held "warming up…" until the
+/// user actually spoke (the "~2s until the chip turns amber" complaint).
+const MIC_LIVE_RMS: f32 = 1.0e-5;
+/// Consecutive above-floor callbacks required before the mic counts as live (~30 ms), so the
+/// single open-click/DC blip a warming device can emit doesn't end the warm-up gate early.
+const MIC_LIVE_CONFIRM: u8 = 3;
+
+/// Per-callback "did the mic actually go live?" detector, one per capture stream. Sets `flag`
+/// (announced once as `stream://mic-live` by `publish_levels_with_live`, on the level cadence)
+/// after MIC_LIVE_CONFIRM consecutive chunks above MIC_LIVE_RMS. Cheap: one extra O(n) RMS pass
+/// per ~10-20 ms chunk, and none at all once live.
+struct LiveDetect {
+    hits: u8,
+    flag: Arc<AtomicBool>,
+}
+
+impl LiveDetect {
+    fn new(flag: Arc<AtomicBool>) -> Self {
+        Self { hits: 0, flag }
+    }
+    fn feed(&mut self, mono: &[f32]) {
+        if self.flag.load(Ordering::Relaxed) {
+            return;
+        }
+        if rms(mono) > MIC_LIVE_RMS {
+            self.hits += 1;
+            if self.hits >= MIC_LIVE_CONFIRM {
+                self.flag.store(true, Ordering::Relaxed);
+            }
+        } else {
+            self.hits = 0;
+        }
+    }
+}
+
 /// One EMA step of the level meter (chip_level gain + clamp, 0.7/0.3 smoothing) — mirrors the
 /// capture meter. Centralized so the coefficients stay in one place across both capture
 /// loops' per-sample-format arms (they were copied verbatim 6×).
@@ -383,17 +423,22 @@ fn run_capture(
     level: Arc<AtomicU32>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
+    // Raw-audio go-live detector (→ one-shot `stream://mic-live`), shared between the format arms'
+    // callbacks and the publish loop below. See LiveDetect for why this is raw-RMS, not the meter.
+    let live = Arc::new(AtomicBool::new(false));
     let stream = match format {
         SampleFormat::F32 => {
             let tx = pcm_tx.clone();
             let lvl = level.clone();
             let mut sm = 0.0f32;
+            let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
                 &config,
                 move |data: &[f32], _| {
                     let mono = downmix(data, channels, |s| s);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    ld.feed(&mono);
                     let _ = tx.send(mono);
                 },
                 err_cb_with_stop(stop.clone()),
@@ -404,12 +449,14 @@ fn run_capture(
             let tx = pcm_tx.clone();
             let lvl = level.clone();
             let mut sm = 0.0f32;
+            let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
                 &config,
                 move |data: &[i16], _| {
                     let mono = downmix(data, channels, |s| s as f32 / 32768.0);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    ld.feed(&mono);
                     let _ = tx.send(mono);
                 },
                 err_cb_with_stop(stop.clone()),
@@ -420,12 +467,14 @@ fn run_capture(
             let tx = pcm_tx.clone();
             let lvl = level.clone();
             let mut sm = 0.0f32;
+            let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
                 &config,
                 move |data: &[u16], _| {
                     let mono = downmix(data, channels, |s| (s as f32 - 32768.0) / 32768.0);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    ld.feed(&mono);
                     let _ = tx.send(mono);
                 },
                 err_cb_with_stop(stop.clone()),
@@ -438,7 +487,7 @@ fn run_capture(
 
     stream.play().map_err(|e| e.to_string())?;
 
-    crate::audio::publish_levels(app, "stream://level", &level, &stop);
+    crate::audio::publish_levels_with_live(app, "stream://level", &level, &stop, Some(&live));
     // `stream` (and the cloned sender) drop here, ending capture and the channel.
     Ok(())
 }
@@ -893,6 +942,9 @@ fn run_record_capture(
     // One resampler, shared with the `move` capture closure via Arc<Mutex>, so we can flush its
     // buffered tail after capture stops (the closure owns nothing else we could reach).
     let resampler = Arc::new(Mutex::new(Resampler16k::new(in_rate).map_err(|e| e.to_string())?));
+    // Same raw-audio go-live detector as the streaming path (batch parity): the frontend's
+    // warm-up gate runs for BOTH endpoints, so both must announce `stream://mic-live`.
+    let live = Arc::new(AtomicBool::new(false));
     let stream = match format {
         SampleFormat::F32 => {
             let buf = buffer.clone();
@@ -900,12 +952,14 @@ fn run_record_capture(
             let mut sm = 0.0f32;
             let mut mono: Vec<f32> = Vec::new();
             let resampler = resampler.clone();
+            let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
                 &config,
                 move |data: &[f32], _| {
                     downmix_into(data, channels, |s| s, &mut mono);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    ld.feed(&mono);
                     let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
                     if !bytes.is_empty() {
                         if let Ok(mut b) = buf.lock() {
@@ -923,12 +977,14 @@ fn run_record_capture(
             let mut sm = 0.0f32;
             let mut mono: Vec<f32> = Vec::new();
             let resampler = resampler.clone();
+            let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
                 &config,
                 move |data: &[i16], _| {
                     downmix_into(data, channels, |s| s as f32 / 32768.0, &mut mono);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    ld.feed(&mono);
                     let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
                     if !bytes.is_empty() {
                         if let Ok(mut b) = buf.lock() {
@@ -946,12 +1002,14 @@ fn run_record_capture(
             let mut sm = 0.0f32;
             let mut mono: Vec<f32> = Vec::new();
             let resampler = resampler.clone();
+            let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
                 &config,
                 move |data: &[u16], _| {
                     downmix_into(data, channels, |s| (s as f32 - 32768.0) / 32768.0, &mut mono);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    ld.feed(&mono);
                     let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
                     if !bytes.is_empty() {
                         if let Ok(mut b) = buf.lock() {
@@ -968,7 +1026,7 @@ fn run_record_capture(
     .map_err(|e| e.to_string())?;
 
     stream.play().map_err(|e| e.to_string())?;
-    crate::audio::publish_levels(app, "stream://level", &level, &stop);
+    crate::audio::publish_levels_with_live(app, "stream://level", &level, &stop, Some(&live));
     // Stop capture (drop the stream → no more callbacks), then flush the resampler's buffered tail
     // (< one input block — ~21 ms at 48 kHz) into the recording so the final sliver isn't dropped.
     drop(stream);

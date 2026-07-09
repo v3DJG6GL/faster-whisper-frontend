@@ -19,7 +19,33 @@ pub mod resample;
 /// capture loops (mic-test "audio://level", plus streaming and batch "stream://level"), so the refresh
 /// rate / decode protocol lives in one place. Runs on the caller's capture thread until stop flips.
 pub fn publish_levels(app: &AppHandle, event: &str, level: &AtomicU32, stop: &AtomicBool) {
+    publish_levels_with_live(app, event, level, stop, None);
+}
+
+/// Like [`publish_levels`], but also announces the mic going LIVE: when `mic_live` (fed by the
+/// capture callback's raw-RMS detector, see `session::LiveDetect`) flips true, emit a one-shot
+/// `stream://mic-live`. The frontend clears its "warming up…" gate on it — the smoothed+gained
+/// level it also receives passes through an EMA from 0 and a threshold a quiet mic's noise floor
+/// only hovers AT, so on such mics the level-based gate held the chip grey until the user actually
+/// spoke. Ungated by the session epoch for the same reason level emits are: the capture thread is
+/// always joined before the next session starts, so it can't outlive its session.
+pub fn publish_levels_with_live(
+    app: &AppHandle,
+    event: &str,
+    level: &AtomicU32,
+    stop: &AtomicBool,
+    mic_live: Option<&AtomicBool>,
+) {
+    let mut announced = false;
     while !stop.load(Ordering::SeqCst) {
+        if !announced {
+            if let Some(flag) = mic_live {
+                if flag.load(Ordering::Relaxed) {
+                    announced = true;
+                    let _ = app.emit("stream://mic-live", ());
+                }
+            }
+        }
         let l = f32::from_bits(level.load(Ordering::Relaxed));
         let _ = app.emit(event, l);
         std::thread::sleep(Duration::from_millis(33));

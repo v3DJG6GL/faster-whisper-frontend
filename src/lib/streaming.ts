@@ -62,10 +62,13 @@ let activeEndpoint: "stream" | "batch" | null = null;
 // the first frame we hold the chip in "warming up…" — a neutral/grey dot, NEVER an amber
 // "listening" flash before the mic is live — and defer the start cue until real audio
 // actually arrives:
-//   • MIC_LIVE_LEVEL — a warming mic delivers exact zeros (level 0); a live mic always
-//     has a faint noise floor above it even in silence (measured ~0.0002 on a quiet
-//     Bluetooth headset). The threshold sits in that gap, so we detect "live" from the
-//     floor alone — no need to wait for speech.
+//   • stream://mic-live (PRIMARY) — Rust detects real audio on the RAW capture chunks
+//     (session.rs LiveDetect) and announces it once; the listener below clears the gate.
+//   • MIC_LIVE_LEVEL (fallback) — a warming mic delivers exact zeros (level 0); a live mic
+//     usually has a faint noise floor above it even in silence (measured ~0.0002 on a quiet
+//     Bluetooth headset). But this level is smoothed from a 0-seeded EMA and QUIET mics'
+//     floors only hover at the threshold (a Framework 13 mic rests at ~1.4-1.9e-4), which
+//     held the gate until the user spoke — hence the raw-RMS Rust signal as primary.
 //   • MIC_LIVE_CONFIRM — require a couple of consecutive frames above the floor, so a
 //     single open-blip (a click/DC spike when the stream opens) can't end it early.
 //   • MIC_WARM_TIMEOUT_MS — hard cap on "warming up…" even if no audio is ever detected.
@@ -541,6 +544,21 @@ async function ensureListeners(): Promise<void> {
         // until the next session and churn a needless cross-window emit).
         if (useApp.getState().status === "listening") setDictation({ level: latestLevel });
       }, wait);
+    }
+  });
+
+  // Rust confirmed real audio on the RAW capture (a few consecutive non-silent chunks — see
+  // session.rs LiveDetect). This is the PRIMARY go-live signal: the smoothed+gained level gate
+  // below starts from a 0-seeded EMA against a threshold a quiet mic's noise floor only hovers
+  // AT, so on such mics it held "warming up…" until the user actually spoke (~2s of grey chip
+  // after the latch press). The level gate stays as a fallback (it can only fire later, and the
+  // warmTimer guard makes whichever lands first the only one that acts). Same stale-emit safety
+  // as level events: the capture thread is joined before the next session starts, and a post-stop
+  // arrival no-ops because stopLive/cancelLive already cleared the warm timer.
+  await reg<null>("stream://mic-live", () => {
+    if (warmTimer !== null) {
+      clearWarmTimer();
+      setDictation({ warming: false, micLive: true });
     }
   });
 
