@@ -15,7 +15,9 @@
   </defs>
   <rect width="1024" height="1024" rx="224" fill="url(#tile)"/>
   <rect x="10" y="10" width="1004" height="1004" rx="214" fill="none" stroke="#ff9e2c" stroke-opacity="0.12" stroke-width="20"/>
-  <g fill="url(#bar)">
+  <!-- Brand-family geometry: the bars lean 9° forward, shared with the backend's mark
+       ("whisper bars, faster lean"). Attribute transform so resvg/tauri-icon honors it. -->
+  <g fill="url(#bar)" transform="translate(512 512) skewX(-9) translate(-512 -512)">
     <rect x="152" y="392" width="104" height="240" rx="52"/>
     <rect x="308" y="292" width="104" height="440" rx="52"/>
     <rect x="464" y="192" width="104" height="640" rx="52"/>

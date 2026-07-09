@@ -26,7 +26,10 @@ function BrandMark() {
         </linearGradient>
       </defs>
       <rect width="1024" height="1024" rx="224" fill="url(#bm-tile)" />
-      <g fill="url(#bm-bar)">
+      {/* Brand-family geometry: the five meter bars lean 9° forward, shared with the
+          backend's mark ("whisper bars, faster lean"). Attribute transform (not CSS)
+          so the same artwork rasterizes identically through `tauri icon`. */}
+      <g fill="url(#bm-bar)" transform="translate(512 512) skewX(-9) translate(-512 -512)">
         <rect x="152" y="392" width="104" height="240" rx="52" />
         <rect x="308" y="292" width="104" height="440" rx="52" />
         <rect x="464" y="192" width="104" height="640" rx="52" />
@@ -57,11 +60,14 @@ export function Sidebar() {
       <div className="flex items-center gap-2.5 px-5 pb-5 pt-6">
         <BrandMark />
         <div className="leading-none">
-          <div className="font-display text-[15px] font-semibold tracking-tight text-text">
-            faster<span className="text-accent">whisper</span>
+          {/* Family wordmark grammar (shared with faster-whisper-backend): light "faster"
+              in ink + bold "whisper" in accent, and an accent "&gt;" prompt before the
+              role label. Mirrored in docs/brand/lockup.html — keep the two in sync. */}
+          <div className="font-display text-[15px] font-[430] tracking-tight text-text">
+            faster<span className="font-[730] text-accent">whisper</span>
           </div>
           <div className="mt-1 font-mono text-[10px] uppercase tracking-label text-faint">
-            dictation
+            <span className="font-bold text-accent">&gt;</span> frontend
           </div>
         </div>
       </div>

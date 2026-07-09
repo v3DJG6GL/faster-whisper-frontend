@@ -35,15 +35,18 @@
   .lockup { display: inline-flex; align-items: center; gap: 40px; padding: 10px; }
   .lockup svg { width: 104px; height: 104px; flex: none; }
   .text { line-height: 1; }
+  /* Family wordmark grammar (shared with faster-whisper-backend): light "faster" in
+     ink + bold "whisper" in accent; accent ">" prompt before the grey role label. */
   .title {
-    font: 600 60px/1 "Hubot Sans Variable", system-ui, sans-serif;
+    font: 430 60px/1 "Hubot Sans Variable", system-ui, sans-serif;
     letter-spacing: -0.025em; color: var(--text);
   }
-  .title .accent { color: var(--accent); }
+  .title .accent { color: var(--accent); font-weight: 730; }
   .sub {
-    margin-top: 16px; font: 400 40px/1 "Geist Mono Variable", monospace;
+    margin-top: 16px; font: 500 40px/1 "Geist Mono Variable", monospace;
     letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint);
   }
+  .sub .prompt { color: var(--accent); font-weight: 700; }
 </style>
 <script>
   if (location.search.includes("light")) document.documentElement.dataset.theme = "light";
@@ -63,7 +66,7 @@
         </linearGradient>
       </defs>
       <rect width="1024" height="1024" rx="224" fill="url(#lk-tile)"/>
-      <g fill="url(#lk-bar)">
+      <g fill="url(#lk-bar)" transform="translate(512 512) skewX(-9) translate(-512 -512)">
         <rect x="152" y="392" width="104" height="240" rx="52"/>
         <rect x="308" y="292" width="104" height="440" rx="52"/>
         <rect x="464" y="192" width="104" height="640" rx="52"/>
@@ -73,7 +76,7 @@
     </svg>
     <div class="text">
       <div class="title">faster<span class="accent">whisper</span></div>
-      <div class="sub">dictation</div>
+      <div class="sub"><span class="prompt">&gt;</span> frontend</div>
     </div>
   </div>
 </body>
