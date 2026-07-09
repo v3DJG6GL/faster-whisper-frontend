@@ -73,14 +73,17 @@ pub fn play_cue(kind: String) {
     };
     let samples = render(notes);
     std::thread::spawn(move || {
-        // Keep `_stream` alive until the tone finishes (dropping it cuts audio).
-        let Ok((_stream, handle)) = rodio::OutputStream::try_default() else {
+        // Keep `sink` (it owns the device stream) alive until the tone
+        // finishes — dropping it cuts audio.
+        let Ok(sink) = rodio::DeviceSinkBuilder::open_default_sink() else {
             return;
         };
-        let Ok(sink) = rodio::Sink::try_new(&handle) else {
-            return;
-        };
-        sink.append(rodio::buffer::SamplesBuffer::new(1, SAMPLE_RATE, samples));
-        sink.sleep_until_end();
+        let player = rodio::Player::connect_new(sink.mixer());
+        player.append(rodio::buffer::SamplesBuffer::new(
+            std::num::NonZero::new(1).unwrap(), // mono
+            std::num::NonZero::new(SAMPLE_RATE).unwrap(),
+            samples,
+        ));
+        player.sleep_until_end();
     });
 }

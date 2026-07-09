@@ -275,7 +275,7 @@ fn open_input(
         supported.sample_format(),
         supported.channels() as usize,
         supported.config(),
-        supported.sample_rate().0,
+        supported.sample_rate(),
     ))
 }
 

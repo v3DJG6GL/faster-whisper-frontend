@@ -44,13 +44,16 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "mul
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 # Microphone capture (ALSA/PipeWire on Linux, WASAPI on Windows).
-cpal = "0.15"
+cpal = "0.17"
 
 # Synthesised start/stop/error cues, played from Rust so they fire for
 # hotkey-triggered dictations (the WebView would block autoplay). Uses the same
-# cpal 0.15 backend; no audio assets to bundle. default-features off drops the
-# media decoders we don't need.
-rodio = { version = "0.20", default-features = false }
+# cpal 0.17 backend; no audio assets to bundle. default-features off drops the
+# media decoders we don't need; `playback` brings back the cpal output path
+# (rodio 0.22 made it optional). cpal is capped at 0.17 in Cargo.toml AND in
+# renovate.json until a rodio release accepts cpal 0.18 -- a lone cpal bump
+# past rodio's requirement puts two audio backends in the binary.
+rodio = { version = "0.22", default-features = false, features = ["playback"] }
 
 # Streaming dictation: resample to 16 kHz + WebSocket to the backend.
 rubato = "0.16"

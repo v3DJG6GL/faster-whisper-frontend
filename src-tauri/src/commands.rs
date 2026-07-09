@@ -329,19 +329,26 @@ pub fn play_mic_test(
     let generation = counter.fetch_add(1, Ordering::SeqCst) + 1;
     std::thread::spawn(move || {
         'play: {
-            // Keep `_stream` alive until playback finishes (dropping it cuts audio).
-            let Ok((_stream, handle)) = rodio::OutputStream::try_default() else {
+            // Keep `sink` (it owns the device stream) alive until playback finishes
+            // (dropping it cuts audio).
+            let Ok(sink) = rodio::DeviceSinkBuilder::open_default_sink() else {
                 break 'play; // no output device / audio server down — fall through to signal "ended"
             };
-            let Ok(sink) = rodio::Sink::try_new(&handle) else {
+            // Guarded by the sample_rate == 0 early-return above; still no unwrap on runtime data.
+            let Some(rate) = std::num::NonZero::new(sample_rate) else {
                 break 'play;
             };
-            sink.append(rodio::buffer::SamplesBuffer::new(1, sample_rate, samples));
+            let player = rodio::Player::connect_new(sink.mixer());
+            player.append(rodio::buffer::SamplesBuffer::new(
+                std::num::NonZero::new(1).unwrap(), // mono
+                rate,
+                samples,
+            ));
             // Play until it drains, but bail the instant a newer replay (or a new test)
             // superseded us — that newer playback owns the "ended" signal.
-            while !sink.empty() {
+            while !player.empty() {
                 if counter.load(Ordering::SeqCst) != generation {
-                    sink.stop();
+                    player.stop();
                     return;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(40));

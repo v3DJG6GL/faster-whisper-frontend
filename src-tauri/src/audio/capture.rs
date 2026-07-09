@@ -170,7 +170,7 @@ fn run(
     let sample_format = supported.sample_format();
     let channels = supported.channels() as usize;
     let config: StreamConfig = supported.config();
-    let sample_rate = config.sample_rate.0;
+    let sample_rate = config.sample_rate;
     let cap = MAX_CLIP_SECS * sample_rate as usize;
 
     // Device opened — stamp its rate for playback (samples were cleared above).
