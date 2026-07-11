@@ -9,11 +9,23 @@ import { IS_WINDOWS } from "./platform";
  */
 let started = false;
 
+/** Resolves once the initial load hydrated the store AND the auto-save
+ *  subscriber is armed (or immediately outside Tauri). The sync engine awaits
+ *  this so its startup pull merges against the real persisted state, and so a
+ *  pull-apply's hydrate() is guaranteed to be persisted by the subscriber. */
+let resolveConfigReady: () => void = () => {};
+export const configReady: Promise<void> = new Promise((r) => {
+  resolveConfigReady = r;
+});
+
 export async function initConfig(): Promise<void> {
   // Run once. React StrictMode double-invokes the App effect in dev; without this guard a
   // second initConfig would register a second auto-save subscriber (doubled saveConfig +
   // reregisterShortcuts on every change). Mirrors initOverlayController / initUsageController.
-  if (!isTauri || started) return;
+  if (!isTauri || started) {
+    resolveConfigReady();
+    return;
+  }
   started = true;
 
   // Arm auto-save ONLY after the initial load resolves. The store boots with seeded
@@ -149,4 +161,6 @@ export async function initConfig(): Promise<void> {
         );
     }, 400);
   });
+
+  resolveConfigReady();
 }

@@ -177,6 +177,31 @@ export interface QuickAddTarget {
   slug: string;
 }
 
+/** The toggleable settings-sync categories (what travels in the synced blob /
+ *  an export file). Machine-local fields (mic device, recordings folder,
+ *  open-at-login, evdev, the sync meta itself) are excluded by construction —
+ *  see lib/sync.ts for the authoritative category → config-path mapping. */
+export type SyncCategory = "general" | "recording" | "backends" | "profiles" | "appRules";
+
+/** Settings-sync metadata. MACHINE-LOCAL by contract: lives in the config for
+ *  persistence, but the sync engine strips it from every blob/export — each
+ *  device decides for itself what it syncs (the Obsidian lesson: syncing the
+ *  sync scope itself creates a bootstrap paradox and lets one device force
+ *  categories onto another). */
+export interface SyncSettings {
+  enabled: boolean;
+  /** Which Backend stores the blob (the "sync server"). null = not chosen. */
+  backendId: string | null;
+  /** Per-device category toggles — which parts of the config this device
+   *  pushes AND applies from pulls. OFF categories still round-trip through
+   *  pushes untouched (compose/preserve) so this device never erases them. */
+  categories: Record<SyncCategory, boolean>;
+  /** Per-device server-address overrides, keyed by Backend id: "use this URL
+   *  on this machine" while the canonical serverUrl stays synced. Solves the
+   *  localhost-vs-LAN split without URL ping-pong. Never synced. */
+  urlOverrides: Record<string, string>;
+}
+
 export interface AppSettings {
   theme: ThemeName;
   microphoneId: string | null;
@@ -184,6 +209,7 @@ export interface AppSettings {
   quickAddList?: QuickAddTarget | null; // pinned "Word mappings" list the QuickAdd window targets
   general: GeneralSettings;
   recording: RecordingSettings;
+  sync?: SyncSettings; // machine-local sync meta; excluded from blobs/exports
 }
 
 /** Runtime dictation status — mirrors the Rust state machine, surfaced to the chip. */

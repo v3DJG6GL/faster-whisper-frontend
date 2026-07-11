@@ -18,6 +18,16 @@ import type {
   UsageBucket,
   UsageStats,
 } from "./types";
+import type {
+  ExportEnvelope,
+  ImportResult,
+  SyncBlob,
+  SyncDeleteResult,
+  SyncDeviceInfo,
+  SyncPullResult,
+  SyncPushResult,
+  SyncState,
+} from "./syncTypes";
 
 export const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -657,6 +667,121 @@ export async function pickRecordingsDir(): Promise<string | null> {
   if (!isTauri) return null;
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({ directory: true, multiple: false });
+  return typeof selected === "string" ? selected : null;
+}
+
+// ── P30: settings export/import + server sync ──────────────────────────────
+
+/** Pull the account's synced settings blob (GET /v1/client-settings). Structured
+ *  result: 0 = unreachable, 200 = ok (version 0 = empty store), 401 = key,
+ *  404 = the backend build predates sync. Outside Tauri → unreachable. */
+export async function syncPull(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+}): Promise<SyncPullResult> {
+  if (!isTauri) return { ok: false, status: 0, error: "Not running in the desktop app." };
+  return invoke<SyncPullResult>("sync_pull", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+  });
+}
+
+/** Push the composed blob (PUT /v1/client-settings). `baseVersion` is the server
+ *  version this device last saw (0 creates); a 409 comes back in `conflict`
+ *  carrying the current server state for the merge loop. */
+export async function syncPush(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  blob: SyncBlob;
+  baseVersion: number;
+  device: string;
+}): Promise<SyncPushResult> {
+  if (!isTauri) return { ok: false, status: 0, error: "Not running in the desktop app." };
+  return invoke<SyncPushResult>("sync_push", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    blob: args.blob,
+    baseVersion: args.baseVersion,
+    device: args.device,
+  });
+}
+
+/** Drop the account's server-side blob (DELETE /v1/client-settings). */
+export async function syncDelete(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+}): Promise<SyncDeleteResult> {
+  if (!isTauri) return { ok: false, status: 0, error: "Not running in the desktop app." };
+  return invoke<SyncDeleteResult>("sync_delete", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+  });
+}
+
+/** Local sync bookkeeping (<config dir>/sync-state.json): last-synced snapshot
+ *  (the 3-way merge base) + server version + hash + device id. */
+export async function loadSyncState(): Promise<SyncState | null> {
+  if (!isTauri) return null;
+  return invoke<SyncState | null>("load_sync_state");
+}
+
+export async function saveSyncState(state: SyncState): Promise<void> {
+  if (!isTauri) return;
+  await invoke("save_sync_state", { state });
+}
+
+/** This machine's sync identity (persistent uuid + hostname + platform). */
+export async function syncDeviceInfo(): Promise<SyncDeviceInfo | null> {
+  if (!isTauri) return null;
+  return invoke<SyncDeviceInfo>("sync_device_info");
+}
+
+/** Bulk keyring read: the stored API keys of the given Backends (ids without a
+ *  key are omitted). Feeds export-with-secrets and the synced blob. */
+export async function readBackendKeys(backendIds: string[]): Promise<Record<string, string>> {
+  if (!isTauri) return {};
+  return invoke<Record<string, string>>("read_backend_keys", { backendIds });
+}
+
+/** Write a settings-export envelope to `path` (atomic tmp+rename, Rust-side). */
+export async function exportSettingsFile(path: string, envelope: ExportEnvelope): Promise<void> {
+  if (!isTauri) return;
+  await invoke("export_settings_file", { path, envelope });
+}
+
+/** Read + validate a settings-export file. Throws (string) with a clear message
+ *  on not-an-export / newer formatVersion / structurally-broken lists. */
+export async function importSettingsFile(path: string): Promise<ImportResult> {
+  if (!isTauri) throw new Error("Not running in the desktop app.");
+  return invoke<ImportResult>("import_settings_file", { path });
+}
+
+/** Native "save file" dialog → absolute path (or null if cancelled / not in Tauri). */
+export async function pickSavePath(defaultName: string): Promise<string | null> {
+  if (!isTauri) return null;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const selected = await save({
+    defaultPath: defaultName,
+    filters: [{ name: "Settings export", extensions: ["json"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+/** Native "open file" dialog for a settings export → absolute path (or null). */
+export async function pickImportFile(): Promise<string | null> {
+  if (!isTauri) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Settings export", extensions: ["json"] }],
+  });
   return typeof selected === "string" ? selected : null;
 }
 

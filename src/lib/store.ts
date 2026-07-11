@@ -8,6 +8,7 @@ import type {
   DictationStatus,
   FocusedApp,
   Profile,
+  SyncSettings,
   ThemeName,
   UsageStats,
 } from "./types";
@@ -40,6 +41,16 @@ const DEFAULT_BACKEND: Backend = {
   language: "auto",
   prompt: "",
   responseFormat: "verbose_json",
+};
+
+/** Sync starts off with every category opted in — flipping "Enable sync" is
+ *  the single gate; the toggles then subtract. Machine-local by contract
+ *  (never travels in a blob/export), so defaults only matter per-device. */
+export const DEFAULT_SYNC: SyncSettings = {
+  enabled: false,
+  backendId: null,
+  categories: { general: true, recording: true, backends: true, profiles: true, appRules: true },
+  urlOverrides: {},
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -85,6 +96,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     hoverRevealMs: 1000,
     quickLaunch: [],
   },
+  sync: DEFAULT_SYNC,
 };
 
 // Seed ids match the legacy mode strings so migration is idempotent (see Rust load()).
@@ -104,6 +116,12 @@ function withSettingsDefaults(raw: unknown): AppSettings {
     ...s,
     general: { ...DEFAULT_SETTINGS.general, ...(s.general ?? {}) },
     recording: { ...DEFAULT_SETTINGS.recording, ...(s.recording ?? {}) },
+    sync: {
+      ...DEFAULT_SYNC,
+      ...(s.sync ?? {}),
+      categories: { ...DEFAULT_SYNC.categories, ...(s.sync?.categories ?? {}) },
+      urlOverrides: { ...(s.sync?.urlOverrides ?? {}) },
+    },
   };
 }
 
@@ -205,10 +223,21 @@ interface AppState {
   // (which is self-contained and must NOT show the save-failure framing). null when saveError is null.
   saveErrorKind: "save" | "load" | null;
 
+  /** P30 runtime sync status (never persisted): what the Sync tab's status
+   *  line shows. `syncUnsupported` = the sync backend 404'd the endpoint
+   *  (build too old); `lastSyncedAt`/`lastSyncDevice` mirror sync-state.json. */
+  syncStatus: "idle" | "syncing" | "ok" | "error";
+  syncError: string | null;
+  syncUnsupported: boolean;
+  lastSyncedAt: number | null; // epoch ms of the last successful pull/push
+  lastSyncDevice: string | null; // last WRITER's device label (server-reported)
+
   setTheme: (t: ThemeName) => void;
   updateSettings: (patch: Partial<AppSettings>) => void;
   updateGeneral: (patch: Partial<AppSettings["general"]>) => void;
   updateRecording: (patch: Partial<AppSettings["recording"]>) => void;
+  /** Patch settings.sync (deep-merges categories/urlOverrides at the caller). */
+  updateSync: (patch: Partial<SyncSettings>) => void;
 
   upsertBackend: (b: Backend) => void;
   removeBackend: (id: string) => void;
@@ -235,6 +264,17 @@ interface AppState {
   /** Set (or clear, with null) the config-save error banner. */
   setSaveError: (msg: string | null, kind?: "save" | "load") => void;
 
+  /** P30: update the runtime sync status line (engine-owned). */
+  setSyncRuntime: (
+    patch: Partial<{
+      syncStatus: "idle" | "syncing" | "ok" | "error";
+      syncError: string | null;
+      syncUnsupported: boolean;
+      lastSyncedAt: number | null;
+      lastSyncDevice: string | null;
+    }>,
+  ) => void;
+
   /** Update live dictation runtime (status / level / partial transcript). */
   setDictation: (
     patch: Partial<{
@@ -255,6 +295,28 @@ interface AppState {
 
   /** Replace settings/backends/profiles from the persisted config (on startup). */
   hydrate: (cfg: Config) => void;
+}
+
+/** Drop every settings-side reference to a removed backend id, RETURNING THE SAME
+ *  OBJECT when nothing referenced it (so the auto-save subscriber sees no change).
+ *  quick-add pin → null; sync server → disable sync (nowhere to push); the
+ *  backend's per-device URL override → removed. */
+function scrubBackendFromSettings(settings: AppSettings, id: string): AppSettings {
+  let next = settings;
+  if (next.quickAddList?.backendId === id) next = { ...next, quickAddList: null };
+  const sync = next.sync;
+  if (sync && (sync.backendId === id || id in sync.urlOverrides)) {
+    const urlOverrides = { ...sync.urlOverrides };
+    delete urlOverrides[id];
+    next = {
+      ...next,
+      sync:
+        sync.backendId === id
+          ? { ...sync, enabled: false, backendId: null, urlOverrides }
+          : { ...sync, urlOverrides },
+    };
+  }
+  return next;
 }
 
 // Replace-or-append by id — the shared body of the upsert* reducers (backends/profiles/appRules).
@@ -292,11 +354,21 @@ export const useApp = create<AppState>((set) => ({
   saveError: null,
   saveErrorKind: null,
 
+  syncStatus: "idle",
+  syncError: null,
+  syncUnsupported: false,
+  lastSyncedAt: null,
+  lastSyncDevice: null,
+
   setTheme: (t) => {
     applyTheme(t);
     set((s) => ({ settings: { ...s.settings, theme: t } }));
   },
   updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
+  updateSync: (patch) =>
+    set((s) => ({
+      settings: { ...s.settings, sync: { ...(s.settings.sync ?? DEFAULT_SYNC), ...patch } },
+    })),
   updateGeneral: (patch) =>
     set((s) => ({ settings: { ...s.settings, general: { ...s.settings.general, ...patch } } })),
   updateRecording: (patch) =>
@@ -339,11 +411,12 @@ export const useApp = create<AppState>((set) => ({
         connections,
         usage,
         // Scrub the other id-keyed references to the removed backend so none dangle: the usage-view
-        // pin (runtime) and the PERSISTED quick-add-list pin. Keep each ref stable when it didn't
-        // point at this backend, so the auto-save subscriber doesn't see a spurious settings change.
+        // pin (runtime), the PERSISTED quick-add-list pin, and the sync meta (removing the sync
+        // server disables sync — there's nowhere to push to; also drop its per-device URL
+        // override). Keep each ref stable when it didn't point at this backend, so the auto-save
+        // subscriber doesn't see a spurious settings change.
         usageViewBackendId: s.usageViewBackendId === id ? null : s.usageViewBackendId,
-        settings:
-          s.settings.quickAddList?.backendId === id ? { ...s.settings, quickAddList: null } : s.settings,
+        settings: scrubBackendFromSettings(s.settings, id),
       };
     }),
   duplicateBackend: (id) =>
@@ -428,6 +501,8 @@ export const useApp = create<AppState>((set) => ({
   setUsageViewBackend: (id) => set({ usageViewBackendId: id }),
 
   setSaveError: (msg, kind = "save") => set({ saveError: msg, saveErrorKind: msg ? kind : null }),
+
+  setSyncRuntime: (patch) => set(patch),
 
   setDictation: (patch) =>
     set((s) => {
