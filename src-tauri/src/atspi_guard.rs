@@ -247,38 +247,52 @@ mod imp {
     type Guarded = Arc<parking_lot::Mutex<super::Snapshot>>;
 
     pub(super) async fn run(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String> {
-        // CRITICAL: enable session accessibility so app a11y bridges actually EMIT events.
-        // Without this, Qt/GTK/Chromium stay dormant and the event stream is silent (this is
-        // what libatspi's init does). Best-effort; left on after exit — benign, and KDE's
-        // QT_ACCESSIBILITY=1 already implies it. This makes app detection work WITHOUT deep
-        // detection; deep detection then only adds the Chromium/Electron poke.
-        // Time-bounded + retried: on a congested/half-wedged session bus this call can hang or
-        // error. It's the CRITICAL bit that makes bridges emit — but run_once below will happily
-        // connect to a SILENT stream if it never lands, and a silent stream never "ends", so the
-        // reconnect loop won't fire to retry it. A single fire-and-forget attempt (the old code)
-        // therefore left a transient first-boot hang as permanently-off detection. Retry a few
-        // times on hang/error; bounded so a permanently-failing call (unsupported, or already
-        // implied by KDE's QT_ACCESSIBILITY=1 — which succeeds on the first try) still lets us
-        // proceed into the reconnect loop.
-        for _ in 0..3 {
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                set_session_accessibility(true),
-            )
-            .await
-            {
-                Ok(Ok(())) => break,
-                _ => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
-            }
-        }
         // Reconnect loop: the a11y connection can die — registry daemon restart, or (the big
         // one for long sessions) suspend/resume drops the bus. If we just returned, the task
         // would exit forever and the snapshot would freeze on the last-seen app (looked like
         // "worked for a while, then everything became konsole"). So we always reconnect.
+        // Repeated failures log dedup'd (first + every 30th) — a broken bus otherwise floods
+        // the journal at one warn per 2 s retry for as long as the outage lasts.
+        let mut failures: u32 = 0;
         loop {
+            // CRITICAL: enable session accessibility so app a11y bridges actually EMIT events.
+            // Without this, Qt/GTK/Chromium stay dormant and the event stream is silent (this is
+            // what libatspi's init does). Best-effort; left on after exit — benign, and KDE's
+            // QT_ACCESSIBILITY=1 already implies it. This makes app detection work WITHOUT deep
+            // detection; deep detection then only adds the Chromium/Electron poke.
+            // Inside the reconnect loop, not once before it: a restarted at-spi-bus-launcher
+            // comes back with IsEnabled=false, so after a bus restart we must re-assert it or
+            // freshly started apps never bridge and we reconnect onto a silent bus forever.
+            // Time-bounded + retried: on a congested/half-wedged session bus this call can hang
+            // or error. run_once below will happily connect to a SILENT stream if it never
+            // lands, and a silent stream never "ends", so the reconnect loop alone wouldn't
+            // retry it. Bounded so a permanently-failing call (unsupported, or already implied
+            // by KDE's QT_ACCESSIBILITY=1 — which succeeds on the first try) still lets us
+            // proceed to connect.
+            for _ in 0..3 {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    set_session_accessibility(true),
+                )
+                .await
+                {
+                    Ok(Ok(())) => break,
+                    _ => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+                }
+            }
             match run_once(snapshot.clone(), deep.clone()).await {
-                Ok(()) => tracing::warn!("[atspi] event stream ended — reconnecting"),
-                Err(e) => tracing::warn!("[atspi] listener error: {e} — reconnecting"),
+                Ok(()) => {
+                    failures = 0;
+                    tracing::warn!("[atspi] event stream ended — reconnecting");
+                }
+                Err(e) => {
+                    failures = failures.saturating_add(1);
+                    if failures == 1 || failures % 30 == 0 {
+                        tracing::warn!(
+                            "[atspi] listener error: {e} — reconnecting (failure #{failures}, logging first + every 30th)"
+                        );
+                    }
+                }
             }
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
