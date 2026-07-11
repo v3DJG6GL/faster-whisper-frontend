@@ -11,6 +11,7 @@ pub mod batch;
 pub mod discovery;
 pub mod pipeline;
 pub mod stream;
+pub mod sync;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

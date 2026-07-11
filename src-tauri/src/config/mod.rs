@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+pub mod sync_state;
+
 const KEYRING_SERVICE: &str = "faster-whisper-frontend";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -487,6 +489,14 @@ pub struct AppSettings {
     pub quick_add_list: Option<QuickAddTarget>,
     pub general: GeneralSettings,
     pub recording: RecordingSettings,
+    /// Settings-sync metadata (enable flag, sync-backend id, per-device category
+    /// toggles, per-backend URL overrides). Frontend-owned opaque JSON like
+    /// `quick_launch`/`app_rules` — Rust stores + round-trips but never interprets
+    /// it. MACHINE-LOCAL by contract: the TS sync layer excludes it from every
+    /// synced blob and export. `#[serde(default, skip…)]` so older configs load
+    /// and an unset value round-trips byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -551,6 +561,7 @@ impl Default for Config {
                     hover_reveal_ms: 1000,
                     quick_launch: Vec::new(),
                 },
+                sync: None,
             },
             backends: vec![Backend {
                 id: "default".into(),

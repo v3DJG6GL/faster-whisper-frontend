@@ -273,6 +273,231 @@ pub async fn get_usage_stats(
     .await
 }
 
+// ── P30: settings export/import + server sync ──────────────────────────────
+
+/// Pull the account's synced settings blob (`GET /v1/client-settings`).
+/// Structured result so the engine can distinguish old-backend (404) /
+/// unauthorized (401) / unreachable (0) / empty store (200, version 0).
+#[tauri::command]
+pub async fn sync_pull(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+) -> transport::sync::SyncPull {
+    let key = resolve_key(api_key, backend_id);
+    transport::sync::pull(&server_url, key.as_deref()).await
+}
+
+/// Push the composed settings blob (`PUT /v1/client-settings`). A 409 comes
+/// back in `conflict` carrying the current server state for the merge loop.
+#[tauri::command]
+pub async fn sync_push(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    blob: serde_json::Value,
+    base_version: i64,
+    device: String,
+) -> transport::sync::SyncPush {
+    let key = resolve_key(api_key, backend_id);
+    transport::sync::push(&server_url, key.as_deref(), blob, base_version, &device).await
+}
+
+/// Drop the account's server-side settings blob (`DELETE /v1/client-settings`).
+#[tauri::command]
+pub async fn sync_delete(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+) -> transport::sync::SyncDelete {
+    let key = resolve_key(api_key, backend_id);
+    transport::sync::delete(&server_url, key.as_deref()).await
+}
+
+/// Local sync bookkeeping (device id, last server version, merge-base
+/// snapshot) — opaque to Rust, lives in `<config dir>/sync-state.json`.
+#[tauri::command]
+pub fn load_sync_state(app: AppHandle) -> Option<serde_json::Value> {
+    config_dir(&app).ok().and_then(|d| config::sync_state::load(&d))
+}
+
+#[tauri::command]
+pub fn save_sync_state(app: AppHandle, state: serde_json::Value) -> Result<(), String> {
+    let dir = config_dir(&app)?;
+    config::sync_state::save(&dir, &state).map_err(|e| e.to_string())
+}
+
+/// This machine's sync identity (persistent uuid + hostname + platform).
+#[tauri::command]
+pub fn sync_device_info(app: AppHandle) -> Result<config::sync_state::DeviceInfo, String> {
+    let dir = config_dir(&app)?;
+    Ok(config::sync_state::device_info(&dir))
+}
+
+/// Bulk keyring read for export/sync composition: the API keys of the given
+/// Backends, omitting ids with no stored key. The result stays in memory on
+/// its way into an export the user asked for (or the sync blob) — never log it.
+#[tauri::command]
+pub fn read_backend_keys(
+    backend_ids: Vec<String>,
+) -> std::collections::HashMap<String, String> {
+    backend_ids
+        .into_iter()
+        .filter_map(|id| config::keys::get(&id).map(|k| (id, k)))
+        .collect()
+}
+
+/// Write a settings-export envelope (built by the TS side) to the path the
+/// user picked in the save dialog. Atomic tmp+rename like `config::save`.
+#[tauri::command]
+pub fn export_settings_file(path: String, envelope: serde_json::Value) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    let tmp = path.with_extension("json.tmp");
+    let text =
+        serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// A parsed + validated settings export, ready for the import-preview UI.
+/// `categories` is the normalized SyncBlob (secrets stripped out into
+/// `secrets`), `warnings` are human-readable notes for the preview.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    pub format_version: u32,
+    pub config_version: u32,
+    pub app_version: String,
+    pub hostname: String,
+    pub platform: String,
+    pub created_at: String,
+    pub categories: serde_json::Value,
+    pub secrets: serde_json::Value,
+    pub has_secrets: bool,
+    pub warnings: Vec<String>,
+}
+
+/// Read + validate a settings-export file. Refuses a NEWER formatVersion
+/// outright (forward compat is the exporter's job, not the importer's);
+/// normalizes `backends.list` / `profiles.list` through the typed serde
+/// structs so garbage fails here — with a clear message — instead of
+/// hydrating a broken store later.
+#[tauri::command]
+pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
+    const MAX_IMPORT_BYTES: u64 = 20_000_000; // sanity cap, not a format limit
+    let meta = std::fs::metadata(&path).map_err(|e| format!("Could not read the file: {e}"))?;
+    if meta.len() > MAX_IMPORT_BYTES {
+        return Err("That file is too large to be a settings export.".into());
+    }
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| format!("Could not read the file: {e}"))?;
+    let mut doc: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| "That file isn't valid JSON.".to_string())?;
+
+    let format_version = doc
+        .get("formatVersion")
+        .and_then(|v| v.as_u64())
+        .ok_or("That file doesn't look like a settings export (no formatVersion).")?;
+    if format_version > 1 {
+        return Err(
+            "This file was created by a newer version of the app — update the app to import it."
+                .into(),
+        );
+    }
+    let config_version = doc
+        .get("configVersion")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(2) as u32;
+
+    let mut warnings: Vec<String> = Vec::new();
+    if config_version > 2 {
+        warnings.push(
+            "The file uses a newer settings schema — unknown settings will be skipped.".into(),
+        );
+    }
+
+    let mut categories = doc
+        .get_mut("categories")
+        .map(serde_json::Value::take)
+        .ok_or("That file doesn't look like a settings export (no categories).")?;
+    if !categories.is_object() {
+        return Err("That file doesn't look like a settings export (bad categories).".into());
+    }
+
+    // Split out + validate secrets ({backendId: apiKey} strings only).
+    let mut secrets = serde_json::Map::new();
+    if let Some(b) = categories.get_mut("backends").and_then(|b| b.as_object_mut()) {
+        if let Some(raw) = b.remove("secrets") {
+            if let Some(map) = raw.as_object() {
+                for (id, key) in map {
+                    if let Some(k) = key.as_str() {
+                        if !k.is_empty() {
+                            secrets.insert(id.clone(), serde_json::json!(k));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Normalize the typed categories through serde (drops unknown fields,
+    // canonicalizes hotkey chords via the Profile deserializer, and fails
+    // loudly on structurally-broken lists).
+    if let Some(list) = categories.get_mut("backends").and_then(|b| b.get_mut("list")) {
+        let parsed: Vec<config::Backend> = serde_json::from_value(list.clone())
+            .map_err(|e| format!("The file's server connections are invalid: {e}"))?;
+        for b in &parsed {
+            if b.has_api_key && !secrets.contains_key(&b.id) {
+                warnings.push(format!(
+                    "\u{201c}{}\u{201d} uses an API key, but the file doesn't include it — re-enter the key after importing.",
+                    b.name
+                ));
+            }
+        }
+        *list = serde_json::to_value(parsed).map_err(|e| e.to_string())?;
+    }
+    if let Some(list) = categories.get_mut("profiles").and_then(|p| p.get_mut("list")) {
+        let parsed: Vec<config::Profile> = serde_json::from_value(list.clone())
+            .map_err(|e| format!("The file's dictation profiles are invalid: {e}"))?;
+        *list = serde_json::to_value(parsed).map_err(|e| e.to_string())?;
+    }
+    for bucket in ["linux", "windows"] {
+        if let Some(rules) = categories.get("appRules").and_then(|r| r.get(bucket)) {
+            if !rules.is_null() && !rules.is_array() {
+                return Err("The file's app rules are invalid.".into());
+            }
+        }
+    }
+    for key in ["general", "recording"] {
+        if let Some(v) = categories.get(key) {
+            if !v.is_null() && !v.is_object() {
+                return Err(format!("The file's {key} settings are invalid."));
+            }
+        }
+    }
+
+    let has_secrets = !secrets.is_empty();
+    let s = |k: &str| {
+        doc.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    Ok(ImportResult {
+        format_version: format_version as u32,
+        config_version,
+        app_version: s("appVersion"),
+        hostname: s("hostname"),
+        platform: s("platform"),
+        created_at: s("createdAt"),
+        categories,
+        secrets: serde_json::Value::Object(secrets),
+        has_secrets,
+        warnings,
+    })
+}
+
 #[tauri::command]
 pub fn list_audio_devices() -> Vec<AudioDevice> {
     audio::device::list_input_devices()
