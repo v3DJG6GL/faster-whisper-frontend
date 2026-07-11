@@ -87,6 +87,20 @@ export function hashBlob(v: unknown): string {
 
 const catEqual = (a: unknown, b: unknown) => hashBlob(a) === hashBlob(b);
 
+/** Bound an await that may never settle. The ONLY unbounded await in the
+ *  engine is the keyring read (a locked KWallet parks the request behind a
+ *  password prompt indefinitely); everything else rides reqwest's timeout.
+ *  Without this, one blocked read wedges the engine for the whole session
+ *  (`inFlight` never clears — the finally never runs on a never-settling
+ *  promise). Degrading to `fallback` (push without secrets) is always safer
+ *  than never pushing again. */
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 // ── extract: live config → category payloads ───────────────────────────────
 
 function extractGeneral(settings: AppSettings): SyncGeneral {
@@ -133,7 +147,11 @@ export async function composeBlob(
       quickAddList: cfg.settings.quickAddList ?? null,
     };
     if (opts.includeSecrets) {
-      const secrets = await readBackendKeys(cfg.backends.map((b) => b.id));
+      const secrets = await withTimeout(
+        readBackendKeys(cfg.backends.map((b) => b.id)),
+        10_000,
+        {} as Record<string, string>,
+      );
       if (Object.keys(secrets).length > 0) blob.backends.secrets = secrets;
     }
   } else {
@@ -244,9 +262,21 @@ async function reconcileBackendSecrets(
   secrets: Record<string, string> | undefined,
 ): Promise<Backend[]> {
   for (const [id, key] of Object.entries(secrets ?? {})) {
-    if (key) await setBackendKey(id, key).catch((e) => console.error("keyring write failed", e));
+    if (key) {
+      // Same locked-wallet hazard as composeBlob's read: a parked prompt must
+      // not wedge the apply. A skipped write surfaces as hasApiKey=false below.
+      await withTimeout(
+        setBackendKey(id, key).catch((e) => console.error("keyring write failed", e)),
+        10_000,
+        undefined,
+      );
+    }
   }
-  const present = await readBackendKeys(list.map((b) => b.id));
+  const present = await withTimeout(
+    readBackendKeys(list.map((b) => b.id)),
+    10_000,
+    {} as Record<string, string>,
+  );
   return list.map((b) =>
     b.hasApiKey === b.id in present ? b : { ...b, hasApiKey: b.id in present },
   );
@@ -534,12 +564,18 @@ async function reconcileRemote(remote: SyncRemoteState): Promise<void> {
     return;
   }
   await applyBlob(merged, s.settings.sync?.categories ?? cats);
+  // Persist what the SERVER holds (remote), not the merge result: snapshot is
+  // the 3-way base for the NEXT sync and hash is the did-anything-change gate
+  // for pushes. Recording `merged` here would make the follow-up push compose
+  // an identical hash and silently skip — stranding the local contribution
+  // client-side forever. (For toggled-OFF categories merged == remote by
+  // construction, so compose-from-snapshot preservation is unaffected.)
   await persistState({
     version: remote.version,
     updatedAt: remote.updated_at ?? null,
     device: remote.device ?? null,
-    hash: hashBlob(merged),
-    snapshot: merged,
+    hash: hashBlob(remoteBlob),
+    snapshot: remoteBlob,
   });
   setRuntime({
     syncStatus: "ok",
@@ -595,10 +631,13 @@ export async function resolveSyncConflicts(
     else (final as Record<string, unknown>)[cat] = val;
   }
   await applyBlob(final, useApp.getState().settings.sync?.categories ?? fullCats());
+  // Same server-truth rule as reconcileRemote: the server still holds
+  // c.remote at remoteVersion — record THAT, so if the follow-up push fails,
+  // later automatic pushes still see a difference and retry.
   await persistState({
     version: c.remoteVersion,
-    hash: hashBlob(final),
-    snapshot: final,
+    hash: hashBlob(c.remote),
+    snapshot: c.remote,
   });
   setRuntime({ syncStatus: "ok", syncError: null, lastSyncedAt: Date.now() });
   // The resolved doc differs from what the server holds unless "remote" won

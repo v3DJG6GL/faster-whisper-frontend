@@ -22,10 +22,13 @@ export async function initConfig(): Promise<void> {
   // Run once. React StrictMode double-invokes the App effect in dev; without this guard a
   // second initConfig would register a second auto-save subscriber (doubled saveConfig +
   // reregisterShortcuts on every change). Mirrors initOverlayController / initUsageController.
-  if (!isTauri || started) {
+  if (!isTauri) {
     resolveConfigReady();
     return;
   }
+  // A StrictMode re-entry must NOT resolve configReady — the FIRST call does,
+  // after hydration + arming (else initSync starts against seeded defaults).
+  if (started) return;
   started = true;
 
   // Arm auto-save ONLY after the initial load resolves. The store boots with seeded

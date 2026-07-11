@@ -337,14 +337,24 @@ pub fn sync_device_info(app: AppHandle) -> Result<config::sync_state::DeviceInfo
 /// Bulk keyring read for export/sync composition: the API keys of the given
 /// Backends, omitting ids with no stored key. The result stays in memory on
 /// its way into an export the user asked for (or the sync blob) — never log it.
+///
+/// async + spawn_blocking: a sync command runs on the MAIN thread, and a
+/// keyring read can BLOCK indefinitely (locked KWallet parks the request
+/// behind a password prompt) — that froze the whole event loop, wedging every
+/// later invoke. On a worker it can hang harmlessly; the TS caller wraps this
+/// in a 10s timeout and degrades to "no secrets".
 #[tauri::command]
-pub fn read_backend_keys(
+pub async fn read_backend_keys(
     backend_ids: Vec<String>,
 ) -> std::collections::HashMap<String, String> {
-    backend_ids
-        .into_iter()
-        .filter_map(|id| config::keys::get(&id).map(|k| (id, k)))
-        .collect()
+    tauri::async_runtime::spawn_blocking(move || {
+        backend_ids
+            .into_iter()
+            .filter_map(|id| config::keys::get(&id).map(|k| (id, k)))
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// Write a settings-export envelope (built by the TS side) to the path the
