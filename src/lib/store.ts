@@ -238,6 +238,10 @@ interface AppState {
   updateRecording: (patch: Partial<AppSettings["recording"]>) => void;
   /** Patch settings.sync (deep-merges categories/urlOverrides at the caller). */
   updateSync: (patch: Partial<SyncSettings>) => void;
+  /** Set (or clear, with null/empty) this device's address override for a
+   *  backend. Invalidates the backend's cached connection + usage — the
+   *  effective target changed (mirrors upsertBackend's URL-edit handling). */
+  setUrlOverride: (backendId: string, url: string | null) => void;
 
   upsertBackend: (b: Backend) => void;
   removeBackend: (id: string) => void;
@@ -369,6 +373,27 @@ export const useApp = create<AppState>((set) => ({
     set((s) => ({
       settings: { ...s.settings, sync: { ...(s.settings.sync ?? DEFAULT_SYNC), ...patch } },
     })),
+  setUrlOverride: (backendId, url) =>
+    set((s) => {
+      const sync = s.settings.sync ?? DEFAULT_SYNC;
+      const next = url?.trim() ? url.trim() : null;
+      const cur = sync.urlOverrides[backendId] ?? null;
+      if (cur === next) return {};
+      const urlOverrides = { ...sync.urlOverrides };
+      if (next) urlOverrides[backendId] = next;
+      else delete urlOverrides[backendId];
+      // The effective connect target changed: drop the cached connection +
+      // usage so status/classification re-test against the new address.
+      const connections = { ...s.connections };
+      delete connections[backendId];
+      const usage = { ...s.usage };
+      delete usage[backendId];
+      return {
+        settings: { ...s.settings, sync: { ...sync, urlOverrides } },
+        connections,
+        usage,
+      };
+    }),
   updateGeneral: (patch) =>
     set((s) => ({ settings: { ...s.settings, general: { ...s.settings.general, ...patch } } })),
   updateRecording: (patch) =>

@@ -21,6 +21,7 @@ import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf } 
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
 import { effectiveServerKind } from "@/lib/serverKind";
+import { effectiveServerUrl } from "@/lib/backends";
 import { getPipelineRules, getRecentWords, savePipelineRules } from "@/lib/api";
 import type {
   Backend, PipelineFetch, PipelineRule, PipelineSaveResult, RuleType,
@@ -525,6 +526,9 @@ export default function Dictionary() {
   const connections = useApp((s) => s.connections);
   const quickAddList = useApp((s) => s.settings.quickAddList);
   const updateSettings = useApp((s) => s.updateSettings);
+  // Subscribe to this device's URL overrides so editing one re-runs the load
+  // effect (the effect deps key on the CONNECTED address, not just serverUrl).
+  const urlOverrides = useApp((s) => s.settings.sync?.urlOverrides);
 
   // Candidate Backends: full faster-whisper servers (and untested ones — we can't
   // prove "standard", so we let the fetch decide). Standard servers are excluded.
@@ -586,7 +590,10 @@ export default function Dictionary() {
     setResult(null);
     let res: Awaited<ReturnType<typeof getPipelineRules>>;
     try {
-      res = await getPipelineRules({ serverUrl: b.serverUrl, backendId: b.id });
+      res = await getPipelineRules({
+        serverUrl: effectiveServerUrl(b, useApp.getState().settings),
+        backendId: b.id,
+      });
     } catch {
       // get_pipeline_rules is a non-Result command; a transport-level reject would otherwise leave
       // the screen stuck on the loading spinner (and surface as an unhandled rejection from the
@@ -602,7 +609,7 @@ export default function Dictionary() {
     const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
     setEdits(fresh);
     setBase(cloneEdits(fresh));
-    getRecentWords({ serverUrl: b.serverUrl, backendId: b.id })
+    getRecentWords({ serverUrl: effectiveServerUrl(b, useApp.getState().settings), backendId: b.id })
       .then((rw) => {
         if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return;
         setRecentWords(rw.words ?? []);
@@ -631,7 +638,10 @@ export default function Dictionary() {
     // suggestions in B's editor if B's getRecentWords is slow or fails (it's best-effort/.catch).
     setRecentWords([]);
     setRecentMax(undefined);
-    getPipelineRules({ serverUrl: backend.serverUrl, backendId: backend.id })
+    getPipelineRules({
+      serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+      backendId: backend.id,
+    })
       .then((res) => {
         if (cancelled) return;
         setFetchRes(res);
@@ -649,7 +659,10 @@ export default function Dictionary() {
       .catch(() => {
         if (!cancelled) setLoading(false);
       });
-    getRecentWords({ serverUrl: backend.serverUrl, backendId: backend.id })
+    getRecentWords({
+      serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+      backendId: backend.id,
+    })
       .then((rw) => {
         if (cancelled) return;
         setRecentWords(rw.words ?? []);
@@ -659,7 +672,7 @@ export default function Dictionary() {
     return () => {
       cancelled = true;
     };
-  }, [backend?.id, backend?.serverUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [backend?.id, backend?.serverUrl, backend && urlOverrides?.[backend.id]]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cache buildPatch by the (edit, base, editable) references so a keystroke only re-diffs the
   // ONE rule that changed — not every rule. setEdits keeps other rules' edit values referentially
@@ -701,7 +714,7 @@ export default function Dictionary() {
     // leaving the screen.
     try {
       const res = await savePipelineRules({
-        serverUrl: backend.serverUrl,
+        serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
         backendId: backend.id,
         patch: { rules_patch, fingerprints },
       });

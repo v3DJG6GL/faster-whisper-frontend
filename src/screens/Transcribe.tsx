@@ -5,6 +5,7 @@ import { Button, Card, Notice, PageHeader, Select } from "@/components/ui";
 import { LANGUAGES } from "@/lib/languages";
 import { fmtDuration } from "@/lib/format";
 import { pickAudioFile, transcribeFile, isTauri } from "@/lib/api";
+import { effectiveServerUrl } from "@/lib/backends";
 import { stripControlChars } from "@/lib/sanitize";
 import type { BatchResult } from "@/lib/types";
 
@@ -90,7 +91,7 @@ export default function Transcribe() {
     setCopied(false); // an unchanged-inputs re-run also invalidates a prior "Copied"
     try {
       const res = await transcribeFile({
-        serverUrl: backend.serverUrl,
+        serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
         backendId: backend.id,
         model: backend.model,
         language,

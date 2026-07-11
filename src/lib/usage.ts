@@ -12,6 +12,7 @@ import { useApp } from "./store";
 import { isTauri, getUsageStats } from "./api";
 import { backendForProfile, homeTargetProfile } from "./dictation";
 import { effectiveServerKind } from "./serverKind";
+import { effectiveServerUrl } from "./backends";
 import type { Backend } from "./types";
 
 const POLL_MS = 30_000; // steady refresh cadence
@@ -51,7 +52,7 @@ async function refreshOne(backend: Backend): Promise<void> {
     return;
   }
   const stats = await getUsageStats({
-    serverUrl: backend.serverUrl,
+    serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
     backendId: backend.id,
     tzMidnight: localMidnightEpoch(),
     days: TREND_DAYS,

@@ -9,6 +9,7 @@ import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
+import { effectiveServerUrl } from "@/lib/backends";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { cn } from "@/lib/cn";
 
@@ -36,6 +37,9 @@ function Editor({
   onCancel: () => void;
 }) {
   const setConnection = useApp((s) => s.setConnection);
+  const syncEnabled = useApp((s) => s.settings.sync?.enabled ?? false);
+  const urlOverride = useApp((s) => s.settings.sync?.urlOverrides?.[initial.id] ?? "");
+  const setUrlOverride = useApp((s) => s.setUrlOverride);
   const [b, setB] = useState<Backend>(initial);
   const [key, setKey] = useState("");
   // Debounce the typed key AND the server URL before they drive the best-effort capability /
@@ -150,6 +154,20 @@ function Editor({
         </Labeled>
         <Labeled label="Server URL">
           <TextInput value={b.serverUrl} onChange={(e) => set({ serverUrl: e.target.value })} placeholder="http://host:8000" />
+        </Labeled>
+        {/* Per-device address override: connects THIS machine somewhere else while
+            the canonical URL above stays shared through settings sync (classic
+            case: localhost on the box running the server, a LAN IP elsewhere).
+            Applied live via the store (it's device state, not part of the Backend
+            being edited); grayed out (never hidden) while sync is off, where the
+            canonical URL is already local-only. */}
+        <Labeled label="Address on this device (optional)">
+          <TextInput
+            value={urlOverride}
+            disabled={!syncEnabled}
+            onChange={(e) => setUrlOverride(b.id, e.target.value)}
+            placeholder={syncEnabled ? "override the synced URL here only" : "used with settings sync"}
+          />
         </Labeled>
         <Labeled label="Model">
           <TextInput value={b.model} onChange={(e) => set({ model: e.target.value })} placeholder="whisper-1 / large-v3" />
@@ -350,7 +368,10 @@ export default function Backends() {
   const handleTest = async (b: Backend) => {
     setTesting((s) => new Set(s).add(b.id));
     try {
-      const info = await testConnection({ serverUrl: b.serverUrl, backendId: b.id });
+      const info = await testConnection({
+        serverUrl: effectiveServerUrl(b, useApp.getState().settings),
+        backendId: b.id,
+      });
       // Mirror the editor's liveTarget guard (+ upsertBackend's connection invalidation): a slow/
       // unreachable test can resolve AFTER the user edits this backend's URL/key (which drops the
       // stale connection) or removes it. Only commit if the backend still exists with the same target,

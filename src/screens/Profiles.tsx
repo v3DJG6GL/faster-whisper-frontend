@@ -15,6 +15,7 @@ import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
+import { effectiveServerUrl } from "@/lib/backends";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import type { Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
@@ -75,7 +76,9 @@ function Editor({
   // (under the backend defaults) and gates on what this connection allows.
   const effectiveProfile = p.overrideProfile?.trim() ? p.overrideProfile.trim() : backend?.overrideProfile;
   const { caps, resolved, resolvedPrompt } = useOverrideContext({
-    serverUrl: backend?.serverUrl ?? "",
+    // Per-device address override wins for the actual requests (display
+    // contexts elsewhere keep showing the canonical serverUrl).
+    serverUrl: backend ? effectiveServerUrl(backend, useApp.getState().settings) : "",
     backendId: backend?.id ?? null,
     profileName: effectiveProfile,
     serverKind,
@@ -281,7 +284,7 @@ function Editor({
               Server override profile <span className="text-faint">· empty inherits the backend</span>
             </div>
             <OverrideProfilePicker
-              serverUrl={backend?.serverUrl ?? ""}
+              serverUrl={backend ? effectiveServerUrl(backend, useApp.getState().settings) : ""}
               backendId={backend?.id ?? ""}
               serverKind={serverKind}
               canRequest={caps?.can_request_override_profile}

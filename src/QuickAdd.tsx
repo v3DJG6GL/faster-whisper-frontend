@@ -25,6 +25,7 @@ import {
   getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText,
 } from "@/lib/api";
 import { resolveInjectionTarget } from "@/lib/streaming";
+import { effectiveServerUrl } from "@/lib/backends";
 import { IS_WINDOWS } from "@/lib/platform";
 import { applyTheme, watchSystemTheme } from "@/lib/theme";
 import type { AppRule, GeneralSettings, PipelineFetch, ThemeName } from "@/lib/types";
@@ -138,9 +139,12 @@ export default function QuickAdd() {
         setPhase("nopin");
         return;
       }
-      target.current = { serverUrl: backend.serverUrl, backendId: backend.id, slug: pin.slug };
+      // Per-device address override wins for the connection (cfg is this
+      // window's own loadConfig snapshot — the quick-add webview has no store).
+      const url = effectiveServerUrl(backend, cfg!.settings);
+      target.current = { serverUrl: url, backendId: backend.id, slug: pin.slug };
       setPhase("loading");
-      const res = await getPipelineRules({ serverUrl: backend.serverUrl, backendId: backend.id });
+      const res = await getPipelineRules({ serverUrl: url, backendId: backend.id });
       if (gen !== loadGen.current) return; // a newer refresh won — don't clobber its rows/target
       if (!res.ok) {
         setFetchErr(res);
@@ -159,7 +163,7 @@ export default function QuickAdd() {
       setRows(mapRowsFromRule(rule));
       setSaveState("idle");
       setPhase("ok");
-      getRecentWords({ serverUrl: backend.serverUrl, backendId: backend.id })
+      getRecentWords({ serverUrl: url, backendId: backend.id })
         .then((rw) => {
           if (gen !== loadGen.current) return;
           setRecent(rw.words ?? []);

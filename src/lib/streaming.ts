@@ -22,6 +22,7 @@
 // baseline so the next utterance starts fresh, and optionally type a separator.
 
 import { useApp } from "./store";
+import { effectiveServerUrl } from "./backends";
 import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
 import {
   isTauri,
@@ -1405,10 +1406,13 @@ async function startLiveInner(
   // clipboard at each phrase, and a session that starts in a non-paste window still restores once
   // it pastes. beginInjection is no longer called at session start.
 
+  // Per-device address override ("use this URL on this device") wins over the
+  // synced canonical serverUrl for the actual connection.
+  const sessionServerUrl = effectiveServerUrl(backend, useApp.getState().settings);
   try {
     if (endpoint === "batch") {
       await startRecord({
-        serverUrl: backend.serverUrl,
+        serverUrl: sessionServerUrl,
         backendId: backend.id,
         model: backend.model,
         language,
@@ -1423,7 +1427,7 @@ async function startLiveInner(
       });
     } else {
       await startStream({
-        serverUrl: backend.serverUrl,
+        serverUrl: sessionServerUrl,
         backendId: backend.id,
         model: backend.model,
         language,

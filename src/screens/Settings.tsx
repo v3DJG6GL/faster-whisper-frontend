@@ -25,10 +25,11 @@ import {
 } from "@/lib/api";
 import type { AudioDevice, OverlayQuickAction, RecordingSettings } from "@/lib/types";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
+import { SyncTab } from "@/screens/SettingsSync";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 
-const TABS = ["General", "Audio", "Recording", "Chip", "Permissions"] as const;
+const TABS = ["General", "Audio", "Recording", "Chip", "Sync", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
 
 // The keys of RecordingSettings whose value is a boolean (the chip-visibility flags).
@@ -941,6 +942,8 @@ export default function Settings() {
             </div>
           </Card>
         )}
+
+        {tab === "Sync" && <SyncTab />}
 
         {tab === "Permissions" && (
           <Card className="px-6">
