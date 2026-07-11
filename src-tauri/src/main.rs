@@ -14,5 +14,22 @@ fn main() {
     {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
+    // Don't bridge OUR OWN UI onto the AT-SPI accessibility bus. WebKitGTK's
+    // startup burst of accessible-object registration segfaults inside
+    // libatk-bridge (spi_register_object_to_path) on current stacks
+    // (webkit2gtk 2.52.3 × at-spi2-core 2.60.0/2.60.4, Ubuntu resolute,
+    // 2026-07-11: three identical startup crashes, deterministic). This app is
+    // itself an AT-SPI *client* — its own listeners are precisely what force
+    // every app (including this one) to bridge — so opting our own tree out
+    // both dodges the crash and removes noise from the desktop a11y tree.
+    // atspi_guard (app detection / field guard) reads OTHER apps as a client
+    // and is unaffected; the own-window inject guard uses Tauri is_focused(),
+    // not AT-SPI. Cost: our UI is invisible to screen readers — export
+    // NO_AT_BRIDGE=0 to re-enable the bridge explicitly. Must happen before
+    // the first webview is created.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("NO_AT_BRIDGE").is_none() {
+        std::env::set_var("NO_AT_BRIDGE", "1");
+    }
     faster_whisper_frontend_lib::run()
 }
