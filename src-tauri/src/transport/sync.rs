@@ -10,6 +10,14 @@
 
 use super::{base_url, client, detail_from, friendly_err, with_auth};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+/// Per-request override of the shared client's 120 s default (that default is
+/// sized for transcription uploads). Sync payloads are ≤512 KB of JSON, and the
+/// engine serializes on one in-flight request — a sync call left hanging on an
+/// unreachable server (e.g. a LAN address away from home) blocks pulls/pushes
+/// to a NEWLY selected server for the whole 120 s. Keep failures prompt.
+const SYNC_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The GET (and PUT-200 / PUT-409) wire shape: `{version, blob, updated_at,
 /// device}`. `version: 0, blob: null` = nothing stored yet.
@@ -64,7 +72,11 @@ pub struct SyncDelete {
 pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
     let base = base_url(server_url);
     let url = format!("{base}/v1/client-settings");
-    match with_auth(client().get(url), api_key).send().await {
+    match with_auth(client().get(url), api_key)
+        .timeout(SYNC_TIMEOUT)
+        .send()
+        .await
+    {
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
@@ -117,7 +129,12 @@ pub async fn push(
         "base_version": base_version,
         "device": device,
     });
-    match with_auth(client().put(url), api_key).json(&body).send().await {
+    match with_auth(client().put(url), api_key)
+        .json(&body)
+        .timeout(SYNC_TIMEOUT)
+        .send()
+        .await
+    {
         Ok(resp) => {
             let code = resp.status().as_u16();
             let text = resp.text().await.unwrap_or_default();
@@ -176,7 +193,11 @@ pub async fn push(
 pub async fn delete(server_url: &str, api_key: Option<&str>) -> SyncDelete {
     let base = base_url(server_url);
     let url = format!("{base}/v1/client-settings");
-    match with_auth(client().delete(url), api_key).send().await {
+    match with_auth(client().delete(url), api_key)
+        .timeout(SYNC_TIMEOUT)
+        .send()
+        .await
+    {
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {

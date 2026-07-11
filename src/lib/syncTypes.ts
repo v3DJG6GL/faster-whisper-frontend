@@ -100,6 +100,11 @@ export interface ImportResult {
  *  nothing sync-relevant changed. */
 export interface SyncState {
   deviceId?: string;
+  /** Which sync server the version/hash/snapshot bookkeeping belongs to.
+   *  Sync state is per-server: reusing server A's version as a CAS base (or
+   *  its snapshot as a merge base) against server B corrupts the first
+   *  exchange after a sync-server switch, so the engine resets on mismatch. */
+  serverBackendId?: string | null;
   version?: number;
   updatedAt?: number | null;
   device?: string | null; // last writer's label as reported by the server

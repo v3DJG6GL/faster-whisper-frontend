@@ -391,6 +391,22 @@ let device: SyncDeviceInfo | null = null;
 let pushTimer: ReturnType<typeof setTimeout> | undefined;
 let lastFocusPull = 0;
 let inFlight = false;
+/** Sync epoch. Bumped by supersede() when the target server changes (or sync
+ *  toggles), so an in-flight pull/push against the OLD server can neither
+ *  block the new server's first sync via `inFlight` nor write its late result
+ *  over the new server's bookkeeping. Stale calls compare their captured epoch
+ *  after every transport await and bail silently. */
+let gen = 0;
+
+/** Invalidate whatever sync work is in flight or queued. Call BEFORE starting
+ *  work against a different server (or after disabling sync). */
+function supersede(): void {
+  gen++;
+  inFlight = false; // the superseded call skips its own reset (epoch mismatch)
+  clearTimeout(pushTimer);
+  pendingConflict = null; // a conflict against the old server is unresolvable now
+  pendingApply = null; // ditto a deferred apply of the old server's blob
+}
 
 /** A conflict awaiting the user's per-category picks (drives the Sync tab's
  *  conflict dialog via store.syncStatus/"conflict" plumbing). */
@@ -433,6 +449,21 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
   await saveSyncState(state).catch((e) => console.error("saveSyncState failed", e));
 }
 
+/** Bind the bookkeeping to the server it belongs to. On a sync-server switch
+ *  the old server's version must not become a CAS base against the new one
+ *  (nor its snapshot a merge base) — drop everything but the device identity
+ *  and start the new server from the version-0 zero-state. */
+async function ensureStateFor(backendId: string): Promise<void> {
+  if (state.serverBackendId === backendId) return;
+  state = { deviceId: state.deviceId };
+  await persistState({
+    serverBackendId: backendId,
+    version: 0,
+    updatedAt: null,
+    device: null,
+  });
+}
+
 // ── pull / push ─────────────────────────────────────────────────────────────
 
 /** Pull the server blob and reconcile it into the running app. `manual` also
@@ -441,12 +472,15 @@ export async function pullNow(manual = false): Promise<void> {
   const backend = syncBackend();
   if (!backend || !canSync() || inFlight) return;
   inFlight = true;
+  const myGen = gen;
   setRuntime({ syncStatus: "syncing", syncError: null });
   try {
+    await ensureStateFor(backend.id);
     const res = await syncPull({
       serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
       backendId: backend.id,
     });
+    if (myGen !== gen) return; // superseded mid-flight — this result is for the wrong server
     if (!res.ok || !res.state) {
       handleTransportFailure(res.status, res.error);
       return;
@@ -466,9 +500,9 @@ export async function pullNow(manual = false): Promise<void> {
       schedulePush();
       return;
     }
-    await reconcileRemote(remote);
+    await reconcileRemote(remote, myGen);
   } finally {
-    inFlight = false;
+    if (myGen === gen) inFlight = false;
   }
 }
 
@@ -481,8 +515,10 @@ export async function pushNow(manual = false): Promise<void> {
   // couldn't persist — sync ships what config.json holds, not a maybe.
   if (useApp.getState().saveErrorKind === "save") return;
   inFlight = true;
+  const myGen = gen;
   setRuntime({ syncStatus: "syncing", syncError: null });
   try {
+    await ensureStateFor(backend.id);
     const s = useApp.getState();
     const cats = s.settings.sync?.categories ?? {
       general: true, recording: true, backends: true, profiles: true, appRules: true,
@@ -506,6 +542,7 @@ export async function pushNow(manual = false): Promise<void> {
         baseVersion: base,
         device: device?.hostname ?? "unknown device",
       });
+      if (myGen !== gen) return; // superseded mid-flight — drop this server's result
       if (res.ok && res.state) {
         await persistState({
           version: res.state.version,
@@ -542,12 +579,14 @@ export async function pushNow(manual = false): Promise<void> {
     }
     setRuntime({ syncStatus: "error", syncError: "The server kept changing underneath — try again." });
   } finally {
-    inFlight = false;
+    if (myGen === gen) inFlight = false;
   }
 }
 
-/** Shared pull-side reconcile: merge remote with local against the snapshot. */
-async function reconcileRemote(remote: SyncRemoteState): Promise<void> {
+/** Shared pull-side reconcile: merge remote with local against the snapshot.
+ *  `myGen` is the caller's sync epoch — bail before mutating anything if a
+ *  supersede happened while the transport call was in flight. */
+async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<void> {
   const s = useApp.getState();
   const cats = fullCats();
   const local = await composeBlob(
@@ -556,6 +595,7 @@ async function reconcileRemote(remote: SyncRemoteState): Promise<void> {
     state.snapshot,
     { includeSecrets: true },
   );
+  if (myGen !== gen) return; // superseded — don't apply the old server's blob
   const remoteBlob = (remote.blob ?? {}) as SyncBlob;
   const { merged, conflicts } = mergeBlobs(state.snapshot, local, remoteBlob);
   if (conflicts.length > 0) {
@@ -672,6 +712,13 @@ export async function initSync(): Promise<void> {
   state = (await loadSyncState()) ?? {};
   device = await syncDeviceInfo();
 
+  // Migrate pre-serverBackendId state files: they were only ever written for
+  // the currently configured sync server, so stamp that identity instead of
+  // letting ensureStateFor() wipe a perfectly good snapshot on first contact.
+  if (state.version && !state.serverBackendId && syncMeta()?.backendId) {
+    await persistState({ serverBackendId: syncMeta()!.backendId });
+  }
+
   if (state.updatedAt) {
     setRuntime({
       lastSyncedAt: Math.round((state.updatedAt as number) * 1000),
@@ -701,10 +748,22 @@ export async function initSync(): Promise<void> {
     }
     // Turning sync on (or switching the sync server) starts with a pull so
     // this device reconciles into the shared set instead of clobbering it.
+    // supersede() first: an in-flight sync against the previous server (e.g.
+    // one still waiting out the transport timeout on an unreachable host)
+    // must neither block this pull via `inFlight` nor land its late result —
+    // without it, switching servers looked dead until a disable/re-enable.
     const prevSync = prev.settings.sync;
     const nowSync = s.settings.sync;
     if (nowSync?.enabled && (!prevSync?.enabled || prevSync.backendId !== nowSync.backendId)) {
+      supersede();
+      setRuntime({ syncUnsupported: false, syncError: null });
       void pullNow(true);
+      return;
+    }
+    // Sync switched off: cancel queued/in-flight work and clear stale status.
+    if (prevSync?.enabled && !nowSync?.enabled) {
+      supersede();
+      setRuntime({ syncStatus: "idle", syncError: null });
       return;
     }
     // A category toggled ON adopts the server's state for it before pushing.
@@ -713,6 +772,7 @@ export async function initSync(): Promise<void> {
       prevSync?.categories &&
       ALL_CATEGORIES.some((c) => nowSync.categories[c] && !prevSync.categories[c])
     ) {
+      supersede();
       void pullNow(true);
       return;
     }
@@ -733,7 +793,7 @@ export async function initSync(): Promise<void> {
 /** For the Sync tab's "Delete server copy": forget local bookkeeping so the
  *  next push recreates from version 0. */
 export async function resetSyncState(): Promise<void> {
-  state = { deviceId: state.deviceId };
+  state = { deviceId: state.deviceId, serverBackendId: state.serverBackendId };
   await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
   setRuntime({ lastSyncedAt: null, lastSyncDevice: null, syncStatus: "idle", syncError: null });
 }
