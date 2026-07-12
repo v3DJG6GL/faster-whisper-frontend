@@ -1,13 +1,14 @@
-# Installer builds: deb + AppImage on Linux.
+# Installer builds: deb + AppImage on Linux, MSI + NSIS on Windows.
 #
 # Forgejo Actions port of the GitHub workflow — structural changes:
 #
 #   * Actions unqualified — resolved via DEFAULT_ACTIONS_URL against local
 #     pull mirrors; see ci.yml.
-#   * windows-latest leg DROPPED (no Windows runner on this instance), so no
-#     MSI/NSIS installers are produced. Windows releases need either a
-#     registered Windows runner or a manual `pnpm tauri build` on a Windows
-#     box until then.
+#   * windows-latest runs on the self-hosted VM runner (host mode). The job
+#     inherits every ci.yml host-mode workaround (manual token checkout,
+#     corepack, no setup-node) and builds with `pnpm tauri build` directly —
+#     tauri-action resolves paths via $GITHUB_WORKSPACE, which the host-mode
+#     runner reports as the container path /github/workspace.
 #   * tauri-action is used in build-only mode (empty tagName): its release
 #     path talks the GitHub releases API (octokit upload_url flow), which
 #     Forgejo's API doesn't implement. Release create / asset upload /
@@ -201,12 +202,126 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
 
-  # Flip the draft live once the build uploaded everything — gating this in a
-  # separate job keeps the release invisible until it is complete (and keeps
-  # the structure ready for additional platform legs later).
+  # Windows installers (MSI + NSIS) on the self-hosted VM runner. Runs in
+  # parallel with the Linux build; both upload into the same draft release
+  # (find-or-create is race-safe: a lost create just re-reads the winner's
+  # release id). Steps mirror ci.yml's windows leg — see the comments there
+  # for why checkout is manual, pnpm comes via corepack, and there is no
+  # setup-node. WiX + NSIS are fetched by tauri itself on first use (cached
+  # in the service profile's %LOCALAPPDATA%\tauri).
+  windows:
+    needs: version
+    if: ${{ !cancelled() && needs.version.result != 'failure' }}
+    runs-on: windows-latest
+    steps:
+      # On a bump run, build the tagged commit (not the pre-bump dispatch ref).
+      - name: Checkout
+        run: |
+          git init -q .
+          git remote add origin https://${{ secrets.CI_TOKEN }}@forgejo.informethic.ch/${{ github.repository }}.git
+          git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin ${{ needs.version.outputs.tag || github.ref }}
+          git checkout -q --force FETCH_HEAD
+
+      - name: Resolve release tag
+        id: rel
+        run: |
+          if [ -n "${{ needs.version.outputs.tag }}" ]; then
+            echo "tag=${{ needs.version.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Verify the tag matches the app version
+        if: steps.rel.outputs.tag != ''
+        run: |
+          node scripts/version.mjs --check
+          app="$(node scripts/version.mjs)"
+          tag="${{ steps.rel.outputs.tag }}"
+          if [ "$app" != "${tag#v}" ]; then
+            echo "::error::tag $tag does not match app version $app — run: pnpm set-version ${tag#v}"
+            exit 1
+          fi
+
+      # beforeBuildCommand covers the frontend build; the linux-only bundle
+      # targets in tauri.conf.json are skipped automatically on Windows.
+      - name: Build installers
+        run: pnpm tauri build
+
+      # Same find-or-create + replace-assets flow as the Linux job, but JSON
+      # parsing runs on node (already on the VM for JS actions) instead of jq
+      # (absent from the VM).
+      - name: Upload installers to the release
+        if: steps.rel.outputs.tag != ''
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          api="$GITHUB_API_URL"
+          hdr="Authorization: token $TOKEN"
+          id=$(curl -sS -H "$hdr" "$api/repos/$REPO/releases/tags/$TAG" \
+            | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).id ?? ""')
+          if [ -z "$id" ]; then
+            id=$(curl -sS -H "$hdr" -X POST "$api/repos/$REPO/releases" \
+              -H 'Content-Type: application/json' \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"draft\":true}" \
+              | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).id ?? ""')
+          fi
+          # empty again = lost the create race to the Linux job — re-read
+          if [ -z "$id" ]; then
+            id=$(curl -sS -H "$hdr" "$api/repos/$REPO/releases/tags/$TAG" \
+              | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).id ?? ""')
+          fi
+          if [ -z "$id" ]; then
+            echo "::error::could not resolve a release id for $TAG"
+            exit 1
+          fi
+          echo "release id: $id"
+          shopt -s nullglob
+          for f in src-tauri/target/release/bundle/msi/*.msi \
+                   src-tauri/target/release/bundle/nsis/*.exe; do
+            name=$(basename "$f")
+            # drop a stale same-name asset from a previous (re-)run
+            curl -sS -H "$hdr" "$api/repos/$REPO/releases/$id/assets" \
+              | node -e 'for (const a of JSON.parse(require("fs").readFileSync(0,"utf8"))) if (a.name === process.argv[1]) console.log(a.id)' "$name" \
+              | while read -r aid; do
+                  curl -fsS -H "$hdr" -X DELETE "$api/repos/$REPO/releases/$id/assets/$aid"
+                done
+            echo "uploading $name"
+            curl -fsS -H "$hdr" -X POST \
+              "$api/repos/$REPO/releases/$id/assets?name=$name" \
+              -F "attachment=@$f" > /dev/null
+          done
+
+      - name: Upload installers as run artifacts (build-only run)
+        if: steps.rel.outputs.tag == ''
+        uses: https://forgejo.informethic.ch/forgejo/upload-artifact@v4
+        with:
+          name: installers-windows
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+
+  # Flip the draft live once both builds uploaded everything — gating this in
+  # a separate job keeps the release invisible until it is complete.
   publish:
-    needs: [version, build]
-    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.version.outputs.tag != '' || startsWith(github.ref, 'refs/tags/')) }}
+    needs: [version, build, windows]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.windows.result == 'success' && (needs.version.outputs.tag != '' || startsWith(github.ref, 'refs/tags/')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Publish the release
