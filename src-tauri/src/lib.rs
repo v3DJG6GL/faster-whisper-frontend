@@ -1,5 +1,6 @@
 mod atspi_guard;
 mod audio;
+mod chord_engine;
 mod commands;
 mod config;
 mod evdev_hotkeys;

@@ -21,7 +21,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, S
 pub struct TriggerPayload {
     /// The fired Profile's stable id (resolved to a Backend on the frontend).
     pub profile_id: String,
-    pub action: String, // "start" | "stop" | "toggle"
+    pub action: String, // "start" | "stop" | "toggle" | "reclassify" | "cancel" (chord family — see chord_engine)
 }
 
 /// Emit a trigger event for an explicit Profile id.

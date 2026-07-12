@@ -15,13 +15,17 @@ import { useEffect, useRef, useState } from "react";
 import { validateCodes, suspendShortcuts, reregisterShortcuts } from "./api";
 import { MODIFIER_CODES, codeToToken, canonicalizeCodes } from "./keys";
 import { learnLetter } from "./keyboardLayout";
-import { findChordConflict } from "./conflicts";
+import { findChordConflict, type BindingKind } from "./conflicts";
 import type { Profile } from "./types";
 
 export function useHotkeyCapture(opts: {
   capturing: boolean;
   lowLevelActive: boolean;
   others: Profile[];
+  /** What the chord being bound will behave as — decides whether a nesting with
+   *  another binding is the designed hold ⊂ latch ⊂ quick-add family (allowed)
+   *  or a real shadow conflict. */
+  selfKind: BindingKind;
   onCommit: (codes: string[]) => void;
   onCancel: () => void;
 }): { heldCodes: string[]; warn: string | null } {
@@ -50,7 +54,7 @@ export function useHotkeyCapture(opts: {
     const finalize = (codes: string[]) => {
       // No low-level backend ⇒ the plugin registers and collapses L/R modifier sides, so collapse
       // them for the clash check too (a side-only-different chord would otherwise warn-free yet collide).
-      const clash = findChordConflict(codes, ref.current.others, !lowLevelActive);
+      const clash = findChordConflict(codes, ref.current.others, !lowLevelActive, ref.current.selfKind);
       if (clash) {
         setWarn(
           clash.kind === "duplicate"

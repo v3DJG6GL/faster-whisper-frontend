@@ -440,6 +440,7 @@ function QuickAddShortcutRow({ lowLevelActive }: { lowLevelActive: boolean }) {
     capturing,
     lowLevelActive,
     others: profiles,
+    selfKind: "quickadd",
     onCommit: (c) => {
       updateGeneral({ quickAddHotkey: c });
       setCapturing(false);

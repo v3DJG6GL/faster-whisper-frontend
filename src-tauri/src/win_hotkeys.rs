@@ -193,6 +193,7 @@ fn vk_to_evdev_mod(vk: u16) -> Option<u16> {
 #[cfg(windows)]
 mod imp {
     use super::{code_to_vk, vk_to_evdev_mod, Running, WinHookState, NUMPAD_ENTER};
+    use crate::chord_engine::{ChordKind, ChordSpec, Engine, Fire};
     use crate::config::{ActivationType, Profile};
     use crate::triggers::TriggerPayload;
     use std::cell::Cell;
@@ -218,19 +219,6 @@ mod imp {
         WM_SYSKEYDOWN, WM_TIMER, WNDCLASSW,
     };
 
-    /// What a matched chord does (mirrors evdev_hotkeys::ChordAction).
-    #[derive(Clone)]
-    enum ChordAction {
-        Dictate { profile_id: String, activation: ActivationType },
-        OpenQuickAdd,
-    }
-
-    /// One enabled chord, in virtual-key-id space, ready for matching.
-    struct ChordDesc {
-        action: ChordAction,
-        keys: Vec<u16>,
-    }
-
     /// A physical key transition, forwarded from `hook_proc` to the worker.
     struct KeyEv {
         id: u16,
@@ -242,13 +230,14 @@ mod imp {
     /// shutdown() swap it. Locked per keystroke — uncontended in steady state.
     static TX: Mutex<Option<Sender<KeyEv>>> = Mutex::new(None);
 
-    /// Build chord descriptors for every enabled Profile whose hotkey maps cleanly,
+    /// Build chord specs for every enabled Profile whose hotkey maps cleanly,
     /// plus the quick-add window chord. Equal chords are de-duped (first by config
     /// order wins) so one keypress can't fire two actions. Unmappable / empty skipped.
-    /// (Direct port of evdev_hotkeys::chords_from into VK space.)
-    fn chords_from(profiles: &[Profile], quick_add_hotkey: &[String]) -> Vec<ChordDesc> {
-        let mut out: Vec<ChordDesc> = Vec::new();
-        let mut push = |action: ChordAction, keys: Vec<u16>, what: &str| {
+    /// (Direct port of evdev_hotkeys::chords_from into VK space; the nesting/family
+    /// semantics live in the shared crate::chord_engine.)
+    fn chords_from(profiles: &[Profile], quick_add_hotkey: &[String]) -> Vec<ChordSpec> {
+        let mut out: Vec<ChordSpec> = Vec::new();
+        let mut push = |kind: ChordKind, keys: Vec<u16>, what: &str| {
             let set: HashSet<u16> = keys.iter().copied().collect();
             let dup = out
                 .iter()
@@ -256,7 +245,7 @@ mod imp {
             if dup {
                 tracing::warn!("[winhook] {what} has the same chord as an earlier one; ignoring the duplicate");
             } else {
-                out.push(ChordDesc { action, keys });
+                out.push(ChordSpec { keys, kind });
             }
         };
         for p in profiles.iter().filter(|p| p.enabled) {
@@ -266,31 +255,15 @@ mod imp {
             if keys.is_empty() {
                 continue;
             }
-            push(
-                ChordAction::Dictate { profile_id: p.id.clone(), activation: p.activation },
-                keys,
-                &format!("profile '{}'", p.id),
-            );
+            let kind = match p.activation {
+                ActivationType::Hold => ChordKind::Hold { profile_id: p.id.clone() },
+                ActivationType::Latch => ChordKind::Latch { profile_id: p.id.clone() },
+            };
+            push(kind, keys, &format!("profile '{}'", p.id));
         }
         if let Some(keys) = quick_add_hotkey.iter().map(|c| code_to_vk(c)).collect::<Option<Vec<_>>>() {
             if !keys.is_empty() {
-                push(ChordAction::OpenQuickAdd, keys, "the quick-add shortcut");
-            }
-        }
-        out
-    }
-
-    /// For each chord `i`, the indices of OTHER chords that are a strict superset of
-    /// it — chord `i` is suppressed while any such superset is fully held ("most-
-    /// specific chord wins"; see evdev_hotkeys::compute_strict_supersets).
-    fn compute_strict_supersets(chords: &[ChordDesc]) -> Vec<Vec<usize>> {
-        let sets: Vec<HashSet<u16>> = chords.iter().map(|c| c.keys.iter().copied().collect()).collect();
-        let mut out = vec![Vec::new(); chords.len()];
-        for i in 0..chords.len() {
-            for j in 0..chords.len() {
-                if i != j && sets[j].len() > sets[i].len() && sets[i].iter().all(|c| sets[j].contains(c)) {
-                    out[i].push(j);
-                }
+                push(ChordKind::QuickAdd, keys, "the quick-add shortcut");
             }
         }
         out
@@ -314,7 +287,6 @@ mod imp {
             return; // guard drops → lock released; *g stays None (no listener)
         }
         let n_chords = chords.len();
-        let supersets = compute_strict_supersets(&chords);
 
         let (tx, rx) = channel::<KeyEv>();
         // Install the sender BEFORE the hook goes live so no transition is dropped.
@@ -326,7 +298,7 @@ mod imp {
         let worker_app = app.clone();
         let _ = std::thread::Builder::new()
             .name("win-hotkeys-match".into())
-            .spawn(move || worker(worker_app, rx, chords, supersets));
+            .spawn(move || worker(worker_app, rx, Engine::new(chords)));
 
         let (ready_tx, ready_rx) = channel::<Option<u32>>();
         let _ = std::thread::Builder::new()
@@ -793,21 +765,17 @@ mod imp {
         }
     }
 
-    /// The chord-matching state machine — a direct port of
-    /// `evdev_hotkeys::run_device` (one instance, fed by the hook instead of
-    /// per-device streams). Runs until the sender is dropped (shutdown/restart),
-    /// then releases its HeldKeys contributions and stops any live Hold session.
-    fn worker(app: AppHandle, rx: Receiver<KeyEv>, chords: Vec<ChordDesc>, supersets: Vec<Vec<usize>>) {
+    /// The chord-matching worker — the twin of `evdev_hotkeys::run_device` (one
+    /// instance, fed by the hook instead of per-device streams). All chord
+    /// semantics (hold edges, latch re-arm, family handoff/grace) live in the
+    /// shared crate::chord_engine. Runs until the sender is dropped (shutdown/
+    /// restart), then releases its HeldKeys contributions and stops any live
+    /// Hold session.
+    fn worker(app: AppHandle, rx: Receiver<KeyEv>, mut engine: Engine) {
         // Mirror physical modifier state into the shared signal `inject_text` reads,
         // so we never type into a still-held trigger modifier (see crate::held_keys).
         let held_keys = app.state::<crate::held_keys::HeldKeys>().inner().clone();
         let mut held: HashSet<u16> = HashSet::new();
-        // Per-chord state — hold: currently emitting; latch: armed (rising-edge
-        // debounce, so one press = one toggle).
-        let mut active = vec![false; chords.len()];
-        // Reused per-event scratch — this worker sees every keystroke in any app;
-        // recompute in place rather than heap-allocating per key event.
-        let mut fully = vec![false; chords.len()];
 
         while let Ok(ev) = rx.recv() {
             // Windows auto-repeats WM_KEYDOWN while a key is held; the held-set
@@ -820,46 +788,23 @@ mod imp {
                 held_keys.set(code, ev.down);
             }
 
-            for (slot, c) in fully.iter_mut().zip(chords.iter()) {
-                *slot = c.keys.iter().all(|k| held.contains(k));
-            }
-
-            for i in 0..chords.len() {
-                // Active iff fully held AND no strict-superset chord is also fully held.
-                let on = fully[i] && !supersets[i].iter().any(|&j| fully[j]);
-                match &chords[i].action {
-                    ChordAction::Dictate { profile_id, activation } => match activation {
-                        ActivationType::Hold => {
-                            if on && !active[i] {
-                                active[i] = true;
-                                emit(&app, profile_id, "start");
-                                note_hold(profile_id, true);
-                            } else if !on && active[i] {
-                                active[i] = false;
-                                emit(&app, profile_id, "stop");
-                                note_hold(profile_id, false);
-                            }
-                        }
-                        ActivationType::Latch => {
-                            if on && !active[i] {
-                                active[i] = true;
-                                emit(&app, profile_id, "toggle");
-                            } else if !fully[i] {
-                                // Re-arm on a real RELEASE only — not when a superset chord
-                                // merely suppresses this one (see evdev_hotkeys).
-                                active[i] = false;
-                            }
-                        }
-                    },
-                    ChordAction::OpenQuickAdd => {
-                        // Rising-edge (like latch): open once per chord press.
-                        if on && !active[i] {
-                            active[i] = true;
-                            crate::quickadd::show(&app);
-                        } else if !fully[i] {
-                            active[i] = false;
-                        }
+            for fire in engine.step(&held, std::time::Instant::now()) {
+                match fire {
+                    Fire::Start(pid) => {
+                        emit(&app, &pid, "start");
+                        note_hold(&pid, true);
                     }
+                    Fire::Stop(pid) => {
+                        emit(&app, &pid, "stop");
+                        note_hold(&pid, false);
+                    }
+                    // Handoff: the hold's session lives on under the superset —
+                    // release the teardown bookkeeping, emit no "stop".
+                    Fire::ReleaseHold(pid) => note_hold(&pid, false),
+                    Fire::Toggle(pid) => emit(&app, &pid, "toggle"),
+                    Fire::Reclassify(pid) => emit(&app, &pid, "reclassify"),
+                    Fire::Cancel(pid) => emit(&app, &pid, "cancel"),
+                    Fire::OpenQuickAdd => crate::quickadd::show(&app),
                 }
             }
         }
@@ -873,13 +818,9 @@ mod imp {
         // …and stop any push-to-talk session still active, claim-based (take_hold)
         // so a stop already emitted by stop_held_sessions() isn't doubled onto a
         // session the user re-triggered meanwhile.
-        for i in 0..chords.len() {
-            if active[i] {
-                if let ChordAction::Dictate { profile_id, activation: ActivationType::Hold } = &chords[i].action {
-                    if take_hold(profile_id) {
-                        emit(&app, profile_id, "stop");
-                    }
-                }
+        for pid in engine.active_holds() {
+            if take_hold(&pid) {
+                emit(&app, &pid, "stop");
             }
         }
     }

@@ -93,6 +93,7 @@ function Editor({
     capturing,
     lowLevelActive,
     others,
+    selfKind: p.activation === "latch" ? "latch" : "hold",
     onCommit: (codes) => {
       set({ hotkey: codes });
       setCapturing(false);

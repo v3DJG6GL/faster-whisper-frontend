@@ -42,7 +42,7 @@ import {
   reregisterShortcutsUnlessCapturing,
   shortcutModsHeld,
 } from "./api";
-import type { ActivationKind, AppRule, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertMethod } from "./types";
+import type { ActivationKind, AppRule, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertMethod, Profile } from "./types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
 
@@ -156,6 +156,10 @@ let clipDirty = false;
 let clipHoldsOurs = false;
 let phraseEndTimer: ReturnType<typeof setTimeout> | null = null;
 const PHRASE_END_QUIET_MS = 1200;
+// Chord family: a latch superset completed during the start prologue (insertCfg not
+// built yet) — startLiveInner applies the upgrade right after it exists. Cleared on
+// every fresh start and on cancel so a stale flip can't latch an unrelated session.
+let pendingReclassify: Profile | null = null;
 // Serialise every injection op so backspaces/types never interleave or race.
 let injectChain: Promise<void> = Promise.resolve();
 function enqueueInject(fn: () => Promise<void>): void {
@@ -1273,6 +1277,7 @@ export async function startLive(
   if (startingSession) return;
   startingSession = true;
   stopRequestedDuringStart = false; // fresh start; a prologue stop sets it (see requestStopIfStarting)
+  pendingReclassify = null; // a stale queued upgrade must not latch this unrelated session
   // Cancel a prior error's lingering auto-clear timer: its body nulls activeProfile + blips the chip
   // to idle, guarded only by status==="error" at fire time. A re-trigger during the ~1s start prologue
   // (status stays "error" until startLiveInner sets "listening") would otherwise let it fire on the
@@ -1399,6 +1404,14 @@ async function startLiveInner(
     useApp.getState().setDictation({ warming: false, micLive: true });
   }, MIC_WARM_TIMEOUT_MS);
   activeEndpoint = endpoint;
+  // A chord-family upgrade landed during the prologue (the common case — Space
+  // arrives well inside the ~1s start) — the session context exists now, apply it
+  // so this session comes up hands-free from its first frame.
+  if (pendingReclassify) {
+    const upgraded = pendingReclassify;
+    pendingReclassify = null;
+    applyReclassify(upgraded);
+  }
   startTargetPoll(); // keep the chip's target readout live as focus moves during the session
 
   // The clipboard snapshot for "restore after" is taken PER PHRASE now, just before each paste
@@ -1459,6 +1472,45 @@ async function startLiveInner(
     console.error("start dictation failed:", e);
     flashError(String(e));
   }
+}
+
+/** Chord family: upgrade the RUNNING hold session to hands-free in place — no
+ *  restart, the capture/transport keep going. Flips what "latch" changes:
+ *  the auto-stop timer arms, live TYPING becomes allowed once the chord is
+ *  released (recomputed below), and the chip/usage relabel to the latch
+ *  Profile. The latch Profile's own backend/language/prompt overrides do NOT
+ *  apply — the transport was opened for the hold's backend and stays there.
+ *  Mid-prologue (insertCfg not built yet) the flip is queued and applied by
+ *  startLiveInner the moment the session context exists. */
+export function reclassifyLive(profile: Profile): void {
+  if (startingSession) {
+    pendingReclassify = profile;
+    return;
+  }
+  if (!insertCfg) return; // no session — dictate() only calls this while busy
+  applyReclassify(profile);
+}
+
+function applyReclassify(profile: Profile): void {
+  const st = useApp.getState();
+  if (insertCfg) {
+    insertCfg.activation = "latch";
+    // The chord gets released now the session is hands-free, so live TYPING becomes
+    // safe — recompute `live` exactly as startLiveInner does (activation is no longer
+    // "hold"). The append-only delta insert catches up anything committed before the
+    // flip. EXCEPT when a hard break already banked text (a long hold upgraded late):
+    // the live path never re-reads bankedDoc, so flipping `live` would drop it at stop
+    // — keep the session in its started insert mode in that rare case.
+    if (bankedDoc === "") {
+      insertCfg.live = insertCfg.timing === "live" && activeEndpoint === "stream";
+    }
+  }
+  // Arm the latch auto-stop (a hold session leaves it off — key-release ends it).
+  const rec = st.settings.recording;
+  autoStopMemo = newSpeakMemo();
+  lastSpokeAt = performance.now();
+  autoStopMs = rec.latchAutoStopMin > 0 ? rec.latchAutoStopMin * 60_000 : 0;
+  st.setDictation({ activeProfile: profile.id });
 }
 
 export async function stopLive(): Promise<void> {
@@ -1536,6 +1588,7 @@ export async function stopLive(): Promise<void> {
 export async function cancelLive(): Promise<void> {
   autoStopMs = 0; // disarm latch auto-stop
   pendingHoldStart = null; // a deliberate cancel also voids a queued fast re-press
+  pendingReclassify = null; // …and a queued chord-family upgrade
   clearWarmTimer();
   clearStuckWatchdog();
   stopTargetPoll();

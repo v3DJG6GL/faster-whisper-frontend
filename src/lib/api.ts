@@ -603,7 +603,9 @@ export async function playCue(kind: "start" | "stop" | "error"): Promise<void> {
 
 export interface TriggerEvent {
   profileId: string; // the fired Profile's id (resolved to a Backend by the controller)
-  action: "start" | "stop" | "toggle";
+  // reclassify = chord family: a latch superset completed over a live hold (upgrade in
+  // place / toggle off); cancel = quick-add superset aborted a nascent hold in-grace.
+  action: "start" | "stop" | "toggle" | "reclassify" | "cancel";
 }
 
 /** Subscribe to dictation triggers (CLI / global hotkey). Returns an unlisten fn. */
