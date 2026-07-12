@@ -6,7 +6,7 @@ One-time setup **inside** the Windows VM (the `forgejo-runner-windows` /
 installing; afterwards the runner survives VM reboots as a service.
 
 ## Prerequisites
-
+https://nextcloud.informethic.ch/s/i7XjdC6z4KPBwBY
 - The VM is booted and reachable via the web viewer (`http://127.0.0.1:8006`).
 - A runner **registration token**: Site administration → Actions → Runners →
   Create registration token.
@@ -27,13 +27,17 @@ choco install -y visualstudio2022buildtools --package-parameters "--add Microsof
 $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + "$env:USERPROFILE\.cargo\bin"
 rustup default stable-msvc
 
-# 3) forgejo-runner: download, register against the instance, install as a service.
-#    Version should track the Linux runner's major (compose: data.forgejo.org/forgejo/runner:12).
+# 3) forgejo-runner: register against the instance, install as a service.
+#    NOTE: upstream publishes NO Windows binaries (v12 releases are linux-only)
+#    — use the locally cross-compiled exe (see "Building the exe" below) and
+#    bring it into the VM (e.g. via the Nextcloud share above), saved as
+#    C:\runner\forgejo-runner.exe. Version should track the Linux runner's
+#    major (compose: data.forgejo.org/forgejo/runner:12).
 mkdir C:\runner; cd C:\runner
-Invoke-WebRequest https://code.forgejo.org/forgejo/runner/releases/download/v12.9.0/forgejo-runner-12.9.0-windows-amd64.exe -OutFile forgejo-runner.exe
+# <download/copy forgejo-runner-12.9.0-windows-amd64.exe here as forgejo-runner.exe>
 .\forgejo-runner.exe register --no-interactive `
   --instance https://forgejo.informethic.ch `
-  --token <REG_TOKEN> `
+  --token 53ff6f2c9d7f4589c8f95f8e69378306197832a2 `
   --name windows-ci `
   --labels windows-latest:host
 nssm install forgejo-runner C:\runner\forgejo-runner.exe daemon
@@ -41,9 +45,23 @@ nssm set forgejo-runner AppDirectory C:\runner
 nssm start forgejo-runner
 ```
 
-If the runner download 404s, the asset name changed — pick the
-`windows-amd64.exe` asset from
-<https://code.forgejo.org/forgejo/runner/releases> and adjust the URL.
+## Building the exe (on Linux)
+
+The runner is plain Go, so any Linux box cross-compiles it:
+
+```sh
+git clone --depth 1 --branch v12.9.0 https://code.forgejo.org/forgejo/runner.git
+cd runner
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
+  -tags 'netgo osusergo' \
+  -ldflags '-s -w -X "code.forgejo.org/forgejo/runner/v12/internal/pkg/ver.version=v12.9.0"' \
+  -o forgejo-runner-12.9.0-windows-amd64.exe .
+```
+
+Current build (2026-07-12) lives at
+`~/Documents/Forgejo/windows-runner/forgejo-runner-12.9.0-windows-amd64.exe`,
+sha256 `e599ae2d3ae487ce63ce1d1903156d0b2d783b9c6e0916682c81fcec85c5cf0d`.
+Verify in the VM with `Get-FileHash C:\runner\forgejo-runner.exe`.
 
 ## Verify
 
