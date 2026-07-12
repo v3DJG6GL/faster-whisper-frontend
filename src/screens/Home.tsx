@@ -8,6 +8,7 @@ import { Button, Card, Notice, SectionLabel, Select, Toggle } from "@/components
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/UsageStats";
+import { SetupChecklist } from "@/components/SetupChecklist";
 import { startLive, stopLive, cancelLive, requestStopIfStarting } from "@/lib/streaming";
 import { backendForProfile, homeTargetProfile } from "@/lib/dictation";
 import type { Backend, Profile } from "@/lib/types";
@@ -189,6 +190,10 @@ export default function Home() {
       {/* Usage at a glance — sparkline tiles between the heading and the dictation
           instrument; the full chart lives on /statistics. */}
       <HomeUsageStrip />
+
+      {/* First-run / re-setup checklist — renders only while a backend or all
+          profiles are missing (the dictate hero below is inert until then). */}
+      <SetupChecklist />
 
       {/* Hero instrument */}
       <Card className="mt-8 overflow-hidden p-0">

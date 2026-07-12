@@ -1,4 +1,4 @@
-import { useEffect, type DependencyList } from "react";
+import { useEffect, useState, type DependencyList } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
@@ -12,6 +12,7 @@ import { dictate, runOverlayAction } from "@/lib/dictation";
 import { cancelLive, requestStopIfStarting } from "@/lib/streaming";
 import { SCREEN_PATH } from "@/lib/screens";
 import { applyTheme, watchSystemTheme } from "@/lib/theme";
+import { Onboarding } from "@/screens/Onboarding";
 import Home from "@/screens/Home";
 import Transcribe from "@/screens/Transcribe";
 import Profiles from "@/screens/Profiles";
@@ -106,6 +107,19 @@ function SaveErrorBanner() {
 
 export default function App() {
   const theme = useApp((s) => s.settings.theme);
+  // First-run gate: a LOADED config with no backends AND no profiles (fresh
+  // install — seeds are gone) and no prior skip mounts the onboarding flow
+  // instead of the shell. Latched locally so the flow survives its own store
+  // writes (creating Backend #1 makes backends non-empty mid-flow); it closes
+  // only via onDone, and setupDismissed keeps it from ever re-opening.
+  const configLoaded = useApp((s) => s.configLoaded);
+  const needsSetup = useApp(
+    (s) => s.backends.length === 0 && s.profiles.length === 0 && !s.settings.setupDismissed,
+  );
+  const [onboarding, setOnboarding] = useState(false);
+  useEffect(() => {
+    if (configLoaded && needsSetup) setOnboarding(true);
+  }, [configLoaded, needsSetup]);
 
   useEffect(() => {
     void initConfig();
@@ -143,6 +157,15 @@ export default function App() {
     // While on "auto", track live OS scheme flips (Windows app-mode / desktop setting).
     return watchSystemTheme(() => useApp.getState().settings.theme);
   }, [theme]);
+
+  if (onboarding) {
+    return (
+      <>
+        <Onboarding onDone={() => setOnboarding(false)} />
+        <SaveErrorBanner />
+      </>
+    );
+  }
 
   return (
     <HashRouter>

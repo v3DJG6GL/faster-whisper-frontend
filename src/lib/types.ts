@@ -210,6 +210,7 @@ export interface AppSettings {
   general: GeneralSettings;
   recording: RecordingSettings;
   sync?: SyncSettings; // machine-local sync meta; excluded from blobs/exports
+  setupDismissed?: boolean; // "Skip for now" on the first-run gate — fall back to the Home checklist
 }
 
 /** Runtime dictation status — mirrors the Rust state machine, surfaced to the chip. */

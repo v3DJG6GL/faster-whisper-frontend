@@ -506,6 +506,10 @@ pub struct AppSettings {
     /// and an unset value round-trips byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync: Option<serde_json::Value>,
+    /// "Skip for now" on the first-run gate: fall back to the Home checklist
+    /// instead of re-gating every launch. `#[serde(default)]` so older configs load.
+    #[serde(default)]
+    pub setup_dismissed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -571,53 +575,14 @@ impl Default for Config {
                     quick_launch: Vec::new(),
                 },
                 sync: None,
+                setup_dismissed: false,
             },
-            backends: vec![Backend {
-                id: "default".into(),
-                name: "Local server".into(),
-                server_url: "http://localhost:8000".into(),
-                has_api_key: false,
-                model: "whisper-1".into(),
-                endpoint: EndpointKind::Stream,
-                language: "auto".into(),
-                prompt: String::new(),
-                response_format: ResponseFormat::VerboseJson,
-                decode_overrides: None,
-                kind: None,
-                override_profile: None,
-            }],
-            profiles: vec![
-                Profile {
-                    id: "hold".into(),
-                    name: "Push-to-talk".into(),
-                    activation: ActivationType::Hold,
-                    enabled: true,
-                    hotkey: vec!["ControlLeft".into(), "ShiftLeft".into()],
-                    backend_id: Some("default".into()),
-                    tag: None,
-                    endpoint: None,
-                    language: None,
-                    prompt: None,
-                    decode_overrides: None,
-                    override_profile: None,
-                },
-                Profile {
-                    id: "handsfree".into(),
-                    name: "Latch".into(),
-                    activation: ActivationType::Latch,
-                    enabled: true,
-                    // Chord family: extends the push-to-talk root — completing it over a
-                    // held PTT upgrades the session in place (see chord_engine.rs).
-                    hotkey: vec!["ControlLeft".into(), "ShiftLeft".into(), "Space".into()],
-                    backend_id: Some("default".into()),
-                    tag: None,
-                    endpoint: None,
-                    language: None,
-                    prompt: None,
-                    decode_overrides: None,
-                    override_profile: None,
-                },
-            ],
+            // Fresh installs start EMPTY — no seeded backend or profiles. The
+            // first-run onboarding (gate → restore-or-starters → quick add) or the
+            // Home checklist walks the user to a working setup; the pre-v2 legacy
+            // migration below still builds real entries, so upgraders never see it.
+            backends: Vec::new(),
+            profiles: Vec::new(),
             app_rules: Vec::new(),
             version: Some(2),
         }

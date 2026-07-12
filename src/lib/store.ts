@@ -31,18 +31,6 @@ const speakMemo = newSpeakMemo();
  * a dictation setup (activation + chord + a target Backend + optional overrides).
  */
 
-const DEFAULT_BACKEND: Backend = {
-  id: "default",
-  name: "Local server",
-  serverUrl: "http://localhost:8000",
-  hasApiKey: false,
-  model: "whisper-1",
-  endpoint: "stream",
-  language: "auto",
-  prompt: "",
-  responseFormat: "verbose_json",
-};
-
 /** Sync starts off with every category opted in — flipping "Enable sync" is
  *  the single gate; the toggles then subtract. Machine-local by contract
  *  (never travels in a blob/export), so defaults only matter per-device. */
@@ -100,15 +88,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     quickLaunch: [],
   },
   sync: DEFAULT_SYNC,
+  setupDismissed: false,
 };
-
-// Seed ids match the legacy mode strings so migration is idempotent (see Rust load()).
-const DEFAULT_PROFILES: Profile[] = [
-  { id: "hold", name: "Push-to-talk", activation: "hold", enabled: true, hotkey: ["ControlLeft", "ShiftLeft"], backendId: "default" },
-  // Chord family: the latch chord extends the push-to-talk root on purpose —
-  // completing it over a held PTT upgrades the session in place (chord_engine.rs).
-  { id: "handsfree", name: "Latch", activation: "latch", enabled: true, hotkey: ["ControlLeft", "ShiftLeft", "Space"], backendId: "default" },
-];
 
 /** Deep-merge loaded settings over the defaults so a config written by an older version
  *  — or with fields omitted by the backend's skip-empty serialization (e.g. an empty
@@ -136,37 +117,38 @@ function withSettingsDefaults(raw: unknown): AppSettings {
  */
 function migrateConfig(raw: unknown): Config {
   const c = raw as Record<string, unknown> | null;
+  // No config at all = a genuinely fresh install: EMPTY (no seeded backend or
+  // profiles) — the first-run onboarding / Home checklist takes it from here.
   if (!c || typeof c !== "object") {
-    return { settings: DEFAULT_SETTINGS, backends: [DEFAULT_BACKEND], profiles: DEFAULT_PROFILES };
+    return { settings: DEFAULT_SETTINGS, backends: [], profiles: [] };
   }
   // Already v2 (has `backends`).
   if (Array.isArray((c as { backends?: unknown }).backends)) {
     return {
       settings: withSettingsDefaults(c.settings),
-      backends: (c.backends as Backend[]) ?? [DEFAULT_BACKEND],
+      backends: (c.backends as Backend[]) ?? [],
       profiles: Array.isArray(c.profiles) ? (c.profiles as Profile[]) : [],
       appRules: Array.isArray((c as { appRules?: unknown }).appRules) ? (c.appRules as AppRule[]) : [],
       version: c.version as number | undefined,
     };
   }
-  // Legacy v1: `profiles` were Backends; `modes` were ModeBindings.
-  const backends = Array.isArray(c.profiles) ? (c.profiles as Backend[]) : [DEFAULT_BACKEND];
+  // Legacy v1: `profiles` were Backends; `modes` were ModeBindings. A legacy config
+  // without modes never dictated — leave profiles empty (the checklist offers starters).
+  const backends = Array.isArray(c.profiles) ? (c.profiles as Backend[]) : [];
   const modes = Array.isArray((c as { modes?: unknown }).modes)
     ? ((c as { modes: Record<string, unknown>[] }).modes)
     : [];
-  const profiles: Profile[] = modes.length
-    ? modes.map((m) => {
-        const isHold = m.mode === "hold";
-        return {
-          id: isHold ? "hold" : "handsfree",
-          name: isHold ? "Push-to-talk" : "Latch",
-          activation: isHold ? "hold" : "latch",
-          enabled: !!m.enabled,
-          hotkey: Array.isArray(m.hotkey) ? (m.hotkey as string[]) : [],
-          backendId: (m.profileId as string | null) ?? null,
-        };
-      })
-    : DEFAULT_PROFILES;
+  const profiles: Profile[] = modes.map((m) => {
+    const isHold = m.mode === "hold";
+    return {
+      id: isHold ? "hold" : "handsfree",
+      name: isHold ? "Push-to-talk" : "Latch",
+      activation: isHold ? "hold" : "latch",
+      enabled: !!m.enabled,
+      hotkey: Array.isArray(m.hotkey) ? (m.hotkey as string[]) : [],
+      backendId: (m.profileId as string | null) ?? null,
+    };
+  });
   return { settings: withSettingsDefaults(c.settings), backends, profiles, version: 2 };
 }
 
@@ -272,6 +254,10 @@ interface AppState {
 
   /** Set (or clear, with null) the config-save error banner. */
   setSaveError: (msg: string | null, kind?: "save" | "load") => void;
+  /** True once initConfig hydrated (or determined there's nothing to load) — the
+   *  onboarding gate waits on this so it can't flash over a config still loading. */
+  configLoaded: boolean;
+  setConfigLoaded: () => void;
 
   /** P30: update the runtime sync status line (engine-owned). */
   setSyncRuntime: (
@@ -339,8 +325,11 @@ function upsertById<T extends { id: string }>(arr: T[], item: T): T[] {
 
 export const useApp = create<AppState>((set) => ({
   settings: DEFAULT_SETTINGS,
-  backends: [DEFAULT_BACKEND],
-  profiles: DEFAULT_PROFILES,
+  // Empty until hydrate() — fresh installs genuinely have no backends/profiles
+  // (the onboarding gate keys on that), and the persistence guard already
+  // prevents saving before the real config loads.
+  backends: [],
+  profiles: [],
   appRules: [],
 
   status: "idle",
@@ -531,6 +520,8 @@ export const useApp = create<AppState>((set) => ({
   setUsageViewBackend: (id) => set({ usageViewBackendId: id }),
 
   setSaveError: (msg, kind = "save") => set({ saveError: msg, saveErrorKind: msg ? kind : null }),
+  configLoaded: false,
+  setConfigLoaded: () => set({ configLoaded: true }),
 
   setSyncRuntime: (patch) => set(patch),
 

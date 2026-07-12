@@ -23,6 +23,7 @@ export async function initConfig(): Promise<void> {
   // second initConfig would register a second auto-save subscriber (doubled saveConfig +
   // reregisterShortcuts on every change). Mirrors initOverlayController / initUsageController.
   if (!isTauri) {
+    useApp.getState().setConfigLoaded();
     resolveConfigReady();
     return;
   }
@@ -165,5 +166,6 @@ export async function initConfig(): Promise<void> {
     }, 400);
   });
 
+  useApp.getState().setConfigLoaded();
   resolveConfigReady();
 }

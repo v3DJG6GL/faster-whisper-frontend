@@ -9,7 +9,7 @@ import { PRIDE_FLAG_URI } from "@/lib/prideFlag";
 import { dictationVisual } from "@/lib/dictationVisual";
 import { StatusDot } from "./ui";
 
-function BrandMark() {
+export function BrandMark() {
   // The unified app mark — the same artwork as src-tauri/icons/icon.svg (five-bar
   // level meter on the warm-dark Signal tile); keep the two in sync. Colors are
   // fixed on purpose: it's the logo, identical in both themes and on the desktop.
@@ -40,12 +40,36 @@ function BrandMark() {
   );
 }
 
+/** Setup guidance dot while the app isn't dictation-ready: amber marks the next
+ *  step's screen (Backends first, then Profiles), green marks a completed step —
+ *  both vanish once a backend AND a profile exist (mirrors the Home checklist). */
+function setupDot(screenId: string, backendCount: number, profileCount: number) {
+  if (backendCount > 0 && profileCount > 0) return null;
+  if (screenId === "backends") {
+    return (
+      <span className="ml-auto">
+        <StatusDot tone={backendCount === 0 ? "accent" : "live"} title={backendCount === 0 ? "Set up: connect a backend" : "Backend connected"} />
+      </span>
+    );
+  }
+  if (screenId === "profiles" && backendCount > 0 && profileCount === 0) {
+    return (
+      <span className="ml-auto">
+        <StatusDot tone="accent" title="Set up: confirm your hotkeys" />
+      </span>
+    );
+  }
+  return null;
+}
+
 export function Sidebar() {
   const theme = useApp((s) => s.settings.theme);
   const setTheme = useApp((s) => s.setTheme);
   const status = useApp((s) => s.status);
   const warming = useApp((s) => s.warming);
   const speaking = useApp((s) => s.speaking);
+  const backendCount = useApp((s) => s.backends.length);
+  const profileCount = useApp((s) => s.profiles.length);
   const vis = dictationVisual(status, speaking, warming);
   // Build-time app version (from tauri.conf.json), shown next to the brand label.
   const [version, setVersion] = useState("");
@@ -73,7 +97,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-0.5 px-3">
-        {VISIBLE_SCREENS.filter((s) => s.id !== "settings").map(({ path, label, icon: Icon, end }) => (
+        {VISIBLE_SCREENS.filter((s) => s.id !== "settings").map(({ id, path, label, icon: Icon, end }) => (
           <NavLink
             key={path}
             to={path}
@@ -92,6 +116,7 @@ export function Sidebar() {
                   strokeWidth={2}
                 />
                 {label}
+                {setupDot(id, backendCount, profileCount)}
               </>
             )}
           </NavLink>

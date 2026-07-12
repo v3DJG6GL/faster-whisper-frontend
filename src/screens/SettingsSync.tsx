@@ -45,7 +45,7 @@ const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
 ];
 
 /** "just now" / "4m ago" / "3h ago" / a date — for the last-synced line. */
-function relTime(ms: number): string {
+export function relTime(ms: number): string {
   const d = Date.now() - ms;
   if (d < 60_000) return "just now";
   if (d < 3_600_000) return `${Math.round(d / 60_000)}m ago`;
@@ -69,7 +69,7 @@ function Modal({ children, onClose }: { children: ReactNode; onClose: () => void
 }
 
 /** Per-category selection + hazard preview for a parsed import file. */
-function ImportPreview({ result, onClose }: { result: ImportResult; onClose: () => void }) {
+export function ImportPreview({ result, onClose }: { result: ImportResult; onClose: () => void }) {
   const evdevEnabled = useApp((st) => st.settings.general.evdevEnabled);
   const dictating = useApp((st) => st.status !== "idle");
   const present = (c: SyncCategory) => result.categories[c] !== undefined;

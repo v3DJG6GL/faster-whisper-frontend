@@ -4,6 +4,7 @@ import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw
 import { useApp } from "@/lib/store";
 import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
+import { starterProfiles } from "@/lib/starters";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { DecodeFields } from "@/components/DecodeFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -421,6 +422,8 @@ export default function Profiles() {
   const lowLevelActive = IS_WINDOWS || (!!evdev?.permitted && evdevEnabled);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Profile | null>(null);
+  // Checklist path: the suggested-starters card can be waved off for this visit.
+  const [startersDismissed, setStartersDismissed] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Open the editor for a profile deep-linked from elsewhere (Home's Edit button →
@@ -518,9 +521,33 @@ export default function Profiles() {
         <>
           <SectionLabel className="mb-3 mt-8">Configured</SectionLabel>
           {profiles.length === 0 ? (
-            <Card className="p-8 text-center text-[13.5px] text-dim">
-              No profiles yet. Add one to start dictating.
-            </Card>
+            backends.length > 0 && !startersDismissed ? (
+              // Checklist path: suggest the starter pair as amber-edged drafts on the
+              // screen the user will manage them on forever. Created only on Keep.
+              <Card className="border-accent/40 p-5">
+                <div className="text-[13.5px] font-semibold text-text">Suggested starters</div>
+                <div className="mt-0.5 text-[12.5px] text-dim">
+                  Push-to-talk (hold <HotkeyChips codes={["ControlLeft", "ShiftLeft"]} />) and Latch (
+                  <HotkeyChips codes={["ControlLeft", "ShiftLeft", "Space"]} /> — or add Space while
+                  holding push-to-talk to go hands-free mid-sentence). Keep them, then edit anything.
+                </div>
+                <div className="mt-4 flex items-center gap-2.5">
+                  <Button
+                    variant="accent"
+                    onClick={() => starterProfiles(backends[0]?.id ?? null).forEach(upsertProfile)}
+                  >
+                    Keep these
+                  </Button>
+                  <Button variant="ghost" onClick={() => setStartersDismissed(true)}>
+                    Start from scratch
+                  </Button>
+                </div>
+              </Card>
+            ) : (
+              <Card className="p-8 text-center text-[13.5px] text-dim">
+                No profiles yet. Add one to start dictating.
+              </Card>
+            )
           ) : (
             <div className="flex flex-col gap-3">
               {profiles.map((p, i) => (
