@@ -33,7 +33,13 @@ jobs:
         platform: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     steps:
+      # Private repo: check out with an explicit token. The auto job-token isn't
+      # applied to the git remote on this instance, so checkout would fall back
+      # to an interactive prompt and fail ("could not read Username"). CI_TOKEN
+      # is a repo secret (a read:repository access token).
       - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.CI_TOKEN }}
 
       - uses: pnpm/action-setup@v6 # version comes from package.json "packageManager"
 
