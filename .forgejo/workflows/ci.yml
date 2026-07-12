@@ -3,7 +3,10 @@
 #   * Actions are referenced unqualified (owner/repo@ref): the instance sets
 #     DEFAULT_ACTIONS_URL to itself, so refs resolve against local pull
 #     mirrors (orgs: actions, pnpm, dtolnay, Swatinem) — no GitHub dependency
-#     at job start. Before bumping any @version, confirm the mirror has
+#     at job start. REQUIRES app.ini [actions] DEFAULT_ACTIONS_URL =
+#     https://forgejo.informethic.ch (+ server restart): without it,
+#     unqualified refs fall back to code.forgejo.org, which lacks
+#     dtolnay/rust-toolchain — this job then dies at the toolchain step. Before bumping any @version, confirm the mirror has
 #     synced that tag (8h interval, or "Synchronize now" in repo settings).
 #   * windows-latest leg DROPPED: the self-hosted instance has no Windows
 #     runner, so the job queues forever. The "compiles on Windows" guarantee
