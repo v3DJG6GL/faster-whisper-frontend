@@ -120,12 +120,14 @@ jobs:
           node-version: 24.18.0
           cache: pnpm
 
-      # ci.yml's list + librsvg/patchelf, which only the AppImage bundling needs.
+      # ci.yml's list + librsvg/patchelf/xdg-utils, which only the AppImage
+      # bundling needs (tauri copies /usr/bin/xdg-open into the AppImage; the
+      # act job image doesn't preinstall it like GitHub-hosted runners do).
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-            libasound2-dev libxkbcommon-dev librsvg2-dev patchelf
+            libasound2-dev libxkbcommon-dev librsvg2-dev patchelf xdg-utils
 
       - uses: dtolnay/rust-toolchain@stable
 
