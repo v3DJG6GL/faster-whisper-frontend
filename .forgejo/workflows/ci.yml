@@ -8,11 +8,10 @@
 #     unqualified refs fall back to code.forgejo.org, which lacks
 #     dtolnay/rust-toolchain — this job then dies at the toolchain step. Before bumping any @version, confirm the mirror has
 #     synced that tag (8h interval, or "Synchronize now" in repo settings).
-#   * windows-latest leg DROPPED: the self-hosted instance has no Windows
-#     runner, so the job queues forever. The "compiles on Windows" guarantee
-#     is lost until a Windows runner is registered — the Linux-only crates
-#     are target-gated, so only a real Windows leg can catch a break there.
-#   * matrix + runner.os gates removed with it (single Linux leg).
+#   * windows-latest runs on the self-hosted Windows VM runner (host mode,
+#     label windows-latest:host — see the local windows-runner-setup guide).
+#     Its job is the MSVC compile check: the Windows-only crates are
+#     target-gated, so only a real Windows leg can catch a break there.
 #
 # Installer builds live in release.yml.
 name: ci
@@ -28,7 +27,11 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
 
@@ -43,6 +46,7 @@ jobs:
       # webkit/gtk for tauri itself; appindicator for the tray; asound for cpal;
       # xkbcommon for the Wayland virtual keyboard.
       - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
@@ -63,5 +67,8 @@ jobs:
       - name: cargo check
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml
 
+      # The unit tests live mostly in Linux-gated modules; the Windows leg's job
+      # is the compile check above.
       - name: cargo test
+        if: runner.os == 'Linux'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
