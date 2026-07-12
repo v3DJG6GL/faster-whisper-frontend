@@ -48,13 +48,19 @@ jobs:
           git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin ${{ github.ref }}
           git checkout -q --force FETCH_HEAD
 
-      - uses: pnpm/action-setup@v6 # version comes from package.json "packageManager"
-
       - uses: actions/setup-node@v6
         with:
           node-version: 24.18.0
-          # pnpm store cache via the runner's GHA-compatible cache server.
-          cache: pnpm
+
+      # pnpm via corepack, NOT pnpm/action-setup: the action's self-installer
+      # invokes an unquoted node path and cmd splits it on the space in
+      # "C:\Program Files\nodejs" ('C:\Program' is not recognized). corepack
+      # ships with node and honours the package.json "packageManager" pin, so
+      # the version stays single-sourced. (This is also why setup-node runs
+      # first and without cache:pnpm — the cache needs pnpm present beforehand,
+      # and the corepack shim is tied to setup-node's node.)
+      - name: Enable pnpm
+        run: corepack enable
 
       # webkit/gtk for tauri itself; appindicator for the tray; asound for cpal;
       # xkbcommon for the Wayland virtual keyboard.
