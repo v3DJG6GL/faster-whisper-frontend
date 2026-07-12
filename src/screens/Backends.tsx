@@ -215,7 +215,11 @@ function Editor({
               <>
                 <StatusDot tone="ok" />
                 <span className="text-dim">
-                  faster-whisper <span className="text-faint">· boot id</span>
+                  faster-whisper-backend
+                  {/* Older builds identify via boot_id but don't report a version yet. */}
+                  {result?.serverVersion && (
+                    <span className="text-faint"> · {result.serverVersion}</span>
+                  )}
                 </span>
               </>
             ) : (

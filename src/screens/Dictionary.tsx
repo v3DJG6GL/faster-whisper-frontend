@@ -827,7 +827,7 @@ export default function Dictionary() {
       {candidates.length === 0 ? (
         <EmptyCard
           title="No compatible server"
-          body="The Dictionary needs a faster-whisper backend (one that reports a boot id). Add or test a server on the Backends screen."
+          body="The Dictionary needs a full faster-whisper-backend server (detected by a connection test). Add or test a server on the Backends screen."
         />
       ) : loading ? (
         <div className="flex items-center gap-2 py-16 text-[13px] text-dim">

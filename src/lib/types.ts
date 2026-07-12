@@ -240,6 +240,9 @@ export interface ConnectionInfo {
   /** Server's per-process `boot_id` (non-standard, faster-whisper-backend only).
    *  Present ⇒ full backend; absent ⇒ conventional Whisper server. */
   bootId?: string;
+  /** Server build version (`server_version` from /v1/models, non-standard).
+   *  Emitted by faster-whisper-backend ≥ v0.1.0; absent on older builds. */
+  serverVersion?: string;
   error?: string;
 }
 

@@ -23,6 +23,10 @@ struct ModelsResp {
     /// OpenAI-compatible Whisper server, which never sends it).
     #[serde(default)]
     boot_id: Option<String>,
+    /// Non-standard build version (faster-whisper-backend ≥ v0.1.0), e.g.
+    /// "v0.1.0-3-g1a2b3c4". Older builds send boot_id but not this.
+    #[serde(default)]
+    server_version: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -58,6 +62,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     username,
                     models: vec![],
                     boot_id: None,
+                    server_version: None,
                     error: Some("Unauthorized — an API key is required or the key is invalid.".into()),
                 };
             }
@@ -68,6 +73,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     username,
                     models: vec![],
                     boot_id: None,
+                    server_version: None,
                     error: Some(format!("Server returned HTTP {}.", status.as_u16())),
                 };
             }
@@ -82,6 +88,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                         .map(|m| ServerModel { id: m.id, loaded: m.loaded })
                         .collect(),
                     boot_id: parsed.boot_id,
+                    server_version: parsed.server_version,
                     error: None,
                 },
                 Err(e) => ConnectionInfo {
@@ -90,6 +97,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     username,
                     models: vec![],
                     boot_id: None,
+                    server_version: None,
                     error: Some(format!("Unexpected /v1/models response: {e}")),
                 },
             }
@@ -100,6 +108,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
             username,
             models: vec![],
             boot_id: None,
+            server_version: None,
             error: Some(friendly_err(&e)),
         },
     }

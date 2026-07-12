@@ -34,6 +34,11 @@ pub struct ConnectionInfo {
     /// The UI uses this to gate server-specific override knobs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub boot_id: Option<String>,
+    /// The server's build version from `/v1/models` (`server_version`, non-standard;
+    /// emitted by faster-whisper-backend ≥ v0.1.0). Shown in the Detected chip;
+    /// absent on standard servers and older backend builds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
