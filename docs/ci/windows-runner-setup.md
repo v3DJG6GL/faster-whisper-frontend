@@ -8,8 +8,9 @@ installing; afterwards the runner survives VM reboots as a service.
 ## Prerequisites
 https://nextcloud.informethic.ch/s/i7XjdC6z4KPBwBY
 - The VM is booted and reachable via the web viewer (`http://127.0.0.1:8006`).
-- A runner **registration token**: Site administration → Actions → Runners →
-  Create registration token.
+- A pre-created runner (**uuid + token** pair): Site administration → Actions →
+  Runners → create a runner. (This instance uses the pre-registration flow —
+  classic `register --token` fails with "registration token not found".)
 
 ## Setup (paste into an *administrator* PowerShell)
 
@@ -35,11 +36,12 @@ rustup default stable-msvc
 #    major (compose: data.forgejo.org/forgejo/runner:12).
 mkdir C:\runner; cd C:\runner
 # <download/copy forgejo-runner-12.9.0-windows-amd64.exe here as forgejo-runner.exe>
-.\forgejo-runner.exe register --no-interactive `
-  --instance https://forgejo.informethic.ch `
-  --token 53ff6f2c9d7f4589c8f95f8e69378306197832a2 `
-  --name windows-ci `
-  --labels windows-latest:host
+# Connect to the PRE-CREATED runner entry (this instance uses the uuid+token
+# flow, not classic registration tokens — same as the Linux runner's compose
+# flags). Get the pair from Site administration → Actions → Runners.
+# The daemon reads .runner from its working directory; labels declared here
+# overwrite the server-side ones on every daemon start.
+Set-Content -Encoding ascii C:\runner\.runner '{"WARNING":"","id":0,"uuid":"<RUNNER_UUID>","name":"windows-ci","token":"<RUNNER_TOKEN>","address":"https://forgejo.informethic.ch","labels":["windows-latest:host"]}'
 nssm install forgejo-runner C:\runner\forgejo-runner.exe daemon
 nssm set forgejo-runner AppDirectory C:\runner
 nssm start forgejo-runner
