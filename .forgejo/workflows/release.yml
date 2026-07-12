@@ -224,6 +224,7 @@ jobs:
 
       - name: Resolve release tag
         id: rel
+        shell: bash
         run: |
           if [ -n "${{ needs.version.outputs.tag }}" ]; then
             echo "tag=${{ needs.version.outputs.tag }}" >> "$GITHUB_OUTPUT"
@@ -246,6 +247,7 @@ jobs:
 
       - name: Verify the tag matches the app version
         if: steps.rel.outputs.tag != ''
+        shell: bash
         run: |
           node scripts/version.mjs --check
           app="$(node scripts/version.mjs)"
@@ -265,6 +267,7 @@ jobs:
       # (absent from the VM).
       - name: Upload installers to the release
         if: steps.rel.outputs.tag != ''
+        shell: bash
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
