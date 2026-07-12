@@ -2,7 +2,8 @@
 #
 # Forgejo Actions port of the GitHub workflow — structural changes:
 #
-#   * Actions fully-qualified (https://github.com/...) — see ci.yml.
+#   * Actions unqualified — resolved via DEFAULT_ACTIONS_URL against local
+#     pull mirrors; see ci.yml.
 #   * windows-latest leg DROPPED (no Windows runner on this instance), so no
 #     MSI/NSIS installers are produced. Windows releases need either a
 #     registered Windows runner or a manual `pnpm tauri build` on a Windows
@@ -14,8 +15,9 @@
 #     run-scoped actions token.
 #   * `gh release edit` replaced with a curl PATCH (gh is GitHub-only).
 #   * permissions: blocks dropped — GitHub token-permission model.
-#   * upload-artifact -> Forgejo-maintained fork (github's v4+ refuses
-#     non-github.com instances).
+#   * upload-artifact -> local mirror of the Forgejo-maintained fork
+#     (github's v4+ refuses non-github.com instances — never reference
+#     actions/upload-artifact here, that mirrors the GitHub original).
 #
 #   - manual run (workflow_dispatch) → pick a version bump (patch/minor/major):
 #       the version job bumps package.json + Cargo.toml/lock + tauri.conf.json via
@@ -57,15 +59,15 @@ jobs:
     outputs:
       tag: ${{ steps.bump.outputs.tag }}
     steps:
-      - uses: https://github.com/actions/checkout@v7
+      - uses: actions/checkout@v7
 
       # Unlike GitHub-hosted runners, the job image has no preinstalled rust —
       # and `cargo update --workspace` below needs one.
-      - uses: https://github.com/actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 24.18.0
 
-      - uses: https://github.com/dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Bump version, commit, tag, push
         id: bump
@@ -94,7 +96,7 @@ jobs:
     if: ${{ !cancelled() && needs.version.result != 'failure' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: https://github.com/actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           # On a bump run, build the tagged commit (not the pre-bump dispatch ref).
           ref: ${{ needs.version.outputs.tag || github.ref }}
@@ -111,9 +113,9 @@ jobs:
             echo "tag=" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: https://github.com/pnpm/action-setup@v6 # version comes from package.json "packageManager"
+      - uses: pnpm/action-setup@v6 # version comes from package.json "packageManager"
 
-      - uses: https://github.com/actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 24.18.0
           cache: pnpm
@@ -125,9 +127,9 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             libasound2-dev libxkbcommon-dev librsvg2-dev patchelf
 
-      - uses: https://github.com/dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
 
-      - uses: https://github.com/Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
@@ -147,7 +149,7 @@ jobs:
 
       # Build-only, always (empty tagName): the release itself is handled via
       # the Forgejo API below — tauri-action's release path is GitHub-only.
-      - uses: https://github.com/tauri-apps/tauri-action@v1
+      - uses: tauri-apps/tauri-action@v1
 
       # Draft release + assets via the Forgejo API. Stays a draft until the
       # publish job flips it live, so a half-uploaded release is never visible.
@@ -189,7 +191,7 @@ jobs:
 
       - name: Upload installers as run artifacts (build-only run)
         if: steps.rel.outputs.tag == ''
-        uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+        uses: forgejo/upload-artifact@v4
         with:
           name: installers-linux
           if-no-files-found: error
