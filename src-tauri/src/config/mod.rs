@@ -71,19 +71,19 @@ fn default_true() -> bool {
 }
 
 fn default_peek_timeout() -> f64 {
-    30.0
+    5.0
 }
 
 fn default_dim_after() -> f64 {
-    10.0
+    2.5
 }
 
 fn default_hover_reveal() -> u32 {
-    1000
+    500
 }
 
 fn default_latch_auto_stop() -> f64 {
-    5.0
+    30.0
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -113,7 +113,7 @@ pub enum OverlayStatsMetric {
 }
 
 fn default_stats_metric() -> OverlayStatsMetric {
-    OverlayStatsMetric::Words
+    OverlayStatsMetric::Both
 }
 
 /// How a Profile's chord behaves. First-class, decoupled from the Profile's id
@@ -412,9 +412,9 @@ pub struct RecordingSettings {
     /// `#[serde(default)]` so older configs default to always-shown.
     #[serde(default)]
     pub show_profile_on_hover: bool,
-    /// Show a tiny usage readout (today's words/minutes) on the chip. Default off
-    /// — opt-in; `#[serde(default)]` so older configs load with it disabled.
-    #[serde(default)]
+    /// Show a tiny usage readout (today's words/minutes) on the chip. Default on;
+    /// `#[serde(default = …)]` so configs missing the field get the factory value.
+    #[serde(default = "default_true")]
     pub show_stats_on_overlay: bool,
     /// When the readout is shown, reveal it only while hovering the chip (vs. always).
     /// `#[serde(default)]` so older configs default to always-shown.
@@ -436,11 +436,11 @@ pub struct RecordingSettings {
     /// when armed but silent — so it doesn't flicker as focus moves between phrases. Default off.
     #[serde(default)]
     pub show_target_only_speaking: bool,
-    /// Keep the chip on screen (a standby dot) even when dictation is off.
-    #[serde(default)]
+    /// Keep the chip on screen (a standby dot) even when dictation is off. Default on.
+    #[serde(default = "default_true")]
     pub persistent_dock: bool,
-    /// After sitting idle, slide the chip to the screen edge (hover to restore).
-    #[serde(default)]
+    /// After sitting idle, slide the chip to the screen edge (hover to restore). Default on.
+    #[serde(default = "default_true")]
     pub overlay_peek: bool,
     /// Idle seconds before the chip peeks to the edge (fractional allowed).
     #[serde(default = "default_peek_timeout")]
@@ -538,27 +538,27 @@ impl Default for Config {
                 },
                 recording: RecordingSettings {
                     indicator_position: IndicatorPosition::Top,
-                    save_recordings: false,
+                    save_recordings: true,
                     recordings_dir: None,
                     trim_silence: true,
-                    mute_system_audio: false,
-                    latch_auto_stop_min: 5.0,
+                    mute_system_audio: true,
+                    latch_auto_stop_min: 30.0,
                     realtime_preview: true,
                     realtime_preview_on_hover: false,
                     show_profile_on_overlay: true,
                     show_profile_on_hover: false,
-                    show_stats_on_overlay: false,
+                    show_stats_on_overlay: true,
                     overlay_stats_on_hover: false,
-                    overlay_stats_metric: OverlayStatsMetric::Words,
+                    overlay_stats_metric: OverlayStatsMetric::Both,
                     show_target_on_overlay: true,
                     show_target_on_hover: false,
                     show_target_only_speaking: false,
-                    persistent_dock: false,
-                    overlay_peek: false,
-                    peek_timeout_sec: 30.0,
+                    persistent_dock: true,
+                    overlay_peek: true,
+                    peek_timeout_sec: 5.0,
                     peek_while_active: false,
-                    dim_after_sec: 10.0,
-                    hover_reveal_ms: 1000,
+                    dim_after_sec: 2.5,
+                    hover_reveal_ms: 500,
                     quick_launch: Vec::new(),
                 },
                 sync: None,

@@ -155,7 +155,7 @@ export interface RecordingSettings {
   realtimePreviewOnHover: boolean; // when on, reveal the live words only while hovering the chip (else always)
   showProfileOnOverlay: boolean; // show the active Profile's tag on the chip
   showProfileOnHover: boolean; // when on, reveal the Profile tag only while hovering the chip (else always)
-  showStatsOnOverlay: boolean; // show a tiny usage readout on the chip (off by default)
+  showStatsOnOverlay: boolean; // show a tiny usage readout on the chip (on by default)
   overlayStatsOnHover: boolean; // when shown, reveal it only while hovering the chip (else always)
   overlayStatsMetric: OverlayStatsMetric; // which usage figure the chip shows
   showTargetOnOverlay: boolean; // show the injection target (→ app) + a warn hint when not typable
