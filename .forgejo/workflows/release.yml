@@ -91,7 +91,11 @@ jobs:
           git push origin "HEAD:$GITHUB_REF_NAME" "v$new"
           echo "tag=v$new" >> "$GITHUB_OUTPUT"
 
+  # The two build legs are split into separate jobs (the GitHub original was
+  # one matrix job) because the steps diverged wholesale on the host-mode
+  # Windows runner; the display names keep the original matrix-style naming.
   build:
+    name: build (ubuntu-latest)
     needs: version
     # Run when version succeeded OR was skipped (tag push / build-only dispatch).
     if: ${{ !cancelled() && needs.version.result != 'failure' }}
@@ -210,6 +214,7 @@ jobs:
   # setup-node. WiX + NSIS are fetched by tauri itself on first use (cached
   # in the service profile's %LOCALAPPDATA%\tauri).
   windows:
+    name: build (windows-latest)
     needs: version
     if: ${{ !cancelled() && needs.version.result != 'failure' }}
     runs-on: windows-latest
