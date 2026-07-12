@@ -48,7 +48,12 @@ jobs:
           git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin ${{ github.ref }}
           git checkout -q --force FETCH_HEAD
 
+      # Linux only: setup-node downloads a node tarball and extracts it, which
+      # on the host-mode Windows runner fails (bundled 7zr.exe errors extracting
+      # into the SYSTEM-profile tool cache). The Windows VM already has a system
+      # node installed (see the runner-setup guide), so the leg uses that.
       - uses: actions/setup-node@v6
+        if: runner.os == 'Linux'
         with:
           node-version: 24.18.0
 
@@ -56,9 +61,7 @@ jobs:
       # invokes an unquoted node path and cmd splits it on the space in
       # "C:\Program Files\nodejs" ('C:\Program' is not recognized). corepack
       # ships with node and honours the package.json "packageManager" pin, so
-      # the version stays single-sourced. (This is also why setup-node runs
-      # first and without cache:pnpm — the cache needs pnpm present beforehand,
-      # and the corepack shim is tied to setup-node's node.)
+      # the version stays single-sourced.
       - name: Enable pnpm
         run: corepack enable
 
