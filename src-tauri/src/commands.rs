@@ -870,7 +870,16 @@ pub fn apply_bindings(app: &AppHandle) {
 
     let Ok(dir) = config_dir(app) else { return };
     let cfg = config::load(&dir);
-    let quick_add = &cfg.settings.general.quick_add_hotkey;
+    // The quick-add chord stays INERT until a word-mapping list is designated
+    // (settings.quickAddList) — the window would have nothing to add to. This
+    // keeps the Ctrl+Shift+RightCtrl factory default harmless out of the box;
+    // designating a list (onboarding step 3 / the Dictionary screen) arms it.
+    let no_quick_add: Vec<String> = Vec::new();
+    let quick_add = if cfg.settings.quick_add_list.is_some() {
+        &cfg.settings.general.quick_add_hotkey
+    } else {
+        &no_quick_add
+    };
     // Re-registering aborts the evdev reader tasks, which skips their post-loop "stop" for any
     // PTT chord held right now — so a session held across this restart (e.g. editing a profile
     // while holding push-to-talk) would wedge "listening". Emit those stops first. No-op when

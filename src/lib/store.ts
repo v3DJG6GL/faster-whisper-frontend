@@ -69,7 +69,10 @@ const DEFAULT_SETTINGS: AppSettings = {
     soundEffects: true,
     evdevEnabled: false,
     deepFieldDetection: false,
-    quickAddHotkey: [],
+    // Chord family: Ctrl+Shift (the dictation root) + Right Ctrl — inert until a
+    // quick-add list is designated (apply_bindings skips it), so the default is
+    // harmless out of the box.
+    quickAddHotkey: ["ControlLeft", "ShiftLeft", "ControlRight"],
   },
   recording: {
     indicatorPosition: "top",
@@ -102,7 +105,9 @@ const DEFAULT_SETTINGS: AppSettings = {
 // Seed ids match the legacy mode strings so migration is idempotent (see Rust load()).
 const DEFAULT_PROFILES: Profile[] = [
   { id: "hold", name: "Push-to-talk", activation: "hold", enabled: true, hotkey: ["ControlLeft", "ShiftLeft"], backendId: "default" },
-  { id: "handsfree", name: "Latch", activation: "latch", enabled: true, hotkey: ["ControlLeft", "KeyH"], backendId: "default" },
+  // Chord family: the latch chord extends the push-to-talk root on purpose —
+  // completing it over a held PTT upgrades the session in place (chord_engine.rs).
+  { id: "handsfree", name: "Latch", activation: "latch", enabled: true, hotkey: ["ControlLeft", "ShiftLeft", "Space"], backendId: "default" },
 ];
 
 /** Deep-merge loaded settings over the defaults so a config written by an older version

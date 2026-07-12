@@ -70,6 +70,13 @@ fn default_true() -> bool {
     true
 }
 
+/// The chord family's quick-add member: Ctrl+Shift (the dictation root) + Right Ctrl.
+/// Deliberately a strict superset of the push-to-talk default — the chord engine
+/// aborts the nascent blip within its grace window (see chord_engine.rs).
+fn default_quick_add_hotkey() -> Vec<String> {
+    vec!["ControlLeft".into(), "ShiftLeft".into(), "ControlRight".into()]
+}
+
 fn default_peek_timeout() -> f64 {
     5.0
 }
@@ -374,9 +381,11 @@ pub struct GeneralSettings {
     #[serde(default)]
     pub deep_field_detection: bool,
     /// Global chord (KeyboardEvent.code list) that opens the quick-add window. Empty =
-    /// unset. `#[serde(default)]` so older configs load. Registered via the same paths
+    /// unset. Factory default = the chord family's Ctrl+Shift+RightCtrl (inert until a
+    /// quick-add list is designated — see apply_bindings). `#[serde(default = …)]` so
+    /// configs missing the field get the factory value. Registered via the same paths
     /// as Profile hotkeys (evdev / plugin / the `--quick-add` CLI flag).
-    #[serde(default)]
+    #[serde(default = "default_quick_add_hotkey")]
     pub quick_add_hotkey: Vec<String>,
 }
 
@@ -534,7 +543,7 @@ impl Default for Config {
                     sound_effects: true,
                     evdev_enabled: false,
                     deep_field_detection: false,
-                    quick_add_hotkey: Vec::new(),
+                    quick_add_hotkey: default_quick_add_hotkey(),
                 },
                 recording: RecordingSettings {
                     indicator_position: IndicatorPosition::Top,
@@ -597,7 +606,9 @@ impl Default for Config {
                     name: "Latch".into(),
                     activation: ActivationType::Latch,
                     enabled: true,
-                    hotkey: vec!["ControlLeft".into(), "KeyH".into()],
+                    // Chord family: extends the push-to-talk root — completing it over a
+                    // held PTT upgrades the session in place (see chord_engine.rs).
+                    hotkey: vec!["ControlLeft".into(), "ShiftLeft".into(), "Space".into()],
                     backend_id: Some("default".into()),
                     tag: None,
                     endpoint: None,
