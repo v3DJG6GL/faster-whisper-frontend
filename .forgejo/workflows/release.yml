@@ -1,18 +1,37 @@
-# Installer builds: deb + AppImage on Linux, MSI + NSIS on Windows.
+# Installer builds: deb + AppImage on Linux.
+#
+# Forgejo Actions port of the GitHub workflow — structural changes:
+#
+#   * Actions fully-qualified (https://github.com/...) — see ci.yml.
+#   * windows-latest leg DROPPED (no Windows runner on this instance), so no
+#     MSI/NSIS installers are produced. Windows releases need either a
+#     registered Windows runner or a manual `pnpm tauri build` on a Windows
+#     box until then.
+#   * tauri-action is used in build-only mode (empty tagName): its release
+#     path talks the GitHub releases API (octokit upload_url flow), which
+#     Forgejo's API doesn't implement. Release create / asset upload /
+#     publish are plain curl against the Forgejo API instead, using the
+#     run-scoped actions token.
+#   * `gh release edit` replaced with a curl PATCH (gh is GitHub-only).
+#   * permissions: blocks dropped — GitHub token-permission model.
+#   * upload-artifact -> Forgejo-maintained fork (github's v4+ refuses
+#     non-github.com instances).
 #
 #   - manual run (workflow_dispatch) → pick a version bump (patch/minor/major):
 #       the version job bumps package.json + Cargo.toml/lock + tauri.conf.json via
-#       scripts/version.mjs, commits "release: vX.Y.Z", tags, pushes, the build jobs
-#       attach the installers to a draft release, and the publish job flips it live
-#       once both platforms uploaded. Pick "build-only" to just compile installers
+#       scripts/version.mjs, commits "release: vX.Y.Z", tags, pushes, the build job
+#       attaches the installers to a draft release, and the publish job flips it
+#       live once everything uploaded. Pick "build-only" to just compile installers
 #       as run artifacts (no version change, no release).
 #   - push a "v*" tag by hand → same path, no version bump.
 #
-#   Installers are unsigned (no code-signing cert — acceptable for a FOSS tool;
-#   Windows shows SmartScreen).
+#   Installers are unsigned (no code-signing cert — acceptable for a FOSS tool).
 #
-#   NOTE: the version job pushes with GITHUB_TOKEN, which deliberately does NOT
-#   trigger other workflows — that's why the build runs in this same workflow run.
+#   NOTE: on GitHub, pushes made with the actions token never trigger other
+#   workflows. Forgejo is expected to behave the same, but if a duplicate
+#   release run ever appears after the version job's tag push, the
+#   `concurrency: release` group queues it behind this one and the API steps
+#   are idempotent (find-or-create + delete-then-upload), so it converges.
 name: release
 
 on:
@@ -35,12 +54,18 @@ jobs:
   version:
     if: github.event_name == 'workflow_dispatch' && inputs.bump != 'build-only'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     outputs:
       tag: ${{ steps.bump.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: https://github.com/actions/checkout@v7
+
+      # Unlike GitHub-hosted runners, the job image has no preinstalled rust —
+      # and `cargo update --workspace` below needs one.
+      - uses: https://github.com/actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
 
       - name: Bump version, commit, tag, push
         id: bump
@@ -56,8 +81,8 @@ jobs:
           node scripts/version.mjs "$new"
           # Sync the workspace member's entry in Cargo.lock (deps stay untouched).
           cargo update --workspace --manifest-path src-tauri/Cargo.toml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "forgejo-actions"
+          git config user.email "forgejo-actions@noreply.localhost"
           git commit -am "release: v$new"
           git tag "v$new"
           git push origin "HEAD:$GITHUB_REF_NAME" "v$new"
@@ -67,15 +92,9 @@ jobs:
     needs: version
     # Run when version succeeded OR was skipped (tag push / build-only dispatch).
     if: ${{ !cancelled() && needs.version.result != 'failure' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.platform }}
-    permissions:
-      contents: write # create the draft release + upload assets
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: https://github.com/actions/checkout@v7
         with:
           # On a bump run, build the tagged commit (not the pre-bump dispatch ref).
           ref: ${{ needs.version.outputs.tag || github.ref }}
@@ -83,7 +102,6 @@ jobs:
       # The release tag this run builds for — empty means build-only (artifacts).
       - name: Resolve release tag
         id: rel
-        shell: bash
         run: |
           if [ -n "${{ needs.version.outputs.tag }}" ]; then
             echo "tag=${{ needs.version.outputs.tag }}" >> "$GITHUB_OUTPUT"
@@ -93,24 +111,23 @@ jobs:
             echo "tag=" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: pnpm/action-setup@v6 # version comes from package.json "packageManager"
+      - uses: https://github.com/pnpm/action-setup@v6 # version comes from package.json "packageManager"
 
-      - uses: actions/setup-node@v6
+      - uses: https://github.com/actions/setup-node@v6
         with:
           node-version: 24.18.0
           cache: pnpm
 
       # ci.yml's list + librsvg/patchelf, which only the AppImage bundling needs.
       - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             libasound2-dev libxkbcommon-dev librsvg2-dev patchelf
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: https://github.com/Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
@@ -119,7 +136,6 @@ jobs:
       # Don't ship a release whose tag disagrees with the in-app version readout.
       - name: Verify the tag matches the app version
         if: steps.rel.outputs.tag != ''
-        shell: bash
         run: |
           node scripts/version.mjs --check
           app="$(node scripts/version.mjs)"
@@ -129,44 +145,75 @@ jobs:
             exit 1
           fi
 
-      # With an empty tagName (build-only) tauri-action only builds; otherwise it
-      # also creates/updates the release and attaches the installers. MUST stay a
-      # draft here: GITHUB_TOKEN may create draft releases but a direct non-draft
-      # create 403s ("Resource not accessible by integration") — and a draft also
-      # keeps the release invisible until BOTH platforms uploaded. The publish job
-      # below flips it live once everything is attached.
-      - uses: tauri-apps/tauri-action@v1
+      # Build-only, always (empty tagName): the release itself is handled via
+      # the Forgejo API below — tauri-action's release path is GitHub-only.
+      - uses: https://github.com/tauri-apps/tauri-action@v1
+
+      # Draft release + assets via the Forgejo API. Stays a draft until the
+      # publish job flips it live, so a half-uploaded release is never visible.
+      # Idempotent on re-runs: find-or-create the release, replace same-name
+      # assets instead of erroring.
+      - name: Create draft release and upload installers
+        if: steps.rel.outputs.tag != ''
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ steps.rel.outputs.tag }}
-          releaseName: ${{ steps.rel.outputs.tag }}
-          releaseDraft: true
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          api="$GITHUB_API_URL"
+          hdr="Authorization: token $TOKEN"
+          rel=$(curl -sS -H "$hdr" "$api/repos/$REPO/releases/tags/$TAG")
+          id=$(jq -r '.id // empty' <<<"$rel")
+          if [ -z "$id" ]; then
+            id=$(curl -fsS -H "$hdr" -X POST "$api/repos/$REPO/releases" \
+              -H 'Content-Type: application/json' \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"draft\":true}" | jq -r '.id')
+          fi
+          echo "release id: $id"
+          shopt -s nullglob
+          for f in src-tauri/target/release/bundle/deb/*.deb \
+                   src-tauri/target/release/bundle/appimage/*.AppImage; do
+            name=$(basename "$f")
+            # drop a stale same-name asset from a previous (re-)run
+            curl -sS -H "$hdr" "$api/repos/$REPO/releases/$id/assets" \
+              | jq -r --arg n "$name" '.[] | select(.name==$n) | .id' \
+              | while read -r aid; do
+                  curl -fsS -H "$hdr" -X DELETE "$api/repos/$REPO/releases/$id/assets/$aid"
+                done
+            echo "uploading $name"
+            curl -fsS -H "$hdr" -X POST \
+              "$api/repos/$REPO/releases/$id/assets?name=$name" \
+              -F "attachment=@$f" > /dev/null
+          done
 
       - name: Upload installers as run artifacts (build-only run)
         if: steps.rel.outputs.tag == ''
-        uses: actions/upload-artifact@v7
+        uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
-          name: installers-${{ matrix.platform }}
+          name: installers-linux
           if-no-files-found: error
           path: |
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/nsis/*.exe
 
-  # Flip the draft live once BOTH platforms have built and uploaded — editing an
-  # existing release is permitted for GITHUB_TOKEN where direct non-draft creation
-  # is not, and gating on the full matrix means the release never appears half-filled.
+  # Flip the draft live once the build uploaded everything — gating this in a
+  # separate job keeps the release invisible until it is complete (and keeps
+  # the structure ready for additional platform legs later).
   publish:
     needs: [version, build]
     if: ${{ !cancelled() && needs.build.result == 'success' && (needs.version.outputs.tag != '' || startsWith(github.ref, 'refs/tags/')) }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Publish the release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
           TAG: ${{ needs.version.outputs.tag || github.ref_name }}
-        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+        run: |
+          set -euo pipefail
+          api="$GITHUB_API_URL"
+          hdr="Authorization: token $TOKEN"
+          id=$(curl -fsS -H "$hdr" "$api/repos/$REPO/releases/tags/$TAG" | jq -r '.id')
+          curl -fsS -H "$hdr" -X PATCH "$api/repos/$REPO/releases/$id" \
+            -H 'Content-Type: application/json' -d '{"draft": false}' > /dev/null

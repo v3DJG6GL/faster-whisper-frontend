@@ -1,7 +1,17 @@
-# Per-push checks on both target platforms. The Windows leg exists to keep the
-# "compiles on Windows" guarantee honest — the Linux-only crates are target-gated
-# and none of those paths are ever compiled on a Linux machine, so only this job
-# catches a break. Installer builds live in release.yml.
+# Per-push checks. Forgejo Actions port of the GitHub workflow — changes:
+#
+#   * Actions are referenced fully-qualified (https://github.com/...) so
+#     resolution never depends on DEFAULT_ACTIONS_URL. An unqualified
+#     `actions/checkout@v7` resolves against code.forgejo.org, whose forks
+#     use their own version numbers — @v7 doesn't exist there and the job
+#     dies instantly at action resolution.
+#   * windows-latest leg DROPPED: the self-hosted instance has no Windows
+#     runner, so the job queues forever. The "compiles on Windows" guarantee
+#     is lost until a Windows runner is registered — the Linux-only crates
+#     are target-gated, so only a real Windows leg can catch a break there.
+#   * matrix + runner.os gates removed with it (single Linux leg).
+#
+# Installer builds live in release.yml.
 name: ci
 
 on:
@@ -15,33 +25,29 @@ concurrency:
 
 jobs:
   check:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.platform }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: https://github.com/actions/checkout@v7
 
-      - uses: pnpm/action-setup@v6 # version comes from package.json "packageManager"
+      - uses: https://github.com/pnpm/action-setup@v6 # version comes from package.json "packageManager"
 
-      - uses: actions/setup-node@v6
+      - uses: https://github.com/actions/setup-node@v6
         with:
           node-version: 24.18.0
+          # pnpm store cache via the runner's GHA-compatible cache server.
           cache: pnpm
 
       # webkit/gtk for tauri itself; appindicator for the tray; asound for cpal;
       # xkbcommon for the Wayland virtual keyboard.
       - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             libasound2-dev libxkbcommon-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: https://github.com/Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
@@ -54,8 +60,5 @@ jobs:
       - name: cargo check
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml
 
-      # The unit tests live mostly in Linux-gated modules; the Windows leg's job
-      # is the compile check above.
       - name: cargo test
-        if: runner.os == 'Linux'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
