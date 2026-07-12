@@ -33,13 +33,20 @@ jobs:
         platform: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     steps:
-      # Private repo: check out with an explicit token. The auto job-token isn't
-      # applied to the git remote on this instance, so checkout would fall back
-      # to an interactive prompt and fail ("could not read Username"). CI_TOKEN
-      # is a repo secret (a read:repository access token).
-      - uses: actions/checkout@v7
-        with:
-          token: ${{ secrets.CI_TOKEN }}
+      # Manual checkout. actions/checkout persists credentials via
+      # includeIf.gitdir bound to $GITHUB_WORKSPACE — but the host-mode runner
+      # reports that as the container path /github/workspace while the clone
+      # actually runs at the real host path, so the condition never matches,
+      # the auth header is never applied, and git prompts for a username
+      # (disabled) → "could not read Username". Cloning directly with the token
+      # sidesteps that entirely. CI_TOKEN is a repo secret (read:repository).
+      # Plain git only → identical on the bash (Linux) and pwsh (Windows) legs.
+      - name: Checkout
+        run: |
+          git init -q .
+          git remote add origin https://${{ secrets.CI_TOKEN }}@forgejo.informethic.ch/${{ github.repository }}.git
+          git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin ${{ github.ref }}
+          git checkout -q --force FETCH_HEAD
 
       - uses: pnpm/action-setup@v6 # version comes from package.json "packageManager"
 
