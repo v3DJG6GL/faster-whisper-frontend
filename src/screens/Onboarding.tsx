@@ -143,8 +143,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="relative z-10 flex h-screen items-center justify-center overflow-y-auto">
-      <div className="flex w-full max-w-[560px] flex-col items-center px-8 py-10 text-center">
+    // m-auto (not items-center on the parent): centered flex children taller than
+    // the viewport get their top clipped past scroll reach; auto margins don't.
+    <div className="relative z-10 flex h-screen overflow-y-auto">
+      <div className="m-auto flex w-full max-w-[560px] flex-col items-center px-8 py-10 text-center">
         <div className="flex items-center gap-3">
           <BrandMark />
           <div className="text-left leading-none">

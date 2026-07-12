@@ -54,6 +54,13 @@
   --c-ok: #93b76f;
   --c-warn: #e0a33a;
   --c-think: #6faed9; /* cool steel blue: machine working (finalizing/inserting/warm-up) — the only cool hue, so it can't be read as off-grey, armed-amber, live-green, or error-red */
+  /* Ambient-glow stops (body::before). Same-hue zero-alpha endpoints on purpose:
+     WebKitGTK interpolates gradient ends toward `transparent`/color-mix-to-transparent
+     unpremultiplied (i.e. toward black), which shows as a dirty grey band on the
+     light theme. */
+  --c-glow-a: rgba(255, 158, 44, 0.09);
+  --c-glow-b: rgba(255, 158, 44, 0.05);
+  --c-glow-0: rgba(255, 158, 44, 0);
   color-scheme: dark;
 }
 
@@ -75,6 +82,10 @@
   --c-ok: #5e8a3c;
   --c-warn: #b9791f;
   --c-think: #33719f; /* cool steel blue: machine working (darker for light bg) */
+  /* Quieter wash than dark — amber over cream turns muddy well before 9%. */
+  --c-glow-a: rgba(191, 111, 18, 0.05);
+  --c-glow-b: rgba(191, 111, 18, 0.03);
+  --c-glow-0: rgba(191, 111, 18, 0);
   color-scheme: light;
 }
 
@@ -119,8 +130,8 @@ body[data-window="main"]::before {
   pointer-events: none;
   z-index: 0;
   background:
-    radial-gradient(120% 80% at 78% -10%, color-mix(in oklab, var(--c-accent) 9%, transparent), transparent 60%),
-    radial-gradient(90% 60% at -10% 110%, color-mix(in oklab, var(--c-accent) 5%, transparent), transparent 55%);
+    radial-gradient(120% 80% at 78% -10%, var(--c-glow-a), var(--c-glow-0) 60%),
+    radial-gradient(90% 60% at -10% 110%, var(--c-glow-b), var(--c-glow-0) 55%);
 }
 
 input,
