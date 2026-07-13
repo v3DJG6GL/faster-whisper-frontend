@@ -73,7 +73,10 @@ jobs:
       - name: Bump version, commit, tag, push
         id: bump
         env:
-          CI_TOKEN: ${{ secrets.CI_TOKEN }}
+          # Must carry write:repository (CI_TOKEN alone is checkout-scoped
+          # read-only — its push 403s). Prefer a dedicated RELEASE_TOKEN so the
+          # Windows VM runner's checkout token can stay least-privilege.
+          PUSH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.CI_TOKEN }}
         run: |
           current="$(node scripts/version.mjs)"
           IFS=. read -r MA MI PA <<< "$current"
@@ -92,7 +95,7 @@ jobs:
           git tag "v$new"
           # master is protected (2026-07-13): the run-scoped actions token gets
           # declined by the pre-receive hook as an anonymous 500 (forgejo#11159),
-          # so the branch push authenticates as the repo owner via CI_TOKEN.
+          # so the branch push authenticates as the repo owner via PUSH_TOKEN.
           # `-c http...extraheader=` clears checkout's actions-token header for
           # that one push — otherwise BOTH credentials are sent and the header
           # wins. The tag still goes through the actions token: its push events
@@ -100,7 +103,7 @@ jobs:
           # Fallback: if protection ever declines the bot's tag too, retry it as
           # the owner — that spawns a duplicate tag-push run, which the
           # `concurrency: release` group + idempotent API steps absorb.
-          owner_url="https://${CI_TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git"
+          owner_url="https://${PUSH_TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git"
           git -c "http.${GITHUB_SERVER_URL}/.extraheader=" push "$owner_url" "HEAD:$GITHUB_REF_NAME"
           git push origin "v$new" \
             || git -c "http.${GITHUB_SERVER_URL}/.extraheader=" push "$owner_url" "v$new"
