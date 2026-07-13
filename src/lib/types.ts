@@ -179,8 +179,8 @@ export interface QuickAddTarget {
 
 /** The toggleable settings-sync categories (what travels in the synced blob /
  *  an export file). Machine-local fields (mic device, recordings folder,
- *  open-at-login, evdev, the sync meta itself) are excluded by construction —
- *  see lib/sync.ts for the authoritative category → config-path mapping. */
+ *  evdev, the sync meta itself) are excluded by construction — see
+ *  lib/sync.ts for the authoritative category → config-path mapping. */
 export type SyncCategory = "general" | "recording" | "backends" | "profiles" | "appRules";
 
 /** Settings-sync metadata. MACHINE-LOCAL by contract: lives in the config for

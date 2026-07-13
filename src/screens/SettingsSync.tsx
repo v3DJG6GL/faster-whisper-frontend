@@ -39,7 +39,7 @@ const MY_BUCKET = IS_WINDOWS ? ("windows" as const) : ("linux" as const);
 const OTHER_BUCKET = IS_WINDOWS ? ("linux" as const) : ("windows" as const);
 
 const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
-  { key: "general", title: "General", desc: "Theme, insertion, sounds, quick-add shortcut." },
+  { key: "general", title: "General", desc: "Theme, insertion, sounds, quick-add shortcut, open at login." },
   { key: "recording", title: "Recording & Chip", desc: "Chip styling, visibility and timing settings." },
   { key: "backends", title: "Backends", desc: "Server connections incl. API keys (stored on your own server)." },
   { key: "profiles", title: "Profiles", desc: "Dictation profiles incl. their hotkeys." },
@@ -164,8 +164,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
 
       <div className="mt-3 flex flex-col gap-2">
         <Notice>
-          Machine-specific settings (microphone, recordings folder, open at login, evdev) are never
-          imported.
+          Machine-specific settings (microphone, recordings folder, evdev) are never imported.
         </Notice>
         {result.hasSecrets && sel.backends && (
           <Notice tone="warn">This file contains API keys — they'll be stored in the system keyring.</Notice>

@@ -116,7 +116,8 @@ function extractGeneral(settings: AppSettings): SyncGeneral {
     soundEffects: g.soundEffects,
     deepFieldDetection: g.deepFieldDetection,
     quickAddHotkey: g.quickAddHotkey,
-    // openAtLogin + evdevEnabled are machine-local: deliberately absent.
+    openAtLogin: g.openAtLogin,
+    // evdevEnabled is machine-local: deliberately absent.
   };
 }
 

@@ -14,11 +14,14 @@ import type {
 } from "./types";
 
 /** The `general` category: settings.theme + the portable general fields.
- *  Machine-local fields (openAtLogin, evdevEnabled) are excluded by
- *  construction — this type simply doesn't have them. */
+ *  Machine-local fields (evdevEnabled) are excluded by construction — this
+ *  type simply doesn't have them. */
 export interface SyncGeneral {
   theme: ThemeName;
   startMinimized: boolean;
+  /** Optional: absent in blobs/exports written before it became syncable
+   *  (2026-07-13) — apply's spread then keeps the device's local value. */
+  openAtLogin?: boolean;
   insertTiming: InsertTiming;
   insertMethod: InsertMethod;
   pasteShortcut: string[];
