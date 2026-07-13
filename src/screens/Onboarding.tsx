@@ -16,6 +16,7 @@ import {
   evdevStatus, getPipelineRules, importSettingsFile, pickImportFile, setBackendKey,
   syncPull, testConnection,
 } from "@/lib/api";
+import { normalizeUrl, nameFromUrl } from "@/lib/backends";
 import { quickAddPeer } from "@/lib/conflicts";
 import { ALL_CATEGORIES, applyBlob } from "@/lib/sync";
 import { starterProfiles } from "@/lib/starters";
@@ -31,19 +32,6 @@ import type { Backend, ConnectionInfo, PipelineRule, Profile, SyncCategory } fro
 type Step = "gate" | "restore" | "starters" | "quickadd";
 
 const ALL_ON = Object.fromEntries(ALL_CATEGORIES.map((c) => [c, true])) as Record<SyncCategory, boolean>;
-
-function normalizeUrl(raw: string): string {
-  const t = raw.trim().replace(/\/+$/, "");
-  return /^https?:\/\//i.test(t) ? t : `http://${t}`;
-}
-
-function nameFromUrl(url: string): string {
-  try {
-    return new URL(url).host || "My server";
-  } catch {
-    return "My server";
-  }
-}
 
 export function Onboarding({ onDone }: { onDone: () => void }) {
   const st = useApp;
