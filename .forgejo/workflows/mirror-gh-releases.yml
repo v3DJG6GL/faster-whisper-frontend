@@ -10,12 +10,18 @@
 # drifted, never delete on the GitHub side.
 #
 # Deliberately a SEPARATE workflow, not a job in release.yml: at publish
-# time the freshly pushed tag usually has NOT reached GitHub yet (the
-# push mirror syncs on its own schedule), and creating a GitHub release
-# for a nonexistent tag silently mints that tag at the default branch
-# HEAD — the wrong commit. The reconcile instead skips tags the mirror
-# hasn't delivered and picks them up next slot. It also backfills the
-# whole historical release list, not just the newest one.
+# time the freshly pushed tag may not have reached GitHub yet (the push
+# mirror syncs on its own schedule), and creating a GitHub release for a
+# nonexistent tag silently mints that tag at the default branch HEAD —
+# the wrong commit. The reconcile instead skips tags the mirror hasn't
+# delivered and picks them up next slot. It also backfills the whole
+# historical release list, not just the newest one.
+#
+# Primary trigger is the release event; the crons are the reconcile
+# backstop. NOTE: if an event run fires before the push mirror has
+# delivered the tag, that release is skipped until the next slot —
+# enable "sync on commit" on the GitHub push mirror to make event runs
+# land immediately.
 #
 # Setup (job no-ops with a notice until this is done):
 #   * Add repo secret GH_MIRROR_TOKEN: a GitHub PAT that may write
@@ -36,13 +42,27 @@
 name: mirror-gh-releases
 
 on:
+  release:
+    # `published` only fires for a release created live. release.yml
+    # stages a draft and PATCHes draft:false, which Forgejo notifies as
+    # an UPDATE (services/release: the publish flip takes the
+    # UpdateRelease branch), surfaced to Actions as `edited` — so both
+    # types are needed. Later edits to release notes also land here;
+    # the metadata drift-patch below turns those into a re-sync.
+    types: [published, edited]
   schedule:
-    # Forgejo evaluates cron in UTC. Staggered after the other mirror
-    # workflows on this instance (nextcloud :00, backend :30) so they
-    # don't contend for the shared runner at the same minute.
+    # Reconcile backstop. Forgejo evaluates cron in UTC. Staggered after
+    # the other mirror workflows on this instance (nextcloud :00,
+    # backend :30) so they don't contend for the shared runner.
     - cron: '45 7 * * *'
     - cron: '45 15 * * *'
   workflow_dispatch:
+
+# A release publish + a notes edit in quick succession must not run two
+# overlapping syncs (both would try to create the same GitHub release).
+concurrency:
+  group: mirror-gh-releases
+  cancel-in-progress: false
 
 env:
   # Source is derived at runtime from GITHUB_API_URL + GITHUB_REPOSITORY,
