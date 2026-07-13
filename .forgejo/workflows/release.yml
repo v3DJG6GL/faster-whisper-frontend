@@ -344,3 +344,25 @@ jobs:
           id=$(curl -fsS -H "$hdr" "$api/repos/$REPO/releases/tags/$TAG" | jq -r '.id')
           curl -fsS -H "$hdr" -X PATCH "$api/repos/$REPO/releases/$id" \
             -H 'Content-Type: application/json' -d '{"draft": false}' > /dev/null
+
+      # Forgejo swallows events whose actor is the actions token
+      # (services/actions/notifier_helper.go: the notify() pipeline bails
+      # on input.Doer.IsActions(), to avoid trigger cycles) — so the
+      # publish above never fires mirror-gh-releases' `release:` trigger.
+      # Dispatch it explicitly instead: the dispatch API creates the run
+      # directly, same code path as the "Run workflow" button, no event
+      # pipeline involved. Non-fatal: the release is already live at this
+      # point, and the mirror's scheduled reconcile converges anyway.
+      - name: Trigger the GitHub release mirror
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # ref must name a branch carrying the workflow file — the run
+          # may itself be on a tag ref, so pin the default branch.
+          curl -sS --fail-with-body -X POST -H "Authorization: token $TOKEN" \
+            -H 'Content-Type: application/json' \
+            "$GITHUB_API_URL/repos/$REPO/actions/workflows/mirror-gh-releases.yml/dispatches" \
+            -d '{"ref":"master"}' \
+            || echo "::warning::mirror-gh-releases dispatch failed — the scheduled reconcile will catch up"

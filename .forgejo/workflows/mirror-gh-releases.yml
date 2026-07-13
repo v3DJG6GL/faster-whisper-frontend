@@ -43,12 +43,15 @@ name: mirror-gh-releases
 
 on:
   release:
-    # `published` only fires for a release created live. release.yml
-    # stages a draft and PATCHes draft:false, which Forgejo notifies as
-    # an UPDATE (services/release: the publish flip takes the
-    # UpdateRelease branch), surfaced to Actions as `edited` — so both
-    # types are needed. Later edits to release notes also land here;
-    # the metadata drift-patch below turns those into a re-sync.
+    # Fires only for MANUALLY published/edited releases (web UI):
+    # Forgejo's notify() pipeline drops any event whose actor is the
+    # actions token (notifier_helper.go, input.Doer.IsActions() — cycle
+    # prevention), so release.yml's publishes never land here. That's
+    # why release.yml's publish job ALSO dispatches this workflow
+    # explicitly via the API. Both types stay on: a live-created
+    # release notifies `published`, a draft→publish flip or a notes
+    # edit notifies as an update → `edited`, and the metadata
+    # drift-patch turns an edit into a re-sync.
     types: [published, edited]
   schedule:
     # Reconcile backstop. Forgejo evaluates cron in UTC. Staggered after
