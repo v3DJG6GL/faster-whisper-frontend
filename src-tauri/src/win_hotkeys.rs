@@ -28,7 +28,8 @@
 //!
 //! The two feeds also patch each other's blind spots: raw input drops
 //! `hDevice == 0` events, which besides SendInput can be a precision touchpad or
-//! virtual-HID keyboard — the hook sees those as non-injected and keeps them.
+//! virtual-HID keyboard — the hook sees those as non-injected and keeps them,
+//! and it also keeps third-party SendInput chords (see below).
 //! Duplicated transitions collapse in the worker's held-set (same dedup that
 //! absorbs autorepeat), so double delivery is harmless by construction.
 //!
@@ -38,10 +39,15 @@
 //! evdev, we react only to the configured chords, never swallow keys (both feeds
 //! are observation-only by design), and never persist or transmit keys.
 //!
-//! Injected events (raw: header `hDevice == 0`; hook: `LLKHF_INJECTED` — both
-//! include our own enigo `SendInput` typing) are ignored: we track PHYSICAL key
-//! state, mirroring evdev. The worker also feeds the shared
-//! [`crate::held_keys::HeldKeys`] gate, so `inject_text`'s
+//! Injected events: our OWN enigo `SendInput` typing/paste is ignored (raw feed:
+//! `hDevice == 0`; hook feed: `LLKHF_INJECTED` + enigo's `EVENT_MARKER` in
+//! dwExtraInfo) — tracking it could break a live chord mid-inject or wedge the
+//! HeldKeys gate. THIRD-PARTY injected input is honoured via the hook feed:
+//! dictation hardware companion apps (Philips SpeechControl for the SpeechMike,
+//! foot pedals, AutoHotkey remaps) deliver their configured chord as VK-only
+//! SendInput, which is invisible to raw input — without the hook keeping it,
+//! such chords could be bound but would never fire. The worker also feeds the
+//! shared [`crate::held_keys::HeldKeys`] gate, so `inject_text`'s
 //! wait-for-modifier-release works on Windows exactly as it does under evdev.
 
 /// Live listener: the receiver thread's native id (to post it `WM_QUIT`). Dropping
@@ -526,17 +532,26 @@ mod imp {
         TICKS.with(|t| t.set(0));
     }
 
-    /// The observation hook: forward physical transitions to the worker (same
-    /// channel as the raw feed; the worker's held-set collapses duplicates) and
-    /// ALWAYS pass the key on — this backend never swallows input. Kept trivial:
-    /// the OS silently removes hooks that dawdle past its timeout.
+    /// The observation hook: forward key transitions (physical + third-party
+    /// injected, minus our own enigo events) to the worker (same channel as the
+    /// raw feed; the worker's held-set collapses duplicates) and ALWAYS pass the
+    /// key on — this backend never swallows input. Kept trivial: the OS silently
+    /// removes hooks that dawdle past its timeout.
     unsafe extern "system" fn ll_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         if code == 0 {
             // HC_ACTION
             let kb = &*(lparam as *const KBDLLHOOKSTRUCT);
-            // LLKHF_INJECTED = SendInput (ours or anyone's) — physical keys only,
-            // the hook-side twin of the raw feed's hDevice check.
-            if kb.flags & LLKHF_INJECTED == 0 {
+            // LLKHF_INJECTED = SendInput. Drop only OUR OWN synthetic input —
+            // enigo tags its events with EVENT_MARKER in dwExtraInfo (inject.rs
+            // typing/paste, quickadd's win_seed grab); tracking those could break
+            // a live chord mid-inject, wedge the HeldKeys gate, or self-trigger a
+            // chord matching the paste shortcut. THIRD-PARTY injected input is
+            // kept: dictation hardware (SpeechMike-style companion apps, AutoHotkey
+            // remaps) sends its configured chord via VK-only SendInput, and the raw
+            // feed can never see it (hDevice == 0) — this hook is its only path.
+            let own_inject = kb.flags & LLKHF_INJECTED != 0
+                && kb.dwExtraInfo == enigo::EVENT_MARKER as usize;
+            if !own_inject {
                 if let Some(id) = ll_key_id(kb.vkCode, kb.scanCode, kb.flags) {
                     let down = wparam == WM_KEYDOWN as usize || wparam == WM_SYSKEYDOWN as usize;
                     if let Ok(g) = TX.lock() {
@@ -617,10 +632,11 @@ mod imp {
             if got != u32::MAX && raw.header.dwType == RIM_TYPEKEYBOARD {
                 // hDevice == 0 marks INJECTED input (SendInput — incl. our own enigo
                 // typing): tracking it could break a live chord mid-inject or wedge
-                // the HeldKeys gate. Physical keys only, mirroring evdev. The check
-                // is over-broad (precision touchpads / virtual-HID keyboards also
-                // report hDevice == 0) — those keys still arrive via the hook feed,
-                // which filters on LLKHF_INJECTED instead.
+                // the HeldKeys gate. The check is over-broad (precision touchpads /
+                // virtual-HID keyboards, and third-party injectors like dictation-
+                // hardware companion apps, all report hDevice == 0) — those keys
+                // still arrive via the hook feed, which drops only events carrying
+                // our own enigo dwExtraInfo marker.
                 if !raw.header.hDevice.is_null() {
                     let kb = raw.data.keyboard;
                     if let Some(id) = key_id(kb.VKey, kb.MakeCode, kb.Flags as u32) {
