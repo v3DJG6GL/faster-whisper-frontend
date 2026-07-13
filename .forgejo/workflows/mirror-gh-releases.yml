@@ -1,0 +1,183 @@
+# .forgejo/workflows/mirror-gh-releases.yml
+#
+# Reconciling one-way sync of published releases (metadata + installer
+# assets) from this instance to the git mirror at
+# github.com/v3DJG6GL/faster-whisper-frontend. The repo mirror only moves
+# git data — GitHub shows the v* tags but none of the releases — so this
+# recreates each Forgejo release over there and fills in missing assets.
+# Same family as the container mirrors (nextcloud-fpm-nginx /
+# faster-whisper-backend mirror-ghcr.yml): compare, copy only what
+# drifted, never delete on the GitHub side.
+#
+# Deliberately a SEPARATE workflow, not a job in release.yml: at publish
+# time the freshly pushed tag usually has NOT reached GitHub yet (the
+# push mirror syncs on its own schedule), and creating a GitHub release
+# for a nonexistent tag silently mints that tag at the default branch
+# HEAD — the wrong commit. The reconcile instead skips tags the mirror
+# hasn't delivered and picks them up next slot. It also backfills the
+# whole historical release list, not just the newest one.
+#
+# Setup (job no-ops with a notice until this is done):
+#   * Add repo secret GH_MIRROR_TOKEN: a GitHub PAT that may write
+#     releases on the mirror repo — classic with `repo` scope (the PAT
+#     backing the Forgejo push mirror already has it), or fine-grained
+#     with "Contents: read and write" on that repo.
+#
+# Sync semantics:
+#   * Drafts are skipped (release.yml stages uploads in a draft before
+#     flipping it live — mirroring one would leak a half-built release).
+#   * Existing GitHub releases get name/body/prerelease drift patched.
+#   * Assets are matched by name and compared by size (the Forgejo API
+#     exposes no digest); a size mismatch means an interrupted upload,
+#     so the GitHub copy is replaced.
+#   * Releases are processed oldest-first so GitHub's "latest release"
+#     badge lands on the newest non-prerelease after a backfill.
+
+name: mirror-gh-releases
+
+on:
+  schedule:
+    # Forgejo evaluates cron in UTC. Staggered after the other mirror
+    # workflows on this instance (nextcloud :00, backend :30) so they
+    # don't contend for the shared runner at the same minute.
+    - cron: '45 7 * * *'
+    - cron: '45 15 * * *'
+  workflow_dispatch:
+
+env:
+  # Source is derived at runtime from GITHUB_API_URL + GITHUB_REPOSITORY,
+  # so instance/user/repo renames need no edit here. Only the GitHub
+  # destination is fixed: it lives on a different platform and can't be
+  # derived from this run's context.
+  DST_REPO: v3DJG6GL/faster-whisper-frontend
+
+jobs:
+  mirror:
+    name: Sync releases to github.com
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync releases (create missing, patch drift, fill assets)
+        env:
+          GH_MIRROR_TOKEN: ${{ secrets.GH_MIRROR_TOKEN }}
+          # Source API read: anonymous works while the repo is public; use
+          # the run-scoped token anyway so the sync survives the repo ever
+          # being flipped private.
+          SRC_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          SRC_REPO="$GITHUB_REPOSITORY"
+          src_api="$GITHUB_API_URL"
+          dst_api="https://api.github.com"
+          echo "Syncing releases $SRC_REPO -> github.com/$DST_REPO"
+
+          if [ -z "$GH_MIRROR_TOKEN" ]; then
+            echo "::notice::GH_MIRROR_TOKEN secret not configured — skipping mirror (add a GitHub PAT that can write releases on $DST_REPO to enable)"
+            exit 0
+          fi
+
+          SRC_HDR="Authorization: token $SRC_TOKEN"
+          DST_HDR="Authorization: Bearer $GH_MIRROR_TOKEN"
+          # Reads retry (transient network); writes do NOT — a retried POST
+          # could double-create, while a failed write just converges next slot.
+          sget() { curl -fsS --retry 3 --retry-delay 5 --retry-connrefused --retry-all-errors -H "$SRC_HDR" "$@"; }
+          dget() { curl -fsS --retry 3 --retry-delay 5 --retry-connrefused --retry-all-errors -H "$DST_HDR" "$@"; }
+          dput() { curl -fsS -H "$DST_HDR" "$@"; }
+
+          # ---- list source releases (paginated), drafts dropped ----------
+          page=1
+          : > src.ndjson
+          while :; do
+            batch=$(sget "$src_api/repos/$SRC_REPO/releases?limit=50&page=$page")
+            jq -c '.[] | select(.draft | not)' <<<"$batch" >> src.ndjson
+            [ "$(jq 'length' <<<"$batch")" -lt 50 ] && break
+            page=$((page + 1))
+          done
+          # Oldest first — see header (GitHub "latest release" semantics).
+          jq -sc 'sort_by(.created_at) | .[]' src.ndjson > src-sorted.ndjson
+          if ! [ -s src-sorted.ndjson ]; then
+            echo "::error::no published releases found on $SRC_REPO"
+            exit 1
+          fi
+
+          # ---- list destination releases (paginated) ---------------------
+          page=1
+          : > dst.ndjson
+          while :; do
+            batch=$(dget "$dst_api/repos/$DST_REPO/releases?per_page=100&page=$page")
+            jq -c '.[]' <<<"$batch" >> dst.ndjson
+            [ "$(jq 'length' <<<"$batch")" -lt 100 ] && break
+            page=$((page + 1))
+          done
+
+          created=0 patched=0 uploaded=0 fresh=0 lagging=0
+          while IFS= read -r rel; do
+            tag=$(jq -r '.tag_name' <<<"$rel")
+
+            # Missing-tag guard — see header. Plain curl: a 404 here is an
+            # expected state, not a transient error worth retrying.
+            code=$(curl -s -o /dev/null -w '%{http_code}' -H "$DST_HDR" \
+              "$dst_api/repos/$DST_REPO/git/ref/tags/$tag")
+            if [ "$code" != "200" ]; then
+              echo "::warning::[$tag] tag not on GitHub yet (push mirror lag?) — skipping until next slot"
+              lagging=$((lagging + 1))
+              continue
+            fi
+
+            # Metadata the mirror owns on the GitHub side. Forgejo may leave
+            # name empty ("" survives jq's //, so test explicitly).
+            want=$(jq -c '{name: (if (.name // "") == "" then .tag_name else .name end),
+                           body: (.body // ""), prerelease: (.prerelease // false)}' <<<"$rel")
+
+            dstrel=$(jq -c --arg t "$tag" 'select(.tag_name == $t)' dst.ndjson | head -n1)
+            if [ -z "$dstrel" ]; then
+              echo "[$tag] creating release"
+              # make_latest omitted: every create defaults to latest, and the
+              # oldest-first order leaves the newest one holding the badge.
+              dstrel=$(dput -X POST "$dst_api/repos/$DST_REPO/releases" \
+                -H 'Content-Type: application/json' \
+                -d "$(jq -c --arg t "$tag" '. + {tag_name: $t, draft: false}' <<<"$want")")
+              created=$((created + 1))
+            else
+              have=$(jq -c '{name: (.name // ""), body: (.body // ""), prerelease}' <<<"$dstrel")
+              if [ "$want" != "$have" ]; then
+                echo "[$tag] patching drifted metadata"
+                dstrel=$(dput -X PATCH "$dst_api/repos/$DST_REPO/releases/$(jq -r '.id' <<<"$dstrel")" \
+                  -H 'Content-Type: application/json' -d "$want")
+                patched=$((patched + 1))
+              fi
+            fi
+            rid=$(jq -r '.id' <<<"$dstrel")
+            dassets=$(jq -c '[.assets[] | {id, name, size}]' <<<"$dstrel")
+
+            while IFS= read -r asset; do
+              aname=$(jq -r '.name' <<<"$asset")
+              asize=$(jq -r '.size' <<<"$asset")
+              match=$(jq -c --arg n "$aname" '.[] | select(.name == $n)' <<<"$dassets")
+              if [ -n "$match" ]; then
+                if [ "$(jq -r '.size' <<<"$match")" = "$asize" ]; then
+                  fresh=$((fresh + 1))
+                  continue
+                fi
+                echo "[$tag] $aname size drifted — replacing"
+                dput -X DELETE "$dst_api/repos/$DST_REPO/releases/assets/$(jq -r '.id' <<<"$match")"
+              fi
+              echo "[$tag] uploading $aname ($asize bytes)"
+              sget -o asset.bin "$(jq -r '.browser_download_url' <<<"$asset")"
+              # A short read must not become a silently corrupt GitHub asset.
+              dl=$(stat -c%s asset.bin)
+              if [ "$dl" != "$asize" ]; then
+                echo "::error::[$tag] $aname downloaded $dl bytes, expected $asize"
+                exit 1
+              fi
+              dput -X POST "https://uploads.github.com/repos/$DST_REPO/releases/$rid/assets?name=$aname" \
+                -H 'Content-Type: application/octet-stream' \
+                --data-binary @asset.bin > /dev/null
+              rm -f asset.bin
+              uploaded=$((uploaded + 1))
+            done < <(jq -c '.assets[]' <<<"$rel")
+          done < src-sorted.ndjson
+
+          summary="mirror-gh-releases: $created release(s) created, $patched patched, $uploaded asset(s) uploaded, $fresh already in sync"
+          [ "$lagging" -gt 0 ] && summary="$summary, $lagging tag(s) awaiting the push mirror"
+          echo "::notice::$summary"
