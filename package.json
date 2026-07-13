@@ -1,7 +1,7 @@
 {
   "name": "faster-whisper-frontend",
   "private": true,
-  "version": "0.1.21",
+  "version": "0.1.22",
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "packageManager": "pnpm@11.11.0",
