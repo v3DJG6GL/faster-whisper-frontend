@@ -323,6 +323,38 @@ export default function Overlay() {
     }, state.hoverRevealMs);
   };
   const onPointerLeave = clearHover;
+  // Latest-render closure for the native crossing listener below (subscribed once, but
+  // onPointerEnter must see the current `peeked`/`state.hoverRevealMs`).
+  const onPointerEnterRef = useRef(onPointerEnter);
+  onPointerEnterRef.current = onPointerEnter;
+  // Native (GDK) crossings are the AUTHORITATIVE hover signal on Linux. WebKitGTK's DOM
+  // pointerenter/leave get dropped when the tucked dot's tiny input region churns quick
+  // enter/leave pairs (cursor micro-drift across a region edge) — after one dropped leave
+  // WebKit believes the pointer never left and stops delivering pointerenter entirely,
+  // leaving the dot dead to every later hover. The Rust side forwards the compositor-fed
+  // GDK crossings as `chip://pointer`; the DOM handlers above stay attached as a
+  // same-frame fast path (and as the only path on Windows, which doesn't emit this event).
+  useEffect(() => {
+    if (!isTauri) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<boolean>("chip://pointer", (e) => {
+          if (e.payload) onPointerEnterRef.current();
+          else clearHover();
+        }),
+      )
+      .then((un) => {
+        if (cancelled) un();
+        else unlisten = un;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [clearHover]);
   const detail = [state.language, state.mode].filter(Boolean).join(" · ");
   // "On hover" mode for the Profile tag: only surface it once the chip is hover-revealed;
   // "always" (profileOnHover false) shows it whenever a tag was sent.

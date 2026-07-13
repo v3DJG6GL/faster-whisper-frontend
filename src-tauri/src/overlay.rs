@@ -171,7 +171,7 @@ pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64, persi
             }
         }
         let applied = apply_hit_region(&win, x, y, w, h).is_some();
-        tracing::debug!("[overlay] hit_region x={x:.0} y={y:.0} w={w:.0} h={h:.0} applied={applied}");
+        tracing::debug!("[overlay] hit_region x={x:.0} y={y:.0} w={w:.0} h={h:.0} persist={persist} applied={applied}");
         // If not applied, the GdkWindow isn't realized yet — a later retry will get
         // it. We must NOT fall back to `set_ignore_cursor_events` here: on an
         // unrealized window tao does `window().unwrap()` and ABORTS the whole app
@@ -218,8 +218,14 @@ pub fn chip_pointer_over(app: AppHandle) -> bool {
         // (None whenever the cursor is over another app or nothing of ours); on X11 the
         // walk-from-root only finds our window when the cursor is actually over it. Compare
         // toplevels — the webview may own a child GdkWindow.
-        let (under, _x, _y) = pointer.window_at_position();
-        return under.is_some_and(|w| w.toplevel() == gdk_win);
+        let (under, x, y) = pointer.window_at_position();
+        let toplevel_eq = under.as_ref().map(|w| w.toplevel() == gdk_win);
+        tracing::debug!(
+            "[overlay] pointer_over: under_some={} toplevel_eq={:?} at=({x:.0},{y:.0})",
+            under.is_some(),
+            toplevel_eq,
+        );
+        return toplevel_eq == Some(true);
     }
     #[cfg(windows)]
     {
@@ -251,6 +257,43 @@ fn reapply_last_hit_region(win: &WebviewWindow) {
     }
 }
 
+/// Forward GDK-level pointer crossings on the overlay toplevel to the overlay webview as
+/// `chip://pointer` (payload: is the cursor over the chip's hit region?). WebKitGTK's DOM
+/// crossing events are NOT trustworthy here: when the tucked dot's tiny input region churns
+/// quick enter/leave pairs (cursor micro-drift across a region edge), WebKit drops crossings
+/// and is left believing the pointer never left — from then on genuine re-enters produce NO
+/// `pointerenter` at all and the dot is dead to hovers. GDK's crossings come straight from
+/// the compositor (observed correct throughout that failure), so the webview treats these
+/// as the authoritative hover signal; its DOM handlers stay as a same-frame fast path (and
+/// the only path on Windows, where win_hover polls the cursor instead).
+#[cfg(target_os = "linux")]
+fn install_crossing_forwarder(win: &WebviewWindow, gtk_win: &gtk::ApplicationWindow) {
+    use gtk::prelude::{WidgetExt, WidgetExtManual};
+    use tauri::{Emitter, Manager};
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    let app = win.app_handle().clone();
+    ONCE.call_once(move || {
+        gtk_win.add_events(
+            gtk::gdk::EventMask::ENTER_NOTIFY_MASK | gtk::gdk::EventMask::LEAVE_NOTIFY_MASK,
+        );
+        let enter_app = app.clone();
+        gtk_win.connect_enter_notify_event(move |_, e| {
+            // Grab/ungrab pseudo-crossings don't reflect real cursor travel — ignore them.
+            if e.mode() == gtk::gdk::CrossingMode::Normal {
+                tracing::debug!("[overlay] gdk enter at {:?}", e.position());
+                let _ = enter_app.emit_to("overlay", "chip://pointer", true);
+            }
+            gtk::glib::Propagation::Proceed
+        });
+        // A leave of ANY mode means the cursor is no longer ours — always safe to clear.
+        gtk_win.connect_leave_notify_event(move |_, e| {
+            tracing::debug!("[overlay] gdk leave mode={:?} at {:?}", e.mode(), e.position());
+            let _ = app.emit_to("overlay", "chip://pointer", false);
+            gtk::glib::Propagation::Proceed
+        });
+    });
+}
+
 /// Apply a rectangular GDK input region to the overlay's underlying window. GDK
 /// input regions live in the window's *logical* coordinate space (GDK applies
 /// HiDPI scaling itself), so the webview's CSS-px `getBoundingClientRect` maps
@@ -272,6 +315,7 @@ fn apply_hit_region(win: &WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> Opti
         tracing::warn!("[overlay] no GdkWindow yet (window not realized?)");
         return None;
     };
+    install_crossing_forwarder(win, &gtk_win);
     let pad = 10.0;
     let rect = gtk::cairo::RectangleInt::new(
         (x - pad).floor() as i32,
@@ -281,6 +325,12 @@ fn apply_hit_region(win: &WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> Opti
     );
     let region = gtk::cairo::Region::create_rectangle(&rect);
     gdk_win.input_shape_combine_region(&region, 0, 0);
+    // A changed input region only reaches the compositor with the next surface COMMIT, and
+    // nothing necessarily repaints right now (e.g. the enter-time full-window hover hold,
+    // whose visuals change only after the dwell). Queue a redraw so the region goes live
+    // within a frame — otherwise KWin keeps hit-testing the OLD region and a tiny tucked-dot
+    // region stays in force, churning enter/leave on every micro-drift of the cursor.
+    gtk_win.queue_draw();
     Some(())
 }
 
