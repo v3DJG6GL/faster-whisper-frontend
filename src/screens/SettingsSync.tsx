@@ -4,6 +4,7 @@
 // The engine lives in lib/sync.ts; this screen only drives it.
 
 import { useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { DownloadCloud, UploadCloud, RefreshCw, Loader2 } from "lucide-react";
 import { useApp, DEFAULT_SYNC } from "@/lib/store";
 import {
@@ -55,7 +56,11 @@ export function relTime(ms: number): string {
 }
 
 function Modal({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-  return (
+  // Portaled to <body>: callers mount this from arbitrary depths (e.g. inside a
+  // Card, whose backdrop-blur makes it a containing block for fixed-position
+  // descendants) — without the portal the "fullscreen" backdrop would dim only
+  // the ancestor's box and the panel would float over undimmed content.
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
       onClick={onClose}
@@ -65,7 +70,8 @@ function Modal({ children, onClose }: { children: ReactNode; onClose: () => void
       <div className="w-full max-w-[600px]" onClick={(e) => e.stopPropagation()}>
         <Card className="max-h-[80vh] overflow-y-auto px-6 py-5">{children}</Card>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
