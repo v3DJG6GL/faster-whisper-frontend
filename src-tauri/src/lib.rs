@@ -207,6 +207,7 @@ pub fn run() {
             overlay::show_overlay,
             overlay::hide_overlay,
             overlay::set_chip_hit_region,
+            overlay::chip_pointer_over,
             quickadd::show_quick_add,
             quickadd::hide_quick_add,
             sound::play_cue,

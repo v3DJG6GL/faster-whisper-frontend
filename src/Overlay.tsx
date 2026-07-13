@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, ty
 import { motion, AnimatePresence, MotionConfig } from "motion/react";
 import { Target, X } from "lucide-react";
 import { Waveform } from "@/components/Waveform";
-import { setChipHitRegion, emitOverlayAction, showMainAtScreen } from "@/lib/api";
+import { setChipHitRegion, chipPointerOver, emitOverlayAction, showMainAtScreen } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { quickLaunchMeta } from "@/lib/screens";
 import { newSpeakMemo, stepSpeaking } from "@/lib/speaking";
@@ -106,6 +106,11 @@ const PEEK_TUCK = 29;
 // back to the edge after this short settle rather than waiting the full peekTimeoutSec — the
 // chip is meant to stay hidden, so it shouldn't sit expanded for half a minute first.
 const PEEK_ACTIVE_SETTLE_MS = 700;
+
+// While the webview believes the cursor is on the chip, re-ask the windowing system this
+// often whether that's still true — a dropped WebKitGTK pointerleave (see onPointerEnter)
+// otherwise strands the hover state forever. Cheap: only runs while `hovering` is held.
+const HOVER_WATCHDOG_MS = 1500;
 
 /**
  * The dictation chip — a frameless, transparent, always-on-top window painted by
@@ -274,6 +279,9 @@ export default function Overlay() {
   const [hoverReveal, setHoverReveal] = useState(false);
   const [hovering, setHovering] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirrors `hovering` for the async dwell verify below (the state value would be stale
+  // inside its closure).
+  const hoveringRef = useRef(false);
   // After any hover, hold off the deep-idle peek for a grace period (anti-oscillation).
   const peekGraceUntil = useRef(0);
   // Deep-idle edge-peek: true when the chip has tucked to the screen edge (driven below).
@@ -284,21 +292,37 @@ export default function Overlay() {
   // the edge) falls off it, dropping the hover before it can reveal. A non-tucked hover leaves it
   // false → the pill keeps its normal rest inset (no jump out from under the cursor).
   const [peekRestoring, setPeekRestoring] = useState(false);
+  // Every "the cursor is definitely gone" path funnels here: a real pointerleave, the
+  // lost-leave safety nets below (non-interactive reset, failed dwell verify, watchdog).
+  const clearHover = useCallback(() => {
+    hoveringRef.current = false;
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setHovering(false);
+    setPeekRestoring(false);
+    setHoverReveal(false);
+  }, []);
   const onPointerEnter = () => {
+    hoveringRef.current = true;
     setHovering(true);
     setPeekRestoring(peeked); // remember whether the chip was tucked when this hover began
     peekGraceUntil.current = performance.now() + PEEK_HOVER_GRACE_MS;
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     // Hover-intent dwell: wait the configured delay before revealing — so a fly-over
     // doesn't expand the chip, and the reveal (detail + quick-launch) happens in ONE step.
-    hoverTimer.current = setTimeout(() => setHoverReveal(true), state.hoverRevealMs);
+    // Firing is NOT proof the cursor stayed: WebKitGTK can drop the pointerleave of a quick
+    // graze (the hit region reshapes mid-exit — see reportBounds), which used to leave this
+    // timer armed and reveal the chip into empty air, stuck at the hover-restore anchor
+    // flush against the screen edge. So confirm with the windowing system (immune to the
+    // lost DOM event) that the cursor is still here; if it isn't, run the leave path instead.
+    hoverTimer.current = setTimeout(() => {
+      void chipPointerOver().then((over) => {
+        if (!hoveringRef.current) return; // a real leave beat the round-trip
+        if (over) setHoverReveal(true);
+        else clearHover();
+      });
+    }, state.hoverRevealMs);
   };
-  const onPointerLeave = () => {
-    setHovering(false);
-    setPeekRestoring(false);
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    setHoverReveal(false);
-  };
+  const onPointerLeave = clearHover;
   const detail = [state.language, state.mode].filter(Boolean).join(" · ");
   // "On hover" mode for the Profile tag: only surface it once the chip is hover-revealed;
   // "always" (profileOnHover false) shows it whenever a tag was sent.
@@ -384,11 +408,25 @@ export default function Overlay() {
   // comes back clean rather than stuck.
   useEffect(() => {
     if (interactive) return;
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    setHovering(false);
-    setHoverReveal(false);
-    setPeekRestoring(false);
-  }, [interactive]);
+    clearHover();
+  }, [interactive, clearHover]);
+
+  // Watchdog for every remaining dropped-leave path (e.g. the cursor is yanked out of the
+  // already-revealed chip right as the hit region reshapes): while the webview believes the
+  // cursor is on the chip, periodically re-ask the windowing system — its enter/leave view
+  // can't miss the exit — and run the leave path the moment it disagrees. Without this the
+  // chip sticks at the hover anchor, never dims and never re-peeks until the next hover.
+  useEffect(() => {
+    if (!hovering || !isTauri) return;
+    const id = setInterval(
+      () =>
+        void chipPointerOver().then((over) => {
+          if (!over) clearHover();
+        }),
+      HOVER_WATCHDOG_MS,
+    );
+    return () => clearInterval(id);
+  }, [hovering, clearHover]);
 
   // After sitting calm for `dimAfterSec`, fade the chip down so it's unobtrusive; any
   // speech / hover / state change snaps it back to full opacity. Applies to BOTH calm

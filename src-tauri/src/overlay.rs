@@ -189,6 +189,50 @@ pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64, persi
     }
 }
 
+/// Is the cursor REALLY over the chip window right now, as the windowing system sees it?
+/// The webview asks before acting on a held hover: WebKitGTK can drop the chip's
+/// `pointerleave` when the input shape is reshaped mid-crossing (a quick graze over the
+/// tucked dot races the full-window hover hold — see `set_chip_hit_region`'s persist=false
+/// caller), stranding the webview's hover state true with the cursor long gone. GDK's
+/// answer comes from compositor enter/leave events directly, so it stays correct even when
+/// the DOM event was lost. Fails OPEN (true) whenever no confident answer is available —
+/// this is a *cancellation* signal, and a query hiccup must not break a legitimate hover.
+#[tauri::command]
+pub fn chip_pointer_over(app: AppHandle) -> bool {
+    let Some(win) = app.get_webview_window("overlay") else {
+        return false;
+    };
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::{DeviceExt, SeatExt, WidgetExt};
+        let Ok(gtk_win) = win.gtk_window() else {
+            return true;
+        };
+        let Some(gdk_win) = WidgetExt::window(&gtk_win) else {
+            return true;
+        };
+        let Some(pointer) = gdk_win.display().default_seat().and_then(|s| s.pointer()) else {
+            return true;
+        };
+        // The window under the pointer: on Wayland this is the surface holding pointer focus
+        // (None whenever the cursor is over another app or nothing of ours); on X11 the
+        // walk-from-root only finds our window when the cursor is actually over it. Compare
+        // toplevels — the webview may own a child GdkWindow.
+        let (under, _x, _y) = pointer.window_at_position();
+        return under.is_some_and(|w| w.toplevel() == gdk_win);
+    }
+    #[cfg(windows)]
+    {
+        let _ = &win;
+        return win_hover::cursor_in_chip(&app).unwrap_or(true);
+    }
+    #[cfg(all(not(target_os = "linux"), not(windows)))]
+    {
+        let _ = &win;
+        true
+    }
+}
+
 /// The most recent chip hit region (logical px) requested by the webview, so a (re)show can
 /// restore it the instant `ignore_cursor` wipes the input shape (the webview also re-reports its
 /// exact bounds a beat later). `Mutex::new` is const, so no lazy init is needed.
@@ -325,7 +369,7 @@ mod win_hover {
     /// Is the global cursor inside the chip rect? Webview-logical rect → physical px
     /// (same 10 px forgiveness pad as the GDK shape). None (no rect yet / any getter
     /// failure) reads as "outside" — the window stays click-through.
-    fn cursor_in_chip(app: &AppHandle) -> Option<bool> {
+    pub fn cursor_in_chip(app: &AppHandle) -> Option<bool> {
         let (x, y, w, h) = (*REGION.lock().ok()?)?;
         let win = app.get_webview_window("overlay")?;
         let cur = app.cursor_position().ok()?;

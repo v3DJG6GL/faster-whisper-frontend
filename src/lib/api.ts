@@ -589,6 +589,19 @@ export async function setChipHitRegion(
   await invoke("set_chip_hit_region", { x, y, w, h, persist });
 }
 
+/** Is the cursor genuinely over the chip window right now, per the windowing system —
+ *  immune to a lost DOM pointerleave (WebKitGTK drops the crossing when the input shape
+ *  reshapes mid-exit). Fail-open: true outside Tauri / on any error, so a query hiccup can
+ *  never cancel a legitimate hover. */
+export async function chipPointerOver(): Promise<boolean> {
+  if (!isTauri) return true;
+  try {
+    return await invoke<boolean>("chip_pointer_over");
+  } catch {
+    return true;
+  }
+}
+
 /** Reflect the dictation status in the tray tooltip. */
 export async function setTrayState(status: string): Promise<void> {
   if (!isTauri) return;
