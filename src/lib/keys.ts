@@ -42,6 +42,44 @@ export function codeToToken(code: string): string | null {
   return null;
 }
 
+// e.key → left/right code pairs for the modifier fallback below.
+const KEY_MODIFIER_SIDES: Record<string, [string, string]> = {
+  Control: ["ControlLeft", "ControlRight"],
+  Shift: ["ShiftLeft", "ShiftRight"],
+  Alt: ["AltLeft", "AltRight"],
+  Meta: ["MetaLeft", "MetaRight"],
+};
+
+// Numpad-located (`e.location === 3`) keys whose `e.key` is a character/name, not a
+// Numpad* code: operators, decimal, equal, and Enter.
+const NUMPAD_KEY_CODES: Record<string, string> = {
+  "+": "NumpadAdd", "-": "NumpadSubtract", "*": "NumpadMultiply",
+  "/": "NumpadDivide", ".": "NumpadDecimal", "=": "NumpadEqual",
+  Enter: "NumpadEnter",
+};
+
+/**
+ * The event's `code`, deriving one from `key` + `location` when `code` is unusable.
+ * Software-injected shortcuts (dictation hardware companion apps like Philips
+ * SpeechControl, AutoHotkey remaps — anything sending VK-only `SendInput` with no
+ * scancode) reach the webview with `code` ""/"Unidentified" but a valid `key`, so
+ * without the fallback such chords can't be captured at all. VK→key→VK round-trips
+ * for letters/digits/named keys, so the binding fires on the same virtual key the
+ * injector sends. Returns the raw (unusable) `code` when no fallback applies —
+ * downstream `codeToToken` then rejects it exactly as before.
+ */
+export function eventToCode(e: Pick<KeyboardEvent, "code" | "key" | "location">): string {
+  if (e.code && e.code !== "Unidentified") return e.code;
+  const sides = KEY_MODIFIER_SIDES[e.key];
+  if (sides) return e.location === 2 ? sides[1] : sides[0];
+  if (/^[a-zA-Z]$/.test(e.key)) return `Key${e.key.toUpperCase()}`;
+  if (/^[0-9]$/.test(e.key)) return e.location === 3 ? `Numpad${e.key}` : `Digit${e.key}`;
+  if (e.key === " ") return "Space";
+  if (e.location === 3 && NUMPAD_KEY_CODES[e.key]) return NUMPAD_KEY_CODES[e.key];
+  if (NAMED_CODES.has(e.key)) return e.key; // Enter, Tab, ArrowUp, PageDown, F1…
+  return e.code;
+}
+
 const PRETTY: Record<string, string> = {
   Ctrl: "Ctrl", Alt: "Alt", Shift: "Shift", Super: "Super",
   Space: "Space", Enter: "↵", Tab: "Tab", Backspace: "⌫",

@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { validateCodes, suspendShortcuts, reregisterShortcuts } from "./api";
-import { MODIFIER_CODES, codeToToken, canonicalizeCodes } from "./keys";
+import { MODIFIER_CODES, codeToToken, canonicalizeCodes, eventToCode } from "./keys";
 import { learnLetter } from "./keyboardLayout";
 import { findChordConflict, type BindingKind } from "./conflicts";
 import type { Profile } from "./types";
@@ -94,8 +94,11 @@ export function useHotkeyCapture(opts: {
         ref.current.onCancel();
         return;
       }
-      if (MODIFIER_CODES.has(e.code)) {
-        pressed.add(e.code);
+      // eventToCode (not e.code): software-injected chords (SpeechMike-style
+      // companion apps) arrive with no scancode, so e.code is ""/"Unidentified".
+      const code = eventToCode(e);
+      if (MODIFIER_CODES.has(code)) {
+        pressed.add(code);
         const cur = canonicalizeCodes([...pressed]);
         // >= (not >) so a LATER equal-length modifier set wins the tie: on a same-count swap mid-capture
         // (release LeftShift, press LeftAlt while LeftCtrl stays down) peak must track the most-recent
@@ -107,7 +110,7 @@ export function useHotkeyCapture(opts: {
       }
       // The user is holding modifiers here, so the passive learner skipped this key;
       // learn its layout label now so the committed chip shows the right keycap.
-      learnLetter(e.code, e.key);
+      learnLetter(code, e.key);
       // A real (non-modifier) key was attempted this hold, so this is no longer a modifier-only
       // chord. Clear `peak` (only ever consumed by the keyup fallback below, which never holds
       // non-modifier keys) so that if this key is rejected as unmappable OR conflicts — leaving
@@ -119,16 +122,16 @@ export function useHotkeyCapture(opts: {
       // evdev would commit a binding that can never fire. Safe: evdev's non-modifier mappable set
       // equals codeToToken's acceptable set (pinned by every_bindable_code_maps_to_an_evdev_key);
       // modifier-only / AltGr chords return early above and commit via the keyup path.
-      if (!codeToToken(e.code)) {
+      if (!codeToToken(code)) {
         setWarn("That key can’t be a global shortcut — try another");
         return;
       }
       done = true;
-      finalize(canonicalizeCodes([...pressed, e.code]));
+      finalize(canonicalizeCodes([...pressed, code]));
     };
     const onKeyUp = (e: KeyboardEvent) => {
       e.preventDefault();
-      pressed.delete(e.code);
+      pressed.delete(eventToCode(e));
       setHeldCodes(canonicalizeCodes([...pressed]));
       if (!done && pressed.size === 0 && peak.length > 0) {
         if (lowLevelActive) {
