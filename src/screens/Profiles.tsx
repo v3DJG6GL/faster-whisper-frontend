@@ -527,9 +527,9 @@ export default function Profiles() {
               <Card className="border-accent/40 p-5">
                 <div className="text-[13.5px] font-semibold text-text">Suggested starters</div>
                 <div className="mt-0.5 text-[12.5px] text-dim">
-                  Push-to-talk (hold <HotkeyChips codes={["ControlLeft", "ShiftLeft"]} />) and Latch (
-                  <HotkeyChips codes={["ControlLeft", "ShiftLeft", "Space"]} /> — or add Space while
-                  holding push-to-talk to go hands-free mid-sentence). Keep them, then edit anything.
+                  Push-to-talk (hold <HotkeyChips codes={["ControlLeft", "ShiftLeft"]} />) and Latch
+                  (tap <HotkeyChips codes={["ControlLeft", "MetaLeft"]} /> for hands-free). Keep them,
+                  then edit anything.
                 </div>
                 <div className="mt-4 flex items-center gap-2.5">
                   <Button

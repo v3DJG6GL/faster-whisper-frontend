@@ -57,10 +57,10 @@ const DEFAULT_SETTINGS: AppSettings = {
     soundEffects: true,
     evdevEnabled: false,
     deepFieldDetection: false,
-    // Chord family: Ctrl+Shift (the dictation root) + Right Ctrl — inert until a
-    // quick-add list is designated (apply_bindings skips it), so the default is
-    // harmless out of the box.
-    quickAddHotkey: ["ControlLeft", "ShiftLeft", "ControlRight"],
+    // Super+Alt (user-set 2026-07-13; mirrors Rust default_quick_add_hotkey) —
+    // inert until a quick-add list is designated (apply_bindings skips it), so
+    // the default is harmless out of the box.
+    quickAddHotkey: ["AltLeft", "MetaLeft"],
   },
   recording: {
     indicatorPosition: "top",

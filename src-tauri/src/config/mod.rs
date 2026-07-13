@@ -70,11 +70,12 @@ fn default_true() -> bool {
     true
 }
 
-/// The chord family's quick-add member: Ctrl+Shift (the dictation root) + Right Ctrl.
-/// Deliberately a strict superset of the push-to-talk default — the chord engine
-/// aborts the nascent blip within its grace window (see chord_engine.rs).
+/// Quick-add default: Super+Alt (user-set 2026-07-13; canonical order per
+/// `code_rank`). Independent of the push-to-talk/latch defaults — no chord
+/// nesting, so chord_engine.rs's grace-window abort never applies between the
+/// defaults (it still works for user-configured superset chords).
 fn default_quick_add_hotkey() -> Vec<String> {
-    vec!["ControlLeft".into(), "ShiftLeft".into(), "ControlRight".into()]
+    vec!["AltLeft".into(), "MetaLeft".into()]
 }
 
 fn default_peek_timeout() -> f64 {

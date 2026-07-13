@@ -296,8 +296,7 @@ function StartersStep({
       <h1 className="mt-6 font-display text-[21px] font-[680]">Your hotkeys</h1>
       <p className="mt-1.5 max-w-[52ch] text-[13px] text-dim">
         Nothing synced on this account yet — here are two starters. Everything is editable; they’re
-        only created when you confirm. Tip: Latch extends Push-to-talk — add Space while holding to go
-        hands-free.
+        only created when you confirm.
       </p>
       <div className="mt-5 grid w-full max-w-[540px] grid-cols-1 gap-3 text-left sm:grid-cols-2">
         {drafts.map((p) => (
