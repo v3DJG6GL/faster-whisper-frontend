@@ -72,7 +72,7 @@ export function SetupChecklist() {
             </div>
           </div>
           {backends === 0 && (
-            <Button variant="accent" size="sm" onClick={() => navigate("/backends")}>
+            <Button variant="accent" size="sm" onClick={() => navigate("/backends?add=1")}>
               Add backend
             </Button>
           )}

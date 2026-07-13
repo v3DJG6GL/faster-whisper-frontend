@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
@@ -6,11 +7,14 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
-import { testConnection, setBackendKey, deleteBackendKey } from "@/lib/api";
+import { testConnection, setBackendKey, deleteBackendKey, syncPull } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
+import type { SyncRemoteState } from "@/lib/syncTypes";
+import { ALL_CATEGORIES } from "@/lib/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
-import { effectiveServerUrl } from "@/lib/backends";
+import { effectiveServerUrl, nameFromUrl, normalizeUrl } from "@/lib/backends";
 import { useOverrideContext } from "@/lib/useOverrideContext";
+import { RestoreFromServer, relTime } from "./SettingsSync";
 import { cn } from "@/lib/cn";
 
 function blankBackend(): Backend {
@@ -29,10 +33,18 @@ function blankBackend(): Backend {
 
 function Editor({
   initial,
+  initialKey,
+  initialResult,
   onSave,
   onCancel,
 }: {
   initial: Backend;
+  /** Connect-first add: the API key typed in the connect step, carried in so
+   *  the editor's Save stores it (and the capability lookups use it). */
+  initialKey?: string;
+  /** Connect-first add: the connect step's still-current test result, shown as
+   *  if the user had just pressed "Test connection". */
+  initialResult?: ConnectionInfo | null;
   onSave: (b: Backend) => void;
   onCancel: () => void;
 }) {
@@ -41,11 +53,11 @@ function Editor({
   const urlOverride = useApp((s) => s.settings.sync?.urlOverrides?.[initial.id] ?? "");
   const setUrlOverride = useApp((s) => s.setUrlOverride);
   const [b, setB] = useState<Backend>(initial);
-  const [key, setKey] = useState("");
+  const [key, setKey] = useState(initialKey ?? "");
   // Debounce the typed key AND the server URL before they drive the best-effort capability /
   // override-profile lookups, so typing either field doesn't fire a burst of requests on every
   // keystroke (the URL drives two lookups — getCapabilities + listOverrideProfiles — per char).
-  const [debouncedKey, setDebouncedKey] = useState("");
+  const [debouncedKey, setDebouncedKey] = useState(initialKey ?? "");
   useEffect(() => {
     const t = setTimeout(() => setDebouncedKey(key), 400);
     return () => clearTimeout(t);
@@ -56,12 +68,20 @@ function Editor({
     return () => clearTimeout(t);
   }, [b.serverUrl]);
   const [testing, setTesting] = useState(false);
-  const [result, setResult] = useState<ConnectionInfo | null>(null);
+  const [result, setResult] = useState<ConnectionInfo | null>(initialResult ?? null);
   // Drop a connection-test result once the tested target changes (URL or key edited): the in-flight
   // liveTarget guard only stops a result that RESOLVES after the edit — one that already committed
   // would keep showing the OLD server's classification / models / "Connected" under the new URL.
-  // On mount result is already null, so this is a no-op there.
-  useEffect(() => setResult(null), [b.serverUrl, key]);
+  // Skipped on mount: a connect-first add arrives with the connect step's still-valid result, which
+  // this effect's initial run would otherwise wipe.
+  const resultIsInitial = useRef(true);
+  useEffect(() => {
+    if (resultIsInitial.current) {
+      resultIsInitial.current = false;
+      return;
+    }
+    setResult(null);
+  }, [b.serverUrl, key]);
   // Saving the API key to the OS keyring can fail (locked/absent Secret Service). Track it so we
   // keep the editor open with an error instead of persisting a backend whose "key" badge claims a
   // key that was never stored.
@@ -133,6 +153,10 @@ function Editor({
     // the server (a padded value never matches a real profile), or shown as a blank card.
     onSave({
       ...b,
+      // A connect-step key only reaches the keyring on THIS save — if the field
+      // was cleared before saving, no key was ever stored, so don't claim one
+      // (an EXISTING backend's blank field still means "keep the stored key").
+      hasApiKey: key.length > 0 || (initialKey ? false : b.hasApiKey),
       name: b.name.trim() || "Untitled backend",
       serverUrl: b.serverUrl.trim(),
       model: b.model.trim(),
@@ -355,6 +379,244 @@ function ConnResult({ info }: { info: ConnectionInfo }) {
   );
 }
 
+// ── Connect-first add flow ──────────────────────────────────────────────────
+// "Add backend" no longer opens the blank editor: a connect step asks only for
+// URL + key, then branches on what the server knows (mirrors first-run
+// onboarding). Synced settings on the account → restore offer; otherwise the
+// editor opens PREFILLED from the test result. Unlike onboarding, nothing is
+// persisted until the editor's Save / the restore applies — cancelling anywhere
+// leaves the config untouched.
+
+type AddFlow =
+  | { step: "connect" }
+  | { step: "offer"; draft: Backend; key: string; info: ConnectionInfo; remote: SyncRemoteState }
+  | { step: "edit"; draft: Backend; key?: string; info?: ConnectionInfo };
+
+/** A draft Backend prefilled from a successful connection test: name from the
+ *  host, the server's loaded model, batch endpoint for standard servers. */
+function draftFromConnection(serverUrl: string, key: string, info: ConnectionInfo): Backend {
+  return {
+    id: crypto.randomUUID(),
+    name: nameFromUrl(serverUrl),
+    serverUrl,
+    hasApiKey: key.length > 0,
+    model: info.models.find((m) => m.loaded)?.id ?? info.models[0]?.id ?? "whisper-1",
+    endpoint: classifyConnection(info) === "standard" ? "batch" : "stream",
+    language: "auto",
+    prompt: "",
+    responseFormat: "verbose_json",
+  };
+}
+
+function ConnectStep({
+  onCancel,
+  onManual,
+  onDone,
+}: {
+  onCancel: () => void;
+  onManual: () => void;
+  onDone: (r: { draft: Backend; key: string; info: ConnectionInfo; remote?: SyncRemoteState }) => void;
+}) {
+  const [url, setUrl] = useState("");
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Fields stay editable during a test, so only act on a result whose target
+  // still matches what's typed (mirrors the editor's liveTarget guard) — a slow
+  // test must not decide the branch with a stale server's answer.
+  const liveTarget = useRef({ url: "", key: "" });
+  liveTarget.current = { url, key };
+
+  const testAndContinue = async () => {
+    if (busy) return;
+    const typedUrl = url;
+    const typedKey = key;
+    const serverUrl = normalizeUrl(typedUrl);
+    if (!serverUrl.replace(/^https?:\/\//i, "")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const info = await testConnection({ serverUrl, apiKey: typedKey || undefined });
+      if (liveTarget.current.url !== typedUrl || liveTarget.current.key !== typedKey) return;
+      if (!info.ok) {
+        setError(info.error || "Couldn’t reach the server.");
+        return;
+      }
+      const draft = draftFromConnection(serverUrl, typedKey, info);
+      // Full backend → this account may have synced settings; discover, don't
+      // ask (mirrors onboarding). Standard servers are never probed.
+      if (info.bootId) {
+        const p = await syncPull({ serverUrl, apiKey: typedKey || null });
+        if (liveTarget.current.url !== typedUrl || liveTarget.current.key !== typedKey) return;
+        if (p.ok && p.state?.blob) {
+          onDone({ draft, key: typedKey, info, remote: p.state });
+          return;
+        }
+      }
+      onDone({ draft, key: typedKey, info });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center gap-2 text-text">
+        <Server className="size-[18px] text-accent" />
+        <span className="text-[14px] font-semibold">Add backend</span>
+        <span className="text-[12px] text-dim">· step 1 of 2 — connect</span>
+      </div>
+      <p className="mt-1.5 text-[12.5px] text-dim">
+        Point at your server first — the rest fills itself in.
+      </p>
+      <div className="mt-5 flex max-w-[430px] flex-col gap-4">
+        <Labeled label="Server URL">
+          <TextInput
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="http://host:8000"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void testAndContinue();
+            }}
+          />
+        </Labeled>
+        <Labeled label="API key · if your server requires one">
+          <TextInput
+            type="password"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder="wk_…"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void testAndContinue();
+            }}
+          />
+        </Labeled>
+      </div>
+      {error && <Notice className="mt-4">{error}</Notice>}
+      <div className="mt-6 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Button variant="accent" onClick={() => void testAndContinue()} disabled={busy || !url.trim()}>
+            {busy ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
+            Test &amp; continue
+          </Button>
+          <Button variant="ghost" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+        </div>
+        <button
+          className="ring-signal rounded text-[12px] text-dim underline decoration-line underline-offset-2 hover:text-text"
+          onClick={onManual}
+        >
+          Enter details manually
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+function RestoreOffer({
+  draft,
+  keyTyped,
+  info,
+  remote,
+  onSkip,
+  onDone,
+}: {
+  draft: Backend;
+  keyTyped: string;
+  info: ConnectionInfo;
+  remote: SyncRemoteState;
+  onSkip: () => void;
+  onDone: () => void;
+}) {
+  const [restoring, setRestoring] = useState(false);
+
+  // After the blob applied: make sure a backend for this server exists (the
+  // restore may or may not have brought one — the backends category can be
+  // deselected), surface the fresh test result on its card, and bind sync to it
+  // (mirrors onboarding's restoreEverything).
+  const finishRestore = async () => {
+    const s = useApp.getState();
+    const target = normalizeUrl(draft.serverUrl);
+    let match = s.backends.find((b) => normalizeUrl(b.serverUrl) === target);
+    if (!match) {
+      let toAdd = draft;
+      if (keyTyped) {
+        try {
+          await setBackendKey(draft.id, keyTyped);
+        } catch (e) {
+          // Don't lose an applied restore over a keyring failure — save the
+          // backend keyless; the sync tab's no-key warning takes it from there.
+          console.error("saving API key failed:", e);
+          toAdd = { ...draft, hasApiKey: false };
+        }
+      }
+      s.upsertBackend(toAdd);
+      match = toAdd;
+    }
+    s.setConnection(match.id, info);
+    s.updateSync({ enabled: true, backendId: match.id });
+    onDone();
+  };
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center gap-2 text-text">
+        <Server className="size-[18px] text-accent" />
+        <span className="text-[14px] font-semibold">Add backend</span>
+        <span className="text-[12px] text-dim">· step 2 of 2</span>
+      </div>
+      <div className="mt-4 flex items-center gap-2 font-mono text-[11px] text-dim">
+        <StatusDot tone="ok" />
+        <span>
+          connected · faster-whisper-backend{info.serverVersion ? ` ${info.serverVersion}` : ""} ·{" "}
+          {info.models.length} model{info.models.length === 1 ? "" : "s"}
+          {info.username ? ` · ${info.username}` : ""}
+        </span>
+      </div>
+      <div className="mt-4 max-w-[520px] rounded-card border border-accent/40 bg-accent-soft p-4">
+        <div className="text-[13.5px] font-semibold text-text">This account has synced settings</div>
+        <div className="mt-1 font-mono text-[11px] text-dim">
+          last synced{remote.device ? ` from ${remote.device}` : ""}
+          {remote.updated_at ? ` · ${relTime(remote.updated_at * 1000)}` : ""}
+        </div>
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          {ALL_CATEGORIES.filter((c) => remote.blob?.[c] !== undefined).map((c) => (
+            <span
+              key={c}
+              className="rounded-pill border border-line-strong px-2.5 py-0.5 font-mono text-[10px] text-dim"
+            >
+              {c === "appRules" ? "app rules" : c}
+            </span>
+          ))}
+        </div>
+        <div className="mt-3.5 flex items-center gap-2.5">
+          <Button variant="accent" onClick={() => setRestoring(true)}>
+            Restore…
+          </Button>
+          <Button variant="ghost" onClick={onSkip}>
+            Just add this backend
+          </Button>
+        </div>
+      </div>
+      <p className="mt-3 max-w-[52ch] text-[12px] text-dim">
+        Restoring lets you pick which parts to bring over — anything you choose replaces its local
+        counterpart. Skipping simply continues to the editor.
+      </p>
+      {restoring && (
+        <RestoreFromServer
+          state={remote}
+          onCancel={() => setRestoring(false)}
+          onApplied={finishRestore}
+        />
+      )}
+    </Card>
+  );
+}
+
 export default function Backends() {
   const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
@@ -363,11 +625,21 @@ export default function Backends() {
   const duplicateBackend = useApp((s) => s.duplicateBackend);
   const moveBackend = useApp((s) => s.moveBackend);
   const setConnection = useApp((s) => s.setConnection);
-  const [editing, setEditing] = useState<Backend | null>(null);
+  const [flow, setFlow] = useState<AddFlow | null>(null);
   // Set of backend ids whose connection test is in flight. A Set (not a single id) so two
   // concurrent tests track independently — finishing one can't clear another's spinner, and
   // its late result can't be misattributed.
   const [testing, setTesting] = useState<ReadonlySet<string>>(new Set());
+
+  // Deep link from the Home checklist: /backends?add=1 opens straight into the
+  // connect step, then drops the param so back/refresh doesn't re-trigger it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("add") != null) {
+      setFlow({ step: "connect" });
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const handleTest = async (b: Backend) => {
     setTesting((s) => new Set(s).add(b.id));
@@ -401,7 +673,7 @@ export default function Backends() {
 
   const handleSave = (b: Backend) => {
     upsertBackend(b);
-    setEditing(null);
+    setFlow(null);
   };
 
   return (
@@ -409,17 +681,55 @@ export default function Backends() {
       <ListScreenHeader
         eyebrow="backends"
         title="Backends"
-        showAdd={!editing}
+        showAdd={!flow}
         addLabel="Add backend"
-        onAdd={() => setEditing(blankBackend())}
+        onAdd={() => setFlow({ step: "connect" })}
       >
         A backend is a connection to a transcription server, with its own model, default
         language, and endpoint. Profiles point at one.
       </ListScreenHeader>
 
-      {editing ? (
+      {flow ? (
         <div className="mt-8">
-          <Editor initial={editing} onCancel={() => setEditing(null)} onSave={handleSave} />
+          {flow.step === "connect" ? (
+            <ConnectStep
+              onCancel={() => setFlow(null)}
+              onManual={() => setFlow({ step: "edit", draft: blankBackend() })}
+              onDone={(r) =>
+                setFlow(
+                  r.remote
+                    ? { step: "offer", draft: r.draft, key: r.key, info: r.info, remote: r.remote }
+                    : { step: "edit", draft: r.draft, key: r.key, info: r.info },
+                )
+              }
+            />
+          ) : flow.step === "offer" ? (
+            <RestoreOffer
+              draft={flow.draft}
+              keyTyped={flow.key}
+              info={flow.info}
+              remote={flow.remote}
+              onSkip={() =>
+                setFlow({ step: "edit", draft: flow.draft, key: flow.key, info: flow.info })
+              }
+              onDone={() => setFlow(null)}
+            />
+          ) : (
+            <Editor
+              initial={flow.draft}
+              initialKey={flow.key}
+              initialResult={flow.info}
+              onCancel={() => setFlow(null)}
+              onSave={(b) => {
+                handleSave(b);
+                // The connect step's test is still current when the URL wasn't
+                // edited — show it on the list card instead of "untested".
+                if (flow.info && b.serverUrl === flow.draft.serverUrl) {
+                  setConnection(b.id, flow.info);
+                }
+              }}
+            />
+          )}
         </div>
       ) : (
         <>
@@ -464,7 +774,7 @@ export default function Backends() {
                     <Button variant="ghost" size="sm" title="Test connection" onClick={() => handleTest(b)} disabled={testing.has(b.id)}>
                       {testing.has(b.id) ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
                     </Button>
-                    <Button variant="ghost" size="sm" title="Edit" onClick={() => setEditing(b)}>
+                    <Button variant="ghost" size="sm" title="Edit" onClick={() => setFlow({ step: "edit", draft: b })}>
                       <Pencil className="size-4" />
                     </Button>
                     <Button variant="ghost" size="sm" title="Duplicate" onClick={() => duplicateBackend(b.id)}>

@@ -20,6 +20,7 @@ import {
 import { importSettingsFile, pickImportFile, pickSavePath, syncDelete } from "@/lib/api";
 import { applyImport, exportToFile } from "@/lib/exportImport";
 import {
+  applyBlob,
   dismissSyncConflict,
   getPendingConflict,
   pullNow,
@@ -31,7 +32,7 @@ import { effectiveServerUrl } from "@/lib/backends";
 import { conflicts as chordConflicts, quickAddPeer } from "@/lib/conflicts";
 import { IS_WINDOWS } from "@/lib/platform";
 import type { SyncCategory } from "@/lib/types";
-import type { ImportResult } from "@/lib/syncTypes";
+import type { ImportResult, SyncRemoteState } from "@/lib/syncTypes";
 
 const MY_BUCKET = IS_WINDOWS ? ("windows" as const) : ("linux" as const);
 const OTHER_BUCKET = IS_WINDOWS ? ("linux" as const) : ("windows" as const);
@@ -193,6 +194,138 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
           disabled={applying || dictating || !Object.values(sel).some(Boolean)}
         >
           {applying ? "Importing…" : "Import selected"}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Per-category selection + hazard preview for a server-side settings blob —
+ *  ImportPreview's sibling for the Backends connect-first add flow, where the
+ *  just-connected account turns out to have synced settings. Applies via the
+ *  same `applyBlob` path sync uses; the CALLER runs `onApplied` afterwards
+ *  (bind sync to the new backend, close the flow). */
+export function RestoreFromServer({
+  state,
+  onCancel,
+  onApplied,
+}: {
+  state: SyncRemoteState;
+  onCancel: () => void;
+  onApplied: () => void | Promise<void>;
+}) {
+  const evdevEnabled = useApp((st) => st.settings.general.evdevEnabled);
+  const dictating = useApp((st) => st.status !== "idle");
+  const blob = state.blob ?? {};
+  const present = (c: SyncCategory) => blob[c] !== undefined;
+  const [sel, setSel] = useState<Record<SyncCategory, boolean>>({
+    general: present("general"),
+    recording: present("recording"),
+    backends: present("backends"),
+    profiles: present("profiles"),
+    appRules: present("appRules"),
+  });
+  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const counts: Partial<Record<SyncCategory, string>> = {
+    backends: blob.backends ? `${blob.backends.list.length}` : undefined,
+    profiles: blob.profiles ? `${blob.profiles.list.length}` : undefined,
+    appRules: blob.appRules
+      ? `${(blob.appRules[MY_BUCKET] ?? []).length} this OS · ${(blob.appRules[OTHER_BUCKET] ?? []).length} other OS`
+      : undefined,
+  };
+
+  // Same would-be-state hazard previews as ImportPreview: predicted hotkey
+  // collisions, and (new here) whether a selected category overwrites data the
+  // device already has — on an empty app the restore is warning-free.
+  const st = useApp.getState();
+  const wouldProfiles = sel.profiles && blob.profiles ? blob.profiles.list : st.profiles;
+  const wouldQa =
+    sel.general && blob.general ? blob.general.quickAddHotkey : st.settings.general.quickAddHotkey;
+  const peers = wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles;
+  const predictedConflicts = chordConflicts(peers, !IS_WINDOWS && !evdevEnabled).length > 0;
+  const replaces =
+    (sel.backends && blob.backends && st.backends.length > 0) ||
+    (sel.profiles && blob.profiles && st.profiles.length > 0) ||
+    (sel.appRules && blob.appRules && st.appRules.length > 0);
+
+  const apply = async () => {
+    // Re-check right before applying: applyBlob silently DEFERS while dictating
+    // (fine for background sync, wrong here — onApplied would bind sync against
+    // the pre-restore state). The disabled button covers the steady state; this
+    // covers a session starting between render and click.
+    if (useApp.getState().status !== "idle") {
+      setError("Stop dictation before restoring.");
+      return;
+    }
+    setApplying(true);
+    setError(null);
+    try {
+      await applyBlob(blob, sel);
+      await onApplied();
+    } catch (e) {
+      setError(String(e));
+      setApplying(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onCancel}>
+      <div className="text-[15px] font-semibold text-text">Restore from server</div>
+      <div className="mt-1 text-[12.5px] text-dim">
+        Last synced{state.device ? ` from ${state.device}` : ""}
+        {state.updated_at ? ` · ${relTime(state.updated_at * 1000)}` : ""}
+      </div>
+
+      <div className="mt-4">
+        {CATEGORY_META.map(({ key, title, desc }, i) => (
+          <SettingRow
+            key={key}
+            title={title}
+            desc={present(key) ? (counts[key] ? `${desc} (${counts[key]})` : desc) : "Nothing synced."}
+            disabled={!present(key)}
+            last={i === CATEGORY_META.length - 1}
+          >
+            <Toggle
+              checked={sel[key]}
+              disabled={!present(key)}
+              onChange={(v) => setSel((s) => ({ ...s, [key]: v }))}
+              ariaLabel={`Restore ${title}`}
+            />
+          </SettingRow>
+        ))}
+      </div>
+
+      <div className="mt-3 flex flex-col gap-2">
+        {replaces && (
+          <Notice tone="warn">
+            Selected categories replace what&apos;s on this device — your current backends and
+            profiles are overwritten.
+          </Notice>
+        )}
+        <Notice tone="ok">
+          After restoring, settings sync turns on for this device against this server.
+        </Notice>
+        {predictedConflicts && (
+          <Notice tone="warn">
+            Some restored shortcuts collide — saving stays paused after restoring until you resolve
+            them in Profiles.
+          </Notice>
+        )}
+        {dictating && <Notice tone="warn">Stop dictation before restoring.</Notice>}
+        {error && <Notice tone="warn">{error}</Notice>}
+      </div>
+
+      <div className="mt-5 flex justify-end gap-2">
+        <Button variant="ghost" onClick={onCancel} disabled={applying}>
+          Cancel
+        </Button>
+        <Button
+          onClick={() => void apply()}
+          disabled={applying || dictating || !Object.values(sel).some(Boolean)}
+        >
+          {applying ? "Restoring…" : "Restore selected"}
         </Button>
       </div>
     </Modal>
