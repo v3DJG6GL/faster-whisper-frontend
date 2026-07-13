@@ -48,6 +48,21 @@ const KEY_MODIFIER_SIDES: Record<string, [string, string]> = {
   Shift: ["ShiftLeft", "ShiftRight"],
   Alt: ["AltLeft", "AltRight"],
   Meta: ["MetaLeft", "MetaRight"],
+  // WebKitGTK reports the Super/Windows key's `key` as "Super" (X11 Hyper as
+  // "Hyper"; pre-2017 engines said "OS") — all are the Meta pair in code space.
+  Super: ["MetaLeft", "MetaRight"],
+  Hyper: ["MetaLeft", "MetaRight"],
+  OS: ["MetaLeft", "MetaRight"],
+};
+
+// WebKitGTK never adopted the 2016 UI-Events rename of the Windows/Super key
+// CODES — its GTK port still emits the old draft names OSLeft/OSRight (see
+// WebKit Source/WebKit/Shared/gtk/WebKeyboardEventGtk.cpp), so without this
+// normalization the Linux webview's Super key is rejected as unmappable during
+// capture. WebView2 (Windows) emits MetaLeft/MetaRight already.
+const LEGACY_CODES: Record<string, string> = {
+  OSLeft: "MetaLeft",
+  OSRight: "MetaRight",
 };
 
 // Numpad-located (`e.location === 3`) keys whose `e.key` is a character/name, not a
@@ -59,7 +74,8 @@ const NUMPAD_KEY_CODES: Record<string, string> = {
 };
 
 /**
- * The event's `code`, deriving one from `key` + `location` when `code` is unusable.
+ * The event's `code` — normalized from legacy names (WebKitGTK's OSLeft/OSRight
+ * for the Super key), and derived from `key` + `location` when `code` is unusable.
  * Software-injected shortcuts (dictation hardware companion apps like Philips
  * SpeechControl, AutoHotkey remaps — anything sending VK-only `SendInput` with no
  * scancode) reach the webview with `code` ""/"Unidentified" but a valid `key`, so
@@ -69,7 +85,7 @@ const NUMPAD_KEY_CODES: Record<string, string> = {
  * downstream `codeToToken` then rejects it exactly as before.
  */
 export function eventToCode(e: Pick<KeyboardEvent, "code" | "key" | "location">): string {
-  if (e.code && e.code !== "Unidentified") return e.code;
+  if (e.code && e.code !== "Unidentified") return LEGACY_CODES[e.code] ?? e.code;
   const sides = KEY_MODIFIER_SIDES[e.key];
   if (sides) return e.location === 2 ? sides[1] : sides[0];
   if (/^[a-zA-Z]$/.test(e.key)) return `Key${e.key.toUpperCase()}`;
