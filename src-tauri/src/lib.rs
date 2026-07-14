@@ -76,9 +76,12 @@ pub fn run() {
                 .with_handler(triggers::handle_shortcut)
                 .build(),
         )
+        // The --autostart flag marks login launches so "start minimized to tray"
+        // applies only to them, not to manual starts (sync_autostart rewrites the
+        // OS entry on every startup, so existing installs pick the flag up).
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec!["--autostart"]),
         ))
         .manage(audio::AudioState::default())
         .manage(audio::MicTestClip::default())
@@ -141,8 +144,11 @@ pub fn run() {
             commands::spawn_suspend_watch(app.handle().clone());
             // Keep the OS autostart entry in sync with the saved preference.
             commands::sync_autostart(app.handle(), cfg.settings.general.open_at_login);
-            // Start hidden to the tray if requested (reachable via the tray menu).
-            if cfg.settings.general.start_minimized {
+            // Start hidden to the tray if requested (reachable via the tray menu) —
+            // but only on login launches (--autostart), never on a manual start.
+            if cfg.settings.general.start_minimized
+                && std::env::args().any(|a| a == "--autostart")
+            {
                 if let Some(win) = app.get_webview_window("main") {
                     let _ = win.hide();
                 }

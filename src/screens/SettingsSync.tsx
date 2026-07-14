@@ -39,7 +39,7 @@ const MY_BUCKET = IS_WINDOWS ? ("windows" as const) : ("linux" as const);
 const OTHER_BUCKET = IS_WINDOWS ? ("linux" as const) : ("windows" as const);
 
 const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
-  { key: "general", title: "General", desc: "Theme, insertion, sounds, quick-add shortcut, open at login." },
+  { key: "general", title: "General", desc: "Theme, insertion, sounds, quick-add shortcut, launch at login." },
   { key: "recording", title: "Recording & Chip", desc: "Chip styling, visibility and timing settings." },
   { key: "backends", title: "Backends", desc: "Server connections incl. API keys (stored on your own server)." },
   { key: "profiles", title: "Profiles", desc: "Dictation profiles incl. their hotkeys." },

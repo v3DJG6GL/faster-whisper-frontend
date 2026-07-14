@@ -100,6 +100,12 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
                 recognized = true;
                 i += 1;
             }
+            // A login launch reaching an already-running instance must not pop the
+            // window — it's the one launch that may explicitly want to stay hidden.
+            "--autostart" => {
+                recognized = true;
+                i += 1;
+            }
             _ => i += 1,
         }
     }

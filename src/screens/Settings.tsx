@@ -552,11 +552,18 @@ export default function Settings() {
       <div className="min-w-0 flex-1">
         {tab === "General" && (
           <Card className="px-6">
-            <SettingRow title="Open at login" desc="Launch automatically when you sign in.">
+            <SettingRow title="Launch at login" desc="Launch automatically when you sign in.">
               <Toggle checked={s.general.openAtLogin} onChange={(v) => updateGeneral({ openAtLogin: v })} />
             </SettingRow>
-            <SettingRow title="Start minimized to tray" desc="Start hidden; reach it from the system tray.">
-              <Toggle checked={s.general.startMinimized} onChange={(v) => updateGeneral({ startMinimized: v })} />
+            <SettingRow
+              title="Start minimized to tray"
+              desc="When launched at login, start hidden; reach it from the system tray. Manual starts always show the window."
+            >
+              <Toggle
+                checked={s.general.startMinimized}
+                onChange={(v) => updateGeneral({ startMinimized: v })}
+                disabled={!s.general.openAtLogin}
+              />
             </SettingRow>
             <SettingRow
               title="Auto-insert"
