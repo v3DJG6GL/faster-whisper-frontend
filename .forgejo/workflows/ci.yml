@@ -27,6 +27,15 @@ concurrency:
 
 jobs:
   check:
+    # Skip the version-bump commit ("release: vX.Y.Z") that release.yml's
+    # version job pushes to master as the repo owner (owner pushes DO trigger
+    # workflows — only actions-token pushes are swallowed). Checking it here is
+    # redundant — the release run builds that exact commit on both platforms —
+    # and its windows leg would compete with the release build for the same
+    # VM. An `if` instead of `[skip ci]` in the bump commit: Forgejo's skip
+    # strings suppress EVERY workflow for the push event, so a hand-pushed v*
+    # tag (release.yml's documented fallback path) would skip the release too.
+    if: "github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'release: v')"
     strategy:
       fail-fast: false
       matrix:
