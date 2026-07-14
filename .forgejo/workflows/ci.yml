@@ -76,9 +76,20 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # cache-all-crates: the windows leg runs host-mode with the machine-wide
+      # CARGO_HOME every job on the VM shares (capacity 5 — jobs overlap). The
+      # action's post step normally prunes registry/src + registry/cache down
+      # to THIS job's dependency set — deleting crate sources out from under
+      # whatever else is compiling at that moment. That is how every release
+      # died: this job's post step ran ~30s before release.yml's windows leg
+      # linked, deleting windows_x86_64_msvc/lib/windows.0.53.0.lib → LNK1181
+      # (runs 63/65). cache-all-crates makes the post step skip that pruning
+      # (cleanup.ts: cleanRegistry bails before the src/cache passes); the
+      # saved cache blob just gets bigger.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          cache-all-crates: true
 
       - run: pnpm install --frozen-lockfile
 
