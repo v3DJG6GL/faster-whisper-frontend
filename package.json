@@ -21,7 +21,7 @@
     "@fontsource-variable/hubot-sans": "^5.2.8",
     "@fontsource-variable/mona-sans": "^5.2.8",
     "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
     "clsx": "^2.1.1",
     "lucide-react": "^1.25.0",
     "motion": "^12.42.2",
