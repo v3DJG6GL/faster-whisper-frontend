@@ -9,8 +9,17 @@
 //! cb:map `map` / `pattern` / `wordlist`), so they pass through as opaque JSON
 //! and are typed on the TS side.
 
-use super::{base_url, client, detail_from, friendly_err, get_json, with_auth};
+use super::{base_url, client, detail_from, friendly_err, with_auth};
 use serde::{Deserialize, Serialize};
+
+/// First `n` chars of `s` for a log line. Error bodies can be huge, and a 422's body embeds
+/// the submitted rule contents — logs get the status + a short detail, never the payload.
+fn trunc(s: &str, n: usize) -> &str {
+    match s.char_indices().nth(n) {
+        Some((i, _)) => &s[..i],
+        None => s,
+    }
+}
 
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
 /// caller may view + edit, their role, and the per-type editable-field allow-list.
@@ -85,29 +94,37 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                         state: Some(state),
                         error: None,
                     },
-                    Err(e) => PipelineFetch {
-                        ok: false,
-                        status: code,
-                        state: None,
-                        error: Some(format!("Unexpected response: {e}")),
-                    },
+                    Err(e) => {
+                        tracing::warn!("[pipeline] rules GET: HTTP {code} but unparsable body: {e}");
+                        PipelineFetch {
+                            ok: false,
+                            status: code,
+                            state: None,
+                            error: Some(format!("Unexpected response: {e}")),
+                        }
+                    }
                 }
             } else {
                 let body = resp.text().await.unwrap_or_default();
+                let detail = detail_from(&body);
+                tracing::warn!("[pipeline] rules GET failed: HTTP {code} {}", trunc(&detail, 200));
                 PipelineFetch {
                     ok: false,
                     status: code,
                     state: None,
-                    error: Some(detail_from(&body)),
+                    error: Some(detail),
                 }
             }
         }
-        Err(e) => PipelineFetch {
-            ok: false,
-            status: 0,
-            state: None,
-            error: Some(friendly_err(&e)),
-        },
+        Err(e) => {
+            tracing::warn!("[pipeline] rules GET failed: {}", friendly_err(&e));
+            PipelineFetch {
+                ok: false,
+                status: 0,
+                state: None,
+                error: Some(friendly_err(&e)),
+            }
+        }
     }
 }
 
@@ -138,13 +155,16 @@ pub async fn save_pipeline_rules(
                         errors: None,
                         detail: None,
                     },
-                    Err(e) => PipelineSave {
-                        ok: false,
-                        status: code,
-                        conflicts: serde_json::json!([]),
-                        detail: Some(format!("Unexpected response: {e}")),
-                        ..Default::default()
-                    },
+                    Err(e) => {
+                        tracing::warn!("[pipeline] rules PATCH: HTTP {code} but unparsable body: {e}");
+                        PipelineSave {
+                            ok: false,
+                            status: code,
+                            conflicts: serde_json::json!([]),
+                            detail: Some(format!("Unexpected response: {e}")),
+                            ..Default::default()
+                        }
+                    }
                 }
             } else {
                 let body = resp.text().await.unwrap_or_default();
@@ -154,6 +174,9 @@ pub async fn save_pipeline_rules(
                     .as_ref()
                     .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
                     .unwrap_or_else(|| if errors.is_some() { String::new() } else { body });
+                // Status + short detail only — never the `errors` value: a 422's validation
+                // list embeds the submitted rule keys/values (user content).
+                tracing::warn!("[pipeline] rules PATCH failed: HTTP {code} {}", trunc(&detail, 200));
                 PipelineSave {
                     ok: false,
                     status: code,
@@ -164,13 +187,16 @@ pub async fn save_pipeline_rules(
                 }
             }
         }
-        Err(e) => PipelineSave {
-            ok: false,
-            status: 0,
-            conflicts: serde_json::json!([]),
-            detail: Some(friendly_err(&e)),
-            ..Default::default()
-        },
+        Err(e) => {
+            tracing::warn!("[pipeline] rules PATCH failed: {}", friendly_err(&e));
+            PipelineSave {
+                ok: false,
+                status: 0,
+                conflicts: serde_json::json!([]),
+                detail: Some(friendly_err(&e)),
+                ..Default::default()
+            }
+        }
     }
 }
 
@@ -192,6 +218,25 @@ pub struct RecentWords {
 pub async fn get_recent_words(server_url: &str, api_key: Option<&str>) -> RecentWords {
     let base = base_url(server_url);
     let url = format!("{base}/v1/recent-words");
-    // get_json already collapses transport-fail / non-2xx / parse-fail to None — best-effort.
-    get_json::<RecentWords>(url, api_key).await.unwrap_or_default()
+    // Hand-rolled instead of get_json so the failure kind is at least VISIBLE: an empty
+    // quick-add dropdown is otherwise indistinguishable from "no recent words yet".
+    // `debug` (not warn) is deliberate — a standard/old server 404s this endpoint on every
+    // summon, and that expected miss must not spam the default-on info/warn log.
+    match with_auth(client().get(url), api_key).send().await {
+        Ok(resp) if resp.status().is_success() => match resp.json::<RecentWords>().await {
+            Ok(rw) => rw,
+            Err(e) => {
+                tracing::debug!("[pipeline] recent-words: unparsable body: {e}");
+                RecentWords::default()
+            }
+        },
+        Ok(resp) => {
+            tracing::debug!("[pipeline] recent-words: HTTP {}", resp.status().as_u16());
+            RecentWords::default()
+        }
+        Err(e) => {
+            tracing::debug!("[pipeline] recent-words: {}", friendly_err(&e));
+            RecentWords::default()
+        }
+    }
 }

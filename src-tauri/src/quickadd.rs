@@ -67,8 +67,10 @@ pub fn show(app: &AppHandle) {
             std::thread::spawn(move || {
                 let _ = tx.send(win_seed::grab(&grabber));
             });
-            // Generous vs grab's internal bounds (~1s worst case); on timeout the
-            // grabber thread is abandoned and the window opens seedless.
+            // Generous vs grab's internal bounds (~1.35s worst case: ≤500ms modifier
+            // gate — which SKIPS the copy when it trips, so it never stacks fully —
+            // + the 800ms copy deadline); on timeout the grabber thread is abandoned
+            // and the window opens seedless.
             let seed = rx
                 .recv_timeout(std::time::Duration::from_millis(1500))
                 .ok()
@@ -140,16 +142,31 @@ pub fn hide_quick_add(app: AppHandle) {
 /// before `show_now` for the summon seed, or after the window hid for the
 /// correct-on-close re-read (`commands::get_focused_selection`).
 ///
-/// Uses only cross-platform APIs (enigo / arboard / HeldKeys), so it compiles on
-/// every platform and the Linux dev loop type-checks it — only the call sites
-/// are `#[cfg(windows)]`.
+/// Uses cross-platform APIs (enigo / arboard / HeldKeys) plus one cfg-gated Win32
+/// call (`GetClipboardSequenceNumber`), so it still compiles on every platform and
+/// the Linux dev loop type-checks it — only the call sites are `#[cfg(windows)]`.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) mod win_seed {
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
     use std::time::{Duration, Instant};
     use tauri::{AppHandle, Manager};
 
-    /// Best-effort: any failure or an unchanged clipboard (= nothing selected; apps
+    /// How long the source app gets for its copy to land. Word delay-renders its
+    /// clipboard text and can't even take clipboard OWNERSHIP until its UI thread
+    /// drains (add-ins, AutoSave, big documents — hundreds of ms is routine), which
+    /// is why the old 400 ms deadline read real selections as "nothing selected".
+    /// The cost of the headroom: a no-selection summon waits the full deadline
+    /// before the window opens seedless.
+    const COPY_DEADLINE_MS: u64 = 800;
+
+    /// The Win32 clipboard sequence number: a cheap user32 counter bumped on every
+    /// clipboard write, readable WITHOUT opening the clipboard.
+    #[cfg(windows)]
+    fn clipboard_seq() -> u32 {
+        unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() }
+    }
+
+    /// Best-effort: any failure or no copy landing (= nothing selected; apps
     /// no-op the copy) → None. The user's clipboard TEXT is restored afterwards;
     /// non-text content (an image) can't be snapshotted via arboard's text API and
     /// is lost only when the copy actually replaced it (logged).
@@ -170,6 +187,8 @@ pub(crate) mod win_seed {
         }
         let mut cb = arboard::Clipboard::new().ok()?;
         let prev = cb.get_text().ok(); // None = empty or non-text (image/files)
+        #[cfg(windows)]
+        let seq0 = clipboard_seq();
         // Ctrl+Insert, the CUA copy chord — Win32 edit controls, browsers, Office, Qt,
         // and terminals all honor it, and unlike Ctrl+C it is never a terminal
         // interrupt. Injected events are skipped by our own keyboard hook
@@ -179,11 +198,60 @@ pub(crate) mod win_seed {
         let copied = enigo.key(Key::Insert, Direction::Click);
         let _ = enigo.key(Key::Control, Direction::Release); // release even if the click failed
         copied.ok()?;
-        // The copy lands asynchronously in the source app — poll briefly for the
-        // clipboard to change. Still unchanged at the deadline ⇒ no selection. (A
-        // selection that exactly equals the prior clipboard text also reads as
-        // "unchanged" and seeds nothing — accepted corner.)
-        let deadline = Instant::now() + Duration::from_millis(400);
+        // The copy lands asynchronously in the source app.
+        let deadline = Instant::now() + Duration::from_millis(COPY_DEADLINE_MS);
+        #[cfg(windows)]
+        {
+            // Phase 1: wait for the copy to LAND by watching the sequence number — NOT by
+            // re-reading the text. Every arboard read OPENS the clipboard, and a poll that
+            // holds it open at the moment the source app writes makes the COPY ITSELF fail
+            // (Office's classic "cannot empty the clipboard"), which this grab then
+            // misreported as "nothing selected". No bump by the deadline ⇒ no selection.
+            loop {
+                std::thread::sleep(Duration::from_millis(15));
+                if clipboard_seq() != seq0 {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    return None; // clipboard untouched — nothing to restore
+                }
+            }
+            // Phase 2: the copy landed — read the text exactly once (this pull is what
+            // triggers Office's delayed rendering). Retry a transient read failure within
+            // the same deadline; a persistent one means non-text content (an image copy) —
+            // put the user's text back and give up.
+            loop {
+                match cb.get_text() {
+                    Ok(text) => {
+                        match &prev {
+                            // A sequence bump proves a copy HAPPENED, so text equal to the
+                            // prior clipboard is a real selection too (the old text-diff
+                            // detector had to read that as "no selection") — and the
+                            // clipboard already holds it, so there's nothing to restore.
+                            Some(p) if *p == text => {}
+                            Some(p) => {
+                                let _ = cb.set_text(p.clone()); // put the user's clipboard back
+                            }
+                            None => tracing::info!("[quickadd-seed] non-text clipboard was replaced by the copy grab"),
+                        }
+                        return Some(text);
+                    }
+                    Err(_) => {
+                        if Instant::now() >= deadline {
+                            if let Some(p) = prev {
+                                let _ = cb.set_text(p); // copied content is non-text — restore
+                            }
+                            return None;
+                        }
+                        std::thread::sleep(Duration::from_millis(25));
+                    }
+                }
+            }
+        }
+        // Non-Windows twin (never called — the call sites are #[cfg(windows)] — but kept
+        // compiling so the Linux dev loop type-checks the module): the old text-diff poll,
+        // which cannot distinguish "same text re-copied" from "no copy".
+        #[cfg(not(windows))]
         loop {
             std::thread::sleep(Duration::from_millis(25));
             let now = cb.get_text().ok();

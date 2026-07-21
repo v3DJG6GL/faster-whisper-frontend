@@ -114,6 +114,29 @@ export default function QuickAdd() {
   // (a re-pin between rapid summons); `summonGen` covers the per-summon selection seed.
   const loadGen = useRef(0);
   const summonGen = useRef(0);
+  // `recentGen` covers the recent-words pool, which refreshes on EVERY summon — including the
+  // ones that skip refresh() to protect an unsaved edit. Its own counter (latest-wins), NOT
+  // loadGen: bumping loadGen here would abort an in-flight refresh()'s rows application, and
+  // merely capturing it wouldn't order two standalone fetches between refreshes.
+  const recentGen = useRef(0);
+
+  // Recent-words fetch, shared by refresh() and the summon path. Read-only (can never clobber
+  // an edit), so unlike the rows re-sync it is safe to run unconditionally. Best-effort: a
+  // failure keeps the previous pool. Null target = no successful config load yet (a summon
+  // racing the initial load) or no pinned list — nothing to fetch from.
+  const fetchRecent = useCallback(async () => {
+    const t = target.current;
+    if (!t) return;
+    const rg = ++recentGen.current;
+    try {
+      const rw = await getRecentWords({ serverUrl: t.serverUrl, backendId: t.backendId });
+      if (rg !== recentGen.current) return; // a newer fetch won
+      setRecent(rw.words ?? []);
+      setRecentMax(rw.max ?? undefined);
+    } catch {
+      /* best-effort pool — a fetch failure must not surface as an unhandled rejection */
+    }
+  }, []);
 
   // Memoized so editing the insert field or a list row doesn't rebuild the Set + filtered pool
   // (and hand a fresh array into Combobox, re-running its rank) on every keystroke. Mirrors the
@@ -163,13 +186,7 @@ export default function QuickAdd() {
       setRows(mapRowsFromRule(rule));
       setSaveState("idle");
       setPhase("ok");
-      getRecentWords({ serverUrl: url, backendId: backend.id })
-        .then((rw) => {
-          if (gen !== loadGen.current) return;
-          setRecent(rw.words ?? []);
-          setRecentMax(rw.max ?? undefined);
-        })
-        .catch(() => {}); // best-effort pool — a fetch failure must not surface as an unhandled rejection
+      void fetchRecent();
     } catch (e) {
       // loadConfig() is a bare IPC invoke that rejects on a plumbing failure; without this the
       // standalone window would hang on "Loading…" forever (phase never advances) and Retry would
@@ -179,12 +196,46 @@ export default function QuickAdd() {
       setFetchErr({ ok: false, status: 0, error: "Couldn’t load the quick-add configuration — try again." });
       setPhase("error");
     }
-  }, []);
+  }, [fetchRecent]);
 
   // Initial load (the static window mounts hidden at startup).
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // ── autosave: whole-map PATCH, no fingerprint (backend = last-writer-wins) ──
+  // Returns whether the PATCH landed, so the summon auto-retry can chain a re-sync on success.
+  const flushSave = useCallback(async (): Promise<boolean> => {
+    const t = target.current;
+    if (!t) return false;
+    // A retry (badge click / summon auto-retry) can run while the 600ms debounce is still
+    // armed — CANCEL it, don't just null the handle: an orphaned timeout would fire a second,
+    // concurrent PATCH of the same rows (and closeNow's `pending` bookkeeping would miss it).
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    // Mark in flight: the badge shows progress, and the summon auto-retry / a badge
+    // double-click are suppressed by the "saving" guards instead of double-PATCHing.
+    setSaveState("saving");
+    try {
+      const res = await savePipelineRules({
+        serverUrl: t.serverUrl,
+        backendId: t.backendId,
+        patch: { rules_patch: { [t.slug]: mapBodyFromRows(rowsRef.current) } },
+      });
+      // An edit landed DURING the PATCH (scheduleSave re-armed the timer): this flight's rows
+      // are stale — its own flush will report the newer outcome, so don't repaint the badge
+      // (a stale "saved" over a pending edit is how "error"+armed-timer states arise).
+      if (saveTimer.current === null) setSaveState(res.ok ? "saved" : "error");
+      return res.ok;
+    } catch (e) {
+      // savePipelineRules is a bare invoke that can reject on an IPC failure — without this saveState
+      // stays stuck at "saving" (no retry button + unhandled rejection), AND the re-summon guard reads
+      // it as not-"error" and lets refresh() clobber the unsaved edit. Treat a reject as a save error.
+      console.error("quick-add save failed:", e);
+      if (saveTimer.current === null) setSaveState("error");
+      return false;
+    }
+  }, []);
 
   // Each summon: re-sync + reset the add row instantly, then seed "When you say" from the
   // source app's current selection. The reset doesn't wait on the (off-thread, time-bounded)
@@ -209,8 +260,24 @@ export default function QuickAdd() {
           // "saving" while the PATCH awaits), OR a FAILED one (saveState "error") all mean the local
           // rows are newer-than-server, so skip the re-sync (refresh also resets saveState to "idle",
           // which would drop the only retry signal). Let the save flush / retry.
-          if (saveTimer.current === null && saveStateRef.current !== "error" && saveStateRef.current !== "saving")
+          if (saveTimer.current === null && saveStateRef.current !== "error" && saveStateRef.current !== "saving") {
             void refresh();
+          } else {
+            // The rows re-sync is skipped to protect the unsaved edit — but the recent-words pool
+            // is read-only, so keep it fresh regardless: one failed save used to freeze the
+            // dropdown (and the retry badge) on every later summon until a manual retry succeeded.
+            void fetchRecent();
+            // Failed save: retry it now instead of waiting for a click on the tiny badge (the
+            // whole stuck state was invisible enough to ship). Only when no timer is armed — an
+            // armed timer flushes the newest rows itself, and a parallel retry would double-PATCH.
+            // On success, re-sync fully — unless an edit arrived during the retry (timer re-armed),
+            // whose own flush now owns the state.
+            if (saveStateRef.current === "error") {
+              void flushSave().then((ok) => {
+                if (ok && saveTimer.current === null && sgen === summonGen.current) void refresh();
+              });
+            }
+          }
           // Seed from whatever the user highlighted in the source app. Got a word → fill it and
           // drop the cursor straight in "Insert" (it's captured). Nothing usable → fall back to
           // the old behaviour: open the recent-words dropdown on the (already-focused) find field.
@@ -242,7 +309,7 @@ export default function QuickAdd() {
       cancelled = true;
       un?.();
     };
-  }, [refresh]);
+  }, [refresh, fetchRecent, flushSave]);
 
   // After a summon, land the cursor in "Insert" when we seeded a selection (the word's already
   // captured). This overrides the Combobox's autoFocus, running AFTER it in the same commit
@@ -253,27 +320,8 @@ export default function QuickAdd() {
     if (phase === "ok" && focusInsert) insertRef.current?.focus();
   }, [showSeq, focusInsert, phase]);
 
-  // ── autosave: whole-map PATCH, no fingerprint (backend = last-writer-wins) ──
-  const flushSave = useCallback(async () => {
-    const t = target.current;
-    if (!t) return;
-    saveTimer.current = null;
-    try {
-      const res = await savePipelineRules({
-        serverUrl: t.serverUrl,
-        backendId: t.backendId,
-        patch: { rules_patch: { [t.slug]: mapBodyFromRows(rowsRef.current) } },
-      });
-      setSaveState(res.ok ? "saved" : "error");
-    } catch (e) {
-      // savePipelineRules is a bare invoke that can reject on an IPC failure — without this saveState
-      // stays stuck at "saving" (no retry button + unhandled rejection), AND the re-summon guard reads
-      // it as not-"error" and lets refresh() clobber the unsaved edit. Treat a reject as a save error.
-      console.error("quick-add save failed:", e);
-      setSaveState("error");
-    }
-  }, []);
-
+  // (flushSave is defined ABOVE the summon listener — the listener's dep array reads it at
+  // render time, and a later declaration would be a temporal-dead-zone error.)
   const scheduleSave = useCallback(() => {
     if (!target.current) return;
     setSaveState("saving");
