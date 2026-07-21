@@ -6,6 +6,7 @@ mod config;
 mod evdev_hotkeys;
 mod held_keys;
 mod inject;
+mod key_debounce;
 #[cfg(target_os = "linux")]
 mod kwin;
 mod overlay;

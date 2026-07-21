@@ -197,6 +197,9 @@ mod imp {
     }
 
     fn emit(app: &AppHandle, profile_id: &str, action: &str) {
+        // Log every fired trigger (same shape as the CLI path's emit_trigger): the chord →
+        // session causality is otherwise invisible in the log — see win_hotkeys::emit.
+        tracing::info!("[trigger] {profile_id}/{action} (evdev)");
         let _ = app.emit(
             "trigger",
             TriggerPayload {
@@ -237,54 +240,90 @@ mod imp {
         }
     }
 
+    /// Commit one debounced key transition: update the held-set + the HeldKeys
+    /// mirror, step the engine, dispatch its fires. (The pre-debounce body of the
+    /// run_device loop, factored out so deferred releases commit through the same
+    /// path — the shared engine owns all chord semantics; this just tracks keys.)
+    fn commit(
+        app: &AppHandle,
+        held_keys: &crate::held_keys::HeldKeys,
+        held: &mut HashSet<u16>,
+        engine: &mut Engine,
+        code: u16,
+        down: bool,
+    ) {
+        let changed = if down { held.insert(code) } else { held.remove(&code) };
+        if !changed {
+            return;
+        }
+        held_keys.set(code, down);
+        for fire in engine.step(held, std::time::Instant::now()) {
+            match fire {
+                Fire::Start(pid) => {
+                    emit(app, &pid, "start");
+                    note_hold(&pid, true);
+                }
+                Fire::Stop(pid) => {
+                    emit(app, &pid, "stop");
+                    note_hold(&pid, false);
+                }
+                // Handoff: the hold's session lives on under the superset —
+                // release the teardown bookkeeping, emit no "stop".
+                Fire::ReleaseHold(pid) => note_hold(&pid, false),
+                Fire::Toggle(pid) => emit(app, &pid, "toggle"),
+                Fire::Reclassify(pid) => emit(app, &pid, "reclassify"),
+                Fire::Cancel(pid) => emit(app, &pid, "cancel"),
+                Fire::OpenQuickAdd => crate::quickadd::show(app),
+            }
+        }
+    }
+
     async fn run_device(app: AppHandle, mut stream: evdev::EventStream, mut engine: Engine) {
         // Mirror physical key state into the shared signal `inject_text` reads, so we
         // never type into a still-held trigger modifier (see crate::held_keys).
         let held_keys = app.state::<crate::held_keys::HeldKeys>().inner().clone();
         let mut held: HashSet<u16> = HashSet::new();
+        // Chatter filter (per device — bounce is per physical switch): key-ups for
+        // held keys are deferred RELEASE_DEBOUNCE and erased if the key comes back
+        // down in the window; see key_debounce and the win_hotkeys twin.
+        let mut deb = crate::key_debounce::Debouncer::new(crate::key_debounce::RELEASE_DEBOUNCE);
 
         loop {
-            let ev = match stream.next_event().await {
-                Ok(e) => e,
-                Err(_) => break, // device went away
+            let ev = match deb.next_deadline() {
+                None => match stream.next_event().await {
+                    Ok(e) => Some(e),
+                    Err(_) => break, // device went away
+                },
+                Some(dl) => {
+                    match tokio::time::timeout_at(tokio::time::Instant::from_std(dl), stream.next_event()).await {
+                        Ok(Ok(e)) => Some(e),
+                        Ok(Err(_)) => break, // device went away
+                        Err(_) => None,      // deadline reached — commit deferred releases below
+                    }
+                }
             };
+            let now = std::time::Instant::now();
+            // Due deferred releases first, so a real release always commits before
+            // whatever event (if any) woke us.
+            for key in deb.expire(now) {
+                commit(&app, &held_keys, &mut held, &mut engine, key, false);
+            }
+            let Some(ev) = ev else { continue };
             if ev.event_type() != EventType::KEY {
                 continue;
             }
-            match ev.value() {
-                1 => {
-                    held.insert(ev.code());
-                    held_keys.set(ev.code(), true);
-                }
-                0 => {
-                    held.remove(&ev.code());
-                    held_keys.set(ev.code(), false);
-                }
+            let down = match ev.value() {
+                1 => true,
+                0 => false,
                 _ => continue, // 2 = autorepeat
-            }
-
-            // The shared engine owns all chord semantics (hold edges, latch re-arm,
-            // family handoff/grace) — this loop just tracks keys and dispatches.
-            for fire in engine.step(&held, std::time::Instant::now()) {
-                match fire {
-                    Fire::Start(pid) => {
-                        emit(&app, &pid, "start");
-                        note_hold(&pid, true);
-                    }
-                    Fire::Stop(pid) => {
-                        emit(&app, &pid, "stop");
-                        note_hold(&pid, false);
-                    }
-                    // Handoff: the hold's session lives on under the superset —
-                    // release the teardown bookkeeping, emit no "stop".
-                    Fire::ReleaseHold(pid) => note_hold(&pid, false),
-                    Fire::Toggle(pid) => emit(&app, &pid, "toggle"),
-                    Fire::Reclassify(pid) => emit(&app, &pid, "reclassify"),
-                    Fire::Cancel(pid) => emit(&app, &pid, "cancel"),
-                    Fire::OpenQuickAdd => crate::quickadd::show(&app),
-                }
+            };
+            if let Some((k, d)) = deb.on_event(ev.code(), down, held.contains(&ev.code()), now) {
+                commit(&app, &held_keys, &mut held, &mut engine, k, d);
             }
         }
+        // NOTE: pending deferred releases are deliberately NOT flushed here — they are
+        // by construction keys still in `held`, and the cleanup below already releases
+        // every held key's HeldKeys contribution and emits the owed stops.
         // The device stream ended (unplugged / read error) while keys were still
         // held — drop our contribution so a stale modifier can't wedge the gate.
         for &code in &held {

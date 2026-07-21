@@ -1260,6 +1260,21 @@ export function requestStopIfStarting(): boolean {
   return true;
 }
 
+/** The inverse, for key chatter: a worn switch can bounce a held chord (phantom release +
+ *  re-press, ms apart), which lands here as "stop" then "start" during the start prologue.
+ *  The stop sets stopRequestedDuringStart and the re-press start is swallowed by the busy
+ *  gate — so the bounce always killed the session with 0 audio while the chord was still
+ *  physically held. dictate()'s start path calls this when a start for the ALREADY-STARTING
+ *  profile arrives mid-prologue: the re-press proves the chord is still down, so the newest
+ *  press wins and the owed stop is dropped. The startingSession check also keeps it a no-op
+ *  against the stale-flag window after a rejected prologue (flag survives, startingSession
+ *  false). Returns whether a pending stop was cleared. */
+export function cancelStopIfStarting(): boolean {
+  if (!startingSession || !stopRequestedDuringStart) return false;
+  stopRequestedDuringStart = false;
+  return true;
+}
+
 /** Read-only: is a session currently mid-start (the prologue is running but status hasn't flipped to
  *  "listening" yet)? dictate()'s START path uses this to no-op a concurrent cross-profile start —
  *  isBusy() only reads `status`, which is still "idle" through the prologue, so without this a second

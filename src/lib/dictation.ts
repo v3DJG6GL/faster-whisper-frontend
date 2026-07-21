@@ -5,7 +5,7 @@
 
 import { useApp } from "./store";
 import {
-  startLive, stopLive, cancelLive, requestStopIfStarting, isStarting,
+  startLive, stopLive, cancelLive, requestStopIfStarting, cancelStopIfStarting, isStarting,
   queuePendingHoldStart, registerPendingStartRunner, reclassifyLive,
 } from "./streaming";
 import { showQuickAdd } from "./api";
@@ -99,6 +99,16 @@ export function dictate(profileId: string, action: TriggerAction): void {
   // then silently no-op on startLive's startingSession guard. The toggle entry-points already guard
   // the prologue via requestStopIfStarting; this is the START path's equivalent.
   if (isBusy() || isStarting()) {
+    // Key chatter: a re-press of the SAME chord during its own start prologue supersedes the
+    // phantom release recorded milliseconds earlier — the chord is still physically held, so
+    // honoring the stale stop would kill the just-started session with 0 audio (the sub-30ms
+    // instant-stop bug). Same-profile only: another profile's press must never erase a real
+    // pending stop (activeProfile is stamped synchronously below before startLive, so during
+    // a prologue it identifies the starting profile).
+    if (action === "start" && isStarting() && s.activeProfile === profileId) {
+      cancelStopIfStarting();
+      return;
+    }
     // …except a hold PRESS during "finalizing…"/"inserting…" — the fast re-press. Don't
     // drop it: queue it, and streaming fires it on settle IF the chord is still held
     // (checked against Rust's HeldKeys), so the next sentence starts the moment the
