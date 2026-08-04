@@ -47,6 +47,7 @@ import type {
   InsertTiming,
   OverlayStatsMetric,
   Profile,
+  QuickAddTarget,
   ResponseFormat,
   SyncCategory,
   ThemeName,
@@ -356,6 +357,12 @@ function sanitizeProfiles(list: unknown): Profile[] {
       // typed parse, and its Backend twin below is already clamped this way.
       enabled: p.enabled === true,
       overrideProfile: typeof p.overrideProfile === "string" ? p.overrideProfile : undefined,
+      // The last leaf still riding the `...p` spread. Rust's `backend_id` is `Option<String>`,
+      // and the dangling-reference scrub in `applyBlob` is NOT a type check standing in for one:
+      // it is gated on `p.backendId &&`, so a FALSY non-string (`0`, `false`) skips it entirely
+      // and reaches the typed parse, which rejects the whole `Config`. `null` is the app's own
+      // "no backend chosen" value, so the scrub still runs on whatever survives here.
+      backendId: typeof p.backendId === "string" ? p.backendId : null,
     }))
     .slice(0, MAX_SYNCED_ENTRIES);
 }
@@ -368,6 +375,18 @@ function sanitizeProfiles(list: unknown): Profile[] {
  *  renders one DOM node per code, `conflictsByProfile` runs an O(k²) subset scan in a component
  *  body (not memoized), both sync preview dialogs cap the PEER count but not the chord, and the
  *  debounced save gate runs the same scan. A real binding is at most a handful of codes. */
+/** The quick-add pin as Rust requires it: both leaves present and both strings.
+ *
+ *  Rebuilding rather than returning the object as-is would drop a newer peer's extra fields, so
+ *  the original is passed through once its two required leaves check out. Anything else becomes
+ *  `null`, which is the app's own "no list pinned" state and leaves the chord inert
+ *  (`apply_bindings` gates on `quick_add_list.is_some()`). */
+function safeQuickAddTarget(v: unknown): QuickAddTarget | null {
+  if (!v || typeof v !== "object") return null;
+  const t = v as Partial<QuickAddTarget>;
+  return typeof t.backendId === "string" && typeof t.slug === "string" ? (v as QuickAddTarget) : null;
+}
+
 function isCodeList(v: unknown): v is string[] {
   return Array.isArray(v) && v.length <= MAX_CHORD_CODES && v.every((c) => typeof c === "string");
 }
@@ -745,15 +764,36 @@ export async function applyBlob(
       // whereas merging a stale `nextSettings` onto the live store would have to re-run both
       // by hand or leave dangling ids behind. Bounded, and on exhaustion the apply is dropped
       // rather than applied stale — the next pull brings the blob back.
-      if (useApp.getState().settings !== settings) {
+      // Check every slice `hydrate` overwrites, not just `settings`. `nextProfiles` and
+      // `nextAppRules` are still the PRE-wait snapshot whenever their category is toggled off,
+      // and `upsertProfile`/`patchProfile`/`upsertAppRule`/`removeAppRule` all return only
+      // `{profiles}` / `{appRules}` — `settings` stays byte-identical, so a user deleting the
+      // app rule this very blob installed slipped the check and had their deletion hydrated
+      // away and written to disk. `nextBackends` needs no check: this wait only exists inside
+      // the `cats.backends` branch, and there `nextBackends` is derived from the wait's own
+      // result rather than the snapshot.
+      const live = useApp.getState();
+      if (live.settings !== settings || live.profiles !== st.profiles || live.appRules !== st.appRules) {
         staleRestart = retries > 0;
         return;
       }
-      nextSettings = { ...nextSettings, quickAddList: blob.backends.quickAddList ?? null };
+      // `quickAddList` was the one leaf written into `settings` with NO type check anywhere —
+      // not here, not in `import_settings_file`, and not by the scrub below, which only asks
+      // whether `.backendId` names a backend in the blob (an attacker just names one it also
+      // sent). Rust's `QuickAddTarget` requires `backend_id` AND `slug` as bare `String`s with
+      // no serde default, so `{"backendId":"<known>","slug":7}` rejected the whole `Config` and
+      // froze every later save for the session.
+      nextSettings = { ...nextSettings, quickAddList: safeQuickAddTarget(blob.backends.quickAddList) };
     }
     if (cats.profiles && blob.profiles) {
       nextProfiles = sanitizeProfiles(blob.profiles.list);
-      nextSettings = { ...nextSettings, homeProfileId: blob.profiles.homeProfileId ?? null };
+      // `??` only replaces null/undefined, so a JSON `0` or `false` survived it — and the scrub
+      // below is gated on truthiness, so a falsy non-string skipped that too and reached Rust's
+      // `Option<String>`. Same wedge as `quickAddList`.
+      nextSettings = {
+        ...nextSettings,
+        homeProfileId: typeof blob.profiles.homeProfileId === "string" ? blob.profiles.homeProfileId : null,
+      };
     }
     if (cats.appRules && blob.appRules) {
       nextAppRules = sanitizeAppRules(blob.appRules[MY_BUCKET]);
