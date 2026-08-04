@@ -244,6 +244,10 @@ jobs:
           git remote add origin https://${{ secrets.CI_TOKEN }}@forgejo.informethic.ch/${{ github.repository }}.git
           git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin ${{ needs.version.outputs.tag || github.ref }}
           git checkout -q --force FETCH_HEAD
+          # Drop the token from .git/config: nothing below fetches or pushes, but every later
+          # step — third-party actions on mutable tags, and the build.rs / proc-macros / vite
+          # plugins of every dependency — runs in this workspace and could read it.
+          git remote set-url origin https://forgejo.informethic.ch/${{ github.repository }}.git
 
       - name: Resolve release tag
         id: rel
