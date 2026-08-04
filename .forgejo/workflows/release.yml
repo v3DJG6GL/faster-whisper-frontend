@@ -60,7 +60,15 @@ jobs:
     outputs:
       tag: ${{ steps.bump.outputs.tag }}
     steps:
+      # persist-credentials: false — the fourth and last checkout to get it (the
+      # build job got it earlier; the two manual clones strip the token by hand).
+      # Otherwise the run token sits in .git/config for the whole job while the
+      # two mutable-tag actions below run in this workspace, and in THIS workflow
+      # that token is what creates releases and uploads installers. Both pushes
+      # now carry their credential explicitly instead (see the step below).
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # Unlike GitHub-hosted runners, the job image has no preinstalled rust —
       # and `cargo update --workspace` below needs one.
@@ -77,6 +85,10 @@ jobs:
           # read-only — its push 403s). Prefer a dedicated RELEASE_TOKEN so the
           # Windows VM runner's checkout token can stay least-privilege.
           PUSH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.CI_TOKEN }}
+          # The run-scoped actions token, previously supplied implicitly by
+          # checkout's persisted header. The tag push still needs it specifically
+          # (see below), so it is now passed explicitly to this one step.
+          ACTIONS_TOKEN: ${{ github.token }}
         run: |
           current="$(node scripts/version.mjs)"
           IFS=. read -r MA MI PA <<< "$current"
@@ -96,17 +108,23 @@ jobs:
           # master is protected (2026-07-13): the run-scoped actions token gets
           # declined by the pre-receive hook as an anonymous 500 (forgejo#11159),
           # so the branch push authenticates as the repo owner via PUSH_TOKEN.
-          # `-c http...extraheader=` clears checkout's actions-token header for
-          # that one push — otherwise BOTH credentials are sent and the header
-          # wins. The tag still goes through the actions token: its push events
-          # are swallowed (IsActions doer), so no duplicate release run fires.
+          # The tag still goes through the ACTIONS token: its push events are
+          # swallowed (IsActions doer), so no duplicate release run fires.
+          # Both URLs carry their credential explicitly now that checkout no
+          # longer persists one — which also means the old
+          # `-c http...extraheader=` overrides are gone: there is no header left
+          # to clear, so neither push can send two credentials.
           # Fallback: if protection ever declines the bot's tag too, retry it as
           # the owner — that spawns a duplicate tag-push run, which the
-          # `concurrency: release` group + idempotent API steps absorb.
-          owner_url="https://${PUSH_TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git"
-          git -c "http.${GITHUB_SERVER_URL}/.extraheader=" push "$owner_url" "HEAD:$GITHUB_REF_NAME"
-          git push origin "v$new" \
-            || git -c "http.${GITHUB_SERVER_URL}/.extraheader=" push "$owner_url" "v$new"
+          # `concurrency: release` group + idempotent API steps absorb. The same
+          # fallback covers the case where a URL-authenticated tag push is NOT
+          # attributed to the actions doer and its push event is not swallowed.
+          repo_path="${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git"
+          owner_url="https://${PUSH_TOKEN}@${repo_path}"
+          actions_url="https://x-access-token:${ACTIONS_TOKEN}@${repo_path}"
+          git push "$owner_url" "HEAD:$GITHUB_REF_NAME"
+          git push "$actions_url" "v$new" \
+            || git push "$owner_url" "v$new"
           echo "tag=v$new" >> "$GITHUB_OUTPUT"
 
   # The two build legs are split into separate jobs (the GitHub original was
