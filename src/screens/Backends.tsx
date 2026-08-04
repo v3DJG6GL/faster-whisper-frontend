@@ -188,14 +188,27 @@ function Editor({
             case: localhost on the box running the server, a LAN IP elsewhere).
             Applied live via the store (it's device state, not part of the Backend
             being edited); grayed out (never hidden) while sync is off, where the
-            canonical URL is already local-only. */}
+            canonical URL is already local-only.
+
+            EXCEPT when one is actually set. The override applies whether or not sync is on and
+            survives turning it off (see the warning note below, and `effectiveServerUrl`), so
+            greying the box on `!syncEnabled` alone locked a value that was still routing every
+            request: a user following the "override in use" badge on the card here to clear a
+            misrouting address found a disabled field, with only "turn sync back on" or "delete
+            the backend" as ways out. Never disable a control that is currently in effect. */}
         <Labeled label="Address on this device (optional)">
           <TextInput
             value={urlOverride}
-            disabled={!syncEnabled}
+            disabled={!syncEnabled && !urlOverride.trim()}
             onChange={(e) => setUrlOverride(b.id, e.target.value)}
             placeholder={syncEnabled ? "override the synced URL here only" : "used with settings sync"}
           />
+          {!syncEnabled && urlOverride.trim() && (
+            <Notice className="mt-2">
+              Sync is off, but this address is still where this device sends everything for this
+              backend. Clear the field to go back to the address above.
+            </Notice>
+          )}
           {/* This field bypasses normalizeUrl entirely — it goes to the transport verbatim — so
               it needs the warning at least as much as the canonical URL above. NOT gated on
               syncEnabled: `effectiveServerUrl` consults the override regardless of whether sync
