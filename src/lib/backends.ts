@@ -10,6 +10,42 @@ export function normalizeUrl(raw: string): string {
   return /^https?:\/\//i.test(t) ? t : `http://${t}`;
 }
 
+/** True for addresses that never leave the user's own machine or LAN, where plain http is the
+ *  normal, expected setup: loopback, an mDNS/`.local` name, a bare hostname with no dot, and the
+ *  private + link-local IPv4 ranges. Everything else is a route across networks the user does
+ *  not control. */
+function isLocalAddress(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h === "::1" || h.endsWith(".localhost")) return true;
+  if (h.endsWith(".local") || h.endsWith(".home.arpa") || h.endsWith(".internal")) return true;
+  if (!h.includes(".") && !h.includes(":")) return true; // bare LAN hostname
+  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!v4) return h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80:"); // ULA / link-local
+  const [a, b] = [Number(v4[1]), Number(v4[2])];
+  return (
+    a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) ||
+    (a === 169 && b === 254)
+  );
+}
+
+/** A warning to show next to a server address that is BOTH unencrypted and outside the user's
+ *  own network, or `null` when there is nothing to warn about. Over such a link the API key, the
+ *  microphone audio, the transcripts and the whole synced settings blob travel readable — and an
+ *  attacker on the path can also rewrite what comes back. Deliberately silent for LAN and
+ *  loopback addresses: a self-hosted server without a certificate is the common, intended case,
+ *  and a warning that fires there is one the user learns to ignore. */
+export function insecureUrlWarning(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(normalizeUrl(url));
+  } catch {
+    return null; // not a parseable address yet — the connect attempt reports that on its own
+  }
+  if (parsed.protocol !== "http:") return null;
+  if (isLocalAddress(parsed.hostname)) return null;
+  return `This address is not encrypted and is outside your own network. Your API key, your microphone audio and everything you dictate would travel readable by anyone on the route. Use https:// if the server supports it.`;
+}
+
 /** A human default name for a backend at `url` — its host, or a fallback. */
 export function nameFromUrl(url: string): string {
   try {

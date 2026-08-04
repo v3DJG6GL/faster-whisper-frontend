@@ -16,7 +16,7 @@ import {
   evdevStatus, getPipelineRules, importSettingsFile, pickImportFile, setBackendKey,
   syncPull, testConnection,
 } from "@/lib/api";
-import { normalizeUrl, nameFromUrl } from "@/lib/backends";
+import { insecureUrlWarning, normalizeUrl, nameFromUrl } from "@/lib/backends";
 import { quickAddPeer } from "@/lib/conflicts";
 import { ALL_CATEGORIES, applyBlob } from "@/lib/sync";
 import { starterProfiles } from "@/lib/starters";
@@ -184,6 +184,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 <span className="text-[12px] text-faint">defaults: streaming · auto language</span>
               </div>
               {error && <Notice>{error}</Notice>}
+              {url.trim() && insecureUrlWarning(url) && <Notice>{insecureUrlWarning(url)}</Notice>}
             </div>
             <div className="mt-7 flex w-full max-w-[430px] items-center justify-between">
               <button

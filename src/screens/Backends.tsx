@@ -12,7 +12,7 @@ import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/syncTypes";
 import { ALL_CATEGORIES } from "@/lib/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
-import { effectiveServerUrl, nameFromUrl, normalizeUrl } from "@/lib/backends";
+import { effectiveServerUrl, insecureUrlWarning, nameFromUrl, normalizeUrl } from "@/lib/backends";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { RestoreFromServer, relTime } from "./SettingsSync";
 import { cn } from "@/lib/cn";
@@ -178,6 +178,9 @@ function Editor({
         </Labeled>
         <Labeled label="Server URL">
           <TextInput value={b.serverUrl} onChange={(e) => set({ serverUrl: e.target.value })} placeholder="http://host:8000" />
+          {insecureUrlWarning(b.serverUrl) && (
+            <Notice className="mt-2">{insecureUrlWarning(b.serverUrl)}</Notice>
+          )}
         </Labeled>
         {/* Per-device address override: connects THIS machine somewhere else while
             the canonical URL above stays shared through settings sync (classic
@@ -192,6 +195,11 @@ function Editor({
             onChange={(e) => setUrlOverride(b.id, e.target.value)}
             placeholder={syncEnabled ? "override the synced URL here only" : "used with settings sync"}
           />
+          {/* This field bypasses normalizeUrl entirely — it goes to the transport verbatim — so
+              it needs the warning at least as much as the canonical URL above. */}
+          {syncEnabled && urlOverride.trim() && insecureUrlWarning(urlOverride) && (
+            <Notice className="mt-2">{insecureUrlWarning(urlOverride)}</Notice>
+          )}
         </Labeled>
         <Labeled label="Model">
           <TextInput value={b.model} onChange={(e) => set({ model: e.target.value })} placeholder="whisper-1 / large-v3" />
@@ -426,6 +434,7 @@ function ConnectStep({
   // test must not decide the branch with a stale server's answer.
   const liveTarget = useRef({ url: "", key: "" });
   liveTarget.current = { url, key };
+  const insecure = url.trim() ? insecureUrlWarning(url) : null;
 
   const testAndContinue = async () => {
     if (busy) return;
@@ -496,6 +505,7 @@ function ConnectStep({
         </Labeled>
       </div>
       {error && <Notice className="mt-4">{error}</Notice>}
+      {insecure && <Notice className="mt-4">{insecure}</Notice>}
       <div className="mt-6 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Button variant="accent" onClick={() => void testAndContinue()} disabled={busy || !url.trim()}>
