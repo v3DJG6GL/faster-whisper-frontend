@@ -123,6 +123,14 @@ jobs:
         with:
           # On a bump run, build the tagged commit (not the pre-bump dispatch ref).
           ref: ${{ needs.version.outputs.tag || github.ref }}
+          # Same reasoning as ci.yml's `git remote set-url` and the windows leg's: with the
+          # default, checkout leaves `http.<server>/.extraheader` — the run token, base64'd — in
+          # .git/config for the whole job. THIS job is the one that then runs `pnpm install`,
+          # tauri-action on a mutable tag, and `cargo build` (every dependency's build.rs and
+          # proc-macros) in that same workspace, and it holds release create/upload rights — so
+          # build-time code that read the token could replace the installers users download.
+          # This job never pushes, so it does not need the credential at all.
+          persist-credentials: false
 
       # The release tag this run builds for — empty means build-only (artifacts).
       - name: Resolve release tag
