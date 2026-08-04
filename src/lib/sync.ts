@@ -33,16 +33,20 @@ import { configReady } from "./persistence";
 import { effectiveServerUrl, normalizeUrl } from "./backends";
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "./paste";
 import { IS_WINDOWS } from "./platform";
+import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./conflicts";
 import type {
+  ActivationKind,
   AppRule,
   AppSettings,
   Backend,
   Config,
+  EndpointKind,
   IndicatorPosition,
   InsertMethod,
   InsertTiming,
   OverlayStatsMetric,
   Profile,
+  ResponseFormat,
   SyncCategory,
   ThemeName,
 } from "./types";
@@ -325,12 +329,69 @@ function sanitizeProfiles(list: unknown): Profile[] {
         // makes exactly this check on its own chord field.
         isCodeList((p as Profile).hotkey),
     )
+    .map((p) => ({
+      ...p,
+      // The three fields above were the ones an earlier run tripped over; every OTHER leaf was
+      // carried through by reference. Two sinks, both reached from the same unattended pull:
+      // `GLYPH[p.activation]` in Home (the DEFAULT route) is rendered AS A COMPONENT, so an
+      // unknown value is `React.createElement(undefined)` — "Element type is invalid" — and with
+      // no error boundary anywhere in the tree that unmounts the main window; and `ActivationType`
+      // is a two-variant serde enum with no fallback, so the same value makes `save_config`'s
+      // typed parse reject the WHOLE config and every later save fails for the session.
+      // "hold" is the fail-safe fallback: push-to-talk never live-types.
+      activation: oneOf<ActivationKind>((p as Profile).activation, ACTIVATIONS, "hold"),
+      // Rendered as React CHILDREN (`<Badge>{p.endpoint}</Badge>`, `languageLabel(p.language)`,
+      // which returns its argument unchanged when the code is unknown) — an object leaf throws
+      // "Objects are not valid as a React child" — and `endpoint` is another fallback-less enum.
+      endpoint: p.endpoint == null ? p.endpoint : oneOf<EndpointKind>(p.endpoint, ENDPOINT_KINDS, "stream"),
+      name: typeof p.name === "string" ? p.name : "",
+      tag: typeof p.tag === "string" ? p.tag : undefined,
+      language: typeof p.language === "string" ? p.language : undefined,
+      prompt: typeof p.prompt === "string" ? p.prompt : undefined,
+    }))
     .slice(0, MAX_SYNCED_ENTRIES);
 }
 
-/** A chord as the capture UI produces it: a list of `KeyboardEvent.code` strings. */
+/** A chord as the capture UI produces it: a list of `KeyboardEvent.code` strings.
+ *
+ *  The LENGTH bound matters as much as the element type. `Profile.hotkey` is canonicalized
+ *  (sort + dedup) by Rust's `de_hotkey` on the round-trip, but the store holds the raw inbound
+ *  value for the rest of the session, and the TS consumers are the expensive ones: `HotkeyChips`
+ *  renders one DOM node per code, `conflictsByProfile` runs an O(k²) subset scan in a component
+ *  body (not memoized), both sync preview dialogs cap the PEER count but not the chord, and the
+ *  debounced save gate runs the same scan. A real binding is at most a handful of codes. */
 function isCodeList(v: unknown): v is string[] {
-  return Array.isArray(v) && v.every((c) => typeof c === "string");
+  return Array.isArray(v) && v.length <= MAX_CHORD_CODES && v.every((c) => typeof c === "string");
+}
+
+/** Ceiling on the codes in ONE chord. Every real binding is ≤6 (modifiers + a key); the capture
+ *  UI cannot produce more. */
+const MAX_CHORD_CODES = 16;
+
+/** Turn OFF the later member of every chord collision in an inbound binding set, including a
+ *  collision with the (possibly also inbound) quick-add chord. See the call site for why a
+ *  conflicting set is worse than a malformed one.
+ *
+ *  `collapseSides: true` deliberately over-detects: the save gate picks it from the live backend
+ *  (evdev vs the plugin) and this runs before that is known, so matching the stricter side keeps
+ *  the sanitizer a superset of the gate — which is the whole point, since anything the gate
+ *  catches and this misses freezes saving. Two chords differing only by modifier side are in any
+ *  case broken on the plugin backend, where one silently never registers. */
+function disableConflictingProfiles(profiles: Profile[], quickAddHotkey: string[]): Profile[] {
+  const peers = quickAddHotkey.length > 0 ? [...profiles, quickAddPeer(quickAddHotkey)] : profiles;
+  const order = new Map(peers.map((p, i) => [p.id, i]));
+  const disable = new Set<string>();
+  for (const c of conflicts(peers, true)) {
+    // Keep whichever came first — the quick-add peer always wins, since it is a single global
+    // chord the user may have bound locally, not one of many list entries.
+    const self = order.get(c.profileId) ?? 0;
+    const other = order.get(c.otherId) ?? 0;
+    if (c.otherId === QUICK_ADD_PEER_ID || self > other) disable.add(c.profileId);
+  }
+  disable.delete(QUICK_ADD_PEER_ID);
+  return disable.size === 0
+    ? profiles
+    : profiles.map((p) => (disable.has(p.id) ? { ...p, enabled: false } : p));
 }
 
 /** Ceiling on how many entries one inbound blob may install. Far above any real profile /
@@ -347,11 +408,41 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T)
   return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
 }
 
+/** Same failure as `oneOf`, one level down: the settings blocks are spread in wholesale, and
+ *  `save_config` takes a typed `Config` whose scalars (`bool`, `u32`, `f64`) have no serde
+ *  fallback either. `#[serde(default)]` covers an ABSENT key, not a present one of the wrong
+ *  type — so `soundEffects: "yes"` or `hoverRevealMs: -1` makes Tauri reject the invoke, and
+ *  because nothing reverts the store, every later debounced save fails the same way for the rest
+ *  of the session (the save banner sticks, `pushNow` short-circuits, and shortcut
+ *  re-registration — which only runs on the success path — stops happening).
+ *
+ *  Drop only KNOWN keys whose type disagrees with what this device holds. Unknown keys are
+ *  passed through untouched: Rust ignores unrecognised fields, so a newer peer's additions must
+ *  survive the round-trip rather than being erased by an older client's next push. */
+function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(incoming as Record<string, unknown>)) {
+    const ref = (local as Record<string, unknown>)[k];
+    if (!(k in (local as Record<string, unknown>)) || ref == null || v == null) {
+      out[k] = v; // unknown to this version, or nullable either side — leave it to the callee
+      continue;
+    }
+    if (typeof v !== typeof ref) continue;
+    if (Array.isArray(ref) !== Array.isArray(v)) continue;
+    if (typeof v === "number" && !Number.isFinite(v)) continue;
+    out[k] = v;
+  }
+  return out as Partial<T>;
+}
+
 const INSERT_METHODS = ["paste", "direct", "clipboard"] as const;
 const INSERT_TIMINGS = ["off", "stop", "live"] as const;
 const THEMES = ["dark", "light", "auto"] as const;
 const INDICATOR_POSITIONS = ["top", "bottom", "off"] as const;
 const OVERLAY_STATS_METRICS = ["words", "audio", "both"] as const;
+const ACTIVATIONS = ["hold", "latch"] as const;
+const ENDPOINT_KINDS = ["stream", "batch"] as const;
+const RESPONSE_FORMATS = ["json", "verbose_json"] as const;
 
 function sanitizeBackends(list: unknown): Backend[] {
   if (!Array.isArray(list)) return [];
@@ -361,7 +452,26 @@ function sanitizeBackends(list: unknown): Backend[] {
       typeof (b as Backend).id === "string" &&
       typeof (b as Backend).serverUrl === "string" &&
       !isReservedBackendId((b as Backend).id),
-  ).slice(0, MAX_SYNCED_ENTRIES);
+  )
+    // FILL the remaining leaves rather than filtering on them. Rust's `Backend` requires
+    // `name`/`model`/`language`/`prompt`/`endpoint`/`responseFormat` with NO serde default, so a
+    // filter would DROP a legitimately older peer's backend entirely — along with the keyring
+    // association its `id` carries. Filling keeps the entry and its key while making the value
+    // safe for both sinks: the list card renders `name`/`model`/`languageLabel(language)` as
+    // React children (an object leaf throws and unmounts the settings window), and the two enums
+    // have no serde fallback, so an unknown variant wedges every later save for the session.
+    .map((b) => ({
+      ...b,
+      name: typeof b.name === "string" ? b.name : "",
+      model: typeof b.model === "string" ? b.model : "",
+      language: typeof b.language === "string" ? b.language : "auto",
+      prompt: typeof b.prompt === "string" ? b.prompt : "",
+      endpoint: oneOf<EndpointKind>(b.endpoint, ENDPOINT_KINDS, "stream"),
+      responseFormat: oneOf<ResponseFormat>(b.responseFormat, RESPONSE_FORMATS, "json"),
+      hasApiKey: b.hasApiKey === true,
+      overrideProfile: typeof b.overrideProfile === "string" ? b.overrideProfile : undefined,
+    }))
+    .slice(0, MAX_SYNCED_ENTRIES);
 }
 
 function sanitizeAppRules(rules: unknown): AppRule[] {
@@ -376,6 +486,12 @@ function sanitizeAppRules(rules: unknown): AppRule[] {
     .map((r) => ({
       ...r,
       block: r.block === true,
+      // `name` rode in through the spread unchecked while its neighbours were clamped, and the
+      // rules list does `r.name?.trim()` in a render body — `?.` guards null/undefined, not a
+      // number or an object, so one malformed rule unmounts the very screen a user opens to
+      // audit which apps have a forced insert method. App rules have no consent gate, so this
+      // arrives silently.
+      name: typeof r.name === "string" ? r.name : undefined,
       pasteShortcut:
         r.pasteShortcut == null
           ? r.pasteShortcut
@@ -469,7 +585,7 @@ export async function applyBlob(
         theme: oneOf<ThemeName>(theme, THEMES, nextSettings.theme),
         general: {
           ...nextSettings.general,
-          ...general,
+          ...typedLike(general as Partial<typeof nextSettings.general>, nextSettings.general),
           pasteShortcut: safePasteShortcut(
             (general as { pasteShortcut?: unknown }).pasteShortcut,
             nextSettings.general.pasteShortcut,
@@ -499,7 +615,16 @@ export async function applyBlob(
       nextSettings = {
         ...nextSettings,
         recording: {
-          ...blob.recording,
+          // Merge over THIS DEVICE'S current block, the way the `general` arm above already
+          // does. Replacing it wholesale meant an omitted key fell through to `hydrate`'s
+          // `withSettingsDefaults`, which refills from the FACTORY defaults — where
+          // `saveRecordings` is true. So a blob that simply left the field out raised no
+          // security change (undefined is falsy), applied silently, and turned permanent
+          // plaintext archiving back on for a user who had deliberately turned it off; the same
+          // omission silently reset trimSilence / muteSystemAudio / latchAutoStopMin too.
+          // A peer that genuinely wants it off still sends the literal `false`.
+          ...settings.recording,
+          ...typedLike(blob.recording, settings.recording),
           // machine-local: keep this device's folder no matter what arrived
           recordingsDir: settings.recording.recordingsDir,
           indicatorPosition: oneOf<IndicatorPosition>(
@@ -543,6 +668,21 @@ export async function applyBlob(
     if (nextSettings.quickAddList && !backendIds.has(nextSettings.quickAddList.backendId)) {
       nextSettings = { ...nextSettings, quickAddList: null };
     }
+    // A well-formed blob is still not a SAFE blob. `profiles` and `quickAddHotkey` have no
+    // consent gate, so an unattended pull can install a binding set that collides with itself
+    // (two enabled profiles on one chord, or one chord a strict subset of another). Nothing here
+    // is malformed — it passes every check above — but the app's OWN save gate then refuses to
+    // persist a conflicting set, and that gate was written for a local editing mistake the user
+    // can see and undo. Applied from a pull it freezes config persistence for the whole session:
+    // later edits are dropped behind a banner blaming "a shortcut", `pushNow` short-circuits on
+    // the save error so the device can never push a correction, shortcut re-registration (which
+    // only runs on the save-success path) stops, and because `settings.sync` is itself part of
+    // `settings`, the user cannot even persist turning sync OFF — so the same blob returns on the
+    // next launch. Disable the later member of each colliding pair instead: the profile stays
+    // visible in the editor for the user to inspect and re-enable, saving keeps working, and the
+    // local gate is left alone so a genuine local mistake still stops the write.
+    nextProfiles = disableConflictingProfiles(nextProfiles, nextSettings.general.quickAddHotkey);
+
     // A pulled backend list may have dropped the backend an urlOverride points
     // at; prune so the map doesn't accumulate dead ids.
     const sync = nextSettings.sync;
@@ -1040,7 +1180,13 @@ function securityChanges(
   const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));
   const localSecrets = local.backends?.secrets ?? {};
   const nextSecrets = incoming.backends.secrets ?? {};
-  for (const b of incoming.backends.list ?? []) {
+  // `??` defends null/undefined only. The CONTAINER is as attacker-shaped as its elements —
+  // the blob is an opaque `serde_json::Value` all the way through Rust — so `"list": 5` threw
+  // "is not iterable" here, before the per-element guard below, with the same silent outcome:
+  // the rejection escapes `void pullNow()` (startup + every window focus), syncStatus sticks on
+  // "syncing" and syncError stays null. The three sanitizers all open with this check; the gate
+  // that protects the apply did not.
+  for (const b of Array.isArray(incoming.backends.list) ? incoming.backends.list : []) {
     // The gate runs on the RAW list — sanitization happens later, inside `applyBlob` — so it must
     // survive anything the server sends. `normalizeUrl` calls `.trim()`, and a non-string
     // serverUrl threw right here, inside the consent gate itself: the rejection escaped
