@@ -109,9 +109,14 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
 
 /// Enforce the saved-recording retention window. Called on startup and after every config save,
 /// so shortening the window takes effect immediately rather than at the next restart.
+///
+/// Turning "keep audio recordings" off stops the sweep too. The Settings screen DISABLES the
+/// retention control whenever saving is off, so leaving the window live meant an existing archive
+/// kept being deleted on every launch and every autosave, driven by a control the user could no
+/// longer see the value of or change. The two now agree: no saving, no deleting.
 pub fn apply_recordings_retention(app: &AppHandle, config: &Config) {
     let days = config.settings.recording.recordings_retention_days;
-    if days == 0 {
+    if days == 0 || !config.settings.recording.save_recordings {
         return;
     }
     if let Some(dir) = resolve_recordings_dir(app, config.settings.recording.recordings_dir.clone())
