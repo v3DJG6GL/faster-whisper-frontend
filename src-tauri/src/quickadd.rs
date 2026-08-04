@@ -57,11 +57,38 @@ pub struct SeedStash(
 /// Windows first grabs the source app's selection (copy-chord + clipboard diff —
 /// `win_seed`) BEFORE the window takes focus, off the calling thread and time-bounded
 /// so a wedged clipboard can never keep the window from opening.
+/// One seed grab at a time. The grab saves the clipboard, synthesizes a copy chord, then
+/// restores what it saved — so two overlapping runs interleave: the second snapshots the
+/// FIRST one's freshly-copied selection as "the user's clipboard", the first restores the
+/// real one, and the second then puts the selection back. Net effect is the user's own
+/// clipboard destroyed and their selection left resident globally, which is exactly the
+/// residue the restore exists to prevent. The window is not shown until the grab settles
+/// (up to 1.5s of no feedback), so a second press in that window is likely, not exotic.
+#[cfg(windows)]
+static SEED_GRAB_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn show(app: &AppHandle) {
     #[cfg(windows)]
     {
+        use std::sync::atomic::Ordering;
+        if SEED_GRAB_ACTIVE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            // A grab is already running; it will show the window when it settles. Still
+            // re-focus, so the second press never feels dead.
+            show_now(app);
+            return;
+        }
         let handle = app.clone();
         std::thread::spawn(move || {
+            struct Release;
+            impl Drop for Release {
+                fn drop(&mut self) {
+                    SEED_GRAB_ACTIVE.store(false, Ordering::Release);
+                }
+            }
+            let _release = Release;
             let (tx, rx) = std::sync::mpsc::channel();
             let grabber = handle.clone();
             std::thread::spawn(move || {
@@ -166,6 +193,27 @@ pub(crate) mod win_seed {
         unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() }
     }
 
+    /// Is any shortcut modifier physically down RIGHT NOW, straight from the OS?
+    /// `GetAsyncKeyState`'s high bit is the current physical state, independent of our
+    /// hook and of any message queue — so unlike `HeldKeys` it cannot be reset to an
+    /// empty map by a worker restart. VK_SHIFT/CONTROL/MENU cover both sides.
+    #[cfg(windows)]
+    fn modifier_physically_down() -> bool {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+        };
+        [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN]
+            .iter()
+            .any(|&vk| unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8000 != 0)
+    }
+
+    /// Non-Windows twin (never called — `grab`'s only call sites are `#[cfg(windows)]` —
+    /// but kept so the Linux dev loop type-checks the module, like `clipboard_seq`'s.
+    #[cfg(not(windows))]
+    fn modifier_physically_down() -> bool {
+        false
+    }
+
     /// Best-effort: any failure or no copy landing (= nothing selected; apps
     /// no-op the copy) → None. The user's clipboard TEXT is restored afterwards;
     /// non-text content (an image) can't be snapshotted via arboard's text API and
@@ -184,6 +232,16 @@ pub(crate) mod win_seed {
                 return None;
             }
             std::thread::sleep(Duration::from_millis(15));
+        }
+        // Second, AUTHORITATIVE read before injecting. `HeldKeys` is fed only by the
+        // win-hotkeys worker, and `apply_bindings` clears it and restarts that worker
+        // unconditionally — reachable mid-wait from a sync pull that changes bindings.
+        // The fresh hook only sees TRANSITIONS, so a modifier already down is never
+        // re-added and the gate above reads "nothing held" for the rest of that hold.
+        // Ask the OS directly rather than trusting the cleared map.
+        if modifier_physically_down() {
+            tracing::info!("[quickadd-seed] modifier still physically down; skipping the copy grab");
+            return None;
         }
         let mut cb = arboard::Clipboard::new().ok()?;
         let prev = cb.get_text().ok(); // None = empty or non-text (image/files)

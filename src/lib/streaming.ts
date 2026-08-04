@@ -298,7 +298,18 @@ async function resolveTarget(): Promise<{
   // Show it as "→ this app" (neutral, no warn hint) and don't match an app rule / field guard.
   if (targetApp?.isSelf) {
     publishTarget(targetApp, null);
-    return { method: g.insertMethod, pasteShortcut: g.pasteShortcut, isSelf: true, appId: null };
+    // Still hand Rust the app we resolved against. `null` is the value that DISABLES the
+    // sink-side focus re-check, so a null here meant: if the user alt-tabbed between this
+    // resolve and the keys going out, the global method was used with no re-check and no
+    // per-app rule — including `block`. Passing our own id makes that move a mismatch,
+    // which degrades to clipboard-only. Our own window still short-circuits earlier in
+    // Rust, so the "dictate into our own window" case is unchanged.
+    return {
+      method: g.insertMethod,
+      pasteShortcut: g.pasteShortcut,
+      isSelf: true,
+      appId: targetApp.appId ?? null,
+    };
   }
   const { rule, notEditable, method, pasteShortcut } = resolveInjectionTarget(targetApp ?? null, appRules, g);
   // Keep the chip's "→ app" readout + skip hint live as focus moves mid-session: this resolves

@@ -839,7 +839,10 @@ pub mod keys {
             // key may EXIST but cannot be read — the visible symptom is an opaque 403 on
             // connect, so say what actually happened.
             Err(e) => {
-                tracing::warn!("[keys] keyring read failed for backend {backend_id}: {e}");
+                // Debug-format the id, like `resolve_key`'s sibling log: it is a sync/import-supplied
+                // string with no length bound and no control-character fold, so a Display copy would
+                // let a peer forge whole records in the log the user is asked to send for support.
+                tracing::warn!("[keys] keyring read failed for backend {backend_id:?}: {e}");
                 None
             }
         }

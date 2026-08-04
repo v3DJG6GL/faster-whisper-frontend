@@ -217,6 +217,15 @@ mod imp {
             if order.is_empty() {
                 return Ok(());
             }
+            // Before the keymap upload, not only between keys: a bare auto-Enter job is a
+            // single-element `order`, so the in-loop check below (which requires `emitted`)
+            // never fires for it and the Enter went out even after a cancel. `Ok(())` and not
+            // an error, because an error here reports `after_typing: false` and the portal
+            // fallback would then type the very text the user cancelled.
+            if crate::inject::injection_cancelled(epoch) {
+                tracing::info!("[vkbd] cancelled before typing — dropping the job");
+                return Ok(());
+            }
             // Distinct symbols, in first-seen order → one keycode each (xkb = idx + 8).
             let mut unique: Vec<String> = Vec::new();
             let mut idx_of: HashMap<String, u32> = HashMap::new();

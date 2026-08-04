@@ -562,6 +562,14 @@ mod imp {
                     }};
                 }
 
+                // Before the job, not just between characters: the paste branch below returns without
+                // ever reaching the per-character check, and a bare auto-Enter job has no characters
+                // to iterate — so without this a cancel that lands while the job sits in the queue
+                // still fires Ctrl+V, or still presses Enter, with nothing to abandon mid-loop.
+                if crate::inject::injection_cancelled(job.epoch) {
+                    tracing::info!("[wayland-inject] cancelled before typing — dropping the job");
+                    return Ok(());
+                }
                 if job.paste {
                     // Resolve the chord to keycodes HERE (the charmap is built) so the MAIN key maps by
                     // keysym against the active layout (e.g. 'v' for Ctrl+V) instead of a fixed physical
@@ -595,7 +603,10 @@ mod imp {
                     // hundred characters a second and follows the user's focus as they move.
                     if crate::inject::injection_cancelled(job.epoch) {
                         tracing::info!("[wayland-inject] cancelled mid-typing — stopping");
-                        break;
+                        // RETURN, not break: `break` fell through to the unconditional auto-Enter
+                        // below, so a cancelled transcript was truncated mid-sentence and then
+                        // SUBMITTED. The virtual-keyboard path already returns here.
+                        return Ok(());
                     }
                     let Some(spec) = key_spec_for(c, &charmap) else {
                         continue; // char not reachable on this layout — skip
