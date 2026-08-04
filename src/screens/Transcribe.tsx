@@ -13,6 +13,18 @@ function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
 
+/** How much of a returned transcript to lay out before the user asks for the rest.
+ *
+ *  The user picks the FILE; the server picks the RESPONSE — a small upload can be answered with a
+ *  body up to the 32 MiB transport cap, and this card renders it wrapping, in one synchronous
+ *  pass, with no error boundary to recover from a stalled renderer. A long transcript is also
+ *  exactly what this screen is for, so this is a preview with an explicit "show the rest", not a
+ *  truncation: `result.text` is untouched, and Copy still writes the FULL text. */
+const TRANSCRIPT_PREVIEW_CHARS = 50_000;
+
+/** Bound the "server ignored N overrides" list too — same untrusted response, same DOM. */
+const MAX_IGNORED_SHOWN = 50;
+
 export default function Transcribe() {
   const backends = useApp((s) => s.backends);
   const [backendId, setBackendId] = useState(backends[0]?.id ?? "");
@@ -22,6 +34,8 @@ export default function Transcribe() {
   const [result, setResult] = useState<BatchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Reset per result, so a new (possibly huge) transcript starts collapsed again.
+  const [showFullText, setShowFullText] = useState(false);
   // Identifies the in-flight transcription. Removing/replacing the file (or a new run) bumps it,
   // so a request that resolves AFTER the user moved on can't strand its (now-stale) result/error
   // against a different/absent file. The file picker + the clear (X) are reachable during a run.
@@ -103,7 +117,10 @@ export default function Transcribe() {
       });
       // Only commit if this is still the current request — the user may have cleared/changed
       // the file (or started another run) while this one was in flight.
-      if (runId.current === myRun) setResult(res);
+      if (runId.current === myRun) {
+        setResult(res);
+        setShowFullText(false); // a new transcript starts collapsed again
+      }
     } catch (e) {
       if (runId.current === myRun) setError(String(e));
     } finally {
@@ -229,7 +246,20 @@ export default function Transcribe() {
               {copied ? "Copied" : "Copy"}
             </Button>
           </div>
-          <div className="select-text whitespace-pre-wrap text-[14px] leading-relaxed text-text">{result.text}</div>
+          <div className="select-text whitespace-pre-wrap text-[14px] leading-relaxed text-text">
+            {showFullText ? result.text : result.text.slice(0, TRANSCRIPT_PREVIEW_CHARS)}
+          </div>
+          {!showFullText && result.text.length > TRANSCRIPT_PREVIEW_CHARS && (
+            <div className="mt-3 flex items-center gap-3">
+              <Button variant="ghost" size="sm" onClick={() => setShowFullText(true)}>
+                Show full transcript
+              </Button>
+              <span className="text-[12px] text-faint">
+                Showing the first {TRANSCRIPT_PREVIEW_CHARS.toLocaleString()} of{" "}
+                {result.text.length.toLocaleString()} characters. Copy always copies all of it.
+              </span>
+            </div>
+          )}
         </Card>
       )}
 
@@ -237,7 +267,10 @@ export default function Transcribe() {
         <Notice className="mt-3">
           The server ignored {result.overridesIgnored.length} override
           {result.overridesIgnored.length === 1 ? "" : "s"} (locked by the server admin):{" "}
-          <span className="font-mono text-[12px]">{result.overridesIgnored.join(", ")}</span>.
+          <span className="font-mono text-[12px]">
+            {result.overridesIgnored.slice(0, MAX_IGNORED_SHOWN).join(", ")}
+          </span>
+          {result.overridesIgnored.length > MAX_IGNORED_SHOWN ? " …" : ""}.
         </Notice>
       )}
     </div>

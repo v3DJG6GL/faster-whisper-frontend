@@ -20,7 +20,7 @@
   "minimumReleaseAge": "3 days",
   "internalChecksFilter": "strict",
   "vulnerabilityAlerts": {
-    "minimumReleaseAge": null
+    "minimumReleaseAge": "3 days"
   },
 
   "ignoreDeps": ["gtk"],
