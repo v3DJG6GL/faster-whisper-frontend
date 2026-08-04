@@ -26,18 +26,20 @@ import {
   dismissSyncConflict,
   getPendingConflict,
   getPendingReview,
+  isCodeList,
   pullNow,
   pushNow,
   rejectPendingReview,
   resetSyncState,
   resolveSyncConflicts,
+  sanitizeProfiles,
   type SecurityChange,
 } from "@/lib/sync";
 import { authorityOf, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
 import { conflicts as chordConflicts, quickAddPeer } from "@/lib/conflicts";
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText } from "@/lib/sanitize";
-import type { Backend, Profile, SyncCategory } from "@/lib/types";
+import type { Backend, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncRemoteState } from "@/lib/syncTypes";
 
 const MY_BUCKET = IS_WINDOWS ? ("windows" as const) : ("linux" as const);
@@ -114,14 +116,23 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // quick-add chord over the current ones) so the user isn't surprised by the
   // save-freeze banner after applying. Conservative L/R collapse off-Windows —
   // mirrors the persistence save-gate's no-low-level-backend assumption.
+  // Run the SAME sanitizers `applyBlob` runs. This dialog is the consent step, so it renders
+  // strictly BEFORE them — and `arr()` coerces only the CONTAINER, so every element was
+  // attacker-shaped at the point `chordConflicts` walked it, in a render body, with no error
+  // boundary anywhere in the tree. A profile missing `hotkey` threw on `p.hotkey.length` and a
+  // numeric code threw in `canonicalizeCodes`' `localeCompare` tie-break — unmounting the very
+  // window whose job is to let the user REJECT this blob. The same call also bounds chord LENGTH
+  // (`isCodeList`), which is what keeps `isStrictSubset`'s O(k·m) scan from freezing the webview
+  // on a hand-authored file. Bonus: the preview now predicts exactly what apply would install.
   const st = useApp.getState();
   const wouldProfiles =
     sel.profiles && result.categories.profiles
-      ? arr<Profile>(result.categories.profiles.list)
+      ? sanitizeProfiles(result.categories.profiles.list)
       : st.profiles;
+  const rawQa = result.categories.general?.quickAddHotkey;
   const wouldQa =
     sel.general && result.categories.general
-      ? arr<string>(result.categories.general.quickAddHotkey)
+      ? (isCodeList(rawQa) ? rawQa : [])
       : st.settings.general.quickAddHotkey;
   const peers = (wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles).slice(
     0,
@@ -269,11 +280,14 @@ export function RestoreFromServer({
   // Same would-be-state hazard previews as ImportPreview: predicted hotkey
   // collisions, and (new here) whether a selected category overwrites data the
   // device already has — on an empty app the restore is warning-free.
+  // Same reasoning as ImportPreview above: sanitize with `applyBlob`'s own helpers, because this
+  // dialog renders before them and `chordConflicts` walks the elements in a render body.
   const st = useApp.getState();
-  const wouldProfiles = sel.profiles && blob.profiles ? arr<Profile>(blob.profiles.list) : st.profiles;
+  const wouldProfiles = sel.profiles && blob.profiles ? sanitizeProfiles(blob.profiles.list) : st.profiles;
+  const rawQa = blob.general?.quickAddHotkey;
   const wouldQa =
     sel.general && blob.general
-      ? arr<string>(blob.general.quickAddHotkey)
+      ? (isCodeList(rawQa) ? rawQa : [])
       : st.settings.general.quickAddHotkey;
   const peers = (wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles).slice(
     0,

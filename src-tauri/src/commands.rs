@@ -426,6 +426,16 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
     // entries in the user's wallet, with the webview blocked throughout. This is the designated
     // validator for the untrusted-file path; it should fail here, with a message.
     const MAX_ENTRIES: usize = 500;
+    // Ceiling on the codes in ONE chord, matching `MAX_CHORD_CODES` in lib/sync.ts. The count cap
+    // above bounds how MANY chords arrive, never how long one is: `de_hotkey`'s `visit_seq` pushes
+    // an unbounded sequence and `canonicalize` only sorts + dedups, which does not bound DISTINCT
+    // strings. `chordConflicts` runs in the import preview's render body — before the user has
+    // consented to anything — and `isStrictSubset` is O(k·m) in chord LENGTH, so one 20 MB file
+    // holding two profiles whose chords nest freezes the window. Rejected, not truncated, and
+    // rejected HERE rather than in `de_hotkey`: that runs on the user's own config.json every
+    // launch, where truncating would silently rewrite a valid stored chord with the autosave
+    // armed, and rejecting would refuse to load a working config.
+    const MAX_CHORD_CODES: usize = 16;
     let meta = std::fs::metadata(&path).map_err(|e| format!("Could not read the file: {e}"))?;
     if meta.len() > MAX_IMPORT_BYTES {
         return Err("That file is too large to be a settings export.".into());
@@ -506,6 +516,9 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
         if parsed.len() > MAX_ENTRIES {
             return Err("That file lists far more dictation profiles than the app supports.".into());
         }
+        if parsed.iter().any(|p| p.hotkey.len() > MAX_CHORD_CODES) {
+            return Err("That file has a shortcut with far more keys than the app supports.".into());
+        }
         *list = serde_json::to_value(parsed).map_err(|e| e.to_string())?;
     }
     for bucket in ["linux", "windows"] {
@@ -523,6 +536,17 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
             if !v.is_null() && !v.is_object() {
                 return Err(format!("The file's {key} settings are invalid."));
             }
+        }
+    }
+    // `general` is checked as an OBJECT only above, so its one chord-shaped leaf never met the
+    // element and length checks the profile list gets. It reaches the same preview scan.
+    if let Some(qa) = categories.get("general").and_then(|g| g.get("quickAddHotkey")) {
+        let ok = qa.is_null()
+            || qa
+                .as_array()
+                .is_some_and(|a| a.len() <= MAX_CHORD_CODES && a.iter().all(|c| c.is_string()));
+        if !ok {
+            return Err("The file's quick-add shortcut is invalid.".into());
         }
     }
 

@@ -316,7 +316,7 @@ function isReservedBackendId(id: unknown): boolean {
  *  reaches consumers that deref it unguarded (`p.hotkey.length`, `deriveChipTag(p.name)`), and
  *  with no error boundary in the tree a throw during render unmounts the window. Drop malformed
  *  entries here so both paths share the same floor. */
-function sanitizeProfiles(list: unknown): Profile[] {
+export function sanitizeProfiles(list: unknown): Profile[] {
   if (!Array.isArray(list)) return [];
   return list
     .filter(
@@ -387,7 +387,7 @@ function safeQuickAddTarget(v: unknown): QuickAddTarget | null {
   return typeof t.backendId === "string" && typeof t.slug === "string" ? (v as QuickAddTarget) : null;
 }
 
-function isCodeList(v: unknown): v is string[] {
+export function isCodeList(v: unknown): v is string[] {
   return Array.isArray(v) && v.length <= MAX_CHORD_CODES && v.every((c) => typeof c === "string");
 }
 
