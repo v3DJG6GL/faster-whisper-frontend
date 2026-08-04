@@ -1320,7 +1320,7 @@ dependencies = [
 
 [[package]]
 name = "faster-whisper-frontend"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "anyhow",
  "arboard",
