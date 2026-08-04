@@ -388,12 +388,14 @@ function SecurityReviewDialog() {
   const pending = getPendingReview();
   const [busy, setBusy] = useState(false);
   if (!pending) return null;
-  const label = (c: SecurityChange) =>
-    c.kind === "new-backend"
-      ? "New server added"
-      : c.kind === "server-url"
-        ? "Server address changed"
-        : "API key replaced";
+  const LABELS: Record<SecurityChange["kind"], string> = {
+    "new-backend": "New server added",
+    "server-url": "Server address changed",
+    "api-key": "API key changed",
+    "recording-retention": "Saved recordings would be deleted",
+    "save-recordings": "Saving every dictation would be turned on",
+  };
+  const label = (c: SecurityChange) => LABELS[c.kind];
   const shown = pending.changes.slice(0, MAX_REVIEW_ROWS);
   const hidden = pending.changes.length - shown.length;
   return (
@@ -401,8 +403,8 @@ function SecurityReviewDialog() {
       <div className="text-[15px] font-semibold text-text">Review this update</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
         {safeText(pending.device || "Another device", 60)} sent changes that affect where your
-        dictation is sent and which key is used. Everything else was applied already — only these
-        are waiting.
+        dictation is sent, which key is used, or what is kept on this device. Everything else was
+        applied already — only these are waiting.
       </div>
       <div className="mt-4 flex flex-col gap-2">
         {shown.map((c, i) => {
@@ -420,7 +422,8 @@ function SecurityReviewDialog() {
                 </div>
               )}
               <div className="mt-0.5 font-mono text-[11px] break-all text-dim">
-                {safeText(c.backend, 80)} · {safeText(c.detail)}
+                {c.backend ? `${safeText(c.backend, 80)} · ` : ""}
+                {safeText(c.detail)}
               </div>
               {auth?.hasUserinfo && (
                 <div className="mt-1 text-[12px] font-semibold text-rec">

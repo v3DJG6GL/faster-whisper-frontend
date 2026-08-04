@@ -775,7 +775,7 @@ export async function pushNow(manual = false): Promise<void> {
         // A 409 merge adopts remote values too, so it gets the same consent gate as a pull.
         const riskyPush = securityChanges(merged, blob, pushCats);
         if (riskyPush.length > 0) {
-          await applyBlob(merged, { ...pushCats, backends: false });
+          await applyBlob(merged, heldBack(pushCats, riskyPush));
           raiseReview({
             changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
             version: remote.version, updatedAt: null, device: remote.device ?? null,
@@ -825,7 +825,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     // Everything else still applies — only the backends category waits. Deliberately no
     // persistState here: adopting the server's version as the new base would drop the held-back
     // change, so the next pull re-offers it until the user decides.
-    await applyBlob(merged, { ...applyCats, backends: false });
+    await applyBlob(merged, heldBack(applyCats, risky));
     raiseReview({
       changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
       version: remote.version, updatedAt: remote.updated_at ?? null,
@@ -883,7 +883,9 @@ function handleTransportFailure(status: number, error?: string): void {
  *  unattended at startup and on every window focus — so these get the same explicit consent
  *  the file-import path already asks for. */
 export interface SecurityChange {
-  kind: "new-backend" | "server-url" | "api-key";
+  kind: "new-backend" | "server-url" | "api-key" | "recording-retention" | "save-recordings";
+  /** The backend a `backends`-category change applies to; the recording kinds have no backend and
+   *  set this to an empty string (the dialog omits it). */
   backend: string;
   detail: string;
   /** The address that would take effect, unformatted, for the kinds that carry one. The dialog
@@ -891,6 +893,22 @@ export interface SecurityChange {
    *  last "@", so `http://localhost:8000@evil.tld/v1` reads as a loopback address in prose while
    *  connecting to `evil.tld`. The consent surface has to show the host it will actually reach. */
   url?: string;
+}
+
+/** Which category each held-back change lives in, so the apply can suppress exactly that one and
+ *  let everything else through. */
+function catOf(kind: SecurityChange["kind"]): SyncCategory {
+  return kind === "recording-retention" || kind === "save-recordings" ? "recording" : "backends";
+}
+
+/** `cats` with every category that has a held-back change switched OFF. */
+function heldBack(
+  cats: Record<SyncCategory, boolean>,
+  risky: SecurityChange[],
+): Record<SyncCategory, boolean> {
+  const out = { ...cats };
+  for (const c of risky) out[catOf(c.kind)] = false;
+  return out;
 }
 
 /** Compare what a pull would apply against what this device holds, and report only the
@@ -901,8 +919,35 @@ function securityChanges(
   local: SyncBlob,
   cats: Record<SyncCategory, boolean>,
 ): SecurityChange[] {
-  if (!cats.backends || !incoming.backends) return [];
   const out: SecurityChange[] = [];
+  // The `recording` category looks like styling but carries two settings with real consequences:
+  // the retention window drives a sweep that DELETES saved recordings and their transcripts, and
+  // `saveRecordings` turns on a permanent plaintext archive of everything dictated. Both applied
+  // silently on an unattended pull. They get the same confirmation as a repointed server.
+  if (cats.recording && incoming.recording) {
+    const nextDays = incoming.recording.recordingsRetentionDays ?? 0;
+    const hereDays = local.recording?.recordingsRetentionDays ?? 0;
+    // Only a change that starts deleting, or deletes sooner, needs consent — lengthening the
+    // window (or turning retention off) destroys nothing.
+    if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
+      out.push({
+        kind: "recording-retention",
+        backend: "",
+        detail:
+          hereDays === 0
+            ? `saved recordings older than ${nextDays} day(s) would start being deleted`
+            : `saved recordings would be deleted after ${nextDays} day(s) instead of ${hereDays}`,
+      });
+    }
+    if (incoming.recording.saveRecordings && !local.recording?.saveRecordings) {
+      out.push({
+        kind: "save-recordings",
+        backend: "",
+        detail: "every dictation would be saved to this device as audio and text",
+      });
+    }
+  }
+  if (!cats.backends || !incoming.backends) return out;
   const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));
   const localSecrets = local.backends?.secrets ?? {};
   const nextSecrets = incoming.backends.secrets ?? {};
@@ -962,7 +1007,7 @@ function raiseReview(r: PendingReview): void {
   setRuntime({
     syncStatus: "error",
     syncError:
-      "A pulled update wants to change where your dictation is sent — review it in Settings → Sync.",
+      "A pulled update wants to change where your dictation is sent, or what is kept on this device — review it in Settings → Sync.",
   });
 }
 
@@ -1025,7 +1070,7 @@ export async function resolveSyncConflicts(
   // persist no base so a rejection is re-offered on the next pull.
   const risky = securityChanges(final, c.local, applyCats);
   if (risky.length > 0) {
-    await applyBlob(final, { ...applyCats, backends: false });
+    await applyBlob(final, heldBack(applyCats, risky));
     raiseReview({
       changes: risky,
       blob: final,

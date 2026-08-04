@@ -807,7 +807,12 @@ pub async fn cancel_record(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<RecordState>();
         let sess = state.0.lock().map_err(|_| "record state poisoned".to_string())?.take();
-        drop(sess); // Drop (not finish) runs OUTSIDE the lock — no transcription POST, releases the mute
+        // discard() (not finish, not a bare drop) runs OUTSIDE the lock: it marks the clip discarded
+        // BEFORE Drop joins the capture thread, so the device-loss salvage arm inside that join does
+        // not upload the audio or write the .wav/.txt. Then Drop stops capture and releases the mute.
+        if let Some(s) = sess {
+            s.discard();
+        }
         session::retire_active_epoch(); // discarded session (+ any in-flight transcribe POST) must never emit again
         Ok(())
     })

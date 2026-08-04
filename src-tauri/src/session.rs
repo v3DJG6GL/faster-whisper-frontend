@@ -540,6 +540,11 @@ pub struct RecordSession {
     // Set by the capture thread's err_cb on a TERMINAL device loss; finish() reads it to avoid
     // double-transcribing (the device-loss arm already salvaged the buffer + spawned its transcribe).
     device_lost: Arc<AtomicBool>,
+    // Set by `discard()` (the user cancelled). The capture thread's device-loss salvage arm runs
+    // INSIDE Drop's join, so without this a cancel that races a mic disconnect still uploaded the
+    // clip and wrote the .wav/.txt — `retire_active_epoch` only suppresses the UI events, not the
+    // POST or the disk write.
+    discard: Arc<AtomicBool>,
     _mute: SystemMuteGuard,
 }
 
@@ -553,6 +558,13 @@ impl Drop for RecordSession {
 }
 
 impl RecordSession {
+    /// Throw the clip away: mark it discarded BEFORE `Drop` joins the capture thread, so the
+    /// device-loss salvage arm does not upload it or write its sidecar, then let `Drop` stop and
+    /// join as usual.
+    pub fn discard(self) {
+        self.discard.store(true, Ordering::SeqCst);
+    }
+
     /// Stop recording and transcribe the captured clip in the background.
     pub fn finish(mut self) {
         self.capture_stop.store(true, Ordering::SeqCst);
@@ -591,6 +603,7 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
     // Set by the capture err_cb on a TERMINAL device loss (vs a user/finish stop), so the post-capture
     // arm below can emit a recovery "closed" only on a real disconnect.
     let device_lost = Arc::new(AtomicBool::new(false));
+    let discard = Arc::new(AtomicBool::new(false));
 
     let capture_join = {
         let app = app.clone();
@@ -598,6 +611,7 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
         let level = level.clone();
         let stop = capture_stop.clone();
         let device_lost = device_lost.clone();
+        let discard = discard.clone();
         // Cloned for the device-loss salvage arm below (transcribe what was captured). `p` itself is
         // moved into the RecordSession; `buffer` is cloned into the call so the arm keeps its own Arc.
         let params = p.clone();
@@ -627,7 +641,10 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
                     // racing finish()/cancel_record joins this thread first, then takes an
                     // already-emptied buffer → empty pcm → transcribe_recording early-returns, so there
                     // is no double-transcribe. finish() (the user stop) never sets `device_lost`.
-                    Ok(()) if device_lost.load(Ordering::SeqCst) => {
+                    // ...unless the user CANCELLED. A cancel means "discard this clip", and that has
+                    // to beat the salvage: otherwise a cancel that races a mic disconnect still sends
+                    // the audio to the server and leaves the .wav + plaintext transcript on disk.
+                    Ok(()) if device_lost.load(Ordering::SeqCst) && !discard.load(Ordering::SeqCst) => {
                         let pcm = buffer
                             .lock()
                             .map(|mut b| std::mem::take(&mut *b))
@@ -653,6 +670,7 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
         capture_stop,
         capture_join: Some(capture_join),
         device_lost,
+        discard,
         _mute: mute,
     })
 }
