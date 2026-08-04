@@ -623,7 +623,16 @@ async function replaceSelectionAfterClose(
   // newline into a real Enter — which would SUBMIT whatever the corrected word landed in. A
   // word mapping is a single line by construction, so fold controls to spaces.
   const safe = corrected.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
-  await injectText({ text: safe, method, autoEnter: false, restoreClipboard: method === "paste", pasteShortcut });
+  // Same re-check as the dictation path: this one deliberately waits for the WM to hand focus
+  // back before resolving, so focus can move again between that resolve and the keystrokes.
+  await injectText({
+    text: safe,
+    method,
+    autoEnter: false,
+    restoreClipboard: method === "paste",
+    pasteShortcut,
+    expectAppId: app?.appId ?? null,
+  });
 }
 
 function errTitle(f: PipelineFetch | null): string {

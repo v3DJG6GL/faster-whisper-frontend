@@ -161,10 +161,19 @@ pub fn client() -> reqwest::Client {
                 //
                 // Same-host hops still follow, so a server that redirects http→https or normalizes
                 // a trailing slash keeps working; only the cross-host case is refused.
+                // The same-host test alone was not enough, because it says nothing about the
+                // SCHEME. reqwest drops `Authorization` when host, port or scheme changes, but it
+                // replays the BODY verbatim on 307/308 — and the sync PUT body carries every
+                // backend's plaintext API key. So `308 Location: http://<same host>/…` counted as
+                // same-host, was followed, and re-sent that credential set in the clear for anyone
+                // on the path to read. Refuse the downgrade specifically: http→https (the proxy
+                // case) and every same-scheme hop still follow.
                 .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                    let same_host = attempt.previous().last().and_then(|u| u.host_str())
-                        == attempt.url().host_str();
-                    if !same_host {
+                    let prev = attempt.previous().last();
+                    let same_host = prev.and_then(|u| u.host_str()) == attempt.url().host_str();
+                    let downgrades_tls =
+                        prev.is_some_and(|u| u.scheme() == "https") && attempt.url().scheme() != "https";
+                    if !same_host || downgrades_tls {
                         attempt.stop()
                     } else if attempt.previous().len() > 5 {
                         attempt.error("too many redirects")

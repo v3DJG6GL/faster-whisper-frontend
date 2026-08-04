@@ -10,8 +10,38 @@
 //! a native libei path is M7) and `arboard` for the clipboard.
 
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
+
+/// Generation counter for "the injection in flight is no longer wanted".
+///
+/// The Wayland typing paths emit ONE KEY AT A TIME with fixed inter-key sleeps — roughly a
+/// hundred characters a second — and used to run to completion unconditionally. The frontend's
+/// cancel checks sit before and after the awaited injection, never inside it, so stopping
+/// dictation, cancelling, or closing the window did not stop the keys already going out; a long
+/// enough transcript keeps typing for hours, into whatever window happens to hold focus as the
+/// user moves around. Each injection captures the counter at entry and re-reads it between keys;
+/// a cancel bumps it and every loop in flight bails at its next character.
+///
+/// A generation rather than a flag, so a cancel can never leak into the NEXT injection: the new
+/// one captures the already-bumped value.
+static INJECT_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// The value an injection starting NOW should carry.
+pub fn injection_epoch() -> u64 {
+    INJECT_EPOCH.load(Ordering::SeqCst)
+}
+
+/// Abandon whatever is currently being typed, at its next character boundary.
+pub fn cancel_injection() {
+    INJECT_EPOCH.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Has the injection that started at `epoch` been cancelled since?
+pub fn injection_cancelled(epoch: u64) -> bool {
+    INJECT_EPOCH.load(Ordering::SeqCst) != epoch
+}
 
 /// The last text WE placed on the clipboard for an insertion (transcript paste, clipboard-only
 /// insert, Wayland paste). Guards every "capture the user's previous clipboard" site: if a

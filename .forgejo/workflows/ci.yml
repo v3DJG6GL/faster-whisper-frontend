@@ -129,3 +129,19 @@ jobs:
       - name: cargo test
         if: runner.os == 'Linux'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      # Advisory scan of the Rust tree — where the network stack (reqwest/rustls,
+      # tokio-tungstenite), the clipboard, keystroke synthesis and the OS keyring live, and the
+      # half of the dependency graph `pnpm audit` cannot see. Linux only: Cargo.lock is
+      # platform-independent, so a second run on Windows would scan the same lockfile.
+      # Accepted advisories (with reasons) live in src-tauri/.cargo/audit.toml — a NEW one on a
+      # crate that actually handles untrusted bytes should fail this job.
+      - name: cargo audit
+        if: runner.os == 'Linux'
+        # Run from src-tauri: cargo-audit resolves .cargo/audit.toml relative to the working
+        # directory, so invoking it from the repo root would silently ignore the accepted-advisory
+        # list and fail the build on entries we have already decided about.
+        working-directory: src-tauri
+        run: |
+          cargo audit --version >/dev/null 2>&1 || cargo install cargo-audit --locked
+          cargo audit

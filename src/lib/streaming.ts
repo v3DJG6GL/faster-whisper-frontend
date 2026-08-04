@@ -185,7 +185,7 @@ function enqueueAutoEnter(): void {
     // the PTT chord is still physically held, so the Enter would fold into the held modifier (mirrors
     // the live-final useClipboard guard). A hold session is clipboard-coerced, so nothing was typed here.
     if (t.method === "clipboard" || cfg?.activation === "hold") return;
-    await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+    await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
   });
 }
 
@@ -283,7 +283,14 @@ export function resolveInjectionTarget(
  *  per-app rules follow window switches mid-session: a latched/live dictation that moves
  *  from Konsole to another app picks up each window's own rule instead of being frozen to
  *  whatever was focused when dictation began. Shares resolveInjectionTarget with startLive. */
-async function resolveTarget(): Promise<{ method: InsertCfg["method"]; pasteShortcut: string[]; isSelf: boolean }> {
+async function resolveTarget(): Promise<{
+  method: InsertCfg["method"];
+  pasteShortcut: string[];
+  isSelf: boolean;
+  /** The app the rule below was resolved against, handed to Rust so it can confirm focus hasn't
+   *  moved by the time the keys actually go out. */
+  appId: string | null;
+}> {
   const g = useApp.getState().settings.general;
   const appRules = useApp.getState().appRules;
   const targetApp = await getFocusedApp();
@@ -291,14 +298,14 @@ async function resolveTarget(): Promise<{ method: InsertCfg["method"]; pasteShor
   // Show it as "→ this app" (neutral, no warn hint) and don't match an app rule / field guard.
   if (targetApp?.isSelf) {
     publishTarget(targetApp, null);
-    return { method: g.insertMethod, pasteShortcut: g.pasteShortcut, isSelf: true };
+    return { method: g.insertMethod, pasteShortcut: g.pasteShortcut, isSelf: true, appId: null };
   }
   const { rule, notEditable, method, pasteShortcut } = resolveInjectionTarget(targetApp ?? null, appRules, g);
   // Keep the chip's "→ app" readout + skip hint live as focus moves mid-session: this resolves
   // the CURRENT window on every call, so it's the chip's source of truth — not the frozen
   // start-of-session value.
   publishTarget(targetApp ?? null, rule?.block ? "blocked" : notEditable ? "notEditable" : null);
-  return { method, pasteShortcut, isSelf: false };
+  return { method, pasteShortcut, isSelf: false, appId: targetApp?.appId ?? null };
 }
 
 /** Push the resolved injection target into the store (deduped) so the chip's "→ app" readout +
@@ -655,7 +662,7 @@ async function ensureListeners(): Promise<void> {
           // mid-speech doesn't re-copy + re-pulse the last phrase on the re-sent final.
           if (phraseClip.length > 0 && grew) {
             try {
-              await injectText({ text: phraseClip, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+              await injectText({ text: phraseClip, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
             } catch (e) {
               // A live phrase's clipboard copy failed: surface it AND tear the session down. Once
               // flashError sets status "error" no further phrase reaches this catch (the old "just
@@ -718,7 +725,7 @@ async function ensureListeners(): Promise<void> {
             // Any snapshot taken is restored by cancelLive's unconditional chained endInjection.
             if (insertCfg !== cfg) return;
             try {
-              await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+              await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
             } catch (e) {
               // A live phrase insert failed: surface it, then tear the session down (mirrors
               // stream://error) so the mic + system-mute don't leak — once status is "error" no
@@ -730,7 +737,7 @@ async function ensureListeners(): Promise<void> {
               if (t.method === "direct") {
                 // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
                 try {
-                  await injectText({ text: toType, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+                  await injectText({ text: toType, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
                   flashError("Couldn’t type the text — it’s on the clipboard to paste manually.");
                 } catch (e2) {
                   console.error("clipboard fallback after failed live insert failed:", e2);
@@ -826,9 +833,9 @@ async function ensureListeners(): Promise<void> {
           // (the held modifier would fold into the separator/Enter once focus moved to a typing window).
           if (t.method === "clipboard" || insertCfg?.activation === "hold") return;
           if (sep.includes("\n")) {
-            await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+            await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
           } else {
-            await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+            await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
             // A cancel-then-fresh-start during the paste await must not stamp the OLD session's clipboard
             // bookkeeping (clipHoldsOurs / a restore) onto the new one — mirrors the inject tasks' guard.
             if (insertCfg !== cfg) return;
@@ -997,7 +1004,7 @@ async function ensureListeners(): Promise<void> {
               method: t.method,
               autoEnter: cfg.autoEnter,
               restoreClipboard: cfg.restoreClipboard,
-              pasteShortcut: t.pasteShortcut,
+              pasteShortcut: t.pasteShortcut, expectAppId: t.appId,
             });
           } catch (e) {
             // The whole-session insert IS the product of the dictation. A failure here (portal
@@ -1019,7 +1026,7 @@ async function ensureListeners(): Promise<void> {
             let onClipboard = t.method !== "direct";
             if (t.method === "direct") {
               try {
-                await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut });
+                await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
                 onClipboard = true;
               } catch (e2) {
                 console.error("clipboard fallback after failed insert failed:", e2);

@@ -1,0 +1,27 @@
+# cargo-audit configuration.
+#
+# The Rust tree is where this app's real attack surface lives — TLS to an untrusted transcription
+# server, WebSocket framing, the clipboard, keystroke synthesis, the OS keyring — so it is scanned
+# on every CI run. The point of this file is to keep that signal USEFUL: each entry below is an
+# advisory that has been looked at and consciously accepted, with the reason, so that a NEW
+# advisory on reqwest / rustls / tokio-tungstenite / arboard stands out instead of drowning.
+#
+# Adding an id here is a security decision. Record why, and what would make it reachable.
+
+[advisories]
+ignore = [
+    # quick-xml 0.39.4 — both are denial-of-service on hostile XML (unbounded namespace-declaration
+    # allocation; quadratic duplicate-attribute check). Reached only via
+    # plist <- tauri-utils <- tauri-build: bundle metadata this repo authors itself at build time.
+    # No attacker-supplied XML reaches a quick-xml parser at runtime — everything the server sends
+    # is JSON. Not fixable here either: plist pins ^0.39, so the bump has to come from Tauri.
+    # DELETE THESE TWO LINES once renovate lands a tauri release that moves plist to quick-xml
+    # >= 0.41, and let the scanner confirm it.
+    "RUSTSEC-2026-0195",
+    "RUSTSEC-2026-0194",
+]
+
+# `unmaintained` and `unsound` advisories are reported but do NOT fail the build. The GTK3 binding
+# family (gtk / gdk / atk / glib 0.18) is unmaintained-but-deliberate — Cargo.toml pins it to
+# tao/wry's ABI and renovate.json lists it in ignoreDeps — so "fixing" it would mean breaking the
+# webview. Leaving them visible-but-non-fatal is what keeps the list worth reading.

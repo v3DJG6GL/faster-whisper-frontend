@@ -190,13 +190,20 @@ fn write_new_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     f.sync_all()
 }
 
-/// Create the recordings directory owner-only (0700 on Unix).
+/// Create the recordings directory owner-only — 0700 on Unix, an owner-only inheritable DACL on
+/// Windows.
 ///
 /// The files themselves have been 0600 since `write_new_private`, but the containing directory was
 /// still created with `create_dir_all`'s default (0777 & ~umask, typically 0755) — and the folder
 /// is USER-CHOSEN, so it may sit somewhere shared. A listing of it is a per-second timestamped log
 /// of every dictation the user made: when they dictate, how often, and how large the archive is.
-/// A directory that already exists keeps whatever mode the user gave it.
+/// A directory that already exists keeps whatever permissions the user gave it.
+///
+/// Both halves used to be `#[cfg(unix)]`, so on Windows the promise this function's name makes was
+/// simply not kept: the directory took its parent's inherited ACL, and so did every `.wav` and its
+/// verbatim `.txt` transcript. A folder outside the user profile — `C:\Users\Public`, a mapped
+/// share, a OneDrive or Dropbox folder — therefore left the recordings readable by other local
+/// accounts and to whatever sync client owns that tree.
 pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -206,10 +213,103 @@ pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
         }
         return std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir);
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        if dir.exists() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(dir)?;
+        // Best-effort, deliberately: a failure here must not stop the user recording. It is logged
+        // so a broken ACL is diagnosable rather than silent.
+        if let Err(e) = windows_owner_only_dacl(dir) {
+            tracing::warn!("[audio] could not restrict {} to the current user: {e}", dir.display());
+        }
+        return Ok(());
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         std::fs::create_dir_all(dir)
     }
+}
+
+/// Replace `dir`'s DACL with a single inheritable ACE granting the current user full control, and
+/// mark it PROTECTED so the parent's inherited entries do not apply. New files created inside
+/// inherit that one ACE, which is what carries the guarantee to the `.wav`/`.txt` pairs.
+#[cfg(windows)]
+fn windows_owner_only_dacl(dir: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{LocalFree, HANDLE};
+    use windows_sys::Win32::Security::Authorization::{
+        SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W, NO_MULTIPLE_TRUSTEE,
+        SET_ACCESS, SE_FILE_OBJECT, TRUSTEE_IS_SID, TRUSTEE_IS_USER, TRUSTEE_W,
+    };
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, TokenUser, ACL, DACL_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, SUB_CONTAINERS_AND_OBJECTS_INHERIT, TOKEN_QUERY,
+        TOKEN_USER,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
+
+    let mut wide: Vec<u16> = dir.as_os_str().encode_wide().collect();
+    wide.push(0);
+
+    unsafe {
+        // The current user's SID, read out of this process's own token.
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut needed: u32 = 0;
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut needed);
+        let mut buf = vec![0u8; needed.max(1) as usize];
+        let ok = GetTokenInformation(
+            token,
+            TokenUser,
+            buf.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        );
+        windows_sys::Win32::Foundation::CloseHandle(token);
+        if ok == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let sid = (*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid;
+
+        let mut ea: EXPLICIT_ACCESS_W = std::mem::zeroed();
+        ea.grfAccessPermissions = FILE_ALL_ACCESS;
+        ea.grfAccessMode = SET_ACCESS;
+        ea.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+        ea.Trustee = TRUSTEE_W {
+            pMultipleTrustee: std::ptr::null_mut(),
+            MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_USER,
+            ptstrName: sid.cast(),
+        };
+
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        if SetEntriesInAclW(1, &ea, std::ptr::null_mut(), &mut acl) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let rc = SetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            acl,
+            std::ptr::null_mut(),
+        );
+        if !acl.is_null() {
+            LocalFree(acl.cast());
+        }
+        if rc != 0 {
+            return Err(std::io::Error::from_raw_os_error(rc as i32));
+        }
+    }
+    Ok(())
 }
 
 /// Save mono s16le PCM as a timestamped `.wav` under `dir`; returns the saved path on

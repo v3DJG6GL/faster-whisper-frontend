@@ -35,6 +35,8 @@ pub struct VkJob {
     text: String,
     auto_enter: bool,
     reply: oneshot::Sender<Result<(), VkError>>,
+    /// See `crate::inject::injection_epoch` — lets the per-key loop abandon a superseded job.
+    epoch: u64,
 }
 
 #[cfg_attr(windows, allow(dead_code))] // Active is only constructed by the Linux worker startup
@@ -60,11 +62,12 @@ pub struct VirtualKeyboard(Mutex<VkChannel>);
 /// when it's true, some keys already landed and re-typing would duplicate them. The setup/plumbing
 /// failures here are all "nothing typed yet" (after_typing: false).
 pub async fn type_text(vk: &VirtualKeyboard, text: &str, auto_enter: bool) -> Result<(), VkError> {
+    let epoch = crate::inject::injection_epoch();
     let tx = ensure_started(vk)
         .await
         .map_err(|message| VkError { message, after_typing: false })?;
     let (reply, reply_rx) = oneshot::channel();
-    tx.send(VkJob { text: text.to_string(), auto_enter, reply })
+    tx.send(VkJob { text: text.to_string(), auto_enter, reply, epoch })
         .map_err(|_| VkError { message: "virtual keyboard thread gone".into(), after_typing: false })?;
     reply_rx
         .await
@@ -157,7 +160,7 @@ mod imp {
             }
         };
         while let Some(job) = rx.blocking_recv() {
-            let res = conn.type_text(&job.text, job.auto_enter);
+            let res = conn.type_text(&job.text, job.auto_enter, job.epoch);
             let failed = res.is_err();
             let _ = job.reply.send(res);
             if failed {
@@ -201,7 +204,7 @@ mod imp {
             Ok(Self { conn, queue, state, vk, start: Instant::now() })
         }
 
-        fn type_text(&mut self, text: &str, auto_enter: bool) -> Result<(), VkError> {
+        fn type_text(&mut self, text: &str, auto_enter: bool, epoch: u64) -> Result<(), VkError> {
             // Helper: an error raised BEFORE any key was transmitted (keymap upload, limit, the
             // pre-key roundtrip) is safe to fall back to the portal. `before` builds those.
             let before = |e: String| VkError { message: e, after_typing: false };
@@ -245,6 +248,14 @@ mod imp {
             // must NOT re-type the whole text (it would duplicate it). Track that with `emitted`.
             let mut emitted = false;
             for name in &order {
+                // Same mid-typing cancellation as the portal path: this loop sleeps between every
+                // key, so a long transcript otherwise keeps going long after the user stopped.
+                // Reported as an already-typed prefix (`after_typing: true`) so the portal
+                // fallback does NOT re-type what landed.
+                if crate::inject::injection_cancelled(epoch) && emitted {
+                    tracing::info!("[vkbd] cancelled mid-typing — stopping");
+                    return Err(VkError { message: "cancelled".into(), after_typing: true });
+                }
                 let code = idx_of[name];
                 let t = self.start.elapsed().as_millis() as u32;
                 self.vk.key(t, code, 1); // pressed

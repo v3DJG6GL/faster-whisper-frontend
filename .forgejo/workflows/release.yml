@@ -225,6 +225,8 @@ jobs:
           fi
           echo "release id: $id"
           shopt -s nullglob
+          sums=SHA256SUMS-linux.txt
+          : > "$sums"
           for f in src-tauri/target/release/bundle/deb/*.deb \
                    src-tauri/target/release/bundle/appimage/*.AppImage; do
             name=$(basename "$f")
@@ -238,7 +240,27 @@ jobs:
             curl -fsS -H "$hdr" -X POST \
               "$api/repos/$REPO/releases/$id/assets?name=$name" \
               -F "attachment=@$f" > /dev/null
+            # Record the digest as we go. Installers are deliberately unsigned, and the release
+            # API exposes no digest of its own (verified against this instance's swagger: the
+            # Attachment schema is id/name/size/uuid/created_at/download_count/url/type), so
+            # without this file a downloader — and the GitHub mirror — have nothing but the byte
+            # count to tell a good copy from a bad one.
+            node -e 'const c=require("crypto"),f=require("fs"),p=require("path");const a=process.argv[1];console.log(c.createHash("sha256").update(f.readFileSync(a)).digest("hex")+"  "+p.basename(a))' "$f" >> "$sums"
           done
+          # Each leg writes its OWN sums file: the two build jobs upload into the same draft
+          # release concurrently, so a single shared name would race.
+          if [ -s "$sums" ]; then
+            sname=$(basename "$sums")
+            curl -sS -H "$hdr" "$api/repos/$REPO/releases/$id/assets" \
+              | jq -r --arg n "$sname" '.[] | select(.name==$n) | .id' \
+              | while read -r aid; do
+                  curl -fsS -H "$hdr" -X DELETE "$api/repos/$REPO/releases/$id/assets/$aid"
+                done
+            echo "uploading $sname"
+            curl -fsS -H "$hdr" -X POST \
+              "$api/repos/$REPO/releases/$id/assets?name=$sname" \
+              -F "attachment=@$sums" > /dev/null
+          fi
 
       - name: Upload installers as run artifacts (build-only run)
         if: steps.rel.outputs.tag == ''
@@ -355,6 +377,8 @@ jobs:
           fi
           echo "release id: $id"
           shopt -s nullglob
+          sums=SHA256SUMS-windows.txt
+          : > "$sums"
           for f in src-tauri/target/release/bundle/msi/*.msi \
                    src-tauri/target/release/bundle/nsis/*.exe; do
             name=$(basename "$f")
@@ -368,7 +392,20 @@ jobs:
             curl -fsS -H "$hdr" -X POST \
               "$api/repos/$REPO/releases/$id/assets?name=$name" \
               -F "attachment=@$f" > /dev/null
+            node -e 'const c=require("crypto"),f=require("fs"),p=require("path");const a=process.argv[1];console.log(c.createHash("sha256").update(f.readFileSync(a)).digest("hex")+"  "+p.basename(a))' "$f" >> "$sums"
           done
+          if [ -s "$sums" ]; then
+            sname=$(basename "$sums")
+            curl -sS -H "$hdr" "$api/repos/$REPO/releases/$id/assets" \
+              | node -e 'for (const a of JSON.parse(require("fs").readFileSync(0,"utf8"))) if (a.name === process.argv[1]) console.log(a.id)' "$sname" \
+              | while read -r aid; do
+                  curl -fsS -H "$hdr" -X DELETE "$api/repos/$REPO/releases/$id/assets/$aid"
+                done
+            echo "uploading $sname"
+            curl -fsS -H "$hdr" -X POST \
+              "$api/repos/$REPO/releases/$id/assets?name=$sname" \
+              -F "attachment=@$sums" > /dev/null
+          fi
 
       - name: Upload installers as run artifacts (build-only run)
         if: steps.rel.outputs.tag == ''

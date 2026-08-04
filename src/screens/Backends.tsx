@@ -636,6 +636,11 @@ function RestoreOffer({
 export default function Backends() {
   const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
+  // Subscribed, not read imperatively, so the card re-renders when an override changes.
+  const urlOverrides = useApp((s) => s.settings.sync?.urlOverrides);
+  /** Where requests for this backend ACTUALLY go — mirrors `effectiveServerUrl`, which the Test
+   *  button on the same row already uses. */
+  const effectiveUrl = (b: Backend) => urlOverrides?.[b.id]?.trim() || b.serverUrl;
   const upsertBackend = useApp((s) => s.upsertBackend);
   const removeBackend = useApp((s) => s.removeBackend);
   const duplicateBackend = useApp((s) => s.duplicateBackend);
@@ -778,16 +783,27 @@ export default function Backends() {
                     </div>
                     <div className="mt-1 flex items-center gap-2 font-mono text-[12px] text-dim">
                       {/* The card is the audit surface — non-security sync categories still apply
-                          silently, so this is where a user checks where dictation goes. A URL's
-                          real authority is whatever follows the last `@`, and the truncate class
-                          hides the tail, so `http://localhost:8000@evil.tld/v1` read as loopback.
-                          Show the parsed host, and flag an address that hides it. */}
-                      <span className="truncate" title={safeDisplayText(b.serverUrl, 200)}>
-                        {safeDisplayText(authorityOf(b.serverUrl)?.host, 80) ||
-                          safeDisplayText(b.serverUrl, 80)}
+                          silently, so this is where a user checks where dictation goes. Two ways
+                          that went wrong. A URL's real authority is whatever follows the last `@`,
+                          and the truncate class hides the tail, so `http://localhost:8000@evil.tld/v1`
+                          read as loopback — hence the parsed host and the badge. And this line
+                          showed the CANONICAL address while every request goes to
+                          `effectiveServerUrl`, which prefers a per-backend URL override: the
+                          override applies whether or not sync is on, survives turning sync off,
+                          and the Test button beside this line already used it. So the row could
+                          name one host while the audio and the bearer key went to another. Show
+                          the address actually used, and say so when it isn't the configured one. */}
+                      <span className="truncate" title={safeDisplayText(effectiveUrl(b), 200)}>
+                        {safeDisplayText(authorityOf(effectiveUrl(b))?.host, 80) ||
+                          safeDisplayText(effectiveUrl(b), 80)}
                       </span>
-                      {authorityOf(b.serverUrl)?.hasUserinfo && (
+                      {authorityOf(effectiveUrl(b))?.hasUserinfo && (
                         <Badge tone="warn">address hides the real host</Badge>
+                      )}
+                      {effectiveUrl(b) !== b.serverUrl && (
+                        <span title={`Configured: ${safeDisplayText(b.serverUrl, 200)}`}>
+                          <Badge tone="warn">override in use</Badge>
+                        </span>
                       )}
                       <span className="text-faint">·</span>
                       <span className="text-faint">{b.model}</span>

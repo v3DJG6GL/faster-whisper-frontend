@@ -33,8 +33,10 @@
 #   * Drafts are skipped (release.yml stages uploads in a draft before
 #     flipping it live — mirroring one would leak a half-built release).
 #   * Existing GitHub releases get name/body/prerelease drift patched.
-#   * Assets are matched by name and compared by size (the Forgejo API
-#     exposes no digest); a size mismatch means an interrupted upload,
+#   * Assets are matched by name and compared by size (neither the Forgejo nor
+#     the GitHub release API exposes a digest for an attachment); every
+#     downloaded byte is then verified against the release's own SHA256SUMS
+#     file before it is pushed on. A size mismatch means an interrupted upload,
 #     so the GitHub copy is replaced.
 #   * Releases are processed oldest-first so GitHub's "latest release"
 #     badge lands on the newest non-prerelease after a backfill.
@@ -173,6 +175,23 @@ jobs:
             rid=$(jq -r '.id' <<<"$dstrel")
             dassets=$(jq -c '[.assets[] | {id, name, size}]' <<<"$dstrel")
 
+            # The release publishes a SHA256SUMS file per build leg. Pull them first so every
+            # other asset can be checked against a real digest rather than just its byte count —
+            # the API exposes no digest of its own on either side (verified: Forgejo's Attachment
+            # schema has none, and neither does GitHub's).
+            : > allsums.txt
+            while IFS= read -r sasset; do
+              sname=$(jq -r '.name' <<<"$sasset")
+              case "$sname" in
+                SHA256SUMS*) ;;
+                *) continue ;;
+              esac
+              if sget -o sums.txt "$(jq -r '.browser_download_url' <<<"$sasset")"; then
+                cat sums.txt >> allsums.txt
+              fi
+              rm -f sums.txt
+            done < <(jq -c '.assets[]' <<<"$rel")
+
             while IFS= read -r asset; do
               aname=$(jq -r '.name' <<<"$asset")
               asize=$(jq -r '.size' <<<"$asset")
@@ -192,6 +211,18 @@ jobs:
               if [ "$dl" != "$asize" ]; then
                 echo "::error::[$tag] $aname downloaded $dl bytes, expected $asize"
                 exit 1
+              fi
+              # And the bytes themselves, when the release published a digest for this name. A
+              # size check alone cannot tell a correct installer from a same-size replacement.
+              want=$(awk -v n="$aname" '$2 == n { print $1; exit }' allsums.txt)
+              if [ -n "$want" ]; then
+                got=$(sha256sum asset.bin | cut -d" " -f1)
+                if [ "$want" != "$got" ]; then
+                  echo "::error::[$tag] $aname sha256 $got does not match the published $want"
+                  exit 1
+                fi
+              elif [ "${aname#SHA256SUMS}" = "$aname" ]; then
+                echo "[$tag] note: no published digest for $aname — size-checked only"
               fi
               dput -X POST "https://uploads.github.com/repos/$DST_REPO/releases/$rid/assets?name=$aname" \
                 -H 'Content-Type: application/octet-stream' \

@@ -480,6 +480,11 @@ export async function injectText(args: {
   autoEnter: boolean;
   restoreClipboard: boolean;
   pasteShortcut: string[];
+  /** The app whose per-app rule produced `method`. Rust re-checks the focused window against this
+   *  immediately before typing and degrades to clipboard-only if focus moved, so a rule resolved
+   *  a second earlier can't be applied to a different window. Omit when there is no identified
+   *  target — an unidentified window deliberately still falls through. */
+  expectAppId?: string | null;
 }): Promise<void> {
   if (!isTauri) return;
   await invoke("inject_text", {
@@ -488,6 +493,7 @@ export async function injectText(args: {
     autoEnter: args.autoEnter,
     restoreClipboard: args.restoreClipboard,
     pasteShortcut: args.pasteShortcut,
+    expectAppId: args.expectAppId ?? null,
   });
 }
 

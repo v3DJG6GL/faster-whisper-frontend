@@ -743,6 +743,10 @@ pub async fn cancel_stream(app: AppHandle) -> Result<(), String> {
         let state = app.state::<StreamState>();
         let sess = state.0.lock().map_err(|_| "stream state poisoned".to_string())?.take();
         drop(sess); // Drop (not finish) runs OUTSIDE the lock — the guard released on the line above
+        // …and abandon any transcript still being typed out. The typing paths emit one key at a
+        // time, so without this a cancel only stopped FUTURE inserts while the current one kept
+        // going into whatever window had focus.
+        crate::inject::cancel_injection();
         session::retire_active_epoch(); // discarded session (+ any detached drain) must never emit again
         Ok(())
     })
@@ -833,6 +837,10 @@ pub async fn cancel_record(app: AppHandle) -> Result<(), String> {
         if let Some(s) = sess {
             s.discard();
         }
+        // …and abandon any transcript still being typed out. The typing paths emit one key at a
+        // time, so without this a cancel only stopped FUTURE inserts while the current one kept
+        // going into whatever window had focus.
+        crate::inject::cancel_injection();
         session::retire_active_epoch(); // discarded session (+ any in-flight transcribe POST) must never emit again
         Ok(())
     })
@@ -1401,6 +1409,10 @@ pub async fn inject_text(
     auto_enter: bool,
     restore_clipboard: bool,
     paste_shortcut: Vec<String>,
+    // `expect_app_id` is the app the CALLER resolved its per-app rule and insert method against.
+    // `None` = no identified target (our own window, or a cold a11y bridge), which skips the
+    // re-check below.
+    expect_app_id: Option<String>,
 ) -> Result<(), String> {
     // Strip control characters (except Tab/LF; CR is normalized to LF) from the server-transcribed
     // text before it reaches ANY injection path — clipboard-only, Wayland paste, or X11 paste/direct
@@ -1478,6 +1490,34 @@ pub async fn inject_text(
             }
         }
     }
+    // The per-app rule — including "never type into this app" — was resolved against the window
+    // focused when this insert was QUEUED, and getting here takes real time: a focus IPC, up to
+    // 400ms of clipboard read, and the 500ms modifier wait just above. In a live or latch session
+    // the user is expected to be switching windows, so the window that receives the keys may not
+    // be the one the decision was made for. Re-check now, at the sink.
+    //
+    // A mismatch degrades to clipboard-only — the same treatment a blocked or non-editable target
+    // already gets, so the text is preserved and nothing is typed into a window whose rule we
+    // never evaluated. An UNIDENTIFIED window still falls through unchanged: that is the
+    // deliberate fail-open behaviour, and a cold a11y bridge hits it routinely.
+    let method = match (&expect_app_id, crate::atspi_guard::focused_app_now(guard.inner())) {
+        (Some(expected), Some(now)) if !now.app_id.eq_ignore_ascii_case(expected) => {
+            tracing::warn!(
+                "[inject] focus moved {} → {} after the rule was resolved — clipboard only",
+                expected,
+                now.app_id
+            );
+            "clipboard".to_string()
+        }
+        _ => method,
+    };
+    if method == "clipboard" {
+        if !text.is_empty() {
+            crate::inject::set_clipboard_persistent(&text);
+        }
+        return Ok(());
+    }
+
     let res = if crate::inject::is_wayland() {
         if text.is_empty() && auto_enter && method != "direct" {
             // Auto-enter with no text on the PASTE path (the per-phrase / tail Enter): press Enter

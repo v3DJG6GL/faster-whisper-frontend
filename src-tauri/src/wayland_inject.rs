@@ -21,6 +21,10 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 #[cfg_attr(windows, allow(dead_code))] // the consuming typer task is Linux-only (RemoteDesktop portal)
 pub struct Job {
     text: String, // characters to type (empty for a paste chord)
+    /// Injection generation this job belongs to; the typing loop abandons the rest of `text` once
+    /// `crate::inject::injection_cancelled` reports it superseded. Without it a long transcript
+    /// kept typing into whatever held focus long after the user cancelled.
+    epoch: u64,
     paste: bool,  // true → synthesize the paste chord instead of typing `text`
     // The paste chord as KeyboardEvent.code strings (modifiers first, main key last) — NOT pre-resolved
     // keycodes — so the MAIN letter key is resolved by KEYSYM against the active layout's charmap inside
@@ -460,7 +464,10 @@ mod imp {
             guard.as_ref().unwrap().clone()
         };
         let (reply, reply_rx) = oneshot::channel();
-        tx.send(Job { text, paste, chord_codes, auto_enter, reply })
+        // Captured as the job is QUEUED: a cancel arriving after this point bumps the counter, so
+        // the loop abandons the job whether it has started typing yet or not.
+        let epoch = crate::inject::injection_epoch();
+        tx.send(Job { text, paste, chord_codes, auto_enter, reply, epoch })
             .await
             .map_err(|_| "wayland typer unavailable".to_string())?;
         reply_rx
@@ -584,6 +591,12 @@ mod imp {
                 // sidestep this, but KWin doesn't advertise it, so we're on this path.)
                 let caps = caps_lock_on();
                 for c in job.text.chars() {
+                    // Between characters, not just before the job: this loop runs at roughly a
+                    // hundred characters a second and follows the user's focus as they move.
+                    if crate::inject::injection_cancelled(job.epoch) {
+                        tracing::info!("[wayland-inject] cancelled mid-typing — stopping");
+                        break;
+                    }
                     let Some(spec) = key_spec_for(c, &charmap) else {
                         continue; // char not reachable on this layout — skip
                     };
