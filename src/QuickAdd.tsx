@@ -155,6 +155,24 @@ export default function QuickAdd() {
   const usedKeys = useMemo(() => new Set(rows.map((r) => r.k.trim().toLowerCase()).filter(Boolean)), [rows]);
   const suggestions = useMemo(() => recent.filter((w) => !usedKeys.has(w.toLowerCase())), [recent, usedKeys]);
 
+  /** The LOCAL half of `refresh`: theme plus the injection policy this window types under.
+   *
+   *  Split out because `refresh` is skipped on a summon whenever a save is pending, in flight,
+   *  or FAILED — and a persistently failing backend holds that error state for the life of the
+   *  window, so the policy refs froze at whatever was loaded at startup. A `block` rule the
+   *  user added afterwards ("never type into this app") was then invisible to the correction
+   *  path, which resolves against these refs. This read touches no server and never replaces
+   *  `rows`, so unlike the rows re-sync it cannot clobber an unsaved edit — same reasoning that
+   *  already split out `fetchRecent`. */
+  const refreshLocalConfig = useCallback(async () => {
+    const cfg = (await loadConfig())?.config ?? null;
+    if (!cfg) return;
+    themeRef.current = cfg.settings.theme;
+    applyTheme(cfg.settings.theme);
+    generalRef.current = cfg.settings.general;
+    appRulesRef.current = cfg.appRules ?? [];
+  }, []);
+
   const refresh = useCallback(async () => {
     const gen = ++loadGen.current;
     try {
@@ -271,6 +289,9 @@ export default function QuickAdd() {
           // "saving" while the PATCH awaits), OR a FAILED one (saveState "error") all mean the local
           // rows are newer-than-server, so skip the re-sync (refresh also resets saveState to "idle",
           // which would drop the only retry signal). Let the save flush / retry.
+          // Unconditionally, ahead of the branch below: the policy this window types under must
+          // never be older than the last summon, whatever the save state is doing.
+          void refreshLocalConfig();
           if (saveTimer.current === null && saveStateRef.current !== "error" && saveStateRef.current !== "saving") {
             void refresh();
           } else {
@@ -320,7 +341,7 @@ export default function QuickAdd() {
       cancelled = true;
       un?.();
     };
-  }, [refresh, fetchRecent, flushSave]);
+  }, [refresh, refreshLocalConfig, fetchRecent, flushSave]);
 
   // After a summon, land the cursor in "Insert" when we seeded a selection (the word's already
   // captured). This overrides the Combobox's autoFocus, running AFTER it in the same commit

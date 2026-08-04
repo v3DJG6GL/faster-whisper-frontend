@@ -20,6 +20,7 @@ import { effectiveServerUrl } from "@/lib/backends";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import type { Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
+import { safeDisplayText } from "@/lib/sanitize";
 
 const ACTIVATION = {
   hold: { icon: Mic, label: "Push-to-talk", hint: "Hold the hotkey while you speak; release to stop." },
@@ -365,10 +366,10 @@ function ProfileRow({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-[14px] font-semibold text-text">{p.name}</span>
-            {p.tag?.trim() && <Badge tone="accent">{p.tag.trim()}</Badge>}
+            <span className="truncate text-[14px] font-semibold text-text">{safeDisplayText(p.name, 80)}</span>
+            {p.tag?.trim() && <Badge tone="accent">{safeDisplayText(p.tag.trim(), 40)}</Badge>}
             <Badge>{meta.label}</Badge>
-            {p.language && <Badge>{languageLabel(p.language)}</Badge>}
+            {p.language && <Badge>{safeDisplayText(languageLabel(p.language), 40)}</Badge>}
             {p.endpoint && <Badge>{p.endpoint}</Badge>}
           </div>
           <div className="mt-1.5 flex items-center gap-3">

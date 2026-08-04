@@ -776,9 +776,15 @@ export default function Backends() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate text-[14px] font-semibold text-text">{b.name}</span>
+                      <span className="truncate text-[14px] font-semibold text-text" title={safeDisplayText(b.name, 200)}>
+                        {/* Sanitized like the address line below it, and for the same reason: a
+                            rename raises no security change, so a name arrives on this card from
+                            an unattended pull with no prompt — and bidi marks in it can make one
+                            server read as another on the screen used to check where audio goes. */}
+                        {safeDisplayText(b.name, 80)}
+                      </span>
                       <Badge tone="accent">{b.endpoint}</Badge>
-                      <Badge>{languageLabel(b.language)}</Badge>
+                      <Badge>{safeDisplayText(languageLabel(b.language), 40)}</Badge>
                       {b.hasApiKey && <Badge>key</Badge>}
                     </div>
                     <div className="mt-1 flex items-center gap-2 font-mono text-[12px] text-dim">
@@ -806,7 +812,7 @@ export default function Backends() {
                         </span>
                       )}
                       <span className="text-faint">·</span>
-                      <span className="text-faint">{b.model}</span>
+                      <span className="text-faint">{safeDisplayText(b.model, 80)}</span>
                     </div>
                   </div>
                   <div className="flex w-24 items-center justify-end gap-1.5 text-[12px] text-dim" title={conn?.error}>

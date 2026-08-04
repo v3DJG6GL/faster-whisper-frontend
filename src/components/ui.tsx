@@ -95,6 +95,11 @@ export function Badge({ children, tone }: { children: ReactNode; tone?: "accent"
   return (
     <span
       className={cn(
+        // `max-w` + `truncate`: badges carry remote-authored leaves (a backend's language, a
+        // profile's tag) whose sanitizers bound the LIST length, not the per-field length — and
+        // `languageLabel` returns an unknown code unchanged. Unbounded here, one field pushed
+        // the Test/Edit/Remove controls off the card it labels.
+        "inline-block max-w-[16ch] truncate align-bottom",
         "rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider",
         tone === "accent"
           ? "bg-accent-soft text-accent"

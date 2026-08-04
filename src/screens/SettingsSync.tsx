@@ -378,6 +378,19 @@ const MAX_REVIEW_ROWS = 50;
  *  remote-authored identity share one implementation — and one Cf denylist — with this one. */
 const safeText = safeDisplayText;
 
+/** The label for the "adopt the other device's value" arm of a conflict choice. The name is
+ *  server-supplied, so it must never be able to read as the arm beside it: a device calling
+ *  itself "This device" would produce two identical buttons on the control that decides whose
+ *  settings win. Fall back to the neutral wording on a collision (compared case- and
+ *  whitespace-insensitively, since the buttons are read, not parsed). */
+function remoteArmLabel(device: string | null): string {
+  const name = safeText(device, 60);
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  return name && norm(name) !== norm(LOCAL_ARM_LABEL) ? name : "Other device";
+}
+
+const LOCAL_ARM_LABEL = "This device";
+
 
 /** The addresses an incoming blob would install, shown BEFORE it is applied.
  *
@@ -522,8 +535,12 @@ function ConflictDialog() {
                 value={picks[c] ?? "local"}
                 onChange={(v) => setPicks((p) => ({ ...p, [c]: v }))}
                 options={[
-                  { value: "local", label: "This device" },
-                  { value: "remote", label: safeText(pending.remoteDevice, 60) || "Other device" },
+                  { value: "local", label: LOCAL_ARM_LABEL },
+                  // The server names this button. Defanging its characters does not stop it
+                  // reporting the literal string "This device" and rendering two identical
+                  // arms — on the one control that decides whose settings win, for categories
+                  // (general, profiles, app rules) that then apply with no second prompt.
+                  { value: "remote", label: remoteArmLabel(pending.remoteDevice) },
                 ]}
               />
             </SettingRow>
@@ -666,7 +683,12 @@ export function SyncTab() {
             disabled={!sync.enabled}
             options={backends.map((b) => ({
               value: b.id,
-              label: b.hasApiKey ? b.name : `${b.name} (no API key)`,
+              // This control picks which server receives EVERY backend's plaintext key, and a
+              // backend rename arrives with no prompt — so the label gets the same defanging as
+              // the device name on the conflict dialog.
+              label: b.hasApiKey
+                ? safeDisplayText(b.name, 80)
+                : `${safeDisplayText(b.name, 80)} (no API key)`,
             }))}
           />
         </SettingRow>
