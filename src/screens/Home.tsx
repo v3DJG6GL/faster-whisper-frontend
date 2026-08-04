@@ -10,6 +10,7 @@ import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/UsageStats";
 import { SetupChecklist } from "@/components/SetupChecklist";
 import { startLive, stopLive, cancelLive, requestStopIfStarting } from "@/lib/streaming";
+import { safeDisplayText } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile } from "@/lib/dictation";
 import type { Backend, Profile } from "@/lib/types";
 
@@ -307,7 +308,7 @@ export default function Home() {
               </div>
               {status === "error" && dictationError ? (
                 <div className="select-text text-[13.5px] leading-relaxed text-rec">
-                  {dictationError.slice(0, 500)}
+                  {safeDisplayText(dictationError, 500)}
                 </div>
               ) : (
                 <div className="min-h-6 select-text whitespace-pre-wrap text-[15px] leading-relaxed text-text">

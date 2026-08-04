@@ -7,6 +7,7 @@ import { Home, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindo
 import type { LucideIcon } from "lucide-react";
 import type { OverlayScreen, OverlayActionKind, OverlayQuickAction } from "./types";
 import { IS_LINUX, IS_WINDOWS } from "./platform";
+import { safeDisplayText } from "./sanitize";
 
 export interface ScreenDef {
   id: OverlayScreen;
@@ -60,5 +61,11 @@ export function quickLaunchMeta(e: OverlayQuickAction): { label: string; icon: L
     e.kind === "screen"
       ? SCREENS.find((s) => s.id === e.target)
       : OVERLAY_ACTIONS.find((a) => a.id === e.target);
-  return { label: reg?.label ?? e.target, icon: reg?.icon ?? SCREENS[0].icon };
+  // The registry branch is a bounded static string; the fallback is the entry's own `target`,
+  // which on a synced entry is server-chosen — and the Settings editor renders this label as a
+  // React child. Same split the overlay chip tag already guards against.
+  return {
+    label: reg?.label ?? safeDisplayText(e.target, 60),
+    icon: reg?.icon ?? SCREENS[0].icon,
+  };
 }

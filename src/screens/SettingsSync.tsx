@@ -197,9 +197,12 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
             API key re-entered after importing (not included in the file).
           </Notice>
         )}
-        {result.warnings.map((w) => (
+        {/* These interpolate a backend name straight out of the imported file. The missing-keys
+            line above renders the same field through safeText; this one did not, so a bidi
+            override could rewrite the sentence the user reads to decide whether to import. */}
+        {result.warnings.slice(0, 20).map((w) => (
           <Notice key={w} tone="warn">
-            {w}
+            {safeDisplayText(w, 300)}
           </Notice>
         ))}
         {predictedConflicts && (
@@ -506,7 +509,7 @@ function ConflictDialog() {
     <Modal onClose={dismissSyncConflict}>
       <div className="text-[15px] font-semibold text-text">Sync conflict</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
-        These settings changed both here and on {pending.remoteDevice || "another device"}. Pick which
+        These settings changed both here and on {safeText(pending.remoteDevice, 60) || "another device"}. Pick which
         version to keep — everything else was merged automatically.
       </div>
       <div className="mt-4">
@@ -520,7 +523,7 @@ function ConflictDialog() {
                 onChange={(v) => setPicks((p) => ({ ...p, [c]: v }))}
                 options={[
                   { value: "local", label: "This device" },
-                  { value: "remote", label: pending.remoteDevice || "Other device" },
+                  { value: "remote", label: safeText(pending.remoteDevice, 60) || "Other device" },
                 ]}
               />
             </SettingRow>
@@ -705,7 +708,7 @@ export function SyncTab() {
             {busy
               ? "Syncing…"
               : lastSyncedAt
-                ? `Last synced ${relTime(lastSyncedAt)}${lastSyncDevice ? ` · from ${lastSyncDevice}` : ""}`
+                ? `Last synced ${relTime(lastSyncedAt)}${lastSyncDevice ? ` · from ${safeText(lastSyncDevice, 60)}` : ""}`
                 : sync.enabled
                   ? "Not synced yet."
                   : "Sync is off."}

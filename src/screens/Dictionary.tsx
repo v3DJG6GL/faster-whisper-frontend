@@ -970,6 +970,11 @@ function SaveBanner({ result, reloadDisabled, onReload }: { result: PipelineSave
   // object-valued `msg` throws "Objects are not valid as a React child" — inside this render, so
   // the whole window goes with the user's unsaved edits the moment they click Save.
   const errors = (Array.isArray(result.errors) ? result.errors : [])
+    // Head-slice BEFORE the walk. Only six are ever shown, but the filter/map ran over the whole
+    // array and allocated an object per element — in a render body, in a banner that persists
+    // while the user edits (the edit handler doesn't clear `result`), so it re-ran on every
+    // keystroke. Every sibling list on this screen already has a ceiling.
+    .slice(0, 50)
     .filter((e) => !!e && typeof e === "object")
     .map((e) => ({
       loc: typeof e.loc === "string" ? e.loc : "",

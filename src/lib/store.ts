@@ -21,6 +21,11 @@ import { applyTheme } from "./theme";
 // without each re-running the smoothing. One singleton memo: the store is a singleton.
 const speakMemo = newSpeakMemo();
 
+/** Ceiling on quick-launch entries reaching the store. The editor caps the user at 6 out of ~11
+ *  possible targets; this is loose on purpose (the list is synced back, so truncating near the
+ *  real count would propagate to the user's other devices) while still bounding a hostile list. */
+const MAX_QUICK_LAUNCH = 100;
+
 /**
  * Frontend store. Holds seeded defaults in memory; the persistence layer wires
  * load/save through Tauri commands (config persisted as JSON in the app config
@@ -117,6 +122,14 @@ function withSettingsDefaults(raw: unknown): AppSettings {
           typeof (e as { kind?: unknown }).kind === "string" &&
           typeof (e as { target?: unknown }).target === "string",
       )
+      // The one sync-supplied list with no entry ceiling anywhere — the three list sanitizers all
+      // have one. It is re-serialized into the overlay payload on every level tick, rendered one
+      // button per entry in the always-on-top chip and one row per entry in the editor, and
+      // persisted, so an oversized list survives restarts. The editor hard-caps the user at 6 and
+      // the option universe is ~11, so this ceiling is far above anything reachable by hand —
+      // deliberately, because this list IS pushed back to the server, and a cap near the real
+      // count would propagate a truncation to the user's other devices.
+      .slice(0, MAX_QUICK_LAUNCH)
     : [];
   return {
     ...DEFAULT_SETTINGS,
@@ -137,7 +150,14 @@ function withSettingsDefaults(raw: unknown): AppSettings {
  *  `serde_json::Value` all the way into `hydrate`. A profile missing `hotkey` or `name` throws
  *  in `conflicts()` and `deriveChipTag()`, and there is no error boundary in the tree, so the
  *  throw unmounts the window and kills the debounced config save for the session. Drop the
- *  malformed entries instead, so every path into the store shares one floor. */
+ *  malformed entries instead, so every path into the store shares one floor.
+ *
+ *  Deliberately SHAPE ONLY. The sync sanitizers also apply entry ceilings and enum clamps, and
+ *  those must NOT be mirrored here: this runs on the user's own on-disk config on every launch,
+ *  where a fallback that is "keep the local value" on the sync path becomes a rewrite, and an
+ *  entry ceiling becomes silent truncation of the user's data that the armed autosave then
+ *  writes back. Shape checks are safe because they only drop what Rust's typed load() would have
+ *  rejected anyway. */
 function wellFormedProfiles(v: unknown): Profile[] {
   if (!Array.isArray(v)) return [];
   return v.filter(
@@ -145,7 +165,10 @@ function wellFormedProfiles(v: unknown): Profile[] {
       !!p && typeof p === "object" &&
       typeof (p as Profile).id === "string" &&
       typeof (p as Profile).name === "string" &&
-      Array.isArray((p as Profile).hotkey),
+      // The ELEMENTS, not just the container — the sync sanitizer's floor. A numeric code throws
+      // in `canonicalizeCodes`' localeCompare tie-break, which runs in a component body and in
+      // the debounced save.
+      isStringList((p as Profile).hotkey),
   );
 }
 
@@ -155,8 +178,29 @@ function wellFormedBackends(v: unknown): Backend[] {
     (b): b is Backend =>
       !!b && typeof b === "object" &&
       typeof (b as Backend).id === "string" &&
-      typeof (b as Backend).serverUrl === "string",
+      typeof (b as Backend).serverUrl === "string" &&
+      // A backend id is used verbatim as a keyring account name; the reserved `__…__` namespace
+      // is our own snapshot stash. Same rejection the sync path makes.
+      !isReservedId((b as Backend).id),
   );
+}
+
+function wellFormedAppRules(v: unknown): AppRule[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (r): r is AppRule =>
+      !!r && typeof r === "object" &&
+      typeof (r as AppRule).id === "string" &&
+      typeof (r as AppRule).appId === "string",
+  );
+}
+
+function isStringList(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((c) => typeof c === "string");
+}
+
+function isReservedId(id: unknown): boolean {
+  return typeof id === "string" && id.startsWith("__") && id.endsWith("__");
 }
 
 /**
@@ -176,13 +220,13 @@ function migrateConfig(raw: unknown): Config {
       settings: withSettingsDefaults(c.settings),
       backends: wellFormedBackends(c.backends),
       profiles: wellFormedProfiles(c.profiles),
-      appRules: Array.isArray((c as { appRules?: unknown }).appRules) ? (c.appRules as AppRule[]) : [],
+      appRules: wellFormedAppRules((c as { appRules?: unknown }).appRules),
       version: c.version as number | undefined,
     };
   }
   // Legacy v1: `profiles` were Backends; `modes` were ModeBindings. A legacy config
   // without modes never dictated — leave profiles empty (the checklist offers starters).
-  const backends = Array.isArray(c.profiles) ? (c.profiles as Backend[]) : [];
+  const backends = wellFormedBackends(c.profiles);
   const modes = Array.isArray((c as { modes?: unknown }).modes)
     ? ((c as { modes: Record<string, unknown>[] }).modes)
     : [];
@@ -193,7 +237,7 @@ function migrateConfig(raw: unknown): Config {
       name: isHold ? "Push-to-talk" : "Latch",
       activation: isHold ? "hold" : "latch",
       enabled: !!m.enabled,
-      hotkey: Array.isArray(m.hotkey) ? (m.hotkey as string[]) : [],
+      hotkey: isStringList(m.hotkey) ? m.hotkey : [],
       backendId: (m.profileId as string | null) ?? null,
     };
   });

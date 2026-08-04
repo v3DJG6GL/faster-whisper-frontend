@@ -596,7 +596,7 @@ function RestoreOffer({
       <div className="mt-4 max-w-[520px] rounded-card border border-accent/40 bg-accent-soft p-4">
         <div className="text-[13.5px] font-semibold text-text">This account has synced settings</div>
         <div className="mt-1 font-mono text-[11px] text-dim">
-          last synced{remote.device ? ` from ${remote.device}` : ""}
+          last synced{remote.device ? ` from ${safeDisplayText(remote.device, 60)}` : ""}
           {remote.updated_at ? ` · ${relTime(remote.updated_at * 1000)}` : ""}
         </div>
         <div className="mt-2.5 flex flex-wrap gap-1.5">
@@ -783,7 +783,8 @@ export default function Backends() {
                           hides the tail, so `http://localhost:8000@evil.tld/v1` read as loopback.
                           Show the parsed host, and flag an address that hides it. */}
                       <span className="truncate" title={safeDisplayText(b.serverUrl, 200)}>
-                        {authorityOf(b.serverUrl)?.host ?? safeDisplayText(b.serverUrl, 80)}
+                        {safeDisplayText(authorityOf(b.serverUrl)?.host, 80) ||
+                          safeDisplayText(b.serverUrl, 80)}
                       </span>
                       {authorityOf(b.serverUrl)?.hasUserinfo && (
                         <Badge tone="warn">address hides the real host</Badge>

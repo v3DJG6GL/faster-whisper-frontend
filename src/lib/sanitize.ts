@@ -15,14 +15,25 @@ function isDeceptiveFormatChar(code: number): boolean {
     code === 0x00ad || // SOFT HYPHEN
     code === 0x061c || // ARABIC LETTER MARK
     code === 0x180e || // MONGOLIAN VOWEL SEPARATOR
+    code === 0x115f || // HANGUL CHOSEONG FILLER — zero-width, and category Lo, so no
+    code === 0x1160 || // HANGUL JUNGSEONG FILLER — category-based rule reaches these
+    code === 0x3164 || // HANGUL FILLER
+    code === 0xffa0 || // HALFWIDTH HANGUL FILLER
     (code >= 0x200b && code <= 0x200f) || // ZWSP/ZWNJ/ZWJ/LRM/RLM
     (code >= 0x202a && code <= 0x202e) || // bidi embeddings + overrides
     (code >= 0x2060 && code <= 0x2064) || // word joiner + invisible operators
     (code >= 0x2066 && code <= 0x2069) || // directional isolates
+    (code >= 0x206a && code <= 0x206f) || // deprecated format controls
     code === 0xfeff || // BOM / ZWNBSP
     (code >= 0xfff9 && code <= 0xfffb) || // interlinear annotation
+    (code >= 0x1bca0 && code <= 0x1bca3) || // Duployan shorthand controls
+    (code >= 0x1d173 && code <= 0x1d17a) || // musical beam/slur/phrase controls
     (code >= 0xe0000 && code <= 0xe007f) // TAG block
   );
+  // Deliberately absent, and must stay absent: U+0600-0605, U+06DD, U+070F, U+0890-0891 and
+  // U+08E2 are also category Cf but all of them RENDER — they span the digits that follow, draw
+  // the circle around a verse number, or overline an abbreviation. Filtering by category would
+  // corrupt ordinary Arabic and Syriac text.
 }
 
 /** A server- or peer-authored string on its way into the UI: control characters and the
@@ -40,6 +51,12 @@ export function safeDisplayText(s: unknown, max = 200): string {
   for (const ch of s) {
     const code = ch.codePointAt(0) ?? 0;
     if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
+    // U+2028/U+2029 are Zl/Zp, so neither the range above nor the format-char denylist reaches
+    // them — but both are mandatory line breaks under UAX#14, produced by the line-breaking
+    // algorithm itself rather than by whitespace handling, so no CSS collapses them. In a label
+    // capped at 60 code points that is up to 60 forced breaks, which is exactly the "push the
+    // buttons off screen" failure the cap exists to prevent.
+    if (code === 0x2028 || code === 0x2029) continue;
     if (isDeceptiveFormatChar(code)) continue;
     out.push(ch);
     if (out.length >= max) break;
