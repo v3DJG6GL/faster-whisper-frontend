@@ -57,24 +57,27 @@ pub struct SeedStash(
 /// Windows first grabs the source app's selection (copy-chord + clipboard diff —
 /// `win_seed`) BEFORE the window takes focus, off the calling thread and time-bounded
 /// so a wedged clipboard can never keep the window from opening.
-/// One seed grab at a time. The grab saves the clipboard, synthesizes a copy chord, then
-/// restores what it saved — so two overlapping runs interleave: the second snapshots the
-/// FIRST one's freshly-copied selection as "the user's clipboard", the first restores the
-/// real one, and the second then puts the selection back. Net effect is the user's own
-/// clipboard destroyed and their selection left resident globally, which is exactly the
-/// residue the restore exists to prevent. The window is not shown until the grab settles
-/// (up to 1.5s of no feedback), so a second press in that window is likely, not exotic.
-#[cfg(windows)]
-static SEED_GRAB_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+// One seed grab at a time — the flag itself lives in `win_seed`, its owner, so that the SECOND
+// caller (`commands::get_focused_selection`, the correct-on-close re-grab) is covered too and so
+// it is held for the grab's real lifetime rather than until a caller's timeout.
+//
+// The grab saves the clipboard, synthesizes a copy chord, then
+// restores what it saved — so two overlapping runs interleave: the second snapshots the
+// FIRST one's freshly-copied selection as "the user's clipboard", the first restores the
+// real one, and the second then puts the selection back. Net effect is the user's own
+// clipboard destroyed and their selection left resident globally, which is exactly the
+// residue the restore exists to prevent. The window is not shown until the grab settles
+// (up to 1.5s of no feedback), so a second press in that window is likely, not exotic.
 
 pub fn show(app: &AppHandle) {
     #[cfg(windows)]
     {
         use std::sync::atomic::Ordering;
-        if SEED_GRAB_ACTIVE
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+        // Only OBSERVE the flag here — `win_seed::grab` owns it (see there). Setting it in this
+        // thread would make the grabber we are about to spawn refuse its own grab, and releasing
+        // it on our `recv_timeout` would clear it while an abandoned grabber is still mutating
+        // the clipboard.
+        if win_seed::SEED_GRAB_ACTIVE.load(Ordering::Acquire) {
             // A grab is already running; it will show the window when it settles. Still
             // re-focus, so the second press never feels dead.
             show_now(app);
@@ -82,13 +85,6 @@ pub fn show(app: &AppHandle) {
         }
         let handle = app.clone();
         std::thread::spawn(move || {
-            struct Release;
-            impl Drop for Release {
-                fn drop(&mut self) {
-                    SEED_GRAB_ACTIVE.store(false, Ordering::Release);
-                }
-            }
-            let _release = Release;
             let (tx, rx) = std::sync::mpsc::channel();
             let grabber = handle.clone();
             std::thread::spawn(move || {
@@ -174,6 +170,12 @@ pub fn hide_quick_add(app: AppHandle) {
 /// the Linux dev loop type-checks it — only the call sites are `#[cfg(windows)]`.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) mod win_seed {
+    /// See the note above `show`: one seed grab at a time, process-wide. Owned here rather
+    /// than in `show` so it covers `commands::get_focused_selection` too, and so it is held
+    /// for the grab's real lifetime rather than until a caller's timeout.
+    pub(super) static SEED_GRAB_ACTIVE: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
     use std::time::{Duration, Instant};
     use tauri::{AppHandle, Manager};
@@ -219,6 +221,27 @@ pub(crate) mod win_seed {
     /// non-text content (an image) can't be snapshotted via arboard's text API and
     /// is lost only when the copy actually replaced it (logged).
     pub fn grab(app: &AppHandle) -> Option<String> {
+        use std::sync::atomic::Ordering;
+        // The single-flight lives HERE, not in `show`, because `show` is only one of two callers:
+        // `commands::get_focused_selection` (the correct-on-close re-grab, which runs ~400ms after
+        // the window hides and can last ~1.3s) calls straight through. A summon landing in that
+        // window used to start a second concurrent grab and produce exactly the interleave
+        // described on SEED_GRAB_ACTIVE. Owning it here also means it is held for as long as the
+        // grab actually runs, rather than until some caller's timeout fires.
+        if SEED_GRAB_ACTIVE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            tracing::info!("[quickadd-seed] another grab is in flight; skipping this one");
+            return None;
+        }
+        struct Release;
+        impl Drop for Release {
+            fn drop(&mut self) {
+                SEED_GRAB_ACTIVE.store(false, Ordering::Release);
+            }
+        }
+        let _release = Release;
         // The summoning chord's modifiers must be UP before injecting: a still-held
         // Shift would mutate the copy chord (Ctrl+Shift+Insert is PASTE in many
         // terminals). Mirrors inject_text's release gate, except on timeout we SKIP

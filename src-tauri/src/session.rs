@@ -586,8 +586,17 @@ impl RecordSession {
     /// Throw the clip away: mark it discarded BEFORE `Drop` joins the capture thread, so the
     /// device-loss salvage arm does not upload it or write its sidecar, then let `Drop` stop and
     /// join as usual.
+    ///
+    /// Also name THIS session's epoch as cancelled. The flag above is a fast path that stops the
+    /// clip ever being saved, but it is only read at the instant capture exits — if the salvage
+    /// arm already fired, the flag is too late and only the epoch can reach the spawned work.
+    /// Marking `self.epoch` rather than "whatever is currently detached" is what makes this safe
+    /// to do unconditionally: epochs are strictly monotonic, so this can never match an earlier
+    /// session's still-in-flight transcription (the hazard `cancel_record`'s `!had_session` gate
+    /// exists for — leave that gate exactly as it is).
     pub fn discard(self) {
         self.discard.store(true, Ordering::SeqCst);
+        CANCELLED_BATCH_EPOCH.store(self.epoch, Ordering::SeqCst);
     }
 
     /// Stop recording and transcribe the captured clip in the background.
@@ -672,11 +681,20 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
                     // ...unless the user CANCELLED. A cancel means "discard this clip", and that has
                     // to beat the salvage: otherwise a cancel that races a mic disconnect still sends
                     // the audio to the server and leaves the .wav + plaintext transcript on disk.
+                    // The `discard` flag alone is read at ONE instant — right here, microseconds
+                    // after the disconnect — so a cancel arriving any later (i.e. essentially
+                    // every real one, since the dead chip is what makes the user reach for
+                    // cancel) missed it entirely. Publish the epoch like `finish` does, so this
+                    // spawn is nameable and `transcribe_recording`'s two `batch_cancelled` checks
+                    // cover it: without this the salvage was the one detached path a cancel could
+                    // not reach, and it left `DETACHED_BATCH_EPOCH` stale, so a later
+                    // `cancel_detached_batch()` disowned some EARLIER session's live POST instead.
                     Ok(()) if device_lost.load(Ordering::SeqCst) && !discard.load(Ordering::SeqCst) => {
                         let pcm = buffer
                             .lock()
                             .map(|mut b| std::mem::take(&mut *b))
                             .unwrap_or_default();
+                        DETACHED_BATCH_EPOCH.store(epoch, Ordering::SeqCst);
                         tauri::async_runtime::spawn(transcribe_recording(
                             app.clone(),
                             epoch,
