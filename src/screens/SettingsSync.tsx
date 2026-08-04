@@ -709,7 +709,7 @@ export function SyncTab() {
         {sync.enabled && syncBackend && !syncBackend.hasApiKey && (
           <div className="pb-3">
             <Notice tone="warn">
-              “{syncBackend.name}” has no API key. On an open-mode server every keyless device shares one
+              “{safeText(syncBackend.name, 80)}” has no API key. On an open-mode server every keyless device shares one
               settings set; on a locked-down server sync won't work at all. Add a key to give this account
               its own set.
             </Notice>

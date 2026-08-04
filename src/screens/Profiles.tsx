@@ -162,7 +162,11 @@ function Editor({
                     ...(backends.some((b) => b.id === p.backendId)
                       ? []
                       : [{ value: "", label: "No backend" }]),
-                    ...backends.map((b) => ({ value: b.id, label: b.name })),
+                    // This Select DECIDES which server a profile sends its audio and key to,
+                    // and a backend rename raises no SecurityChange — so a hostile sync server
+                    // can relabel the options silently. Same defanging as the sync-server
+                    // picker, for the same reason.
+                    ...backends.map((b) => ({ value: b.id, label: safeDisplayText(b.name, 80) })),
                   ]
                 : [{ value: "", label: "No backends — add one" }]
             }
@@ -218,7 +222,7 @@ function Editor({
               {p.endpoint === "stream" && serverKind === "standard" && (
                 <Notice className="mt-2">
                   A standard Whisper server has no streaming endpoint — this override won’t work on{" "}
-                  <span className="font-medium">{backend?.name ?? "this backend"}</span>.
+                  <span className="font-medium">{safeDisplayText(backend?.name, 80) || "this backend"}</span>.
                 </Notice>
               )}
             </div>
@@ -452,9 +456,13 @@ export default function Profiles() {
   const conflictPeers =
     quickAddHotkey.length > 0 ? [...profiles, quickAddPeer(quickAddHotkey)] : profiles;
   const conflicts = conflictsByProfile(conflictPeers, !lowLevelActive);
+  // `||` not `??`: safeDisplayText returns "" for a non-string, so the fallback still applies.
   const nameOf = (id: string) =>
-    id === QUICK_ADD_PEER_ID ? "Quick add" : (profiles.find((p) => p.id === id)?.name ?? "another profile");
-  const backendName = (id: string | null) => backends.find((b) => b.id === id)?.name ?? "No backend";
+    id === QUICK_ADD_PEER_ID
+      ? "Quick add"
+      : safeDisplayText(profiles.find((p) => p.id === id)?.name, 60) || "another profile";
+  const backendName = (id: string | null) =>
+    safeDisplayText(backends.find((b) => b.id === id)?.name, 80) || "No backend";
 
   const conflictText = (id: string): string | null => {
     const list = conflicts.get(id);

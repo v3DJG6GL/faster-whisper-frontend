@@ -410,7 +410,15 @@ function QuickAddStep({
   }, [serverUrl, backendId]);
 
   const options = useMemo(
-    () => (rules ?? []).map((r) => ({ value: r.name, label: r.label || r.name })),
+    // First-run screen, fired from a mount effect against a server the user has just met.
+    // `ruleListOf` coerces these to strings but bounds no length and strips no bidi marks.
+    // `value` stays RAW on purpose: it is the slug PATCHed back and stored in
+    // `quickAddList.slug`, so defanging it would pin quick-add to a list that does not exist.
+    () =>
+      (rules ?? []).map((r) => ({
+        value: r.name,
+        label: safeDisplayText(r.label, 80) || safeDisplayText(r.name, 80),
+      })),
     [rules],
   );
 

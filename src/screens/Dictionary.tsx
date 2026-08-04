@@ -10,6 +10,7 @@
 // render — so editing never remounts an input (cf. DecodeFields focus-loss caveat).
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { safeDisplayText } from "@/lib/sanitize";
 import {
   BookA, Loader2, RefreshCw, Plus, Trash2, Lock, RotateCcw, ChevronRight,
   ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair,
@@ -168,6 +169,13 @@ function RuleCard({
   // keystroke typed during the network round-trip. The show/hide below keeps using bodyEditable so
   // controls gray in place rather than vanishing for the brief save.
   const inputsDisabled = !bodyEditable || saving;
+  // `RuleCard` is unmemoized and the parent passes inline arrow props, so EVERY card
+  // re-renders on every keystroke in ANY rule on the screen. Counting the words meant a
+  // split+map+filter over the whole server-supplied wordlist each time. (Its sibling at the
+  // top of the screen was already memoized; this one was not.) Do NOT instead cap the list —
+  // `emitBody` PATCHes the whole `wordlist` back from `e.words`, so a cap would delete the
+  // user's server-side words on the next save.
+  const wordsCount = useMemo(() => wordCount(edit.words), [edit.words]);
   // `dirty` is passed in (computed once, cached, in the parent) — recomputing buildPatch here
   // re-ran a whole-map sort + JSON.stringify in every card on every keystroke.
   const dotHex = ruleDotColor(rule.color);
@@ -462,7 +470,7 @@ function RuleCard({
                 />
               </div>
               <div>
-                <FieldLabel>Word list — one per line ({wordCount(edit.words)})</FieldLabel>
+                <FieldLabel>Word list — one per line ({wordsCount})</FieldLabel>
                 <textarea
                   aria-label="Word list — one per line"
                   value={edit.words ?? ""}
@@ -494,8 +502,18 @@ function RuleCard({
           {/* read-only context + per-rule reset */}
           <div className="flex items-end justify-between gap-3 border-t border-line pt-3">
             <div className="min-w-0 space-y-1">
-              <div className="font-mono text-[10.5px] text-faint">{rule.name}</div>
-              {rule.note && <div className="text-[12px] italic leading-snug text-dim">{rule.note}</div>}
+              {/* Both are server-authored and unbounded on the wire (the rules payload is an
+                  opaque Value, capped only by the 32 MiB body limit), and unlike `rule.label`
+                  above neither sits in a `truncate` — they WRAP, so a huge one is millions of
+                  line boxes laid out synchronously in the window that owns the debounced
+                  config save. Bounded at the RENDER only: `rule.name` is the rule IDENTITY
+                  (`rules_patch[r.name]`, `fingerprints[r.name]`, the edits/base record key),
+                  so truncating it at the coercion boundary would PATCH under a slug the
+                  server does not have. */}
+              <div className="font-mono text-[10.5px] text-faint">{safeDisplayText(rule.name, 200)}</div>
+              {rule.note && (
+                <div className="text-[12px] italic leading-snug text-dim">{safeDisplayText(rule.note, 500)}</div>
+              )}
             </div>
             {dirty && (
               <Button variant="ghost" size="sm" disabled={saving} onClick={onReset} title="Discard this rule's changes">
