@@ -128,8 +128,17 @@ mod imp {
     /// Nesting (a chord strictly containing another) is NOT deduped — the shared
     /// chord engine implements the designed hold ⊂ latch ⊂ quick-add family.
     fn chords_from(profiles: &[Profile], quick_add_hotkey: &[String]) -> Vec<ChordSpec> {
+        const MAX_CHORDS: usize = 256;
         let mut out: Vec<ChordSpec> = Vec::new();
         let mut push = |kind: ChordKind, keys: Vec<u16>, what: &str| {
+            // Hard ceiling on the chord set. The dedup below is O(n^2), `Engine::new`'s
+            // superset matrix is another, and `Engine::step` then walks every chord on EVERY
+            // system-wide key transition — so the profile list, which arrives from the sync
+            // blob and is persisted, sizes a hot path. This bound is orders of magnitude above
+            // any real binding set, so nothing legitimate is dropped.
+            if out.len() >= MAX_CHORDS {
+                return;
+            }
             let set: HashSet<u16> = keys.iter().copied().collect();
             let dup = out
                 .iter()

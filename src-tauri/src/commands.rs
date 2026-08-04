@@ -47,7 +47,7 @@ pub fn open_recordings_dir(app: AppHandle, custom: Option<String>) -> Result<(),
     use tauri_plugin_opener::OpenerExt;
     let dir =
         resolve_recordings_dir(&app, custom).ok_or("could not resolve a recordings folder")?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create the folder: {e}"))?;
+    crate::audio::create_dir_private(&dir).map_err(|e| format!("could not create the folder: {e}"))?;
     app.opener()
         .open_path(dir.to_string_lossy().into_owned(), None::<&str>)
         .map_err(|e| e.to_string())
@@ -415,6 +415,12 @@ pub struct ImportResult {
 #[tauri::command]
 pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
     const MAX_IMPORT_BYTES: u64 = 20_000_000; // sanity cap, not a format limit
+    // Entry-count ceiling, matching the sync path's own (`MAX_SYNCED_ENTRIES` in lib/sync.ts).
+    // The byte cap alone admits ~130k well-formed backends, and every one with a key becomes a
+    // SERIAL 10s-timeout keyring write in `reconcileBackendSecrets` — permanent credential
+    // entries in the user's wallet, with the webview blocked throughout. This is the designated
+    // validator for the untrusted-file path; it should fail here, with a message.
+    const MAX_ENTRIES: usize = 500;
     let meta = std::fs::metadata(&path).map_err(|e| format!("Could not read the file: {e}"))?;
     if meta.len() > MAX_IMPORT_BYTES {
         return Err("That file is too large to be a settings export.".into());
@@ -476,6 +482,9 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
     if let Some(list) = categories.get_mut("backends").and_then(|b| b.get_mut("list")) {
         let parsed: Vec<config::Backend> = serde_json::from_value(list.clone())
             .map_err(|e| format!("The file's server connections are invalid: {e}"))?;
+        if parsed.len() > MAX_ENTRIES {
+            return Err("That file lists far more server connections than the app supports.".into());
+        }
         for b in &parsed {
             if b.has_api_key && !secrets.contains_key(&b.id) {
                 warnings.push(format!(
@@ -489,12 +498,18 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
     if let Some(list) = categories.get_mut("profiles").and_then(|p| p.get_mut("list")) {
         let parsed: Vec<config::Profile> = serde_json::from_value(list.clone())
             .map_err(|e| format!("The file's dictation profiles are invalid: {e}"))?;
+        if parsed.len() > MAX_ENTRIES {
+            return Err("That file lists far more dictation profiles than the app supports.".into());
+        }
         *list = serde_json::to_value(parsed).map_err(|e| e.to_string())?;
     }
     for bucket in ["linux", "windows"] {
         if let Some(rules) = categories.get("appRules").and_then(|r| r.get(bucket)) {
             if !rules.is_null() && !rules.is_array() {
                 return Err("The file's app rules are invalid.".into());
+            }
+            if rules.as_array().is_some_and(|a| a.len() > MAX_ENTRIES) {
+                return Err("That file lists far more app rules than the app supports.".into());
             }
         }
     }

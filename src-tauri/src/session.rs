@@ -785,6 +785,17 @@ enum MuteCmd {
 }
 
 /// Apply the system mute (per-app, falling back to whole-sink) and return the mode to restore later.
+///
+/// PulseAudio/PipeWire only. The module header calls the Windows case a no-op — it was not: the
+/// helpers below spawn `pactl` / `wpctl` by BARE PROGRAM NAME, and Windows process creation
+/// searches the current working directory, so a planted `pactl.exe` next to a shortcut's working
+/// dir would run whenever a dictation started with "mute system audio" on. Make the no-op real.
+#[cfg(not(unix))]
+fn apply_mute() -> MuteMode {
+    MuteMode::PerApp(Vec::new())
+}
+
+#[cfg(unix)]
 fn apply_mute() -> MuteMode {
     // Prefer per-app muting so our own cues stay audible; fall back to the whole-sink mute only
     // when pactl can't enumerate streams.
@@ -796,6 +807,10 @@ fn apply_mute() -> MuteMode {
     MuteMode::WholeSink(prior)
 }
 
+#[cfg(not(unix))]
+fn restore_mute(_mode: &MuteMode) {}
+
+#[cfg(unix)]
 fn restore_mute(mode: &MuteMode) {
     match mode {
         MuteMode::None => {}
@@ -903,6 +918,7 @@ fn streams_to_mute(text: &str, our_pid: u32) -> Vec<u32> {
 
 /// Mute every other app's playback stream (see streams_to_mute); returns the ids muted (to restore
 /// on drop), or None when pactl is unavailable so the caller falls back to a whole-sink mute.
+#[cfg(unix)]
 fn mute_other_streams() -> Option<Vec<u32>> {
     // LC_ALL=C: pactl localizes the labels we parse ("Sink Input #", "Mute:", "yes"/"no"), so on a
     // non-English desktop the parse would find nothing → Some(vec![]) → no whole-sink fallback →
@@ -922,6 +938,7 @@ fn mute_other_streams() -> Option<Vec<u32>> {
     Some(ids)
 }
 
+#[cfg(unix)]
 fn set_sink_input_mute(id: u32, mute: bool) {
     let _ = std::process::Command::new("pactl")
         .args(["set-sink-input-mute", &id.to_string(), if mute { "1" } else { "0" }])
@@ -932,6 +949,7 @@ fn set_sink_input_mute(id: u32, mute: bool) {
 /// PulseAudio (`pactl get-sink-mute` → "Mute: yes"). The fallback MUST mirror set_system_mute's
 /// wpctl→pactl fallback: on a PulseAudio-only host wpctl is absent, so a wpctl-only read returns
 /// None → the guard records "unmuted" and then wrongly UN-mutes a user who began muted on drop.
+#[cfg(unix)]
 fn get_system_mute() -> Option<bool> {
     if let Ok(out) = std::process::Command::new("wpctl")
         .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
@@ -953,6 +971,7 @@ fn get_system_mute() -> Option<bool> {
     Some(String::from_utf8_lossy(&out.stdout).to_lowercase().contains("yes"))
 }
 
+#[cfg(unix)]
 fn set_system_mute(mute: bool) {
     let v = if mute { "1" } else { "0" };
     let ok = std::process::Command::new("wpctl")

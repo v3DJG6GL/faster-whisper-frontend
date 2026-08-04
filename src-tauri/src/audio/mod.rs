@@ -190,14 +190,38 @@ fn write_new_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     f.sync_all()
 }
 
+/// Create the recordings directory owner-only (0700 on Unix).
+///
+/// The files themselves have been 0600 since `write_new_private`, but the containing directory was
+/// still created with `create_dir_all`'s default (0777 & ~umask, typically 0755) — and the folder
+/// is USER-CHOSEN, so it may sit somewhere shared. A listing of it is a per-second timestamped log
+/// of every dictation the user made: when they dictate, how often, and how large the archive is.
+/// A directory that already exists keeps whatever mode the user gave it.
+pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        if dir.exists() {
+            return Ok(());
+        }
+        return std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir);
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(dir)
+    }
+}
+
 /// Save mono s16le PCM as a timestamped `.wav` under `dir`; returns the saved path on
 /// success (so the caller can write a transcript sidecar next to it). Best-effort: logs
 /// and returns None on any I/O error rather than failing the dictation.
+///
+/// See [`create_dir_private`] for why the directory itself is owner-only.
 pub fn save_recording(dir: &Path, pcm: &[u8], sample_rate: u32) -> Option<PathBuf> {
     if pcm.is_empty() {
         return None;
     }
-    if let Err(e) = std::fs::create_dir_all(dir) {
+    if let Err(e) = create_dir_private(dir) {
         tracing::warn!("[record] could not create recordings dir: {e}");
         return None;
     }
