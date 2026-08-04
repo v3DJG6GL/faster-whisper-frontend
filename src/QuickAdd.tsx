@@ -30,6 +30,12 @@ import { IS_WINDOWS } from "@/lib/platform";
 import { applyTheme, watchSystemTheme } from "@/lib/theme";
 import type { AppRule, GeneralSettings, PipelineFetch, ThemeName } from "@/lib/types";
 
+// Client-side ceilings on the two server-supplied lists this window renders. Both arrive as
+// opaque JSON with no bound on either side of the IPC, and this webview is summoned by a global
+// hotkey — a huge list would wedge it (and, on Linux, the renderer it shares with the chip).
+const MAX_SHOWN_ROWS = 500;
+const MAX_RECENT_WORDS = 500;
+
 type Target = { serverUrl: string; backendId: string; slug: string };
 type Phase = "loading" | "nopin" | "error" | "ok";
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -131,7 +137,9 @@ export default function QuickAdd() {
     try {
       const rw = await getRecentWords({ serverUrl: t.serverUrl, backendId: t.backendId });
       if (rg !== recentGen.current) return; // a newer fetch won
-      setRecent(rw.words ?? []);
+      // The pool is server-supplied and re-scanned on every keystroke; Combobox assumes it is
+      // "already server-capped", which is exactly the assumption an untrusted server breaks.
+      setRecent((rw.words ?? []).slice(0, MAX_RECENT_WORDS));
       setRecentMax(rw.max ?? undefined);
     } catch {
       /* best-effort pool — a fetch failure must not surface as an unhandled rejection */
@@ -141,6 +149,9 @@ export default function QuickAdd() {
   // Memoized so editing the insert field or a list row doesn't rebuild the Set + filtered pool
   // (and hand a fresh array into Combobox, re-running its rank) on every keystroke. Mirrors the
   // Dictionary RuleCard's usedKeys/keySuggestions memos.
+  // Render cap only — `rows` stays whole because mapBodyFromRows sends it back as the ENTIRE map,
+  // so trimming the state itself would delete the server's other entries on the next save.
+  const shownRows = useMemo(() => rows.slice(0, MAX_SHOWN_ROWS), [rows]);
   const usedKeys = useMemo(() => new Set(rows.map((r) => r.k.trim().toLowerCase()).filter(Boolean)), [rows]);
   const suggestions = useMemo(() => recent.filter((w) => !usedKeys.has(w.toLowerCase())), [recent, usedKeys]);
 
@@ -526,7 +537,7 @@ export default function QuickAdd() {
               {rows.length === 0 ? (
                 <div className="px-2 py-8 text-center text-[13px] text-faint">No mappings yet — add your first above.</div>
               ) : (
-                rows.map((row) => (
+                shownRows.map((row) => (
                   <div key={row.id} className="group flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-surface-2/40">
                     <input
                       value={row.k}
@@ -555,6 +566,11 @@ export default function QuickAdd() {
                     </button>
                   </div>
                 ))
+              )}
+              {rows.length > shownRows.length && (
+                <div className="px-2 py-3 text-center text-[12px] text-faint">
+                  Showing the newest {MAX_SHOWN_ROWS} of {rows.length} — edit the rest in the Dictionary.
+                </div>
               )}
             </div>
 
@@ -603,7 +619,11 @@ async function replaceSelectionAfterClose(
   if (rule?.block) return; // the user marked this app "never type into" — don't correct into it at all (not even clipboard)
   // Clipboard-only (explicit per-app, or coerced for a non-editable target) puts the correction on the
   // clipboard with no keystroke; restore the prior clipboard only for a real paste.
-  await injectText({ text: corrected, method, autoEnter: false, restoreClipboard: method === "paste", pasteShortcut });
+  // The replacement text comes from the server's mapping list, and every typing path turns a
+  // newline into a real Enter — which would SUBMIT whatever the corrected word landed in. A
+  // word mapping is a single line by construction, so fold controls to spaces.
+  const safe = corrected.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+  await injectText({ text: safe, method, autoEnter: false, restoreClipboard: method === "paste", pasteShortcut });
 }
 
 function errTitle(f: PipelineFetch | null): string {

@@ -88,13 +88,17 @@ function niceMax(v: number): number {
  *  the backend's server-local day numbering for whole-hour offsets), extended to
  *  the latest data day so nothing is ever cut off. */
 function densify(series: UsageSeriesPoint[]): UsageSeriesPoint[] {
+  const today = localTodayDay();
   const byDay = new Map<number, UsageSeriesPoint>();
   let maxDay = -Infinity;
   for (const p of series) {
+    // `day` comes off the wire as an unvalidated i64. Past ~1e8 it overflows the Date
+    // constructor and the tick formatter throws mid-render (no error boundary — the whole
+    // window goes white); past 2^53 the `day++` below stops advancing and the loop never ends.
+    if (!Number.isSafeInteger(p.day) || p.day < 0 || p.day > today + 1) continue;
     byDay.set(p.day, p);
     if (p.day > maxDay) maxDay = p.day;
   }
-  const today = localTodayDay();
   const end = Number.isFinite(maxDay) ? Math.max(today, maxDay) : today;
   const start = end - (TREND_DAYS - 1);
   const out: UsageSeriesPoint[] = [];

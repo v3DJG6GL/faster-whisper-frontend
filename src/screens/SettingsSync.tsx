@@ -32,11 +32,18 @@ import {
 import { effectiveServerUrl } from "@/lib/backends";
 import { conflicts as chordConflicts, quickAddPeer } from "@/lib/conflicts";
 import { IS_WINDOWS } from "@/lib/platform";
-import type { SyncCategory } from "@/lib/types";
+import type { Backend, Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncRemoteState } from "@/lib/syncTypes";
 
 const MY_BUCKET = IS_WINDOWS ? ("windows" as const) : ("linux" as const);
 const OTHER_BUCKET = IS_WINDOWS ? ("linux" as const) : ("windows" as const);
+
+/** Coerce an opaque payload field to an array before the previews walk it. Both preview
+ *  components render categories that are only compile-time typed: the Rust importer validates a
+ *  category's `list` only when the key is present, and the sync-pull path passes the blob through
+ *  as raw JSON. A `{"backends": {}}` payload otherwise throws in the render body, and with no
+ *  error boundary in the app that unmounts the whole window. */
+const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
 const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
   { key: "general", title: "General", desc: "Theme, insertion, sounds, quick-add shortcut, launch at login." },
@@ -91,10 +98,10 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   const [error, setError] = useState<string | null>(null);
 
   const counts: Partial<Record<SyncCategory, string>> = {
-    backends: result.categories.backends ? `${result.categories.backends.list.length}` : undefined,
-    profiles: result.categories.profiles ? `${result.categories.profiles.list.length}` : undefined,
+    backends: result.categories.backends ? `${arr(result.categories.backends.list).length}` : undefined,
+    profiles: result.categories.profiles ? `${arr(result.categories.profiles.list).length}` : undefined,
     appRules: result.categories.appRules
-      ? `${(result.categories.appRules[MY_BUCKET] ?? []).length} this OS · ${(result.categories.appRules[OTHER_BUCKET] ?? []).length} other OS`
+      ? `${arr(result.categories.appRules[MY_BUCKET]).length} this OS · ${arr(result.categories.appRules[OTHER_BUCKET]).length} other OS`
       : undefined,
   };
 
@@ -104,10 +111,12 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // mirrors the persistence save-gate's no-low-level-backend assumption.
   const st = useApp.getState();
   const wouldProfiles =
-    sel.profiles && result.categories.profiles ? result.categories.profiles.list : st.profiles;
+    sel.profiles && result.categories.profiles
+      ? arr<Profile>(result.categories.profiles.list)
+      : st.profiles;
   const wouldQa =
     sel.general && result.categories.general
-      ? result.categories.general.quickAddHotkey
+      ? arr<string>(result.categories.general.quickAddHotkey)
       : st.settings.general.quickAddHotkey;
   const peers = wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles;
   const predictedConflicts =
@@ -115,7 +124,9 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
 
   const missingKeys =
     sel.backends && result.categories.backends
-      ? result.categories.backends.list.filter((b) => b.hasApiKey && !result.secrets[b.id])
+      ? arr<Backend>(result.categories.backends.list).filter(
+          (b) => b.hasApiKey && !result.secrets[b.id],
+        )
       : [];
 
   const apply = async () => {
@@ -234,10 +245,10 @@ export function RestoreFromServer({
   const [error, setError] = useState<string | null>(null);
 
   const counts: Partial<Record<SyncCategory, string>> = {
-    backends: blob.backends ? `${blob.backends.list.length}` : undefined,
-    profiles: blob.profiles ? `${blob.profiles.list.length}` : undefined,
+    backends: blob.backends ? `${arr(blob.backends.list).length}` : undefined,
+    profiles: blob.profiles ? `${arr(blob.profiles.list).length}` : undefined,
     appRules: blob.appRules
-      ? `${(blob.appRules[MY_BUCKET] ?? []).length} this OS · ${(blob.appRules[OTHER_BUCKET] ?? []).length} other OS`
+      ? `${arr(blob.appRules[MY_BUCKET]).length} this OS · ${arr(blob.appRules[OTHER_BUCKET]).length} other OS`
       : undefined,
   };
 
@@ -245,9 +256,11 @@ export function RestoreFromServer({
   // collisions, and (new here) whether a selected category overwrites data the
   // device already has — on an empty app the restore is warning-free.
   const st = useApp.getState();
-  const wouldProfiles = sel.profiles && blob.profiles ? blob.profiles.list : st.profiles;
+  const wouldProfiles = sel.profiles && blob.profiles ? arr<Profile>(blob.profiles.list) : st.profiles;
   const wouldQa =
-    sel.general && blob.general ? blob.general.quickAddHotkey : st.settings.general.quickAddHotkey;
+    sel.general && blob.general
+      ? arr<string>(blob.general.quickAddHotkey)
+      : st.settings.general.quickAddHotkey;
   const peers = wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles;
   const predictedConflicts = chordConflicts(peers, !IS_WINDOWS && !evdevEnabled).length > 0;
   const replaces =

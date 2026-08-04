@@ -943,7 +943,10 @@ export default function Overlay() {
                               )}
                             >
                               <span className="shrink-0 whitespace-nowrap font-mono text-[12.5px]">
-                                {state.partial}
+                                {/* Tail only: the chip is right-pinned and ~800px wide, so this is
+                                    what was visible anyway — but the string is server-streamed and
+                                    unbounded, and it re-lays-out several times a second. */}
+                                {state.partial.slice(-400)}
                               </span>
                             </div>
                             {faded && (
