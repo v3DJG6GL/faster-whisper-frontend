@@ -20,7 +20,10 @@ function isLocalAddress(host: string): boolean {
   if (h.endsWith(".local") || h.endsWith(".home.arpa") || h.endsWith(".internal")) return true;
   if (!h.includes(".") && !h.includes(":")) return true; // bare LAN hostname
   const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!v4) return h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80:"); // ULA / link-local
+  // ULA / link-local, but ONLY for an IPv6 LITERAL — an IPv6 address always contains ":".
+  // Testing the prefix on any non-dotted-quad host classified every public DNS name beginning
+  // "fc" or "fd" (fcc.gov, fdic.gov, fc2.com …) as LAN and silently suppressed the warning.
+  if (!v4) return h.includes(":") && (h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80:"));
   const [a, b] = [Number(v4[1]), Number(v4[2])];
   return (
     a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) ||

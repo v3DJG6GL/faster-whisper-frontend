@@ -196,8 +196,13 @@ function Editor({
             placeholder={syncEnabled ? "override the synced URL here only" : "used with settings sync"}
           />
           {/* This field bypasses normalizeUrl entirely — it goes to the transport verbatim — so
-              it needs the warning at least as much as the canonical URL above. */}
-          {syncEnabled && urlOverride.trim() && insecureUrlWarning(urlOverride) && (
+              it needs the warning at least as much as the canonical URL above. NOT gated on
+              syncEnabled: `effectiveServerUrl` consults the override regardless of whether sync
+              is on, and turning sync off does not clear it — so after enable → set an override →
+              disable, that address is still where every request goes, while the field is grayed
+              out and (when gated) its warning hidden. The warning must track the address actually
+              in use, not the toggle. */}
+          {urlOverride.trim() && insecureUrlWarning(urlOverride) && (
             <Notice className="mt-2">{insecureUrlWarning(urlOverride)}</Notice>
           )}
         </Labeled>
