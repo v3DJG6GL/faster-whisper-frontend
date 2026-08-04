@@ -77,11 +77,34 @@ mod imp {
         evdev::enumerate().any(|(_, d)| is_keyboard(&d))
     }
 
-    /// `pkexec usermod -aG input $USER` (polkit GUI auth). The user must re-login.
+    /// The login name of the real uid, read from the passwd database.
+    fn current_username() -> Option<String> {
+        // SAFETY: getpwuid returns a pointer into a static buffer owned by libc; we copy the name
+        // out immediately and never retain the pointer, and this runs on one thread from setup().
+        unsafe {
+            let pw = libc::getpwuid(libc::getuid());
+            if pw.is_null() {
+                return None;
+            }
+            let name = (*pw).pw_name;
+            if name.is_null() {
+                return None;
+            }
+            std::ffi::CStr::from_ptr(name).to_str().ok().map(str::to_owned)
+        }
+    }
+
+    /// `pkexec usermod -aG input <this uid's login>` (polkit GUI auth). The user must re-login.
+    ///
+    /// The account name comes from the REAL uid, not from `$USER`/`$LOGNAME`. This grants
+    /// permanent read of every `/dev/input` device — system-wide keylogging capability — and it is
+    /// the polkit dialog, not this process, that supplies the privilege. The environment is
+    /// writable by anything that launches us (a .desktop entry, a shell rc, a wrapper script), so
+    /// taking the target account from it let that name be pointed at a DIFFERENT existing account
+    /// while the polkit prompt showed only "usermod" — an administrator approving it had no way to
+    /// see whom they were granting it to. The uid we are actually running as cannot be spoofed.
     pub async fn setup() -> Result<String, String> {
-        let user = std::env::var("USER")
-            .or_else(|_| std::env::var("LOGNAME"))
-            .map_err(|_| "couldn't determine the current user".to_string())?;
+        let user = current_username().ok_or_else(|| "couldn't determine the current user".to_string())?;
         let out = tokio::process::Command::new("pkexec")
             .args(["usermod", "-aG", "input", &user])
             .output()

@@ -88,8 +88,28 @@ pub fn sanitize_injected(text: &str) -> String {
     text.replace("\r\n", "\n")
         .replace('\r', "\n")
         .chars()
-        .filter(|&c| !c.is_control() || c == '\t' || c == '\n')
+        .filter(|&c| (!c.is_control() || c == '\t' || c == '\n') && !is_deceptive_format_char(c))
         .collect()
+}
+
+/// Unicode FORMAT characters (category Cf) that change how text READS without being visible.
+///
+/// `char::is_control()` is category Cc only, so none of these were caught: the bidi overrides and
+/// embeddings (U+202A–U+202E), the directional isolates (U+2066–U+2069), the invisible marks
+/// (U+200B ZWSP, U+200D ZWJ, U+200E/U+200F LRM/RLM) and U+FEFF. The transcript is server-authored
+/// and gets typed or pasted into whatever has focus — an editor, a commit message, a config file,
+/// a chat box — so a right-to-left override lets the server make the text that actually lands
+/// differ from the text the user watched appear. Trojan-Source, via dictation.
+///
+/// The portal keycode path already drops these (they are not in the layout charmap); this brings
+/// the clipboard/paste, X11-direct and virtual-keyboard paths to the same posture. No legitimate
+/// dictation output needs them.
+fn is_deceptive_format_char(c: char) -> bool {
+    matches!(c,
+        '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{200e}' | '\u{200f}'
+        | '\u{202a}'..='\u{202e}'
+        | '\u{2066}'..='\u{2069}'
+        | '\u{feff}')
 }
 
 pub fn inject(
@@ -327,6 +347,27 @@ fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::sanitize_injected;
+
+    /// Category Cf is invisible but reorders what the reader sees, and `char::is_control()` (Cc
+    /// only) never caught it — so a hostile transcript could make the text that lands differ from
+    /// the text the user watched appear.
+    #[test]
+    fn strips_bidi_overrides_and_invisible_marks() {
+        let hostile = "rm -rf /\u{202e}# harmless\u{202c}";
+        let out = sanitize_injected(hostile);
+        assert!(!out.contains('\u{202e}'), "RLO survived: {out:?}");
+        assert!(!out.contains('\u{202c}'), "PDF survived: {out:?}");
+        for c in ['\u{200b}', '\u{200d}', '\u{200e}', '\u{200f}', '\u{2066}', '\u{2069}', '\u{feff}'] {
+            assert_eq!(sanitize_injected(&format!("a{c}b")), "ab", "{c:?} survived");
+        }
+    }
+
+    /// Ordinary dictation output, including non-Latin scripts and the whitespace the typing paths
+    /// rely on, must pass through untouched.
+    #[test]
+    fn leaves_normal_transcript_text_alone() {
+        assert_eq!(sanitize_injected("Grüße, 日本語\tund\nZeile 2"), "Grüße, 日本語\tund\nZeile 2");
+    }
 
     #[test]
     fn own_injected_matches_last_set_modulo_crlf() {

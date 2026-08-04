@@ -44,10 +44,16 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
 
     // /auth/whoami is best-effort (open-mode banner / username); ignore its failures.
     let (mut open_mode, mut username) = (false, None);
+    // Status-gated like every sibling probe (`get_json`, the `/v1/models` arm below,
+    // `get_recent_words`): without it a 401 or 500 whose body happens to parse was rendered as a
+    // successful identity — an unauthenticated error response showing an open-mode banner and a
+    // username in the connection UI.
     if let Ok(resp) = with_auth(http.get(format!("{base}/auth/whoami")), api_key).send().await {
-        if let Ok(who) = super::json_capped::<WhoAmI>(resp).await {
-            open_mode = who.open_mode;
-            username = who.username;
+        if resp.status().is_success() {
+            if let Ok(who) = super::json_capped::<WhoAmI>(resp).await {
+                open_mode = who.open_mode;
+                username = who.username;
+            }
         }
     }
 

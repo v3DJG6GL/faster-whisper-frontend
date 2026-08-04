@@ -18,6 +18,11 @@ const KEYRING_SERVICE: &str = "faster-whisper-frontend";
 /// typically world-readable 0644, which is the wrong default for anything under the config dir:
 /// sync-state.json carries the sync snapshot, config.json carries server URLs, and the Wayland
 /// restore token is a capability that re-acquires input-injection rights without a consent prompt.
+///
+/// The open does not follow a symlink at the final component. `export_settings_file` writes to
+/// `<user-picked-path>.json.tmp`, which can land in a world-writable directory (a save dialog
+/// pointed at /tmp is entirely plausible) — without `O_NOFOLLOW` a pre-planted symlink there
+/// would have this truncate and overwrite whatever it pointed at, with the user's privileges.
 pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
     let mut opts = std::fs::OpenOptions::new();
@@ -26,6 +31,11 @@ pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
     {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW);
     }
     // An existing file keeps its old mode through OpenOptions, so restate it after the open.
     let mut f = opts.open(path)?;

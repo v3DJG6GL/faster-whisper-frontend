@@ -152,6 +152,26 @@ pub fn client() -> reqwest::Client {
             reqwest::Client::builder()
                 .timeout(Duration::from_secs(120))
                 .user_agent(concat!("faster-whisper-frontend/", env!("CARGO_PKG_VERSION")))
+                // Never follow a redirect to a DIFFERENT host. reqwest strips `Authorization` on a
+                // cross-host hop, but it does NOT strip the request BODY, and 307/308 replay method
+                // + body verbatim to the `Location` host — and the sync push's body is the settings
+                // blob, which carries `backends.secrets`, i.e. every backend's plaintext API key.
+                // A hostile (or MITM'd — cleartext http is permitted) server answering the PUT with
+                // a 308 would have that key set POSTed to a host of its choosing.
+                //
+                // Same-host hops still follow, so a server that redirects http→https or normalizes
+                // a trailing slash keeps working; only the cross-host case is refused.
+                .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                    let same_host = attempt.previous().last().and_then(|u| u.host_str())
+                        == attempt.url().host_str();
+                    if !same_host {
+                        attempt.stop()
+                    } else if attempt.previous().len() > 5 {
+                        attempt.error("too many redirects")
+                    } else {
+                        attempt.follow()
+                    }
+                }))
                 .build()
                 .expect("failed to build reqwest client")
         })
@@ -190,6 +210,27 @@ pub fn with_auth(req: reqwest::RequestBuilder, api_key: Option<&str>) -> reqwest
 /// a hostile server to stream tens of gigabytes into one allocation. 32 MiB is orders of magnitude
 /// above any legitimate transcription or settings payload.
 pub const MAX_BODY: usize = 32 * 1024 * 1024;
+
+/// A server-supplied error string is surfaced in the UI and written to the log file users are
+/// asked to attach to support reports. Same ceiling the streaming parse path uses.
+pub const MAX_ERROR_TEXT: usize = 200;
+
+/// Bound and defang a server-supplied string on its way to the UI or the log.
+///
+/// The streaming parse path caps its `error` frames at [`MAX_ERROR_TEXT`], but the BATCH sibling
+/// formatted the transport error straight into the emitted message — and that error carries
+/// `detail_from(&body)`, which falls back to the whole response body (bounded only by
+/// [`MAX_BODY`]). Newlines are folded too, so a server cannot forge log records.
+pub fn bounded_server_text(s: &str, n: usize) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    match cleaned.char_indices().nth(n) {
+        Some((i, _)) => format!("{}…", &cleaned[..i]),
+        None => cleaned,
+    }
+}
 
 /// Buffer a response body, giving up once it passes [`MAX_BODY`] instead of growing without bound.
 pub async fn body_capped(resp: reqwest::Response) -> Result<String, String> {

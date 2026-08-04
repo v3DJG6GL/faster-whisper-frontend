@@ -357,6 +357,9 @@ fn rms(samples: &[f32]) -> f32 {
 /// that one passes through chip_level's clamp and a 0-seeded EMA against a threshold
 /// (streaming.ts MIC_LIVE_LEVEL) that quiet mics only hover AT, which held "warming up…" until the
 /// user actually spoke (the "~2s until the chip turns amber" complaint).
+/// Server-supplied "ignored override" notices are rendered one per row; bound how many arrive.
+const MAX_OVERRIDE_NOTICES: usize = 50;
+
 const MIC_LIVE_RMS: f32 = 1.0e-5;
 /// Consecutive above-floor callbacks required before the mic counts as live (~30 ms), so the
 /// single open-click/DC blip a warming device can emit doesn't end the warm-up gate early.
@@ -701,7 +704,15 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             // but it was being dropped here — so on a batch backend a locked override was
             // silently ignored with no "Server ignored N override(s)" notice on Home/chip.
             if !res.overrides_ignored.is_empty() {
-                emit_if_active(&app, epoch, "stream://overrides-ignored", res.overrides_ignored);
+                // Server-supplied and unbounded on the wire; each entry is rendered as its own
+                // notice. Bound the count and each string before it reaches the UI.
+                let notices: Vec<String> = res
+                    .overrides_ignored
+                    .iter()
+                    .take(MAX_OVERRIDE_NOTICES)
+                    .map(|s| crate::transport::bounded_server_text(s, 200))
+                    .collect();
+                emit_if_active(&app, epoch, "stream://overrides-ignored", notices);
             }
             emit_if_active(
                 &app,
@@ -716,7 +727,13 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             emit_if_active(&app, epoch, "stream://status", "closed");
         }
         Err(e) => {
-            emit_if_active(&app, epoch, "stream://error", format!("Transcription failed: {e}"));
+            // The streaming path caps its `error` frames; this sibling formatted the transport
+            // error in raw, and that error carries `detail_from(&body)` — up to the 32 MiB body cap.
+            let msg = crate::transport::bounded_server_text(
+                &format!("Transcription failed: {e}"),
+                crate::transport::MAX_ERROR_TEXT,
+            );
+            emit_if_active(&app, epoch, "stream://error", msg);
             emit_if_active(&app, epoch, "stream://status", "closed");
         }
     }

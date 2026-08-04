@@ -132,7 +132,15 @@ pub fn prune_recordings(dir: &Path, days: u32) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
     };
-    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(days as u64 * 86_400);
+    // Clamp before the arithmetic. `days` is a u32 that arrives from config — and the `recording`
+    // sync category carries it, so a peer's blob sets it with no numeric validation on the way in.
+    // On Windows the subtraction converts the span to 100 ns intervals in an i64, which overflows
+    // once the window passes ~10.7 million days, and `SystemTime: Sub<Duration>` panics rather than
+    // returning an error — inside `setup()`, on every launch, with the value already persisted.
+    // Ten years is far past any real retention window and 0 still means "keep forever".
+    const MAX_RETENTION_DAYS: u32 = 3650;
+    let cutoff = std::time::SystemTime::now()
+        - std::time::Duration::from_secs(days.min(MAX_RETENTION_DAYS) as u64 * 86_400);
     let mut removed = 0;
     for entry in entries.flatten() {
         let path = entry.path();
@@ -156,6 +164,32 @@ pub fn prune_recordings(dir: &Path, days: u32) -> usize {
     removed
 }
 
+/// Create a file that must not already exist and that only the owner can read.
+///
+/// The saved recordings are the most sensitive thing this app writes: a `.wav` of everything
+/// dictated and a `.txt` of its verbatim transcript. `std::fs::write` created them `0666 & ~umask`
+/// — typically world-readable 0644 — and the recordings folder is user-chosen, so that mode is
+/// what actually decides who can read the archive when it is not under the app's private dir.
+///
+/// `create_new` also closes the gap the `path.exists()` collision loop left open: `exists()`
+/// follows symlinks and is separated from the write by a TOCTOU window, so anyone able to create
+/// entries in that folder could pre-plant a link named for a coming second and have the
+/// server-supplied transcript written through it. `create_new` fails on an existing name of any
+/// kind, symlink included.
+fn write_new_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(path)?;
+    f.write_all(bytes)?;
+    f.sync_all()
+}
+
 /// Save mono s16le PCM as a timestamped `.wav` under `dir`; returns the saved path on
 /// success (so the caller can write a transcript sidecar next to it). Best-effort: logs
 /// and returns None on any I/O error rather than failing the dictation.
@@ -176,7 +210,7 @@ pub fn save_recording(dir: &Path, pcm: &[u8], sample_rate: u32) -> Option<PathBu
         path = dir.join(format!("dictation-{stamp}-{n}.wav"));
         n += 1;
     }
-    match std::fs::write(&path, wav_from_pcm16(pcm, sample_rate)) {
+    match write_new_private(&path, &wav_from_pcm16(pcm, sample_rate)) {
         Ok(()) => {
             tracing::info!("[record] saved {}", path.display());
             Some(path)
@@ -303,7 +337,7 @@ pub fn save_transcript_sidecar(wav_path: &Path, text: &str) {
         return;
     }
     let txt_path = wav_path.with_extension("txt");
-    if let Err(e) = std::fs::write(&txt_path, format!("{trimmed}\n")) {
+    if let Err(e) = write_new_private(&txt_path, format!("{trimmed}\n").as_bytes()) {
         tracing::warn!("[record] could not write transcript sidecar: {e}");
     } else {
         tracing::info!("[record] transcript saved {}", txt_path.display());
@@ -321,6 +355,35 @@ mod retention_tests {
         let when = std::time::SystemTime::now() - Duration::from_secs(age_days * 86_400);
         let f = std::fs::File::options().write(true).open(&p).unwrap();
         f.set_modified(when).unwrap();
+    }
+
+    /// A retention window a peer's sync blob can set must not reach the `SystemTime` subtraction
+    /// unclamped: on Windows the span is converted to 100ns intervals in an i64, which overflows
+    /// past ~10.7 million days and PANICS inside `setup()` on every launch once persisted.
+    #[test]
+    fn an_absurd_retention_window_is_clamped_not_fatal() {
+        let dir = std::env::temp_dir().join("fwf-retention-clamp");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        seed(&dir, "dictation-old.wav", 400);
+        // u32::MAX days is ~11.7 million years; clamped, this is simply "keep everything".
+        assert_eq!(prune_recordings(&dir, u32::MAX), 0);
+        assert!(dir.join("dictation-old.wav").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `create_new` must refuse an existing name, so a pre-planted entry in a shared recordings
+    /// folder cannot have the server-supplied transcript written through it.
+    #[test]
+    fn a_transcript_never_overwrites_an_existing_file() {
+        let dir = std::env::temp_dir().join("fwf-sidecar-nofollow");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("dictation-x.txt");
+        std::fs::write(&victim, b"original").unwrap();
+        save_transcript_sidecar(&dir.join("dictation-x.wav"), "replacement text");
+        assert_eq!(std::fs::read(&victim).unwrap(), b"original");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
