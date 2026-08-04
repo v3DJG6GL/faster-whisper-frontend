@@ -106,10 +106,16 @@ pub fn sanitize_injected(text: &str) -> String {
 /// dictation output needs them.
 fn is_deceptive_format_char(c: char) -> bool {
     matches!(c,
-        '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{200e}' | '\u{200f}'
+        '\u{00ad}'                      // SOFT HYPHEN — invisible, splits a word for search/diff
+        | '\u{061c}'                    // ARABIC LETTER MARK — bidi control, sibling of LRM/RLM
+        | '\u{180e}'                    // MONGOLIAN VOWEL SEPARATOR
+        | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{200e}' | '\u{200f}'
         | '\u{202a}'..='\u{202e}'
+        | '\u{2060}'..='\u{2064}'       // word joiner + invisible times/separator/plus
         | '\u{2066}'..='\u{2069}'
-        | '\u{feff}')
+        | '\u{feff}'
+        | '\u{fff9}'..='\u{fffb}'       // interlinear annotation — hides text between the anchors
+        | '\u{e0000}'..='\u{e007f}')    // TAG block — the standard invisible-payload range
 }
 
 pub fn inject(
@@ -358,6 +364,15 @@ mod tests {
         assert!(!out.contains('\u{202e}'), "RLO survived: {out:?}");
         assert!(!out.contains('\u{202c}'), "PDF survived: {out:?}");
         for c in ['\u{200b}', '\u{200d}', '\u{200e}', '\u{200f}', '\u{2066}', '\u{2069}', '\u{feff}'] {
+            assert_eq!(sanitize_injected(&format!("a{c}b")), "ab", "{c:?} survived");
+        }
+        // The Cf set is wider than the first pass covered: soft hyphen, the Arabic letter mark
+        // (a bidi control like LRM/RLM), the invisible operators, the annotation anchors and the
+        // TAG block are all invisible-but-meaningful and none are category Cc.
+        for c in [
+            '\u{00ad}', '\u{061c}', '\u{180e}', '\u{2060}', '\u{2064}', '\u{fff9}', '\u{fffb}',
+            '\u{e0001}', '\u{e007f}',
+        ] {
             assert_eq!(sanitize_injected(&format!("a{c}b")), "ab", "{c:?} survived");
         }
     }

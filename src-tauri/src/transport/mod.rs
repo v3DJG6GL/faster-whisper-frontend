@@ -190,11 +190,18 @@ pub fn friendly_err(e: &reqwest::Error) -> String {
 }
 
 /// Pull FastAPI's `detail` string from an error body, falling back to the raw text.
+///
+/// Bounded HERE rather than at each call site: every caller surfaces the result to the UI or the
+/// log, the fallback arm returns the WHOLE response body (32 MiB, see [`MAX_BODY`]), and only the
+/// two `session.rs` sites had picked up [`bounded_server_text`]. The sync pull runs unattended at
+/// startup and on every window focus, so a hostile server needed no user action to plant a
+/// multi-megabyte, newline-bearing string in a `<Notice>` and in the log file.
 pub fn detail_from(body: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(body)
+    let raw = serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
-        .unwrap_or_else(|| body.to_string())
+        .unwrap_or_else(|| body.to_string());
+    bounded_server_text(&raw, MAX_ERROR_TEXT)
 }
 
 /// Attach a bearer token if one is provided.

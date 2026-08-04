@@ -38,6 +38,17 @@ struct ModelObj {
 
 /// Probe a server: list its models and resolve auth state. Never errors — failures
 /// are reported in `ConnectionInfo { ok: false, error }` so the UI can show them.
+/// Ceiling on server-supplied identifier lists (model ids, override-profile names). Orders of
+/// magnitude above any real server's inventory; it exists so one response cannot make the settings
+/// window lay out an unbounded number of DOM nodes.
+const MAX_MODELS: usize = 500;
+/// Ceiling on a single server-supplied name rendered in the UI.
+const MAX_NAME: usize = 120;
+
+fn bounded_name(s: &str) -> String {
+    super::bounded_server_text(s, MAX_NAME)
+}
+
 pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> ConnectionInfo {
     let base = base_url(server_url);
     let http = client();
@@ -52,7 +63,11 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
         if resp.status().is_success() {
             if let Ok(who) = super::json_capped::<WhoAmI>(resp).await {
                 open_mode = who.open_mode;
-                username = who.username;
+                // Bounded and control-folded HERE so every consumer inherits it: the username is
+                // rendered inline with the connection verdict ("· open mode (no auth)" / "· name"),
+                // which is the text the user reads to judge the connection. Unbounded it was a
+                // 32 MiB layout freeze; with bidi marks it reorders the verdict around it.
+                username = who.username.map(|u| bounded_name(&u));
             }
         }
     }
@@ -88,13 +103,17 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     ok: true,
                     open_mode,
                     username,
+                    // Count and length ceiling on the one server-supplied list in this layer that
+                    // never got one: the editor maps EVERY entry into a rendered chip, and the
+                    // probe runs on screen entry, not only behind the manual button.
                     models: parsed
                         .data
                         .into_iter()
-                        .map(|m| ServerModel { id: m.id, loaded: m.loaded })
+                        .take(MAX_MODELS)
+                        .map(|m| ServerModel { id: bounded_name(&m.id), loaded: m.loaded })
                         .collect(),
-                    boot_id: parsed.boot_id,
-                    server_version: parsed.server_version,
+                    boot_id: parsed.boot_id.map(|s| bounded_name(&s)),
+                    server_version: parsed.server_version.map(|s| bounded_name(&s)),
                     error: None,
                 },
                 Err(e) => ConnectionInfo {
@@ -134,7 +153,10 @@ pub async fn list_override_profiles(server_url: &str, api_key: Option<&str>) -> 
     let base = base_url(server_url);
     let url = format!("{base}/v1/override-profiles");
     // Best-effort: get_json → None on any failure, so the picker falls back to free-text.
-    get_json::<OverrideProfilesResp>(url, api_key).await.map(|r| r.profiles).unwrap_or_default()
+    get_json::<OverrideProfilesResp>(url, api_key)
+        .await
+        .map(|r| r.profiles.iter().take(MAX_MODELS).map(|p| bounded_name(p)).collect())
+        .unwrap_or_default()
 }
 
 /// The caller's effective request-override capabilities (`GET /v1/me`, full

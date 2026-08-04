@@ -14,12 +14,6 @@ use serde::{Deserialize, Serialize};
 
 /// First `n` chars of `s` for a log line. Error bodies can be huge, and a 422's body embeds
 /// the submitted rule contents — logs get the status + a short detail, never the payload.
-fn trunc(s: &str, n: usize) -> &str {
-    match s.char_indices().nth(n) {
-        Some((i, _)) => &s[..i],
-        None => s,
-    }
-}
 
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
 /// caller may view + edit, their role, and the per-type editable-field allow-list.
@@ -107,7 +101,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
             } else {
                 let body = body_capped(resp).await.unwrap_or_default();
                 let detail = detail_from(&body);
-                tracing::warn!("[pipeline] rules GET failed: HTTP {code} {}", trunc(&detail, 200));
+                tracing::warn!("[pipeline] rules GET failed: HTTP {code} {detail}");
                 PipelineFetch {
                     ok: false,
                     status: code,
@@ -170,13 +164,19 @@ pub async fn save_pipeline_rules(
                 let body = body_capped(resp).await.unwrap_or_default();
                 let parsed: Option<serde_json::Value> = serde_json::from_str(&body).ok();
                 let errors = parsed.as_ref().and_then(|v| v.get("errors").cloned());
-                let detail = parsed
-                    .as_ref()
-                    .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
-                    .unwrap_or_else(|| if errors.is_some() { String::new() } else { body });
+                // Bounded and control-folded like every other server-supplied string: the fallback
+                // arm is the whole response body (32 MiB), and this one is both rendered in a
+                // wrapping paragraph and written to the log.
+                let detail = crate::transport::bounded_server_text(
+                    &parsed
+                        .as_ref()
+                        .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
+                        .unwrap_or_else(|| if errors.is_some() { String::new() } else { body }),
+                    crate::transport::MAX_ERROR_TEXT,
+                );
                 // Status + short detail only — never the `errors` value: a 422's validation
                 // list embeds the submitted rule keys/values (user content).
-                tracing::warn!("[pipeline] rules PATCH failed: HTTP {code} {}", trunc(&detail, 200));
+                tracing::warn!("[pipeline] rules PATCH failed: HTTP {code} {detail}");
                 PipelineSave {
                     ok: false,
                     status: code,

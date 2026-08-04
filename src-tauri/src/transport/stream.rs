@@ -488,7 +488,12 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
     match v.get("type").and_then(|t| t.as_str()) {
         Some("ready") => {
             on_event(StreamEvent::Ready {
-                overrides_ignored: str_vec_field(&v, "overrides_ignored"),
+                // Bounded here, at the parse boundary, like its neighbours `separator` and
+                // `message`: the BATCH sibling caps this same list at 50 × 200 chars, but the
+                // streaming arm forwarded it whole to `stream://overrides-ignored`, where Home
+                // renders `join(", ")` in a wrapping span. The only other ceiling was tungstenite's
+                // 64 MiB frame limit — one `ready` frame froze the main window.
+                overrides_ignored: bounded_str_vec_field(&v, "overrides_ignored"),
             });
             false
         }
@@ -547,9 +552,20 @@ fn str_field(v: &serde_json::Value, key: &str) -> String {
     v.get(key).and_then(|x| x.as_str()).unwrap_or("").to_string()
 }
 
-fn str_vec_field(v: &serde_json::Value, key: &str) -> Vec<String> {
+/// A server-supplied string LIST, held to the same ceiling the batch path applies to this data:
+/// [`MAX_NOTICES`] entries of [`crate::transport::MAX_ERROR_TEXT`] chars, control chars folded.
+fn bounded_str_vec_field(v: &serde_json::Value, key: &str) -> Vec<String> {
     v.get(key)
         .and_then(|x| x.as_array())
-        .map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| e.as_str())
+                .take(MAX_NOTICES)
+                .map(|s| crate::transport::bounded_server_text(s, crate::transport::MAX_ERROR_TEXT))
+                .collect()
+        })
         .unwrap_or_default()
 }
+
+/// Mirrors `session::MAX_OVERRIDE_NOTICES`, which bounds the batch path's copy of this list.
+const MAX_NOTICES: usize = 50;
