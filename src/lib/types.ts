@@ -149,6 +149,7 @@ export interface RecordingSettings {
   saveRecordings: boolean;
   recordingsDir: string | null; // user-chosen folder for saved .wav files; null = default app-data location
   trimSilence: boolean; // when saving: keep only spoken spans (drop silence) in the .wav
+  recordingsRetentionDays: number; // delete saved recordings older than N days (0 = keep forever)
   muteSystemAudio: boolean;
   latchAutoStopMin: number; // auto-stop a hands-free (latch) session after N min of silence (0 = never)
   realtimePreview: boolean; // show live words on the chip as you speak (streaming backends)

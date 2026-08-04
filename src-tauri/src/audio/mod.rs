@@ -120,6 +120,42 @@ pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32) -> Vec<u8> {
     wav
 }
 
+/// Delete saved recordings and their transcript sidecars older than `days` (0 = keep forever).
+/// Best-effort and silent on I/O errors: retention is housekeeping, and a failure here must
+/// never interrupt a dictation. Only touches the files this app writes — `dictation-*.wav` and
+/// the `.txt` sidecar next to each — so pointing the recordings folder at a shared directory
+/// can't make it delete anything else.
+pub fn prune_recordings(dir: &Path, days: u32) -> usize {
+    if days == 0 {
+        return 0;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(days as u64 * 86_400);
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("dictation-") || !(name.ends_with(".wav") || name.ends_with(".txt")) {
+            continue;
+        }
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| t < cutoff)
+            .unwrap_or(false);
+        if old && std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        tracing::info!("[record] retention: removed {removed} file(s) older than {days}d");
+    }
+    removed
+}
+
 /// Save mono s16le PCM as a timestamped `.wav` under `dir`; returns the saved path on
 /// success (so the caller can write a transcript sidecar next to it). Best-effort: logs
 /// and returns None on any I/O error rather than failing the dictation.
@@ -271,5 +307,56 @@ pub fn save_transcript_sidecar(wav_path: &Path, text: &str) {
         tracing::warn!("[record] could not write transcript sidecar: {e}");
     } else {
         tracing::info!("[record] transcript saved {}", txt_path.display());
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+
+    /// Write `name` into `dir` with an mtime `age_days` in the past.
+    fn seed(dir: &Path, name: &str, age_days: u64) {
+        let p = dir.join(name);
+        std::fs::write(&p, b"x").unwrap();
+        let when = std::time::SystemTime::now() - Duration::from_secs(age_days * 86_400);
+        let f = std::fs::File::options().write(true).open(&p).unwrap();
+        f.set_modified(when).unwrap();
+    }
+
+    #[test]
+    fn keeps_everything_when_retention_is_off() {
+        let dir = std::env::temp_dir().join("fwf-retention-off");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        seed(&dir, "dictation-old.wav", 400);
+        assert_eq!(prune_recordings(&dir, 0), 0);
+        assert!(dir.join("dictation-old.wav").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn removes_only_our_files_past_the_window() {
+        let dir = std::env::temp_dir().join("fwf-retention-window");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        seed(&dir, "dictation-old.wav", 40);
+        seed(&dir, "dictation-old.txt", 40);
+        seed(&dir, "dictation-fresh.wav", 2);
+        // Someone else's file in a shared folder, old enough to qualify on age alone.
+        seed(&dir, "important-tax-return.wav", 400);
+        seed(&dir, "notes.txt", 400);
+
+        assert_eq!(prune_recordings(&dir, 30), 2);
+        assert!(!dir.join("dictation-old.wav").exists());
+        assert!(!dir.join("dictation-old.txt").exists());
+        assert!(dir.join("dictation-fresh.wav").exists());
+        assert!(dir.join("important-tax-return.wav").exists());
+        assert!(dir.join("notes.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_directory_is_not_an_error() {
+        assert_eq!(prune_recordings(Path::new("/nonexistent/fwf/x"), 30), 0);
     }
 }

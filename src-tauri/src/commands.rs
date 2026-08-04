@@ -103,7 +103,21 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     let dir = config_dir(&app)?;
     config::save(&dir, &config).map_err(|e| e.to_string())?;
     sync_autostart(&app, config.settings.general.open_at_login);
+    apply_recordings_retention(&app, &config);
     Ok(())
+}
+
+/// Enforce the saved-recording retention window. Called on startup and after every config save,
+/// so shortening the window takes effect immediately rather than at the next restart.
+pub fn apply_recordings_retention(app: &AppHandle, config: &Config) {
+    let days = config.settings.recording.recordings_retention_days;
+    if days == 0 {
+        return;
+    }
+    if let Some(dir) = resolve_recordings_dir(app, config.settings.recording.recordings_dir.clone())
+    {
+        crate::audio::prune_recordings(&dir, days);
+    }
 }
 
 /// Keep the OS "launch at login" entry in sync with the saved preference. Called

@@ -145,6 +145,9 @@ pub fn run() {
             commands::spawn_suspend_watch(app.handle().clone());
             // Keep the OS autostart entry in sync with the saved preference.
             commands::sync_autostart(app.handle(), cfg.settings.general.open_at_login);
+            // Enforce the saved-recording retention window once per launch, so it also applies
+            // to a machine that dictated for months and only just enabled it.
+            commands::apply_recordings_retention(app.handle(), &cfg);
             // Start hidden to the tray if requested (reachable via the tray menu) —
             // but only on login launches (--autostart), never on a manual start.
             if cfg.settings.general.start_minimized

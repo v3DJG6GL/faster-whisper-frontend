@@ -429,6 +429,12 @@ pub struct RecordingSettings {
     /// session doesn't store hours of quiet. `#[serde(default)]` (true) so older configs load.
     #[serde(default = "default_true")]
     pub trim_silence: bool,
+    /// Delete saved recordings (and their transcript sidecars) older than this many days.
+    /// 0 = keep forever. Saved recordings are a plaintext archive of everything dictated —
+    /// passwords, private documents — and without this they accumulate for the life of the
+    /// install. Defaults to 0 so an upgrade never deletes anything the user already has.
+    #[serde(default)]
+    pub recordings_retention_days: u32,
     pub mute_system_audio: bool,
     /// Auto-stop a hands-free (latch) session after this many minutes of continuous silence
     /// (0 = never). Prevents multi-hour runaway sessions and frees the mic/connection.
@@ -580,6 +586,7 @@ impl Default for Config {
                     save_recordings: true,
                     recordings_dir: None,
                     trim_silence: true,
+                    recordings_retention_days: 0,
                     mute_system_audio: true,
                     latch_auto_stop_min: 30.0,
                     realtime_preview: true,

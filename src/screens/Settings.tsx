@@ -673,6 +673,25 @@ export default function Settings() {
                 onChange={(v) => updateRecording({ trimSilence: v })}
               />
             </SettingRow>
+            <SettingRow
+              title="Delete recordings after"
+              desc="Saved recordings and their transcripts are a plain-text record of everything you dictate. Old ones are removed on launch and whenever you change this."
+              disabled={!s.recording.saveRecordings}
+            >
+              <Select
+                value={String(s.recording.recordingsRetentionDays ?? 0)}
+                disabled={!s.recording.saveRecordings}
+                onChange={(v) => updateRecording({ recordingsRetentionDays: Number(v) })}
+                ariaLabel="Delete recordings after"
+                options={[
+                  { value: "0", label: "Keep forever" },
+                  { value: "7", label: "7 days" },
+                  { value: "30", label: "30 days" },
+                  { value: "90", label: "90 days" },
+                  { value: "365", label: "1 year" },
+                ]}
+              />
+            </SettingRow>
             {/* Recordings folder: where saved .wav files live, plus open / relocate / reset. Its own
                 block (a mono path readout + an action row) rather than a SettingRow — the path is the
                 point, and three actions don't fit a row's trailing slot. */}

@@ -67,6 +67,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     saveRecordings: true,
     recordingsDir: null,
     trimSilence: true,
+    recordingsRetentionDays: 0,
     muteSystemAudio: true,
     latchAutoStopMin: 30,
     realtimePreview: true,
