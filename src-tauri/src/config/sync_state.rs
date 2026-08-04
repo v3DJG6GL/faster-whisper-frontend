@@ -31,7 +31,7 @@ pub fn save(dir: &Path, state: &serde_json::Value) -> anyhow::Result<()> {
     let path = sync_state_path(dir);
     let tmp = path.with_extension("json.tmp");
     let text = serde_json::to_string(state)?;
-    std::fs::write(&tmp, text)?;
+    super::write_private(&tmp, &text)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
 }

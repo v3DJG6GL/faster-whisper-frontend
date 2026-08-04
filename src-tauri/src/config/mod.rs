@@ -13,6 +13,31 @@ pub mod sync_state;
 
 const KEYRING_SERVICE: &str = "faster-whisper-frontend";
 
+/// Write a file only the owner can read (Unix `0600`; a no-op refinement on Windows, where the
+/// per-user profile ACL already does this). `std::fs::write` would create it `0666 & ~umask` —
+/// typically world-readable 0644, which is the wrong default for anything under the config dir:
+/// sync-state.json carries the sync snapshot, config.json carries server URLs, and the Wayland
+/// restore token is a capability that re-acquires input-injection rights without a consent prompt.
+pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    // An existing file keeps its old mode through OpenOptions, so restate it after the open.
+    let mut f = opts.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    f.write_all(contents.as_bytes())?;
+    f.sync_all()
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum EndpointKind {
@@ -757,7 +782,7 @@ pub fn save(dir: &Path, config: &Config) -> anyhow::Result<()> {
     let path = config_path(dir);
     let tmp = path.with_extension("json.tmp");
     let text = serde_json::to_string_pretty(config)?;
-    std::fs::write(&tmp, text)?;
+    write_private(&tmp, &text)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
 }

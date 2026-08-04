@@ -102,7 +102,9 @@ mod imp {
             if let Some(dir) = p.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
-            let _ = std::fs::write(p, token);
+            // Owner-only: presenting this token re-acquires input-injection rights without
+            // the portal's "Control input devices" consent dialog.
+            let _ = crate::config::write_private(&p, token);
         }
     }
 

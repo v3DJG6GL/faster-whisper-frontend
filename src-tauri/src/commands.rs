@@ -365,8 +365,13 @@ pub fn export_settings_file(path: String, envelope: serde_json::Value) -> Result
     let tmp = path.with_extension("json.tmp");
     let text =
         serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
-    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    // Owner-only, and never leave the tmp behind: with "include API keys" ticked this envelope
+    // holds the raw keyring secrets, and it lands wherever the user pointed the save dialog.
+    config::write_private(&tmp, &text).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
     Ok(())
 }
 
