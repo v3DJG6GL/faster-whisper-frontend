@@ -12,6 +12,7 @@
 // check against for conflicts (e.g. the Profiles), passed as Profile[].
 
 import { useEffect, useRef, useState } from "react";
+import { safeDisplayText } from "@/lib/sanitize";
 import { validateCodes, suspendShortcuts, reregisterShortcuts } from "./api";
 import { MODIFIER_CODES, codeToToken, canonicalizeCodes, eventToCode } from "./keys";
 import { learnLetter } from "./keyboardLayout";
@@ -56,10 +57,14 @@ export function useHotkeyCapture(opts: {
       // them for the clash check too (a side-only-different chord would otherwise warn-free yet collide).
       const clash = findChordConflict(codes, ref.current.others, !lowLevelActive, ref.current.selfKind);
       if (clash) {
+        // The name is peer/blob-authored (`sanitizeProfiles` type-checks it but does not bound it),
+        // and this is the sentence the user reads to decide whether a chord is safe to bind — so it
+        // gets the same defanging as the conflict banner's copy in Profiles.tsx.
+        const clashName = safeDisplayText(clash.name, 60) || "another profile";
         setWarn(
           clash.kind === "duplicate"
-            ? `Same shortcut as “${clash.name}”`
-            : `Overlaps “${clash.name}” — one chord shadows the other`,
+            ? `Same shortcut as “${clashName}”`
+            : `Overlaps “${clashName}” — one chord shadows the other`,
         );
         done = false;
         return;

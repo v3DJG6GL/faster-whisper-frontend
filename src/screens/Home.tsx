@@ -43,7 +43,7 @@ function ProfileCard({ p }: { p: Profile }) {
             <Glyph className="size-[18px]" />
           </div>
           <div>
-            <div className="text-[14px] font-semibold text-text">{p.name}</div>
+            <div className="text-[14px] font-semibold text-text">{safeDisplayText(p.name, 80)}</div>
             <div className="text-[12px] text-dim">
               {p.activation === "hold" ? "Hold the hotkey while you speak" : "Tap once to start, tap again to stop"}
             </div>
@@ -58,14 +58,14 @@ function ProfileCard({ p }: { p: Profile }) {
           >
             <Pencil className="size-4" />
           </Button>
-          <Toggle ariaLabel={`Enable ${p.name}`} checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
+          <Toggle ariaLabel={`Enable ${safeDisplayText(p.name, 80)}`} checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
         </div>
       </div>
       <div className="mt-5 flex items-center justify-between">
         <HotkeyChips codes={p.hotkey} />
         <div className="text-right">
           <div className="font-mono text-[11px] uppercase tracking-label text-faint">{p.endpoint ?? backend?.endpoint ?? "—"}</div>
-          <div className="text-[12.5px] text-dim">{backend?.name ?? "No backend"}</div>
+          <div className="truncate text-[12.5px] text-dim">{safeDisplayText(backend?.name, 80) || "No backend"}</div>
         </div>
       </div>
     </Card>
@@ -238,7 +238,7 @@ export default function Home() {
                   <span className="text-dim">{p.activation === "hold" ? "Hold" : "Tap"}</span>
                   <HotkeyChips codes={p.hotkey} />
                   <span className="text-dim">{p.activation === "hold" ? "to talk" : "to latch"}</span>
-                  <span className="truncate text-[12.5px] text-faint">· {p.name}</span>
+                  <span className="truncate text-[12.5px] text-faint">· {safeDisplayText(p.name, 80)}</span>
                 </div>
               ))
             ) : (
@@ -250,7 +250,7 @@ export default function Home() {
                 <Select
                   value={target?.id ?? ""}
                   onChange={(v) => updateSettings({ homeProfileId: v })}
-                  options={enabled.map((p) => ({ value: p.id, label: p.name }))}
+                  options={enabled.map((p) => ({ value: p.id, label: safeDisplayText(p.name, 80) }))}
                   className="w-40"
                   ariaLabel="Profile the Home button dictates with"
                 />

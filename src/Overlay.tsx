@@ -4,6 +4,7 @@ import { Target, X } from "lucide-react";
 import { Waveform } from "@/components/Waveform";
 import { setChipHitRegion, chipPointerOver, emitOverlayAction, showMainAtScreen } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { safeDisplayText } from "@/lib/sanitize";
 import { quickLaunchMeta } from "@/lib/screens";
 import { newSpeakMemo, stepSpeaking } from "@/lib/speaking";
 import { dictationVisual, isActiveDictation, isProcessing, type DictationTone } from "@/lib/dictationVisual";
@@ -900,7 +901,7 @@ export default function Overlay() {
                       <span aria-hidden className="mr-1.5">
                         ⚠
                       </span>
-                      {state.dictationError || "error"}
+                      {safeDisplayText(state.dictationError, 300) || "error"}
                     </div>
                   ) : (
                     <>

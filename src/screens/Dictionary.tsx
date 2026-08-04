@@ -231,9 +231,9 @@ function RuleCard({
           {dotHex && (
             <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: dotHex }} aria-hidden />
           )}
-          <span className="truncate text-[14px] font-medium text-text">{rule.label}</span>
+          <span className="truncate text-[14px] font-medium text-text">{safeDisplayText(rule.label, 120)}</span>
           {dirty && <span className="size-1.5 shrink-0 rounded-full bg-accent" title="Unsaved changes" aria-hidden />}
-          <Badge>{TYPE_LABEL[rule.type] ?? rule.type}</Badge>
+          <Badge>{TYPE_LABEL[rule.type] ?? safeDisplayText(rule.type, 40)}</Badge>
           {pinned && <Badge tone="accent">quick-add</Badge>}
           {locked && (
             <span className="inline-flex items-center gap-1 text-faint" title="Locked by the server admin — read-only">
@@ -243,7 +243,7 @@ function RuleCard({
         </button>
         <div className="flex shrink-0 items-center gap-1.5">
           {(rule.tags ?? []).slice(0, 3).map((t) => (
-            <Badge key={t} tone="dim">{t}</Badge>
+            <Badge key={t} tone="dim">{safeDisplayText(t, 40)}</Badge>
           ))}
         </div>
         {rule.type === "callback:map" && onTogglePin && (
@@ -845,7 +845,7 @@ export default function Dictionary() {
                       : "border-line bg-surface-2 text-dim hover:text-text",
                   )}
                 >
-                  {b.name}
+                  <span className="block max-w-[16rem] truncate">{safeDisplayText(b.name, 80)}</span>
                 </button>
               );
             })}
@@ -868,7 +868,7 @@ export default function Dictionary() {
           <Loader2 className="size-4 animate-spin" /> Loading rules…
         </div>
       ) : fetchRes && !fetchRes.ok ? (
-        <FetchError fetch={fetchRes} backendName={backend?.name ?? "the server"} onRetry={() => backend && load(backend)} />
+        <FetchError fetch={fetchRes} backendName={safeDisplayText(backend?.name, 80) || "the server"} onRetry={() => backend && load(backend)} />
       ) : rules.length === 0 ? (
         <EmptyCard
           title="No rules to manage"
@@ -995,7 +995,7 @@ function SaveBanner({ result, reloadDisabled, onReload }: { result: PipelineSave
     .slice(0, 50)
     .filter((e) => !!e && typeof e === "object")
     .map((e) => ({
-      loc: typeof e.loc === "string" ? e.loc : "",
+      loc: typeof e.loc === "string" ? e.loc.slice(0, 300) : "",
       msg: typeof e.msg === "string" ? e.msg.slice(0, 300) : "",
     }));
   if (result.status === 422 && errors.length) {

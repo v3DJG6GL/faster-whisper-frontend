@@ -269,7 +269,7 @@ function Editor({
                   faster-whisper-backend
                   {/* Older builds identify via boot_id but don't report a version yet. */}
                   {result?.serverVersion && (
-                    <span className="text-faint"> · {result.serverVersion}</span>
+                    <span className="text-faint"> · {safeDisplayText(result.serverVersion, 60)}</span>
                   )}
                 </span>
               </>
@@ -397,7 +397,7 @@ function ConnResult({ info }: { info: ConnectionInfo }) {
       {info.ok ? (
         <>
           Connected — {info.models.length} model{info.models.length === 1 ? "" : "s"}
-          {info.openMode ? " · open mode (no auth)" : info.username ? ` · ${info.username}` : ""}.
+          {info.openMode ? " · open mode (no auth)" : info.username ? ` · ${safeDisplayText(info.username, 60)}` : ""}.
         </>
       ) : (
         info.error
@@ -601,9 +601,9 @@ function RestoreOffer({
       <div className="mt-4 flex items-center gap-2 font-mono text-[11px] text-dim">
         <StatusDot tone="ok" />
         <span>
-          connected · faster-whisper-backend{info.serverVersion ? ` ${info.serverVersion}` : ""} ·{" "}
+          connected · faster-whisper-backend{info.serverVersion ? ` ${safeDisplayText(info.serverVersion, 60)}` : ""} ·{" "}
           {info.models.length} model{info.models.length === 1 ? "" : "s"}
-          {info.username ? ` · ${info.username}` : ""}
+          {info.username ? ` · ${safeDisplayText(info.username, 60)}` : ""}
         </span>
       </div>
       <div className="mt-4 max-w-[520px] rounded-card border border-accent/40 bg-accent-soft p-4">
