@@ -65,6 +65,12 @@ async function refreshOne(backend: Backend): Promise<void> {
   // (live backends only) never clears.
   const cur = useApp.getState().backends.find((x) => x.id === backend.id);
   if (!cur || cur.serverUrl !== backend.serverUrl || cur.hasApiKey !== backend.hasApiKey) return;
+  // `series` is server-supplied and unbounded on the wire. We asked for TREND_DAYS buckets, so
+  // anything past that is not data we can use — but it WOULD be stored and then re-serialized by
+  // setUsage's two stringify passes on the main thread, every 30s, for every backend, forever.
+  if (stats?.series && stats.series.length > TREND_DAYS) {
+    stats.series = stats.series.slice(-TREND_DAYS);
+  }
   // Keep the last-known value on a transient miss — only commit null the first
   // time. Key-presence (not truthiness) so an already-null backend isn't re-set to
   // null every poll (which would spread a fresh `usage` object and churn the

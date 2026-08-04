@@ -129,6 +129,17 @@ function FieldLabel({ children }: { children: ReactNode }) {
 
 const monoInput = "font-mono text-[12.5px]";
 
+// Render ceilings on the pipeline-rules payload. Every list below is 100% server-authored, and
+// QuickAdd already caps its copies of the same two (`MAX_SHOWN_ROWS` / `MAX_RECENT_WORDS`) — this
+// screen renders the SAME data and had no ceiling at all. The cb:map bound was worse than absent:
+// it came from the server's own `map_collapse_after`, so the payload chose its own limit.
+// RENDER-ONLY, never applied to `edit.pairs` / `edit.entries` — the save path PATCHes those back
+// as the ENTIRE map, so capping the state would delete every server entry past the cap.
+const MAX_SHOWN_RULES = 500;
+const MAX_SHOWN_MAP_ROWS = 500;
+const MAX_SHOWN_ENTRIES = 500;
+const MAX_RECENT_WORDS = 500;
+
 /* ── one rule (stable, module-scope component) ─────────────────────────── */
 function RuleCard({
   rule, edit, editable, dirty, expanded, mapCollapseAfter, recentWords, recentMax,
@@ -191,7 +202,12 @@ function RuleCard({
     rule.type === "callback:map" && mapCollapseAfter > 0 && mapPairs.length > mapCollapseAfter
       ? mapPairs.length - mapCollapseAfter
       : 0;
-  const mapShown = mapHidden > 0 && !mapShowAll ? mapPairs.slice(0, mapCollapseAfter) : mapPairs;
+  // Even "show all" stays bounded: `mapCollapseAfter` is server-chosen, so it cannot be the only
+  // ceiling. Expanding shows at most MAX_SHOWN_MAP_ROWS regardless of what the payload asked for.
+  const mapShown =
+    mapHidden > 0 && !mapShowAll
+      ? mapPairs.slice(0, Math.min(mapCollapseAfter, MAX_SHOWN_MAP_ROWS))
+      : mapPairs.slice(0, MAX_SHOWN_MAP_ROWS);
 
   return (
     <Card className={cn("overflow-hidden transition-colors", dirty && "border-line-strong")}>
@@ -260,7 +276,7 @@ function RuleCard({
               <p className="text-[12px] leading-snug text-faint">
                 Ordered find→replace list — entries run top to bottom. An empty replacement deletes the match.
               </p>
-              {(edit.entries ?? []).map((row, i) => {
+              {(edit.entries ?? []).slice(0, MAX_SHOWN_ENTRIES).map((row, i) => {
                 const hasNote = !!(row.note && row.note.length);
                 const noteShown = noteShow.has(row.id) ? !!noteShow.get(row.id) : hasNote;
                 const last = i === (edit.entries?.length ?? 0) - 1;
@@ -612,7 +628,7 @@ export default function Dictionary() {
     getRecentWords({ serverUrl: effectiveServerUrl(b, useApp.getState().settings), backendId: b.id })
       .then((rw) => {
         if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return;
-        setRecentWords(rw.words ?? []);
+        setRecentWords((rw.words ?? []).slice(0, MAX_RECENT_WORDS));
         setRecentMax(rw.max ?? undefined);
       })
       .catch(() => {}); // best-effort pool — a fetch failure must not surface as an unhandled rejection
@@ -665,7 +681,7 @@ export default function Dictionary() {
     })
       .then((rw) => {
         if (cancelled) return;
-        setRecentWords(rw.words ?? []);
+        setRecentWords((rw.words ?? []).slice(0, MAX_RECENT_WORDS));
         setRecentMax(rw.max ?? undefined);
       })
       .catch(() => {}); // best-effort pool — a fetch failure must not surface as an unhandled rejection
@@ -861,7 +877,7 @@ export default function Dictionary() {
             </div>
           )}
 
-          {rules.map((r) => (
+          {rules.slice(0, MAX_SHOWN_RULES).map((r) => (
             <RuleCard
               key={r.name}
               rule={r}

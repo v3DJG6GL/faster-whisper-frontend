@@ -75,9 +75,15 @@ function ProfileCard({ p }: { p: Profile }) {
 // updates re-render ONLY this line — not the whole Home tree (the hero hotkey rows, the
 // profile-picker Select, and the ProfileCard grid don't depend on the transcript). Mirrors how
 // the 30Hz level meter is isolated inside LiveWaveform.
+// The chip caps its own copy of this at 400 chars; the same cap has to exist here, because the
+// partial is 100% server-authored and this card is WRAPPING — a multi-megabyte partial becomes
+// millions of line boxes, re-laid-out several times a second, and freezes the main window.
+// Render-only, and a tail slice: only the end of a live partial is of any use while speaking.
+const MAX_PARTIAL_CHARS = 4000;
+
 function LiveTranscriptText() {
   const partial = useApp((s) => s.partial);
-  return <>{partial || <span className="text-faint">…</span>}</>;
+  return <>{partial.slice(-MAX_PARTIAL_CHARS) || <span className="text-faint">…</span>}</>;
 }
 
 export default function Home() {
@@ -300,7 +306,9 @@ export default function Home() {
                 {cardLabel}
               </div>
               {status === "error" && dictationError ? (
-                <div className="select-text text-[13.5px] leading-relaxed text-rec">{dictationError}</div>
+                <div className="select-text text-[13.5px] leading-relaxed text-rec">
+                  {dictationError.slice(0, 500)}
+                </div>
               ) : (
                 <div className="min-h-6 select-text whitespace-pre-wrap text-[15px] leading-relaxed text-text">
                   <LiveTranscriptText />

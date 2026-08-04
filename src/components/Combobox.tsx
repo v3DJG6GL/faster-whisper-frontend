@@ -208,7 +208,10 @@ export function Combobox({
             <ul id={listId} role="listbox" className="max-h-[14rem] overflow-auto py-1">
               {candidates.map((w, i) => (
                 <li
-                  key={w}
+                  // Positional, not the word itself: the suggestion pool is server-supplied and a
+                  // repeated word would give two siblings the same key, letting React pair an
+                  // option's label with another option's click handler.
+                  key={`${i}-${w}`}
                   id={optId(i)}
                   role="option"
                   aria-selected={i === active}
