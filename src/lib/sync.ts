@@ -38,8 +38,13 @@ import type {
   AppSettings,
   Backend,
   Config,
+  IndicatorPosition,
+  InsertMethod,
+  InsertTiming,
+  OverlayStatsMetric,
   Profile,
   SyncCategory,
+  ThemeName,
 } from "./types";
 import type {
   SyncBlob,
@@ -156,7 +161,13 @@ export async function composeBlob(
         10_000,
         {} as Record<string, string>,
       );
-      if (Object.keys(secrets).length > 0) {
+      // COMPLETENESS, not non-emptiness. `read_backend_keys` is a `filter_map`: it drops the
+      // individual entries it cannot read rather than failing the batch, so a PARTIAL map is the
+      // normal degraded shape. Uploading it replaces the server's copy of every key that is
+      // missing here with nothing — the same erase hazard the `else` branch below guards, one
+      // step earlier. (`restoreSnapshotSecrets` already treats a partial read-back as failure.)
+      const complete = cfg.backends.every((b) => !b.hasApiKey || secrets[b.id] !== undefined);
+      if (Object.keys(secrets).length > 0 && complete) {
         blob.backends.secrets = secrets;
       } else if (cfg.backends.some((b) => b.hasApiKey)) {
         // Same erase-the-server's-keys hazard as the pass-through branch below, on the branch
@@ -301,14 +312,46 @@ function isReservedBackendId(id: unknown): boolean {
  *  entries here so both paths share the same floor. */
 function sanitizeProfiles(list: unknown): Profile[] {
   if (!Array.isArray(list)) return [];
-  return list.filter(
-    (p): p is Profile =>
-      !!p && typeof p === "object" &&
-      typeof (p as Profile).id === "string" &&
-      typeof (p as Profile).name === "string" &&
-      Array.isArray((p as Profile).hotkey),
-  );
+  return list
+    .filter(
+      (p): p is Profile =>
+        !!p && typeof p === "object" &&
+        typeof (p as Profile).id === "string" &&
+        typeof (p as Profile).name === "string" &&
+        // The ELEMENTS matter as much as the container: `canonicalizeCodes`' sort tie-break calls
+        // `a.localeCompare(b)`, which throws on a non-string code. That runs in a component body
+        // (`conflictsByProfile`) and inside the debounced save, so one numeric entry both unmounts
+        // the window and kills config persistence for the session. `safePasteShortcut` already
+        // makes exactly this check on its own chord field.
+        isCodeList((p as Profile).hotkey),
+    )
+    .slice(0, MAX_SYNCED_ENTRIES);
 }
+
+/** A chord as the capture UI produces it: a list of `KeyboardEvent.code` strings. */
+function isCodeList(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((c) => typeof c === "string");
+}
+
+/** Ceiling on how many entries one inbound blob may install. Far above any real profile /
+ *  backend / rule set, so nothing legitimate is truncated — but it bounds the O(n²) passes
+ *  these lists feed: `chords_from`'s dedup and `Engine::step`, which runs on EVERY system-wide
+ *  key event, plus `conflicts()` and the unbounded list renders. */
+const MAX_SYNCED_ENTRIES = 500;
+
+/** Closed-vocabulary settings arrive as raw JSON. `save_config` takes a typed `Config` whose
+ *  enums have no serde fallback, so one unknown variant makes EVERY later save fail — the store
+ *  keeps the bad value, the save banner sticks, and `pushNow` short-circuits on it. Keep the
+ *  device's current value when the incoming one is not a known variant. */
+function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
+}
+
+const INSERT_METHODS = ["paste", "direct", "clipboard"] as const;
+const INSERT_TIMINGS = ["off", "stop", "live"] as const;
+const THEMES = ["dark", "light", "auto"] as const;
+const INDICATOR_POSITIONS = ["top", "bottom", "off"] as const;
+const OVERLAY_STATS_METRICS = ["words", "audio", "both"] as const;
 
 function sanitizeBackends(list: unknown): Backend[] {
   if (!Array.isArray(list)) return [];
@@ -318,7 +361,7 @@ function sanitizeBackends(list: unknown): Backend[] {
       typeof (b as Backend).id === "string" &&
       typeof (b as Backend).serverUrl === "string" &&
       !isReservedBackendId((b as Backend).id),
-  );
+  ).slice(0, MAX_SYNCED_ENTRIES);
 }
 
 function sanitizeAppRules(rules: unknown): AppRule[] {
@@ -337,7 +380,15 @@ function sanitizeAppRules(rules: unknown): AppRule[] {
         r.pasteShortcut == null
           ? r.pasteShortcut
           : safePasteShortcut(r.pasteShortcut, DEFAULT_PASTE_SHORTCUT),
-    }));
+      // Sibling of the clamp above, and of the `general` clamp in `applyBlob`: a per-rule
+      // insertMethod outside the enum is rejected by `save_config`'s typed parse and wedges
+      // every later save. `null`/absent means "inherit the global", which stays valid.
+      insertMethod:
+        r.insertMethod == null
+          ? r.insertMethod
+          : oneOf<InsertMethod>(r.insertMethod, INSERT_METHODS, "paste"),
+    }))
+    .slice(0, MAX_SYNCED_ENTRIES);
 }
 
 /** Write incoming secrets to the keyring, then re-derive every backend's
@@ -415,13 +466,31 @@ export async function applyBlob(
       } = incoming as Record<string, unknown>;
       nextSettings = {
         ...nextSettings,
-        theme,
+        theme: oneOf<ThemeName>(theme, THEMES, nextSettings.theme),
         general: {
           ...nextSettings.general,
           ...general,
           pasteShortcut: safePasteShortcut(
             (general as { pasteShortcut?: unknown }).pasteShortcut,
             nextSettings.general.pasteShortcut,
+          ),
+          // Sibling of the chord clamp above. `quickAddHotkey` is a chord too, and it lands in
+          // the same `canonicalizeCodes` / `conflicts()` consumers — a non-list (or a list with a
+          // numeric entry) throws in a component body AND in the debounced save.
+          quickAddHotkey: isCodeList((general as { quickAddHotkey?: unknown }).quickAddHotkey)
+            ? ((general as { quickAddHotkey: string[] }).quickAddHotkey)
+            : nextSettings.general.quickAddHotkey,
+          // Closed vocabularies: an unknown variant is rejected by `save_config`'s typed parse,
+          // which then fails EVERY later save (see `oneOf`).
+          insertMethod: oneOf<InsertMethod>(
+            (general as { insertMethod?: unknown }).insertMethod,
+            INSERT_METHODS,
+            nextSettings.general.insertMethod,
+          ),
+          insertTiming: oneOf<InsertTiming>(
+            (general as { insertTiming?: unknown }).insertTiming,
+            INSERT_TIMINGS,
+            nextSettings.general.insertTiming,
           ),
         },
       };
@@ -433,6 +502,16 @@ export async function applyBlob(
           ...blob.recording,
           // machine-local: keep this device's folder no matter what arrived
           recordingsDir: settings.recording.recordingsDir,
+          indicatorPosition: oneOf<IndicatorPosition>(
+            blob.recording.indicatorPosition,
+            INDICATOR_POSITIONS,
+            settings.recording.indicatorPosition,
+          ),
+          overlayStatsMetric: oneOf<OverlayStatsMetric>(
+            blob.recording.overlayStatsMetric,
+            OVERLAY_STATS_METRICS,
+            settings.recording.overlayStatsMetric,
+          ),
         },
       };
     }
@@ -630,8 +709,18 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
   // Split the snapshot's secrets out to the keyring; the file gets ids only.
   const secrets = state.snapshot?.backends?.secrets;
   const ids = secrets ? Object.keys(secrets) : [];
+  const hadStash = state.snapshotSecretIds !== undefined;
   state.snapshotSecretIds = ids.length > 0 ? ids : undefined;
-  if (ids.length > 0) await stashSnapshotSecrets(secrets!);
+  if (ids.length > 0) {
+    await stashSnapshotSecrets(secrets!);
+  } else if (hadStash) {
+    // The stash must never outlive the snapshot it belongs to. When the new snapshot carries no
+    // secrets (locked wallet, or a remote snapshot with no backends category) the old bundle was
+    // left in the keyring with nothing left to point at it: `restoreSnapshotSecrets` returns
+    // early on an empty id list, and the two `clearSnapshotSecrets` callers only fire on a server
+    // switch or a manual reset. A plaintext bundle of every key stayed there indefinitely.
+    await clearSnapshotSecrets();
+  }
   const onDisk: SyncState = {
     ...state,
     snapshot: state.snapshot
@@ -952,7 +1041,13 @@ function securityChanges(
   const localSecrets = local.backends?.secrets ?? {};
   const nextSecrets = incoming.backends.secrets ?? {};
   for (const b of incoming.backends.list ?? []) {
-    if (!b || typeof b.id !== "string") continue;
+    // The gate runs on the RAW list — sanitization happens later, inside `applyBlob` — so it must
+    // survive anything the server sends. `normalizeUrl` calls `.trim()`, and a non-string
+    // serverUrl threw right here, inside the consent gate itself: the rejection escaped
+    // `reconcileRemote` into `void pullNow()`, leaving syncStatus stuck on "syncing" with no error
+    // shown and every later focus pull repeating it. Match `sanitizeBackends`' own floor, so an
+    // entry that would be dropped anyway cannot disable the gate that protects the apply.
+    if (!b || typeof b.id !== "string" || typeof b.serverUrl !== "string") continue;
     const cur = here.get(b.id);
     const name = b.name || b.serverUrl || b.id;
     if (!cur) {
