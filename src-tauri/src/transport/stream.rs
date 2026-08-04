@@ -470,7 +470,14 @@ fn accumulate_transcript(e: &StreamEvent, docs: &mut Vec<String>, current: &mut 
         }
         StreamEvent::Boundary { .. } => {
             let trimmed = current.trim();
-            if !trimmed.is_empty() {
+            // Total-size budget across the whole session. Each field is capped at MAX_TRANSCRIPT,
+            // but the number of banked documents was not, so a server looping final/boundary grew
+            // this without limit and `join("\n")` then allocated the whole thing a second time
+            // before writing it under the user's recordings directory. Only the `.txt` sidecar
+            // clips: the `.wav` and the text actually typed are untouched, and 8 MiB is well over
+            // a million words.
+            let banked: usize = docs.iter().map(|d| d.len()).sum();
+            if !trimmed.is_empty() && banked + trimmed.len() <= MAX_SIDECAR_BYTES {
                 docs.push(trimmed.to_string());
             }
             current.clear();
@@ -499,16 +506,16 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
         }
         Some("partial") => {
             on_event(StreamEvent::Partial {
-                committed: str_field(&v, "committed"),
-                pending: str_field(&v, "pending"),
+                committed: bounded(&str_field(&v, "committed"), MAX_TRANSCRIPT),
+                pending: bounded(&str_field(&v, "pending"), MAX_TRANSCRIPT),
             });
             false
         }
         Some("final") => {
             let last = v.get("last").and_then(|b| b.as_bool()).unwrap_or(false);
             on_event(StreamEvent::Final {
-                committed: str_field(&v, "committed"),
-                tail: str_field(&v, "tail"),
+                committed: bounded(&str_field(&v, "committed"), MAX_TRANSCRIPT),
+                tail: bounded(&str_field(&v, "tail"), MAX_TRANSCRIPT),
                 last,
             });
             last
@@ -539,6 +546,23 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
 
 /// A `boundary` separator is a delimiter — " ", "\n", "\n\n", ". ". The frontend types it as
 /// keystrokes into the focused window, so the server does not get to make it a payload.
+/// Ceiling on ONE transcript field. These four were the last fields on this socket with no bound
+/// at all — their neighbours (`separator`, `message`, `overrides_ignored`) are all capped here —
+/// and tungstenite's 64 MiB limit is PER MESSAGE, so it bounds nothing cumulative. They reach two
+/// sinks: a cross-window IPC emit plus an overlay re-render on every frame, and `injectText`,
+/// which on direct-typing synthesizes them key by key into whatever window has focus.
+///
+/// `bounded` and NOT `bounded_server_text`: a transcript legitimately contains newlines, and
+/// folding controls to spaces would destroy every hard break. Sized for headroom rather than
+/// thrift — an hour of continuous dictation is roughly 50 KB, and `final.committed` is the whole
+/// document so far and grows across a latch session, so 4 MiB is a whole working week of speech.
+const MAX_TRANSCRIPT: usize = 4 * 1024 * 1024;
+
+/// Ceiling on the whole saved-transcript sidecar for one session. Applies ONLY to the `.txt`
+/// written beside a kept recording — never to what is typed, and never to file transcription
+/// in the Transcribe tab, which takes a different path and writes no sidecar.
+const MAX_SIDECAR_BYTES: usize = 8 * 1024 * 1024;
+
 const MAX_SEPARATOR: usize = 32;
 
 /// An `error` message is surfaced in the UI and written to the log file users are asked to send

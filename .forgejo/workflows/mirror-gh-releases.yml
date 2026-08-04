@@ -181,7 +181,16 @@ jobs:
             # schema has none, and neither does GitHub's).
             : > allsums.txt
             sumsfound=0
+            # `done < <(jq …)` is a PROCESS SUBSTITUTION, whose exit status `set -euo pipefail`
+            # does not observe either — the same class of exemption as the if-condition noted
+            # below, one step upstream. Go marshals a nil slice as `null`, so a release whose
+            # `.assets` came back malformed made jq error while BOTH loops ran zero iterations:
+            # allsums.txt stayed empty, no asset was mirrored, and the job reported success.
+            # A plain assignment IS checked, so a malformed payload now fails the job while
+            # `// []` keeps a legitimately asset-less release a quiet no-op.
+            assets=$(jq -c '.assets // [] | .[]' <<<"$rel")
             while IFS= read -r sasset; do
+              [ -n "$sasset" ] || continue
               sname=$(jq -r '.name' <<<"$sasset")
               case "$sname" in
                 SHA256SUMS*) ;;
@@ -195,9 +204,10 @@ jobs:
               sget -o sums.txt "$(jq -r '.browser_download_url' <<<"$sasset")"
               cat sums.txt >> allsums.txt
               rm -f sums.txt
-            done < <(jq -c '.assets[]' <<<"$rel")
+            done <<<"$assets"
 
             while IFS= read -r asset; do
+              [ -n "$asset" ] || continue
               aname=$(jq -r '.name' <<<"$asset")
               asize=$(jq -r '.size' <<<"$asset")
               match=$(jq -c --arg n "$aname" '.[] | select(.name == $n)' <<<"$dassets")
@@ -247,7 +257,7 @@ jobs:
                 --data-binary @asset.bin > /dev/null
               rm -f asset.bin
               uploaded=$((uploaded + 1))
-            done < <(jq -c '.assets[]' <<<"$rel")
+            done <<<"$assets"
           done < src-sorted.ndjson
 
           summary="mirror-gh-releases: $created release(s) created, $patched patched, $uploaded asset(s) uploaded, $fresh already in sync"

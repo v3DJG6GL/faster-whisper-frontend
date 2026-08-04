@@ -227,6 +227,7 @@ jobs:
           shopt -s nullglob
           sums=SHA256SUMS-linux.txt
           : > "$sums"
+          uploaded=0
           for f in src-tauri/target/release/bundle/deb/*.deb \
                    src-tauri/target/release/bundle/appimage/*.AppImage; do
             name=$(basename "$f")
@@ -240,6 +241,7 @@ jobs:
             curl -fsS -H "$hdr" -X POST \
               "$api/repos/$REPO/releases/$id/assets?name=$name" \
               -F "attachment=@$f" > /dev/null
+            uploaded=$((uploaded + 1))
             # Record the digest as we go. Installers are deliberately unsigned, and the release
             # API exposes no digest of its own (verified against this instance's swagger: the
             # Attachment schema is id/name/size/uuid/created_at/download_count/url/type), so
@@ -249,6 +251,17 @@ jobs:
           done
           # Each leg writes its OWN sums file: the two build jobs upload into the same draft
           # release concurrently, so a single shared name would race.
+          # `shopt -s nullglob` means a glob that matches NOTHING is a silent no-op, so a
+          # bundle-layout change (a tauri upgrade renaming a bundle dir, a dropped target)
+          # used to leave this step green with zero installers uploaded and no SHA256SUMS
+          # file — and `publish` gates only on job success, so the release went public,
+          # and got mirrored, with nothing in it and no digest to verify. The sibling
+          # build-only path has always asserted this via `if-no-files-found: error`; the
+          # PUBLISHING path was the lenient one.
+          if [ "$uploaded" -eq 0 ]; then
+            echo "::error::no installer bundles matched under src-tauri/target/release/bundle — refusing to publish an empty release"
+            exit 1
+          fi
           if [ -s "$sums" ]; then
             sname=$(basename "$sums")
             curl -sS -H "$hdr" "$api/repos/$REPO/releases/$id/assets" \
@@ -379,6 +392,7 @@ jobs:
           shopt -s nullglob
           sums=SHA256SUMS-windows.txt
           : > "$sums"
+          uploaded=0
           for f in src-tauri/target/release/bundle/msi/*.msi \
                    src-tauri/target/release/bundle/nsis/*.exe; do
             name=$(basename "$f")
@@ -392,8 +406,20 @@ jobs:
             curl -fsS -H "$hdr" -X POST \
               "$api/repos/$REPO/releases/$id/assets?name=$name" \
               -F "attachment=@$f" > /dev/null
+            uploaded=$((uploaded + 1))
             node -e 'const c=require("crypto"),f=require("fs"),p=require("path");const a=process.argv[1];console.log(c.createHash("sha256").update(f.readFileSync(a)).digest("hex")+"  "+p.basename(a))' "$f" >> "$sums"
           done
+          # `shopt -s nullglob` means a glob that matches NOTHING is a silent no-op, so a
+          # bundle-layout change (a tauri upgrade renaming a bundle dir, a dropped target)
+          # used to leave this step green with zero installers uploaded and no SHA256SUMS
+          # file — and `publish` gates only on job success, so the release went public,
+          # and got mirrored, with nothing in it and no digest to verify. The sibling
+          # build-only path has always asserted this via `if-no-files-found: error`; the
+          # PUBLISHING path was the lenient one.
+          if [ "$uploaded" -eq 0 ]; then
+            echo "::error::no installer bundles matched under src-tauri/target/release/bundle — refusing to publish an empty release"
+            exit 1
+          fi
           if [ -s "$sums" ]; then
             sname=$(basename "$sums")
             curl -sS -H "$hdr" "$api/repos/$REPO/releases/$id/assets" \

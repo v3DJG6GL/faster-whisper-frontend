@@ -194,6 +194,16 @@ pub fn is_deceptive_format_char(c: char) -> bool {
         | '\u{e0000}'..='\u{e007f}')    // TAG block — the standard invisible-payload range
 }
 
+/// How much text one `enigo.text` call may carry. The Wayland backends type character by
+/// character and re-read the injection generation between keys, so a cancel lands within one
+/// keystroke — but this backend hands the WHOLE string to the OS in a single blocking call, which
+/// gave it no cancellation point at all: stopping dictation, cancelling, or closing the window did
+/// not interrupt a long transcript being synthesized into whatever window had focus. Splitting it
+/// restores that check without changing what is typed (the chunks are typed back to back, and the
+/// split is on a char boundary). Small enough that the worst-case wait to notice a cancel is short,
+/// large enough that a normal phrase is still a single call.
+const DIRECT_CHUNK_CHARS: usize = 512;
+
 pub fn inject(
     text: &str,
     method: &str,
@@ -201,20 +211,44 @@ pub fn inject(
     restore_clipboard: bool,
     paste_shortcut: &[String],
     remote_target: bool,
+    // The generation captured when this job was queued; see `injection_cancelled`.
+    epoch: u64,
 ) -> Result<(), String> {
     if text.is_empty() && !auto_enter {
+        return Ok(());
+    }
+    // Before anything is typed, matching the Wayland backends' pre-job check: a cancel that lands
+    // between queueing and execution must not still fire a paste or a bare auto-Enter.
+    if injection_cancelled(epoch) {
+        tracing::info!("[inject] cancelled before typing — dropping the job");
         return Ok(());
     }
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
 
     if !text.is_empty() {
         match method {
-            "direct" => enigo.text(text).map_err(|e| e.to_string())?,
+            "direct" => {
+                let mut rest = text;
+                while !rest.is_empty() {
+                    let split = match rest.char_indices().nth(DIRECT_CHUNK_CHARS) {
+                        Some((i, _)) => i,
+                        None => rest.len(),
+                    };
+                    let (chunk, tail) = rest.split_at(split);
+                    enigo.text(chunk).map_err(|e| e.to_string())?;
+                    rest = tail;
+                    if !rest.is_empty() && injection_cancelled(epoch) {
+                        tracing::info!("[inject] cancelled mid-typing — stopping");
+                        return Ok(());
+                    }
+                }
+            }
             _ => paste(&mut enigo, text, restore_clipboard, paste_shortcut, remote_target)?,
         }
     }
 
-    if auto_enter {
+    // A cancel during the typing above must not still submit what landed.
+    if auto_enter && !injection_cancelled(epoch) {
         enigo
             .key(Key::Return, Direction::Click)
             .map_err(|e| e.to_string())?;

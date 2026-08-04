@@ -1687,7 +1687,7 @@ pub async fn inject_text(
         }
     } else {
         tokio::task::spawn_blocking(move || {
-            crate::inject::inject(&text, &method, auto_enter, restore_clipboard, &paste_shortcut, remote_target)
+            crate::inject::inject(&text, &method, auto_enter, restore_clipboard, &paste_shortcut, remote_target, epoch)
         })
         .await
         .map_err(|e| e.to_string())?
