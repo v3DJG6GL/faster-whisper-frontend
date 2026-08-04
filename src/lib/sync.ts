@@ -30,6 +30,7 @@ import {
 } from "./api";
 import { configReady } from "./persistence";
 import { effectiveServerUrl } from "./backends";
+import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "./paste";
 import { IS_WINDOWS } from "./platform";
 import type {
   AppRule,
@@ -254,6 +255,39 @@ function mergeAppRules(
 
 // ── apply: blob → running app ───────────────────────────────────────────────
 
+/** Keep an inbound paste chord within the presets the editor actually offers.
+ *  The chord is synthesized as a real keypress into whatever window has focus, and nothing on
+ *  the pull/import path validates it — so an arbitrary chord (Ctrl+Alt+T, Meta+R) would fire on
+ *  every insert. Only applied to values arriving from a peer; a local config is left alone. */
+function safePasteShortcut(codes: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(codes) || codes.some((c) => typeof c !== "string")) return fallback;
+  const joined = (codes as string[]).join("+");
+  return PASTE_PRESETS.some((p) => p.codes.join("+") === joined) ? (codes as string[]) : fallback;
+}
+
+/** Drop inbound app rules that aren't shaped like rules. `appId` is only checked for existence
+ *  by the Rust importer (and not at all on the pull path), yet every injection resolves through
+ *  `rule.appId.toLowerCase()` — one malformed entry throws there and no transcript is ever
+ *  inserted again, including in the editor the user would need to remove it. */
+function sanitizeAppRules(rules: unknown): AppRule[] {
+  if (!Array.isArray(rules)) return [];
+  return rules
+    .filter(
+      (r): r is AppRule =>
+        !!r && typeof r === "object" &&
+        typeof (r as AppRule).id === "string" &&
+        typeof (r as AppRule).appId === "string",
+    )
+    .map((r) => ({
+      ...r,
+      block: r.block === true,
+      pasteShortcut:
+        r.pasteShortcut == null
+          ? r.pasteShortcut
+          : safePasteShortcut(r.pasteShortcut, DEFAULT_PASTE_SHORTCUT),
+    }));
+}
+
 /** Write incoming secrets to the keyring, then re-derive every backend's
  *  hasApiKey from KEYRING TRUTH (imported key present, or one already stored
  *  on this machine) — so a synced "hasApiKey: true" can't claim a key that
@@ -262,7 +296,12 @@ async function reconcileBackendSecrets(
   list: Backend[],
   secrets: Record<string, string> | undefined,
 ): Promise<Backend[]> {
+  // Only ids that are actually in the list: composeBlob reads keys for exactly the backends it
+  // ships, so a secret for an unknown id can't come from a legitimate peer — but it WOULD be
+  // written into the OS keyring under a name the sender chose.
+  const known = new Set(list.map((b) => b.id));
   for (const [id, key] of Object.entries(secrets ?? {})) {
+    if (!known.has(id)) continue;
     if (key) {
       // Same locked-wallet hazard as composeBlob's read: a parked prompt must
       // not wedge the apply. A skipped write surfaces as hasApiKey=false below.
@@ -309,11 +348,22 @@ export async function applyBlob(
     let nextAppRules = st.appRules;
 
     if (cats.general && blob.general) {
-      const { theme, ...general } = blob.general;
+      const { theme, ...incoming } = blob.general;
+      // Machine-local fields are excluded from SyncGeneral by TYPE only, which stops us sending
+      // them but not a peer (or a hand-authored import file) from sending them to us — and the
+      // import dialog promises the user "evdev is never imported". Enforce it on the way in.
+      const { evdevEnabled: _evdev, ...general } = incoming as Record<string, unknown>;
       nextSettings = {
         ...nextSettings,
         theme,
-        general: { ...nextSettings.general, ...general },
+        general: {
+          ...nextSettings.general,
+          ...general,
+          pasteShortcut: safePasteShortcut(
+            (general as { pasteShortcut?: unknown }).pasteShortcut,
+            nextSettings.general.pasteShortcut,
+          ),
+        },
       };
     }
     if (cats.recording && blob.recording) {
@@ -335,7 +385,7 @@ export async function applyBlob(
       nextSettings = { ...nextSettings, homeProfileId: blob.profiles.homeProfileId ?? null };
     }
     if (cats.appRules && blob.appRules) {
-      nextAppRules = blob.appRules[MY_BUCKET] ?? [];
+      nextAppRules = sanitizeAppRules(blob.appRules[MY_BUCKET]);
     }
 
     // Scrub dangling cross-references (a partially-synced pull can pair e.g.
@@ -569,8 +619,10 @@ export async function pushNow(manual = false): Promise<void> {
             remoteVersion: remote.version, remoteDevice: remote.device ?? null });
           return;
         }
-        // Auto-merged: adopt the merge locally, then retry on the new base.
-        await applyBlob(merged, fullCats());
+        // Auto-merged: adopt the merge locally, then retry on the new base. Honour the user's
+        // category opt-outs like the other two applyBlob callers — with fullCats() a category
+        // the user switched OFF still took the remote value on any ordinary 409.
+        await applyBlob(merged, useApp.getState().settings.sync?.categories ?? fullCats());
         blob = merged;
         base = remote.version;
         continue;
