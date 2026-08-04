@@ -98,11 +98,20 @@ const DEFAULT_SETTINGS: AppSettings = {
  *  `undefined` at runtime and crashes code that assumes the typed shape. */
 function withSettingsDefaults(raw: unknown): AppSettings {
   const s = (raw ?? {}) as Partial<AppSettings>;
+  const recording = { ...DEFAULT_SETTINGS.recording, ...(s.recording ?? {}) };
+  // This merge fills MISSING keys but cannot vouch for the type of a key that is PRESENT, and
+  // the whole `recording` block is replaced wholesale by a pulled sync blob. `quickLaunch` is
+  // the one leaf whose elements get dereferenced unguarded (`quickLaunchMeta` reads `e.kind`
+  // in both the chip and the Settings editor), and with no error boundary in either webview a
+  // bad element unmounts the window. Coerce it to a list of objects here, at the choke point.
+  recording.quickLaunch = Array.isArray(recording.quickLaunch)
+    ? recording.quickLaunch.filter((e) => !!e && typeof e === "object")
+    : [];
   return {
     ...DEFAULT_SETTINGS,
     ...s,
     general: { ...DEFAULT_SETTINGS.general, ...(s.general ?? {}) },
-    recording: { ...DEFAULT_SETTINGS.recording, ...(s.recording ?? {}) },
+    recording,
     sync: {
       ...DEFAULT_SYNC,
       ...(s.sync ?? {}),
@@ -110,6 +119,33 @@ function withSettingsDefaults(raw: unknown): AppSettings {
       urlOverrides: { ...(s.sync?.urlOverrides ?? {}) },
     },
   };
+}
+
+/** Element-level shape checks for the two lists that arrive typed only by assertion. The FILE
+ *  import path gets a real serde parse in Rust; a sync pull does not — its blob is an opaque
+ *  `serde_json::Value` all the way into `hydrate`. A profile missing `hotkey` or `name` throws
+ *  in `conflicts()` and `deriveChipTag()`, and there is no error boundary in the tree, so the
+ *  throw unmounts the window and kills the debounced config save for the session. Drop the
+ *  malformed entries instead, so every path into the store shares one floor. */
+function wellFormedProfiles(v: unknown): Profile[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (p): p is Profile =>
+      !!p && typeof p === "object" &&
+      typeof (p as Profile).id === "string" &&
+      typeof (p as Profile).name === "string" &&
+      Array.isArray((p as Profile).hotkey),
+  );
+}
+
+function wellFormedBackends(v: unknown): Backend[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (b): b is Backend =>
+      !!b && typeof b === "object" &&
+      typeof (b as Backend).id === "string" &&
+      typeof (b as Backend).serverUrl === "string",
+  );
 }
 
 /**
@@ -127,8 +163,8 @@ function migrateConfig(raw: unknown): Config {
   if (Array.isArray((c as { backends?: unknown }).backends)) {
     return {
       settings: withSettingsDefaults(c.settings),
-      backends: (c.backends as Backend[]) ?? [],
-      profiles: Array.isArray(c.profiles) ? (c.profiles as Profile[]) : [],
+      backends: wellFormedBackends(c.backends),
+      profiles: wellFormedProfiles(c.profiles),
       appRules: Array.isArray((c as { appRules?: unknown }).appRules) ? (c.appRules as AppRule[]) : [],
       version: c.version as number | undefined,
     };

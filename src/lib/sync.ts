@@ -19,6 +19,7 @@
 
 import { useApp } from "./store";
 import {
+  deleteBackendKey,
   isTauri,
   loadSyncState,
   readBackendKeys,
@@ -37,6 +38,7 @@ import type {
   AppSettings,
   Backend,
   Config,
+  Profile,
   SyncCategory,
 } from "./types";
 import type {
@@ -154,7 +156,16 @@ export async function composeBlob(
         10_000,
         {} as Record<string, string>,
       );
-      if (Object.keys(secrets).length > 0) blob.backends.secrets = secrets;
+      if (Object.keys(secrets).length > 0) {
+        blob.backends.secrets = secrets;
+      } else if (cfg.backends.some((b) => b.hasApiKey)) {
+        // Same erase-the-server's-keys hazard as the pass-through branch below, on the branch
+        // that actually runs by default: when the wallet is locked the read above degrades to
+        // `{}`, and pushing this list without secrets replaces the server's copy with a keyless
+        // one — which pushNow then records as the new snapshot, orphaning the stash. If this
+        // device believes it HAS keys and we read none back, push nothing for this category.
+        blob.backends = undefined;
+      }
     }
   } else if (opts.includeSecrets && snapshotSecretsUnavailable) {
     // The snapshot recorded keys we could not read back this session. Pushing its backends now
@@ -274,6 +285,42 @@ function safePasteShortcut(codes: unknown, fallback: string[]): string[] {
  *  by the Rust importer (and not at all on the pull path), yet every injection resolves through
  *  `rule.appId.toLowerCase()` — one malformed entry throws there and no transcript is ever
  *  inserted again, including in the editor the user would need to remove it. */
+/** Keyring accounts this app reserves for its own bookkeeping. A Backend `id` is used verbatim
+ *  as the keyring account name, and an inbound `id` is whatever the sender chose — so without
+ *  this a peer could name a backend after our snapshot stash and have `readBackendKeys` hand it
+ *  the bundle of EVERY backend's key (which the next push, and that backend's own Authorization
+ *  header, would then ship to a server of the sender's choosing). */
+function isReservedBackendId(id: unknown): boolean {
+  return typeof id === "string" && id.startsWith("__") && id.endsWith("__");
+}
+
+/** Inbound `profiles.list` / `backends.list` are typed only by assertion: the FILE import path
+ *  gets a real serde parse in Rust, the sync path does not. An element missing a required field
+ *  reaches consumers that deref it unguarded (`p.hotkey.length`, `deriveChipTag(p.name)`), and
+ *  with no error boundary in the tree a throw during render unmounts the window. Drop malformed
+ *  entries here so both paths share the same floor. */
+function sanitizeProfiles(list: unknown): Profile[] {
+  if (!Array.isArray(list)) return [];
+  return list.filter(
+    (p): p is Profile =>
+      !!p && typeof p === "object" &&
+      typeof (p as Profile).id === "string" &&
+      typeof (p as Profile).name === "string" &&
+      Array.isArray((p as Profile).hotkey),
+  );
+}
+
+function sanitizeBackends(list: unknown): Backend[] {
+  if (!Array.isArray(list)) return [];
+  return list.filter(
+    (b): b is Backend =>
+      !!b && typeof b === "object" &&
+      typeof (b as Backend).id === "string" &&
+      typeof (b as Backend).serverUrl === "string" &&
+      !isReservedBackendId((b as Backend).id),
+  );
+}
+
 function sanitizeAppRules(rules: unknown): AppRule[] {
   if (!Array.isArray(rules)) return [];
   return rules
@@ -357,7 +404,15 @@ export async function applyBlob(
       // Machine-local fields are excluded from SyncGeneral by TYPE only, which stops us sending
       // them but not a peer (or a hand-authored import file) from sending them to us — and the
       // import dialog promises the user "evdev is never imported". Enforce it on the way in.
-      const { evdevEnabled: _evdev, ...general } = incoming as Record<string, unknown>;
+      // `autoEnter` gets the same treatment for a sharper reason: the synthesized Return is sent
+      // AFTER the paste, i.e. outside the bracketed-paste region, so it submits whatever the
+      // pasted (server-authored, newline-preserving) transcript put in the buffer. A peer must
+      // not be able to arm that; the local toggle is untouched.
+      const {
+        evdevEnabled: _evdev,
+        autoEnter: _autoEnter,
+        ...general
+      } = incoming as Record<string, unknown>;
       nextSettings = {
         ...nextSettings,
         theme,
@@ -382,11 +437,14 @@ export async function applyBlob(
       };
     }
     if (cats.backends && blob.backends) {
-      nextBackends = await reconcileBackendSecrets(blob.backends.list, blob.backends.secrets);
+      nextBackends = await reconcileBackendSecrets(
+        sanitizeBackends(blob.backends.list),
+        blob.backends.secrets,
+      );
       nextSettings = { ...nextSettings, quickAddList: blob.backends.quickAddList ?? null };
     }
     if (cats.profiles && blob.profiles) {
-      nextProfiles = blob.profiles.list;
+      nextProfiles = sanitizeProfiles(blob.profiles.list);
       nextSettings = { ...nextSettings, homeProfileId: blob.profiles.homeProfileId ?? null };
     }
     if (cats.appRules && blob.appRules) {
@@ -540,14 +598,31 @@ async function restoreSnapshotSecrets(): Promise<void> {
     secrets = {};
   }
   const got = ids.filter((id) => secrets[id]);
-  if (got.length === 0) {
+  // A PARTIAL read-back is not a success: the whole point of the flag is to stop a pass-through
+  // push from erasing the server's keys, and a partial map erases exactly the ones that are
+  // missing. Only a complete read-back clears it.
+  if (got.length < ids.length) {
     snapshotSecretsUnavailable = true;
     console.warn("sync: snapshot keys unavailable — backends pass-through disabled this session");
-    return;
+    if (got.length === 0) return;
   }
   if (state.snapshot?.backends) {
-    state.snapshot.backends.secrets = secrets;
+    // Only the ids this snapshot actually recorded — a stale entry from an older snapshot must
+    // not re-enter the blob and get pushed back to the server.
+    state.snapshot.backends.secrets = Object.fromEntries(got.map((id) => [id, secrets[id]]));
   }
+}
+
+/** Forget the stashed snapshot keys. The stash is a JSON bundle of every backend's key, so a
+ *  state reset that leaves it behind parks plaintext credentials in the OS secret store
+ *  indefinitely, under an account name nothing in the UI ever surfaces. */
+async function clearSnapshotSecrets(): Promise<void> {
+  snapshotSecretsUnavailable = false;
+  await withTimeout(
+    deleteBackendKey(SNAPSHOT_SECRETS_ACCOUNT).catch(() => {}),
+    10_000,
+    undefined,
+  );
 }
 
 async function persistState(patch: Partial<SyncState>): Promise<void> {
@@ -578,9 +653,9 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
 async function ensureStateFor(backendId: string): Promise<void> {
   if (state.serverBackendId === backendId) return;
   state = { deviceId: state.deviceId };
-  // The old server's snapshot is gone, so its stashed keys are too — and the fresh state has no
-  // recorded ids, so nothing will look for them again.
-  snapshotSecretsUnavailable = false;
+  // The old server's snapshot is gone — but its stashed keys are NOT, unless we delete them.
+  // The fresh state records no ids, so nothing would ever look for that entry again either.
+  await clearSnapshotSecrets();
   await persistState({
     serverBackendId: backendId,
     version: 0,
@@ -811,6 +886,11 @@ export interface SecurityChange {
   kind: "new-backend" | "server-url" | "api-key";
   backend: string;
   detail: string;
+  /** The address that would take effect, unformatted, for the kinds that carry one. The dialog
+   *  parses this rather than trusting `detail`: a URL's real authority is whatever follows the
+   *  last "@", so `http://localhost:8000@evil.tld/v1` reads as a loopback address in prose while
+   *  connecting to `evil.tld`. The consent surface has to show the host it will actually reach. */
+  url?: string;
 }
 
 /** Compare what a pull would apply against what this device holds, and report only the
@@ -831,14 +911,29 @@ function securityChanges(
     const cur = here.get(b.id);
     const name = b.name || b.serverUrl || b.id;
     if (!cur) {
-      out.push({ kind: "new-backend", backend: name, detail: b.serverUrl });
+      out.push({ kind: "new-backend", backend: name, detail: b.serverUrl, url: b.serverUrl });
     } else if (normalizeUrl(cur.serverUrl) !== normalizeUrl(b.serverUrl)) {
-      out.push({ kind: "server-url", backend: cur.name || name, detail: `${cur.serverUrl} → ${b.serverUrl}` });
+      out.push({
+        kind: "server-url",
+        backend: cur.name || name,
+        detail: `${cur.serverUrl} → ${b.serverUrl}`,
+        url: b.serverUrl,
+      });
     }
-    // Only an actual value change counts: an unchanged key rides along in every push.
+    // Only an actual value change counts: an unchanged key rides along in every push. But the
+    // comparison must FAIL CLOSED — `localSecrets` is `{}` whenever the keyring read degraded
+    // (locked wallet: composeBlob's read is a 10s withTimeout that falls back to `{}`), and it is
+    // legitimately empty for a backend that has no key yet. Requiring a known local value there
+    // let an incoming key be written with no review in exactly the cases we can least verify.
     const incomingKey = nextSecrets[b.id];
-    if (incomingKey && here.has(b.id) && localSecrets[b.id] && incomingKey !== localSecrets[b.id]) {
-      out.push({ kind: "api-key", backend: cur?.name || name, detail: "the stored key would be replaced" });
+    if (incomingKey && here.has(b.id) && incomingKey !== localSecrets[b.id]) {
+      out.push({
+        kind: "api-key",
+        backend: cur?.name || name,
+        detail: localSecrets[b.id]
+          ? "the stored key would be replaced"
+          : "a key would be stored for this server",
+      });
     }
   }
   return out;
@@ -920,7 +1015,30 @@ export async function resolveSyncConflicts(
     if (val === undefined) delete final[cat];
     else (final as Record<string, unknown>)[cat] = val;
   }
-  await applyBlob(final, useApp.getState().settings.sync?.categories ?? fullCats());
+  const applyCats = useApp.getState().settings.sync?.categories ?? fullCats();
+  // The security gate has to run HERE too, not just on the clean-merge path. `final` starts as
+  // `c.merged`, which already contains every NON-conflicting category auto-resolved in the
+  // server's favour — so a peer that also touches some category the user happened to edit
+  // locally forces the pull down this branch and rides its backend repoint / key swap in
+  // unreviewed. The conflict dialog only ever showed the CONFLICTING category names, never the
+  // address change. Same shape as reconcileRemote: apply everything else, hold backends, and
+  // persist no base so a rejection is re-offered on the next pull.
+  const risky = securityChanges(final, c.local, applyCats);
+  if (risky.length > 0) {
+    await applyBlob(final, { ...applyCats, backends: false });
+    raiseReview({
+      changes: risky,
+      blob: final,
+      cats: applyCats,
+      remote: c.remote,
+      version: c.remoteVersion,
+      updatedAt: null,
+      device: c.remoteDevice ?? null,
+      pushAfter: true,
+    });
+    return;
+  }
+  await applyBlob(final, applyCats);
   // Same server-truth rule as reconcileRemote: the server still holds
   // c.remote at remoteVersion — record THAT, so if the follow-up push fails,
   // later automatic pushes still see a difference and retry.
@@ -1051,7 +1169,7 @@ export async function initSync(): Promise<void> {
  *  next push recreates from version 0. */
 export async function resetSyncState(): Promise<void> {
   state = { deviceId: state.deviceId, serverBackendId: state.serverBackendId };
-  snapshotSecretsUnavailable = false; // no snapshot left to be missing keys for
+  await clearSnapshotSecrets(); // no snapshot left — drop its stashed keys with it
   await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
   setRuntime({ lastSyncedAt: null, lastSyncDevice: null, syncStatus: "idle", syncError: null });
 }

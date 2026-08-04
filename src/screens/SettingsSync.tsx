@@ -33,7 +33,7 @@ import {
   resolveSyncConflicts,
   type SecurityChange,
 } from "@/lib/sync";
-import { effectiveServerUrl } from "@/lib/backends";
+import { effectiveServerUrl, insecureUrlWarning, normalizeUrl } from "@/lib/backends";
 import { conflicts as chordConflicts, quickAddPeer } from "@/lib/conflicts";
 import { IS_WINDOWS } from "@/lib/platform";
 import type { Backend, Profile, SyncCategory } from "@/lib/types";
@@ -354,9 +354,39 @@ export function RestoreFromServer({
   );
 }
 
+/** Every string in this dialog came from the untrusted blob, and it is the ONE surface where the
+ *  user decides whether to trust an address. Strip the characters that let a sender make text
+ *  read as something other than what it is — C0/C1 controls, the bidi overrides and isolates
+ *  (U+202A–U+202E, U+2066–U+2069) and the invisible marks — and bound the length so a long value
+ *  cannot push the buttons off screen. */
+const MAX_REVIEW_ROWS = 50;
+function safeText(s: string, max = 200): string {
+  return [...s]
+    .filter((ch) => {
+      const c = ch.codePointAt(0)!;
+      if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return false;
+      if (c >= 0x202a && c <= 0x202e) return false;
+      if (c >= 0x2066 && c <= 0x2069) return false;
+      return c !== 0x200b && c !== 0x200e && c !== 0x200f && c !== 0xfeff;
+    })
+    .slice(0, max)
+    .join("");
+}
+
+/** What the app will ACTUALLY connect to, plus a flag when the address hides it behind userinfo. */
+function authorityOf(raw: string): { host: string; hasUserinfo: boolean } | null {
+  try {
+    const u = new URL(normalizeUrl(raw));
+    return { host: u.host, hasUserinfo: !!u.username || !!u.password };
+  } catch {
+    return null;
+  }
+}
+
 /** A pulled update that would repoint a backend or replace a stored key, held for approval. */
 function SecurityReviewDialog() {
   const pending = getPendingReview();
+  const [busy, setBusy] = useState(false);
   if (!pending) return null;
   const label = (c: SecurityChange) =>
     c.kind === "new-backend"
@@ -364,35 +394,68 @@ function SecurityReviewDialog() {
       : c.kind === "server-url"
         ? "Server address changed"
         : "API key replaced";
+  const shown = pending.changes.slice(0, MAX_REVIEW_ROWS);
+  const hidden = pending.changes.length - shown.length;
   return (
-    <Modal onClose={rejectPendingReview}>
+    <Modal onClose={busy ? () => {} : rejectPendingReview}>
       <div className="text-[15px] font-semibold text-text">Review this update</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
-        {pending.device || "Another device"} sent changes that affect where your dictation is sent
-        and which key is used. Everything else was applied already — only these are waiting.
+        {safeText(pending.device || "Another device", 60)} sent changes that affect where your
+        dictation is sent and which key is used. Everything else was applied already — only these
+        are waiting.
       </div>
       <div className="mt-4 flex flex-col gap-2">
-        {pending.changes.map((c, i) => (
-          <div
-            key={`${c.kind}-${c.backend}-${i}`}
-            className="rounded-card border border-line bg-surface-2 px-3.5 py-2.5"
-          >
-            <div className="text-[13.5px] font-semibold text-text">{label(c)}</div>
-            <div className="mt-0.5 font-mono text-[11px] break-all text-dim">
-              {c.backend} · {c.detail}
+        {shown.map((c, i) => {
+          const auth = c.url ? authorityOf(c.url) : null;
+          const insecure = c.url ? insecureUrlWarning(c.url) : null;
+          return (
+            <div
+              key={`${c.kind}-${c.backend}-${i}`}
+              className="rounded-card border border-line bg-surface-2 px-3.5 py-2.5"
+            >
+              <div className="text-[13.5px] font-semibold text-text">{label(c)}</div>
+              {auth && (
+                <div className="mt-1 text-[12.5px] text-text">
+                  Would connect to <span className="font-mono font-semibold">{safeText(auth.host, 80)}</span>
+                </div>
+              )}
+              <div className="mt-0.5 font-mono text-[11px] break-all text-dim">
+                {safeText(c.backend, 80)} · {safeText(c.detail)}
+              </div>
+              {auth?.hasUserinfo && (
+                <div className="mt-1 text-[12px] font-semibold text-rec">
+                  This address hides the real server behind a sign-in prefix — the part before the
+                  “@” is not where it connects.
+                </div>
+              )}
+              {insecure && <div className="mt-1 text-[12px] text-rec">{insecure}</div>}
             </div>
-          </div>
-        ))}
+          );
+        })}
+        {hidden > 0 && (
+          <div className="text-[12px] text-faint">…and {hidden} more change(s) not shown.</div>
+        )}
       </div>
       <Notice className="mt-3">
         If you did not change this yourself on another device, reject it — your microphone audio and
         everything you dictate would go to the new address.
       </Notice>
       <div className="mt-5 flex justify-end gap-2">
-        <Button variant="ghost" onClick={rejectPendingReview}>
+        <Button variant="ghost" disabled={busy} onClick={rejectPendingReview}>
           Reject
         </Button>
-        <Button onClick={() => void approvePendingReview()}>Apply</Button>
+        {/* Both buttons stay live across the await otherwise: approve nulls the pending review and
+            only then awaits applyBlob's keyring writes, so a click on Reject during that window
+            closes the modal as "rejected" after the change has already been committed. */}
+        <Button
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            void approvePendingReview().finally(() => setBusy(false));
+          }}
+        >
+          {busy ? "Applying…" : "Apply"}
+        </Button>
       </div>
     </Modal>
   );
