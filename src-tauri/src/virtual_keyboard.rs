@@ -61,8 +61,15 @@ pub struct VirtualKeyboard(Mutex<VkChannel>);
 /// unavailable or the job failed; check `VkError::after_typing` before falling back to the portal —
 /// when it's true, some keys already landed and re-typing would duplicate them. The setup/plumbing
 /// failures here are all "nothing typed yet" (after_typing: false).
-pub async fn type_text(vk: &VirtualKeyboard, text: &str, auto_enter: bool) -> Result<(), VkError> {
-    let epoch = crate::inject::injection_epoch();
+/// `epoch` is captured by the CALLER at the top of `inject_text`, not here: queuing happens
+/// after up to ~1.2s of pre-work, and a cancel landing in that window would otherwise be read
+/// as this job's own starting generation.
+pub async fn type_text(
+    vk: &VirtualKeyboard,
+    text: &str,
+    auto_enter: bool,
+    epoch: u64,
+) -> Result<(), VkError> {
     let tx = ensure_started(vk)
         .await
         .map_err(|message| VkError { message, after_typing: false })?;

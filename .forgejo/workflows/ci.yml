@@ -142,6 +142,19 @@ jobs:
         # directory, so invoking it from the repo root would silently ignore the accepted-advisory
         # list and fail the build on entries we have already decided about.
         working-directory: src-tauri
+        env:
+          # Pinned so a run compiles a KNOWN cargo-audit rather than whatever crates.io calls
+          # latest at that moment — `--locked` pins its dependencies, not the tool itself, and the
+          # install runs the tool's own build scripts and proc-macros on the runner (then
+          # rust-cache keeps the binary for later runs). Renovate bumps this line; the
+          # `datasource`/`depName` comment below is what tells it where to look.
+          # renovate: datasource=crate depName=cargo-audit
+          CARGO_AUDIT_VERSION: "0.22.2"
         run: |
-          cargo audit --version >/dev/null 2>&1 || cargo install cargo-audit --locked
+          # Re-install when the cached binary is a different version from the pin, not merely when
+          # none is present — otherwise a stale cached build outlives every bump.
+          have=$(cargo audit --version 2>/dev/null | awk '{print $NF}')
+          if [ "$have" != "$CARGO_AUDIT_VERSION" ]; then
+            cargo install cargo-audit --version "$CARGO_AUDIT_VERSION" --locked --force
+          fi
           cargo audit

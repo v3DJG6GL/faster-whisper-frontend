@@ -339,14 +339,16 @@ mod imp {
         false
     }
 
-    /// Type `text` character-by-character (layout-correct keycodes).
+    /// Type `text` character-by-character (layout-correct keycodes). `epoch` is the
+    /// cancellation generation the CALLER captured — see `submit`.
     pub async fn type_text(
         app: &AppHandle,
         typer: &WaylandTyper,
         text: &str,
         auto_enter: bool,
+        epoch: u64,
     ) -> Result<(), String> {
-        submit(app, typer, text.to_string(), false, Vec::new(), auto_enter).await
+        submit(app, typer, text.to_string(), false, Vec::new(), auto_enter, epoch).await
     }
 
     /// Synthesize Ctrl+V on the shared session (the caller has already set the
@@ -357,8 +359,9 @@ mod imp {
         typer: &WaylandTyper,
         chord_codes: Vec<String>,
         auto_enter: bool,
+        epoch: u64,
     ) -> Result<(), String> {
-        submit(app, typer, String::new(), true, chord_codes, auto_enter).await
+        submit(app, typer, String::new(), true, chord_codes, auto_enter, epoch).await
     }
 
     fn is_modifier_code(code: &str) -> bool {
@@ -451,6 +454,7 @@ mod imp {
         paste: bool,
         chord_codes: Vec<String>,
         auto_enter: bool,
+        epoch: u64,
     ) -> Result<(), String> {
         let tx = {
             let mut guard = typer.0.lock().await;
@@ -464,9 +468,13 @@ mod imp {
             guard.as_ref().unwrap().clone()
         };
         let (reply, reply_rx) = oneshot::channel();
-        // Captured as the job is QUEUED: a cancel arriving after this point bumps the counter, so
-        // the loop abandons the job whether it has started typing yet or not.
-        let epoch = crate::inject::injection_epoch();
+        // The epoch is captured by the CALLER, at the top of `inject_text`, not here. Queuing
+        // happens after up to ~1.2s of pre-work (the held-modifier wait, two focus IPCs, a
+        // bounded clipboard read, the settle, and on the fallback path a failed VK attempt), and
+        // a cancel landing in that window would otherwise bump the counter BEFORE this read — so
+        // the job adopted the post-cancel generation and `injection_cancelled` was false for its
+        // whole life. Capturing at entry closes that window; the counter is still monotonic, so a
+        // cancel still cannot leak into the NEXT injection.
         tx.send(Job { text, paste, chord_codes, auto_enter, reply, epoch })
             .await
             .map_err(|_| "wayland typer unavailable".to_string())?;
@@ -767,6 +775,7 @@ pub async fn type_text(
     _typer: &WaylandTyper,
     _text: &str,
     _auto_enter: bool,
+    _epoch: u64,
 ) -> Result<(), String> {
     Err("Wayland text injection is only available on Linux".into())
 }
@@ -777,6 +786,7 @@ pub async fn paste(
     _typer: &WaylandTyper,
     _chord_codes: Vec<String>,
     _auto_enter: bool,
+    _epoch: u64,
 ) -> Result<(), String> {
     Err("Wayland text injection is only available on Linux".into())
 }

@@ -24,9 +24,34 @@ pub struct TriggerPayload {
     pub action: String, // "start" | "stop" | "toggle" | "reclassify" | "cancel" (chord family — see chord_engine)
 }
 
+/// The shortcut modifiers that were physically down at the moment the last trigger fired — by
+/// construction, the dictation chord's own. `inject_text` waits for the modifiers to be released
+/// before typing (they would otherwise fold into the injected keys and fire shortcuts in the
+/// focused app), and on timeout it needs to tell "the user has not let go of the dictation chord"
+/// from "the user is holding Shift for their own reasons". Only the first is a reason to divert
+/// the text to the clipboard; diverting on the second would break ordinary dictation.
+static TRIGGER_MODS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+
+/// Are any of the modifiers that were down when the trigger fired STILL down?
+pub fn trigger_modifiers_still_held(held: &crate::held_keys::HeldKeys) -> bool {
+    TRIGGER_MODS
+        .lock()
+        .ok()
+        .is_some_and(|mods| !mods.is_empty() && held.any_held(&mods))
+}
+
 /// Emit a trigger event for an explicit Profile id.
 fn emit_trigger(app: &AppHandle, profile_id: String, action: &str) {
     tracing::info!("[trigger] {profile_id}/{action}");
+    // Snapshot the chord's modifiers while they are still down (see `TRIGGER_MODS`).
+    if let Ok(mut g) = TRIGGER_MODS.lock() {
+        let held = app.state::<crate::held_keys::HeldKeys>();
+        *g = crate::held_keys::SHORTCUT_MOD_CODES
+            .iter()
+            .copied()
+            .filter(|&c| held.any_held(&[c]))
+            .collect();
+    }
     let _ = app.emit(
         "trigger",
         TriggerPayload {

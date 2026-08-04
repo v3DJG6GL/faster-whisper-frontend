@@ -10,7 +10,7 @@
 //! a native libei path is M7) and `arboard` for the clipboard.
 
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -33,9 +33,32 @@ pub fn injection_epoch() -> u64 {
     INJECT_EPOCH.load(Ordering::SeqCst)
 }
 
-/// Abandon whatever is currently being typed, at its next character boundary.
+/// Should a job abandoned by the CURRENT bump leave its text on the clipboard?
+///
+/// A user-initiated cancel means "I don't want this" — recovering it to the clipboard would
+/// be the opposite of the request. A session that DIED (a server error frame, a fatal insert,
+/// a rejected stop) is different: the user never asked for the text to go away, and the
+/// stop-mode path already copies the transcript for manual recovery. Set alongside the bump so
+/// the two cases stay distinguishable at the point the job bails.
+static RECOVER_ON_CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// Abandon whatever is currently being typed, at its next character boundary. The user asked
+/// for this, so the abandoned text is NOT recovered.
 pub fn cancel_injection() {
+    RECOVER_ON_CANCEL.store(false, Ordering::SeqCst);
     INJECT_EPOCH.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Same abandonment, but for a session that died rather than one the user cancelled: the text
+/// still being typed is left on the clipboard so it is recoverable.
+pub fn abort_injection_for_error() {
+    RECOVER_ON_CANCEL.store(true, Ordering::SeqCst);
+    INJECT_EPOCH.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Was the bump that cancelled the current job an error abort (recover) or a user cancel (drop)?
+pub fn cancel_wants_recovery() -> bool {
+    RECOVER_ON_CANCEL.load(Ordering::SeqCst)
 }
 
 /// Has the injection that started at `epoch` been cancelled since?

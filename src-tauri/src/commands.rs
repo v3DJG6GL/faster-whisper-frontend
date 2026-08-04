@@ -742,11 +742,20 @@ pub async fn cancel_stream(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<StreamState>();
         let sess = state.0.lock().map_err(|_| "stream state poisoned".to_string())?.take();
+        let had_session = sess.is_some();
         drop(sess); // Drop (not finish) runs OUTSIDE the lock — the guard released on the line above
         // …and abandon any transcript still being typed out. The typing paths emit one key at a
         // time, so without this a cancel only stopped FUTURE inserts while the current one kept
         // going into whatever window had focus.
-        crate::inject::cancel_injection();
+        //
+        // ONLY when a session was actually taken. The frontend fire-and-forgets a cancel on every
+        // normal close, and that no-op call used to bump the counter too — harmless only because
+        // the injection captured its epoch so late that the bump always landed first. Now that the
+        // capture is at the top of `inject_text`, an unconditional bump here would abort the
+        // legitimate end-of-session insert queued moments later.
+        if had_session {
+            crate::inject::cancel_injection();
+        }
         session::retire_active_epoch(); // discarded session (+ any detached drain) must never emit again
         Ok(())
     })
@@ -834,13 +843,28 @@ pub async fn cancel_record(app: AppHandle) -> Result<(), String> {
         // discard() (not finish, not a bare drop) runs OUTSIDE the lock: it marks the clip discarded
         // BEFORE Drop joins the capture thread, so the device-loss salvage arm inside that join does
         // not upload the audio or write the .wav/.txt. Then Drop stops capture and releases the mute.
+        let had_session = sess.is_some();
         if let Some(s) = sess {
             s.discard();
         }
+        // A cancel arriving during the "transcribing…" phase finds None here — `stop_record`
+        // already took the session and `finish` detached the POST. Disown that work too, so the
+        // audio is not uploaded and neither the .wav nor its verbatim .txt is left on disk after
+        // a UI that says cancelled.
+        //
+        // Only when there was no live session: a cancel that DID find one is aimed at that
+        // session, and disowning here would instead kill a legitimate earlier transcription that
+        // is still in flight (stop A → start B → cancel B would have discarded A's result).
+        if !had_session {
+            session::cancel_detached_batch();
+        }
         // …and abandon any transcript still being typed out. The typing paths emit one key at a
         // time, so without this a cancel only stopped FUTURE inserts while the current one kept
-        // going into whatever window had focus.
-        crate::inject::cancel_injection();
+        // going into whatever window had focus. Gated on a real session for the same reason as
+        // the streaming twin — see `cancel_stream`.
+        if had_session {
+            crate::inject::cancel_injection();
+        }
         session::retire_active_epoch(); // discarded session (+ any in-flight transcribe POST) must never emit again
         Ok(())
     })
@@ -855,6 +879,13 @@ pub async fn cancel_record(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn retire_session_epoch() {
     session::retire_active_epoch();
+    // The three callers are all "the session died" paths (a server error frame, a fatal insert,
+    // a rejected stop), and each one restores the user's focus and declares the session over.
+    // Retiring the ACTIVE epoch only silences future EVENTS, though — a transcript already being
+    // typed kept going, one key at a time, into whatever window the teardown had just refocused.
+    // Abort it too. Unlike a user cancel this leaves the text on the clipboard: the user never
+    // asked for it to go away, and the stop-mode path already offers the same recovery.
+    crate::inject::abort_injection_for_error();
 }
 
 /// Suspend ALL hotkey backends (while the user captures a new binding) so pressing
@@ -1419,6 +1450,12 @@ pub async fn inject_text(
     // — so a malicious/garbled server can't smuggle terminal-escape sequences onto the clipboard or
     // into a paste. (The Wayland direct-typing paths already drop controls; this matches them.)
     let text = crate::inject::sanitize_injected(&text);
+    // Captured HERE — before any await — not where the job is finally queued. Everything below
+    // (the held-modifier wait, two focus IPCs, a bounded clipboard read, the settle, and on the
+    // Wayland fallback a failed virtual-keyboard attempt) can take a second or more, and a cancel
+    // landing in that window used to bump the counter BEFORE the job read it, so the job adopted
+    // the post-cancel generation and never saw itself as cancelled.
+    let epoch = crate::inject::injection_epoch();
     tracing::info!("[inject] {} chars via {} (auto_enter={})", text.len(), method, auto_enter);
     // Never inject into our OWN UI: if one of our real windows holds keyboard focus, typed/pasted
     // keys would fire buttons/shortcuts in the app itself (e.g. dictating while looking at Home) —
@@ -1477,13 +1514,29 @@ pub async fn inject_text(
     // stop, which triggers on the second chord press with every key still down). Only
     // the evdev backend can observe physical release on Wayland; when it isn't running
     // the held set is empty so this is a no-op. Capped so we never drop the text.
+    let mut modifiers_stuck = false;
     {
         let held = app.state::<crate::held_keys::HeldKeys>().inner().clone();
         if held.any_held(&crate::held_keys::SHORTCUT_MOD_CODES) {
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
             while held.any_held(&crate::held_keys::SHORTCUT_MOD_CODES) {
                 if std::time::Instant::now() >= deadline {
-                    tracing::warn!("[inject] trigger modifiers still held after 500ms — injecting anyway");
+                    // The gate used to fail OPEN here: it logged and typed anyway, so the
+                    // transcript's characters folded into the still-held modifier and became
+                    // shortcut chords in the focused app — with the server choosing WHICH ones.
+                    //
+                    // It cannot simply fail closed either. `SHORTCUT_MOD_CODES` spans both
+                    // Shifts, and this is `any_held`, so a user holding Shift to capitalize or
+                    // Ctrl to scroll-zoom during a live session would silently have every phrase
+                    // diverted — dictation looks broken with nothing to explain it. So divert
+                    // only when the modifiers still down are the ones that were down when the
+                    // TRIGGER fired, i.e. the dictation chord itself is not being released.
+                    modifiers_stuck = crate::triggers::trigger_modifiers_still_held(&held);
+                    if modifiers_stuck {
+                        tracing::warn!("[inject] trigger chord still held after 500ms — clipboard only");
+                    } else {
+                        tracing::warn!("[inject] an unrelated modifier is held — injecting anyway");
+                    }
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(15)).await;
@@ -1500,6 +1553,7 @@ pub async fn inject_text(
     // already gets, so the text is preserved and nothing is typed into a window whose rule we
     // never evaluated. An UNIDENTIFIED window still falls through unchanged: that is the
     // deliberate fail-open behaviour, and a cold a11y bridge hits it routinely.
+    let method = if modifiers_stuck { "clipboard".to_string() } else { method };
     let method = match (&expect_app_id, crate::atspi_guard::focused_app_now(guard.inner())) {
         (Some(expected), Some(now)) if !now.app_id.eq_ignore_ascii_case(expected) => {
             tracing::warn!(
@@ -1518,6 +1572,8 @@ pub async fn inject_text(
         return Ok(());
     }
 
+    // Kept for the error-abort recovery below: the X11 branch moves `text` into spawn_blocking.
+    let recovery_text = text.clone();
     let res = if crate::inject::is_wayland() {
         if text.is_empty() && auto_enter && method != "direct" {
             // Auto-enter with no text on the PASTE path (the per-phrase / tail Enter): press Enter
@@ -1526,12 +1582,12 @@ pub async fn inject_text(
             // branch below: VK type_text("", true) cleanly types Return — and on KWin, where VK is
             // unavailable, it falls back to this same portal path — so the per-phrase Enter takes the
             // SAME silent VK route the phrase's words did instead of forcing a portal consent prompt.)
-            crate::wayland_inject::type_text(&app, typer.inner(), "", true).await
+            crate::wayland_inject::type_text(&app, typer.inner(), "", true, epoch).await
         } else if method == "direct" {
             // Prefer the virtual keyboard (Caps Lock-/layout-correct typing). Fall back
             // to the portal keycode path when the protocol is unavailable (e.g. GNOME)
             // or a job fails.
-            match crate::virtual_keyboard::type_text(vkbd.inner(), &text, auto_enter).await {
+            match crate::virtual_keyboard::type_text(vkbd.inner(), &text, auto_enter, epoch).await {
                 Ok(()) => {
                     tracing::info!("[inject] typed via virtual keyboard");
                     Ok(())
@@ -1541,7 +1597,7 @@ pub async fn inject_text(
                 // re-typing the whole text via the portal would duplicate it — surface the error instead.
                 Err(e) if !e.after_typing => {
                     tracing::warn!("[inject] virtual keyboard unavailable ({}); using portal", e.message);
-                    crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter).await
+                    crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter, epoch).await
                 }
                 Err(e) => {
                     tracing::error!("[inject] virtual keyboard failed mid-typing ({}); not re-typing via portal (would duplicate the landed prefix)", e.message);
@@ -1586,7 +1642,7 @@ pub async fn inject_text(
             set_res?; // propagate a set_text failure; prev was captured (time-bounded) above
             // Longer settle for a remote-desktop target (content must cross the network first).
             tokio::time::sleep(std::time::Duration::from_millis(if remote_target { 300 } else { 60 })).await;
-            let r = crate::wayland_inject::paste(&app, typer.inner(), paste_shortcut, auto_enter).await;
+            let r = crate::wayland_inject::paste(&app, typer.inner(), paste_shortcut, auto_enter, epoch).await;
             // Restore the user's prior clipboard only if the paste actually landed. If it failed,
             // leave the transcript on the clipboard so it's recoverable (the user can paste it
             // manually) instead of silently clobbering it with the old clipboard.
@@ -1604,6 +1660,17 @@ pub async fn inject_text(
     };
     if let Err(ref e) = res {
         tracing::warn!("[inject] FAILED: {e}");
+    }
+    // If a DIED session (not a user cancel) cut this injection short, the text stopped somewhere
+    // mid-sentence and the window it was going into has already been refocused by the teardown.
+    // Leave the transcript on the clipboard so it is recoverable — the same courtesy the
+    // stop-mode path extends. A user-initiated cancel deliberately does not land here.
+    if crate::inject::injection_cancelled(epoch)
+        && crate::inject::cancel_wants_recovery()
+        && !recovery_text.is_empty()
+    {
+        tracing::info!("[inject] aborted by a failed session — transcript left on the clipboard");
+        crate::inject::set_clipboard_persistent(&recovery_text);
     }
     res
 }

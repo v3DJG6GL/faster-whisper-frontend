@@ -168,12 +168,25 @@ pub fn client() -> reqwest::Client {
                 // same-host, was followed, and re-sent that credential set in the clear for anyone
                 // on the path to read. Refuse the downgrade specifically: http→https (the proxy
                 // case) and every same-scheme hop still follow.
+                // And the PORT, for the same reason one level down. A different port is a
+                // different listener, and on a multi-tenant box — or on the loopback/LAN
+                // deployments where plaintext is deliberately un-warned — any unprivileged local
+                // process can bind a high one. reqwest strips `Authorization` on a port change but
+                // still replays the body, so `308 Location: https://<same host>:9443/…` handed the
+                // whole key set to that listener, which needed no credential to read it.
+                //
+                // Compared only WITHIN a scheme: an http→https upgrade almost always moves the
+                // port too (80→443, 8000→8443), and refusing on port equality alone would break
+                // the very hop the downgrade rule above deliberately keeps working.
                 .redirect(reqwest::redirect::Policy::custom(|attempt| {
                     let prev = attempt.previous().last();
                     let same_host = prev.and_then(|u| u.host_str()) == attempt.url().host_str();
+                    let same_scheme = prev.map(|u| u.scheme()) == Some(attempt.url().scheme());
+                    let same_port = prev.and_then(|u| u.port_or_known_default())
+                        == attempt.url().port_or_known_default();
                     let downgrades_tls =
                         prev.is_some_and(|u| u.scheme() == "https") && attempt.url().scheme() != "https";
-                    if !same_host || downgrades_tls {
+                    if !same_host || downgrades_tls || (same_scheme && !same_port) {
                         attempt.stop()
                     } else if attempt.previous().len() > 5 {
                         attempt.error("too many redirects")

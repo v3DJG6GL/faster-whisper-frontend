@@ -180,15 +180,20 @@ jobs:
             # the API exposes no digest of its own on either side (verified: Forgejo's Attachment
             # schema has none, and neither does GitHub's).
             : > allsums.txt
+            sumsfound=0
             while IFS= read -r sasset; do
               sname=$(jq -r '.name' <<<"$sasset")
               case "$sname" in
                 SHA256SUMS*) ;;
                 *) continue ;;
               esac
-              if sget -o sums.txt "$(jq -r '.browser_download_url' <<<"$sasset")"; then
-                cat sums.txt >> allsums.txt
-              fi
+              sumsfound=1
+              # NOT inside an `if`: a command in an if-condition is exempt from `set -e`, so a
+              # 404 or a persistent 5xx used to leave allsums.txt short and the per-asset check
+              # below then silently degraded to a size comparison — exactly the failure someone
+              # tampering with a release would induce. Fail the job instead.
+              sget -o sums.txt "$(jq -r '.browser_download_url' <<<"$sasset")"
+              cat sums.txt >> allsums.txt
               rm -f sums.txt
             done < <(jq -c '.assets[]' <<<"$rel")
 
@@ -222,7 +227,20 @@ jobs:
                   exit 1
                 fi
               elif [ "${aname#SHA256SUMS}" = "$aname" ]; then
-                echo "[$tag] note: no published digest for $aname — size-checked only"
+                # No digest for this asset. Every release built since SHA256SUMS was introduced
+                # publishes one per leg, so this now means either a release predating that, or an
+                # asset someone added to the release out of band. Refuse to mirror it: a size
+                # check cannot tell a correct installer from a same-size replacement, and the job
+                # summary claims every byte is verified.
+                #
+                # Note the consequence, deliberately accepted: if an OLD (pre-SHA256SUMS) release
+                # ever needs re-uploading — its asset deleted on the GitHub side, or its size
+                # drifted — this hard-fails and no further releases mirror until it is resolved,
+                # either by publishing a SHA256SUMS for that release or by deleting the entry.
+                # Assets already mirrored are counted `fresh` and skipped, so this does not fire
+                # on a steady-state run.
+                echo "::error::[$tag] $aname has no published sha256 (release published ${sumsfound} SHA256SUMS asset(s)) — refusing to mirror unverified bytes"
+                exit 1
               fi
               dput -X POST "https://uploads.github.com/repos/$DST_REPO/releases/$rid/assets?name=$aname" \
                 -H 'Content-Type: application/octet-stream' \

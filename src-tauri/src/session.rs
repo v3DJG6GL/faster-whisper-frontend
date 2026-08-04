@@ -50,6 +50,31 @@ pub fn retire_active_epoch() {
     ACTIVE_EPOCH.fetch_add(1, Ordering::SeqCst);
 }
 
+/// The epoch of the batch transcription most recently DETACHED by `RecordSession::finish`, and
+/// the epoch a cancel has since disowned.
+///
+/// `stop_record` takes the session out of managed state and `finish` spawns the transcribe POST
+/// on its own task — so a cancel arriving during the "transcribing…" phase found `None` and had
+/// nothing to discard, while the detached work went on to POST the audio and write the `.wav`
+/// plus its verbatim `.txt` sidecar. The UI meanwhile showed a clean cancelled state.
+///
+/// A dedicated pair rather than reusing `ACTIVE_EPOCH`: that one is also bumped when the NEXT
+/// session starts, so gating on "still active" would throw away a legitimate transcription
+/// whenever the user began dictating again before the previous batch POST returned.
+static DETACHED_BATCH_EPOCH: AtomicU64 = AtomicU64::new(0);
+static CANCELLED_BATCH_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// Disown whatever batch transcription is currently detached, if any. Called by `cancel_record`
+/// even when the session has already been taken out of state by a preceding stop.
+pub fn cancel_detached_batch() {
+    CANCELLED_BATCH_EPOCH.store(DETACHED_BATCH_EPOCH.load(Ordering::SeqCst), Ordering::SeqCst);
+}
+
+/// Was the detached transcription for `epoch` cancelled? Epoch 0 is "none detached yet".
+fn batch_cancelled(epoch: u64) -> bool {
+    epoch != 0 && CANCELLED_BATCH_EPOCH.load(Ordering::SeqCst) == epoch
+}
+
 /// Emit a `stream://*` event only if `epoch` is still the active session (see [`ACTIVE_EPOCH`]).
 fn emit_if_active<S: Serialize + Clone>(app: &AppHandle, epoch: u64, event: &str, payload: S) {
     if ACTIVE_EPOCH.load(Ordering::SeqCst) == epoch {
@@ -587,6 +612,9 @@ impl RecordSession {
         let app = self.app.clone();
         let epoch = self.epoch;
         let params = self.params.clone();
+        // Publish the epoch BEFORE spawning, so a cancel landing in the "transcribing…" phase has
+        // something to disown (see DETACHED_BATCH_EPOCH).
+        DETACHED_BATCH_EPOCH.store(epoch, Ordering::SeqCst);
         tauri::async_runtime::spawn(async move {
             transcribe_recording(app, epoch, params, pcm).await;
         });
@@ -676,6 +704,12 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
 }
 
 async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, pcm: Vec<u8>) {
+    // Cancelled between the stop and this task getting scheduled: archive nothing, send nothing.
+    // "Cancel" has to mean discard here too, not just for a session still held in state.
+    if batch_cancelled(epoch) {
+        tracing::info!("[record] session {epoch} cancelled before transcribing — discarding the clip");
+        return;
+    }
     // Save the captured clip FIRST, regardless of length — exactly as the streaming save path
     // does (it saves any non-empty buffer, with no minimum-duration gate). Whether a too-short
     // recording is worth keeping is the BACKEND's call (CAPTURE_RECORDINGS_MIN_DURATION_SEC),
@@ -713,6 +747,16 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
     .await
     {
         Ok(res) => {
+            // Cancelled while the POST was in flight. The clip was already written above, so
+            // remove it rather than leaving an orphan the user believes they discarded — and do
+            // not write the transcript beside it or emit its text.
+            if batch_cancelled(epoch) {
+                tracing::info!("[record] session {epoch} cancelled during transcription — discarding");
+                if let Some(p) = &saved_path {
+                    let _ = std::fs::remove_file(p);
+                }
+                return;
+            }
             // Label the saved recording with its transcript (sibling .txt), same as streaming.
             if let Some(p) = &saved_path {
                 crate::audio::save_transcript_sidecar(p, &res.text);
