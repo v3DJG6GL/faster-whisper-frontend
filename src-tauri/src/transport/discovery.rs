@@ -44,6 +44,10 @@ struct ModelObj {
 const MAX_MODELS: usize = 500;
 /// Ceiling on a single server-supplied name rendered in the UI.
 const MAX_NAME: usize = 120;
+/// Whisper caps `initial_prompt` at 224 tokens server-side, so this cannot clip a real one.
+const PROMPT_MAX: usize = 2000;
+/// The decode-values map is a handful of scalars; anything past this is not a real profile.
+const VALUES_MAX_BYTES: usize = 64 * 1024;
 
 fn bounded_name(s: &str) -> String {
     super::bounded_server_text(s, MAX_NAME)
@@ -198,7 +202,13 @@ pub async fn get_usage_stats(
     } else {
         format!("{base}/v1/usage?{}", q.join("&"))
     };
-    get_json(url, api_key).await
+    // `username` and `range.bucket` ride in a struct the store re-serializes with TWO
+    // JSON.stringify passes on the main thread every 30s for every backend — the same reason
+    // `series` is already sliced client-side. The `test_connection` sibling caps `username`.
+    let mut u: UsageStats = get_json(url, api_key).await?;
+    u.username = bounded_name(&u.username);
+    u.range.bucket = bounded_name(&u.range.bucket);
+    Some(u)
 }
 
 /// A single override-profile's decode values + locked client keys
@@ -220,5 +230,18 @@ pub async fn get_override_profile(
     }
     let base = base_url(server_url);
     let url = format!("{base}/v1/override-profiles/{name}");
-    get_json(url, api_key).await
+    // Its sibling `list_override_profiles` is capped; this one returned every field straight off
+    // the wire, and the editor fetches it from a `useEffect` with no user gesture — `prompt`
+    // becomes a textarea placeholder and each `values` entry a Segmented option label.
+    let mut p: ResolvedOverrideProfile = get_json(url, api_key).await?;
+    p.name = bounded_name(&p.name);
+    p.prompt = p.prompt.map(|s| super::bounded_server_text(&s, PROMPT_MAX));
+    p.locked.truncate(MAX_MODELS);
+    p.locked = p.locked.iter().map(|s| bounded_name(s)).collect();
+    // `values` is an opaque map rendered as option labels; drop it wholesale if it is absurd
+    // rather than trying to bound each leaf of an arbitrary JSON shape.
+    if serde_json::to_string(&p.values).map_or(true, |s| s.len() > VALUES_MAX_BYTES) {
+        p.values = serde_json::json!({});
+    }
+    Some(p)
 }

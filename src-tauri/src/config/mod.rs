@@ -421,7 +421,12 @@ pub struct GeneralSettings {
     /// quick-add list is designated — see apply_bindings). `#[serde(default = …)]` so
     /// configs missing the field get the factory value. Registered via the same paths
     /// as Profile hotkeys (evdev / plugin / the `--quick-add` CLI flag).
-    #[serde(default = "default_quick_add_hotkey")]
+    /// Deserialized through `de_hotkey`, exactly like `Profile.hotkey`. Without it this chord got
+    /// no canonicalization and no dedup, so it was the one binding whose LENGTH nothing bounded:
+    /// `chords_from` maps every element (a million copies of one modifier all map), and
+    /// `Engine::step` then walks the whole vector on EVERY system-wide key transition. The dedup
+    /// makes that structurally impossible for all three consumers at once.
+    #[serde(default = "default_quick_add_hotkey", deserialize_with = "de_hotkey")]
     pub quick_add_hotkey: Vec<String>,
 }
 
@@ -800,7 +805,13 @@ pub fn save(dir: &Path, config: &Config) -> anyhow::Result<()> {
     let tmp = path.with_extension("json.tmp");
     let text = serde_json::to_string_pretty(config)?;
     write_private(&tmp, &text)?;
-    std::fs::rename(&tmp, &path)?;
+    // Don't leave the tmp behind when the rename fails (a Windows AV/indexer lock — the exact
+    // condition the config reader already retries for — a read-only or full volume, a cross-device
+    // app-data dir). The settings-export sibling already cleans up on this path.
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(())
 }
 

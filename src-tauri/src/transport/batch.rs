@@ -16,6 +16,11 @@ use std::time::Duration;
 /// stuck-session backstop).
 const FILE_TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(3600);
 
+/// Mirrors `session.rs`'s cap on the same list from the dictation path.
+const MAX_OVERRIDE_NOTICES: usize = 50;
+/// A BCP-47 tag; the longest real ones are ~35 characters.
+const LANGUAGE_MAX: usize = 64;
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchResult {
@@ -172,10 +177,20 @@ async fn post(
         .await
         .map_err(|e| anyhow::anyhow!(e))
         .context("decoding response")?;
+    // The dictation sibling caps this same pair on the way out (session.rs); the file-upload arm
+    // returned them straight off the wire, so the Transcribe screen rendered a server string
+    // bounded only by the 32 MiB body cap. `text` is deliberately untouched — that IS the output.
     Ok(BatchResult {
         text: parsed.text,
-        language: parsed.language,
+        language: parsed
+            .language
+            .map(|s| super::bounded_server_text(&s, LANGUAGE_MAX)),
         duration: parsed.duration,
-        overrides_ignored: parsed.overrides_ignored,
+        overrides_ignored: parsed
+            .overrides_ignored
+            .iter()
+            .take(MAX_OVERRIDE_NOTICES)
+            .map(|s| super::bounded_server_text(s, super::MAX_ERROR_TEXT))
+            .collect(),
     })
 }

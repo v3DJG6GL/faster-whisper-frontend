@@ -32,7 +32,13 @@ pub fn save(dir: &Path, state: &serde_json::Value) -> anyhow::Result<()> {
     let tmp = path.with_extension("json.tmp");
     let text = serde_json::to_string(state)?;
     super::write_private(&tmp, &text)?;
-    std::fs::rename(&tmp, &path)?;
+    // Don't leave the tmp behind when the rename fails (a Windows AV/indexer lock — the exact
+    // condition the config reader already retries for — a read-only or full volume, a cross-device
+    // app-data dir). The settings-export sibling already cleans up on this path.
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(())
 }
 

@@ -228,9 +228,15 @@ pub const MAX_ERROR_TEXT: usize = 200;
 /// formatted the transport error straight into the emitted message — and that error carries
 /// `detail_from(&body)`, which falls back to the whole response body (bounded only by
 /// [`MAX_BODY`]). Newlines are folded too, so a server cannot forge log records.
+/// The fold is Cc AND the invisible-format set, not `is_control()` alone. These strings are
+/// single-line labels printed next to a connection verdict or inside a consent dialog, and a bidi
+/// override there reorders the sentence the user is reading to make a trust decision — the same
+/// reason the injection path strips them. Doing it here means every consumer of a bounded server
+/// string inherits it, instead of each render site remembering to sanitize.
 pub fn bounded_server_text(s: &str, n: usize) -> String {
     let cleaned: String = s
         .chars()
+        .filter(|c| !crate::inject::is_deceptive_format_char(*c))
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
     match cleaned.char_indices().nth(n) {
@@ -266,7 +272,11 @@ pub async fn json_capped<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
 ) -> Result<T, String> {
     let text = body_capped(resp).await?;
-    serde_json::from_str(&text).map_err(|e| e.to_string())
+    // serde embeds the offending value VERBATIM in its message (`Unexpected::Str` formats as
+    // `string {:?}`), so a 32 MiB field yields a 32 MiB error — larger still once Debug escaping
+    // expands each character. That string is what the unattended sync pull surfaces in the
+    // settings banner. Bound it here, where every caller inherits the bound.
+    serde_json::from_str(&text).map_err(|e| bounded_server_text(&e.to_string(), MAX_ERROR_TEXT))
 }
 
 const TOO_LARGE: &str = "The server sent an unreasonably large response — ignoring it.";

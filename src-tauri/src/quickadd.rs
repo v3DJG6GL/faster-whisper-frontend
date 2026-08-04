@@ -232,14 +232,28 @@ pub(crate) mod win_seed {
                             Some(p) => {
                                 let _ = cb.set_text(p.clone()); // put the user's clipboard back
                             }
-                            None => tracing::info!("[quickadd-seed] non-text clipboard was replaced by the copy grab"),
+                            // Nothing text-shaped to put back — but the grab still LEFT the
+                            // user's selection sitting in the global clipboard, readable by every
+                            // process and captured by clipboard history / cloud sync, after the
+                            // user did nothing but press a hotkey to open a word-mapping window.
+                            // Clearing is the closest we can get to "as it was".
+                            None => {
+                                let _ = cb.clear();
+                                tracing::info!("[quickadd-seed] non-text clipboard was replaced by the copy grab; cleared it");
+                            }
                         }
                         return Some(text);
                     }
                     Err(_) => {
                         if Instant::now() >= deadline {
-                            if let Some(p) = prev {
-                                let _ = cb.set_text(p); // copied content is non-text — restore
+                            match prev {
+                                Some(p) => {
+                                    let _ = cb.set_text(p); // copied content is non-text — restore
+                                }
+                                // Same residue as above, on the read-failure path.
+                                None => {
+                                    let _ = cb.clear();
+                                }
                             }
                             return None;
                         }

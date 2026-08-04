@@ -12,6 +12,13 @@
 use super::{base_url, body_capped, client, detail_from, friendly_err, json_capped, with_auth};
 use serde::{Deserialize, Serialize};
 
+/// A role name ("admin", "editor"), never prose.
+const ROLE_MAX: usize = 60;
+/// Mirrors the count both webviews already slice to.
+const MAX_RECENT_WORDS: usize = 500;
+/// A single dictated word or short phrase.
+const WORD_MAX: usize = 120;
+
 /// First `n` chars of `s` for a log line. Error bodies can be huge, and a 422's body embeds
 /// the submitted rule contents — logs get the status + a short detail, never the payload.
 
@@ -82,12 +89,18 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
             let code = resp.status().as_u16();
             if resp.status().is_success() {
                 match json_capped::<PipelineRulesState>(resp).await {
-                    Ok(state) => PipelineFetch {
-                        ok: true,
-                        status: code,
-                        state: Some(state),
-                        error: None,
-                    },
+                    Ok(mut state) => {
+                        // `role` is the user's own privilege readout ("Editing as <role>"),
+                        // rendered inline in a wrapping row with no truncation — the sibling of
+                        // the identity strings discovery.rs already bounds.
+                        state.role = super::bounded_server_text(&state.role, ROLE_MAX);
+                        PipelineFetch {
+                            ok: true,
+                            status: code,
+                            state: Some(state),
+                            error: None,
+                        }
+                    }
                     Err(e) => {
                         tracing::warn!("[pipeline] rules GET: HTTP {code} but unparsable body: {e}");
                         PipelineFetch {
@@ -224,7 +237,17 @@ pub async fn get_recent_words(server_url: &str, api_key: Option<&str>) -> Recent
     // summon, and that expected miss must not spam the default-on info/warn log.
     match with_auth(client().get(url), api_key).send().await {
         Ok(resp) if resp.status().is_success() => match json_capped::<RecentWords>(resp).await {
-            Ok(rw) => rw,
+            // The COUNT is capped in both webviews; the per-word LENGTH never was, and
+            // `Combobox.rank` lowercases every candidate on every keystroke.
+            Ok(mut rw) => {
+                rw.words.truncate(MAX_RECENT_WORDS);
+                rw.words = rw
+                    .words
+                    .iter()
+                    .map(|w| super::bounded_server_text(w, WORD_MAX))
+                    .collect();
+                rw
+            }
             Err(e) => {
                 tracing::debug!("[pipeline] recent-words: unparsable body: {e}");
                 RecentWords::default()

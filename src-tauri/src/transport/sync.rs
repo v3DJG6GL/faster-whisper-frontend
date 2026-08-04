@@ -33,6 +33,23 @@ pub struct SyncRemoteState {
     pub device: Option<String>,
 }
 
+impl SyncRemoteState {
+    /// `device` is a server-supplied label rendered in the conflict dialog, as a Segmented option
+    /// LABEL the user clicks, on the always-visible sync status line, and on the restore consent
+    /// card — but unlike its `username` / `boot_id` / `server_version` siblings it was never
+    /// routed through the bounding helper, so it reached those surfaces with no cap and no
+    /// defanging at all. Bound it once, here, rather than at each render.
+    fn bounded(mut self) -> Self {
+        self.device = self
+            .device
+            .map(|d| super::bounded_server_text(&d, DEVICE_LABEL_MAX));
+        self
+    }
+}
+
+/// A device label is a short human name ("mar's laptop"), never prose.
+const DEVICE_LABEL_MAX: usize = 80;
+
 /// GET outcome. `ok` ⇒ `state` is present; otherwise `status` + `error` say
 /// why (0 = unreachable, 404 = backend build predates sync, 401 = key).
 #[derive(Debug, Serialize, Default)]
@@ -84,14 +101,14 @@ pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
                     Ok(state) => SyncPull {
                         ok: true,
                         status: code,
-                        state: Some(state),
+                        state: Some(state.bounded()),
                         error: None,
                     },
                     Err(e) => SyncPull {
                         ok: false,
                         status: code,
                         state: None,
-                        error: Some(format!("Unexpected response: {e}")),
+                        error: Some(format!("Unexpected response: {}", super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT))),
                     },
                 }
             } else {
@@ -143,14 +160,14 @@ pub async fn push(
                     Ok(state) => SyncPush {
                         ok: true,
                         status: code,
-                        state: Some(state),
+                        state: Some(state.bounded()),
                         conflict: None,
                         error: None,
                     },
                     Err(e) => SyncPush {
                         ok: false,
                         status: code,
-                        error: Some(format!("Unexpected response: {e}")),
+                        error: Some(format!("Unexpected response: {}", super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT))),
                         ..Default::default()
                     },
                 }
@@ -161,13 +178,13 @@ pub async fn push(
                     Ok(current) => SyncPush {
                         ok: false,
                         status: code,
-                        conflict: Some(current),
+                        conflict: Some(current.bounded()),
                         ..Default::default()
                     },
                     Err(e) => SyncPush {
                         ok: false,
                         status: code,
-                        error: Some(format!("Unexpected conflict response: {e}")),
+                        error: Some(format!("Unexpected conflict response: {}", super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT))),
                         ..Default::default()
                     },
                 }

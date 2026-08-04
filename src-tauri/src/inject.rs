@@ -104,17 +104,32 @@ pub fn sanitize_injected(text: &str) -> String {
 /// The portal keycode path already drops these (they are not in the layout charmap); this brings
 /// the clipboard/paste, X11-direct and virtual-keyboard paths to the same posture. No legitimate
 /// dictation output needs them.
-fn is_deceptive_format_char(c: char) -> bool {
+/// Kept deliberately NARROW. Every entry below is invisible when rendered and has no legitimate
+/// producer in dictation output. Category alone is the wrong test: plenty of Cf characters are
+/// genuinely printable — U+0600–U+0605 span the digits that follow them, U+06DD and U+08E2 draw
+/// the decorative circle around a verse number, U+070F overlines a Syriac abbreviation, and
+/// U+0890–U+0891 are visible currency marks. Filtering those would silently corrupt real Arabic
+/// and Syriac transcripts, which is worse than the attack. Do not "complete the category".
+pub fn is_deceptive_format_char(c: char) -> bool {
     matches!(c,
         '\u{00ad}'                      // SOFT HYPHEN — invisible, splits a word for search/diff
         | '\u{061c}'                    // ARABIC LETTER MARK — bidi control, sibling of LRM/RLM
+        | '\u{115f}' | '\u{1160}'       // HANGUL CHOSEONG/JUNGSEONG FILLER — zero-width, and
+        | '\u{3164}' | '\u{ffa0}'       // HANGUL FILLER — category Lo, so no category rule catches these
         | '\u{180e}'                    // MONGOLIAN VOWEL SEPARATOR
         | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{200e}' | '\u{200f}'
+        | '\u{2028}' | '\u{2029}'       // LINE/PARAGRAPH SEPARATOR — Zl/Zp, so is_control() misses
+                                        // them, yet both are UAX#14 mandatory breaks: a hard line
+                                        // break in a label, and a real Enter on the typing paths
         | '\u{202a}'..='\u{202e}'
         | '\u{2060}'..='\u{2064}'       // word joiner + invisible times/separator/plus
         | '\u{2066}'..='\u{2069}'
+        | '\u{206a}'..='\u{206f}'       // deprecated Cf controls (symmetric swapping, Arabic
+                                        // shaping, digit shapes) — no renderer draws these
         | '\u{feff}'
         | '\u{fff9}'..='\u{fffb}'       // interlinear annotation — hides text between the anchors
+        | '\u{1bca0}'..='\u{1bca3}'     // Duployan shorthand format controls
+        | '\u{1d173}'..='\u{1d17a}'     // musical beam/slur/phrase controls — invisible
         | '\u{e0000}'..='\u{e007f}')    // TAG block — the standard invisible-payload range
 }
 
@@ -374,6 +389,37 @@ mod tests {
             '\u{e0001}', '\u{e007f}',
         ] {
             assert_eq!(sanitize_injected(&format!("a{c}b")), "ab", "{c:?} survived");
+        }
+        // Zero-width characters that no CATEGORY rule reaches: the Hangul fillers are category Lo
+        // (letters), and the line/paragraph separators are Zl/Zp — `is_control()` returns false
+        // for all of them, yet U+2028/U+2029 are UAX#14 mandatory breaks, so on the typing paths
+        // they land as a real Enter.
+        for c in [
+            '\u{115f}', '\u{1160}', '\u{3164}', '\u{ffa0}', '\u{2028}', '\u{2029}', '\u{206a}',
+            '\u{206f}', '\u{1bca0}', '\u{1d173}',
+        ] {
+            assert_eq!(sanitize_injected(&format!("a{c}b")), "ab", "{c:?} survived");
+        }
+    }
+
+    /// The denylist must stay narrow. These are all category Cf — the same class as the marks
+    /// above — but every one of them RENDERS: U+0600–U+0605 span the digits that follow, U+06DD
+    /// and U+08E2 draw the circle around a verse number, U+070F overlines a Syriac abbreviation,
+    /// and U+0890/U+0891 are currency marks. Filtering by category would silently corrupt
+    /// ordinary Arabic and Syriac transcripts.
+    #[test]
+    fn keeps_printable_format_characters() {
+        for c in [
+            '\u{0600}', '\u{0605}', '\u{06dd}', '\u{070f}', '\u{0890}', '\u{0891}', '\u{08e2}',
+        ] {
+            let s = format!("a{c}b");
+            assert_eq!(sanitize_injected(&s), s, "{c:?} was wrongly stripped");
+        }
+        // Variation selectors pick a glyph variant; VS15/VS16 are the emoji text/presentation
+        // selectors, and the supplement carries CJK ideographic variation sequences.
+        for c in ['\u{fe0e}', '\u{fe0f}', '\u{e0100}'] {
+            let s = format!("a{c}b");
+            assert_eq!(sanitize_injected(&s), s, "{c:?} was wrongly stripped");
         }
     }
 

@@ -24,6 +24,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+/// Ceiling on an app-supplied AT-SPI application name. Real ones are short ("firefox",
+/// "org.gnome.Nautilus"); this is loose enough that no existing app rule stops matching.
+const APP_ID_MAX: usize = 200;
+
 /// The focused application + (when known) whether its focused element is editable.
 /// Serialised camelCase for the frontend (`{ appId, title, editable, isSelf }`).
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -538,6 +542,15 @@ mod imp {
         if app_id.is_empty() {
             return None;
         }
+        // This is the focused application's OWN name, over the session a11y bus — any app can
+        // choose it freely, so it is untrusted input on a par with a server string. It reaches
+        // three sinks unbounded: the overlay payload rebuilt on every level tick and rendered as
+        // a React child, a persisted AppRule that then rides the sync push to other devices, and
+        // a default-on log line polled roughly once a second (a newline there forges records).
+        // Bound and defang it once, here, where all three inherit it. Generous enough that no
+        // real application name — or an existing rule keyed on one — is affected.
+        let app_id =
+            crate::transport::bounded_server_text(&app_id, crate::atspi_guard::APP_ID_MAX);
         Some((app_id, editable, active))
     }
 

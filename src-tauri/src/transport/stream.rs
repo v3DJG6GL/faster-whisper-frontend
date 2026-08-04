@@ -520,7 +520,13 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
             false
         }
         Some("error") => {
-            on_event(StreamEvent::Error(bounded(
+            // Defanged, not merely truncated: this string is rendered in the error banner and in
+            // the always-on-top overlay, and the log copy's own fold is Cc-only — so the bidi and
+            // invisible-format class survived into the sentence the user reads to judge a failed
+            // dictation. NOT applied to the `separator` above: separators are legitimately "\n"
+            // and are typed as Enter, so folding controls to spaces would silently turn every
+            // hard break into a space.
+            on_event(StreamEvent::Error(super::bounded_server_text(
                 &str_field(&v, "message"),
                 MAX_ERROR_MESSAGE,
             )));
