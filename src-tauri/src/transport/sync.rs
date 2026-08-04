@@ -45,7 +45,27 @@ impl SyncRemoteState {
             .map(|d| super::bounded_server_text(&d, DEVICE_LABEL_MAX));
         self
     }
+
+    /// Is `version` representable in JS? The frontend holds it as a double and PERSISTS it to
+    /// sync-state.json, then hands it back as `base_version: i64` on the next push — so a value
+    /// past 2^53 round-trips as something else and the `sync_push` invoke fails to deserialize
+    /// before any Rust code runs, rejecting into a `void pushNow()` with no catch. The device
+    /// then pulls forever and can never push again, and because the bad value is on disk it
+    /// survives restarts. The TS pull path already refuses such a version; the PUSH path (200 and
+    /// 409 alike) did not, and the push path is the one that writes it down.
+    fn version_representable(&self) -> bool {
+        self.version.abs() <= MAX_SAFE_VERSION
+    }
 }
+
+/// `Number.MAX_SAFE_INTEGER`. A version counter starts at 1 and increments, so no real server
+/// approaches this; anything beyond it is a server saying something the client cannot hold.
+const MAX_SAFE_VERSION: i64 = 9_007_199_254_740_991;
+
+/// Shown for an unrepresentable version on all three arms. Deliberately a transport FAILURE
+/// rather than a clamp: adopting a different number than the server has would desync the base
+/// version and make every later push a 409.
+const VERSION_ERR: &str = "The server sent a settings version this app cannot represent.";
 
 /// A device label is a short human name ("mar's laptop"), never prose.
 const DEVICE_LABEL_MAX: usize = 80;
@@ -98,11 +118,17 @@ pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
                 match json_capped::<SyncRemoteState>(resp).await {
-                    Ok(state) => SyncPull {
+                    Ok(state) if state.version_representable() => SyncPull {
                         ok: true,
                         status: code,
                         state: Some(state.bounded()),
                         error: None,
+                    },
+                    Ok(_) => SyncPull {
+                        ok: false,
+                        status: code,
+                        state: None,
+                        error: Some(VERSION_ERR.into()),
                     },
                     Err(e) => SyncPull {
                         ok: false,
@@ -157,12 +183,18 @@ pub async fn push(
             let text = body_capped(resp).await.unwrap_or_default();
             if (200..300).contains(&(code as i32)) {
                 match serde_json::from_str::<SyncRemoteState>(&text) {
-                    Ok(state) => SyncPush {
+                    Ok(state) if state.version_representable() => SyncPush {
                         ok: true,
                         status: code,
                         state: Some(state.bounded()),
                         conflict: None,
                         error: None,
+                    },
+                    Ok(_) => SyncPush {
+                        ok: false,
+                        status: code,
+                        error: Some(VERSION_ERR.into()),
+                        ..Default::default()
                     },
                     Err(e) => SyncPush {
                         ok: false,
@@ -175,10 +207,16 @@ pub async fn push(
                 // The conflict body IS the current server state (+ a detail
                 // string serde ignores) — hand it to the merge loop.
                 match serde_json::from_str::<SyncRemoteState>(&text) {
-                    Ok(current) => SyncPush {
+                    Ok(current) if current.version_representable() => SyncPush {
                         ok: false,
                         status: code,
                         conflict: Some(current.bounded()),
+                        ..Default::default()
+                    },
+                    Ok(_) => SyncPush {
+                        ok: false,
+                        status: code,
+                        error: Some(VERSION_ERR.into()),
                         ..Default::default()
                     },
                     Err(e) => SyncPush {

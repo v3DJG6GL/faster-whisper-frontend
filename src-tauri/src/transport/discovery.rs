@@ -48,6 +48,9 @@ const MAX_NAME: usize = 120;
 const PROMPT_MAX: usize = 2000;
 /// The decode-values map is a handful of scalars; anything past this is not a real profile.
 const VALUES_MAX_BYTES: usize = 64 * 1024;
+/// Ceiling on the usage trend points kept. The client asks for 90 and renders the tail, so
+/// this is far above any window the UI can request while removing the 32 MiB body headroom.
+const MAX_SERIES: usize = 400;
 
 fn bounded_name(s: &str) -> String {
     super::bounded_server_text(s, MAX_NAME)
@@ -208,6 +211,14 @@ pub async fn get_usage_stats(
     let mut u: UsageStats = get_json(url, api_key).await?;
     u.username = bounded_name(&u.username);
     u.range.bucket = bounded_name(&u.range.bucket);
+    // `series` was bounded at the CONSUMER (usage.ts slices to 90) — i.e. after the whole cost
+    // had already been paid: the webview parses the full list off the IPC on the main thread
+    // before that slice runs, on an unattended 30s poll, once per backend. Keep the NEWEST
+    // points: the client renders the tail, so truncating from the front would show a long-lived
+    // server's oldest window instead of its current one.
+    if u.series.len() > MAX_SERIES {
+        u.series.drain(..u.series.len() - MAX_SERIES);
+    }
     Some(u)
 }
 
@@ -242,6 +253,18 @@ pub async fn get_override_profile(
     // rather than trying to bound each leaf of an arbitrary JSON shape.
     if serde_json::to_string(&p.values).map_or(true, |s| s.len() > VALUES_MAX_BYTES) {
         p.values = serde_json::json!({});
+    }
+    // Under that ceiling, still bound each leaf: `values` is documented as a FLAT
+    // {client_decode_key: scalar} map, and `DecodeFields` puts `String(v)` into a Segmented
+    // option label and an input placeholder. A single 64 KiB string, or one carrying bidi marks,
+    // reached both surfaces raw — the one field in this response that skipped the treatment its
+    // three siblings above get. Flat pass only: never recurse into attacker-chosen nesting.
+    if let Some(map) = p.values.as_object_mut() {
+        for v in map.values_mut() {
+            if let Some(text) = v.as_str() {
+                *v = serde_json::Value::String(super::bounded_server_text(text, MAX_NAME));
+            }
+        }
     }
     Some(p)
 }
