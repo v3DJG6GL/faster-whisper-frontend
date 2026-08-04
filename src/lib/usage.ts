@@ -51,8 +51,9 @@ async function refreshOne(backend: Backend): Promise<void> {
     if (!(backend.id in usage)) setUsage(backend.id, null);
     return;
   }
+  const target = effectiveServerUrl(backend, useApp.getState().settings);
   const stats = await getUsageStats({
-    serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+    serverUrl: target,
     backendId: backend.id,
     tzMidnight: localMidnightEpoch(),
     days: TREND_DAYS,
@@ -63,8 +64,14 @@ async function refreshOne(backend: Backend): Promise<void> {
   // usage) or removed it. Bail unless the backend still exists with the same target — else we'd flash
   // the old server's counts under the edited backend, or re-add a dangling usage[removedId] the rerun
   // (live backends only) never clears.
-  const cur = useApp.getState().backends.find((x) => x.id === backend.id);
+  const st = useApp.getState();
+  const cur = st.backends.find((x) => x.id === backend.id);
   if (!cur || cur.serverUrl !== backend.serverUrl || cur.hasApiKey !== backend.hasApiKey) return;
+  // …and the URL OVERRIDE, which is where this request actually went. It is the third
+  // invalidation trigger `setUrlOverride` fires on, and comparing only `serverUrl` let a fetch
+  // already in flight against the old address resolve afterwards and re-install its counters
+  // under a backend that now points somewhere else — undoing the invalidation that just ran.
+  if (effectiveServerUrl(cur, st.settings) !== target) return;
   // `series` is server-supplied and unbounded on the wire. We asked for TREND_DAYS buckets, so
   // anything past that is not data we can use — but it WOULD be stored and then re-serialized by
   // setUsage's two stringify passes on the main thread, every 30s, for every backend, forever.

@@ -634,8 +634,34 @@ export const useApp = create<AppState>((set) => ({
       return speaking === s.speaking ? patch : { ...patch, speaking };
     }),
 
-  hydrate: (cfg) => {
-    const c = migrateConfig(cfg);
-    set({ settings: c.settings, backends: c.backends, profiles: c.profiles, appRules: c.appRules ?? [] });
-  },
+  hydrate: (cfg) =>
+    set((s) => {
+      const c = migrateConfig(cfg);
+      // Same invalidation `upsertBackend` and `setUrlOverride` do, for the same reason — this
+      // is the third writer of `backends` and the only one that was missing it. It matters most
+      // here: `hydrate` is also how a sync pull or an imported file replaces the list, so a
+      // blob that keeps an existing id and repoints its address would otherwise leave the OLD
+      // server's `{ok: true}` verdict — the green "connected" on the card whose own comment
+      // calls it the audit surface — bound to the new host, permanently, since every re-test is
+      // a user gesture. On the startup path nothing has been tested yet, so this drops nothing.
+      const prev = new Map(s.backends.map((b) => [b.id, b]));
+      const connections = { ...s.connections };
+      const usage = { ...s.usage };
+      for (const id of new Set([...Object.keys(connections), ...Object.keys(usage)])) {
+        const before = prev.get(id);
+        const after = c.backends.find((b) => b.id === id);
+        if (!after || !before || before.serverUrl !== after.serverUrl || before.hasApiKey !== after.hasApiKey) {
+          delete connections[id];
+          delete usage[id];
+        }
+      }
+      return {
+        settings: c.settings,
+        backends: c.backends,
+        profiles: c.profiles,
+        appRules: c.appRules ?? [],
+        connections,
+        usage,
+      };
+    }),
 }));

@@ -30,7 +30,7 @@ import {
   syncPush,
 } from "./api";
 import { configReady } from "./persistence";
-import { effectiveServerUrl, normalizeUrl } from "./backends";
+import { effectiveServerUrl, isStorableServerUrl, normalizeUrl } from "./backends";
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "./paste";
 import { IS_WINDOWS } from "./platform";
 import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./conflicts";
@@ -39,6 +39,7 @@ import type {
   AppRule,
   AppSettings,
   Backend,
+  BackendKind,
   Config,
   EndpointKind,
   IndicatorPosition,
@@ -348,6 +349,13 @@ function sanitizeProfiles(list: unknown): Profile[] {
       tag: typeof p.tag === "string" ? p.tag : undefined,
       language: typeof p.language === "string" ? p.language : undefined,
       prompt: typeof p.prompt === "string" ? p.prompt : undefined,
+      // The two leaves the pass above still carried by reference. `enabled` is a bare `bool`
+      // with no serde default, so a wrong type wedges every later save; before that a truthy
+      // non-bool also makes the profile count as ACTIVE in `conflicts()`. `overrideProfile`
+      // has a default, so an absent key is fine — but a present non-string still fails the
+      // typed parse, and its Backend twin below is already clamped this way.
+      enabled: p.enabled === true,
+      overrideProfile: typeof p.overrideProfile === "string" ? p.overrideProfile : undefined,
     }))
     .slice(0, MAX_SYNCED_ENTRIES);
 }
@@ -377,21 +385,45 @@ const MAX_CHORD_CODES = 16;
  *  the sanitizer a superset of the gate — which is the whole point, since anything the gate
  *  catches and this misses freezes saving. Two chords differing only by modifier side are in any
  *  case broken on the plugin backend, where one silently never registers. */
-function disableConflictingProfiles(profiles: Profile[], quickAddHotkey: string[]): Profile[] {
+function disableConflictingProfiles(
+  profiles: Profile[],
+  quickAddHotkey: string[],
+  /** Did the PROFILES in this call arrive in the same blob as the chord? When they did not,
+   *  the chord is remote-authored and the list is this device's own — see below. */
+  profilesAreInbound: boolean,
+): { profiles: Profile[]; rejectQuickAddHotkey: boolean } {
   const peers = quickAddHotkey.length > 0 ? [...profiles, quickAddPeer(quickAddHotkey)] : profiles;
   const order = new Map(peers.map((p, i) => [p.id, i]));
   const disable = new Set<string>();
+  let rejectQuickAddHotkey = false;
   for (const c of conflicts(peers, true)) {
     // Keep whichever came first — the quick-add peer always wins, since it is a single global
     // chord the user may have bound locally, not one of many list entries.
+    //
+    // …but only when the profiles it beats came from the same blob. `general` has no consent
+    // arm, so a blob carrying ONLY `general.quickAddHotkey` reaches this with the user's own
+    // local profile list, and the unconditional win then switches those profiles off and
+    // persists that — worst case `["ControlLeft"]`, a strict subset of virtually every real
+    // chord, which disables dictation app-wide with nothing malformed to point at and no
+    // banner. When the collision is remote-chord-vs-local-profiles, drop the incoming chord
+    // instead. The peer still cannot be disabled, so the save gate stays un-tripped either way.
     const self = order.get(c.profileId) ?? 0;
     const other = order.get(c.otherId) ?? 0;
-    if (c.otherId === QUICK_ADD_PEER_ID || self > other) disable.add(c.profileId);
+    if (c.otherId === QUICK_ADD_PEER_ID) {
+      if (profilesAreInbound) disable.add(c.profileId);
+      else rejectQuickAddHotkey = true;
+    } else if (self > other) {
+      disable.add(c.profileId);
+    }
   }
   disable.delete(QUICK_ADD_PEER_ID);
-  return disable.size === 0
-    ? profiles
-    : profiles.map((p) => (disable.has(p.id) ? { ...p, enabled: false } : p));
+  return {
+    profiles:
+      disable.size === 0
+        ? profiles
+        : profiles.map((p) => (disable.has(p.id) ? { ...p, enabled: false } : p)),
+    rejectQuickAddHotkey,
+  };
 }
 
 /** Ceiling on how many entries one inbound blob may install. Far above any real profile /
@@ -419,6 +451,10 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T)
  *  Drop only KNOWN keys whose type disagrees with what this device holds. Unknown keys are
  *  passed through untouched: Rust ignores unrecognised fields, so a newer peer's additions must
  *  survive the round-trip rather than being erased by an older client's next push. */
+/** The settings leaves Rust declares as `u32` (`config/mod.rs`: `hover_reveal_ms`,
+ *  `recordings_retention_days`). Every other numeric leaf is `f64`. */
+const U32_KEYS = new Set(["hoverRevealMs", "recordingsRetentionDays"]);
+
 function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(incoming as Record<string, unknown>)) {
@@ -430,6 +466,12 @@ function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
     if (typeof v !== typeof ref) continue;
     if (Array.isArray(ref) !== Array.isArray(v)) continue;
     if (typeof v === "number" && !Number.isFinite(v)) continue;
+    // JS has ONE number type; Rust does not. `typeof` agreeing is not enough for the two
+    // fields Rust holds as `u32` — `-1`, `0.5` and `5e9` all pass the check above and then
+    // fail serde on the whole `Config`, which is the same session-long save freeze `oneOf`
+    // exists to prevent (its own docstring names `hoverRevealMs: -1`). The f64 fields need
+    // no bound: serde accepts any finite double, so they cannot wedge the parse.
+    if (U32_KEYS.has(k) && !(Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 0xff_ff_ff_ff)) continue;
     out[k] = v;
   }
   return out as Partial<T>;
@@ -443,6 +485,7 @@ const OVERLAY_STATS_METRICS = ["words", "audio", "both"] as const;
 const ACTIVATIONS = ["hold", "latch"] as const;
 const ENDPOINT_KINDS = ["stream", "batch"] as const;
 const RESPONSE_FORMATS = ["json", "verbose_json"] as const;
+const BACKEND_KINDS = ["auto", "full", "standard"] as const;
 
 function sanitizeBackends(list: unknown): Backend[] {
   if (!Array.isArray(list)) return [];
@@ -462,6 +505,14 @@ function sanitizeBackends(list: unknown): Backend[] {
     // have no serde fallback, so an unknown variant wedges every later save for the session.
     .map((b) => ({
       ...b,
+      // Inbound addresses are stored VERBATIM — `normalizeUrl` runs only on what the user
+      // types — and go straight to the transport. Blank one that carries a scheme this app
+      // does not speak: prefixing `http://` to `https:/evil.tld` makes every helper here read
+      // the host as "https" while reqwest resolves evil.tld, so the card and the consent
+      // dialog would name a different server from the one receiving the key and the audio.
+      // Blank, not dropped: the entry keeps its id and therefore its keyring association, and
+      // an empty address is the app's existing "not configured yet" state.
+      serverUrl: isStorableServerUrl(b.serverUrl) ? b.serverUrl : "",
       name: typeof b.name === "string" ? b.name : "",
       model: typeof b.model === "string" ? b.model : "",
       language: typeof b.language === "string" ? b.language : "auto",
@@ -470,6 +521,11 @@ function sanitizeBackends(list: unknown): Backend[] {
       responseFormat: oneOf<ResponseFormat>(b.responseFormat, RESPONSE_FORMATS, "json"),
       hasApiKey: b.hasApiKey === true,
       overrideProfile: typeof b.overrideProfile === "string" ? b.overrideProfile : undefined,
+      // The one backend enum this pass had missed. `Option<BackendKind>` defaults when the key
+      // is ABSENT, but a present unknown string (or a non-string) has no serde fallback and
+      // fails the typed parse like its two siblings above. Keep undefined = "infer from the
+      // connection test", which is what an absent key already means.
+      kind: b.kind == null ? undefined : oneOf<BackendKind>(b.kind, BACKEND_KINDS, "auto"),
     }))
     .slice(0, MAX_SYNCED_ENTRIES);
 }
@@ -552,6 +608,9 @@ async function reconcileBackendSecrets(
 export async function applyBlob(
   blob: SyncBlob,
   cats: Record<SyncCategory, boolean>,
+  /** Retries left after a mid-apply store change (see the check after the keyring wait).
+   *  Bounded so a user editing settings in a tight loop cannot spin this. */
+  retries = 2,
 ): Promise<void> {
   const st = useApp.getState();
   if (st.status !== "idle") {
@@ -559,6 +618,7 @@ export async function applyBlob(
     return;
   }
   applyingRemote = true;
+  let staleRestart = false;
   try {
     const settings = st.settings;
     let nextSettings: AppSettings = settings;
@@ -645,6 +705,23 @@ export async function applyBlob(
         sanitizeBackends(blob.backends.list),
         blob.backends.secrets,
       );
+      // The ONLY await in this function, and the blob sizes it: `reconcileBackendSecrets`
+      // writes each incoming secret sequentially with a 10s timeout apiece, so up to 500
+      // entries against a locked keyring park here for a long time. Everything above was
+      // computed from a snapshot taken BEFORE that wait, and `hydrate` below replaces
+      // `settings` wholesale — so anything the user changed meanwhile is silently reverted
+      // and then written to disk by the persistence subscriber. That includes turning sync
+      // OFF (`settings.sync` is part of `settings`) and deleting the offending backend, i.e.
+      // the blob would hold the disconnect switch down for as long as it keeps the apply
+      // running. Restart rather than merge: re-entering recomputes every derived value above
+      // (the dangling-reference scrub and the conflict pass included) against current state,
+      // whereas merging a stale `nextSettings` onto the live store would have to re-run both
+      // by hand or leave dangling ids behind. Bounded, and on exhaustion the apply is dropped
+      // rather than applied stale — the next pull brings the blob back.
+      if (useApp.getState().settings !== settings) {
+        staleRestart = retries > 0;
+        return;
+      }
       nextSettings = { ...nextSettings, quickAddList: blob.backends.quickAddList ?? null };
     }
     if (cats.profiles && blob.profiles) {
@@ -681,7 +758,21 @@ export async function applyBlob(
     // next launch. Disable the later member of each colliding pair instead: the profile stays
     // visible in the editor for the user to inspect and re-enable, saving keeps working, and the
     // local gate is left alone so a genuine local mistake still stops the write.
-    nextProfiles = disableConflictingProfiles(nextProfiles, nextSettings.general.quickAddHotkey);
+    const resolved = disableConflictingProfiles(
+      nextProfiles,
+      nextSettings.general.quickAddHotkey,
+      !!(cats.profiles && blob.profiles),
+    );
+    nextProfiles = resolved.profiles;
+    if (resolved.rejectQuickAddHotkey) {
+      // Keep THIS device's chord: the collision is between an incoming chord and profiles the
+      // user authored here, and switching their profiles off to make room for it would be the
+      // blob quietly disabling dictation.
+      nextSettings = {
+        ...nextSettings,
+        general: { ...nextSettings.general, quickAddHotkey: settings.general.quickAddHotkey },
+      };
+    }
 
     // A pulled backend list may have dropped the backend an urlOverride points
     // at; prune so the map doesn't accumulate dead ids.
@@ -712,6 +803,7 @@ export async function applyBlob(
   } finally {
     applyingRemote = false;
   }
+  if (staleRestart) await applyBlob(blob, cats, retries - 1);
 }
 
 // ── engine state ─────────────────────────────────────────────────────────────
@@ -915,7 +1007,17 @@ export async function pullNow(manual = false): Promise<void> {
       return;
     }
     setRuntime({ syncUnsupported: false });
+    // The server chooses `version`, Rust parses it as i64, and it arrives here as a JS double —
+    // so anything above 2^53 has already lost precision, and i64::MAX round-trips back out as
+    // i64::MAX + 1. Every later `sync_push` then fails to deserialize `base_version: i64` before
+    // any Rust code runs, and because the bad value is PERSISTED to sync-state.json the device
+    // can never push again, across restarts, with the status stuck on "syncing" and no error.
+    // Treat an unrepresentable version as a transport failure instead of adopting it.
     const remote = res.state;
+    if (!Number.isSafeInteger(remote.version)) {
+      handleTransportFailure(0, "The server sent a settings version this app cannot represent.");
+      return;
+    }
     if (remote.blob === null) {
       // First-ever contact: nothing stored server-side yet — seed it.
       setRuntime({ syncStatus: "ok" });

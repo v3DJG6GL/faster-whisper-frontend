@@ -7,7 +7,33 @@ import type { AppSettings, Backend } from "./types";
  *  first-run gate and the Backends connect step so both accept "host:8000". */
 export function normalizeUrl(raw: string): string {
   const t = raw.trim().replace(/\/+$/, "");
-  return /^https?:\/\//i.test(t) ? t : `http://${t}`;
+  if (/^https?:\/\//i.test(t)) return t;
+  return isSchemelessAddress(t) ? `http://${t}` : "";
+}
+
+/** Does this string carry NO scheme, so that prefixing `http://` is honest?
+ *
+ *  The two-slash test above is not the same rule the parsers use. WHATWG (the browser's `URL`,
+ *  and Rust's `url` crate behind reqwest) also honours a scheme written with ONE slash, a
+ *  backslash, or none at all — so `https:/evil.tld` fails the test above, gets `http://`
+ *  PREPENDED, and then reads as host `https` to every helper here while reqwest connects to
+ *  evil.tld. That made the address shown on the backends card and in the sync consent dialog
+ *  disagree with where the audio and the bearer key actually went, and (host `http`, no dot)
+ *  it also read as a bare LAN name, which suppressed the not-encrypted warning.
+ *
+ *  A colon alone cannot be the test: `host:8000` is the LAN form this function exists to
+ *  accept. A scheme is a colon whose remainder is not a port, so require digits after it. */
+function isSchemelessAddress(t: string): boolean {
+  const m = t.match(/^[a-z][a-z0-9+.-]*:(.*)$/is);
+  return !m || /^\d+(\/|$)/.test(m[1]);
+}
+
+/** May this address be STORED as a backend's `serverUrl`? Applied where an address arrives from
+ *  somewhere other than the user's own keyboard (a sync pull, an imported file), because those
+ *  paths keep the string verbatim and hand it straight to the transport. */
+export function isStorableServerUrl(raw: string): boolean {
+  const t = raw.trim();
+  return t === "" || /^https?:\/\//i.test(t) || isSchemelessAddress(t);
 }
 
 /** True for addresses that never leave the user's own machine or LAN, where plain http is the

@@ -20,6 +20,12 @@ function isDeceptiveFormatChar(code: number): boolean {
     code === 0x3164 || // HANGUL FILLER
     code === 0xffa0 || // HALFWIDTH HANGUL FILLER
     (code >= 0x200b && code <= 0x200f) || // ZWSP/ZWNJ/ZWJ/LRM/RLM
+    code === 0x2028 || code === 0x2029 || // LINE/PARAGRAPH SEPARATOR — Zl/Zp, so the Cc test in
+                                          // the callers misses them, yet both are UAX#14 mandatory
+                                          // breaks. Rust's twin has had them since H12; here they
+                                          // were added only to safeDisplayText's own inline test,
+                                          // so the manual Copy surface still let them onto the
+                                          // clipboard while every injection path dropped them.
     (code >= 0x202a && code <= 0x202e) || // bidi embeddings + overrides
     (code >= 0x2060 && code <= 0x2064) || // word joiner + invisible operators
     (code >= 0x2066 && code <= 0x2069) || // directional isolates
@@ -51,12 +57,10 @@ export function safeDisplayText(s: unknown, max = 200): string {
   for (const ch of s) {
     const code = ch.codePointAt(0) ?? 0;
     if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
-    // U+2028/U+2029 are Zl/Zp, so neither the range above nor the format-char denylist reaches
-    // them — but both are mandatory line breaks under UAX#14, produced by the line-breaking
-    // algorithm itself rather than by whitespace handling, so no CSS collapses them. In a label
-    // capped at 60 code points that is up to 60 forced breaks, which is exactly the "push the
-    // buttons off screen" failure the cap exists to prevent.
-    if (code === 0x2028 || code === 0x2029) continue;
+    // U+2028/U+2029 now live in the shared denylist above (they belong to both callers, not
+    // just this one): Zl/Zp, so the Cc range test misses them, yet both are UAX#14 mandatory
+    // breaks that no CSS collapses. In a label capped at 60 code points that is up to 60
+    // forced breaks — the "push the buttons off screen" failure the cap exists to prevent.
     if (isDeceptiveFormatChar(code)) continue;
     out.push(ch);
     if (out.length >= max) break;

@@ -33,10 +33,33 @@ export function ruleListOf(res: PipelineFetch): PipelineRule[] {
       wordlist: Array.isArray(rule.wordlist)
         ? rule.wordlist.filter((w) => typeof w === "string")
         : undefined,
+      // The two leaves the pass above had missed, and the ones that actually drive the
+      // editor. `mapRowsFromRule` runs `Object.entries` over `map` — which on a STRING
+      // expands per code point — allocating a row object each and then sorting them, all
+      // before any render cap (those bound the DOM, not this array). A 32 MiB string field
+      // is tens of millions of allocations plus an O(n log n) sort on the UI thread, and
+      // QuickAdd reaches it from a mount effect at startup with no user gesture.
+      map: plainMap(rule.map),
+      map_meta: plainMap(rule.map_meta),
     }));
 }
 
 const MAX_RULES = 500;
+
+/** A server-supplied field that the editors treat as a plain string→value record.
+ *  Anything else (a string, an array, a scalar) becomes undefined rather than being
+ *  enumerated. The entry ceiling is deliberately generous — this map is the user's own
+ *  word list and the editor PATCHes it back whole, so a tight cap would delete their
+ *  entries on the next save; it only has to keep the enumeration finite. */
+function plainMap<T>(v: unknown): Record<string, T> | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const entries = Object.entries(v as Record<string, T>);
+  return entries.length <= MAX_MAP_ENTRIES
+    ? (v as Record<string, T>)
+    : Object.fromEntries(entries.slice(0, MAX_MAP_ENTRIES));
+}
+
+const MAX_MAP_ENTRIES = 20_000;
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 /** One editor row for a spoken→symbol mapping. `id` is a client-only stable React
