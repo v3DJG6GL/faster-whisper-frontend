@@ -223,7 +223,13 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         StreamEvent::Error(m) => {
             // Log it here (not just emit): a superseded session's error is epoch-
             // suppressed from the UI and would otherwise vanish entirely.
-            tracing::warn!("[stream] session {epoch} error: {m}");
+            // The message is server-supplied and this log is the file users are asked to send
+            // for support — fold control chars to spaces so embedded newlines can't forge records.
+            let safe: String = m
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            tracing::warn!("[stream] session {epoch} error: {safe}");
             emit_if_active(&appc, epoch, "stream://error", m);
         }
         StreamEvent::Closed => {

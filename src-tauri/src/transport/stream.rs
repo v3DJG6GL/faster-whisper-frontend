@@ -510,16 +510,36 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
         }
         Some("boundary") => {
             on_event(StreamEvent::Boundary {
-                separator: str_field(&v, "separator"),
+                separator: bounded(&str_field(&v, "separator"), MAX_SEPARATOR),
             });
             false
         }
         Some("error") => {
-            on_event(StreamEvent::Error(str_field(&v, "message")));
+            on_event(StreamEvent::Error(bounded(
+                &str_field(&v, "message"),
+                MAX_ERROR_MESSAGE,
+            )));
             false
         }
         Some("closing") => true,
         _ => false,
+    }
+}
+
+/// A `boundary` separator is a delimiter — " ", "\n", "\n\n", ". ". The frontend types it as
+/// keystrokes into the focused window, so the server does not get to make it a payload.
+const MAX_SEPARATOR: usize = 32;
+
+/// An `error` message is surfaced in the UI and written to the log file users are asked to send
+/// for support. `pipeline.rs` already truncates server-derived strings before logging; the stream
+/// path gets the same ceiling so a hostile server can't pad the log or forge records.
+const MAX_ERROR_MESSAGE: usize = 200;
+
+/// First `n` chars of a server-supplied string. Char-indexed, so it can't split a UTF-8 sequence.
+fn bounded(s: &str, n: usize) -> String {
+    match s.char_indices().nth(n) {
+        Some((i, _)) => s[..i].to_string(),
+        None => s.to_string(),
     }
 }
 
