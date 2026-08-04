@@ -30,7 +30,7 @@ import {
   syncPush,
 } from "./api";
 import { configReady } from "./persistence";
-import { effectiveServerUrl, isStorableServerUrl, normalizeUrl } from "./backends";
+import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } from "./backends";
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "./paste";
 import { IS_WINDOWS } from "./platform";
 import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./conflicts";
@@ -459,8 +459,26 @@ function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(incoming as Record<string, unknown>)) {
     const ref = (local as Record<string, unknown>)[k];
-    if (!(k in (local as Record<string, unknown>)) || ref == null || v == null) {
-      out[k] = v; // unknown to this version, or nullable either side — leave it to the callee
+    // A key this version does not know: pass it through untouched, `null` included. Rust ignores
+    // unrecognised fields, so it cannot wedge the parse, and swallowing it would erase a newer
+    // peer's data on this device's next push.
+    if (!(k in (local as Record<string, unknown>))) {
+      out[k] = v;
+      continue;
+    }
+    // JSON has no `undefined`, so `null` is exactly what a hostile server puts on the wire — and
+    // this arm used to pass it straight through on the strength of "nullable either side",
+    // without ever checking that the LOCAL field is nullable. `#[serde(default)]` fills an ABSENT
+    // key; a PRESENT `null` still goes through `deserialize_bool` and errors, so a single
+    // `{"general":{"soundEffects":null}}` rejected the whole `Config` — the same session-long
+    // save freeze this function exists to prevent. Keep this device's value instead, exactly as
+    // `oneOf` does for an unknown variant.
+    if (v == null) {
+      if (ref == null) out[k] = v; // genuinely nullable here too
+      continue;
+    }
+    if (ref == null) {
+      out[k] = v;
       continue;
     }
     if (typeof v !== typeof ref) continue;
@@ -512,7 +530,16 @@ function sanitizeBackends(list: unknown): Backend[] {
       // dialog would name a different server from the one receiving the key and the audio.
       // Blank, not dropped: the entry keeps its id and therefore its keyring association, and
       // an empty address is the app's existing "not configured yet" state.
-      serverUrl: isStorableServerUrl(b.serverUrl) ? b.serverUrl : "",
+      //
+      // STORE THE CLEANED STRING, not the raw one. `stripUrlNoise` removes exactly what WHATWG
+      // and Rust's `url` crate remove before parsing (interior tab/LF/CR, leading/trailing C0),
+      // so this device's copy already reads the way the transport will resolve it. Cleaning here
+      // rather than only inside `normalizeUrl` is deliberate: `securityChanges` detects a
+      // repointed address with `normalizeUrl(cur) !== normalizeUrl(next)`, so if the STORED value
+      // stayed dirty while the comparison saw a cleaned one, a dirty→clean swap of the same host
+      // would compare equal and the consent prompt would not fire for the very transition it
+      // exists to catch.
+      serverUrl: isStorableServerUrl(b.serverUrl) ? stripUrlNoise(b.serverUrl) : "",
       name: typeof b.name === "string" ? b.name : "",
       model: typeof b.model === "string" ? b.model : "",
       language: typeof b.language === "string" ? b.language : "auto",

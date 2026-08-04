@@ -2,11 +2,30 @@
 
 import type { AppSettings, Backend } from "./types";
 
+/** The preprocessing WHATWG performs BEFORE it looks for a scheme, reproduced so the tests below
+ *  judge the same string the parsers do.
+ *
+ *  Both the browser's `URL` and Rust's `url` crate (behind reqwest) delete every ASCII tab, LF and
+ *  CR from ANYWHERE in the input, and strip leading/trailing C0 controls and spaces. Testing the
+ *  raw string instead let `"h<TAB>ttp://evil.tld"` read as SCHEMELESS here — so it was stored, and
+ *  `http://` was prepended for display, making every helper below see host `"http"` (dotless, so
+ *  `isLocalAddress` returned true and the not-encrypted warning was suppressed) while reqwest
+ *  resolved evil.tld and sent it the bearer key, the uploaded audio and the sync blob — which
+ *  carries every backend's plaintext key. A leading NUL was the same bug via the other rule: JS
+ *  `trim()` does not strip C0, but both parsers do.
+ *
+ *  Note `\s` would be wrong here: it matches Unicode whitespace the parsers do NOT strip
+ *  (U+00A0, U+2028…), which would make this helper disagree with them in the other direction. */
+export function stripUrlNoise(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  return raw.replace(/[\t\n\r]/g, "").replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "");
+}
+
 /** Loose user input → a connectable URL: trim, strip trailing slashes, default
  *  the scheme to http (LAN servers are the common case). Shared by the
  *  first-run gate and the Backends connect step so both accept "host:8000". */
 export function normalizeUrl(raw: string): string {
-  const t = raw.trim().replace(/\/+$/, "");
+  const t = stripUrlNoise(raw).replace(/\/+$/, "");
   if (/^https?:\/\//i.test(t)) return t;
   return isSchemelessAddress(t) ? `http://${t}` : "";
 }
@@ -32,7 +51,7 @@ function isSchemelessAddress(t: string): boolean {
  *  somewhere other than the user's own keyboard (a sync pull, an imported file), because those
  *  paths keep the string verbatim and hand it straight to the transport. */
 export function isStorableServerUrl(raw: string): boolean {
-  const t = raw.trim();
+  const t = stripUrlNoise(raw);
   return t === "" || /^https?:\/\//i.test(t) || isSchemelessAddress(t);
 }
 
