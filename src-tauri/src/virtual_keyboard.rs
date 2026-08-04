@@ -215,6 +215,19 @@ mod imp {
             // Helper: an error raised BEFORE any key was transmitted (keymap upload, limit, the
             // pre-key roundtrip) is safe to fall back to the portal. `before` builds those.
             let before = |e: String| VkError { message: e, after_typing: false };
+            // Bound the input BEFORE the per-character allocation below. `order` is one heap
+            // `String` per input character, ~50-60 bytes each against 1 byte of ASCII input — so
+            // a transcript at the 32 MiB body cap becomes ~1.8 GB here, and the distinct-symbol
+            // ceiling further down never catches it because plain text has few distinct symbols.
+            // The portal path holds the same text as one `String`, so this amplification is
+            // specific to this backend, not inherent to the input. `before(...)` carries
+            // `after_typing: false`, so this cleanly falls back to the portal path, which types
+            // the same text with no amplification. 1 MiB is ~2 hours of typing at this loop's
+            // 8ms/key — no real dictation approaches it.
+            const MAX_VK_TEXT_BYTES: usize = 1 << 20;
+            if text.len() > MAX_VK_TEXT_BYTES {
+                return Err(before("transcript too large for the virtual keyboard".into()));
+            }
             // Each character → its keysym name; skip non-printing control chars (Enter
             // and Tab map to their named keysyms, matching the portal path).
             let mut order: Vec<String> = text.chars().filter_map(keysym_name).collect();

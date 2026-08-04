@@ -10,7 +10,7 @@
 //! a native libei path is M7) and `arboard` for the clipboard.
 
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -40,25 +40,33 @@ pub fn injection_epoch() -> u64 {
 /// a rejected stop) is different: the user never asked for the text to go away, and the
 /// stop-mode path already copies the transcript for manual recovery. Set alongside the bump so
 /// the two cases stay distinguishable at the point the job bails.
-static RECOVER_ON_CANCEL: AtomicBool = AtomicBool::new(false);
+/// Carries the epoch VALUE produced by the most recent error-abort bump, not a bare "the last
+/// bump was an error" flag. A flag is read long after it is written — the job that bailed asks
+/// about it at the end of `inject_text` — so two interleaved aborts let a user cancel adopt an
+/// error abort's answer and put the transcript the user explicitly discarded onto the clipboard
+/// as a persistent owner, clobbering whatever they had copied. Comparing the epoch instead asks
+/// the precise question: was the bump that superseded MY job an error abort?
+static RECOVER_AT_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 /// Abandon whatever is currently being typed, at its next character boundary. The user asked
 /// for this, so the abandoned text is NOT recovered.
 pub fn cancel_injection() {
-    RECOVER_ON_CANCEL.store(false, Ordering::SeqCst);
     INJECT_EPOCH.fetch_add(1, Ordering::SeqCst);
 }
 
 /// Same abandonment, but for a session that died rather than one the user cancelled: the text
 /// still being typed is left on the clipboard so it is recoverable.
 pub fn abort_injection_for_error() {
-    RECOVER_ON_CANCEL.store(true, Ordering::SeqCst);
-    INJECT_EPOCH.fetch_add(1, Ordering::SeqCst);
+    // `fetch_add` returns the PREVIOUS value, so the epoch this bump produces is prev + 1.
+    let produced = INJECT_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
+    RECOVER_AT_EPOCH.store(produced, Ordering::SeqCst);
 }
 
-/// Was the bump that cancelled the current job an error abort (recover) or a user cancel (drop)?
-pub fn cancel_wants_recovery() -> bool {
-    RECOVER_ON_CANCEL.load(Ordering::SeqCst)
+/// Was the bump that superseded the job started at `epoch` an error abort (recover) rather than a
+/// user cancel (drop)? Only the FIRST bump past `epoch` can be attributed, which is the one that
+/// actually stopped this job.
+pub fn cancel_wants_recovery(epoch: u64) -> bool {
+    RECOVER_AT_EPOCH.load(Ordering::SeqCst) == epoch + 1
 }
 
 /// Has the injection that started at `epoch` been cancelled since?

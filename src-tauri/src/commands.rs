@@ -1521,17 +1521,7 @@ pub async fn inject_text(
     // value can be what the remote's paste actually fetches — this is how a 7-minute-old
     // transcript once landed instead of the fresh one). Direct typing never touches the
     // clipboard, so it doesn't care.
-    let remote_target = method != "direct"
-        && match crate::atspi_guard::focused_app_now(guard.inner()) {
-            Some(f) if crate::inject::is_remote_desktop_app(&f.app_id) => {
-                tracing::info!(
-                    "[inject] remote-desktop target ({}) — longer clipboard settle, restore skipped",
-                    f.app_id
-                );
-                true
-            }
-            _ => false,
-        };
+    // Resolved at the SINK, below, from the same focus read the per-app re-check uses — see there.
     // Wait briefly for the trigger chord's shortcut modifiers (Ctrl/Alt/Meta) to be
     // physically released before typing — otherwise the injected keys fold into the
     // still-held modifier and fire shortcuts in the focused app (worst with a latch
@@ -1578,7 +1568,15 @@ pub async fn inject_text(
     // never evaluated. An UNIDENTIFIED window still falls through unchanged: that is the
     // deliberate fail-open behaviour, and a cold a11y bridge hits it routinely.
     let method = if modifiers_stuck { "clipboard".to_string() } else { method };
-    let method = match (&expect_app_id, crate::atspi_guard::focused_app_now(guard.inner())) {
+    // ONE focus read, used for both decisions below. `remote_target` used to be resolved at the
+    // top of this function and acted on here — the same decided-at-T, applied-at-T+n shape the
+    // per-app re-check exists to fix, on the control immediately beside it. Focus leaving a
+    // remote-desktop client meanwhile left it true and the clipboard was never restored; focus
+    // entering one left it false, giving the paste the 60ms local settle instead of 300ms AND
+    // scheduling a restore — reproducing the delayed-rendering failure described above, where the
+    // remote's deferred fetch pastes the RESTORED value.
+    let focused_now = crate::atspi_guard::focused_app_now(guard.inner());
+    let method = match (&expect_app_id, &focused_now) {
         (Some(expected), Some(now)) if !now.app_id.eq_ignore_ascii_case(expected) => {
             tracing::warn!(
                 "[inject] focus moved {} → {} after the rule was resolved — clipboard only",
@@ -1595,6 +1593,18 @@ pub async fn inject_text(
         }
         return Ok(());
     }
+    // Now that the method is final and focus has been read once, at the sink.
+    let remote_target = method != "direct"
+        && match &focused_now {
+            Some(f) if crate::inject::is_remote_desktop_app(&f.app_id) => {
+                tracing::info!(
+                    "[inject] remote-desktop target ({}) — longer clipboard settle, restore skipped",
+                    f.app_id
+                );
+                true
+            }
+            _ => false,
+        };
 
     // Kept for the error-abort recovery below: the X11 branch moves `text` into spawn_blocking.
     let recovery_text = text.clone();
@@ -1690,7 +1700,7 @@ pub async fn inject_text(
     // Leave the transcript on the clipboard so it is recoverable — the same courtesy the
     // stop-mode path extends. A user-initiated cancel deliberately does not land here.
     if crate::inject::injection_cancelled(epoch)
-        && crate::inject::cancel_wants_recovery()
+        && crate::inject::cancel_wants_recovery(epoch)
         && !recovery_text.is_empty()
     {
         tracing::info!("[inject] aborted by a failed session — transcript left on the clipboard");
