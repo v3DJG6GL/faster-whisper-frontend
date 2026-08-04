@@ -39,7 +39,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-latest, windows-latest]
+        # Pull requests build on the ephemeral Linux runner ONLY. The windows leg runs
+        # host-mode on the self-hosted VM — no container isolation, machine-wide CARGO_HOME
+        # shared with up to 5 concurrent jobs (see the rust-cache comment below), and that
+        # same VM builds the release installers. `pnpm build` and `cargo check` execute
+        # arbitrary third-party build-time code (vite plugins, build.rs, proc-macros), so a
+        # fork PR or a Renovate bump carrying a hijacked crate must not run there.
+        # Pushes to master still cover MSVC, and release.yml builds windows again before
+        # anything ships — so a break surfaces at merge instead of in the PR.
+        # Single-line on purpose: the whole value must be ONE expression for the matrix to
+        # expand to a list. If Forgejo ever fails to evaluate it, the fallback is a second
+        # job guarded by `if: github.event_name == 'push'` holding the windows steps.
+        platform: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
     runs-on: ${{ matrix.platform }}
     steps:
       # Manual checkout. actions/checkout persists credentials via
