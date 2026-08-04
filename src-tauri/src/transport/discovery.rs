@@ -45,7 +45,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
     // /auth/whoami is best-effort (open-mode banner / username); ignore its failures.
     let (mut open_mode, mut username) = (false, None);
     if let Ok(resp) = with_auth(http.get(format!("{base}/auth/whoami")), api_key).send().await {
-        if let Ok(who) = resp.json::<WhoAmI>().await {
+        if let Ok(who) = super::json_capped::<WhoAmI>(resp).await {
             open_mode = who.open_mode;
             username = who.username;
         }
@@ -77,7 +77,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     error: Some(format!("Server returned HTTP {}.", status.as_u16())),
                 };
             }
-            match resp.json::<ModelsResp>().await {
+            match super::json_capped::<ModelsResp>(resp).await {
                 Ok(parsed) => ConnectionInfo {
                     ok: true,
                     open_mode,

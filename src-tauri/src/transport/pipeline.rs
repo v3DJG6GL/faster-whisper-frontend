@@ -9,7 +9,7 @@
 //! cb:map `map` / `pattern` / `wordlist`), so they pass through as opaque JSON
 //! and are typed on the TS side.
 
-use super::{base_url, client, detail_from, friendly_err, with_auth};
+use super::{base_url, body_capped, client, detail_from, friendly_err, json_capped, with_auth};
 use serde::{Deserialize, Serialize};
 
 /// First `n` chars of `s` for a log line. Error bodies can be huge, and a 422's body embeds
@@ -87,7 +87,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
-                match resp.json::<PipelineRulesState>().await {
+                match json_capped::<PipelineRulesState>(resp).await {
                     Ok(state) => PipelineFetch {
                         ok: true,
                         status: code,
@@ -105,7 +105,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                     }
                 }
             } else {
-                let body = resp.text().await.unwrap_or_default();
+                let body = body_capped(resp).await.unwrap_or_default();
                 let detail = detail_from(&body);
                 tracing::warn!("[pipeline] rules GET failed: HTTP {code} {}", trunc(&detail, 200));
                 PipelineFetch {
@@ -141,7 +141,7 @@ pub async fn save_pipeline_rules(
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
-                match resp.json::<SaveBody>().await {
+                match json_capped::<SaveBody>(resp).await {
                     Ok(b) => PipelineSave {
                         ok: true,
                         status: code,
@@ -167,7 +167,7 @@ pub async fn save_pipeline_rules(
                     }
                 }
             } else {
-                let body = resp.text().await.unwrap_or_default();
+                let body = body_capped(resp).await.unwrap_or_default();
                 let parsed: Option<serde_json::Value> = serde_json::from_str(&body).ok();
                 let errors = parsed.as_ref().and_then(|v| v.get("errors").cloned());
                 let detail = parsed
@@ -223,7 +223,7 @@ pub async fn get_recent_words(server_url: &str, api_key: Option<&str>) -> Recent
     // `debug` (not warn) is deliberate — a standard/old server 404s this endpoint on every
     // summon, and that expected miss must not spam the default-on info/warn log.
     match with_auth(client().get(url), api_key).send().await {
-        Ok(resp) if resp.status().is_success() => match resp.json::<RecentWords>().await {
+        Ok(resp) if resp.status().is_success() => match json_capped::<RecentWords>(resp).await {
             Ok(rw) => rw,
             Err(e) => {
                 tracing::debug!("[pipeline] recent-words: unparsable body: {e}");

@@ -8,7 +8,7 @@
 //! merge without a second GET). Blobs pass through as opaque JSON — the
 //! category shapes are typed on the TS side.
 
-use super::{base_url, client, detail_from, friendly_err, with_auth};
+use super::{base_url, body_capped, client, detail_from, friendly_err, json_capped, with_auth};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -80,7 +80,7 @@ pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
-                match resp.json::<SyncRemoteState>().await {
+                match json_capped::<SyncRemoteState>(resp).await {
                     Ok(state) => SyncPull {
                         ok: true,
                         status: code,
@@ -95,7 +95,7 @@ pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
                     },
                 }
             } else {
-                let body = resp.text().await.unwrap_or_default();
+                let body = body_capped(resp).await.unwrap_or_default();
                 SyncPull {
                     ok: false,
                     status: code,
@@ -137,7 +137,7 @@ pub async fn push(
     {
         Ok(resp) => {
             let code = resp.status().as_u16();
-            let text = resp.text().await.unwrap_or_default();
+            let text = body_capped(resp).await.unwrap_or_default();
             if (200..300).contains(&(code as i32)) {
                 match serde_json::from_str::<SyncRemoteState>(&text) {
                     Ok(state) => SyncPush {
@@ -207,7 +207,7 @@ pub async fn delete(server_url: &str, api_key: Option<&str>) -> SyncDelete {
                     error: None,
                 }
             } else {
-                let body = resp.text().await.unwrap_or_default();
+                let body = body_capped(resp).await.unwrap_or_default();
                 SyncDelete {
                     ok: false,
                     status: code,

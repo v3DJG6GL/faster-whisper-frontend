@@ -185,12 +185,51 @@ pub fn with_auth(req: reqwest::RequestBuilder, api_key: Option<&str>) -> reqwest
     }
 }
 
-/// Best-effort `GET <url>` deserialized as `T`: any failure — transport error, non-2xx, or a body
-/// that won't deserialize — collapses to `None`. The discovery probes (`/v1/me`, `/v1/usage`,
-/// `/v1/override-profiles/{name}`) all treat an unreachable/absent/unauthorized endpoint this way.
+/// Hard ceiling on any response body we buffer in memory. reqwest has no built-in body limit, and
+/// the only other bound is the request timeout — 3600s on the file-transcribe path, long enough for
+/// a hostile server to stream tens of gigabytes into one allocation. 32 MiB is orders of magnitude
+/// above any legitimate transcription or settings payload.
+pub const MAX_BODY: usize = 32 * 1024 * 1024;
+
+/// Buffer a response body, giving up once it passes [`MAX_BODY`] instead of growing without bound.
+pub async fn body_capped(resp: reqwest::Response) -> Result<String, String> {
+    if resp.content_length().is_some_and(|n| n > MAX_BODY as u64) {
+        return Err(TOO_LARGE.into());
+    }
+    let mut resp = resp;
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                if buf.len() + chunk.len() > MAX_BODY {
+                    return Err(TOO_LARGE.into());
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(e) => return Err(friendly_err(&e)),
+        }
+    }
+    String::from_utf8(buf).map_err(|_| "The server sent a response that wasn't valid text.".into())
+}
+
+/// [`body_capped`] plus a JSON parse.
+pub async fn json_capped<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+) -> Result<T, String> {
+    let text = body_capped(resp).await?;
+    serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
+const TOO_LARGE: &str = "The server sent an unreasonably large response — ignoring it.";
+
+/// Best-effort `GET <url>` deserialized as `T`: any failure — transport error, non-2xx, an
+/// over-large body, or one that won't deserialize — collapses to `None`. The discovery probes
+/// (`/v1/me`, `/v1/usage`, `/v1/override-profiles/{name}`) all treat an unreachable/absent/
+/// unauthorized endpoint this way.
 pub async fn get_json<T: serde::de::DeserializeOwned>(url: String, api_key: Option<&str>) -> Option<T> {
     match with_auth(client().get(url), api_key).send().await {
-        Ok(resp) if resp.status().is_success() => resp.json::<T>().await.ok(),
+        Ok(resp) if resp.status().is_success() => json_capped::<T>(resp).await.ok(),
         _ => None,
     }
 }

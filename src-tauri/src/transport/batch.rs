@@ -1,6 +1,6 @@
 //! Batch transcription: `POST /v1/audio/transcriptions` (multipart).
 
-use super::{base_url, client, detail_from, friendly_err, with_auth};
+use super::{base_url, body_capped, client, detail_from, friendly_err, json_capped, with_auth};
 use anyhow::{bail, Context};
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
@@ -164,11 +164,14 @@ async fn post(
 
     let status = resp.status();
     if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
+        let body = body_capped(resp).await.unwrap_or_default();
         bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
     }
 
-    let parsed: VerboseJson = resp.json().await.context("decoding response")?;
+    let parsed: VerboseJson = json_capped::<VerboseJson>(resp)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))
+        .context("decoding response")?;
     Ok(BatchResult {
         text: parsed.text,
         language: parsed.language,
