@@ -113,6 +113,10 @@ export interface SyncState {
   device?: string | null; // last writer's label as reported by the server
   hash?: string;
   snapshot?: SyncBlob;
+  /** Backend ids whose API keys belong to `snapshot`. The VALUES live in the OS keyring, not
+   *  here — this file sits beside config.json and used to hold them in cleartext. Absent when
+   *  the snapshot carries no keys. */
+  snapshotSecretIds?: string[];
 }
 
 /** Mirror of Rust transport::sync::SyncRemoteState. */

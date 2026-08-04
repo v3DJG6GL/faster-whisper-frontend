@@ -156,6 +156,11 @@ export async function composeBlob(
       );
       if (Object.keys(secrets).length > 0) blob.backends.secrets = secrets;
     }
+  } else if (opts.includeSecrets && snapshotSecretsUnavailable) {
+    // The snapshot recorded keys we could not read back this session. Pushing its backends now
+    // would send the list WITHOUT them and erase the server's stored keys, so leave the category
+    // out entirely and let the server keep what it holds.
+    blob.backends = undefined;
   } else {
     blob.backends = snapshot?.backends;
   }
@@ -496,9 +501,74 @@ function canSync(): boolean {
   return Boolean(isTauri && syncMeta()?.enabled && syncBackend());
 }
 
+/** Keyring account holding the snapshot's API keys. The snapshot is the 3-way merge base and,
+ *  for a toggled-OFF backends category, the source of what gets pushed back — so it has to keep
+ *  the real keys. It does NOT have to keep them in a FILE: sync-state.json sat next to config.json
+ *  as plaintext, defeating the whole point of the OS secret store. In memory the snapshot is
+ *  unchanged; only the on-disk copy is stripped. */
+const SNAPSHOT_SECRETS_ACCOUNT = "__sync_snapshot_secrets__";
+
+/** True when the last snapshot load found recorded key ids but could not read their values back
+ *  (locked wallet, wiped keyring). Blocks composing a backends push FROM the snapshot, which
+ *  would otherwise send a secret-less list and wipe the server's stored keys. */
+let snapshotSecretsUnavailable = false;
+
+async function stashSnapshotSecrets(secrets: Record<string, string>): Promise<void> {
+  await withTimeout(
+    setBackendKey(SNAPSHOT_SECRETS_ACCOUNT, JSON.stringify(secrets)).catch((e) =>
+      console.error("snapshot keyring write failed", e),
+    ),
+    10_000,
+    undefined,
+  );
+}
+
+/** Put the snapshot's keys back after a load. */
+async function restoreSnapshotSecrets(): Promise<void> {
+  snapshotSecretsUnavailable = false;
+  const ids = state.snapshotSecretIds ?? [];
+  if (ids.length === 0) return;
+  const read = await withTimeout(
+    readBackendKeys([SNAPSHOT_SECRETS_ACCOUNT]),
+    10_000,
+    {} as Record<string, string>,
+  );
+  let secrets: Record<string, string> = {};
+  try {
+    secrets = JSON.parse(read[SNAPSHOT_SECRETS_ACCOUNT] ?? "{}");
+  } catch {
+    secrets = {};
+  }
+  const got = ids.filter((id) => secrets[id]);
+  if (got.length === 0) {
+    snapshotSecretsUnavailable = true;
+    console.warn("sync: snapshot keys unavailable — backends pass-through disabled this session");
+    return;
+  }
+  if (state.snapshot?.backends) {
+    state.snapshot.backends.secrets = secrets;
+  }
+}
+
 async function persistState(patch: Partial<SyncState>): Promise<void> {
   state = { ...state, ...patch };
-  await saveSyncState(state).catch((e) => console.error("saveSyncState failed", e));
+  // Split the snapshot's secrets out to the keyring; the file gets ids only.
+  const secrets = state.snapshot?.backends?.secrets;
+  const ids = secrets ? Object.keys(secrets) : [];
+  state.snapshotSecretIds = ids.length > 0 ? ids : undefined;
+  if (ids.length > 0) await stashSnapshotSecrets(secrets!);
+  const onDisk: SyncState = {
+    ...state,
+    snapshot: state.snapshot
+      ? {
+          ...state.snapshot,
+          backends: state.snapshot.backends
+            ? { ...state.snapshot.backends, secrets: undefined }
+            : state.snapshot.backends,
+        }
+      : state.snapshot,
+  };
+  await saveSyncState(onDisk).catch((e) => console.error("saveSyncState failed", e));
 }
 
 /** Bind the bookkeeping to the server it belongs to. On a sync-server switch
@@ -508,6 +578,9 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
 async function ensureStateFor(backendId: string): Promise<void> {
   if (state.serverBackendId === backendId) return;
   state = { deviceId: state.deviceId };
+  // The old server's snapshot is gone, so its stashed keys are too — and the fresh state has no
+  // recorded ids, so nothing will look for them again.
+  snapshotSecretsUnavailable = false;
   await persistState({
     serverBackendId: backendId,
     version: 0,
@@ -887,6 +960,13 @@ export async function initSync(): Promise<void> {
   started = true;
   await configReady;
   state = (await loadSyncState()) ?? {};
+  await restoreSnapshotSecrets();
+  // Migrate a pre-split state file: it still holds the keys in cleartext and records no ids.
+  // Rewriting now moves them to the keyring and strips the file, rather than waiting for
+  // whenever the next sync happens to persist.
+  if (!state.snapshotSecretIds && state.snapshot?.backends?.secrets) {
+    await persistState({});
+  }
   device = await syncDeviceInfo();
 
   // Migrate pre-serverBackendId state files: they were only ever written for
@@ -971,6 +1051,7 @@ export async function initSync(): Promise<void> {
  *  next push recreates from version 0. */
 export async function resetSyncState(): Promise<void> {
   state = { deviceId: state.deviceId, serverBackendId: state.serverBackendId };
+  snapshotSecretsUnavailable = false; // no snapshot left to be missing keys for
   await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
   setRuntime({ lastSyncedAt: null, lastSyncDevice: null, syncStatus: "idle", syncError: null });
 }
