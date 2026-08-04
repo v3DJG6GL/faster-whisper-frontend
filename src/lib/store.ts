@@ -104,8 +104,19 @@ function withSettingsDefaults(raw: unknown): AppSettings {
   // the one leaf whose elements get dereferenced unguarded (`quickLaunchMeta` reads `e.kind`
   // in both the chip and the Settings editor), and with no error boundary in either webview a
   // bad element unmounts the window. Coerce it to a list of objects here, at the choke point.
+  // The "is an object" floor was enough for the `e.kind` deref it was written for, but
+  // `quickLaunchMeta` also returns `label: reg?.label ?? e.target`, and the Settings editor
+  // renders both `label` and `e.kind` as React CHILDREN — an object target survives the filter
+  // and throws "Objects are not valid as a React child" during render. Require string leaves.
   recording.quickLaunch = Array.isArray(recording.quickLaunch)
-    ? recording.quickLaunch.filter((e) => !!e && typeof e === "object")
+    ? recording.quickLaunch.filter(
+        (e) =>
+          !!e &&
+          typeof e === "object" &&
+          typeof (e as { id?: unknown }).id === "string" &&
+          typeof (e as { kind?: unknown }).kind === "string" &&
+          typeof (e as { target?: unknown }).target === "string",
+      )
     : [];
   return {
     ...DEFAULT_SETTINGS,

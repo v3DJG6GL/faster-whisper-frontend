@@ -10,8 +10,34 @@ import type { PipelineFetch, PipelineRule } from "./types";
  *  throw and white-screen the route. Returns [] unless ok AND rules is an array. */
 export function ruleListOf(res: PipelineFetch): PipelineRule[] {
   const r = res.ok ? res.state?.rules : undefined;
-  return Array.isArray(r) ? r : [];
+  if (!Array.isArray(r)) return [];
+  // The coercion has to reach the ELEMENTS, not just the container. Rust forwards `rules` as an
+  // opaque Value, so every field is server-shaped, and both screens deref them at RENDER time:
+  // `(rule.tags ?? []).slice()` throws on a string, and a non-string `label`/`type`/`note` throws
+  // "Objects are not valid as a React child". With no error boundary in the tree either throw
+  // unmounts the window — the main one for Dictionary, the hotkey-summoned one for QuickAdd.
+  return r
+    .filter((x): x is PipelineRule => !!x && typeof x === "object")
+    .slice(0, MAX_RULES)
+    .map((rule) => ({
+      ...rule,
+      name: str(rule.name),
+      label: str(rule.label),
+      type: str(rule.type) as PipelineRule["type"],
+      note: rule.note === undefined ? undefined : str(rule.note),
+      color: rule.color === undefined ? undefined : str(rule.color),
+      tags: Array.isArray(rule.tags) ? rule.tags.filter((t) => typeof t === "string") : undefined,
+      entries: Array.isArray(rule.entries)
+        ? rule.entries.filter((e) => !!e && typeof e === "object")
+        : undefined,
+      wordlist: Array.isArray(rule.wordlist)
+        ? rule.wordlist.filter((w) => typeof w === "string")
+        : undefined,
+    }));
 }
+
+const MAX_RULES = 500;
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 /** One editor row for a spoken→symbol mapping. `id` is a client-only stable React
  *  key (never persisted); `k` = spoken phrase, `v` = inserted symbol. */

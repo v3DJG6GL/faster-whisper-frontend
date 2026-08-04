@@ -33,9 +33,10 @@ import {
   resolveSyncConflicts,
   type SecurityChange,
 } from "@/lib/sync";
-import { effectiveServerUrl, insecureUrlWarning, normalizeUrl } from "@/lib/backends";
+import { authorityOf, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
 import { conflicts as chordConflicts, quickAddPeer } from "@/lib/conflicts";
 import { IS_WINDOWS } from "@/lib/platform";
+import { safeDisplayText } from "@/lib/sanitize";
 import type { Backend, Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncRemoteState } from "@/lib/syncTypes";
 
@@ -122,7 +123,10 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     sel.general && result.categories.general
       ? arr<string>(result.categories.general.quickAddHotkey)
       : st.settings.general.quickAddHotkey;
-  const peers = wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles;
+  const peers = (wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles).slice(
+    0,
+    MAX_PREVIEW_PEERS,
+  );
   const predictedConflicts =
     chordConflicts(peers, !IS_WINDOWS && !evdevEnabled).length > 0;
 
@@ -154,8 +158,8 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     <Modal onClose={onClose}>
       <div className="text-[15px] font-semibold text-text">Import settings</div>
       <div className="mt-1 text-[12.5px] text-dim">
-        From {result.hostname || "unknown device"} · {result.platform || "?"} · v
-        {result.appVersion || "?"} · {result.createdAt ? new Date(result.createdAt).toLocaleString() : "?"}
+        From {safeText(result.hostname, 60) || "unknown device"} · {safeText(result.platform, 40) || "?"} · v
+        {safeText(result.appVersion, 30) || "?"} · {result.createdAt ? new Date(result.createdAt).toLocaleString() : "?"}
       </div>
 
       <div className="mt-4">
@@ -184,9 +188,12 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
         {result.hasSecrets && sel.backends && (
           <Notice tone="warn">This file contains API keys — they'll be stored in the system keyring.</Notice>
         )}
+        {sel.backends && result.categories.backends && (
+          <IncomingAddresses list={result.categories.backends.list} />
+        )}
         {missingKeys.length > 0 && (
           <Notice tone="warn">
-            {missingKeys.map((b) => `“${b.name}”`).join(", ")} need{missingKeys.length === 1 ? "s" : ""} an
+            {missingKeys.map((b) => `“${safeText(b.name, 60)}”`).join(", ")} need{missingKeys.length === 1 ? "s" : ""} an
             API key re-entered after importing (not included in the file).
           </Notice>
         )}
@@ -265,7 +272,10 @@ export function RestoreFromServer({
     sel.general && blob.general
       ? arr<string>(blob.general.quickAddHotkey)
       : st.settings.general.quickAddHotkey;
-  const peers = wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles;
+  const peers = (wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles).slice(
+    0,
+    MAX_PREVIEW_PEERS,
+  );
   const predictedConflicts = chordConflicts(peers, !IS_WINDOWS && !evdevEnabled).length > 0;
   const replaces =
     (sel.backends && blob.backends && st.backends.length > 0) ||
@@ -296,7 +306,7 @@ export function RestoreFromServer({
     <Modal onClose={onCancel}>
       <div className="text-[15px] font-semibold text-text">Restore from server</div>
       <div className="mt-1 text-[12.5px] text-dim">
-        Last synced{state.device ? ` from ${state.device}` : ""}
+        Last synced{state.device ? ` from ${safeText(state.device, 60)}` : ""}
         {state.updated_at ? ` · ${relTime(state.updated_at * 1000)}` : ""}
       </div>
 
@@ -326,6 +336,7 @@ export function RestoreFromServer({
             profiles are overwritten.
           </Notice>
         )}
+        {sel.backends && blob.backends && <IncomingAddresses list={blob.backends.list} />}
         <Notice tone="ok">
           After restoring, settings sync turns on for this device against this server.
         </Notice>
@@ -360,28 +371,50 @@ export function RestoreFromServer({
  *  (U+202A–U+202E, U+2066–U+2069) and the invisible marks — and bound the length so a long value
  *  cannot push the buttons off screen. */
 const MAX_REVIEW_ROWS = 50;
-function safeText(s: string, max = 200): string {
-  return [...s]
-    .filter((ch) => {
-      const c = ch.codePointAt(0)!;
-      if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return false;
-      if (c >= 0x202a && c <= 0x202e) return false;
-      if (c >= 0x2066 && c <= 0x2069) return false;
-      return c !== 0x200b && c !== 0x200e && c !== 0x200f && c !== 0xfeff;
-    })
-    .slice(0, max)
-    .join("");
+/** Moved to lib/sanitize.ts (`safeDisplayText`) so the sibling dialogs and cards that render
+ *  remote-authored identity share one implementation — and one Cf denylist — with this one. */
+const safeText = safeDisplayText;
+
+
+/** The addresses an incoming blob would install, shown BEFORE it is applied.
+ *
+ *  SecurityReviewDialog gets this because it is where the user decides whether to trust an
+ *  address. Its siblings — Restore from server, Import preview, Onboarding's restore — apply the
+ *  same attacker-authored `backends.list` through the same `applyBlob`, with no `securityChanges`
+ *  gate in front of them, and disclosed only a COUNT. A URL's real authority is whatever follows
+ *  the last `@`, so `http://localhost:8000@evil.tld/v1` reads as loopback until it is parsed. */
+export function IncomingAddresses({ list }: { list: unknown }) {
+  const backends = arr<Backend>(list).slice(0, MAX_SHOWN_ADDRESSES);
+  if (backends.length === 0) return null;
+  return (
+    <Notice>
+      <div className="font-medium">Dictation would be sent to:</div>
+      <ul className="mt-1 space-y-0.5">
+        {backends.map((b, i) => {
+          const auth = authorityOf(String(b.serverUrl ?? ""));
+          const warn = insecureUrlWarning(String(b.serverUrl ?? ""));
+          return (
+            <li key={`${b.id}-${i}`} className="font-mono text-[12px]">
+              {safeText(b.name || b.id, 60)} →{" "}
+              <span className="font-semibold">{auth ? safeText(auth.host, 80) : "unreadable address"}</span>
+              {auth?.hasUserinfo ? " · address hides the real host behind a username" : ""}
+              {warn ? ` · ${warn}` : ""}
+            </li>
+          );
+        })}
+      </ul>
+      {arr(list).length > backends.length ? (
+        <div className="mt-1">…and {arr(list).length - backends.length} more.</div>
+      ) : null}
+    </Notice>
+  );
 }
 
-/** What the app will ACTUALLY connect to, plus a flag when the address hides it behind userinfo. */
-function authorityOf(raw: string): { host: string; hasUserinfo: boolean } | null {
-  try {
-    const u = new URL(normalizeUrl(raw));
-    return { host: u.host, hasUserinfo: !!u.username || !!u.password };
-  } catch {
-    return null;
-  }
-}
+const MAX_SHOWN_ADDRESSES = 20;
+/** Bound on the list fed to the hazard PREVIEWS. `conflicts()` is an O(n²) pair scan that also
+ *  pushes O(n²) result objects, and it runs in the render body — before the user has consented to
+ *  anything. Truncating a predictive warning drops no data; the applied list is untouched. */
+const MAX_PREVIEW_PEERS = 500;
 
 /** A pulled update that would repoint a backend or replace a stored key, held for approval. */
 function SecurityReviewDialog() {

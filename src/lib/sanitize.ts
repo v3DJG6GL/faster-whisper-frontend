@@ -25,6 +25,28 @@ function isDeceptiveFormatChar(code: number): boolean {
   );
 }
 
+/** A server- or peer-authored string on its way into the UI: control characters and the
+ *  deceptive-format set removed, length bounded.
+ *
+ *  The security-review dialog has done this since B17, on the reasoning that a string shown next
+ *  to a trust decision must not be able to reorder the text around it or push it off screen. Every
+ *  sibling surface that renders remote-authored identity — device names, usernames, server
+ *  versions, imported backend names — needs the same treatment, so it lives here rather than in
+ *  one screen. Unlike `stripControlChars` this also drops Tab and newline: these are single-line
+ *  labels, and a newline in one is a layout break, not content. */
+export function safeDisplayText(s: unknown, max = 200): string {
+  if (typeof s !== "string") return "";
+  const out: string[] = [];
+  for (const ch of s) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
+    if (isDeceptiveFormatChar(code)) continue;
+    out.push(ch);
+    if (out.length >= max) break;
+  }
+  return out.join("");
+}
+
 export function stripControlChars(text: string): string {
   const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   let out = "";

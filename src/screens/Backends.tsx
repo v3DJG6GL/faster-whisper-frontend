@@ -12,7 +12,8 @@ import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/syncTypes";
 import { ALL_CATEGORIES } from "@/lib/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
-import { effectiveServerUrl, insecureUrlWarning, nameFromUrl, normalizeUrl } from "@/lib/backends";
+import { authorityOf, effectiveServerUrl, insecureUrlWarning, nameFromUrl, normalizeUrl } from "@/lib/backends";
+import { safeDisplayText } from "@/lib/sanitize";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { RestoreFromServer, relTime } from "./SettingsSync";
 import { cn } from "@/lib/cn";
@@ -776,7 +777,17 @@ export default function Backends() {
                       {b.hasApiKey && <Badge>key</Badge>}
                     </div>
                     <div className="mt-1 flex items-center gap-2 font-mono text-[12px] text-dim">
-                      <span className="truncate">{b.serverUrl}</span>
+                      {/* The card is the audit surface — non-security sync categories still apply
+                          silently, so this is where a user checks where dictation goes. A URL's
+                          real authority is whatever follows the last `@`, and the truncate class
+                          hides the tail, so `http://localhost:8000@evil.tld/v1` read as loopback.
+                          Show the parsed host, and flag an address that hides it. */}
+                      <span className="truncate" title={safeDisplayText(b.serverUrl, 200)}>
+                        {authorityOf(b.serverUrl)?.host ?? safeDisplayText(b.serverUrl, 80)}
+                      </span>
+                      {authorityOf(b.serverUrl)?.hasUserinfo && (
+                        <Badge tone="warn">address hides the real host</Badge>
+                      )}
                       <span className="text-faint">·</span>
                       <span className="text-faint">{b.model}</span>
                     </div>

@@ -7,6 +7,7 @@ import type { ServerKind } from "@/lib/serverKind";
 // Local-only sentinel for the "type a name by hand" row — never stored; the
 // stored value comes from the text field it reveals.
 const CUSTOM = "__custom__";
+const MAX_SHOWN_PROFILES = 500;
 
 // Picks a server-side override-profile name to reference per request. Only the
 // full faster-whisper-backend exposes profiles, so on a server KNOWN to be
@@ -56,7 +57,10 @@ export function OverrideProfilePicker({
     setNames([]);
     void listOverrideProfiles({ serverUrl, backendId, apiKey })
       .then((n) => {
-        if (!cancelled) setNames(n);
+        // Render cap, matching the MAX_SHOWN_* ceilings the Dictionary/QuickAdd siblings use: the
+        // list is server-authored and every entry becomes an <option>. Nothing becomes
+        // unreachable — the free-text "custom name" input covers any name past the cap.
+        if (!cancelled) setNames(n.slice(0, MAX_SHOWN_PROFILES));
       })
       .catch(() => {
         // Best-effort, per the doc above: on failure degrade to the free-text input.

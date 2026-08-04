@@ -24,7 +24,8 @@ import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { IS_WINDOWS } from "@/lib/platform";
-import { ImportPreview, relTime } from "./SettingsSync";
+import { safeDisplayText } from "@/lib/sanitize";
+import { ImportPreview, IncomingAddresses, relTime } from "./SettingsSync";
 import type { ImportResult, SyncPullResult } from "@/lib/syncTypes";
 import type { Backend, ConnectionInfo, PipelineRule, Profile, SyncCategory } from "@/lib/types";
 
@@ -203,12 +204,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         {step === "restore" && pull?.state && (
           <>
             <div className="mt-6 font-mono text-[11px] text-dim">
-              connected · {info?.serverVersion ? `faster-whisper-backend ${info.serverVersion}` : "faster-whisper-backend"}
+              connected ·{" "}
+              {info?.serverVersion
+                ? `faster-whisper-backend ${safeDisplayText(info.serverVersion, 30)}`
+                : "faster-whisper-backend"}
             </div>
             <div className="mt-4 w-full max-w-[480px] rounded-card border border-accent/40 bg-accent-soft p-4 text-left">
               <div className="text-[13.5px] font-semibold">This account has synced settings</div>
               <div className="mt-1 font-mono text-[11px] text-dim">
-                last synced{pull.state.device ? ` from ${pull.state.device}` : ""}
+                last synced{pull.state.device ? ` from ${safeDisplayText(pull.state.device, 60)}` : ""}
                 {pull.state.updated_at ? ` · ${relTime(pull.state.updated_at * 1000)}` : ""}
               </div>
               <div className="mt-2.5 flex flex-wrap gap-1.5">
@@ -218,6 +222,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   </span>
                 ))}
               </div>
+              {pull.state.blob?.backends ? (
+                <div className="mt-2.5">
+                  <IncomingAddresses list={pull.state.blob.backends.list} />
+                </div>
+              ) : null}
               <div className="mt-3.5 flex items-center gap-2.5">
                 <Button variant="accent" onClick={() => void restoreEverything()} disabled={busy}>
                   {busy ? "Restoring…" : "Restore everything"}

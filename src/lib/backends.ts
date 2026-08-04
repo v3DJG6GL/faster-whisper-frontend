@@ -70,3 +70,18 @@ export function effectiveServerUrl(backend: Backend, settings: AppSettings): str
   const override = settings.sync?.urlOverrides?.[backend.id]?.trim();
   return override ? override : backend.serverUrl;
 }
+
+/** What the app will ACTUALLY connect to, plus a flag when the address hides it behind userinfo.
+ *
+ *  A URL's real authority is whatever follows the LAST `@`, so `http://localhost:8000@evil.tld/v1`
+ *  has host `evil.tld` while reading as loopback. Every surface that shows the user an address to
+ *  judge — the security-review dialog, the restore/import previews, the backend cards — parses it
+ *  through here rather than printing the raw string. */
+export function authorityOf(raw: string): { host: string; hasUserinfo: boolean } | null {
+  try {
+    const u = new URL(normalizeUrl(raw));
+    return { host: u.host, hasUserinfo: !!u.username || !!u.password };
+  } catch {
+    return null;
+  }
+}

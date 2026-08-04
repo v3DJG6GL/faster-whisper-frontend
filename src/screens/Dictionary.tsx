@@ -966,7 +966,15 @@ function SaveBanner({ result, reloadDisabled, onReload }: { result: PipelineSave
   // truthy check and then crashes `.slice().map()`, white-screening the route. Coerce to an array
   // first — mirrors the GET-path rule coercion (ruleListOf). 422-without-errors falls through to the
   // generic !ok banner below.
-  const errors = Array.isArray(result.errors) ? result.errors : [];
+  // ...and the same coercion has to reach the elements: a `null` member throws on `e.loc`, and an
+  // object-valued `msg` throws "Objects are not valid as a React child" — inside this render, so
+  // the whole window goes with the user's unsaved edits the moment they click Save.
+  const errors = (Array.isArray(result.errors) ? result.errors : [])
+    .filter((e) => !!e && typeof e === "object")
+    .map((e) => ({
+      loc: typeof e.loc === "string" ? e.loc : "",
+      msg: typeof e.msg === "string" ? e.msg.slice(0, 300) : "",
+    }));
   if (result.status === 422 && errors.length) {
     return (
       <div className="rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
