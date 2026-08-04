@@ -22,12 +22,16 @@ import { importSettingsFile, pickImportFile, pickSavePath, syncDelete } from "@/
 import { applyImport, exportToFile } from "@/lib/exportImport";
 import {
   applyBlob,
+  approvePendingReview,
   dismissSyncConflict,
   getPendingConflict,
+  getPendingReview,
   pullNow,
   pushNow,
+  rejectPendingReview,
   resetSyncState,
   resolveSyncConflicts,
+  type SecurityChange,
 } from "@/lib/sync";
 import { effectiveServerUrl } from "@/lib/backends";
 import { conflicts as chordConflicts, quickAddPeer } from "@/lib/conflicts";
@@ -350,6 +354,50 @@ export function RestoreFromServer({
   );
 }
 
+/** A pulled update that would repoint a backend or replace a stored key, held for approval. */
+function SecurityReviewDialog() {
+  const pending = getPendingReview();
+  if (!pending) return null;
+  const label = (c: SecurityChange) =>
+    c.kind === "new-backend"
+      ? "New server added"
+      : c.kind === "server-url"
+        ? "Server address changed"
+        : "API key replaced";
+  return (
+    <Modal onClose={rejectPendingReview}>
+      <div className="text-[15px] font-semibold text-text">Review this update</div>
+      <div className="mt-1 text-[12.5px] leading-snug text-dim">
+        {pending.device || "Another device"} sent changes that affect where your dictation is sent
+        and which key is used. Everything else was applied already — only these are waiting.
+      </div>
+      <div className="mt-4 flex flex-col gap-2">
+        {pending.changes.map((c, i) => (
+          <div
+            key={`${c.kind}-${c.backend}-${i}`}
+            className="rounded-card border border-line bg-surface-2 px-3.5 py-2.5"
+          >
+            <div className="text-[13.5px] font-semibold text-text">{label(c)}</div>
+            <div className="mt-0.5 font-mono text-[11px] break-all text-dim">
+              {c.backend} · {c.detail}
+            </div>
+          </div>
+        ))}
+      </div>
+      <Notice className="mt-3">
+        If you did not change this yourself on another device, reject it — your microphone audio and
+        everything you dictate would go to the new address.
+      </Notice>
+      <div className="mt-5 flex justify-end gap-2">
+        <Button variant="ghost" onClick={rejectPendingReview}>
+          Reject
+        </Button>
+        <Button onClick={() => void approvePendingReview()}>Apply</Button>
+      </div>
+    </Modal>
+  );
+}
+
 /** Keep Local / Keep Remote per genuinely-conflicting category. */
 function ConflictDialog() {
   const pending = getPendingConflict();
@@ -601,6 +649,7 @@ export function SyncTab() {
       </Card>
 
       {importResult && <ImportPreview result={importResult} onClose={() => setImportResult(null)} />}
+      <SecurityReviewDialog />
       <ConflictDialog />
     </>
   );

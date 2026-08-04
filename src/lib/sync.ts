@@ -29,7 +29,7 @@ import {
   syncPush,
 } from "./api";
 import { configReady } from "./persistence";
-import { effectiveServerUrl } from "./backends";
+import { effectiveServerUrl, normalizeUrl } from "./backends";
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "./paste";
 import { IS_WINDOWS } from "./platform";
 import type {
@@ -456,6 +456,7 @@ function supersede(): void {
   inFlight = false; // the superseded call skips its own reset (epoch mismatch)
   clearTimeout(pushTimer);
   pendingConflict = null; // a conflict against the old server is unresolvable now
+  pendingReview = null; // ditto for a held-back pull from the old server
   pendingApply = null; // ditto a deferred apply of the old server's blob
 }
 
@@ -622,7 +623,19 @@ export async function pushNow(manual = false): Promise<void> {
         // Auto-merged: adopt the merge locally, then retry on the new base. Honour the user's
         // category opt-outs like the other two applyBlob callers — with fullCats() a category
         // the user switched OFF still took the remote value on any ordinary 409.
-        await applyBlob(merged, useApp.getState().settings.sync?.categories ?? fullCats());
+        const pushCats = useApp.getState().settings.sync?.categories ?? fullCats();
+        // A 409 merge adopts remote values too, so it gets the same consent gate as a pull.
+        const riskyPush = securityChanges(merged, blob, pushCats);
+        if (riskyPush.length > 0) {
+          await applyBlob(merged, { ...pushCats, backends: false });
+          raiseReview({
+            changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
+            version: remote.version, updatedAt: null, device: remote.device ?? null,
+            pushAfter: true,
+          });
+          return;
+        }
+        await applyBlob(merged, pushCats);
         blob = merged;
         base = remote.version;
         continue;
@@ -656,7 +669,23 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
       remoteVersion: remote.version, remoteDevice: remote.device ?? null });
     return;
   }
-  await applyBlob(merged, s.settings.sync?.categories ?? cats);
+  const applyCats = s.settings.sync?.categories ?? cats;
+  // This pull is unattended (startup + every window focus). If it would repoint a backend or
+  // swap a stored key, hold it for confirmation instead of adopting it silently.
+  const risky = securityChanges(merged, local, applyCats);
+  if (risky.length > 0) {
+    // Everything else still applies — only the backends category waits. Deliberately no
+    // persistState here: adopting the server's version as the new base would drop the held-back
+    // change, so the next pull re-offers it until the user decides.
+    await applyBlob(merged, { ...applyCats, backends: false });
+    raiseReview({
+      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
+      version: remote.version, updatedAt: remote.updated_at ?? null,
+      device: remote.device ?? null, pushAfter: true,
+    });
+    return;
+  }
+  await applyBlob(merged, applyCats);
   // Persist what the SERVER holds (remote), not the merge result: snapshot is
   // the 3-way base for the NEXT sync and hash is the did-anything-change gate
   // for pushes. Recording `merged` here would make the follow-up push compose
@@ -696,6 +725,101 @@ function handleTransportFailure(status: number, error?: string): void {
   } else {
     setRuntime({ syncStatus: "error", syncError: error ?? "Sync failed." });
   }
+}
+
+// ── security review of a pulled blob (driven by the Sync tab dialog) ────────
+
+/** One pulled change worth stopping for. Everything a sync server can change is applied
+ *  silently EXCEPT these two: where the microphone audio goes, and which credential travels
+ *  with it. A sync server is remote and may be hostile or intercepted, and the pull runs
+ *  unattended at startup and on every window focus — so these get the same explicit consent
+ *  the file-import path already asks for. */
+export interface SecurityChange {
+  kind: "new-backend" | "server-url" | "api-key";
+  backend: string;
+  detail: string;
+}
+
+/** Compare what a pull would apply against what this device holds, and report only the
+ *  security-relevant differences. `local` is the freshly composed local blob, so its
+ *  `backends.secrets` already reflects the keyring — no extra wallet read here. */
+function securityChanges(
+  incoming: SyncBlob,
+  local: SyncBlob,
+  cats: Record<SyncCategory, boolean>,
+): SecurityChange[] {
+  if (!cats.backends || !incoming.backends) return [];
+  const out: SecurityChange[] = [];
+  const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));
+  const localSecrets = local.backends?.secrets ?? {};
+  const nextSecrets = incoming.backends.secrets ?? {};
+  for (const b of incoming.backends.list ?? []) {
+    if (!b || typeof b.id !== "string") continue;
+    const cur = here.get(b.id);
+    const name = b.name || b.serverUrl || b.id;
+    if (!cur) {
+      out.push({ kind: "new-backend", backend: name, detail: b.serverUrl });
+    } else if (normalizeUrl(cur.serverUrl) !== normalizeUrl(b.serverUrl)) {
+      out.push({ kind: "server-url", backend: cur.name || name, detail: `${cur.serverUrl} → ${b.serverUrl}` });
+    }
+    // Only an actual value change counts: an unchanged key rides along in every push.
+    const incomingKey = nextSecrets[b.id];
+    if (incomingKey && here.has(b.id) && localSecrets[b.id] && incomingKey !== localSecrets[b.id]) {
+      out.push({ kind: "api-key", backend: cur?.name || name, detail: "the stored key would be replaced" });
+    }
+  }
+  return out;
+}
+
+/** A pulled blob held back until the user approves its security-relevant changes. */
+interface PendingReview {
+  changes: SecurityChange[];
+  blob: SyncBlob;
+  cats: Record<SyncCategory, boolean>;
+  remote: SyncBlob;
+  version: number;
+  updatedAt: number | null;
+  device: string | null;
+  pushAfter: boolean;
+}
+let pendingReview: PendingReview | null = null;
+
+/** The Sync tab reads the held-back pull through this (the blobs stay out of the store). */
+export function getPendingReview(): { changes: SecurityChange[]; device: string | null } | null {
+  return pendingReview ? { changes: pendingReview.changes, device: pendingReview.device } : null;
+}
+
+function raiseReview(r: PendingReview): void {
+  pendingReview = r;
+  setRuntime({
+    syncStatus: "error",
+    syncError:
+      "A pulled update wants to change where your dictation is sent — review it in Settings → Sync.",
+  });
+}
+
+/** Approve the held-back pull: apply it and adopt the server's version as the new base. */
+export async function approvePendingReview(): Promise<void> {
+  const r = pendingReview;
+  if (!r) return;
+  pendingReview = null;
+  await applyBlob(r.blob, r.cats);
+  await persistState({
+    version: r.version,
+    updatedAt: r.updatedAt,
+    device: r.device,
+    hash: hashBlob(r.remote),
+    snapshot: r.remote,
+  });
+  setRuntime({ syncStatus: "ok", syncError: null, lastSyncedAt: Date.now(), lastSyncDevice: r.device });
+  if (r.pushAfter && hashBlob(r.blob) !== hashBlob(r.remote)) schedulePush(0);
+}
+
+/** Reject the held-back pull. Nothing is applied and NO base is adopted, so the next pull
+ *  re-offers it rather than silently treating the rejected state as agreed. */
+export function rejectPendingReview(): void {
+  pendingReview = null;
+  setRuntime({ syncStatus: "idle", syncError: null });
 }
 
 // ── conflict resolution (driven by the Sync tab dialog) ─────────────────────
