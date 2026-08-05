@@ -183,7 +183,30 @@ pub async fn run<F>(
     // default of a minute+, sticking the UI at "finalizing…").
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
     let mut stop_requested = false;
-    let connect = tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(request));
+    // Bound one inbound frame. This socket was the last transport route with no read ceiling: every
+    // HTTP route got one (`MAX_BODY` for the transcript parse, `MAX_META_BODY` for the metadata
+    // probes, `MAX_ERROR_BODY` for error arms), but `connect_async` takes tungstenite's DEFAULT
+    // `max_message_size` of 64 MiB, so a hostile server buffered 64 MiB and had it expanded into a
+    // full serde `Value` tree — several times that in RSS — BEFORE `MAX_TRANSCRIPT` and its
+    // neighbours trimmed anything, repeatable for the life of the session.
+    //
+    // Sized so it can never reject a frame whose content the parser would have KEPT IN FULL, which
+    // is the only truncation that would be a regression. The largest such frame is a `final`:
+    // `committed` + `tail`, each capped at MAX_TRANSCRIPT *chars* (not bytes) — so at the 4-byte
+    // worst case that is 2 × 4 Mchars × 4 B = 32 MiB of payload, plus keys, quoting and the
+    // 50 × 200 `overrides_ignored` list. 48 MiB clears that with room to spare while removing a
+    // quarter of the amplification. (A cap sized to REAL usage — an hour of dictation is ~50 KB —
+    // would be far tighter and worth much more, but it could refuse a frame the parser would have
+    // accepted whole, which is the D12/E8/N1 truncation trade the owner has settled against.
+    // Recorded in the notes as the alternative.)
+    const MAX_WS_MESSAGE: usize = 48 * 1024 * 1024;
+    let ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(MAX_WS_MESSAGE))
+        .max_frame_size(Some(MAX_WS_MESSAGE));
+    let connect = tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        tokio_tungstenite::connect_async_with_config(request, Some(ws_config), false),
+    );
     tokio::pin!(connect);
     let (ws, _resp) = loop {
         tokio::select! {
