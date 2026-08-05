@@ -204,6 +204,28 @@ pub fn is_deceptive_format_char(c: char) -> bool {
 /// large enough that a normal phrase is still a single call.
 const DIRECT_CHUNK_CHARS: usize = 512;
 
+/// What an X11/Windows job actually did. `Ok(())` alone could not tell "typed it" from "abandoned
+/// it because one of our own windows took focus", and the caller has to know: the first advances
+/// the typed baseline, the second must be re-sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Landed {
+    /// Keystrokes were synthesized — or the job was a deliberate no-op (empty text, a cancel bail,
+    /// which P16 records as reporting `landed: true` because the caller discards the phrase itself).
+    Yes,
+    /// Nothing was written and nothing sits on the clipboard. The caller re-sends.
+    NothingWritten,
+    /// The transcript IS on the clipboard but the paste chord was never pressed.
+    OnClipboard,
+}
+
+/// Is one of our own windows focused right now?
+///
+/// Passed in as a closure rather than an `AppHandle` so this module stays Tauri-free. Safe to call
+/// from the blocking pool: Tauri's `is_focused` posts to the event loop and waits on a channel
+/// (`send_user_message` branches on the thread id), so the toolkit call always runs on the main
+/// thread no matter who asks.
+pub type OwnWindowFocused<'a> = &'a (dyn Fn() -> bool + Sync);
+
 pub fn inject(
     text: &str,
     method: &str,
@@ -213,21 +235,31 @@ pub fn inject(
     remote_target: bool,
     // The generation captured when this job was queued; see `injection_cancelled`.
     epoch: u64,
-) -> Result<(), String> {
+    // Re-asked at the sinks below — see `OwnWindowFocused`. `inject_text`'s own-window guard runs
+    // before `spawn_blocking`, and everything in this function happens after it.
+    own_window_focused: OwnWindowFocused<'_>,
+) -> Result<Landed, String> {
     if text.is_empty() && !auto_enter {
-        return Ok(());
+        return Ok(Landed::Yes);
     }
     // Before anything is typed, matching the Wayland backends' pre-job check: a cancel that lands
     // between queueing and execution must not still fire a paste or a bare auto-Enter.
     if injection_cancelled(epoch) {
         tracing::info!("[inject] cancelled before typing — dropping the job");
-        return Ok(());
+        return Ok(Landed::Yes);
     }
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
 
     if !text.is_empty() {
         match method {
             "direct" => {
+                // The caller's own-window guard ran before `spawn_blocking`; `Enigo::new` and the
+                // dispatch sit between it and the first keystroke. Without this, a click into our
+                // own settings field mid-injection types the transcript into it.
+                if own_window_focused() {
+                    tracing::info!("[inject] skipped at the typing sink: our own window took focus");
+                    return Ok(Landed::NothingWritten);
+                }
                 let mut rest = text;
                 while !rest.is_empty() {
                     let split = match rest.char_indices().nth(DIRECT_CHUNK_CHARS) {
@@ -239,21 +271,46 @@ pub fn inject(
                     rest = tail;
                     if !rest.is_empty() && injection_cancelled(epoch) {
                         tracing::info!("[inject] cancelled mid-typing — stopping");
-                        return Ok(());
+                        return Ok(Landed::Yes);
                     }
                 }
             }
-            _ => paste(&mut enigo, text, restore_clipboard, paste_shortcut, remote_target, epoch)?,
+            _ => {
+                match paste(
+                    &mut enigo,
+                    text,
+                    restore_clipboard,
+                    paste_shortcut,
+                    remote_target,
+                    epoch,
+                    own_window_focused,
+                )? {
+                    // Nothing was pressed, so the auto-Enter below must not fire either — it would
+                    // submit whatever the focused field already holds.
+                    l @ (Landed::NothingWritten | Landed::OnClipboard) => return Ok(l),
+                    Landed::Yes => {}
+                }
+            }
         }
     }
 
     // A cancel during the typing above must not still submit what landed.
     if auto_enter && !injection_cancelled(epoch) {
+        // The three probes above all sit inside `if !text.is_empty()`, so a BARE auto-Enter job —
+        // which `streaming.ts` sends routinely for the per-phrase and tail Enter, on both methods —
+        // reached this Return having been checked by none of them, and fired blind into whatever
+        // held focus. Same sink guard, at the sink that job actually has.
+        if own_window_focused() {
+            tracing::info!("[inject] skipped the auto-Enter: our own window took focus");
+            // `NothingWritten` ONLY when this job was just the Enter. If text landed above, saying
+            // "nothing written" makes the caller re-send it — the P16 duplicate-text hazard.
+            return Ok(if text.is_empty() { Landed::NothingWritten } else { Landed::Yes });
+        }
         enigo
             .key(Key::Return, Direction::Click)
             .map_err(|e| e.to_string())?;
     }
-    Ok(())
+    Ok(Landed::Yes)
 }
 
 /// Read the focus-independent PRIMARY selection (the Linux "highlight to select" buffer) as
@@ -360,7 +417,8 @@ fn paste(
     // anything — so "checked at the top of the job" is not the same as "checked at the sink", the
     // distinction the Wayland twin was already fixed for.
     epoch: u64,
-) -> Result<(), String> {
+    own_window_focused: OwnWindowFocused<'_>,
+) -> Result<Landed, String> {
     use arboard::Clipboard;
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     // Never capture (→ never restore) for a remote-desktop target: its clipboard sync is
@@ -388,7 +446,17 @@ fn paste(
     // block at the end of that function still runs and a died session keeps its text.
     if injection_cancelled(epoch) {
         tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
-        return Ok(());
+        return Ok(Landed::Yes);
+    }
+    // Own-window check at the clipboard WRITE. `inject_text`'s guard ran before `spawn_blocking`,
+    // and between it and here sit `Enigo::new`, `Clipboard::new` and an explicitly UN-TIMED
+    // blocking `get_text()` — the longest guard-to-sink gap on any injection path. Without it, a
+    // click into one of our own windows mid-injection clobbers the user's clipboard and then
+    // pastes into our own field. `NothingWritten`: `previous` was only READ, so the caller
+    // re-sends and no text is duplicated.
+    if own_window_focused() {
+        tracing::info!("[clip] paste: skipped at the clipboard write — our own window took focus");
+        return Ok(Landed::NothingWritten);
     }
     clipboard.set_text(text.to_string()).map_err(|e| e.to_string())?;
     note_injected(text);
@@ -412,7 +480,22 @@ fn paste(
         if !cancel_wants_recovery(epoch) {
             restore_clipboard_later(previous);
         }
-        return Ok(());
+        return Ok(Landed::Yes);
+    }
+    // And again before the chord. The transcript is on the clipboard by now, so the honest answer
+    // is a DIVERT, not "nothing written" — and the restore is skipped deliberately so the text
+    // stays pasteable, exactly as the failed-paste arm below does.
+    if own_window_focused() {
+        tracing::info!("[clip] paste: skipped at the chord — our own window took focus");
+        // Hand the selection to the persistent owner BEFORE returning. The `set_text` above went
+        // through this local `Clipboard`, which is dropped when this function returns — and on X11
+        // with no clipboard manager running, arboard tears the selection down on that drop. So
+        // reporting "it's on the clipboard" without this is a FALSE confirmation: the caller
+        // advances its baseline, the phrase leaves the re-send stream, and the text is gone. This
+        // is the rule `set_clipboard_persistent`'s own doc states — nothing consumes the clipboard
+        // here, so it must persist via a live owner.
+        set_clipboard_persistent(text);
+        return Ok(Landed::OnClipboard);
     }
     let res = paste_keystroke(enigo, chord);
 
@@ -426,7 +509,7 @@ fn paste(
     if res.is_ok() {
         restore_clipboard_later(previous);
     }
-    res
+    res.map(|()| Landed::Yes)
 }
 
 /// Map a KeyboardEvent.code to an enigo key + whether it's a modifier. "Control" maps to

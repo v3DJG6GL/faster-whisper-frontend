@@ -1773,7 +1773,10 @@ pub async fn inject_text(
     // Kept for the error-abort recovery below: the X11 branch moves `text` into spawn_blocking.
     let recovery_text = text.clone();
     let res = if crate::inject::is_wayland() {
-        if text.is_empty() && auto_enter && method != "direct" {
+        // Every Wayland arm either lands or returns early with its own `InjectOutcome`, so the
+        // block's own value is the plain success/failure and maps to `Landed::Yes`. The X11 arm
+        // below reports its outcome properly, because that is where the sink guards live.
+        let wayland_res: Result<(), String> = if text.is_empty() && auto_enter && method != "direct" {
             // Auto-enter with no text on the PASTE path (the per-phrase / tail Enter): press Enter
             // WITHOUT touching the clipboard — paste would set_clipboard("") and clobber it, so route
             // the bare Enter through the portal type path instead. (Direct falls through to the VK-first
@@ -1900,6 +1903,12 @@ pub async fn inject_text(
                 .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
             {
                 tracing::info!("[inject] skipped at the paste chord: our own window took focus");
+                // Re-set through the PERSISTENT owner first. The write above used the plain
+                // `set_clipboard`, which does not stick on Wayland once the setter returns — so
+                // reporting the divert without this promises a clipboard that no longer holds the
+                // text, and the caller has already advanced past that phrase. Same rule the X11
+                // twin follows at its own chord guard.
+                crate::inject::set_clipboard_persistent(&text);
                 return Ok(InjectOutcome { landed: true, diverted: true });
             }
             let r = crate::wayland_inject::paste(&app, typer.inner(), paste_shortcut, auto_enter, epoch).await;
@@ -1920,10 +1929,35 @@ pub async fn inject_text(
                 crate::inject::restore_clipboard_later(prev);
             }
             r
-        }
+        };
+        wayland_res.map(|()| crate::inject::Landed::Yes)
     } else {
+        // The X11/Windows twin of the two Wayland sink guards above. This arm hands off to the
+        // blocking pool, and everything past that point — `Enigo::new`, `Clipboard::new`, an
+        // un-timed blocking clipboard read, the settle — happens after the guard that ran before
+        // the dispatch, so it needs to re-ask at its own sinks. Passing a probe rather than the
+        // handle keeps `inject.rs` Tauri-free; it is safe from the blocking pool because Tauri's
+        // `is_focused` posts to the event loop and waits on a channel, so the toolkit call runs on
+        // the main thread whichever thread asks. No deadlock: this command runs on the async
+        // runtime, so the main thread is never waiting on us.
+        let probe_app = app.clone();
         tokio::task::spawn_blocking(move || {
-            crate::inject::inject(&text, &method, auto_enter, restore_clipboard, &paste_shortcut, remote_target, epoch)
+            let own_window_focused = move || {
+                probe_app
+                    .webview_windows()
+                    .iter()
+                    .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+            };
+            crate::inject::inject(
+                &text,
+                &method,
+                auto_enter,
+                restore_clipboard,
+                &paste_shortcut,
+                remote_target,
+                epoch,
+                &own_window_focused,
+            )
         })
         .await
         .map_err(|e| e.to_string())?
@@ -1942,5 +1976,12 @@ pub async fn inject_text(
         tracing::info!("[inject] aborted by a failed session — transcript left on the clipboard");
         crate::inject::set_clipboard_persistent(&recovery_text);
     }
-    res.map(|()| InjectOutcome { landed: true, diverted: false })
+    res.map(|landed| match landed {
+        crate::inject::Landed::Yes => InjectOutcome { landed: true, diverted: false },
+        // Nothing was written and nothing is on the clipboard, so the caller re-sends. Unlike the
+        // Wayland guard this reaches the recovery block above on the way out, which is the shape
+        // P4 asked for.
+        crate::inject::Landed::NothingWritten => InjectOutcome { landed: false, diverted: false },
+        crate::inject::Landed::OnClipboard => InjectOutcome { landed: true, diverted: true },
+    })
 }
