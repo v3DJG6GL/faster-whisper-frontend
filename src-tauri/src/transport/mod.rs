@@ -207,9 +207,26 @@ pub fn friendly_err(e: &reqwest::Error) -> String {
     } else if e.is_timeout() {
         "Timed out waiting for the server.".into()
     } else {
-        e.to_string()
+        // `is_connect`/`is_timeout` catch two kinds; everything else lands here, and reqwest's
+        // Display appends " for url ({url})" with `Url`'s FULL serialization — userinfo included.
+        // A `serverUrl` of the form `https://user:secret@host/` would then be written verbatim
+        // into the UI banners below AND into the pipeline `tracing::warn!` calls, i.e. the log
+        // file users are asked to attach to a support report. `without_url()` consumes the error
+        // and we only have a reference, so strip the suffix reqwest itself appends.
+        let mut msg = e.to_string();
+        if e.url().is_some() {
+            if let Some(i) = msg.find(" for url (") {
+                msg.truncate(i);
+            }
+        }
+        // The remainder is still a server-influenced string on its way to a banner and a log.
+        bounded_server_text(&msg, MAX_ERR)
     }
 }
+
+/// Cap for the transport's own error text. Matches the ceiling the server-supplied `detail`
+/// strings already carry — an error line is a single-line banner, not a document.
+const MAX_ERR: usize = 300;
 
 /// Pull FastAPI's `detail` string from an error body, falling back to the raw text.
 ///

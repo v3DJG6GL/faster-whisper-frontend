@@ -28,6 +28,11 @@ use std::sync::Arc;
 /// "org.gnome.Nautilus"); this is loose enough that no existing app rule stops matching.
 const APP_ID_MAX: usize = 200;
 
+/// Ceiling on an AT-SPI selection reply. The focused app picks the offsets, so it picks the
+/// length; this is the read-side bound so both consumers inherit it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // selection reads are AT-SPI (Linux)
+const SEL_MAX: usize = 64 * 1024;
+
 /// The focused application + (when known) whether its focused element is editable.
 /// Serialised camelCase for the frontend (`{ appId, title, editable, isSelf }`).
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -628,7 +633,16 @@ mod imp {
                 // reads the actual rendered selection from PRIMARY (and the close-guard can still
                 // trust "a selection exists in the focused app").
                 Ok(s) if s.contains('\u{fffc}') => super::SelRead::Opaque,
-                Ok(s) => super::SelRead::Text(s),
+                // Bound at the READ, so every consumer inherits it (H13's shape, applied to
+                // `resolve_focus` in this file and missed here). `start`/`end` are chosen by the
+                // focused app itself, so the reply length is that app's choice: `get_quickadd_seed`
+                // bounds it via `sanitize_seed`, but `get_focused_selection` hands it straight
+                // across the IPC into the QuickAdd webview, where it is only ever compared for
+                // equality. SEL_MAX is far above any real selection, so the cap costs nothing.
+                Ok(s) => super::SelRead::Text(match s.char_indices().nth(crate::atspi_guard::SEL_MAX) {
+                    Some((i, _)) => s[..i].to_string(),
+                    None => s,
+                }),
                 Err(_) => super::SelRead::Unavailable,
             }
         };

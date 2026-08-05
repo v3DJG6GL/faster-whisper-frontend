@@ -386,7 +386,16 @@ pub fn export_settings_file(path: String, envelope: serde_json::Value) -> Result
         serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
     // Owner-only, and never leave the tmp behind: with "include API keys" ticked this envelope
     // holds the raw keyring secrets, and it lands wherever the user pointed the save dialog.
-    config::write_private(&tmp, &text).map_err(|e| e.to_string())?;
+    // A4 cleaned up the tmp on a rename failure but not on a write failure — and `write_private`
+    // fails AFTER creating and truncating the file (write_all / sync_all hitting ENOSPC, EIO or
+    // EDQUOT), which is the realistic case for this sink: the user points the save dialog at a
+    // nearly-full USB stick or a network share. What survives is a PARTIAL plaintext-credential
+    // file in a directory the user chose, and they see only an error toast. The 0600 does not
+    // cover it there either — FAT/exFAT removable media and most SMB mounts carry no Unix mode.
+    if let Err(e) = config::write_private(&tmp, &text) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
     if let Err(e) = std::fs::rename(&tmp, &path) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.to_string());
@@ -1670,6 +1679,17 @@ pub async fn inject_text(
             } else {
                 None
             };
+            // `inject::inject`'s own paste path checks the epoch BEFORE it touches the clipboard
+            // (see the `RECOVER_AT_EPOCH` note: a user cancel means "I don't want this", and
+            // putting it on the clipboard anyway clobbers whatever they had copied). This Wayland
+            // twin sits at the end of the same ~0.5-1.2s window — the held-modifier wait, the focus
+            // read, the bounded prev-clipboard read — and carried no such check, so a cancel
+            // landing anywhere in it still wrote the transcript out. Returning here is safe: the
+            // error-abort recovery block below keys off `res`, which this branch never produces.
+            if crate::inject::injection_cancelled(epoch) {
+                tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
+                return Ok(());
+            }
             let set_res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
                 .await
                 .map_err(|e| e.to_string())?;

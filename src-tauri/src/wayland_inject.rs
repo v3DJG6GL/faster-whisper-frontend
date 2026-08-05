@@ -592,7 +592,12 @@ mod imp {
                         tokio::time::sleep(Duration::from_millis(6)).await;
                         release!(code);
                     }
-                    if job.auto_enter {
+                    // The enigo sibling has `if auto_enter && !injection_cancelled(epoch)`
+                    // (inject.rs) — N1 gave that path a pre-job check, a per-chunk check AND a
+                    // check before the auto-Enter. This path got the first two (K12 turned the
+                    // in-loop `break` into a `return`) but never the third, so a cancel landing
+                    // during the paste chord still submitted the transcript.
+                    if job.auto_enter && !crate::inject::injection_cancelled(job.epoch) {
                         tokio::time::sleep(Duration::from_millis(6)).await;
                         press!(KEY_ENTER);
                         release!(KEY_ENTER);
@@ -723,7 +728,12 @@ mod imp {
                     }
                     tokio::time::sleep(Duration::from_millis(6)).await;
                 }
-                if job.auto_enter {
+                // Same missing third check as the paste branch above. The in-loop guard is
+                // `&& emitted`, so for a bare-Enter job (`order == ["Return"]`) it is
+                // short-circuited at the only iteration — a cancel arriving during the keymap
+                // upload and its compositor round-trip, the widest gap on this path, still
+                // pressed Return.
+                if job.auto_enter && !crate::inject::injection_cancelled(job.epoch) {
                     press!(KEY_ENTER);
                     release!(KEY_ENTER);
                 }

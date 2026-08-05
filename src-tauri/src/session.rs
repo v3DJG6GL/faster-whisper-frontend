@@ -775,9 +775,22 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
                 }
                 return;
             }
+            // N1/N2 bounded the STREAMING transcript at its parse and gave the streaming sidecar
+            // a byte budget; this is the other of the two branches that produce `stream://final`
+            // and one of `save_transcript_sidecar`'s exactly two callers, and it carried neither.
+            // Bound it HERE and not in `transport::batch`: `post()` is shared with
+            // `commands::transcribe_file` (the Transcribe tab's file upload, 3600s timeout), where
+            // a long transcript IS the product and E8 settled that it stays untouched. Batch
+            // DICTATION is a different sink — a `.txt` beside the recording and keystrokes into
+            // the focused window. At ~50 KB per hour of speech, 4 MiB is ~78 hours; the 120s POST
+            // timeout on this path caps a legitimate one far below that.
+            let text = crate::transport::stream::bounded(
+                &res.text,
+                crate::transport::stream::MAX_TRANSCRIPT,
+            );
             // Label the saved recording with its transcript (sibling .txt), same as streaming.
             if let Some(p) = &saved_path {
-                crate::audio::save_transcript_sidecar(p, &res.text);
+                crate::audio::save_transcript_sidecar(p, &text);
             }
             // Surface server-locked decode overrides the same way the streaming path's
             // `ready` frame does. The batch POST hands the same list back in its result,
@@ -799,7 +812,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
                 epoch,
                 "stream://final",
                 FinalPayload {
-                    committed: res.text,
+                    committed: text,
                     tail: String::new(),
                     last: true,
                 },

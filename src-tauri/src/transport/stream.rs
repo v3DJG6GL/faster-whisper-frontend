@@ -444,8 +444,13 @@ pub async fn run<F>(
             if let Some(path) = crate::audio::save_recording(dir, &saved, 16_000) {
                 // Label the .wav with the session transcript IN RUST (ungated), so a cancelled/
                 // superseded recording still gets its sibling .txt — matching the batch path.
+                // The same MAX_SIDECAR_BYTES budget the Boundary arm enforces: this end-of-drain
+                // flush is the session's OTHER push site, and it had no check, so a server that
+                // banked right up to the budget and then sent one last `final` overshot it by a
+                // whole MAX_TRANSCRIPT before `join` allocated the lot again.
                 let last = transcript_cur.trim();
-                if !last.is_empty() {
+                let banked: usize = transcript_docs.iter().map(|d| d.len()).sum();
+                if !last.is_empty() && banked + last.len() <= MAX_SIDECAR_BYTES {
                     transcript_docs.push(last.to_string());
                 }
                 let transcript = transcript_docs.join("\n");
@@ -556,7 +561,7 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
 /// folding controls to spaces would destroy every hard break. Sized for headroom rather than
 /// thrift — an hour of continuous dictation is roughly 50 KB, and `final.committed` is the whole
 /// document so far and grows across a latch session, so 4 MiB is a whole working week of speech.
-const MAX_TRANSCRIPT: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_TRANSCRIPT: usize = 4 * 1024 * 1024;
 
 /// Ceiling on the whole saved-transcript sidecar for one session. Applies ONLY to the `.txt`
 /// written beside a kept recording — never to what is typed, and never to file transcription
@@ -571,7 +576,7 @@ const MAX_SEPARATOR: usize = 32;
 const MAX_ERROR_MESSAGE: usize = 200;
 
 /// First `n` chars of a server-supplied string. Char-indexed, so it can't split a UTF-8 sequence.
-fn bounded(s: &str, n: usize) -> String {
+pub(crate) fn bounded(s: &str, n: usize) -> String {
     match s.char_indices().nth(n) {
         Some((i, _)) => s[..i].to_string(),
         None => s.to_string(),
