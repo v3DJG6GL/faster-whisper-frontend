@@ -68,7 +68,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
     // username in the connection UI.
     if let Ok(resp) = with_auth(http.get(format!("{base}/auth/whoami")), api_key).send().await {
         if resp.status().is_success() {
-            if let Ok(who) = super::json_capped::<WhoAmI>(resp).await {
+            if let Ok(who) = super::json_capped_to::<WhoAmI>(resp, super::MAX_META_BODY).await {
                 open_mode = who.open_mode;
                 // Bounded and control-folded HERE so every consumer inherits it: the username is
                 // rendered inline with the connection verdict ("· open mode (no auth)" / "· name"),
@@ -105,7 +105,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     error: Some(format!("Server returned HTTP {}.", status.as_u16())),
                 };
             }
-            match super::json_capped::<ModelsResp>(resp).await {
+            match super::json_capped_to::<ModelsResp>(resp, super::MAX_META_BODY).await {
                 Ok(parsed) => ConnectionInfo {
                     ok: true,
                     open_mode,

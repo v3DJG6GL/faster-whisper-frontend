@@ -9,7 +9,7 @@
 //! cb:map `map` / `pattern` / `wordlist`), so they pass through as opaque JSON
 //! and are typed on the TS side.
 
-use super::{base_url, body_capped_to, client, detail_from, friendly_err, json_capped, with_auth, MAX_ERROR_BODY};
+use super::{base_url, body_capped_to, client, detail_from, friendly_err, json_capped_to, with_auth, MAX_ERROR_BODY, MAX_META_BODY};
 use serde::{Deserialize, Serialize};
 
 /// A role name ("admin", "editor"), never prose.
@@ -88,7 +88,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
-                match json_capped::<PipelineRulesState>(resp).await {
+                match json_capped_to::<PipelineRulesState>(resp, MAX_META_BODY).await {
                     Ok(mut state) => {
                         // `role` is the user's own privilege readout ("Editing as <role>"),
                         // rendered inline in a wrapping row with no truncation — the sibling of
@@ -148,7 +148,7 @@ pub async fn save_pipeline_rules(
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
-                match json_capped::<SaveBody>(resp).await {
+                match json_capped_to::<SaveBody>(resp, MAX_META_BODY).await {
                     Ok(mut b) => PipelineSave {
                         ok: true,
                         status: code,
@@ -244,7 +244,7 @@ pub async fn get_recent_words(server_url: &str, api_key: Option<&str>) -> Recent
     // `debug` (not warn) is deliberate — a standard/old server 404s this endpoint on every
     // summon, and that expected miss must not spam the default-on info/warn log.
     match with_auth(client().get(url), api_key).send().await {
-        Ok(resp) if resp.status().is_success() => match json_capped::<RecentWords>(resp).await {
+        Ok(resp) if resp.status().is_success() => match json_capped_to::<RecentWords>(resp, MAX_META_BODY).await {
             // The COUNT is capped in both webviews; the per-word LENGTH never was, and
             // `Combobox.rank` lowercases every candidate on every keystroke.
             Ok(mut rw) => {

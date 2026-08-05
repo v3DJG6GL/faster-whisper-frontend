@@ -81,20 +81,29 @@ fn display_url(u: &str) -> String {
         Some((s, r)) => (s, r),
         None => ("", u),
     };
-    let (authority, tail) = match rest.split_once('/') {
-        Some((a, t)) => (a, Some(t)),
-        None => (rest, None),
-    };
-    // Userinfo is everything before the LAST '@' — a password may itself contain one.
+    // The authority ends at the first `/ ? # \` — all four terminate it for the real parsers.
+    let end = rest.find(['/', '?', '#', '\\']).unwrap_or(rest.len());
+    let (authority, remainder) = rest.split_at(end);
+    // Userinfo is everything before the LAST `@` WITHIN the authority; a password may contain one.
     let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    let joined = match (scheme.is_empty(), tail) {
-        (true, None) => host.to_string(),
-        (true, Some(t)) => format!("{host}/{t}"),
-        (false, None) => format!("{scheme}://{host}"),
-        (false, Some(t)) => format!("{scheme}://{host}/{t}"),
-    };
-    super::bounded_server_text(&joined, super::MAX_ERROR_TEXT)
+    // If an `@` survives past the authority, the split was ambiguous — an un-percent-encoded `/`
+    // in a proxy password moves the authority boundary left, so what we just called "host" is
+    // really a fragment of the credential. `isStorableServerUrl` is a regex gate that never parses,
+    // so such a string IS storable and lands in exactly the arm that reports an unparseable URL.
+    // Print nothing rather than a piece of a password.
+    if remainder.contains('@') {
+        return "the configured server address".to_string();
+    }
+    // The path is a fixed literal on every one of these URLs, so it carries no information for the
+    // reader and only spends the message's budget. Scheme + host is the whole point.
+    let joined = if scheme.is_empty() { host.to_string() } else { format!("{scheme}://{host}") };
+    // Its own, smaller budget: the caller bounds the WHOLE message at MAX_ERROR_TEXT, so a URL
+    // allowed to spend all 200 would truncate the error's cause away entirely.
+    super::bounded_server_text(&joined, MAX_URL_IN_ERROR)
 }
+
+/// How much of a message a printed URL may spend — see `display_url`.
+const MAX_URL_IN_ERROR: usize = 80;
 
 fn text_msg(s: String) -> Message {
     Message::Text(s.into())
@@ -636,3 +645,35 @@ fn bounded_str_vec_field(v: &serde_json::Value, key: &str) -> Vec<String> {
 
 /// Mirrors `session::MAX_OVERRIDE_NOTICES`, which bounds the batch path's copy of this list.
 const MAX_NOTICES: usize = 50;
+
+#[cfg(test)]
+mod display_url_tests {
+    use super::display_url;
+
+    #[test]
+    fn strips_userinfo_including_a_slash_in_the_password() {
+        // A `/` in the password moved the authority split left, so the strip found no `@` and the
+        // credentials were printed verbatim into the message AND the log.
+        assert_eq!(display_url("wss://user:secret@host/v1/x"), "wss://host");
+        assert_eq!(display_url("wss://a@b@host/v1"), "wss://host");
+        // Ambiguous: the `/` moved the authority boundary into the password, so refuse entirely
+        // rather than print the fragment `user:p` the old form leaked.
+        let amb = display_url("wss://user:p/ss@host/v1/x");
+        assert!(!amb.contains("user"), "{amb}");
+    }
+
+    #[test]
+    fn does_not_let_a_query_or_backslash_rename_the_host() {
+        // `?`/`#`/`\` end the authority for the real parsers, so they must end it here too — else
+        // the message names a host the connection never used.
+        assert!(!display_url("wss://real.host?x=@fake.host/v1").contains("fake.host"));
+        assert!(!display_url("wss://evil.tld\\@trusted.tld/v1").contains("trusted.tld"));
+    }
+
+    #[test]
+    fn keeps_ordinary_urls_and_ipv6_intact() {
+        assert_eq!(display_url("wss://host:8000/v1/x"), "wss://host:8000");
+        assert_eq!(display_url("wss://[::1]:8000/v1/x"), "wss://[::1]:8000");
+        assert_eq!(display_url("host:8000"), "host:8000");
+    }
+}

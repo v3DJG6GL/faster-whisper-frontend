@@ -35,7 +35,7 @@ import {
   sanitizeProfiles,
   type SecurityChange,
 } from "@/lib/sync";
-import { authorityOf, backendOptionLabel, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
+import { authorityOf, backendOptions, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
 import { ownProp } from "@/lib/own";
 import { conflicts as chordConflicts, quickAddPeer } from "@/lib/conflicts";
 import { IS_WINDOWS } from "@/lib/platform";
@@ -432,9 +432,10 @@ export function IncomingAddresses({ list }: { list: unknown }) {
                   on the sync/import path — so a padded, fully resolvable hostname
                   (`sync.internal.corp.example.com.<padding>.evil.tld`) rendered as a
                   trusted-looking PREFIX of itself with the real suffix invisible, on the dialog
-                  whose whole job is to disclose where dictation would go. The security-review
-                  dialog escapes this because it prints the full address on its detail line; this
-                  one has no such second line, so it gets the marker and a hover title. */}
+                  whose whole job is to disclose where dictation would go. Its sibling in the
+                  security-review dialog below gets the same treatment: that one's detail line
+                  carries the full address, but at the same markerless 200-code-point cap — and for
+                  a repoint the detail is TWO addresses sharing that budget. */}
               <span className="font-semibold">{auth ? safeIdentityText(auth.host, 80) : "unreadable address"}</span>
               {auth?.hasUserinfo ? " · address hides the real host behind a username" : ""}
               {warn ? ` · ${warn}` : ""}
@@ -490,12 +491,12 @@ function SecurityReviewDialog() {
               <div className="text-[13.5px] font-semibold text-text">{label(c)}</div>
               {auth && (
                 <div className="mt-1 text-[12.5px] text-text">
-                  Would connect to <span className="font-mono font-semibold">{safeText(auth.host, 80)}</span>
+                  Would connect to <span className="font-mono font-semibold">{safeIdentityText(auth.host, 80)}</span>
                 </div>
               )}
               <div className="mt-0.5 font-mono text-[11px] break-all text-dim">
                 {c.backend ? `${safeText(c.backend, 80)} · ` : ""}
-                {safeText(c.detail)}
+                {safeIdentityText(c.detail, 200)}
               </div>
               {auth?.hasUserinfo && (
                 <div className="mt-1 text-[12px] font-semibold text-rec">
@@ -708,15 +709,12 @@ export function SyncTab() {
             value={sync.backendId ?? ""}
             onChange={(v) => updateSync({ backendId: v || null })}
             disabled={!sync.enabled}
-            options={backends.map((b) => ({
-              value: b.id,
-              // This control picks which server receives EVERY backend's plaintext key, and a
-              // backend rename arrives with no prompt — so the label gets the same defanging as
-              // the device name on the conflict dialog.
-              label: b.hasApiKey
-                ? backendOptionLabel(b, backends)
-                : `${backendOptionLabel(b, backends)} (no API key)`,
-            }))}
+            // This control picks which server receives EVERY backend's plaintext key, and a
+            // backend rename arrives with no prompt — so the labels get the same defanging as the
+            // device name on the conflict dialog, plus a host suffix when two of them collide.
+            options={backendOptions(backends).map((o, i) =>
+              backends[i].hasApiKey ? o : { ...o, label: `${o.label} (no API key)` },
+            )}
           />
         </SettingRow>
         {sync.enabled && syncBackend && !syncBackend.hasApiKey && (

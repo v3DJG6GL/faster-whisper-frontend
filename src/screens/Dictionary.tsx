@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { safeDisplayText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
+import { backendOptions } from "@/lib/backends";
 import {
   BookA, Loader2, RefreshCw, Plus, Trash2, Lock, RotateCcw, ChevronRight,
   ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair,
@@ -558,6 +559,13 @@ function wordCount(words?: string): number {
 /* ── screen ────────────────────────────────────────────────────────────── */
 export default function Dictionary() {
   const backends = useApp((s) => s.backends);
+  // This chip row SELECTS which server's mapping list is edited, so it is a decision surface like
+  // the three pickers, not a readout: two backends whose defanged names collide must not draw
+  // identically here either.
+  const backendLabels = useMemo(
+    () => Object.fromEntries(backendOptions(backends).map((o) => [o.value, o.label])),
+    [backends],
+  );
   const connections = useApp((s) => s.connections);
   const quickAddList = useApp((s) => s.settings.quickAddList);
   const updateSettings = useApp((s) => s.updateSettings);
@@ -846,7 +854,7 @@ export default function Dictionary() {
                       : "border-line bg-surface-2 text-dim hover:text-text",
                   )}
                 >
-                  <span className="block max-w-[16rem] truncate">{safeDisplayText(b.name, 80)}</span>
+                  <span className="block max-w-[16rem] truncate">{backendLabels[b.id] ?? safeDisplayText(b.name, 80)}</span>
                 </button>
               );
             })}

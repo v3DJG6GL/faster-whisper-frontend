@@ -16,7 +16,7 @@ import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { backendOptionLabel, effectiveServerUrl } from "@/lib/backends";
+import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import type { Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
@@ -167,7 +167,7 @@ function Editor({
                     // and a backend rename raises no SecurityChange — so a hostile sync server
                     // can relabel the options silently. Same defanging as the sync-server
                     // picker, for the same reason.
-                    ...backends.map((b) => ({ value: b.id, label: backendOptionLabel(b, backends) })),
+                    ...backendOptions(backends),
                   ]
                 : [{ value: "", label: "No backends — add one" }]
             }

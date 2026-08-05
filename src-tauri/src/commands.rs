@@ -1689,7 +1689,8 @@ pub async fn inject_text(
     // does not destroy the latch the re-send needs.
     //
     // The TTL covers manufactured-stop → the server returning a final → here, and the SERVER owns
-    // the middle leg. Sized against this pipeline's own patience for it rather than a guess: a
+    // the middle leg. Sized against the LONGEST such leg — the batch POST's 120s client timeout,
+    // NOT the stream-only stuck-finalize watchdog this once cited; see HELD_CHORD_LATCH_TTL. A
     // tighter bound would let a slow — or deliberately stalling — server walk its transcript
     // straight past this control, which is a one-line bypass by the actor the control defends
     // against.
@@ -1868,6 +1869,17 @@ pub async fn inject_text(
                 .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
             {
                 tracing::info!("[inject] skipped at the clipboard write: our own window took focus");
+                // An early `return` here would skip the error-abort recovery block at the end of
+                // this function — the exact defect P4 recorded for the cancel check above, which
+                // cost a died session its transcript. The two states are not exclusive: the cancel
+                // arm only returns when `!cancel_wants_recovery`, so an ERROR abort reaches here.
+                if crate::inject::injection_cancelled(epoch)
+                    && crate::inject::cancel_wants_recovery(epoch)
+                    && !recovery_text.is_empty()
+                {
+                    crate::inject::set_clipboard_persistent(&recovery_text);
+                    return Ok(InjectOutcome { landed: true, diverted: true });
+                }
                 return Ok(InjectOutcome { landed: false, diverted: false });
             }
             let set_res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
@@ -1876,6 +1888,20 @@ pub async fn inject_text(
             set_res?; // propagate a set_text failure; prev was captured (time-bounded) above
             // Longer settle for a remote-desktop target (content must cross the network first).
             tokio::time::sleep(std::time::Duration::from_millis(if remote_target { 300 } else { 60 })).await;
+            // And again after the settle, before the chord. The check above guards the clipboard
+            // WRITE; this one guards the KEYSTROKE, and 60ms (300ms remote) of wall clock separates
+            // them — the same gap `inject::paste` re-asks the epoch across on the other platform.
+            // `diverted: true`, not `landed: false`: the transcript IS on the clipboard by now, so
+            // that is the truthful answer, and the restore below must be skipped so it stays
+            // pasteable.
+            if app
+                .webview_windows()
+                .iter()
+                .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+            {
+                tracing::info!("[inject] skipped at the paste chord: our own window took focus");
+                return Ok(InjectOutcome { landed: true, diverted: true });
+            }
             let r = crate::wayland_inject::paste(&app, typer.inner(), paste_shortcut, auto_enter, epoch).await;
             // Restore the user's prior clipboard only if the paste actually landed. If it failed,
             // leave the transcript on the clipboard so it's recoverable (the user can paste it

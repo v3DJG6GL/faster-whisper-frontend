@@ -141,24 +141,30 @@ export function authorityOf(raw: string): { host: string; hasUserinfo: boolean }
 /** Display labels for a backend list, disambiguated when two of them collide.
  *
  *  The labels are defanged before rendering, which DELETES zero-width and bidi characters — so two
- *  distinct backends named `"Work"` and `"Work​"` draw identically, while the option value
+ *  distinct backends named `"Work"` and `"Work\u200b"` draw identically, while the option value
  *  stays the distinct id. A backend RENAME raises no security-review prompt, so a sync server can
  *  relabel an already-approved second backend to collide with the user's real one on an unattended
  *  pull; the affected controls are the ones that decide which server receives a profile's audio and
  *  bearer key, and none of them shows the address. This is the two-arm conflict Segmented's
  *  collision fallback, generalized to an N-option list: on a collision, name the thing the option
- *  actually selects. Legitimate duplicates ("Local" on two machines) simply gain a host suffix. */
-export function backendOptionLabel(b: Backend, all: Backend[], max = 80): string {
-  const label = safeDisplayText(b.name, max);
+ *  actually selects. Legitimate duplicates ("Local" on two machines) simply gain a host suffix.
+ *
+ *  List-level by design. The per-item form was O(n^2) with an 80-codepoint scan per comparison,
+ *  called from three unmemoized render bodies over a list `MAX_SYNCED_ENTRIES` bounds at 500 —
+ *  measured at 233ms per render pass. One pass builds the collision counts, then labels. */
+export function backendOptions(all: Backend[], max = 80): { value: string; label: string }[] {
   const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
-  const key = norm(label);
-  const collides = all.filter((o) => norm(safeDisplayText(o.name, max)) === key).length > 1;
-  if (!collides && label) return label;
-  // A blanked serverUrl (one `isStorableServerUrl` refused) has no host to name, so fall back to an
-  // id fragment — still unique, still stable across renders.
-  // The stored address, not the effective one: a per-device URL override is machine-local and
-  // rarely set, and this only has to tell two same-named entries apart.
-  const host = authorityOf(b.serverUrl)?.host;
-  const suffix = host || `#${b.id.slice(0, 8)}`;
-  return label ? `${label} · ${suffix}` : suffix;
+  const labels = all.map((b) => safeDisplayText(b.name, max));
+  const counts = new Map<string, number>();
+  for (const l of labels) counts.set(norm(l), (counts.get(norm(l)) ?? 0) + 1);
+  return all.map((b, i) => {
+    const label = labels[i];
+    if (label && (counts.get(norm(label)) ?? 0) < 2) return { value: b.id, label };
+    // The stored address, not the effective one: a per-device URL override is machine-local and
+    // rarely set, and this only has to tell two same-named entries apart. A blanked serverUrl (one
+    // `isStorableServerUrl` refused) has no host, so fall back to an id fragment.
+    const host = authorityOf(b.serverUrl)?.host;
+    const suffix = host || `#${b.id.slice(0, 8)}`;
+    return { value: b.id, label: label ? `${label} \u00b7 ${suffix}` : suffix };
+  });
 }

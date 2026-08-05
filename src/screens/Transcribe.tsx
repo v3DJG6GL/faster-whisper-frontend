@@ -5,7 +5,7 @@ import { Button, Card, Notice, PageHeader, Select } from "@/components/ui";
 import { LANGUAGES } from "@/lib/languages";
 import { fmtDuration } from "@/lib/format";
 import { pickAudioFile, transcribeFile, isTauri } from "@/lib/api";
-import { backendOptionLabel, effectiveServerUrl } from "@/lib/backends";
+import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { stripControlChars } from "@/lib/sanitize";
 import type { BatchResult } from "@/lib/types";
 
@@ -202,7 +202,7 @@ export default function Transcribe() {
               const b = backends.find((x) => x.id === v);
               if (b) setLanguage(b.language ?? "auto");
             }}
-            options={backends.map((b) => ({ value: b.id, label: backendOptionLabel(b, backends) }))}
+            options={backendOptions(backends)}
           />
         </div>
         <div>

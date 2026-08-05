@@ -268,6 +268,14 @@ pub const MAX_ERROR_TEXT: usize = 200;
 /// at `SYNC_MAX_BODY` for exactly this reason; this is the same bound for the routes left behind.
 pub const MAX_ERROR_BODY: usize = 256 * 1024;
 
+/// Ceiling on a METADATA response — capabilities, model lists, usage counters, pipeline rules,
+/// recent words. Every one of these has a per-field cap applied AFTER the read, so leaving them at
+/// the transcription-sized [`MAX_BODY`] meant the 32 MiB buffer and the full serde tree were paid
+/// first and the cap only trimmed the result. Several fire on screen entry or from a gesture-free
+/// effect. [`MAX_BODY`] should now be reachable only from the one route that can legitimately carry
+/// a transcription.
+pub const MAX_META_BODY: usize = 1024 * 1024;
+
 /// Bound and defang a server-supplied string on its way to the UI or the log.
 ///
 /// The streaming parse path caps its `error` frames at [`MAX_ERROR_TEXT`], but the BATCH sibling
@@ -316,7 +324,7 @@ pub async fn body_capped_to(resp: reqwest::Response, limit: usize) -> Result<Str
     String::from_utf8(buf).map_err(|_| "The server sent a response that wasn't valid text.".into())
 }
 
-/// [`body_capped`] plus a JSON parse.
+/// [`body_capped_to`] plus a JSON parse.
 pub async fn json_capped<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
 ) -> Result<T, String> {
@@ -344,7 +352,7 @@ const TOO_LARGE: &str = "The server sent an unreasonably large response — igno
 /// unauthorized endpoint this way.
 pub async fn get_json<T: serde::de::DeserializeOwned>(url: String, api_key: Option<&str>) -> Option<T> {
     match with_auth(client().get(url), api_key).send().await {
-        Ok(resp) if resp.status().is_success() => json_capped::<T>(resp).await.ok(),
+        Ok(resp) if resp.status().is_success() => json_capped_to::<T>(resp, MAX_META_BODY).await.ok(),
         _ => None,
     }
 }

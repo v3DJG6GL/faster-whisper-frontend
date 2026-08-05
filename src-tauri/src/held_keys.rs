@@ -91,9 +91,10 @@ pub fn clear_chord_lost() {
 ///
 /// One-shot and self-expiring, so it can never wedge. The TTL has to cover
 /// manufactured-stop → the server returning a final → the injection, and the SERVER controls the
-/// middle leg — so it is sized against this pipeline's own patience for that leg (the stuck-finalize
-/// watchdog), not against a guess. A tighter bound would let a slow or deliberately stalling server
-/// walk the transcript straight past the control.
+/// middle leg — so it is sized against the LONGEST such leg, not against a guess. That leg is the
+/// batch transcription POST's 120s client timeout, NOT the stuck-finalize watchdog this doc once
+/// cited: that watchdog is stream-only, so on a batch hold profile it never runs. A tighter bound
+/// would let a slow or deliberately stalling server walk the transcript straight past the control.
 pub fn take_lost_if_fresh(ttl: Duration) -> bool {
     let at = MODS_LOST_AT.lock().ok().and_then(|mut g| g.take());
     at.is_some_and(|at| at.elapsed() <= ttl)

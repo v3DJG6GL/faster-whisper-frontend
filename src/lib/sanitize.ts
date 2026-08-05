@@ -99,6 +99,10 @@ export function normalizeAppId(s: unknown): string {
  *  matches nothing. Verified: U+034F, U+17B4-B5, U+2800 and the variation selectors all survive
  *  `safeDisplayText` and all render empty.
  *
+ *  The union of this list and `isDeceptiveFormatChar`'s is `Default_Ignorable_Code_Point` minus the
+ *  Arabic/Syriac format characters that one deliberately excludes — state that when extending
+ *  either, so the next omission is visible.
+ *
  *  Deliberately NOT added to `isDeceptiveFormatChar`: that list is the declared mirror of Rust's
  *  `sanitize_injected`, and deleting U+FE0F there would strip emoji-presentation selectors out of
  *  every transcript the app types. This belongs to the KEY, not to the display. */
@@ -106,9 +110,12 @@ function isInvisibleKeyChar(code: number): boolean {
   return (
     code === 0x034f || // COMBINING GRAPHEME JOINER — "no visible glyph"
     (code >= 0x17b4 && code <= 0x17b5) || // Khmer inherent vowels, rendered invisible
+    (code >= 0x180b && code <= 0x180f) || // Mongolian free variation selectors (+ FVS4)
+    code === 0x2065 || // the one hole in the 2060-206F run the deceptive list splits around
     code === 0x2800 || // BRAILLE PATTERN BLANK
     (code >= 0xfe00 && code <= 0xfe0f) || // variation selectors
-    (code >= 0xe0100 && code <= 0xe01ef) // variation selectors supplement
+    (code >= 0xfff0 && code <= 0xfff8) || // unassigned-but-ignorable specials
+    (code >= 0xe0000 && code <= 0xe0fff) // tags + variation selectors supplement
   );
 }
 
@@ -126,7 +133,12 @@ function isInvisibleKeyChar(code: number): boolean {
  *  padded value to render as a strict prefix of itself. Display only — the stored key stays
  *  `normalizeAppId`'s output, which is what keeps it agreeing with the producer side. */
 export function safeIdentityText(s: unknown, max = 80): string {
-  const t = safeDisplayText(s, max + 1).replace(/\s+/g, " ").trim();
+  // Collapse BEFORE bounding. The other order is inert for exactly the case above: a padding run
+  // longer than `max` is cut inside the padding, the collapse then shrinks the remainder back under
+  // the cap, and the marker never gets appended — leaving the render byte-identical to the
+  // unguarded one. Collapsing first makes the example render "konsole evil".
+  const collapsed = (typeof s === "string" ? s : "").replace(/\s+/g, " ");
+  const t = safeDisplayText(collapsed, max + 1).trim();
   const chars = [...t];
   return chars.length > max ? chars.slice(0, max).join("") + "…" : t;
 }

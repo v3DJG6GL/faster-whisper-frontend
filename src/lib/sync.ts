@@ -378,7 +378,8 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       // "no backend chosen" value, so the scrub still runs on whatever survives here.
       backendId: typeof p.backendId === "string" ? p.backendId : null,
     }))
-    .slice(0, MAX_SYNCED_ENTRIES));
+    )
+    .slice(0, MAX_SYNCED_ENTRIES);
 }
 
 /** A chord as the capture UI produces it: a list of `KeyboardEvent.code` strings.
@@ -601,7 +602,8 @@ function sanitizeBackends(list: unknown): Backend[] {
       // connection test", which is what an absent key already means.
       kind: b.kind == null ? undefined : oneOf<BackendKind>(b.kind, BACKEND_KINDS, "auto"),
     }))
-    .slice(0, MAX_SYNCED_ENTRIES));
+    )
+    .slice(0, MAX_SYNCED_ENTRIES);
 }
 
 function sanitizeAppRules(rules: unknown): AppRule[] {
@@ -1435,12 +1437,17 @@ function securityChanges(
     // (locked wallet: composeBlob's read is a 10s withTimeout that falls back to `{}`), and it is
     // legitimately empty for a backend that has no key yet. Requiring a known local value there
     // let an incoming key be written with no review in exactly the cases we can least verify.
-    const incomingKey = nextSecrets[b.id];
-    if (incomingKey && here.has(b.id) && incomingKey !== localSecrets[b.id]) {
+    // Own-property reads: an inbound id is whatever the blob chose, and `isReservedBackendId`
+    // rejects only the `__…__` namespace — so `toString`/`constructor` otherwise make both maps
+    // return the same inherited function (comparison false, no prompt) or mislabel the detail line
+    // as "the stored key would be replaced" for a key that does not exist locally.
+    const incomingKey = ownProp(nextSecrets, b.id);
+    const localKey = ownProp(localSecrets, b.id);
+    if (incomingKey && here.has(b.id) && incomingKey !== localKey) {
       out.push({
         kind: "api-key",
         backend: cur?.name || name,
-        detail: localSecrets[b.id]
+        detail: localKey
           ? "the stored key would be replaced"
           : "a key would be stored for this server",
       });
