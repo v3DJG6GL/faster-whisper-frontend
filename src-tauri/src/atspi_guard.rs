@@ -31,7 +31,7 @@ const APP_ID_MAX: usize = 200;
 /// Ceiling on an AT-SPI selection reply. The focused app picks the offsets, so it picks the
 /// length; this is the read-side bound so both consumers inherit it.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // selection reads are AT-SPI (Linux)
-const SEL_MAX: usize = 64 * 1024;
+pub(crate) const SEL_MAX: usize = 64 * 1024;
 
 /// The focused application + (when known) whether its focused element is editable.
 /// Serialised camelCase for the frontend (`{ appId, title, editable, isSelf }`).

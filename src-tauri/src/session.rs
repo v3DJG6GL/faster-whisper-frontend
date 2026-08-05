@@ -599,6 +599,24 @@ impl RecordSession {
         CANCELLED_BATCH_EPOCH.store(self.epoch, Ordering::SeqCst);
     }
 
+    /// Claim this session as the detached batch BEFORE the state lock is released.
+    ///
+    /// `finish()` publishes the same value, but only after it has joined the capture thread —
+    /// a thread parked in a 33ms poll loop, so ~33-50ms on every stop, and `stop_record` has
+    /// already dropped the `RecordState` guard by then. A `cancel_record` landing in that gap
+    /// found `None`, took the no-live-session branch, and `cancel_detached_batch()` copied
+    /// whatever `DETACHED_BATCH_EPOCH` still held: 0 on a first session, otherwise the PREVIOUS
+    /// session's epoch. Both outcomes are the failure the branch exists to prevent — the
+    /// cancelled clip was uploaded and archived while the UI said cancelled, and an earlier
+    /// still-in-flight POST could be killed and its `.wav` deleted in its place.
+    ///
+    /// Publishing early is safe: the value is `self.epoch` either way, the device-loss bail in
+    /// `finish()` stores the same epoch from the salvage arm, and nothing reads the value except
+    /// `cancel_detached_batch` and `batch_cancelled`.
+    pub fn claim_detached(&self) {
+        DETACHED_BATCH_EPOCH.store(self.epoch, Ordering::SeqCst);
+    }
+
     /// Stop recording and transcribe the captured clip in the background.
     pub fn finish(mut self) {
         self.capture_stop.store(true, Ordering::SeqCst);
@@ -764,17 +782,24 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
     )
     .await
     {
-        Ok(res) => {
-            // Cancelled while the POST was in flight. The clip was already written above, so
-            // remove it rather than leaving an orphan the user believes they discarded — and do
-            // not write the transcript beside it or emit its text.
-            if batch_cancelled(epoch) {
-                tracing::info!("[record] session {epoch} cancelled during transcription — discarding");
-                if let Some(p) = &saved_path {
-                    let _ = std::fs::remove_file(p);
-                }
-                return;
+        // Cancelled while the POST was in flight. The clip was written BEFORE the POST, so remove
+        // it rather than leaving an orphan the user believes they discarded — and do not write the
+        // transcript beside it or emit its text.
+        //
+        // Checked ahead of the match, so it covers BOTH arms. It used to live only in `Ok`, and
+        // which arm runs is the untrusted server's choice: any non-2xx, a reset, or simply stalling
+        // past the 120s timeout lands in `Err`. So a hostile or MITM'd server could make every
+        // cancelled batch dictation keep its audio on disk — with retention defaulting to
+        // keep-forever — while the UI showed a clean cancelled state and the error emit was
+        // epoch-suppressed. Only ever deletes a file this function just created, and only on the
+        // user's own expressed discard.
+        _ if batch_cancelled(epoch) => {
+            tracing::info!("[record] session {epoch} cancelled during transcription — discarding");
+            if let Some(p) = &saved_path {
+                let _ = std::fs::remove_file(p);
             }
+        }
+        Ok(res) => {
             // N1/N2 bounded the STREAMING transcript at its parse and gave the streaming sidecar
             // a byte budget; this is the other of the two branches that produce `stream://final`
             // and one of `save_transcript_sidecar`'s exactly two callers, and it carried neither.

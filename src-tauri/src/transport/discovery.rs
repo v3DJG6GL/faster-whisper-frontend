@@ -172,7 +172,18 @@ pub async fn list_override_profiles(server_url: &str, api_key: Option<&str>) -> 
 /// (never gate a knob we can't prove is unsupported).
 pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option<Capabilities> {
     let base = base_url(server_url);
-    get_json(format!("{base}/v1/me"), api_key).await
+    let mut caps: Capabilities = get_json(format!("{base}/v1/me"), api_key).await?;
+    // The one server-supplied string list in this module with no ceiling of its own, while every
+    // sibling here — `models`, `list_override_profiles`, `ResolvedOverrideProfile.locked` — takes
+    // `MAX_MODELS` plus a per-entry `bounded_name`. `get_json`'s only ceiling is the generic 32 MiB
+    // body cap, and `Capabilities` is `Serialize`, so the whole list crossed the IPC and was
+    // JSON-parsed on the webview main thread from a gesture-free effect that re-fires as the
+    // server address is typed. Nothing in the frontend reads the field at all.
+    caps.allowed_override_profiles.truncate(MAX_MODELS);
+    for name in caps.allowed_override_profiles.iter_mut() {
+        *name = bounded_name(name);
+    }
+    Some(caps)
 }
 
 /// The caller's own usage (`GET /v1/usage`, full backend only): today + total

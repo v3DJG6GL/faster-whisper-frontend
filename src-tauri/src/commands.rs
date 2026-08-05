@@ -854,7 +854,17 @@ pub async fn start_record(
 pub async fn stop_record(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<RecordState>();
-        let sess = state.0.lock().map_err(|_| "record state poisoned".to_string())?.take();
+        // Claim the detached epoch UNDER the lock. `finish()` publishes it too, but only after
+        // joining the capture thread — see `RecordSession::claim_detached` for why that gap let a
+        // concurrent cancel disown the wrong session (or none at all).
+        let sess = {
+            let mut guard = state.0.lock().map_err(|_| "record state poisoned".to_string())?;
+            let sess = guard.take();
+            if let Some(s) = sess.as_ref() {
+                s.claim_detached();
+            }
+            sess
+        };
         if let Some(s) = sess {
             s.finish();
         }
@@ -872,14 +882,11 @@ pub async fn stop_record(app: AppHandle) -> Result<(), String> {
 pub async fn cancel_record(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<RecordState>();
-        let sess = state.0.lock().map_err(|_| "record state poisoned".to_string())?.take();
-        // discard() (not finish, not a bare drop) runs OUTSIDE the lock: it marks the clip discarded
-        // BEFORE Drop joins the capture thread, so the device-loss salvage arm inside that join does
-        // not upload the audio or write the .wav/.txt. Then Drop stops capture and releases the mute.
-        let had_session = sess.is_some();
-        if let Some(s) = sess {
-            s.discard();
-        }
+        // The take AND the no-live-session decision happen under ONE lock. Reading the state and
+        // then disowning outside it is the other half of the race `claim_detached` closes: this
+        // command must not observe "no session" while `stop_record` is still between its own take
+        // and the epoch it is about to publish.
+        //
         // A cancel arriving during the "transcribing…" phase finds None here — `stop_record`
         // already took the session and `finish` detached the POST. Disown that work too, so the
         // audio is not uploaded and neither the .wav nor its verbatim .txt is left on disk after
@@ -888,8 +895,20 @@ pub async fn cancel_record(app: AppHandle) -> Result<(), String> {
         // Only when there was no live session: a cancel that DID find one is aimed at that
         // session, and disowning here would instead kill a legitimate earlier transcription that
         // is still in flight (stop A → start B → cancel B would have discarded A's result).
-        if !had_session {
-            session::cancel_detached_batch();
+        let (sess, had_session) = {
+            let mut guard = state.0.lock().map_err(|_| "record state poisoned".to_string())?;
+            let sess = guard.take();
+            let had_session = sess.is_some();
+            if !had_session {
+                session::cancel_detached_batch();
+            }
+            (sess, had_session)
+        };
+        // discard() (not finish, not a bare drop) runs OUTSIDE the lock: it marks the clip discarded
+        // BEFORE Drop joins the capture thread, so the device-loss salvage arm inside that join does
+        // not upload the audio or write the .wav/.txt. Then Drop stops capture and releases the mute.
+        if let Some(s) = sess {
+            s.discard();
         }
         // …and abandon any transcript still being typed out. The typing paths emit one key at a
         // time, so without this a cancel only stopped FUTURE inserts while the current one kept
@@ -1406,7 +1425,8 @@ pub async fn get_focused_selection(
         let sel = tauri::async_runtime::spawn_blocking(move || crate::quickadd::win_seed::grab(&app))
             .await
             .ok()
-            .flatten();
+            .flatten()
+            .map(bounded_selection);
         tracing::info!(
             "[quickadd-close] windows re-grab -> {} chars",
             sel.as_deref().map_or(0, str::len)
@@ -1418,8 +1438,9 @@ pub async fn get_focused_selection(
         let _ = &app;
         use crate::atspi_guard::SelRead;
         Ok(match crate::atspi_guard::focused_selection(guard.inner()).await {
+            // `Text` is already capped at its own read; the PRIMARY fallback is only TIME-bounded.
             SelRead::Text(s) => Some(s),
-            SelRead::Opaque => read_primary_now().await,
+            SelRead::Opaque => read_primary_now().await.map(bounded_selection),
             SelRead::Empty | SelRead::Unavailable => None,
         })
     }
@@ -1430,6 +1451,21 @@ pub async fn get_focused_selection(
 #[cfg_attr(windows, allow(dead_code))] // PRIMARY is a Linux concept; Windows seeds via win_seed
 async fn read_primary_now() -> Option<String> {
     read_selection_bounded(crate::inject::read_primary_selection).await
+}
+
+/// Cap a selection read at `SEL_MAX`, the way the AT-SPI Text read already does at its own source.
+///
+/// That bound was applied "at the READ, so every consumer inherits it" — but only for the one
+/// path that had a read to bind it to. Two siblings feed the SAME command and got nothing:
+/// `read_primary_now`, which is TIME-bounded (400ms) and not SIZE-bounded, and the Windows
+/// clipboard re-grab. Both hand the string straight across the IPC into the QuickAdd webview.
+/// Truncation cannot change the outcome downstream: the value is only compared against a mapping
+/// key that `sanitize_seed` already limits to a single line of ≤100 characters.
+fn bounded_selection(s: String) -> String {
+    match s.char_indices().nth(crate::atspi_guard::SEL_MAX) {
+        Some((i, _)) => s[..i].to_string(),
+        None => s,
+    }
 }
 
 /// Turn a raw selection into a usable mapping KEY, or reject it. Multi-WORD selections are kept

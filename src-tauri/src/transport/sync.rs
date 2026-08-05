@@ -8,7 +8,7 @@
 //! merge without a second GET). Blobs pass through as opaque JSON — the
 //! category shapes are typed on the TS side.
 
-use super::{base_url, body_capped, body_capped_to, client, detail_from, friendly_err, json_capped_to, with_auth};
+use super::{base_url, body_capped_to, client, detail_from, friendly_err, json_capped_to, with_auth};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -160,7 +160,12 @@ pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
                     },
                 }
             } else {
-                let body = body_capped(resp).await.unwrap_or_default();
+                // SYNC_MAX_BODY, not the transcription-sized MAX_BODY: `push`'s non-2xx arm in
+                // this same file already reads at the 4 MiB ceiling, and the whole body is handed
+                // to `detail_from`, which full-parses it as JSON just to extract 200 characters.
+                // This is the UNATTENDED leg — startup plus every window focus — so a hostile
+                // server answering 500 with a 32 MiB document needed no state and no gesture.
+                let body = body_capped_to(resp, SYNC_MAX_BODY).await.unwrap_or_default();
                 SyncPull {
                     ok: false,
                     status: code,
@@ -284,7 +289,8 @@ pub async fn delete(server_url: &str, api_key: Option<&str>) -> SyncDelete {
                     error: None,
                 }
             } else {
-                let body = body_capped(resp).await.unwrap_or_default();
+                // Same ceiling as the pull arm above and as `push`. User-initiated, so narrower.
+                let body = body_capped_to(resp, SYNC_MAX_BODY).await.unwrap_or_default();
                 SyncDelete {
                     ok: false,
                     status: code,
