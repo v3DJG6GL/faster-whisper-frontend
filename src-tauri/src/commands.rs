@@ -1621,6 +1621,23 @@ pub async fn inject_text(
         _ => method,
     };
     if method == "clipboard" {
+        // Unlike the clipboard-only block at the top of this function, THIS one is reachable only
+        // by the two mid-function DIVERSIONS above — `modifiers_stuck` and the focus mismatch —
+        // so it sits at the far end of the held-modifier wait, which the `modifiers_stuck` arm has
+        // by construction run to its full 500ms. A cancel landing in that window used to write the
+        // transcript out anyway, as a live persistent clipboard owner, clobbering whatever the user
+        // had copied — the exact thing `cancel_injection`'s contract forbids and the Wayland paste
+        // path was fixed for.
+        //
+        // `cancel_wants_recovery` is NOT redundant here: an error abort (a died session) reaches
+        // this branch through the same race, and it DOES want its text recovered. Because this is
+        // an early `return`, it never reaches the recovery block at the end of the function, so
+        // falling through and letting the write happen is what reproduces that recovery.
+        if crate::inject::injection_cancelled(epoch) && !crate::inject::cancel_wants_recovery(epoch)
+        {
+            tracing::info!("[inject] diverted to clipboard, but cancelled first — skipping");
+            return Ok(());
+        }
         if !text.is_empty() {
             crate::inject::set_clipboard_persistent(&text);
         }
@@ -1708,9 +1725,16 @@ pub async fn inject_text(
             // putting it on the clipboard anyway clobbers whatever they had copied). This Wayland
             // twin sits at the end of the same ~0.5-1.2s window — the held-modifier wait, the focus
             // read, the bounded prev-clipboard read — and carried no such check, so a cancel
-            // landing anywhere in it still wrote the transcript out. Returning here is safe: the
-            // error-abort recovery block below keys off `res`, which this branch never produces.
-            if crate::inject::injection_cancelled(epoch) {
+            // landing anywhere in it still wrote the transcript out.
+            //
+            // The `cancel_wants_recovery` term is load-bearing, and its absence was a bug in this
+            // check as first written: the justification given was "the error-abort recovery block
+            // below keys off `res`, which this branch never produces", but that block keys off
+            // `injection_cancelled && cancel_wants_recovery && !recovery_text.is_empty()` — never
+            // `res` — and this is an early `return`, so it skipped the block entirely and a died
+            // session lost its transcript instead of leaving it recoverable.
+            if crate::inject::injection_cancelled(epoch) && !crate::inject::cancel_wants_recovery(epoch)
+            {
                 tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
                 return Ok(());
             }

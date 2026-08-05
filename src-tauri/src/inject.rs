@@ -243,7 +243,7 @@ pub fn inject(
                     }
                 }
             }
-            _ => paste(&mut enigo, text, restore_clipboard, paste_shortcut, remote_target)?,
+            _ => paste(&mut enigo, text, restore_clipboard, paste_shortcut, remote_target, epoch)?,
         }
     }
 
@@ -355,6 +355,11 @@ fn paste(
     restore_clipboard: bool,
     chord: &[String],
     remote_target: bool,
+    // See `injection_cancelled`. The pre-job check in `inject` runs before `Enigo::new`, and this
+    // function then does an unbounded blocking `get_text()` plus a settle sleep before it touches
+    // anything — so "checked at the top of the job" is not the same as "checked at the sink", the
+    // distinction the Wayland twin was already fixed for.
+    epoch: u64,
 ) -> Result<(), String> {
     use arboard::Clipboard;
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
@@ -376,6 +381,15 @@ fn paste(
     } else {
         None
     };
+    // A cancel that landed during `Enigo::new` / `Clipboard::new` / the un-timed `get_text()` above
+    // must not still clobber the user's clipboard with the transcript they discarded. Bailing here
+    // is clean: nothing has been written yet and `previous` was only read, never replaced. The
+    // caller (`inject`) returns `Ok(())` into `inject_text`'s `res`, so the error-abort recovery
+    // block at the end of that function still runs and a died session keeps its text.
+    if injection_cancelled(epoch) {
+        tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
+        return Ok(());
+    }
     clipboard.set_text(text.to_string()).map_err(|e| e.to_string())?;
     note_injected(text);
     // Let the new clipboard owner settle before pasting. A remote-desktop client additionally
