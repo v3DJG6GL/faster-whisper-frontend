@@ -6,13 +6,98 @@
 //! into that Ctrl/Alt/Meta and fire shortcuts in the focused app (e.g. a latch
 //! profile's stop fires on the *second* chord press, with every key still down).
 //!
-//! Refcounted by keycode so multiple keyboards compose correctly; a leaked count
-//! (a device vanishing mid-hold) only ever costs an injection a bounded wait, never
-//! a wedge. When the evdev backend isn't running the map stays empty, so the gate
-//! is a no-op and injection behaves exactly as before.
+//! Refcounted by keycode so multiple keyboards compose correctly. When the backend isn't running
+//! the map stays empty, so the gate is a no-op and injection behaves exactly as before.
+//!
+//! A leaked count used to "only cost an injection a bounded wait, never a wedge" — that stopped
+//! being true when the divert-on-still-held branch became reachable on the primary hotkey paths.
+//! A stuck count now means every phrase is silently sent to the clipboard for the process lifetime.
+//!
+//! The map is TRANSITION-fed, and that is the reason for the loss latch below: `commit()` on both
+//! backends early-returns on its own `held` set before touching this map, and that set starts empty
+//! on every (re)start. So after a `clear()` a modifier that is already physically down never
+//! reappears here, and its eventual key-up early-returns too — the map reads empty for the whole
+//! remainder of that hold, and the gate that depends on it is blind. `clear()` itself is load-
+//! bearing and must stay (it prevents the immortal-count wedge above), so instead of trying to
+//! preserve the state we RECORD that we destroyed it.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// When we last MANUFACTURED a stop for a push-to-talk session that was still physically held —
+/// or `None` for "not armed". A one-shot: `take_lost_if_fresh` consumes it.
+///
+/// This is the evidence a listener teardown destroys. `apply_bindings` (a sync pull that touches a
+/// profile, a rebind, a hotkey capture, a resume) emits a stop for every chord still held — which
+/// MANUFACTURES an injection at the moment the chord is provably still down — and then restarts the
+/// backend, which empties this map. Because the map is transition-fed, what is emptied here never
+/// comes back, so the injection a beat later reads an empty map, skips the wait, skips the
+/// still-held check, and types the server's transcript into a live Ctrl/Shift.
+///
+/// It is ONE process-global slot with no session or profile identity — consumed by whichever
+/// non-empty typing injection arrives first. That is why `clear_chord_lost` exists.
+///
+/// Armed at the STOP, not at the wipe. Two reasons, both learned the hard way:
+///   * The map is also emptied by DECREMENT in each backend's post-loop cleanup, which then emits
+///     the same manufactured stop — and on Windows that cleanup RACES the wipe (`*g = None` wakes
+///     the worker before the wipe runs), so arming off the map's contents was a coin flip on the
+///     platform where this is unconditionally exposed.
+///   * A manufactured stop means a session WAS held, so it cannot fire when no session was at
+///     risk at all — which arming off "the
+///     map contained a chord modifier" does: that also fires when the user merely happens to be
+///     holding Shift to select text while an unrelated sync pull lands — a silent clipboard divert
+///     for a phrase that was never at risk, the failure mode this project has twice refused.
+///
+/// `Instant`, not the wall clock: an NTP step or a VM restore can move `SystemTime` backwards, and
+/// an elapsed-time comparison that underflows reads an arbitrarily old latch as fresh — failing
+/// toward a false divert.
+static MODS_LOST_AT: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// A teardown just emitted a stop for a still-held chord. Record it: the key state that proves the
+/// chord is down is about to be unrecoverable.
+pub fn arm_chord_lost() {
+    if let Ok(mut g) = MODS_LOST_AT.lock() {
+        *g = Some(Instant::now());
+        tracing::warn!(
+            "[held] manufactured a stop for a still-held chord — the injection gate will treat the \
+             chord as held until this is consumed"
+        );
+    }
+}
+
+/// A chord just fired a fresh rising edge, so the latch's premise is void: a press the engine saw
+/// as an edge is a press this map is tracking correctly, and the still-held check works normally
+/// for it. Without this the latch is a dud that the NEXT, unrelated session drains.
+///
+/// It exists because arming is unconditional at the manufactured stop, and a manufactured stop does
+/// not guarantee an injection follows: a live-mode hold profile coerces every per-phrase insert to
+/// clipboard-only (which returns before the consume), and a stop with no speech yet returns without
+/// injecting at all. Either leaves the latch set for the whole TTL, and the user's very next
+/// reflex — release, re-press, dictate — would have had its first phrase diverted.
+///
+/// Cannot produce a false negative: a chord held continuously across the wipe emits no rising edge
+/// by definition, which is the entire situation the latch is for. Deliberately NOT cleared on a
+/// bare modifier key-down — a user reaching for an extra modifier while the trigger chord is
+/// genuinely still down would wipe a true positive.
+pub fn clear_chord_lost() {
+    if let Ok(mut g) = MODS_LOST_AT.lock() {
+        *g = None;
+    }
+}
+
+/// Consume the latch if it was armed within `ttl`. Returns whether the caller should treat the
+/// chord as still held.
+///
+/// One-shot and self-expiring, so it can never wedge. The TTL has to cover
+/// manufactured-stop → the server returning a final → the injection, and the SERVER controls the
+/// middle leg — so it is sized against this pipeline's own patience for that leg (the stuck-finalize
+/// watchdog), not against a guess. A tighter bound would let a slow or deliberately stalling server
+/// walk the transcript straight past the control.
+pub fn take_lost_if_fresh(ttl: Duration) -> bool {
+    let at = MODS_LOST_AT.lock().ok().and_then(|mut g| g.take());
+    at.is_some_and(|at| at.elapsed() <= ttl)
+}
 
 /// evdev keycodes (input-event-codes.h) for the modifiers whose physical release the pre-injection
 /// gate waits for — left/right Ctrl, Alt, Meta, AltGr, and Shift. Shift is included because on the
@@ -91,9 +176,59 @@ impl HeldKeys {
 
     /// Forget all held keys — called when the listener (re)starts, so a stale count
     /// from a previous run can't wedge the gate.
+    ///
+    /// Deliberately unconditional and evidence-free: see [`MODS_LOST_AT`] for why the loss is
+    /// recorded at the manufactured stop instead of here.
     pub fn clear(&self) {
         if let Ok(mut m) = self.0.lock() {
             m.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // These share one process-global latch, so they live in ONE test rather than racing each
+    // other under the default parallel harness.
+    #[test]
+    fn loss_latch_semantics() {
+        // Not armed ⇒ nothing to take.
+        assert!(!take_lost_if_fresh(Duration::from_secs(60)));
+
+        // Armed ⇒ taken once, and ONLY once. This is what stops a true positive from leaving the
+        // latch set and diverting the next, legitimate injection too.
+        arm_chord_lost();
+        assert!(take_lost_if_fresh(Duration::from_secs(60)));
+        assert!(!take_lost_if_fresh(Duration::from_secs(60)));
+
+        // Stale ⇒ consumed but not honoured, so a latch nobody picks up can never wedge.
+        arm_chord_lost();
+        assert!(!take_lost_if_fresh(Duration::ZERO));
+        assert!(!take_lost_if_fresh(Duration::from_secs(60)));
+
+        // A fresh rising edge voids it: the press the engine saw as an edge IS in the map, so the
+        // next session must not inherit a dud latch from a teardown that produced no injection.
+        arm_chord_lost();
+        clear_chord_lost();
+        assert!(!take_lost_if_fresh(Duration::from_secs(60)));
+
+        // A WIPE does not arm. The loss is recorded at the manufactured stop, never at the wipe —
+        // otherwise an unrelated sync pull landing while the user merely holds Shift to select text
+        // would divert a phrase that was never at risk.
+        let held = HeldKeys::default();
+        held.set(SHORTCUT_MOD_CODES[0], true);
+        assert!(held.any_held(&SHORTCUT_MOD_CODES));
+        held.clear();
+        assert!(!held.any_held(&SHORTCUT_MOD_CODES));
+        assert!(!take_lost_if_fresh(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn all_held_is_false_for_an_empty_chord() {
+        // The queued-start gate depends on "nothing to check" never reading as "held".
+        let held = HeldKeys::default();
+        assert!(!held.all_held(&[]));
     }
 }

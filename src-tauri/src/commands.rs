@@ -1495,6 +1495,38 @@ pub fn set_deep_field_detection(
     Ok(())
 }
 
+/// How long a manufactured-stop latch stays valid — see `held_keys::take_lost_if_fresh`.
+///
+/// Deliberately generous, and deliberately tied to the frontend's stuck-finalize watchdog
+/// (`STUCK_FINALIZE_MS` in `src/lib/streaming.ts`) rather than to a guessed round-trip: the leg this
+/// has to span is the untrusted server returning a final, so anything shorter is a bypass the
+/// server itself can trigger by stalling. A stale latch only ever costs one phrase a clipboard
+/// divert, which the chip now reports; a short one costs the control entirely.
+const HELD_CHORD_LATCH_TTL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// What `inject_text` did, so the caller can keep its own bookkeeping honest.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InjectOutcome {
+    /// The text LANDED — typed, pasted, or deliberately left on the clipboard. `false` only when
+    /// one of our own windows held focus and the whole insert was skipped, at entry or at the sink.
+    /// The caller must not advance its typed baseline on `false`; nothing was written anywhere, so
+    /// there is nothing to recover, and the phrase has to go out again.
+    ///
+    /// The default for any future early return must be `true`. `false` means "send it again", and a
+    /// wrong `false` re-types a phrase the user already has — visibly duplicated text, which is
+    /// worse than the silent drop this field exists to fix.
+    pub landed: bool,
+    /// We DIVERTED to the clipboard against the caller's wishes — it asked for typing or pasting
+    /// and got neither, because the trigger chord was still held or focus had moved to a different
+    /// app. The text is safe, but it did not go where the user was looking, and until this field
+    /// existed nothing said so: the caller stamped its green "typed" confirmation either way.
+    ///
+    /// This matters more since the held-chord branch became reachable on the primary hotkey paths,
+    /// and more again now that the wiped-map latch can reach it too.
+    pub diverted: bool,
+}
+
 /// Insert text into the focused field of the active app (paste or direct typing).
 /// Direct typing on Wayland routes through the RemoteDesktop portal; everything
 /// else uses enigo (clipboard paste, or direct on X11/Windows).
@@ -1513,16 +1545,7 @@ pub async fn inject_text(
     // `None` = no identified target (our own window, or a cold a11y bridge), which skips the
     // re-check below.
     expect_app_id: Option<String>,
-    // `Ok(true)` = the text LANDED (typed, pasted, or deliberately left on the clipboard).
-    // `Ok(false)` = nothing was delivered and nothing was written anywhere, so the caller must NOT
-    // advance its typed baseline. Exactly two sites return `false`: the own-window guards, at entry
-    // and at the sink. Everything else returns `true`, including both clipboard degrades (the
-    // clipboard IS a landing) and the cancel paths (the caller discards that phrase on its own).
-    //
-    // The default for any future early return must be `true`. `false` means "send it again", and a
-    // wrong `false` re-types a phrase the user already has — visibly duplicated text, which is
-    // worse than the silent drop this return value exists to fix.
-) -> Result<bool, String> {
+) -> Result<InjectOutcome, String> {
     // Strip control characters (except Tab/LF; CR is normalized to LF) from the server-transcribed
     // text before it reaches ANY injection path — clipboard-only, Wayland paste, or X11 paste/direct
     // — so a malicious/garbled server can't smuggle terminal-escape sequences onto the clipboard or
@@ -1549,7 +1572,7 @@ pub async fn inject_text(
         .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
     {
         tracing::info!("[inject] skipped: our own window holds focus");
-        return Ok(false);
+        return Ok(InjectOutcome { landed: false, diverted: false });
     }
     // Clipboard-only: put the text on the clipboard and inject NO keystrokes, so it can't
     // fire actions in the wrong window — the user pastes it themselves. No modifier gate needed
@@ -1558,7 +1581,7 @@ pub async fn inject_text(
         if !text.is_empty() {
             crate::inject::set_clipboard_persistent(&text);
         }
-        return Ok(true);
+        return Ok(InjectOutcome { landed: true, diverted: false });
     }
     // Nothing to type and no Enter to send → bail before the keystroke paths. Without this, the
     // Wayland PASTE branch below would set_clipboard("") — clobbering the user's clipboard with an
@@ -1566,7 +1589,7 @@ pub async fn inject_text(
     // emitted only control chars). Mirrors the X11 inject::inject guard. (empty + auto_enter still
     // falls through below to send the bare Enter.)
     if text.is_empty() && !auto_enter {
-        return Ok(true);
+        return Ok(InjectOutcome { landed: true, diverted: false });
     }
     // Pasting into a remote-desktop client (mstsc & co) needs different clipboard handling: the
     // local clipboard reaches the remote host ASYNCHRONOUSLY, so the paste gets a longer settle
@@ -1611,6 +1634,21 @@ pub async fn inject_text(
             }
         }
     }
+    // …and the case the map CANNOT report, because the record was destroyed: a backend restart
+    // (a sync pull that changes a profile, a rebind, a hotkey capture, the evdev-off arm) wipes the
+    // held map, and both backends feed it by TRANSITION — so a modifier already physically down
+    // never reappears and its key-up early-returns too. The map reads empty for the rest of that
+    // hold and the whole gate above is skipped.
+    //
+    // That teardown is not a bystander: it emits a mid-hold stop for a push-to-talk profile, which
+    // MANUFACTURES this injection at the exact moment the chord is provably still down. So the wipe
+    // now arms a chord-precise, self-expiring latch, and here we consume it.
+    //
+    // Deliberately consumed AFTER the loop, not merged into it: this is a "the chord was down when
+    // we lost sight of it" fact, not a live reading, so there is nothing to wait for. Straight to
+    // the same clipboard divert the timeout arm produces. The TTL only has to cover
+    // teardown-stop → frontend finalize → here.
+
     // The own-window guard at the top of this command has the same decided-at-T/applied-at-T+n
     // problem the per-app re-check below was written to fix, and it was left at the entry: the
     // held-modifier wait, the focus IPC and the bounded clipboard read can take a second, and in a
@@ -1633,7 +1671,28 @@ pub async fn inject_text(
         .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
     {
         tracing::info!("[inject] skipped at the sink: our own window took focus mid-injection");
-        return Ok(false);
+        return Ok(InjectOutcome { landed: false, diverted: false });
+    }
+    // Consumed UNCONDITIONALLY (no `!modifiers_stuck &&` short-circuit): a latch left armed by a
+    // true positive would divert the NEXT, legitimate injection too. Guarded on `!text.is_empty()`
+    // so the bare auto-Enter insert — which carries no transcript and cannot be typed into a chord
+    // harmfully — does not steal the latch from the transcript insert that follows it. And placed
+    // BELOW the own-window sink skip, so an injection that is going to write nothing and be re-sent
+    // does not destroy the latch the re-send needs.
+    //
+    // The TTL covers manufactured-stop → the server returning a final → here, and the SERVER owns
+    // the middle leg. Sized against this pipeline's own patience for it rather than a guess: a
+    // tighter bound would let a slow — or deliberately stalling — server walk its transcript
+    // straight past this control, which is a one-line bypass by the actor the control defends
+    // against.
+    if !text.is_empty() {
+        let chord_lost = crate::held_keys::take_lost_if_fresh(HELD_CHORD_LATCH_TTL);
+        if chord_lost && !modifiers_stuck {
+            tracing::warn!(
+                "[inject] a stop was manufactured for a still-held chord — clipboard only"
+            );
+        }
+        modifiers_stuck = modifiers_stuck || chord_lost;
     }
     // The per-app rule — including "never type into this app" — was resolved against the window
     // focused when this insert was QUEUED, and getting here takes real time: a focus IPC, up to
@@ -1681,12 +1740,13 @@ pub async fn inject_text(
         if crate::inject::injection_cancelled(epoch) && !crate::inject::cancel_wants_recovery(epoch)
         {
             tracing::info!("[inject] diverted to clipboard, but cancelled first — skipping");
-            return Ok(true);
+            return Ok(InjectOutcome { landed: true, diverted: false });
         }
         if !text.is_empty() {
             crate::inject::set_clipboard_persistent(&text);
         }
-        return Ok(true);
+        // The one site that reports a DIVERT: the caller asked to type or paste and we did neither.
+        return Ok(InjectOutcome { landed: true, diverted: true });
     }
     // Now that the method is final and focus has been read once, at the sink.
     let remote_target = method != "direct"
@@ -1781,7 +1841,7 @@ pub async fn inject_text(
             if crate::inject::injection_cancelled(epoch) && !crate::inject::cancel_wants_recovery(epoch)
             {
                 tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
-                return Ok(true);
+                return Ok(InjectOutcome { landed: true, diverted: false });
             }
             let set_res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
                 .await
@@ -1819,5 +1879,5 @@ pub async fn inject_text(
         tracing::info!("[inject] aborted by a failed session — transcript left on the clipboard");
         crate::inject::set_clipboard_persistent(&recovery_text);
     }
-    res.map(|()| true)
+    res.map(|()| InjectOutcome { landed: true, diverted: false })
 }

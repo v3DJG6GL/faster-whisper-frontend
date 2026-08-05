@@ -736,8 +736,9 @@ async function ensureListeners(): Promise<void> {
             // Any snapshot taken is restored by cancelLive's unconditional chained endInjection.
             if (insertCfg !== cfg) return;
             let landed = true;
+            let diverted = false;
             try {
-              landed = await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+              ({ landed, diverted } = await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
             } catch (e) {
               // A live phrase insert failed: surface it, then tear the session down (mirrors
               // stream://error) so the mic + system-mute don't leak — once status is "error" no
@@ -781,7 +782,14 @@ async function ensureListeners(): Promise<void> {
             // green "Inserted" pulse claiming otherwise, and nothing on the clipboard to recover
             // from, because the sink skip returns before any clipboard write.
             const delivered = !t.isSelf && landed;
-            if (t.method === "paste" && delivered) {
+            if (delivered && diverted) {
+              // Rust wrote a persistent clipboard owner INSTEAD of pasting, so our transcript is
+              // what the user must now paste — we owe no restore over it. Mirrors the clipboard-only
+              // phrase path above exactly; without this the end-of-phrase restore would put the
+              // user's old clipboard back over the text we just told them to paste.
+              clipDirty = false;
+              clipHoldsOurs = true;
+            } else if (t.method === "paste" && delivered) {
               clipDirty = true;
               clipHoldsOurs = true;
             }
@@ -789,8 +797,25 @@ async function ensureListeners(): Promise<void> {
             // un-advanced re-sends the skipped text with the next insert, which is the whole point.
             if (delivered) {
               injectedText = target;
-              sessionTyped = true;
-              signalInsert("typed");
+              // Tell the truth about WHERE it went. Rust can divert a typed/pasted insert to the
+              // clipboard — the trigger chord is still held, or focus moved to another app — and
+              // until it reported that back, this stamped the green "typed" pulse over it either
+              // way. The user saw a success confirmation and no text, with nothing to explain it.
+              if (diverted) {
+                // The chip's clipboard glyph IS the signal here — the same one the clipboard-only
+                // phrase path uses, for the same reason: it repeats per phrase, so a latch session
+                // shows it continuously. Deliberately NOT flashError: that sets status "error",
+                // which drops out of `isActiveDictation`, so every later frame of a session that is
+                // still capturing would be discarded while Rust holds the mic and the system mute —
+                // a session-killer in exchange for a message. And this fires on the routine
+                // focus-moved-to-another-app divert too, which the sink comment expects in any live
+                // or latch session.
+                sessionClipboard = true;
+                signalInsert("clipboard");
+              } else {
+                sessionTyped = true;
+                signalInsert("typed");
+              }
             }
           }
         }
@@ -1020,14 +1045,15 @@ async function ensureListeners(): Promise<void> {
           // a normal stop keeps insertCfg===cfg so the end-of-session insert still lands.
           if (insertCfg !== cfg) return;
           let landed = true;
+          let diverted = false;
           try {
-            landed = await injectText({
+            ({ landed, diverted } = await injectText({
               text,
               method: t.method,
               autoEnter: cfg.autoEnter,
               restoreClipboard: cfg.restoreClipboard,
               pasteShortcut: t.pasteShortcut, expectAppId: t.appId,
-            });
+            }));
           } catch (e) {
             // The whole-session insert IS the product of the dictation. A failure here (portal
             // denied, VK + portal both fail, …) would otherwise drop the entire transcript silently
@@ -1072,7 +1098,14 @@ async function ensureListeners(): Promise<void> {
           // — while every other failure mode on this path deliberately copies the text to the
           // clipboard and says so.
           if (!t.isSelf && landed) {
-            if (t.method === "clipboard") sessionClipboard = true;
+            // A divert means the transcript went to the clipboard rather than into the window,
+            // so record THAT outcome — `endOutcome()` reports it and the done marker shows the
+            // clipboard result instead of a green "typed" over text that was never typed. No
+            // flashError, for the reason given on the per-phrase path: it would set status "error"
+            // and `settleToIdleAfterInjection` would then never call `settleIdle()`, leaving the
+            // outcome unstamped and dropping a queued hold-start — in the very scenario where the
+            // user is still holding the chord.
+            if (t.method === "clipboard" || diverted) sessionClipboard = true;
             else sessionTyped = true;
           } else if (!t.isSelf && !landed) {
             // Our own window took focus mid-insert: nothing was typed and — unlike every other
@@ -1083,7 +1116,7 @@ async function ensureListeners(): Promise<void> {
             // recovery there would be the false confirmation this whole fix removes.
             let onClipboard = false;
             try {
-              onClipboard = await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+              onClipboard = (await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId })).landed;
             } catch (e2) {
               console.error("clipboard fallback after a sink-skipped insert failed:", e2);
             }

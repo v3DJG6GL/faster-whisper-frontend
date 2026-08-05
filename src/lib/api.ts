@@ -473,6 +473,19 @@ export async function discardInjectionSnapshot(): Promise<void> {
   await invoke("discard_injection_snapshot");
 }
 
+/** What `inject_text` did. Mirror of the Rust `InjectOutcome`. */
+export interface InjectOutcome {
+  /** The text landed — typed, pasted, or deliberately left on the clipboard. False ONLY when one
+   *  of our own windows held focus and the insert was skipped, at entry or at the sink. Do not
+   *  advance a typed baseline on false: nothing was written anywhere, so there is nothing to
+   *  recover and the phrase must go out again. */
+  landed: boolean;
+  /** Rust diverted to the clipboard against what we asked for — the trigger chord was still held,
+   *  or focus had moved to a different app. The text is safe but did not go where the user was
+   *  looking, so say so rather than stamping a green "typed" confirmation over it. */
+  diverted: boolean;
+}
+
 /** Insert text into the focused field of the active app. */
 export async function injectText(args: {
   text: string;
@@ -485,14 +498,9 @@ export async function injectText(args: {
    *  a second earlier can't be applied to a different window. Omit when there is no identified
    *  target — an unidentified window deliberately still falls through. */
   expectAppId?: string | null;
-  /** Resolves TRUE when the text landed — typed, pasted, or deliberately left on the clipboard —
-   *  and FALSE only when Rust skipped the whole insert because one of our own windows held focus.
-   *  Callers must not advance their typed baseline on a false: the skip can happen at the SINK,
-   *  after the caller already resolved a real other window, and there is nothing on the clipboard
-   *  to recover from. Non-Tauri (browser dev) reports true — there is no injection to miss. */
-}): Promise<boolean> {
-  if (!isTauri) return true;
-  return await invoke<boolean>("inject_text", {
+}): Promise<InjectOutcome> {
+  if (!isTauri) return { landed: true, diverted: false };
+  return await invoke<InjectOutcome>("inject_text", {
     text: args.text,
     method: args.method,
     autoEnter: args.autoEnter,

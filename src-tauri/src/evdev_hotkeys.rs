@@ -279,6 +279,12 @@ mod imp {
             .map(|mut h| std::mem::take(&mut *h))
             .unwrap_or_default();
         for profile_id in stuck {
+            // A stop we MANUFACTURED for a chord that is still physically down — `None` marks
+            // exactly that, and nothing else passes it. The listener teardown that follows
+            // empties the transition-fed held-key map, and what it empties never comes back, so
+            // record the loss now: the injection this stop is about to produce would otherwise
+            // read an empty map and type into the live chord.
+            crate::held_keys::arm_chord_lost();
             emit(app, &profile_id, "stop", None);
         }
     }
@@ -313,6 +319,9 @@ mod imp {
         for fire in fires {
             match fire {
                 Fire::Start(pid) => {
+                    // A fresh rising edge: this press IS in the map, so the still-held check
+                    // works normally for it and any pending loss latch is now a dud.
+                    crate::held_keys::clear_chord_lost();
                     emit(app, &pid, "start", Some(&chord_mods(&pid)));
                     note_hold(&pid, true);
                 }
@@ -323,7 +332,12 @@ mod imp {
                 // Handoff: the hold's session lives on under the superset —
                 // release the teardown bookkeeping, emit no "stop".
                 Fire::ReleaseHold(pid) => note_hold(&pid, false),
-                Fire::Toggle(pid) => emit(app, &pid, "toggle", Some(&chord_mods(&pid))),
+                Fire::Toggle(pid) => {
+                    // A fresh rising edge: this press IS in the map, so the still-held check
+                    // works normally for it and any pending loss latch is now a dud.
+                    crate::held_keys::clear_chord_lost();
+                    emit(app, &pid, "toggle", Some(&chord_mods(&pid)));
+                }
                 Fire::Reclassify(pid) => emit(app, &pid, "reclassify", Some(&chord_mods(&pid))),
                 Fire::Cancel(pid) => emit(app, &pid, "cancel", Some(&chord_mods(&pid))),
                 Fire::OpenQuickAdd => crate::quickadd::show(app),
@@ -387,6 +401,12 @@ mod imp {
         // hold-to-talk dictation started here would stay stuck running. Latch/quick-add are
         // rising-edge, so their dangling state dies with the task — only Hold leaks.
         for pid in engine.active_holds() {
+            // A stop we MANUFACTURED for a chord that is still physically down — `None` marks
+            // exactly that, and nothing else passes it. The listener teardown that follows
+            // empties the transition-fed held-key map, and what it empties never comes back, so
+            // record the loss now: the injection this stop is about to produce would otherwise
+            // read an empty map and type into the live chord.
+            crate::held_keys::arm_chord_lost();
             emit(&app, &pid, "stop", None);
             note_hold(&pid, false);
         }
