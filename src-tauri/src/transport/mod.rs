@@ -286,7 +286,13 @@ pub fn bounded_server_text(s: &str, n: usize) -> String {
 
 /// Buffer a response body, giving up once it passes [`MAX_BODY`] instead of growing without bound.
 pub async fn body_capped(resp: reqwest::Response) -> Result<String, String> {
-    if resp.content_length().is_some_and(|n| n > MAX_BODY as u64) {
+    body_capped_to(resp, MAX_BODY).await
+}
+
+/// [`body_capped`] with an explicit ceiling, for routes whose legitimate payload is far smaller
+/// than the transcription-sized [`MAX_BODY`] — see `sync::SYNC_MAX_BODY`.
+pub async fn body_capped_to(resp: reqwest::Response, limit: usize) -> Result<String, String> {
+    if resp.content_length().is_some_and(|n| n > limit as u64) {
         return Err(TOO_LARGE.into());
     }
     let mut resp = resp;
@@ -294,7 +300,7 @@ pub async fn body_capped(resp: reqwest::Response) -> Result<String, String> {
     loop {
         match resp.chunk().await {
             Ok(Some(chunk)) => {
-                if buf.len() + chunk.len() > MAX_BODY {
+                if buf.len() + chunk.len() > limit {
                     return Err(TOO_LARGE.into());
                 }
                 buf.extend_from_slice(&chunk);
@@ -310,7 +316,15 @@ pub async fn body_capped(resp: reqwest::Response) -> Result<String, String> {
 pub async fn json_capped<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
 ) -> Result<T, String> {
-    let text = body_capped(resp).await?;
+    json_capped_to(resp, MAX_BODY).await
+}
+
+/// [`json_capped`] with an explicit ceiling.
+pub async fn json_capped_to<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+    limit: usize,
+) -> Result<T, String> {
+    let text = body_capped_to(resp, limit).await?;
     // serde embeds the offending value VERBATIM in its message (`Unexpected::Str` formats as
     // `string {:?}`), so a 32 MiB field yields a 32 MiB error — larger still once Debug escaping
     // expands each character. That string is what the unattended sync pull surfaces in the

@@ -8,7 +8,7 @@
 //! merge without a second GET). Blobs pass through as opaque JSON — the
 //! category shapes are typed on the TS side.
 
-use super::{base_url, body_capped, client, detail_from, friendly_err, json_capped, with_auth};
+use super::{base_url, body_capped, body_capped_to, client, detail_from, friendly_err, json_capped_to, with_auth};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -18,6 +18,28 @@ use std::time::Duration;
 /// unreachable server (e.g. a LAN address away from home) blocks pulls/pushes
 /// to a NEWLY selected server for the whole 120 s. Keep failures prompt.
 const SYNC_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Ceiling on an inbound sync payload — the aggregate the per-category caps never bounded.
+///
+/// Every existing bound on this data sits on a CONSUMER: `MAX_SYNCED_ENTRIES` (500) caps the
+/// entry COUNT per category, the render caps bound what is shown, and the per-field caps bound
+/// individual leaves. Nothing bounded the BLOB, so this route inherited the transcription-sized
+/// [`MAX_BODY`] (32 MiB) — while the doc comment above claims payloads are ≤512 KB.
+///
+/// That gap is reachable and measurable: a blob that passes every existing sanitizer (500 backends
+/// each carrying a 60 KB prompt ≈ 29 MiB) costs ~1.5-2 s of hard main-thread block per pull, in a
+/// webview, on a route that runs UNATTENDED at startup and on every window focus. It is then
+/// persisted verbatim to `sync-state.json` as the 3-way merge base, so it is re-read and re-hashed
+/// at every launch for the life of the install.
+///
+/// 4 MiB, not the 512 KB the comment claims: the worst-case LEGITIMATE blob computed from the caps
+/// above is ~1.5 MB (500 backends ≈750 KB + 500 profiles ≈500 KB + appRules ≈100 KB + secrets
+/// ≈50 KB), and a typical one is under 50 KB. 512 KB would reject a real max-config user and brick
+/// their sync; 4 MiB keeps ~2.5x headroom over worst-case-legit while cutting the surface 8x.
+///
+/// Applied BEFORE the JSON parse, so an oversized payload fails as a transport error and is never
+/// merged, never rendered, and never persisted.
+pub const SYNC_MAX_BODY: usize = 4 * 1024 * 1024;
 
 /// The GET (and PUT-200 / PUT-409) wire shape: `{version, blob, updated_at,
 /// device}`. `version: 0, blob: null` = nothing stored yet.
@@ -117,7 +139,7 @@ pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
-                match json_capped::<SyncRemoteState>(resp).await {
+                match json_capped_to::<SyncRemoteState>(resp, SYNC_MAX_BODY).await {
                     Ok(state) if state.version_representable() => SyncPull {
                         ok: true,
                         status: code,
@@ -180,7 +202,7 @@ pub async fn push(
     {
         Ok(resp) => {
             let code = resp.status().as_u16();
-            let text = body_capped(resp).await.unwrap_or_default();
+            let text = body_capped_to(resp, SYNC_MAX_BODY).await.unwrap_or_default();
             if (200..300).contains(&(code as i32)) {
                 match serde_json::from_str::<SyncRemoteState>(&text) {
                     Ok(state) if state.version_representable() => SyncPush {
