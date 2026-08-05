@@ -269,9 +269,30 @@ pub fn inject(
                     let (chunk, tail) = rest.split_at(split);
                     enigo.text(chunk).map_err(|e| e.to_string())?;
                     rest = tail;
-                    if !rest.is_empty() && injection_cancelled(epoch) {
-                        tracing::info!("[inject] cancelled mid-typing — stopping");
-                        return Ok(Landed::Yes);
+                    if !rest.is_empty() {
+                        if injection_cancelled(epoch) {
+                            tracing::info!("[inject] cancelled mid-typing — stopping");
+                            return Ok(Landed::Yes);
+                        }
+                        // Focus is re-asked per chunk, not only before the first one: a 512-char
+                        // chunk is tens of milliseconds of typing, so a click into one of our own
+                        // windows part-way through a long transcript otherwise lands every
+                        // remaining chunk in that window's field.
+                        //
+                        // `Yes`, NOT `NothingWritten` — the chunks before this one really did land,
+                        // and claiming otherwise makes the caller re-send the whole phrase on top
+                        // of them (P16's duplicate-text hazard). The untyped tail is dropped, which
+                        // is the same trade the mid-typing cancel above already makes.
+                        //
+                        // One probe per chunk, and each is an event-loop round trip (~0.1ms) — a
+                        // rounding error against `enigo.text()`. What it does add is a dependency
+                        // on the UI thread being responsive: if that stalls, typing stalls here.
+                        // Accepted, and consistent with the guards at the entry and the sinks,
+                        // which have always made the same unbounded call.
+                        if own_window_focused() {
+                            tracing::info!("[inject] stopped mid-typing: our own window took focus");
+                            return Ok(Landed::Yes);
+                        }
                     }
                 }
             }
