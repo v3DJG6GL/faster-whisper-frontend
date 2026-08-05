@@ -1566,6 +1566,30 @@ pub async fn inject_text(
             }
         }
     }
+    // The own-window guard at the top of this command has the same decided-at-T/applied-at-T+n
+    // problem the per-app re-check below was written to fix, and it was left at the entry: the
+    // held-modifier wait, the focus IPC and the bounded clipboard read can take a second, and in a
+    // live or latch session the user is expected to be moving between windows. Clicking our own
+    // window in that gap landed the keys in the app's own settings/dictionary fields — and on the
+    // paste path the clipboard was clobbered first, regardless.
+    //
+    // The per-app re-check below CANNOT stand in for this. `focused_app_now` (and `win_focus`'s
+    // twin) classify our own window as noise and fall back to `last_other`, so they report the
+    // PREVIOUS app — which still matches `expect_app_id`, so the mismatch arm never fires. Only
+    // the authoritative webview-focus check sees it, so re-run exactly that.
+    //
+    // `return Ok(())`, deliberately NOT a degrade to "clipboard": the entry guard was moved above
+    // the clipboard-only branch precisely so our own window holding focus can never clobber the
+    // user's clipboard for an insert they cannot see land. Skipping is safe — `streaming.ts`
+    // leaves `injectedText` un-advanced on a skip, so the text goes out with the next insert.
+    if app
+        .webview_windows()
+        .iter()
+        .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+    {
+        tracing::info!("[inject] skipped at the sink: our own window took focus mid-injection");
+        return Ok(());
+    }
     // The per-app rule — including "never type into this app" — was resolved against the window
     // focused when this insert was QUEUED, and getting here takes real time: a focus IPC, up to
     // 400ms of clipboard read, and the 500ms modifier wait just above. In a live or latch session
