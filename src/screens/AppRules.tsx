@@ -7,7 +7,7 @@ import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
 import { IS_WINDOWS } from "@/lib/platform";
 import type { AppRule, InsertMethod } from "@/lib/types";
 import { cn } from "@/lib/cn";
-import { normalizeAppId, safeDisplayText } from "@/lib/sanitize";
+import { normalizeAppId, safeIdentityText } from "@/lib/sanitize";
 
 // App ids differ per platform: AT-SPI application names on Linux, lowercased exe
 // basenames on Windows — show examples the local detector will actually produce.
@@ -179,10 +179,10 @@ function RuleRow({ r, onEdit, onRemove }: { r: AppRule; onEdit: () => void; onRe
                 blocked, and app rules sync with NO consent gate — so both identity strings are
                 peer-authored. Bidi/invisible marks here let one rule read as another app. */}
             <span className="truncate text-[14px] font-semibold text-text">
-              {safeDisplayText(r.name?.trim(), 80) || safeDisplayText(r.appId, 80)}
+              {safeIdentityText(r.name?.trim(), 80) || safeIdentityText(r.appId, 80)}
             </span>
             <span className="truncate rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
-              {safeDisplayText(r.appId, 80)}
+              {safeIdentityText(r.appId, 80)}
             </span>
           </div>
           <div className="mt-1 truncate text-[12px] text-dim">{summary}</div>

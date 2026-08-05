@@ -83,7 +83,52 @@ export function safeDisplayText(s: unknown, max = 200): string {
  *  through the same class, and `win_focus::exe_basename` now does too — normalizing only the rule
  *  would invert the bug on Windows, where a filename legitimately may carry those characters. */
 export function normalizeAppId(s: unknown): string {
-  return safeDisplayText(s, 200).trim();
+  let out = "";
+  for (const ch of safeDisplayText(s, 200)) {
+    if (!isInvisibleKeyChar(ch.codePointAt(0) ?? 0)) out += ch;
+  }
+  return out.trim();
+}
+
+/** Characters that render as NOTHING but are neither in the deceptive-format denylist above nor
+ *  `WhiteSpace` (so `trim()` misses them too).
+ *
+ *  This is the same bug `normalizeAppId` exists for, through a class the display filter does not
+ *  reach. The zero-width fix made `"konsole​"` normalize to `konsole`; `"konsole️"` still
+ *  stores whole, still draws as exactly `konsole` beside "Blocked — never typed here", and still
+ *  matches nothing. Verified: U+034F, U+17B4-B5, U+2800 and the variation selectors all survive
+ *  `safeDisplayText` and all render empty.
+ *
+ *  Deliberately NOT added to `isDeceptiveFormatChar`: that list is the declared mirror of Rust's
+ *  `sanitize_injected`, and deleting U+FE0F there would strip emoji-presentation selectors out of
+ *  every transcript the app types. This belongs to the KEY, not to the display. */
+function isInvisibleKeyChar(code: number): boolean {
+  return (
+    code === 0x034f || // COMBINING GRAPHEME JOINER — "no visible glyph"
+    (code >= 0x17b4 && code <= 0x17b5) || // Khmer inherent vowels, rendered invisible
+    code === 0x2800 || // BRAILLE PATTERN BLANK
+    (code >= 0xfe00 && code <= 0xfe0f) || // variation selectors
+    (code >= 0xe0100 && code <= 0xe01ef) // variation selectors supplement
+  );
+}
+
+/** An identity string rendered NEXT TO a trust decision — an app-rule key, a parsed host.
+ *
+ *  `safeDisplayText` truncates at `max` with no marker at all, unlike its Rust twin
+ *  `bounded_server_text`, which appends an ellipsis. That is fine for a label and wrong for an
+ *  identity: an app-rule key of `"konsole" + 80 spaces + "evil"` is stored whole (the matcher is
+ *  exact equality on the full 200-char key) while the audit row renders the first 80 code points —
+ *  and CSS collapses the run, so the row reads exactly `konsole`, claims "Blocked — never typed
+ *  here", and matches nothing. Same shape for a hostname padded to push its real suffix past the
+ *  cut in a consent dialog.
+ *
+ *  So: collapse interior whitespace runs and mark truncation, making it impossible for a longer or
+ *  padded value to render as a strict prefix of itself. Display only — the stored key stays
+ *  `normalizeAppId`'s output, which is what keeps it agreeing with the producer side. */
+export function safeIdentityText(s: unknown, max = 80): string {
+  const t = safeDisplayText(s, max + 1).replace(/\s+/g, " ").trim();
+  const chars = [...t];
+  return chars.length > max ? chars.slice(0, max).join("") + "…" : t;
 }
 
 export function stripControlChars(text: string): string {

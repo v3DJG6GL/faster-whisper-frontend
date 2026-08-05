@@ -45,6 +45,7 @@ import {
 import type { ActivationKind, AppRule, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertMethod, Profile } from "./types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
+import { normalizeAppId } from "./sanitize";
 
 let wired = false;
 
@@ -264,9 +265,21 @@ export function resolveInjectionTarget(
   appRules: AppRule[],
   g: GeneralSettings,
 ): { rule: AppRule | undefined; notEditable: boolean; method: InsertMethod; pasteShortcut: string[] } {
-  const rule = targetApp
-    ? appRules.find((r) => r.appId.toLowerCase() === targetApp.appId.toLowerCase())
-    : undefined;
+  // Normalize BOTH sides, not just the stored key. The rule floors already run `normalizeAppId`,
+  // but the live id comes from Rust's `bounded_server_text`, whose character class is not the same
+  // one — so an app naming itself with an invisible character (a variation selector, U+2800, the
+  // combining grapheme joiner) publishes an id the normalized key can never equal, and a rule that
+  // reads "Blocked — never typed here" silently stops blocking. Normalizing the live id here is
+  // what keeps the fix from inverting: doing it on the rule alone would break the Windows case,
+  // where an exe basename may legitimately carry such a character.
+  //
+  // Both injecting windows route through this function, so this covers the main window and QuickAdd
+  // in one place. `expectAppId` still crosses to Rust raw, so the sink re-check is unchanged.
+  const liveId = targetApp ? normalizeAppId(targetApp.appId).toLowerCase() : null;
+  const rule =
+    liveId !== null
+      ? appRules.find((r) => normalizeAppId(r.appId).toLowerCase() === liveId)
+      : undefined;
   const notEditable = !!(
     g.deepFieldDetection && !rule?.block && !rule?.insertMethod && targetApp?.editable === false
   );
@@ -465,8 +478,12 @@ function armStuckWatchdog(): void {
         void (async () => {
           let onClipboard = false;
           try {
-            await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [] });
-            onClipboard = true;
+            // Believe the ANSWER, not the attempt: `inject_text`'s own-window guard sits above the
+            // clipboard branch and returns `landed: false` having written nothing, so a promise of
+            // "it's on the clipboard" made on "the invoke didn't throw" can be false — and these
+            // recovery paths fire exactly when the user is most likely looking at (or clicking
+            // into) our own window. No re-send is introduced, so this cannot duplicate text.
+            ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [] }));
           } catch (err) {
             console.error("clipboard recovery after stuck-finalize failed:", err);
           }
@@ -672,8 +689,9 @@ async function ensureListeners(): Promise<void> {
           // final (the flush final the drain emits at latch end), so a clipboard latch that ends
           // mid-speech doesn't re-copy + re-pulse the last phrase on the re-sent final.
           if (phraseClip.length > 0 && grew) {
+            let landed = true;
             try {
-              await injectText({ text: phraseClip, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+              ({ landed } = await injectText({ text: phraseClip, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
             } catch (e) {
               // A live phrase's clipboard copy failed: surface it AND tear the session down. Once
               // flashError sets status "error" no further phrase reaches this catch (the old "just
@@ -690,7 +708,12 @@ async function ensureListeners(): Promise<void> {
             // A cancel / fresh session that landed during the awaited inject nulled or replaced
             // insertCfg — don't stamp this discarded phrase's bookkeeping onto the idle/next session.
             if (insertCfg !== cfg) return;
-            if (!t.isSelf) {
+            // `!t.isSelf` alone is the answer resolved one IPC hop EARLIER — the same start-time vs
+            // sink-time divergence the typed sibling below fixed with `delivered`. If our own window
+            // took focus during the await, Rust wrote nothing and returned `landed: false`; booking
+            // the copy anyway pulses a "copied" confirmation for a phrase that reached no clipboard,
+            // and clears a restore debt an earlier real paste still owes the user.
+            if (!t.isSelf && landed) {
               sessionClipboard = true;
               signalInsert("clipboard");
               // The clipboard now holds THIS clipboard-only transcript (what the user wants to
@@ -750,8 +773,12 @@ async function ensureListeners(): Promise<void> {
               if (t.method === "direct") {
                 // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
                 try {
-                  await injectText({ text: toType, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
-                  flashError("Couldn’t type the text — it’s on the clipboard to paste manually.");
+                  const copied = await injectText({ text: toType, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+                  flashError(
+                    copied.landed
+                      ? "Couldn’t type the text — it’s on the clipboard to paste manually."
+                      : "Couldn’t insert the text.",
+                  );
                 } catch (e2) {
                   console.error("clipboard fallback after failed live insert failed:", e2);
                   flashError("Couldn’t insert the text.");
@@ -881,14 +908,17 @@ async function ensureListeners(): Promise<void> {
           if (sep.includes("\n")) {
             await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
           } else {
-            await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+            const { landed } = await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
             // A cancel-then-fresh-start during the paste await must not stamp the OLD session's clipboard
             // bookkeeping (clipHoldsOurs / a restore) onto the new one — mirrors the inject tasks' guard.
             if (insertCfg !== cfg) return;
             // The separator paste just clobbered the clipboard with `sep` (set_clipboard + Ctrl+V).
             // (!t.isSelf: an own-window separator is Rust-guard-skipped, so the clipboard is untouched
             // there and the boundary backstop below handles any owed restore — don't touch bookkeeping.)
-            if (t.method === "paste" && insertCfg?.restoreClipboard && !t.isSelf) {
+            // `landed` for the same reason as the phrase task: a sink-side own-window skip wrote
+            // nothing, so there is no clobber to restore and setting clipHoldsOurs would suppress the
+            // NEXT real paste's snapshot — leaving a later paste with nothing recorded to put back.
+            if (t.method === "paste" && insertCfg?.restoreClipboard && !t.isSelf && landed) {
               if (beganInjection) {
                 // A prior paste snapshotted the user's clipboard — put it back (mirrors the per-phrase
                 // restore contract); the snapshot survives in Rust and isn't consumed.
@@ -1074,8 +1104,7 @@ async function ensureListeners(): Promise<void> {
             let onClipboard = t.method !== "direct";
             if (t.method === "direct") {
               try {
-                await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
-                onClipboard = true;
+                ({ landed: onClipboard } = await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
               } catch (e2) {
                 console.error("clipboard fallback after failed insert failed:", e2);
               }
@@ -1179,8 +1208,8 @@ async function ensureListeners(): Promise<void> {
       void (async () => {
         let onClipboard = false;
         try {
-          await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [] });
-          onClipboard = true;
+          // Same as the stuck-finalize sibling: `landed: false` means nothing was written.
+          ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [] }));
         } catch (err) {
           console.error("clipboard recovery after stream error failed:", err);
         }
@@ -1665,8 +1694,8 @@ export async function stopLive(): Promise<void> {
       void (async () => {
         let onClipboard = false;
         try {
-          await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [] });
-          onClipboard = true;
+          // Same as the stuck-finalize sibling: `landed: false` means nothing was written.
+          ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [] }));
         } catch (err) {
           console.error("clipboard recovery after stop reject failed:", err);
         }

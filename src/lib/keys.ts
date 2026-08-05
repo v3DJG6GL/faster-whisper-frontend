@@ -10,6 +10,14 @@
 // are rejected here; `validateCodes` is the final gate in the Rust layer.
 
 import { keycapLabel } from "./keyboardLayout";
+// A hotkey CODE is an untrusted key just like a backend id: `isCodeList`/`isStringList` check only
+// `typeof === "string"`, and Rust's `de_hotkey` only sorts and dedups — so a sync blob or an
+// imported file can put `"__proto__"` in a chord. Every bare index into the literal maps below then
+// returns an `Object.prototype` member instead of `undefined`: `codeToLabel` handed that object to
+// `<Kbd>` as a React child (which throws, unmounting a window with no error boundary above it), and
+// `collapseModifierSides` put it into a `string[]` where `canonicalizeCodes`' `localeCompare`
+// tie-break threw — aborting `applyBlob` uncaught and stalling sync permanently.
+import { ownProp } from "./own";
 
 /** Named keys (by `event.code`) the plugin accepts as a shortcut's key part. */
 const NAMED_CODES = new Set<string>([
@@ -109,7 +117,8 @@ const PRETTY: Record<string, string> = {
 
 /** Human-friendly label for one accelerator token (for `<kbd>` chips). */
 export function prettyToken(token: string): string {
-  if (PRETTY[token]) return PRETTY[token];
+  const pretty = ownProp(PRETTY, token);
+  if (pretty) return pretty;
   const numpad = /^Numpad([0-9])$/.exec(token);
   if (numpad) return `Num ${numpad[1]}`;
   return token; // letters, digits, F-keys
@@ -128,7 +137,8 @@ const MOD_LABELS: Record<string, string> = {
  *  user's learned keyboard layout (so a QWERTZ "Z"-keycap on physical KeyY shows
  *  "Z", not "Y") — see keyboardLayout.ts — falling back to the physical letter. */
 export function codeToLabel(code: string): string {
-  if (MOD_LABELS[code]) return MOD_LABELS[code];
+  const mod = ownProp(MOD_LABELS, code);
+  if (mod) return mod;
   if (/^Key[A-Z]$/.test(code)) return keycapLabel(code) ?? code.slice(3); // KeyH → H
   if (/^Digit[0-9]$/.test(code)) return code.slice(5); // Digit1 → 1
   return prettyToken(code); // Numpad0 → Num 0, ArrowUp → ↑, Backspace → ⌫, F1 …
@@ -162,7 +172,7 @@ const SIDE_COLLAPSE: Record<string, string> = {
  *  AltGr (AltRight) is excluded: the plugin rejects it rather than folding it, so it must stay a distinct
  *  token (see SIDE_COLLAPSE). Under evdev (which DOES honour sides) callers skip this entirely. */
 export function collapseModifierSides(codes: string[]): string[] {
-  return codes.map((c) => SIDE_COLLAPSE[c] ?? c);
+  return codes.map((c) => ownProp(SIDE_COLLAPSE, c) ?? c);
 }
 
 /** Canonical order (modifiers by type+side, key last) + de-duped, so a stored
@@ -172,7 +182,7 @@ export function canonicalizeCodes(codes: string[]): string[] {
     // Rank orders modifiers first (by type+side); equal-rank codes — e.g. two non-modifier
     // keys in an evdev N-chord, both rank 100 — fall back to a stable lexical tie-break so the
     // same chord canonicalizes identically regardless of press order (keeps `sameCodes` correct).
-    (a, b) => (CODE_RANK[a] ?? 100) - (CODE_RANK[b] ?? 100) || a.localeCompare(b),
+    (a, b) => (ownProp(CODE_RANK, a) ?? 100) - (ownProp(CODE_RANK, b) ?? 100) || a.localeCompare(b),
   );
 }
 
