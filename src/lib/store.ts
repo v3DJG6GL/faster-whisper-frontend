@@ -14,6 +14,7 @@ import type {
 } from "./types";
 import { newSpeakMemo, stepSpeaking } from "./speaking";
 import { swap } from "./arr";
+import { hasOwn } from "./own";
 import { applyTheme } from "./theme";
 
 // Derives `speaking` (green vs amber) from the RMS level stream centrally, so the
@@ -605,7 +606,9 @@ export const useApp = create<AppState>((set) => ({
       // poll churns a cross-window overlay re-emit + a UsageStats SVG re-render for no reason. The
       // shape is small + fixed (today/total + a ≤90-point series), so stringify-compare is trivial;
       // JSON.stringify(null) === "null" also subsumes the already-null path.
-      if (backendId in s.usage && JSON.stringify(s.usage[backendId]) === JSON.stringify(stats)) return {};
+      // hasOwn, not `in`: an id like `constructor` is inherited-present, and skipping the write
+      // for it would leave the prototype member in place for every reader below.
+      if (hasOwn(s.usage, backendId) && JSON.stringify(s.usage[backendId]) === JSON.stringify(stats)) return {};
       return { usage: { ...s.usage, [backendId]: stats } };
     }),
 

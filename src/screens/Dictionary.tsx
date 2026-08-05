@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { safeDisplayText } from "@/lib/sanitize";
+import { ownProp } from "@/lib/own";
 import {
   BookA, Loader2, RefreshCw, Plus, Trash2, Lock, RotateCcw, ChevronRight,
   ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair,
@@ -567,7 +568,7 @@ export default function Dictionary() {
   // Candidate Backends: full faster-whisper servers (and untested ones — we can't
   // prove "standard", so we let the fetch decide). Standard servers are excluded.
   const candidates = useMemo(
-    () => backends.filter((b) => effectiveServerKind(b, connections[b.id]) !== "standard"),
+    () => backends.filter((b) => effectiveServerKind(b, ownProp(connections, b.id)) !== "standard"),
     [backends, connections],
   );
 

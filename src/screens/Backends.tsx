@@ -14,6 +14,7 @@ import { ALL_CATEGORIES } from "@/lib/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
 import { authorityOf, effectiveServerUrl, insecureUrlWarning, nameFromUrl, normalizeUrl } from "@/lib/backends";
 import { safeDisplayText } from "@/lib/sanitize";
+import { ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { RestoreFromServer, relTime } from "./SettingsSync";
 import { cn } from "@/lib/cn";
@@ -784,7 +785,7 @@ export default function Backends() {
           ) : (
           <div className="flex flex-col gap-3">
             {backends.map((b, i) => {
-              const conn = connections[b.id];
+              const conn = ownProp(connections, b.id);
               return (
                 <Card key={b.id} className="flex items-center gap-4 p-5">
                   <ReorderControls

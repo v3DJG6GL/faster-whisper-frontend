@@ -34,6 +34,7 @@ import {
 } from "@/lib/format";
 import { TREND_DAYS } from "@/lib/usage";
 import { homeTargetProfile } from "@/lib/dictation";
+import { ownProp } from "@/lib/own";
 import { BackendChips } from "@/components/BackendChips";
 import type { UsageSeriesPoint, UsageStats, UsageTotals } from "@/lib/types";
 
@@ -413,7 +414,10 @@ function useUsageView() {
   const setView = useApp((s) => s.setUsageViewBackend);
 
   // Only backends that actually have usage stats are shown / switchable.
-  const statsBackends = backends.filter((b) => !!usage[b.id]);
+  // Own-property reads throughout: a backend id of `constructor`/`toString`/… reads a function
+  // off `Object.prototype`, which is truthy here and then hits `for (const p of stats.series)`
+  // with `series` undefined — a throw in a render body, in a tree with no error boundary.
+  const statsBackends = backends.filter((b) => !!ownProp(usage, b.id));
   // Default view = the dictation/home-target backend (what the chip shows) when it has
   // stats; otherwise the first backend that does.
   const defaultId = homeTargetProfile(profiles, homeProfileId)?.backendId ?? backends[0]?.id;
@@ -421,7 +425,7 @@ function useUsageView() {
     statsBackends.find((b) => b.id === viewId) ??
     statsBackends.find((b) => b.id === defaultId) ??
     statsBackends[0];
-  const stats = viewBackend ? usage[viewBackend.id] : null;
+  const stats = viewBackend ? (ownProp(usage, viewBackend.id) ?? null) : null;
   const dense = useMemo(() => (stats ? densify(stats.series) : []), [stats]);
   return { statsBackends, viewBackend, setView, stats, dense };
 }

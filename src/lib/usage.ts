@@ -13,6 +13,7 @@ import { isTauri, getUsageStats } from "./api";
 import { backendForProfile, homeTargetProfile } from "./dictation";
 import { effectiveServerKind } from "./serverKind";
 import { effectiveServerUrl } from "./backends";
+import { hasOwn, ownProp } from "./own";
 import type { Backend } from "./types";
 
 const POLL_MS = 30_000; // steady refresh cadence
@@ -42,13 +43,15 @@ function localMidnightEpoch(): number {
 async function refreshOne(backend: Backend): Promise<void> {
   const { connections, usage, setUsage } = useApp.getState();
   // Skip a server we KNOW is standard (no /v1/usage); "unknown" ⇒ try anyway.
-  if (effectiveServerKind(backend, connections[backend.id]) === "standard") {
+  if (effectiveServerKind(backend, ownProp(connections, backend.id)) === "standard") {
     // Don't clobber a backend that has been serving usage just because the
     // connection probe hasn't run yet — only seed null if we've never recorded a
     // value. Test key-presence (not truthiness): `!usage[id]` is true for the null
     // we just wrote, so it would re-set null every poll, and setUsage always spreads
     // a fresh `usage` object — churning a cross-window dictation://update each tick.
-    if (!(backend.id in usage)) setUsage(backend.id, null);
+    // Own-property test: `in` is true for `constructor`/`toString`/… via the prototype, so the
+    // seed that would shadow the inherited member never ran and the map stayed poisoned.
+    if (!hasOwn(usage, backend.id)) setUsage(backend.id, null);
     return;
   }
   const target = effectiveServerUrl(backend, useApp.getState().settings);

@@ -21,6 +21,7 @@ import { useOverrideContext } from "@/lib/useOverrideContext";
 import type { Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
+import { ownProp } from "@/lib/own";
 
 const ACTIVATION = {
   hold: { icon: Mic, label: "Push-to-talk", hint: "Hold the hotkey while you speak; release to stop." },
@@ -71,7 +72,7 @@ function Editor({
   // inherited baseline and gate to the backend's detected capability.
   const backend = backends.find((b) => b.id === p.backendId);
   const serverKind = backend
-    ? effectiveServerKind(backend, p.backendId ? connections[p.backendId] : undefined)
+    ? effectiveServerKind(backend, p.backendId ? ownProp(connections, p.backendId) : undefined)
     : "unknown";
   // The effective override-profile (Profile over Backend) and the caller's
   // capabilities, so the decode editor ghosts the profile's resolved values

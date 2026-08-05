@@ -13,6 +13,7 @@ import { chipTagFor } from "./profileTag";
 import { backendForProfile, homeTargetProfile } from "./dictation";
 import { activeStatsBackend } from "./usage";
 import { fmtCompact, fmtDuration } from "./format";
+import { ownProp } from "./own";
 import { isActiveDictation } from "./dictationVisual";
 import type { OverlayStatsMetric, UsageStats } from "./types";
 
@@ -89,7 +90,10 @@ export async function initOverlayController(): Promise<void> {
       let statsLine: string | undefined;
       if (rec.showStatsOnOverlay) {
         const sb = activeStatsBackend(state);
-        const u = sb ? state.usage[sb.id] : null;
+        // Own-property read: an inherited `Object.prototype` member is non-nullish, so it would
+        // pass `if (u)` and then throw on `u.today.words` — inside a store subscriber, where the
+        // throw propagates out of `set()` and aborts every listener after this one.
+        const u = sb ? ownProp(state.usage, sb.id) : null;
         if (u) statsLine = chipStatsLine(u, rec.overlayStatsMetric);
       }
       // P16/D: the app being injected into (+ why, if it's coerced to clipboard), gated by the

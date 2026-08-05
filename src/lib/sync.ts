@@ -33,6 +33,7 @@ import { configReady } from "./persistence";
 import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } from "./backends";
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "./paste";
 import { IS_WINDOWS } from "./platform";
+import { hasOwn, ownProp } from "./own";
 import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./conflicts";
 import type {
   ActivationKind,
@@ -172,7 +173,7 @@ export async function composeBlob(
       // normal degraded shape. Uploading it replaces the server's copy of every key that is
       // missing here with nothing — the same erase hazard the `else` branch below guards, one
       // step earlier. (`restoreSnapshotSecrets` already treats a partial read-back as failure.)
-      const complete = cfg.backends.every((b) => !b.hasApiKey || secrets[b.id] !== undefined);
+      const complete = cfg.backends.every((b) => !b.hasApiKey || ownProp(secrets, b.id) !== undefined);
       if (Object.keys(secrets).length > 0 && complete) {
         blob.backends.secrets = secrets;
       } else if (cfg.backends.some((b) => b.hasApiKey)) {
@@ -638,9 +639,15 @@ async function reconcileBackendSecrets(
     10_000,
     {} as Record<string, string>,
   );
-  return list.map((b) =>
-    b.hasApiKey === b.id in present ? b : { ...b, hasApiKey: b.id in present },
-  );
+  // Own-property test, not `in`: `present` is JSON-parsed, so it carries `Object.prototype`, and a
+  // backend whose id is `constructor`/`toString`/… would be re-derived as `hasApiKey: true` with
+  // nothing in the keyring — defeating the exact promise this function makes. Downstream that
+  // phantom also makes `composeBlob`'s erase guard fire forever on a device holding no real keys,
+  // silently dropping the backends category from every push.
+  return list.map((b) => {
+    const held = hasOwn(present, b.id);
+    return b.hasApiKey === held ? b : { ...b, hasApiKey: held };
+  });
 }
 
 /**
