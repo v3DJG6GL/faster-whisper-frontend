@@ -112,7 +112,13 @@ export function nameFromUrl(url: string): string {
  * through sync. Display contexts keep showing backend.serverUrl.
  */
 export function effectiveServerUrl(backend: Backend, settings: AppSettings): string {
-  const override = settings.sync?.urlOverrides?.[backend.id]?.trim();
+  // Read the value out FIRST and type-check it. `?.` guards nullish but NOT prototype-inherited:
+  // a backend whose id is "constructor" / "toString" / "valueOf" makes this lookup return a
+  // function off Object.prototype, which is non-nullish, so `.trim()` threw — inside a render
+  // body, in a tree with no error boundary, so the window unmounted. The `__..__` filter that
+  // polices ids only rejects the keyring namespace, so those ids survive sanitization.
+  const raw = settings.sync?.urlOverrides?.[backend.id];
+  const override = typeof raw === "string" ? raw.trim() : "";
   return override ? override : backend.serverUrl;
 }
 

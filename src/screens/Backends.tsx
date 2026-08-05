@@ -51,7 +51,11 @@ function Editor({
 }) {
   const setConnection = useApp((s) => s.setConnection);
   const syncEnabled = useApp((s) => s.settings.sync?.enabled ?? false);
-  const urlOverride = useApp((s) => s.settings.sync?.urlOverrides?.[initial.id] ?? "");
+  // Same guard: an inherited value here would put a FUNCTION into a controlled input's `value`.
+  const urlOverride = useApp((s) => {
+    const raw = s.settings.sync?.urlOverrides?.[initial.id];
+    return typeof raw === "string" ? raw : "";
+  });
   const setUrlOverride = useApp((s) => s.setUrlOverride);
   const [b, setB] = useState<Backend>(initial);
   const [key, setKey] = useState(initialKey ?? "");
@@ -653,7 +657,12 @@ export default function Backends() {
   const urlOverrides = useApp((s) => s.settings.sync?.urlOverrides);
   /** Where requests for this backend ACTUALLY go — mirrors `effectiveServerUrl`, which the Test
    *  button on the same row already uses. */
-  const effectiveUrl = (b: Backend) => urlOverrides?.[b.id]?.trim() || b.serverUrl;
+  // Type-check the lookup, same reason as `effectiveServerUrl`: `?.` does not guard a
+  // prototype-inherited value, and this open-coded twin threw identically.
+  const effectiveUrl = (b: Backend) => {
+    const raw = urlOverrides?.[b.id];
+    return (typeof raw === "string" ? raw.trim() : "") || b.serverUrl;
+  };
   const upsertBackend = useApp((s) => s.upsertBackend);
   const removeBackend = useApp((s) => s.removeBackend);
   const duplicateBackend = useApp((s) => s.duplicateBackend);
