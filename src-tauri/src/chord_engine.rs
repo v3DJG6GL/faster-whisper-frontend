@@ -133,6 +133,30 @@ impl Engine {
     /// Advance the machine after a key event. `held` is the full set of
     /// currently-down key codes; `now` timestamps the event (injected so the
     /// grace window is unit-testable).
+    /// The keys of every chord bound to `profile_id`, unioned, in the backend's own code
+    /// namespace. The backends use this to snapshot the FIRING chord's own modifiers
+    /// (`triggers::snapshot_trigger_mods`) instead of every modifier that happens to be down —
+    /// so holding an unrelated Ctrl to scroll cannot read as "the dictation chord is still held".
+    pub fn keys_for_profile(&self, profile_id: &str) -> Vec<u16> {
+        let mut out: Vec<u16> = Vec::new();
+        for c in &self.chords {
+            let owner = match &c.kind {
+                ChordKind::Hold { profile_id } | ChordKind::Latch { profile_id } => {
+                    Some(profile_id.as_str())
+                }
+                ChordKind::QuickAdd => None,
+            };
+            if owner == Some(profile_id) {
+                for &k in &c.keys {
+                    if !out.contains(&k) {
+                        out.push(k);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     pub fn step(&mut self, held: &HashSet<u16>, now: Instant) -> Vec<Fire> {
         let n = self.chords.len();
         for i in 0..n {

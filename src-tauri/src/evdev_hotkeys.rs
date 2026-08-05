@@ -228,7 +228,18 @@ mod imp {
         *g = Some(Running { tasks }); // still holding the guard from the top → atomic stop→store
     }
 
-    fn emit(app: &AppHandle, profile_id: &str, action: &str) {
+    /// `chord_mods` = the firing chord's OWN modifier keycodes, so `inject_text` can tell "the
+    /// user has not let go of the dictation chord" (divert to clipboard) from "an unrelated
+    /// modifier is down" (type anyway). This backend feeds `HeldKeys`, so without the snapshot
+    /// the gate was dead here — see `triggers::snapshot_trigger_mods`. Empty for a teardown-
+    /// emitted stop, which is not a user chord release.
+    fn emit(app: &AppHandle, profile_id: &str, action: &str, chord_mods: Option<&[u16]>) {
+        // `None` = a teardown-emitted stop, which is not a user chord release: leave the existing
+        // snapshot alone rather than clearing it, so a stop that follows a real chord press by
+        // milliseconds cannot wipe the very modifiers the gate needs to see.
+        if let Some(mods) = chord_mods {
+            crate::triggers::snapshot_trigger_mods(app, mods);
+        }
         // Log every fired trigger (same shape as the CLI path's emit_trigger): the chord →
         // session causality is otherwise invisible in the log — see win_hotkeys::emit.
         tracing::info!("[trigger] {profile_id}/{action} (evdev)");
@@ -268,7 +279,7 @@ mod imp {
             .map(|mut h| std::mem::take(&mut *h))
             .unwrap_or_default();
         for profile_id in stuck {
-            emit(app, &profile_id, "stop");
+            emit(app, &profile_id, "stop", None);
         }
     }
 
@@ -289,22 +300,32 @@ mod imp {
             return;
         }
         held_keys.set(code, down);
-        for fire in engine.step(held, std::time::Instant::now()) {
+        let fires = engine.step(held, std::time::Instant::now());
+        // This backend's chord keys ARE evdev keycodes, so the `held_keys` namespace needs no
+        // translation — just the projection onto the observable modifier subset.
+        let chord_mods = |pid: &str| -> Vec<u16> {
+            engine
+                .keys_for_profile(pid)
+                .into_iter()
+                .filter(|k| crate::held_keys::SHORTCUT_MOD_CODES.contains(k))
+                .collect()
+        };
+        for fire in fires {
             match fire {
                 Fire::Start(pid) => {
-                    emit(app, &pid, "start");
+                    emit(app, &pid, "start", Some(&chord_mods(&pid)));
                     note_hold(&pid, true);
                 }
                 Fire::Stop(pid) => {
-                    emit(app, &pid, "stop");
+                    emit(app, &pid, "stop", Some(&chord_mods(&pid)));
                     note_hold(&pid, false);
                 }
                 // Handoff: the hold's session lives on under the superset —
                 // release the teardown bookkeeping, emit no "stop".
                 Fire::ReleaseHold(pid) => note_hold(&pid, false),
-                Fire::Toggle(pid) => emit(app, &pid, "toggle"),
-                Fire::Reclassify(pid) => emit(app, &pid, "reclassify"),
-                Fire::Cancel(pid) => emit(app, &pid, "cancel"),
+                Fire::Toggle(pid) => emit(app, &pid, "toggle", Some(&chord_mods(&pid))),
+                Fire::Reclassify(pid) => emit(app, &pid, "reclassify", Some(&chord_mods(&pid))),
+                Fire::Cancel(pid) => emit(app, &pid, "cancel", Some(&chord_mods(&pid))),
                 Fire::OpenQuickAdd => crate::quickadd::show(app),
             }
         }
@@ -366,7 +387,7 @@ mod imp {
         // hold-to-talk dictation started here would stay stuck running. Latch/quick-add are
         // rising-edge, so their dangling state dies with the task — only Hold leaks.
         for pid in engine.active_holds() {
-            emit(&app, &pid, "stop");
+            emit(&app, &pid, "stop", None);
             note_hold(&pid, false);
         }
     }

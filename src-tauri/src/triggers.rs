@@ -40,18 +40,41 @@ pub fn trigger_modifiers_still_held(held: &crate::held_keys::HeldKeys) -> bool {
         .is_some_and(|mods| !mods.is_empty() && held.any_held(&mods))
 }
 
-/// Emit a trigger event for an explicit Profile id.
-fn emit_trigger(app: &AppHandle, profile_id: String, action: &str) {
-    tracing::info!("[trigger] {profile_id}/{action}");
-    // Snapshot the chord's modifiers while they are still down (see `TRIGGER_MODS`).
+/// Record which of `chord_mods` are still physically down, as the trigger's modifier snapshot.
+///
+/// `chord_mods` are evdev keycodes — the `held_keys` namespace, which BOTH backends share
+/// (`win_hotkeys::commit` translates VKs through `vk_to_evdev_mod` before `held_keys.set`).
+///
+/// This is the ONLY writer of [`TRIGGER_MODS`]. It used to live inline in `emit_trigger`, which
+/// meant the CLI and global-shortcut-plugin registrars were the only ones that ever wrote it —
+/// while `HeldKeys` is populated ONLY by the evdev and Windows backends. The two facts composed
+/// into a dead control: on exactly the backends where the gate can engage, the snapshot was empty,
+/// and `trigger_modifiers_still_held` fails OPEN on an empty set by construction. So L3's
+/// "the dictation chord is still held → divert to clipboard" never fired on the primary
+/// native-hotkey paths.
+///
+/// Callers pass the FIRING CHORD's own modifiers, not every modifier currently down. That is
+/// strictly more precise than what the CLI path did before, and it is what keeps an unrelated
+/// held Ctrl (scroll-zoom) or Shift from diverting an ordinary phrase to the clipboard.
+/// An empty slice clears the snapshot — correct for a teardown-emitted "stop", which is not a
+/// user chord release.
+pub fn snapshot_trigger_mods(app: &AppHandle, chord_mods: &[u16]) {
     if let Ok(mut g) = TRIGGER_MODS.lock() {
         let held = app.state::<crate::held_keys::HeldKeys>();
-        *g = crate::held_keys::SHORTCUT_MOD_CODES
+        *g = chord_mods
             .iter()
             .copied()
             .filter(|&c| held.any_held(&[c]))
             .collect();
     }
+}
+
+/// Emit a trigger event for an explicit Profile id.
+fn emit_trigger(app: &AppHandle, profile_id: String, action: &str) {
+    tracing::info!("[trigger] {profile_id}/{action}");
+    // This registrar has no chord in hand (a CLI arg or a DE-level shortcut), so it keeps the
+    // original behaviour: every shortcut modifier currently down.
+    snapshot_trigger_mods(app, &crate::held_keys::SHORTCUT_MOD_CODES);
     let _ = app.emit(
         "trigger",
         TriggerPayload {
