@@ -281,8 +281,18 @@ mod imp {
                 // key, so a long transcript otherwise keeps going long after the user stopped.
                 // Reported as an already-typed prefix (`after_typing: true`) so the portal
                 // fallback does NOT re-type what landed.
-                if crate::inject::injection_cancelled(epoch) && emitted {
+                if crate::inject::injection_cancelled(epoch) {
                     tracing::info!("[vkbd] cancelled mid-typing — stopping");
+                    if !emitted {
+                        // Nothing transmitted yet. The pre-loop check above already covers the
+                        // common case, but the keymap build, the memfd write and the compositor
+                        // roundtrip sit between it and here — and for a bare auto-Enter job
+                        // (`order == ["Return"]`) the `&& emitted` form used to short-circuit at
+                        // the only iteration, so a cancel in that gap still synthesized Return.
+                        // `Ok(())` and not an error, for the same reason the pre-loop check gives:
+                        // `after_typing: false` sends the portal fallback to type the cancelled text.
+                        return Ok(());
+                    }
                     return Err(VkError { message: "cancelled".into(), after_typing: true });
                 }
                 let code = idx_of[name];

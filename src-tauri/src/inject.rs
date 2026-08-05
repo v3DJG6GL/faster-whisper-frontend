@@ -396,6 +396,24 @@ fn paste(
     // needs the new content to cross the network (format-list announcement) before the forwarded
     // Ctrl+V lands, or the remote pastes its previously-synced clipboard — give it a longer window.
     std::thread::sleep(Duration::from_millis(if remote_target { 300 } else { 60 }));
+    // Second check, at the sink. The one above guards the clipboard WRITE; this one guards the
+    // KEYSTROKE, and the settle between them is 60ms (300ms remote) of wall clock during which
+    // `cancel_stream`/`cancel_record` run un-chained on another blocking thread. The Wayland twin
+    // has always re-asked on this leg (`wayland_inject::paste`'s own pre-job check), and P3's
+    // verifier named this gap explicitly; only the first half was applied.
+    //
+    // It bails differently from the check above, and must: the transcript is already ON the
+    // clipboard here, so the choice is who owns it afterwards. A USER cancel means "I don't want
+    // this", so the user's prior clipboard goes back. An ERROR abort deliberately leaves the
+    // transcript, because `inject_text`'s recovery block is what makes a died session's text
+    // recoverable — scheduling a restore here would erase it 400ms later.
+    if injection_cancelled(epoch) {
+        tracing::info!("[clip] paste: cancelled during the settle — not pasting");
+        if !cancel_wants_recovery(epoch) {
+            restore_clipboard_later(previous);
+        }
+        return Ok(());
+    }
     let res = paste_keystroke(enigo, chord);
 
     // Restore the user's prior clipboard ONLY when the paste SUCCEEDED — via a live owner (same path

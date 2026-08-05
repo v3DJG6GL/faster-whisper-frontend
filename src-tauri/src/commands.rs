@@ -1843,6 +1843,25 @@ pub async fn inject_text(
                 tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
                 return Ok(InjectOutcome { landed: true, diverted: false });
             }
+            // Own-window re-check, at the sink rather than at the top of the function. The guard
+            // that decides "our own window took focus" runs ~0.5s earlier: the latch consume, a
+            // focus IPC, up to 400ms of bounded prev-clipboard read and the settle all sit between
+            // it and this write. Without this, a focus change inside that window clobbers the
+            // user's clipboard and then fires Ctrl+V into one of our own windows — the exact
+            // outcome the entry guard was moved above the clipboard-only branch to prevent.
+            //
+            // `landed: false` is the truthful answer: nothing has been written yet (`prev` was only
+            // READ), so the caller re-sends and no text is duplicated. This does not strand the
+            // held-chord latch — if it had been armed, `method` would already be "clipboard" and
+            // this branch is unreachable.
+            if app
+                .webview_windows()
+                .iter()
+                .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+            {
+                tracing::info!("[inject] skipped at the clipboard write: our own window took focus");
+                return Ok(InjectOutcome { landed: false, diverted: false });
+            }
             let set_res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
                 .await
                 .map_err(|e| e.to_string())?;
@@ -1853,7 +1872,17 @@ pub async fn inject_text(
             // Restore the user's prior clipboard only if the paste actually landed. If it failed,
             // leave the transcript on the clipboard so it's recoverable (the user can paste it
             // manually) instead of silently clobbering it with the old clipboard.
-            if r.is_ok() {
+            //
+            // `r.is_ok()` is not the same question as "did it press anything": the portal job also
+            // returns `Ok(())` when ITS pre-job check finds the epoch cancelled. On an ERROR abort
+            // that matters, because the recovery block at the end of this function is about to put
+            // the transcript on the clipboard — and this restore, which serves `prev` 400ms later,
+            // would erase it, leaving the text neither typed nor recoverable. A plain user cancel
+            // still restores: there the clobbered clipboard IS the thing to put back.
+            if r.is_ok()
+                && !(crate::inject::injection_cancelled(epoch)
+                    && crate::inject::cancel_wants_recovery(epoch))
+            {
                 crate::inject::restore_clipboard_later(prev);
             }
             r
