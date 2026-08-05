@@ -327,16 +327,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # cache-all-crates: this job shares the VM's machine-wide CARGO_HOME
-      # with every other job the runner executes (capacity 5). Without it the
-      # post step prunes registry/src to this job's own deps, ripping crate
-      # sources out from under a concurrently compiling job — see the fuller
-      # comment on ci.yml's rust-cache step (that job's post step is what
-      # killed every release windows link with LNK1181).
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-          cache-all-crates: true
+      # No rust-cache on this leg — see the fuller comment on ci.yml's step. It
+      # never restored a byte here (every run: "No cache found") and its post
+      # step added ~2min of invisible tail to the job: Forgejo renders no post
+      # steps, so the time showed up as a gap between the last upload and
+      # "Complete job". The VM's CARGO_HOME persists across jobs on its own, so
+      # this build still downloads zero crates.
 
       - run: pnpm install --frozen-lockfile
 

@@ -16,6 +16,14 @@ export default defineConfig(async () => ({
     },
   },
 
+  build: {
+    // The bundle is read from disk inside the webview, never over a network, so the 500 kB default
+    // (a download-time heuristic) flags a size that costs us nothing. Splitting it would only add
+    // request round-trips to the asset protocol. Raised rather than silenced so a genuine jump
+    // still shows up.
+    chunkSizeWarningLimit: 1000,
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

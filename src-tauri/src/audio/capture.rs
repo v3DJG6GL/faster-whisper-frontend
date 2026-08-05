@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use tauri::AppHandle;
 
+use crate::audio::device::device_name;
 use crate::audio::MicClip;
 
 /// Keep at most this many seconds of the most recent capture for replay.
@@ -136,7 +137,7 @@ fn pick_device(device_id: Option<String>) -> Result<Device, String> {
         Some(id) => host
             .input_devices()
             .map_err(|e| e.to_string())?
-            .find(|d| d.name().map(|n| n == id).unwrap_or(false))
+            .find(|d| device_name(d).map(|n| n == id).unwrap_or(false))
             .or_else(|| {
                 tracing::warn!("[audio] microphone '{id}' not found; falling back to the default input");
                 host.default_input_device()

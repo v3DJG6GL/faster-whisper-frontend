@@ -25,6 +25,7 @@ import {
   readBackendKeys,
   saveSyncState,
   setBackendKey,
+  setDeepFieldDetection,
   syncDeviceInfo,
   syncPull,
   syncPush,
@@ -878,7 +879,6 @@ export async function applyBlob(
     // re-syncs via save_config; theme is reactive; hotkeys re-register via the
     // persistence subscriber.)
     if (cats.general && blob.general) {
-      const { setDeepFieldDetection } = await import("./api");
       void setDeepFieldDetection(blob.general.deepFieldDetection).catch(() => {});
     }
   } finally {

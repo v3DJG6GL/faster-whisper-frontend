@@ -6,6 +6,7 @@
 //! emitted as `stream://level`; transcripts as `stream://partial`/`final`;
 //! state as `stream://status`. Dropping a [`StreamSession`] stops everything.
 
+use crate::audio::device::device_name;
 use crate::audio::resample::Resampler16k;
 use crate::transport::batch;
 use crate::transport::stream::{self, StreamEvent, StreamParams};
@@ -290,7 +291,7 @@ fn open_input(
         Some(id) => host
             .input_devices()
             .map_err(|e| e.to_string())?
-            .find(|d| d.name().map(|n| n == id).unwrap_or(false))
+            .find(|d| device_name(d).map(|n| n == id).unwrap_or(false))
             .or_else(|| {
                 tracing::warn!("[audio] microphone '{id}' not found; falling back to the default input");
                 host.default_input_device()
@@ -868,11 +869,16 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
 // leave streams muted until the next dictation restores them.
 
 /// What the guard did, so Drop undoes exactly that.
+///
+/// Both non-None variants are unix-only: off unix `apply_mute` is a real no-op (see below), so
+/// gating them keeps the Windows build free of dead-code warnings for a state it can never reach.
 enum MuteMode {
     None,
     /// Per-app: the sink-input ids WE muted (others' playback). Unmute these on drop.
+    #[cfg(unix)]
     PerApp(Vec<u32>),
     /// Fallback: the whole default sink was muted; restore its prior mute state on drop.
+    #[cfg(unix)]
     WholeSink(bool),
 }
 
@@ -892,7 +898,7 @@ enum MuteCmd {
 /// dir would run whenever a dictation started with "mute system audio" on. Make the no-op real.
 #[cfg(not(unix))]
 fn apply_mute() -> MuteMode {
-    MuteMode::PerApp(Vec::new())
+    MuteMode::None
 }
 
 #[cfg(unix)]
@@ -991,6 +997,10 @@ impl Drop for SystemMuteGuard {
 /// Parse `pactl list sink-inputs` output → the ids of streams to MUTE: every block that is neither
 /// ours (`application.process.id` == our PID, so our cues stay audible) nor already muted (so we
 /// never restore something the user muted). Pure (no IO) for testability.
+///
+/// unix-only in the shipped binary (only `mute_other_streams` calls it), but the unit tests below
+/// are platform-independent and cover it on every target.
+#[cfg(any(unix, test))]
 fn streams_to_mute(text: &str, our_pid: u32) -> Vec<u32> {
     // Each block: (sink-input id, already-muted, owner pid).
     let mut blocks: Vec<(u32, bool, Option<u32>)> = Vec::new();
