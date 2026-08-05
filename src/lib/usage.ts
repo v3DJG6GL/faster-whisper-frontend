@@ -85,7 +85,7 @@ async function refreshOne(backend: Backend): Promise<void> {
   // time. Key-presence (not truthiness) so an already-null backend isn't re-set to
   // null every poll (which would spread a fresh `usage` object and churn the
   // cross-window update); a real value still overwrites since stats!==null falls through.
-  if (stats === null && backend.id in usage) return;
+  if (stats === null && hasOwn(usage, backend.id)) return;
   setUsage(backend.id, stats);
 }
 

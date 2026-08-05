@@ -20,7 +20,7 @@ import { Button, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
-import { safeDisplayText } from "@/lib/sanitize";
+import { normalizeAppId, safeDisplayText } from "@/lib/sanitize";
 import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
   getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText,
@@ -36,6 +36,20 @@ import type { AppRule, GeneralSettings, PipelineFetch, ThemeName } from "@/lib/t
 // hotkey — a huge list would wedge it (and, on Linux, the renderer it shares with the chip).
 const MAX_SHOWN_ROWS = 500;
 const MAX_RECENT_WORDS = 500;
+
+/** This window has no store, so it never passes through `wellFormedAppRules` — it reads
+ *  `cfg.appRules` straight off `loadConfig()` and hands it to the SAME shared
+ *  `resolveInjectionTarget` the main window uses. Apply the same key normalization here, or the
+ *  two injecting windows disagree about which rules match: a rule whose stored `appId` carries an
+ *  invisible character is enforced in the main window (which normalizes on hydrate) and silently
+ *  inert here, so correct-on-close would type into an app the user marked "never type here".
+ *  Hydration's normalization is in-memory only — the persistence subscriber returns early unless
+ *  `appRules` changed — so a rule that landed on disk before that fix keeps its raw key. */
+function normalizedAppRules(rules: AppRule[] | undefined | null): AppRule[] {
+  return (rules ?? [])
+    .map((r) => ({ ...r, appId: normalizeAppId(r.appId) }))
+    .filter((r) => r.appId.length > 0);
+}
 
 type Target = { serverUrl: string; backendId: string; slug: string };
 type Phase = "loading" | "nopin" | "error" | "ok";
@@ -171,7 +185,7 @@ export default function QuickAdd() {
     themeRef.current = cfg.settings.theme;
     applyTheme(cfg.settings.theme);
     generalRef.current = cfg.settings.general;
-    appRulesRef.current = cfg.appRules ?? [];
+    appRulesRef.current = normalizedAppRules(cfg.appRules);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -183,7 +197,7 @@ export default function QuickAdd() {
         themeRef.current = cfg.settings.theme;
         applyTheme(cfg.settings.theme);
         generalRef.current = cfg.settings.general;
-        appRulesRef.current = cfg.appRules ?? [];
+        appRulesRef.current = normalizedAppRules(cfg.appRules);
       }
       const pin = cfg?.settings.quickAddList ?? null;
       const backend = pin ? cfg!.backends.find((b) => b.id === pin.backendId) ?? null : null;

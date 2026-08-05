@@ -989,7 +989,13 @@ async function restoreSnapshotSecrets(): Promise<void> {
   } catch {
     secrets = {};
   }
-  const got = ids.filter((id) => secrets[id]);
+  // Own-property reads: `secrets` is JSON-parsed, so a backend id of `constructor`/`toString`/…
+  // would read a truthy function off the prototype and be counted as PRESENT in a read-back that
+  // does not contain it. That defeats the only thing this function does — with a locked wallet the
+  // read-back is `{}`, the partial-read flag would never fire, and the pass-through push would
+  // upload a secrets map missing that key (the `Object` function does not survive JSON), erasing
+  // the server's copy. Exactly the hazard the flag exists to prevent.
+  const got = ids.filter((id) => !!ownProp(secrets, id));
   // A PARTIAL read-back is not a success: the whole point of the flag is to stop a pass-through
   // push from erasing the server's keys, and a partial map erases exactly the ones that are
   // missing. Only a complete read-back clears it.
@@ -1001,7 +1007,7 @@ async function restoreSnapshotSecrets(): Promise<void> {
   if (state.snapshot?.backends) {
     // Only the ids this snapshot actually recorded — a stale entry from an older snapshot must
     // not re-enter the blob and get pushed back to the server.
-    state.snapshot.backends.secrets = Object.fromEntries(got.map((id) => [id, secrets[id]]));
+    state.snapshot.backends.secrets = Object.fromEntries(got.map((id) => [id, ownProp(secrets, id)!]));
   }
 }
 
