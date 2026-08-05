@@ -640,9 +640,16 @@ impl RecordSession {
         let app = self.app.clone();
         let epoch = self.epoch;
         let params = self.params.clone();
-        // Publish the epoch BEFORE spawning, so a cancel landing in the "transcribing…" phase has
-        // something to disown (see DETACHED_BATCH_EPOCH).
-        DETACHED_BATCH_EPOCH.store(epoch, Ordering::SeqCst);
+        // The epoch was already published by `claim_detached`, under the RecordState lock, in the
+        // one caller that reaches here (`stop_record`). Re-publishing it now — AFTER the ~33-50ms
+        // capture-thread join above — is not merely redundant, it can move a monotonic epoch
+        // BACKWARDS: `start_record`/`stop_record` for session N+1 can acquire the freed lock
+        // inside that join and set DETACHED to N+1, and this store would then put it back to N.
+        // A `cancel_record` arriving during N+1's "transcribing…" phase takes the `!had_session`
+        // branch, so `cancel_detached_batch` would copy N and disown the ALREADY-FINISHED session
+        // instead of the live one: the clip the user just cancelled gets POSTed to the server and
+        // its .wav plus verbatim .txt sidecar are left on disk, while the UI shows a clean
+        // cancelled state — exactly the failure `claim_detached` was added to prevent.
         tauri::async_runtime::spawn(async move {
             transcribe_recording(app, epoch, params, pcm).await;
         });

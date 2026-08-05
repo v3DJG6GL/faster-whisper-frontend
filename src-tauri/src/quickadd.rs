@@ -275,6 +275,20 @@ pub(crate) mod win_seed {
         // interrupt. Injected events are skipped by our own keyboard hook
         // (LLKHF_INJECTED), so this can't disturb chord matching.
         let mut enigo = Enigo::new(&Settings::default()).ok()?;
+        // Third read, at the SINK. The authoritative check above runs before `Clipboard::new()`,
+        // an explicitly UN-timed blocking `get_text()`, `clipboard_seq()` and `Enigo::new()` — so
+        // the gate that decides "no modifier is down" is separated from the chord it guards by an
+        // unbounded wait. `quickadd::show` gives the user up to 1.5s of no feedback before the
+        // window appears, and this file already records a second chord press in that window as
+        // "likely, not exotic" — landing squarely in the unguarded leg. With Shift physically
+        // down, the Ctrl+Insert below becomes Ctrl+Shift+Insert, which is PASTE in most terminals
+        // and many editors: it would dump the user's clipboard into the focused source app, the
+        // exact mutation the gate's own comment names. Same rule as the injection sinks — re-ask
+        // at the sink, not only before the prologue.
+        if modifier_physically_down() {
+            tracing::info!("[quickadd-seed] modifier went down during the prologue; skipping the copy grab");
+            return None;
+        }
         enigo.key(Key::Control, Direction::Press).ok()?;
         let copied = enigo.key(Key::Insert, Direction::Click);
         let _ = enigo.key(Key::Control, Direction::Release); // release even if the click failed

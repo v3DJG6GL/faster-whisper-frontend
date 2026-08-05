@@ -869,7 +869,20 @@ mod imp {
                     crate::held_keys::clear_chord_lost();
                     emit(app, &pid, "toggle", Some(&chord_mods(&pid)));
                 }
-                Fire::Reclassify(pid) => emit(app, &pid, "reclassify", Some(&chord_mods(&pid))),
+                Fire::Reclassify(pid) => {
+                    // Same rising edge, same reason as Start/Toggle above: the engine fires
+                    // Reclassify only on the latch chord's own physical completion (`on &&
+                    // !active[i]`), so this press IS in the map and the still-held check works
+                    // normally for it — which makes any pending loss latch a dud. It was the one
+                    // fire of the three that did not clear it, and it CONTINUES a live session
+                    // into hands-free mode, so an injection follows it. Reachable on the ordinary
+                    // multi-keyboard setup: keyboard A's stream dies with a hold active and its
+                    // post-loop arms the latch, keyboard B's separate engine still has that hold,
+                    // and completing the latch superset on B otherwise consumed the stale latch
+                    // (TTL 130s) and diverted the phrase to the clipboard.
+                    crate::held_keys::clear_chord_lost();
+                    emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))
+                }
                 Fire::Cancel(pid) => emit(app, &pid, "cancel", Some(&chord_mods(&pid))),
                 Fire::OpenQuickAdd => crate::quickadd::show(app),
             }

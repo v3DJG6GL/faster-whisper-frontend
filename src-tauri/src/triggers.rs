@@ -71,7 +71,15 @@ pub fn snapshot_trigger_mods(app: &AppHandle, chord_mods: &[u16]) {
 
 /// Emit a trigger event for an explicit Profile id.
 fn emit_trigger(app: &AppHandle, profile_id: String, action: &str) {
-    tracing::info!("[trigger] {profile_id}/{action}");
+    // Defanged before it reaches the log, the same way `session.rs`'s stream-error line and every
+    // transport log line already are, and for the reason that line states: this file is what users
+    // are asked to send for support, so an embedded newline forges records. `profile_id` is
+    // untrusted from two directions — `handle_cli_args` parses `--profile <value>` straight out of
+    // argv (the documented DE-shortcut path, ~32k of it available and no validation anywhere on
+    // the way), and the sync blob's profile ids are only type-checked, never length- or
+    // character-clamped.
+    let profile_id_log = crate::transport::bounded_server_text(&profile_id, 120);
+    tracing::info!("[trigger] {profile_id_log}/{action}");
     // This registrar has no chord in hand (a CLI arg or a DE-level shortcut), so it keeps the
     // original behaviour: every shortcut modifier currently down.
     snapshot_trigger_mods(app, &crate::held_keys::SHORTCUT_MOD_CODES);
@@ -296,9 +304,11 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
         let accel = match crate::config::codes_to_accelerator(&p.hotkey) {
             Some(a) => a,
             None => {
+                // Same defang, same file, same reason — `p.id` here is the sync blob's.
+                let id_log = crate::transport::bounded_server_text(&p.id, 120);
                 tracing::info!(
                     "[hotkey] {} {:?} isn't a global-shortcut chord (modifier-only / AltGr) — use a desktop shortcut → `app --profile {} --action toggle`, or the evdev backend",
-                    p.id, p.hotkey, p.id
+                    id_log, p.hotkey, id_log
                 );
                 continue;
             }
@@ -312,7 +322,11 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
         };
         match gs.register(shortcut.clone()) {
             Ok(()) => {
-                tracing::info!("[hotkey] registered '{accel}' → {} ({:?})", p.id, p.activation);
+                tracing::info!(
+                    "[hotkey] registered '{accel}' → {} ({:?})",
+                    crate::transport::bounded_server_text(&p.id, 120),
+                    p.activation
+                );
                 if map
                     .insert(
                         shortcut,

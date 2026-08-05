@@ -270,6 +270,19 @@ mod imp {
         }
     }
 
+    /// Remove `profile_id` from ACTIVE_HOLDS, reporting whether it was present — the twin of
+    /// `win_hotkeys::take_hold`, and here for the same reason its docblock gives: a manufactured
+    /// stop must be CLAIMED, so whichever of the two racing producers runs first wins and a late
+    /// duplicate cannot kill a session the user re-triggered in between.
+    fn take_hold(profile_id: &str) -> bool {
+        let Ok(mut h) = ACTIVE_HOLDS.lock() else {
+            return false;
+        };
+        let had = h.iter().any(|p| p == profile_id);
+        h.retain(|p| p != profile_id);
+        had
+    }
+
     /// Emit "stop" for every PTT chord still held, then clear the set. Call from a listener teardown
     /// whose abort()'d readers skip their own post-loop stop cleanup, so a session held across the
     /// restart isn't wedged "listening". No-op when nothing is held (the common case).
@@ -338,7 +351,20 @@ mod imp {
                     crate::held_keys::clear_chord_lost();
                     emit(app, &pid, "toggle", Some(&chord_mods(&pid)));
                 }
-                Fire::Reclassify(pid) => emit(app, &pid, "reclassify", Some(&chord_mods(&pid))),
+                Fire::Reclassify(pid) => {
+                    // Same rising edge, same reason as Start/Toggle above: the engine fires
+                    // Reclassify only on the latch chord's own physical completion (`on &&
+                    // !active[i]`), so this press IS in the map and the still-held check works
+                    // normally for it — which makes any pending loss latch a dud. It was the one
+                    // fire of the three that did not clear it, and it CONTINUES a live session
+                    // into hands-free mode, so an injection follows it. Reachable on the ordinary
+                    // multi-keyboard setup: keyboard A's stream dies with a hold active and its
+                    // post-loop arms the latch, keyboard B's separate engine still has that hold,
+                    // and completing the latch superset on B otherwise consumed the stale latch
+                    // (TTL 130s) and diverted the phrase to the clipboard.
+                    crate::held_keys::clear_chord_lost();
+                    emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))
+                }
                 Fire::Cancel(pid) => emit(app, &pid, "cancel", Some(&chord_mods(&pid))),
                 Fire::OpenQuickAdd => crate::quickadd::show(app),
             }
@@ -401,6 +427,20 @@ mod imp {
         // hold-to-talk dictation started here would stay stuck running. Latch/quick-add are
         // rising-edge, so their dangling state dies with the task — only Hold leaks.
         for pid in engine.active_holds() {
+            // CLAIM the hold before manufacturing its stop. `stop_held_sessions` drains the same
+            // registry, arms the latch and emits the same stop — and `apply_bindings` calls it
+            // BEFORE `permitted()`'s full /dev/input enumeration and evdev's abort, while
+            // `suspend_shortcuts` calls `stop()` and `stop_held_sessions` as separate steps. A
+            // reader whose stream errors in that window (unplug, dock event, suspend/resume —
+            // itself an `apply_bindings` trigger) runs this post-loop synchronously past the abort
+            // point and emitted a SECOND stop for the same profile plus a SECOND `arm_chord_lost`:
+            // a stop delivered onto a session the user re-triggered in between, and an extra
+            // process-global loss latch that the next typing injection drains, silently diverting
+            // that phrase to the clipboard. The Windows arm has had this guard since `take_hold`
+            // was added; this is its missing twin.
+            if !take_hold(&pid) {
+                continue;
+            }
             // A stop we MANUFACTURED for a chord that is still physically down — `None` marks
             // exactly that, and nothing else passes it. The listener teardown that follows
             // empties the transition-fed held-key map, and what it empties never comes back, so
@@ -408,7 +448,6 @@ mod imp {
             // read an empty map and type into the live chord.
             crate::held_keys::arm_chord_lost();
             emit(&app, &pid, "stop", None);
-            note_hold(&pid, false);
         }
     }
 
