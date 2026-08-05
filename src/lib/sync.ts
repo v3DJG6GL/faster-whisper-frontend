@@ -34,6 +34,7 @@ import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } 
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "./paste";
 import { IS_WINDOWS } from "./platform";
 import { hasOwn, ownProp } from "./own";
+import { normalizeAppId } from "./sanitize";
 import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./conflicts";
 import type {
   ActivationKind,
@@ -588,6 +589,9 @@ function sanitizeAppRules(rules: unknown): AppRule[] {
     )
     .map((r) => ({
       ...r,
+      // The rule's KEY, and the only field the form used to normalize (`appId.trim()` in `save()`)
+      // while every inbound path left it verbatim. See `normalizeAppId`.
+      appId: normalizeAppId(r.appId),
       block: r.block === true,
       // `name` rode in through the spread unchecked while its neighbours were clamped, and the
       // rules list does `r.name?.trim()` in a render body — `?.` guards null/undefined, not a
@@ -607,6 +611,9 @@ function sanitizeAppRules(rules: unknown): AppRule[] {
           ? r.insertMethod
           : oneOf<InsertMethod>(r.insertMethod, INSERT_METHODS, "paste"),
     }))
+    // An all-invisible appId normalizes to "", which matches nothing and displays as nothing —
+    // a zombie row on the audit screen. Drop it rather than store it.
+    .filter((r) => r.appId.length > 0)
     .slice(0, MAX_SYNCED_ENTRIES);
 }
 

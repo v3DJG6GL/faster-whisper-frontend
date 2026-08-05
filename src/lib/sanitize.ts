@@ -68,6 +68,24 @@ export function safeDisplayText(s: unknown, max = 200): string {
   return out.join("");
 }
 
+/** The stored key of an `AppRule` — the string the injection-target matcher compares against a
+ *  live window's app id.
+ *
+ *  It has to go through the SAME filter the audit screen renders it with. `safeDisplayText`
+ *  DELETES zero-width and bidi characters, so a rule whose `appId` is `"konsole​"` displayed
+ *  as exactly `konsole`, still read "Blocked — never typed here", and never matched: the display
+ *  sanitizer erased the one character that broke the comparison. The editor is no help either —
+ *  the mark is invisible in a text input, and `trim()` does not remove it, so opening the rule and
+ *  re-saving it did not repair it. App rules have no consent gate and raise no security-review
+ *  prompt, so such a rule arrives on an unattended pull.
+ *
+ *  The producer side is normalized to match: `atspi_guard` already ran the AT-SPI application name
+ *  through the same class, and `win_focus::exe_basename` now does too — normalizing only the rule
+ *  would invert the bug on Windows, where a filename legitimately may carry those characters. */
+export function normalizeAppId(s: unknown): string {
+  return safeDisplayText(s, 200).trim();
+}
+
 export function stripControlChars(text: string): string {
   const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   let out = "";

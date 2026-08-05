@@ -25,7 +25,7 @@
 //! Selection reads stay `Unavailable` (quick-add seeds via the copy-chord grab
 //! in `quickadd::win_seed` instead).
 
-use super::{FocusedApp, Snapshot};
+use super::{FocusedApp, Snapshot, APP_ID_MAX};
 use std::sync::{Arc, OnceLock};
 use windows_sys::core::BOOL;
 use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM};
@@ -184,7 +184,18 @@ unsafe fn exe_basename(pid: u32) -> Option<String> {
     }
     let path = String::from_utf16_lossy(&buf[..len as usize]);
     let base = path.rsplit(['\\', '/']).next()?.to_lowercase();
-    Some(base.strip_suffix(".exe").map(str::to_string).unwrap_or(base))
+    let base = base.strip_suffix(".exe").map(str::to_string).unwrap_or(base);
+    // Same bound + defang the AT-SPI twin applies to ITS app id, for the same three sinks (the
+    // overlay payload, a persisted AppRule that rides the sync push, the once-a-second log line).
+    // The earlier refutation — "an NTFS filename cannot contain control characters" — is right for
+    // Cc and wrong for Cf: a filename may carry U+202E/U+2066/U+200B, which is why the overlay's
+    // target readout had to be defanged at the render.
+    //
+    // Doing it HERE rather than at each consumer is what keeps the app-rule matcher honest. The
+    // rule side is normalized with the same character class, and an exe basename that kept an
+    // invisible mark while the rule had it stripped would turn a working "never type here" rule
+    // into a silent no-op — the failure the rule-side normalization exists to prevent, inverted.
+    Some(crate::transport::bounded_server_text(&base, APP_ID_MAX))
 }
 
 /// Resolve a UWP app hosted by ApplicationFrameHost: find the child window of

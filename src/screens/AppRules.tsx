@@ -7,7 +7,7 @@ import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
 import { IS_WINDOWS } from "@/lib/platform";
 import type { AppRule, InsertMethod } from "@/lib/types";
 import { cn } from "@/lib/cn";
-import { safeDisplayText } from "@/lib/sanitize";
+import { normalizeAppId, safeDisplayText } from "@/lib/sanitize";
 
 // App ids differ per platform: AT-SPI application names on Linux, lowercased exe
 // basenames on Windows — show examples the local detector will actually produce.
@@ -83,11 +83,14 @@ function Editor({
 
   const effectiveMethod = (r.insertMethod ?? globalMethod) as InsertMethod;
   const pasteRelevant = !r.block && effectiveMethod === "paste";
-  const canSave = r.appId.trim().length > 0;
+  // Same normalizer the two inbound floors use, so all three agree on what the stored key is.
+  // `trim()` alone was not enough: an invisible character survives it, and this screen renders the
+  // id through a filter that deletes such characters — so the rule read armed and matched nothing.
+  const canSave = normalizeAppId(r.appId).length > 0;
 
   const save = () => {
     if (!canSave) return;
-    onSave({ ...r, appId: r.appId.trim(), name: r.name?.trim() ? r.name.trim() : undefined });
+    onSave({ ...r, appId: normalizeAppId(r.appId), name: r.name?.trim() ? r.name.trim() : undefined });
   };
 
   return (
