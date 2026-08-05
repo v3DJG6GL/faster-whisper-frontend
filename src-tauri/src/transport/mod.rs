@@ -261,6 +261,13 @@ pub const MAX_BODY: usize = 32 * 1024 * 1024;
 /// asked to attach to support reports. Same ceiling the streaming parse path uses.
 pub const MAX_ERROR_TEXT: usize = 200;
 
+/// Ceiling on a body we read ONLY to pull a `detail` string out of. `detail_from` full-parses the
+/// whole body as JSON to extract at most [`MAX_ERROR_TEXT`] characters, so the transcription-sized
+/// [`MAX_BODY`] buys nothing on a non-2xx arm — it just lets a hostile server bill us 32 MiB and a
+/// full serde tree for 200 characters it will then discard. `sync.rs` already reads its error arms
+/// at `SYNC_MAX_BODY` for exactly this reason; this is the same bound for the routes left behind.
+pub const MAX_ERROR_BODY: usize = 256 * 1024;
+
 /// Bound and defang a server-supplied string on its way to the UI or the log.
 ///
 /// The streaming parse path caps its `error` frames at [`MAX_ERROR_TEXT`], but the BATCH sibling
@@ -284,13 +291,10 @@ pub fn bounded_server_text(s: &str, n: usize) -> String {
     }
 }
 
-/// Buffer a response body, giving up once it passes [`MAX_BODY`] instead of growing without bound.
-pub async fn body_capped(resp: reqwest::Response) -> Result<String, String> {
-    body_capped_to(resp, MAX_BODY).await
-}
-
-/// [`body_capped`] with an explicit ceiling, for routes whose legitimate payload is far smaller
-/// than the transcription-sized [`MAX_BODY`] — see `sync::SYNC_MAX_BODY`.
+/// Buffer a response body with an explicit ceiling, giving up once it passes the limit instead of
+/// growing without bound. Every caller now names its own ceiling: an error arm that only wants a
+/// `detail` string takes [`MAX_ERROR_BODY`], a sync payload takes `sync::SYNC_MAX_BODY`, and only a
+/// route that can legitimately carry a transcription takes [`MAX_BODY`].
 pub async fn body_capped_to(resp: reqwest::Response, limit: usize) -> Result<String, String> {
     if resp.content_length().is_some_and(|n| n > limit as u64) {
         return Err(TOO_LARGE.into());

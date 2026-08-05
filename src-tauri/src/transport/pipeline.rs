@@ -9,7 +9,7 @@
 //! cb:map `map` / `pattern` / `wordlist`), so they pass through as opaque JSON
 //! and are typed on the TS side.
 
-use super::{base_url, body_capped, client, detail_from, friendly_err, json_capped, with_auth};
+use super::{base_url, body_capped_to, client, detail_from, friendly_err, json_capped, with_auth, MAX_ERROR_BODY};
 use serde::{Deserialize, Serialize};
 
 /// A role name ("admin", "editor"), never prose.
@@ -112,7 +112,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                     }
                 }
             } else {
-                let body = body_capped(resp).await.unwrap_or_default();
+                let body = body_capped_to(resp, MAX_ERROR_BODY).await.unwrap_or_default();
                 let detail = detail_from(&body);
                 tracing::warn!("[pipeline] rules GET failed: HTTP {code} {detail}");
                 PipelineFetch {
@@ -149,10 +149,18 @@ pub async fn save_pipeline_rules(
             let code = resp.status().as_u16();
             if resp.status().is_success() {
                 match json_capped::<SaveBody>(resp).await {
-                    Ok(b) => PipelineSave {
+                    Ok(mut b) => PipelineSave {
                         ok: true,
                         status: code,
-                        saved: b.saved,
+                        // The one server-supplied string list in this module with no ceiling of its
+                        // own, while both siblings here take a count cap plus a per-entry bound
+                        // (`words`, `role`). It crosses the IPC and is JSON-parsed on the webview
+                        // main thread, and the only consumer reads `.length` — so nothing is lost
+                        // by holding it to the same shape as its neighbours.
+                        saved: {
+                            b.saved.truncate(MAX_RECENT_WORDS);
+                            b.saved.iter().map(|s| super::bounded_server_text(s, WORD_MAX)).collect()
+                        },
                         conflicts: if b.conflicts.is_null() {
                             serde_json::json!([])
                         } else {
@@ -174,7 +182,7 @@ pub async fn save_pipeline_rules(
                     }
                 }
             } else {
-                let body = body_capped(resp).await.unwrap_or_default();
+                let body = body_capped_to(resp, MAX_ERROR_BODY).await.unwrap_or_default();
                 let parsed: Option<serde_json::Value> = serde_json::from_str(&body).ok();
                 let errors = parsed.as_ref().and_then(|v| v.get("errors").cloned());
                 // Bounded and control-folded like every other server-supplied string: the fallback

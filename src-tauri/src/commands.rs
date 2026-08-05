@@ -1497,12 +1497,20 @@ pub fn set_deep_field_detection(
 
 /// How long a manufactured-stop latch stays valid — see `held_keys::take_lost_if_fresh`.
 ///
-/// Deliberately generous, and deliberately tied to the frontend's stuck-finalize watchdog
-/// (`STUCK_FINALIZE_MS` in `src/lib/streaming.ts`) rather than to a guessed round-trip: the leg this
-/// has to span is the untrusted server returning a final, so anything shorter is a bypass the
-/// server itself can trigger by stalling. A stale latch only ever costs one phrase a clipboard
-/// divert, which the chip now reports; a short one costs the control entirely.
-const HELD_CHORD_LATCH_TTL: std::time::Duration = std::time::Duration::from_secs(15);
+/// Deliberately generous, and sized against the LONGEST leg it has to span rather than a guessed
+/// round-trip: what sits in the middle is the untrusted server returning a final, so anything
+/// shorter is a bypass the server itself can trigger by stalling. A stale latch only ever costs one
+/// phrase a clipboard divert, which the chip now reports; a short one costs the control entirely.
+///
+/// That leg is NOT bounded by the frontend's stuck-finalize watchdog, which is what this constant
+/// was first tied to: `armStuckWatchdog` returns early unless the endpoint is `stream`
+/// (`src/lib/streaming.ts`), and `activation: "hold"` with `endpoint: "batch"` is a legal profile —
+/// one that lands in stop-timing mode, where the single insert carries the WHOLE transcript through
+/// the typing path. On that leg the only bound is the shared HTTP client's 120s default
+/// (`transport::mod`, which `batch` dictation does not override), so a transcription that takes
+/// longer than 15s — a long clip, a big model, or a server stalling on purpose — walked straight
+/// past this control. 130s covers the 120s timeout plus the stop → POST → final → inject hops.
+const HELD_CHORD_LATCH_TTL: std::time::Duration = std::time::Duration::from_secs(130);
 
 /// What `inject_text` did, so the caller can keep its own bookkeeping honest.
 #[derive(Debug, Clone, Copy, serde::Serialize)]

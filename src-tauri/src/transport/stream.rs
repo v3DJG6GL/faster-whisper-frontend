@@ -67,6 +67,35 @@ pub fn http_to_ws(server_url: &str) -> String {
     format!("{scheme_swapped}/v1/audio/transcriptions/stream")
 }
 
+/// The stream URL as it is safe to PRINT — userinfo stripped and length bounded.
+///
+/// `friendly_err` gave the reqwest half of the transport exactly this treatment: a `serverUrl` of
+/// the form `https://user:secret@host/` is storable (`isStorableServerUrl` accepts it, which is why
+/// `authorityOf` exists at all), and `http_to_ws` carries the userinfo through by construction, so
+/// the connect-failure message — a routine one — otherwise wrote the user's own reverse-proxy
+/// password into the message AND into `tracing::warn!`, which on Windows is a log file on disk that
+/// users are asked to attach to support reports. Bounded too: `serverUrl` carries no length cap on
+/// the sync/import path, only the 4 MiB whole-blob ceiling.
+fn display_url(u: &str) -> String {
+    let (scheme, rest) = match u.split_once("://") {
+        Some((s, r)) => (s, r),
+        None => ("", u),
+    };
+    let (authority, tail) = match rest.split_once('/') {
+        Some((a, t)) => (a, Some(t)),
+        None => (rest, None),
+    };
+    // Userinfo is everything before the LAST '@' — a password may itself contain one.
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let joined = match (scheme.is_empty(), tail) {
+        (true, None) => host.to_string(),
+        (true, Some(t)) => format!("{host}/{t}"),
+        (false, None) => format!("{scheme}://{host}"),
+        (false, Some(t)) => format!("{scheme}://{host}/{t}"),
+    };
+    super::bounded_server_text(&joined, super::MAX_ERROR_TEXT)
+}
+
 fn text_msg(s: String) -> Message {
     Message::Text(s.into())
 }
@@ -107,7 +136,10 @@ pub async fn run<F>(
     // On any setup failure, surface the error AND a terminal Closed, then bail.
     macro_rules! fail {
         ($msg:expr) => {{
-            let m = $msg;
+            // Bounded inside the macro so no future arm can regress: these are the only error
+            // strings in the transport with no ceiling of their own, and they reach both the UI
+            // and the log.
+            let m = super::bounded_server_text(&$msg, super::MAX_ERROR_TEXT);
             tracing::warn!("[stream] {m}");
             on_event(StreamEvent::Error(m));
             on_event(StreamEvent::Closed);
@@ -117,7 +149,7 @@ pub async fn run<F>(
 
     let mut request = match params.ws_url.as_str().into_client_request() {
         Ok(r) => r,
-        Err(e) => fail!(format!("Invalid stream URL {}: {e}", params.ws_url)),
+        Err(e) => fail!(format!("Invalid stream URL {}: {e}", display_url(&params.ws_url))),
     };
     if let Some(k) = &params.api_key {
         if !k.is_empty() {
@@ -153,10 +185,10 @@ pub async fn run<F>(
             }
             res = &mut connect => match res {
                 Ok(Ok(pair)) => break pair,
-                Ok(Err(e)) => fail!(format!("Could not connect to {}: {e}", params.ws_url)),
+                Ok(Err(e)) => fail!(format!("Could not connect to {}: {e}", display_url(&params.ws_url))),
                 Err(_) => fail!(format!(
                     "Could not connect to {} — timed out after {}s (server unreachable?)",
-                    params.ws_url,
+                    display_url(&params.ws_url),
                     CONNECT_TIMEOUT.as_secs()
                 )),
             },

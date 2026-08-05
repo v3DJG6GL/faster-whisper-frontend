@@ -1,6 +1,6 @@
 //! Batch transcription: `POST /v1/audio/transcriptions` (multipart).
 
-use super::{base_url, body_capped, client, detail_from, friendly_err, json_capped, with_auth};
+use super::{base_url, body_capped_to, client, detail_from, friendly_err, json_capped, with_auth, MAX_ERROR_BODY};
 use anyhow::{bail, Context};
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
@@ -169,7 +169,7 @@ async fn post(
 
     let status = resp.status();
     if !status.is_success() {
-        let body = body_capped(resp).await.unwrap_or_default();
+        let body = body_capped_to(resp, MAX_ERROR_BODY).await.unwrap_or_default();
         bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
     }
 
