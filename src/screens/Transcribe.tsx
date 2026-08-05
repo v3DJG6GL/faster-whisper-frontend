@@ -5,8 +5,8 @@ import { Button, Card, Notice, PageHeader, Select } from "@/components/ui";
 import { LANGUAGES } from "@/lib/languages";
 import { fmtDuration } from "@/lib/format";
 import { pickAudioFile, transcribeFile, isTauri } from "@/lib/api";
-import { effectiveServerUrl } from "@/lib/backends";
-import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
+import { backendOptionLabel, effectiveServerUrl } from "@/lib/backends";
+import { stripControlChars } from "@/lib/sanitize";
 import type { BatchResult } from "@/lib/types";
 
 function basename(path: string): string {
@@ -202,7 +202,7 @@ export default function Transcribe() {
               const b = backends.find((x) => x.id === v);
               if (b) setLanguage(b.language ?? "auto");
             }}
-            options={backends.map((b) => ({ value: b.id, label: safeDisplayText(b.name, 80) }))}
+            options={backends.map((b) => ({ value: b.id, label: backendOptionLabel(b, backends) }))}
           />
         </div>
         <div>

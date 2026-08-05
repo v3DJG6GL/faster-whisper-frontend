@@ -8,7 +8,7 @@
 // every completion set settings.setupDismissed so the gate never re-opens; any
 // later half-configured state is the Home checklist's job (SetupChecklist).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BrandMark } from "@/components/Sidebar";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { Button, Labeled, Notice, Segmented, Select, TextInput } from "@/components/ui";
@@ -53,7 +53,16 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     onDone();
   };
 
+  // The backend created at the connect gate, kept so the restore can put it back if the applied
+  // blob's list does not contain it (see restoreEverything).
+  const gateBackend = useRef<Backend | null>(null);
+
   const testAndContinue = async () => {
+    // Re-entrancy guard, matching the Backends screen's twin. The submit Button is disabled while
+    // busy, but both text inputs still fire this on Enter and stay editable — and a second run
+    // mints a fresh id, writes the API key to a SECOND keyring account, and upserts a duplicate
+    // backend, leaving one of the two keys orphaned in the OS wallet.
+    if (busy) return;
     const serverUrl = normalizeUrl(url);
     if (!serverUrl.replace(/^https?:\/\//i, "")) return;
     setBusy(true);
@@ -80,6 +89,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         responseFormat: "verbose_json",
       };
       st.getState().upsertBackend(backend);
+      gateBackend.current = backend;
       st.getState().setConnection(id, res);
       setInfo(res);
       setBackendId(id);
@@ -110,7 +120,16 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // the gate's URL (the restore may have replaced Backend #1's entry).
       const s = st.getState();
       const gateUrl = normalizeUrl(url);
-      const match = s.backends.find((b) => normalizeUrl(b.serverUrl) === gateUrl) ?? s.backends[0];
+      // Re-add the gate's own backend when the restore replaced the list without it, exactly as
+      // the Backends screen's restore does. `?? s.backends[0]` bound sync — and therefore every
+      // future push of every backend's plaintext key — to the FIRST entry of a list the server
+      // wrote, chosen by position, with nothing on screen saying so. It also orphaned the keyring
+      // entry written at the gate, since no backend referenced that id any more.
+      let match = s.backends.find((b) => normalizeUrl(b.serverUrl) === gateUrl);
+      if (!match && gateBackend.current) {
+        s.upsertBackend(gateBackend.current);
+        match = gateBackend.current;
+      }
       s.updateSync({ enabled: true, backendId: match?.id ?? null });
       finish();
     } catch (e) {

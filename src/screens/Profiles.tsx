@@ -16,7 +16,7 @@ import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { effectiveServerUrl } from "@/lib/backends";
+import { backendOptionLabel, effectiveServerUrl } from "@/lib/backends";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import type { Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
@@ -167,7 +167,7 @@ function Editor({
                     // and a backend rename raises no SecurityChange — so a hostile sync server
                     // can relabel the options silently. Same defanging as the sync-server
                     // picker, for the same reason.
-                    ...backends.map((b) => ({ value: b.id, label: safeDisplayText(b.name, 80) })),
+                    ...backends.map((b) => ({ value: b.id, label: backendOptionLabel(b, backends) })),
                   ]
                 : [{ value: "", label: "No backends — add one" }]
             }
@@ -385,7 +385,7 @@ function ProfileRow({
             </span>
           </div>
         </div>
-        <Toggle ariaLabel={`Enable ${p.name}`} checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
+        <Toggle ariaLabel={`Enable ${safeDisplayText(p.name, 80)}`} checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" title="Edit" onClick={onEdit}>
             <Pencil className="size-4" />

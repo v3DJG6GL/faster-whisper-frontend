@@ -116,11 +116,14 @@ function Editor({
   // already moved off. Track the live target and only commit a test whose URL+key still match
   // (mirrors Transcribe's runId guard); else effectiveServerKind / the status dot / the decode gate
   // would cache the old server's classification under this backend id.
-  const liveTarget = useRef({ url: b.serverUrl, key });
-  liveTarget.current = { url: b.serverUrl, key };
+  // The EFFECTIVE url on both sides: this screen shows the effective address, so a verdict earned
+  // by testing `b.serverUrl` while an override points somewhere else described a different host
+  // than the one displayed next to it.
+  const liveTarget = useRef({ url: effectiveServerUrl(b, useApp.getState().settings), key });
+  liveTarget.current = { url: effectiveServerUrl(b, useApp.getState().settings), key };
 
   const runTest = async () => {
-    const testedUrl = b.serverUrl;
+    const testedUrl = effectiveServerUrl(b, useApp.getState().settings);
     const testedKey = key;
     setTesting(true);
     try {
@@ -688,8 +691,9 @@ export default function Backends() {
   const handleTest = async (b: Backend) => {
     setTesting((s) => new Set(s).add(b.id));
     try {
+      const testedUrl = effectiveServerUrl(b, useApp.getState().settings);
       const info = await testConnection({
-        serverUrl: effectiveServerUrl(b, useApp.getState().settings),
+        serverUrl: testedUrl,
         backendId: b.id,
       });
       // Mirror the editor's liveTarget guard (+ upsertBackend's connection invalidation): a slow/
@@ -697,8 +701,14 @@ export default function Backends() {
       // stale connection) or removes it. Only commit if the backend still exists with the same target,
       // else we'd re-cache the OLD server's classification under this id (effectiveServerKind / status
       // dot / decode gate) or re-add a dangling connection for a removed backend.
+      // The invalidation triple is serverUrl / hasApiKey / URL OVERRIDE, and the third term was
+      // missing — while the request itself goes to the EFFECTIVE url, which prefers the override.
+      // So editing "Address on this device" (applied live, no save needed) while a slow test was
+      // in flight installed the old address's verdict under the repointed backend, and nothing
+      // re-tests on its own: the green "connected" dot beside the new host was permanent.
       const cur = useApp.getState().backends.find((x) => x.id === b.id);
-      if (cur && cur.serverUrl === b.serverUrl && cur.hasApiKey === b.hasApiKey) {
+      const curUrl = cur ? effectiveServerUrl(cur, useApp.getState().settings) : null;
+      if (cur && cur.serverUrl === b.serverUrl && cur.hasApiKey === b.hasApiKey && curUrl === testedUrl) {
         setConnection(b.id, info);
       }
     } finally {

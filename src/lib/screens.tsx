@@ -7,7 +7,6 @@ import { Home, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindo
 import type { LucideIcon } from "lucide-react";
 import type { OverlayScreen, OverlayActionKind, OverlayQuickAction } from "./types";
 import { IS_LINUX, IS_WINDOWS } from "./platform";
-import { safeDisplayText } from "./sanitize";
 
 export interface ScreenDef {
   id: OverlayScreen;
@@ -65,7 +64,10 @@ export function quickLaunchMeta(e: OverlayQuickAction): { label: string; icon: L
   // which on a synced entry is server-chosen — and the Settings editor renders this label as a
   // React child. Same split the overlay chip tag already guards against.
   return {
-    label: reg?.label ?? safeDisplayText(e.target, 60),
+    // No raw-target fallback: the registry lookup uses the RAW target while this label was
+    // defanged, so a zero-width-padded `"settings\u200b"` resolved to nothing yet rendered as
+    // `settings` — an inert button impersonating a real one, and a duplicate offered in the editor.
+    label: reg?.label ?? "Unknown action",
     icon: reg?.icon ?? SCREENS[0].icon,
   };
 }

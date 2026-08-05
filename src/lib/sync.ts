@@ -102,7 +102,18 @@ export function hashBlob(v: unknown): string {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
-const catEqual = (a: unknown, b: unknown) => hashBlob(a) === hashBlob(b);
+/** Category equality — the test that decides whether a category conflicts and prompts, or merges
+ *  silently. Compares the canonical strings, NOT their hashes: `hashBlob` builds this exact string
+ *  first and then folds it to 32 bits, so the digest comparison was strictly more work for a
+ *  probabilistic answer — on inputs one of which (the base) is the server's own last blob. */
+/** A JSON object — not null, not an array, not a string. The blob's containers are attacker-shaped
+ *  just like its lists, and `Object.entries`/`Object.keys` accept a string by expanding it per code
+ *  unit; every ceiling in the engine bounds ENTRY COUNT, which that turns into 4M. */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+const catEqual = (a: unknown, b: unknown) => stableStringify(a ?? null) === stableStringify(b ?? null);
 
 /** Bound an await that may never settle. The ONLY unbounded await in the
  *  engine is the keyring read (a locked KWallet parks the request behind a
@@ -321,7 +332,7 @@ function isReservedBackendId(id: unknown): boolean {
  *  entries here so both paths share the same floor. */
 export function sanitizeProfiles(list: unknown): Profile[] {
   if (!Array.isArray(list)) return [];
-  return list
+  return dedupeById(list
     .filter(
       (p): p is Profile =>
         !!p && typeof p === "object" &&
@@ -367,7 +378,7 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       // "no backend chosen" value, so the scrub still runs on whatever survives here.
       backendId: typeof p.backendId === "string" ? p.backendId : null,
     }))
-    .slice(0, MAX_SYNCED_ENTRIES);
+    .slice(0, MAX_SYNCED_ENTRIES));
 }
 
 /** A chord as the capture UI produces it: a list of `KeyboardEvent.code` strings.
@@ -452,6 +463,20 @@ function disableConflictingProfiles(
  *  backend / rule set, so nothing legitimate is truncated — but it bounds the O(n²) passes
  *  these lists feed: `chords_from`'s dedup and `Engine::step`, which runs on EVERY system-wide
  *  key event, plus `conflicts()` and the unbounded list renders. */
+/** Drop later entries sharing an id. Uniqueness is unenforced everywhere else, and every consumer
+ *  resolves by FIRST match (`backends.find(b => b.id === …)`) while the pickers render one option
+ *  per entry — so two entries with one id give two differently-LABELLED options that both select
+ *  the first entry's server. Keep-first, so the surviving entry is the one those lookups already
+ *  resolve to and no keyring association moves. Ids are `crypto.randomUUID()` on every legitimate
+ *  path, so a duplicate is never a real entry.
+ *
+ *  Deliberately NOT mirrored into the store's `wellFormed*` floors: those run over the user's own
+ *  config.json on every launch with the autosave armed. */
+function dedupeById<T extends { id: string }>(list: T[]): T[] {
+  const seen = new Set<string>();
+  return list.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
+}
+
 const MAX_SYNCED_ENTRIES = 500;
 
 /** Closed-vocabulary settings arrive as raw JSON. `save_config` takes a typed `Config` whose
@@ -529,7 +554,7 @@ const BACKEND_KINDS = ["auto", "full", "standard"] as const;
 
 function sanitizeBackends(list: unknown): Backend[] {
   if (!Array.isArray(list)) return [];
-  return list.filter(
+  return dedupeById(list.filter(
     (b): b is Backend =>
       !!b && typeof b === "object" &&
       typeof (b as Backend).id === "string" &&
@@ -576,7 +601,7 @@ function sanitizeBackends(list: unknown): Backend[] {
       // connection test", which is what an absent key already means.
       kind: b.kind == null ? undefined : oneOf<BackendKind>(b.kind, BACKEND_KINDS, "auto"),
     }))
-    .slice(0, MAX_SYNCED_ENTRIES);
+    .slice(0, MAX_SYNCED_ENTRIES));
 }
 
 function sanitizeAppRules(rules: unknown): AppRule[] {
@@ -629,10 +654,17 @@ async function reconcileBackendSecrets(
   // Only ids that are actually in the list: composeBlob reads keys for exactly the backends it
   // ships, so a secret for an unknown id can't come from a legitimate peer — but it WOULD be
   // written into the OS keyring under a name the sender chose.
-  const known = new Set(list.map((b) => b.id));
-  for (const [id, key] of Object.entries(secrets ?? {})) {
-    if (!known.has(id)) continue;
-    if (key) {
+  // Iterate the BACKENDS, not the map. `secrets` is the one container in the blob with no shape
+  // check on either side — Rust forwards the blob as an opaque Value, and the file-import path's
+  // `as_object()` floor has no sync-path twin — so a STRING here made `Object.entries` expand it
+  // per code unit: a 4 MiB value measured 4M entries, ~8s of frozen main thread and +575 MB, on
+  // the pull that runs unattended at startup and on every window focus. Reading by id instead is
+  // O(backends), can never drop a legitimate key, and makes the lookup own-property at the same
+  // time (`secrets.constructor` is a truthy function otherwise — the class already fixed below).
+  for (const b of list) {
+    const id = b.id;
+    const key = isPlainObject(secrets) ? ownProp(secrets as Record<string, unknown>, id) : undefined;
+    if (typeof key === "string" && key) {
       // Same locked-wallet hazard as composeBlob's read: a parked prompt must
       // not wedge the apply. A skipped write surfaces as hasApiKey=false below.
       await withTimeout(
@@ -1027,7 +1059,10 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
   state = { ...state, ...patch };
   // Split the snapshot's secrets out to the keyring; the file gets ids only.
   const secrets = state.snapshot?.backends?.secrets;
-  const ids = secrets ? Object.keys(secrets) : [];
+  // Same reason as `reconcileBackendSecrets`: `Object.keys` on a server-supplied STRING yields one
+  // id per code unit, and these ids are PERSISTED — a 4 MiB value becomes a ~40 MB sync-state.json
+  // that is re-read and re-expanded on every launch, long after the blob that caused it is gone.
+  const ids = isPlainObject(secrets) ? Object.keys(secrets) : [];
   const hadStash = state.snapshotSecretIds !== undefined;
   state.snapshotSecretIds = ids.length > 0 ? ids : undefined;
   if (ids.length > 0) {

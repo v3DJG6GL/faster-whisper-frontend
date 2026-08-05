@@ -13,6 +13,7 @@ import { importSettingsFile, pickImportFile } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import type { ImportResult } from "@/lib/syncTypes";
 import { ImportPreview } from "@/screens/SettingsSync";
+import { safeDisplayText } from "@/lib/sanitize";
 
 function StepBullet({ state, n }: { state: "done" | "now" | "off"; n: number }) {
   return (
@@ -49,7 +50,10 @@ export function SetupChecklist() {
       if (!path) return;
       setImportResult(await importSettingsFile(path));
     } catch (e) {
-      setImportError(String(e));
+      // Defanged and bounded like the two sibling import buttons: the Rust typed parse
+      // Display-formats serde errors whose `unknown variant` text quotes the untrusted file's own
+      // string verbatim, and the only ceiling on it is the 20 MB whole-file cap.
+      setImportError(safeDisplayText(String(e), 300));
     }
   };
 

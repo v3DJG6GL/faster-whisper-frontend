@@ -35,10 +35,11 @@ import {
   sanitizeProfiles,
   type SecurityChange,
 } from "@/lib/sync";
-import { authorityOf, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
+import { authorityOf, backendOptionLabel, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
+import { ownProp } from "@/lib/own";
 import { conflicts as chordConflicts, quickAddPeer } from "@/lib/conflicts";
 import { IS_WINDOWS } from "@/lib/platform";
-import { safeDisplayText } from "@/lib/sanitize";
+import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import type { Backend, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncRemoteState } from "@/lib/syncTypes";
 
@@ -144,7 +145,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   const missingKeys =
     sel.backends && result.categories.backends
       ? arr<Backend>(result.categories.backends.list).filter(
-          (b) => b.hasApiKey && !result.secrets[b.id],
+          (b) => b.hasApiKey && !ownProp(result.secrets, b.id),
         )
       : [];
 
@@ -424,9 +425,17 @@ export function IncomingAddresses({ list }: { list: unknown }) {
           const auth = authorityOf(String(b.serverUrl ?? ""));
           const warn = insecureUrlWarning(String(b.serverUrl ?? ""));
           return (
-            <li key={`${b.id}-${i}`} className="font-mono text-[12px]">
+            <li key={`${b.id}-${i}`} className="font-mono text-[12px]" title={safeText(String(b.serverUrl ?? ""), 300)}>
               {safeText(b.name || b.id, 60)} →{" "}
-              <span className="font-semibold">{auth ? safeText(auth.host, 80) : "unreadable address"}</span>
+              {/* The host through the IDENTITY helper, which marks a truncation. The plain display
+                  filter cuts at 80 code points with no ellipsis, and `serverUrl` has no length cap
+                  on the sync/import path — so a padded, fully resolvable hostname
+                  (`sync.internal.corp.example.com.<padding>.evil.tld`) rendered as a
+                  trusted-looking PREFIX of itself with the real suffix invisible, on the dialog
+                  whose whole job is to disclose where dictation would go. The security-review
+                  dialog escapes this because it prints the full address on its detail line; this
+                  one has no such second line, so it gets the marker and a hover title. */}
+              <span className="font-semibold">{auth ? safeIdentityText(auth.host, 80) : "unreadable address"}</span>
               {auth?.hasUserinfo ? " · address hides the real host behind a username" : ""}
               {warn ? ` · ${warn}` : ""}
             </li>
@@ -705,8 +714,8 @@ export function SyncTab() {
               // backend rename arrives with no prompt — so the label gets the same defanging as
               // the device name on the conflict dialog.
               label: b.hasApiKey
-                ? safeDisplayText(b.name, 80)
-                : `${safeDisplayText(b.name, 80)} (no API key)`,
+                ? backendOptionLabel(b, backends)
+                : `${backendOptionLabel(b, backends)} (no API key)`,
             }))}
           />
         </SettingRow>
