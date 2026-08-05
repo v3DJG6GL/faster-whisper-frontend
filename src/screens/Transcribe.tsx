@@ -246,8 +246,13 @@ export default function Transcribe() {
               {copied ? "Copied" : "Copy"}
             </Button>
           </div>
+          {/* `transport::batch` deliberately leaves `text` untouched ("that IS the output"), so
+              bidi overrides and other invisible format characters from an untrusted server reach
+              this node by design. The Copy button above already strips them; without the same
+              treatment here what the user READS can be reordered relative to what they paste.
+              Same reasoning, and the same helper, as the live partial preview. */}
           <div className="select-text whitespace-pre-wrap text-[14px] leading-relaxed text-text">
-            {showFullText ? result.text : result.text.slice(0, TRANSCRIPT_PREVIEW_CHARS)}
+            {stripControlChars(showFullText ? result.text : result.text.slice(0, TRANSCRIPT_PREVIEW_CHARS))}
           </div>
           {!showFullText && result.text.length > TRANSCRIPT_PREVIEW_CHARS && (
             <div className="mt-3 flex items-center gap-3">

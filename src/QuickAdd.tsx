@@ -20,6 +20,7 @@ import { Button, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
+import { safeDisplayText } from "@/lib/sanitize";
 import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
   getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText,
@@ -210,7 +211,9 @@ export default function QuickAdd() {
         setPhase("error");
         return;
       }
-      setLabel(rule.label || "Word mappings");
+      // Third render of the server-authored rule label; the Dictionary and Onboarding renders of
+      // the same field both defang it, this window did not.
+      setLabel(safeDisplayText(rule.label, 80) || "Word mappings");
       setColor(rule.color);
       setRows(mapRowsFromRule(rule));
       setSaveState("idle");

@@ -127,7 +127,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       if (!path) return;
       setImportResult(await importSettingsFile(path));
     } catch (e) {
-      setError(String(e));
+      // Same as the Sync tab's twin: the Rust import error can quote the untrusted file's own
+      // text back, unbounded, and this is the first-run gate.
+      setError(safeDisplayText(String(e), 300));
     }
   };
 

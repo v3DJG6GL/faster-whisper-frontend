@@ -7,6 +7,7 @@ import { Waveform } from "@/components/Waveform";
 import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screens";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { cn } from "@/lib/cn";
+import { safeDisplayText } from "@/lib/sanitize";
 import {
   listAudioDevices,
   startMicTest,
@@ -381,7 +382,13 @@ function QuickLaunchEditor({
           >
             <Icon className="size-4 shrink-0 text-faint" />
             <span className="text-[13px] text-text">{label}</span>
-            <span className="font-mono text-[10px] uppercase tracking-label text-faint">{e.kind}</span>
+            {/* `kind` is blob-authored: `withSettingsDefaults` type-checks it as a string but
+                bounds neither its length nor its character set, and Rust round-trips the block
+                without interpreting it. Its row-sibling `label` is already defanged by
+                `quickLaunchMeta`; this one is rendered as a child two elements over. */}
+            <span className="shrink-0 truncate font-mono text-[10px] uppercase tracking-label text-faint">
+              {safeDisplayText(e.kind, 24)}
+            </span>
             <div className="ml-auto flex items-center gap-1">
               <Button variant="ghost" size="sm" title="Move up" onClick={() => move(i, -1)} disabled={disabled || i === 0}>
                 <ArrowUp className="size-3.5" />

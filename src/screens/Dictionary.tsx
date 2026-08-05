@@ -995,8 +995,12 @@ function SaveBanner({ result, reloadDisabled, onReload }: { result: PipelineSave
     .slice(0, 50)
     .filter((e) => !!e && typeof e === "object")
     .map((e) => ({
-      loc: typeof e.loc === "string" ? e.loc.slice(0, 300) : "",
-      msg: typeof e.msg === "string" ? e.msg.slice(0, 300) : "",
+      // `errors` is forwarded from the server as an opaque Value — unlike its `detail` sibling,
+      // which `transport/pipeline.rs` runs through `bounded_server_text`. A length slice alone
+      // still lets C1/bidi/U+2028 through into a banner that persists while the user edits, so
+      // these two get the same defanging every other server string on this screen has.
+      loc: safeDisplayText(e.loc, 300),
+      msg: safeDisplayText(e.msg, 300),
     }));
   if (result.status === 422 && errors.length) {
     return (

@@ -274,11 +274,21 @@ export default function Home() {
           />
         </div>
         <div className="grid grid-cols-3 border-t border-line font-mono text-[12px]">
-          <Readout label="model" value={shownBackend?.model ?? "—"} />
+          {/* `model` and `language` are peer-authored (`sanitizeBackends` type-checks them and
+              nothing more) and neither raises a security-review prompt, so both arrive on an
+              unattended pull. The same two values go through `safeDisplayText` on the Backends
+              screen; this readout tells the user which model and language the NEXT dictation
+              uses, so it gets the same treatment. */}
+          <Readout label="model" value={safeDisplayText(shownBackend?.model, 80) || "—"} />
           <Readout label="endpoint" value={shown?.endpoint ?? shownBackend?.endpoint ?? "—"} accent />
           <Readout
             label="language"
-            value={shown?.language?.trim() ? shown.language : (shownBackend?.language ?? "auto")}
+            value={
+              safeDisplayText(
+                shown?.language?.trim() ? shown.language : (shownBackend?.language ?? "auto"),
+                40,
+              ) || "auto"
+            }
             last
           />
         </div>

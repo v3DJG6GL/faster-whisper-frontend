@@ -619,7 +619,11 @@ export function SyncTab() {
     try {
       setImportResult(await importSettingsFile(path));
     } catch (e) {
-      setImportError(String(e));
+      // `import_settings_file`'s serde errors echo the offending input VERBATIM and untruncated
+      // (the config enums are plain unit variants, so `unknown_variant` quotes whatever the file
+      // said). That is attacker-authored text from a file that never passed validation, i.e. with
+      // no consent step in front of it. Defang it the way the `warnings` channel beside it is.
+      setImportError(safeDisplayText(String(e), 300));
     }
   };
 

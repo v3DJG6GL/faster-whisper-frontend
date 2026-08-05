@@ -356,7 +356,13 @@ export default function Overlay() {
       unlisten?.();
     };
   }, [clearHover]);
-  const detail = [state.language, state.mode].filter(Boolean).join(" · ");
+  // `language` is sync-authored and type-checked only — `sanitizeBackends`/`sanitizeProfiles`
+  // clamp neither its length nor its character set, and a language edit raises no security-review
+  // prompt, so it lands unattended. It is the one segment of the identity row with no cap of its
+  // own, in a `shrink-0` row next to the `min-w-0` cell that holds the live preview: unbounded, it
+  // squeezes out the very surface the user reads to supervise what is about to be typed. Same
+  // treatment as its `targetTitle` neighbour.
+  const detail = [safeDisplayText(state.language, 40), state.mode].filter(Boolean).join(" · ");
   // "On hover" mode for the Profile tag: only surface it once the chip is hover-revealed;
   // "always" (profileOnHover false) shows it whenever a tag was sent.
   const showProfile = !!state.profileTag && (!state.profileOnHover || hoverReveal);
@@ -711,7 +717,11 @@ export default function Overlay() {
   if (showProfile) {
     idGroups.push(
       <div key="tag" className="flex items-center">
-        <span className="max-w-[140px] truncate uppercase text-dim">{state.profileTag}</span>
+        {/* `chipTagFor` caps the tag at 10 code points but strips nothing, and `sanitizeProfiles`
+            checks id/name/hotkey, not `tag` — so this is the second unstripped leaf in the row. */}
+        <span className="max-w-[140px] truncate uppercase text-dim">
+          {safeDisplayText(state.profileTag, 40)}
+        </span>
         <AnimatePresence>
           {hoverReveal && detail && (
             <motion.span
