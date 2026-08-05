@@ -773,27 +773,34 @@ async function ensureListeners(): Promise<void> {
               // A cancel / fresh session landed during the await — this reject is the DISCARDED
               // session's, so don't recover/flash/teardown the freshly-started session B.
               if (insertCfg !== cfg) return;
-              // Believe the ANSWER, not the attempt — Q9's rule, applied to the arm it did not
-              // reach. The non-direct branch used to ASSERT the text was on the clipboard because
-              // Rust skips the restore on a failed paste. That assumption is false for the
-              // PRE-WRITE failures: `inject::paste` can return Err from `Clipboard::new()` and
-              // from `set_text`, both strictly before anything reaches the clipboard, and both
-              // reject this promise. Those failures are exactly correlated with a broken clipboard
-              // (Wayland with no data-control manager, headless/remote session, arboard init
-              // error) — the same environment failure that made the paste fail. So verify it the
-              // way the direct arm already does: a clipboard-only insert types nothing, so
-              // re-issuing it cannot duplicate text, and its `landed` is an answer rather than a
-              // guess.
-              try {
-                const copied = await injectText({ text: toType, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
-                flashError(
-                  copied.landed
-                    ? "Couldn’t insert the text — it’s on the clipboard to paste manually."
-                    : "Couldn’t insert the text.",
-                );
-              } catch (e2) {
-                console.error("clipboard fallback after failed live insert failed:", e2);
-                flashError("Couldn’t insert the text.");
+              if (t.method === "direct") {
+                // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
+                try {
+                  const copied = await injectText({ text: toType, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+                  flashError(
+                    copied.landed
+                      ? "Couldn’t type the text — it’s on the clipboard to paste manually."
+                      : "Couldn’t insert the text.",
+                  );
+                } catch (e2) {
+                  console.error("clipboard fallback after failed live insert failed:", e2);
+                  flashError("Couldn’t insert the text.");
+                }
+              } else {
+                // Paste failed, but the Rust paste path leaves the transcript on the clipboard on
+                // failure (skip-restore-on-failed-paste) AND the teardown below drops the snapshot
+                // WITHOUT restoring, so it stays recoverable — surface that (mirrors the direct
+                // fallback above and the end-of-session insert), instead of claiming nothing landed.
+                //
+                // NOT "verified" by re-issuing a clipboard insert. That looks like an upgrade and
+                // is a downgrade: `inject_text` short-circuits `method == "clipboard"` and returns
+                // `landed: true` UNCONDITIONALLY (`set_clipboard_persistent` is `-> ()` and merely
+                // spawns a thread, discarding any error), so the answer is a constant — `true` in
+                // exactly the broken-clipboard environment that motivates the doubt. Worse, the
+                // one input that CAN make it false is the own-window focus guard ahead of that
+                // branch, which would report a recoverable transcript as lost. A real fix needs
+                // Rust to report whether the clipboard write landed; recorded in the notes.
+                flashError("Couldn’t paste the text — it’s on the clipboard to paste manually.");
               }
               teardownAfterFatalInject();
               return;
@@ -1116,19 +1123,17 @@ async function ensureListeners(): Promise<void> {
             // direct typing needs an explicit copy — and that copy can ALSO fail. Tell the truth
             // either way (mirrors the per-phrase handler), so a double failure doesn't promise a
             // clipboard recovery that isn't there.
-            // Verified for EVERY method, not asserted for the non-direct ones — see the
-            // per-phrase twin above for why "paste failed, so Rust left it on the clipboard" is
-            // false whenever the failure came from `Clipboard::new()` or `set_text`. This is the
-            // call carrying the ENTIRE session transcript, so a false promise here loses the whole
-            // dictation with no other copy, and `teardownAfterFatalInject`'s
-            // `discardInjectionSnapshot()` then drops the snapshot without restoring on the same
-            // false premise. A clipboard-only insert synthesizes no keystrokes, so asking again
-            // costs nothing and cannot duplicate text.
-            let onClipboard = false;
-            try {
-              ({ landed: onClipboard } = await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
-            } catch (e2) {
-              console.error("clipboard fallback after failed insert failed:", e2);
+            // See the per-phrase twin for why the non-direct arm ASSERTS rather than asking:
+            // a clipboard-method `inject_text` returns `landed: true` unconditionally, so
+            // "verifying" here would replace a documented assumption with a constant — and would
+            // report a recoverable transcript as lost whenever the own-window guard fires.
+            let onClipboard = t.method !== "direct";
+            if (t.method === "direct") {
+              try {
+                ({ landed: onClipboard } = await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
+              } catch (e2) {
+                console.error("clipboard fallback after failed insert failed:", e2);
+              }
             }
             flashError(
               onClipboard

@@ -200,9 +200,14 @@ pub async fn run<F>(
     // accepted whole, which is the D12/E8/N1 truncation trade the owner has settled against.
     // Recorded in the notes as the alternative.)
     const MAX_WS_MESSAGE: usize = 48 * 1024 * 1024;
+    // ONLY `max_message_size` is overridden. `max_frame_size` keeps tungstenite's default, which is
+    // 16 MiB — NOT 64 MiB — and `read_frame` reserves on the DECLARED length before any payload
+    // arrives, so setting it to 48 MiB here would have tripled the free per-frame commit a server
+    // can demand with a one-byte body. That is the opposite of this change's purpose: the 32 MiB
+    // no-truncation argument above is about the assembled MESSAGE, and a message larger than one
+    // frame is simply fragmented, so the 16 MiB frame default costs nothing and is left in force.
     let ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
-        .max_message_size(Some(MAX_WS_MESSAGE))
-        .max_frame_size(Some(MAX_WS_MESSAGE));
+        .max_message_size(Some(MAX_WS_MESSAGE));
     let connect = tokio::time::timeout(
         CONNECT_TIMEOUT,
         tokio_tungstenite::connect_async_with_config(request, Some(ws_config), false),

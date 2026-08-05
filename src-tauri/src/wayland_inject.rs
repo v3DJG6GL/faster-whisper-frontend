@@ -673,6 +673,16 @@ mod imp {
                     let Some(spec) = key_spec_for(c, &charmap) else {
                         continue; // char not reachable on this layout — skip
                     };
+                    // Counted HERE, the moment this character is committed to being typed — not at
+                    // the bottom of the body. The `spec.lock` branch below (a capital reachable only
+                    // via a Caps Lock bracket: Swiss-German Ü/Ä/Ö, French È/É/À) ends in its own
+                    // `continue`, which jumped past a bottom-of-body increment — so those characters
+                    // cost ~38ms each, MORE than a normal one, while counting zero. The transcript
+                    // is remote and untrusted, so that is attacker-controllable rather than a
+                    // cadence wobble: an all-lock-capital transcript held the counter at 0, the
+                    // `typed > 0` term never became true, and the focus probe below never fired once
+                    // for the whole job — leaving exactly the sink this guard was added to close.
+                    typed += 1;
 
                     // Capital reachable ONLY via Caps Lock (Swiss-German Ü/Ä/Ö, È/É/À): press the
                     // base key with Caps Lock effectively ON so KWin capitalizes the lowercase
@@ -776,9 +786,6 @@ mod imp {
                         release!(KEY_CAPSLOCK);
                     }
                     tokio::time::sleep(Duration::from_millis(6)).await;
-                    // Counted only for characters this layout could actually reach — the `continue`
-                    // above skips the rest, and those cost no wall clock to pace the probe against.
-                    typed += 1;
                 }
                 // Same missing third check as the paste branch above. The in-loop guard is
                 // `&& emitted`, so for a bare-Enter job (`order == ["Return"]`) it is

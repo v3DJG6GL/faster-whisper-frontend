@@ -313,17 +313,23 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
                 continue;
             }
         };
+        // `accel` is as untrusted as the `p.id` beside it, and was left raw on every line that
+        // prints it — including the one whose id this run defanged. `de_hotkey` only sorts and
+        // dedups, `codes_to_accelerator` passes an unrecognized code straight through
+        // `code_to_token`'s `code.to_string()` fallthrough, so a synced profile's hotkey carries
+        // arbitrary text and length into the accelerator. Same log file, same forged-record harm.
+        let accel_log = crate::transport::bounded_server_text(&accel, 120);
         let shortcut = match Shortcut::from_str(&accel) {
             Ok(s) => s,
             Err(_) => {
-                tracing::warn!("[hotkey] '{accel}' is not a registerable global shortcut");
+                tracing::warn!("[hotkey] '{accel_log}' is not a registerable global shortcut");
                 continue;
             }
         };
         match gs.register(shortcut.clone()) {
             Ok(()) => {
                 tracing::info!(
-                    "[hotkey] registered '{accel}' → {} ({:?})",
+                    "[hotkey] registered '{accel_log}' → {} ({:?})",
                     crate::transport::bounded_server_text(&p.id, 120),
                     p.activation
                 );
@@ -337,25 +343,26 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
                     )
                     .is_some()
                 {
-                    tracing::warn!("[hotkey] '{accel}' is bound by more than one profile; last wins");
+                    tracing::warn!("[hotkey] '{accel_log}' is bound by more than one profile; last wins");
                 }
             }
-            Err(e) => tracing::warn!("[hotkey] could not register '{accel}' (X11 only): {e}"),
+            Err(e) => tracing::warn!("[hotkey] could not register '{accel_log}' (X11 only): {e}"),
         }
     }
 
     // The quick-add window shortcut (not a Profile) — same plugin registration path.
     if !quick_add_hotkey.is_empty() {
         match crate::config::codes_to_accelerator(quick_add_hotkey) {
+            // Same defang: `quickAddHotkey` is a synced code list with the same passthrough.
             Some(accel) => match Shortcut::from_str(&accel) {
                 Ok(shortcut) => match gs.register(shortcut.clone()) {
                     Ok(()) => {
-                        tracing::info!("[hotkey] registered '{accel}' → quick-add");
+                        tracing::info!("[hotkey] registered '{}' → quick-add", crate::transport::bounded_server_text(&accel, 120));
                         map.insert(shortcut, ShortcutTarget::OpenQuickAdd);
                     }
-                    Err(e) => tracing::warn!("[hotkey] could not register quick-add '{accel}' (X11 only): {e}"),
+                    Err(e) => tracing::warn!("[hotkey] could not register quick-add '{}' (X11 only): {e}", crate::transport::bounded_server_text(&accel, 120)),
                 },
-                Err(_) => tracing::warn!("[hotkey] quick-add '{accel}' is not a registerable global shortcut"),
+                Err(_) => tracing::warn!("[hotkey] quick-add '{}' is not a registerable global shortcut", crate::transport::bounded_server_text(&accel, 120)),
             },
             None => tracing::info!(
                 "[hotkey] quick-add chord {:?} isn't a global-shortcut chord (modifier-only / AltGr) — use the evdev backend or a desktop shortcut → `app --quick-add`",

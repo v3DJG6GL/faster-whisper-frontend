@@ -137,7 +137,18 @@ export function safeIdentityText(s: unknown, max = 80): string {
   // longer than `max` is cut inside the padding, the collapse then shrinks the remainder back under
   // the cap, and the marker never gets appended — leaving the render byte-identical to the
   // unguarded one. Collapsing first makes the example render "konsole evil".
-  const collapsed = (typeof s === "string" ? s : "").replace(/\s+/g, " ");
+  //
+  // "Whitespace" here is NOT just JS `\s`. That misses the invisible class this file already
+  // enumerates in `isInvisibleKeyChar` — U+2800 BRAILLE PATTERN BLANK, U+034F, the Mongolian and
+  // standard variation selectors, the tags block — every one of which renders as nothing and pads
+  // exactly like a space. `"kate" + 200×U+2800` reproduced the padding attack this function was
+  // written for, one character class over. Fold those to spaces first, then collapse, so the run
+  // shrinks and the real suffix survives the cut.
+  const raw = typeof s === "string" ? s : "";
+  const defanged = [...raw]
+    .map((ch) => (isInvisibleKeyChar(ch.codePointAt(0) ?? 0) ? " " : ch))
+    .join("");
+  const collapsed = defanged.replace(/\s+/g, " ");
   const t = safeDisplayText(collapsed, max + 1).trim();
   const chars = [...t];
   return chars.length > max ? chars.slice(0, max).join("") + "…" : t;

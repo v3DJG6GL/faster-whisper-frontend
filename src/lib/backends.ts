@@ -152,35 +152,45 @@ export function authorityOf(raw: string): { host: string; hasUserinfo: boolean }
  *  List-level by design. The per-item form was O(n^2) with an 80-codepoint scan per comparison,
  *  called from three unmemoized render bodies over a list `MAX_SYNCED_ENTRIES` bounds at 500 —
  *  measured at 233ms per render pass. One pass builds the collision counts, then labels. */
+/** The disambiguating separator. Defined once so the label builder and the forgery test below can
+ *  never drift apart — the whole guard rests on the two meaning the same string. */
+const SEP = " \u00b7 ";
+
 export function backendOptions(all: Backend[], max = 80): { value: string; label: string }[] {
   const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
   const labels = all.map((b) => safeDisplayText(b.name, max));
   const counts = new Map<string, number>();
   for (const l of labels) counts.set(norm(l), (counts.get(norm(l)) ?? 0) + 1);
+  // A name that already CONTAINS the separator is forced into the suffix branch whatever the
+  // counts say. That, and not a second counting pass, is what makes the suffix unforgeable: the
+  // collision test compares WHOLE labels, so an impostor renamed to `"Work · good.tld"` is
+  // distinct from the real `"Work"` and neither collides — leaving the real one bare while the
+  // impostor alone renders in the form that now MEANS "disambiguated, at good.tld". Suffixing it
+  // appends its REAL host, so the forgery reads `Work · good.tld · evil.tld` and gives itself away.
+  const forgesSuffix = (l: string) => l.includes(SEP);
   const out = all.map((b, i) => {
     const label = labels[i];
-    if (label && (counts.get(norm(label)) ?? 0) < 2) return { value: b.id, label };
+    if (label && (counts.get(norm(label)) ?? 0) < 2 && !forgesSuffix(label)) {
+      return { value: b.id, label };
+    }
     // The stored address, not the effective one: a per-device URL override is machine-local and
     // rarely set, and this only has to tell two same-named entries apart. A blanked serverUrl (one
     // `isStorableServerUrl` refused) has no host, so fall back to an id fragment.
     const host = authorityOf(b.serverUrl)?.host;
     const suffix = host || `#${b.id.slice(0, 8)}`;
-    return { value: b.id, label: label ? `${label} \u00b7 ${suffix}` : suffix };
+    return { value: b.id, label: label ? `${label}${SEP}${suffix}` : suffix };
   });
-  // Re-check the FINAL labels, because the pass above only tested the base ones \u2014 which left the
-  // suffix forgeable by the same untrusted `name` it defends against. `sanitizeBackends` neither
-  // length-caps nor filters `name` and the separator is a plain U+00B7 the display filter passes
-  // through, so a server renaming an approved second backend to the literal `"Work \u00b7 good.tld"`
-  // collides with nothing: the user's real backend renders as bare `Work` while the impostor
-  // renders in the form that now MEANS "disambiguated", carrying a trusted-looking host. The
-  // ` (no API key)` suffix some callers append lands after this function for the same reason.
-  // An id fragment is the one term a remote name cannot reproduce, so collisions that survive
-  // fall back to it.
+  // A final pass for labels that are STILL identical — same name AND same host, or two names that
+  // both forged their way into the suffix branch. The id fragment is the only term left that a
+  // remote name cannot usefully reproduce: it can print some `#aaaaaaaa`, but not one matching the
+  // id of the option it wants to be mistaken for, and a wrong fragment beside the right one is
+  // itself the tell. Callers append their own suffixes (` (no API key)`) AFTER this function, so
+  // the collision test can never be the last word on its own.
   const finalCounts = new Map<string, number>();
   for (const o of out) finalCounts.set(norm(o.label), (finalCounts.get(norm(o.label)) ?? 0) + 1);
   return out.map((o) =>
     (finalCounts.get(norm(o.label)) ?? 0) < 2
       ? o
-      : { value: o.value, label: `${o.label} \u00b7 #${o.value.slice(0, 8)}` },
+      : { value: o.value, label: `${o.label}${SEP}#${o.value.slice(0, 8)}` },
   );
 }
