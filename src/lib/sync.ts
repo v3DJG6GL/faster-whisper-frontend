@@ -56,6 +56,7 @@ import type {
   ThemeName,
 } from "./types";
 import type {
+  SyncBackends,
   SyncBlob,
   SyncDeviceInfo,
   SyncGeneral,
@@ -506,11 +507,18 @@ const U32_KEYS = new Set(["hoverRevealMs", "recordingsRetentionDays"]);
 function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(incoming as Record<string, unknown>)) {
-    const ref = (local as Record<string, unknown>)[k];
+    // OWN properties on both reads. `k` comes from `Object.entries` over the blob, and
+    // `JSON.parse` makes `__proto__` / `constructor` / `toString` ordinary own enumerable keys —
+    // while `in` and a bare index both consult the prototype chain, so those keys used to compare
+    // against `Object.prototype`'s members instead of against "absent". It fails CLOSED today
+    // (every prototype member is a function, and JSON cannot produce one, so the `typeof`
+    // mismatch arm swallows them) — this is the last inbound site still reading that way, which
+    // is exactly the hygiene `own.ts` exists for and `securityChanges` was converted to.
+    const ref = ownProp(local as Record<string, unknown>, k);
     // A key this version does not know: pass it through untouched, `null` included. Rust ignores
     // unrecognised fields, so it cannot wedge the parse, and swallowing it would erase a newer
     // peer's data on this device's next push.
-    if (!(k in (local as Record<string, unknown>))) {
+    if (!hasOwn(local as Record<string, unknown>, k)) {
       out[k] = v;
       continue;
     }
@@ -721,8 +729,16 @@ export async function applyBlob(
     let nextProfiles = st.profiles;
     let nextAppRules = st.appRules;
 
-    if (cats.general && blob.general) {
-      const { theme, ...incoming } = blob.general;
+    // `isPlainObject`, not truthiness: Rust forwards the blob as opaque JSON (`transport/sync.rs`
+    // — "Blobs pass through as opaque JSON"), so `general` arrives as whatever the server put
+    // there. A STRING is truthy, and object rest-destructuring boxes it into one key per code
+    // unit — so a 4 MiB string (the `SYNC_MAX_BODY` ceiling) becomes 4,194,304 keys, twice over
+    // for the two rest-spreads, and `typedLike` then copies every one of them into the store
+    // because "0", "1", … are not in `settings.general`. This is Q11's `backends.secrets` fix
+    // applied to the two containers it never reached, on a pull that runs unattended at startup
+    // and on every window focus.
+    if (cats.general && isPlainObject(blob.general)) {
+      const { theme, ...incoming } = blob.general as SyncGeneral;
       // Machine-local fields are excluded from SyncGeneral by TYPE only, which stops us sending
       // them but not a peer (or a hand-authored import file) from sending them to us — and the
       // import dialog promises the user "evdev is never imported". Enforce it on the way in.
@@ -766,7 +782,9 @@ export async function applyBlob(
         },
       };
     }
-    if (cats.recording && blob.recording) {
+    // Same shape check, same reason as the `general` arm above — `blob.recording` reaches
+    // `typedLike` directly.
+    if (cats.recording && isPlainObject(blob.recording)) {
       nextSettings = {
         ...nextSettings,
         recording: {
@@ -1077,16 +1095,28 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
     // switch or a manual reset. A plaintext bundle of every key stayed there indefinitely.
     await clearSnapshotSecrets();
   }
+  // `isPlainObject` on BOTH containers, for the reason the `ids` line above already gives — but
+  // this is the half that PERSISTS. `state.snapshot?.backends?.secrets` reads `undefined` when
+  // `backends` is a server-supplied STRING, so the guarded `ids` path above is silently skipped
+  // and the unguarded spread below expands it to one key per code unit. A 4 MiB `backends` string
+  // becomes a ~57 MB sync-state.json, which `initSync` re-parses into the 3-way merge base at
+  // every launch — so `catEqual`/`stableStringify` then sort 4M keys on every merge and the next
+  // `persistState` re-spreads the exploded object. One pull otherwise degrades the install
+  // permanently, long after the blob that caused it is gone.
+  const snapshot = isPlainObject(state.snapshot) ? (state.snapshot as SyncBlob) : undefined;
   const onDisk: SyncState = {
     ...state,
-    snapshot: state.snapshot
+    snapshot: snapshot
       ? {
-          ...state.snapshot,
-          backends: state.snapshot.backends
-            ? { ...state.snapshot.backends, secrets: undefined }
-            : state.snapshot.backends,
+          ...snapshot,
+          // A non-object `backends` is DROPPED rather than passed through: it can only have come
+          // from a hostile/broken server, it is unusable as a merge base either way, and keeping
+          // it is what re-explodes it on the next `persistState`.
+          backends: isPlainObject(snapshot.backends)
+            ? ({ ...snapshot.backends, secrets: undefined } as SyncBackends)
+            : undefined,
         }
-      : state.snapshot,
+      : undefined,
   };
   await saveSyncState(onDisk).catch((e) => console.error("saveSyncState failed", e));
 }
