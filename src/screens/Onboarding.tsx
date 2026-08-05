@@ -64,11 +64,25 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     // backend, leaving one of the two keys orphaned in the OS wallet.
     if (busy) return;
     const serverUrl = normalizeUrl(url);
+    // Snapshotted alongside the url so the post-await check below compares BOTH terms the test
+    // was run with — a corrected key matters as much as a corrected host.
+    const keyAtTest = key;
     if (!serverUrl.replace(/^https?:\/\//i, "")) return;
     setBusy(true);
     setError(null);
     try {
       const res = await testConnection({ serverUrl, apiKey: key || undefined });
+      // Live-target guard, the twin of the one `Backends.ConnectStep.testAndContinue` already has
+      // for exactly this reason. Both inputs stay editable for the whole (unbounded,
+      // network-timeout-length) test while `busy` blocks a re-run, so a user who mistypes a host,
+      // presses Enter and corrects the field is FORCED to wait — and the stale result then won
+      // unconditionally: a backend for the ABANDONED url was minted, the typed API key written to
+      // the keyring under it, `syncPull` run against it, and its restore offer presented while the
+      // on-screen field showed the corrected host. Accepting that restore runs
+      // `applyBlob(blob, ALL_ON)` and binds sync to that server.
+      if (normalizeUrl(url) !== serverUrl || key !== keyAtTest) {
+        return;
+      }
       if (!res.ok) {
         setError(res.error || "Couldn’t reach the server.");
         return;

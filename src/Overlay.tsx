@@ -4,7 +4,7 @@ import { Target, X } from "lucide-react";
 import { Waveform } from "@/components/Waveform";
 import { setChipHitRegion, chipPointerOver, emitOverlayAction, showMainAtScreen } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
+import { safeDisplayText, safeIdentityText, stripControlChars } from "@/lib/sanitize";
 import { quickLaunchMeta } from "@/lib/screens";
 import { newSpeakMemo, stepSpeaking } from "@/lib/speaking";
 import { dictationVisual, isActiveDictation, isProcessing, type DictationTone } from "@/lib/dictationVisual";
@@ -785,7 +785,14 @@ export default function Overlay() {
               control characters") holds for Cc but not for U+202E/U+2066/U+200B — and this is the
               segment that tells the user WHERE the transcript is about to be typed, sitting right
               next to the blocked / not-a-text-field trust signal. */}
-          {safeDisplayText(state.targetTitle, 130)}
+          {/* `safeIdentityText`, not the plain display filter: this is an IDENTITY beside a trust
+              decision, which is the distinction Q1 drew and Q21 fixed the helper for. The display
+              filter truncates with no marker and does not collapse whitespace, and the span is
+              `truncate` (`white-space: nowrap` suppresses wrapping but still COLLAPSES runs) — so
+              `"kate" + 190 spaces + "evil-term"` cuts inside the padding and renders as exactly
+              `kate`. `AppRules` already renders this same class of string the defanged way; the
+              chip disagreed with it about the same app. */}
+          {safeIdentityText(state.targetTitle, 130)}
         </span>
         {targetWarn && expanded && <span className="whitespace-nowrap">· {skipLabel}</span>}
       </span>,

@@ -157,7 +157,7 @@ export function backendOptions(all: Backend[], max = 80): { value: string; label
   const labels = all.map((b) => safeDisplayText(b.name, max));
   const counts = new Map<string, number>();
   for (const l of labels) counts.set(norm(l), (counts.get(norm(l)) ?? 0) + 1);
-  return all.map((b, i) => {
+  const out = all.map((b, i) => {
     const label = labels[i];
     if (label && (counts.get(norm(label)) ?? 0) < 2) return { value: b.id, label };
     // The stored address, not the effective one: a per-device URL override is machine-local and
@@ -167,4 +167,20 @@ export function backendOptions(all: Backend[], max = 80): { value: string; label
     const suffix = host || `#${b.id.slice(0, 8)}`;
     return { value: b.id, label: label ? `${label} \u00b7 ${suffix}` : suffix };
   });
+  // Re-check the FINAL labels, because the pass above only tested the base ones \u2014 which left the
+  // suffix forgeable by the same untrusted `name` it defends against. `sanitizeBackends` neither
+  // length-caps nor filters `name` and the separator is a plain U+00B7 the display filter passes
+  // through, so a server renaming an approved second backend to the literal `"Work \u00b7 good.tld"`
+  // collides with nothing: the user's real backend renders as bare `Work` while the impostor
+  // renders in the form that now MEANS "disambiguated", carrying a trusted-looking host. The
+  // ` (no API key)` suffix some callers append lands after this function for the same reason.
+  // An id fragment is the one term a remote name cannot reproduce, so collisions that survive
+  // fall back to it.
+  const finalCounts = new Map<string, number>();
+  for (const o of out) finalCounts.set(norm(o.label), (finalCounts.get(norm(o.label)) ?? 0) + 1);
+  return out.map((o) =>
+    (finalCounts.get(norm(o.label)) ?? 0) < 2
+      ? o
+      : { value: o.value, label: `${o.label} \u00b7 #${o.value.slice(0, 8)}` },
+  );
 }

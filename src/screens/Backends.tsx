@@ -13,7 +13,7 @@ import type { SyncRemoteState } from "@/lib/syncTypes";
 import { ALL_CATEGORIES } from "@/lib/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
 import { authorityOf, effectiveServerUrl, insecureUrlWarning, nameFromUrl, normalizeUrl } from "@/lib/backends";
-import { safeDisplayText } from "@/lib/sanitize";
+import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { RestoreFromServer, relTime } from "./SettingsSync";
@@ -60,6 +60,11 @@ function Editor({
   const setUrlOverride = useApp((s) => s.setUrlOverride);
   const [b, setB] = useState<Backend>(initial);
   const [key, setKey] = useState(initialKey ?? "");
+  // The address this editor's requests ACTUALLY go to — the same rule `effectiveServerUrl`
+  // applies, but reactive, so a change to "Address on this device" re-runs the effects below.
+  // `runTest`, `liveTarget`, the list card and every transcription already resolve the override;
+  // the probes driven from here did not, which is what sent the API key to the canonical host.
+  const effUrl = urlOverride.trim() || b.serverUrl;
   // Debounce the typed key AND the server URL before they drive the best-effort capability /
   // override-profile lookups, so typing either field doesn't fire a burst of requests on every
   // keystroke (the URL drives two lookups — getCapabilities + listOverrideProfiles — per char).
@@ -68,11 +73,20 @@ function Editor({
     const t = setTimeout(() => setDebouncedKey(key), 400);
     return () => clearTimeout(t);
   }, [key]);
-  const [debouncedUrl, setDebouncedUrl] = useState(initial.serverUrl);
+  // Debounced on the EFFECTIVE address. This value feeds `useOverrideContext`, whose three probes
+  // (getCapabilities, getOverrideProfile, listOverrideProfiles) carry the bearer credential — the
+  // typed key, or, when the field is blank, the STORED keyring key Rust resolves for this id. On
+  // the canonical url those requests went to the very host a user had redirected this backend away
+  // from, and the override-profile names the picker offered came from that host while the name
+  // chosen was then sent to the other one. `Profiles.tsx` already resolves the override for
+  // exactly this reason, and Q13/J8 fixed the same divergence on `runTest` and the card's address.
+  const [debouncedUrl, setDebouncedUrl] = useState(
+    () => urlOverride.trim() || initial.serverUrl,
+  );
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedUrl(b.serverUrl), 400);
+    const t = setTimeout(() => setDebouncedUrl(effUrl), 400);
     return () => clearTimeout(t);
-  }, [b.serverUrl]);
+  }, [effUrl]);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ConnectionInfo | null>(initialResult ?? null);
   // Drop a connection-test result once the tested target changes (URL or key edited): the in-flight
@@ -87,7 +101,15 @@ function Editor({
       return;
     }
     setResult(null);
-  }, [b.serverUrl, key]);
+    // Keyed on the EFFECTIVE address, not the canonical one. Q13 moved `liveTarget` and
+    // `runTest` onto `effectiveServerUrl` (which prefers `settings.sync.urlOverrides`) precisely
+    // because the canonical url is not what gets tested — but this effect, whose job is to DROP a
+    // committed result once the tested target changes, kept the two terms that fix declared
+    // insufficient. So: run Test, get "Connected · <version> · <username>", then edit "Address on
+    // this device" in the same editor (it applies live, no save) — the store's cached connection
+    // is dropped, but this local `result` survived, so the version and username of the OLD server
+    // stayed on screen next to the NEW address and kept gating the decode-override editor.
+  }, [effUrl, key]);
   // Saving the API key to the OS keyring can fail (locked/absent Secret Service). Track it so we
   // keep the editor open with an error instead of persisting a backend whose "key" badge claims a
   // key that was never stored.
@@ -814,7 +836,11 @@ export default function Backends() {
                             rename raises no security change, so a name arrives on this card from
                             an unattended pull with no prompt — and bidi marks in it can make one
                             server read as another on the screen used to check where audio goes. */}
-                        {safeDisplayText(b.name, 80)}
+                        {/* `safeIdentityText`, like the address line below: the display filter
+                            truncates with no marker and leaves whitespace runs to CSS, so
+                            `"Work" + 100 spaces + "Evil"` renders as exactly `Work` on the very
+                            card this comment calls the audit surface. */}
+                        {safeIdentityText(b.name, 80)}
                       </span>
                       <Badge tone="accent">{b.endpoint}</Badge>
                       <Badge>{safeDisplayText(languageLabel(b.language), 40)}</Badge>
@@ -833,8 +859,8 @@ export default function Backends() {
                           name one host while the audio and the bearer key went to another. Show
                           the address actually used, and say so when it isn't the configured one. */}
                       <span className="truncate" title={safeDisplayText(effectiveUrl(b), 200)}>
-                        {safeDisplayText(authorityOf(effectiveUrl(b))?.host, 80) ||
-                          safeDisplayText(effectiveUrl(b), 80)}
+                        {safeIdentityText(authorityOf(effectiveUrl(b))?.host, 80) ||
+                          safeIdentityText(effectiveUrl(b), 80)}
                       </span>
                       {authorityOf(effectiveUrl(b))?.hasUserinfo && (
                         <Badge tone="warn">address hides the real host</Badge>

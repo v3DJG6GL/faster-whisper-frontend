@@ -102,6 +102,9 @@ let seenDoc = "";
 // Documents completed before a hard break, accumulated for the "stop"-timing single
 // insert. Live mode types as it goes, so it doesn't read this back.
 let bankedDoc = "";
+/** Ceiling on `bankedDoc`, matching Rust's `MAX_SIDECAR_BYTES` on the same per-boundary
+ *  accumulation — see the bank site for why the frontend copy needed its own. */
+const MAX_BANKED_DOC = 8 * 1024 * 1024;
 // Clipboard-only phrase boundary. committedDoc grows across phrases until the backend's long-silence
 // hard break — which can be many seconds away, far too late to feel like "just my last phrase". So we
 // detect the phrase boundary client-side: `clipBaseline` is the committedDoc text already copied as
@@ -770,25 +773,27 @@ async function ensureListeners(): Promise<void> {
               // A cancel / fresh session landed during the await — this reject is the DISCARDED
               // session's, so don't recover/flash/teardown the freshly-started session B.
               if (insertCfg !== cfg) return;
-              if (t.method === "direct") {
-                // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
-                try {
-                  const copied = await injectText({ text: toType, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
-                  flashError(
-                    copied.landed
-                      ? "Couldn’t type the text — it’s on the clipboard to paste manually."
-                      : "Couldn’t insert the text.",
-                  );
-                } catch (e2) {
-                  console.error("clipboard fallback after failed live insert failed:", e2);
-                  flashError("Couldn’t insert the text.");
-                }
-              } else {
-                // Paste failed, but the Rust paste path leaves the transcript on the clipboard on
-                // failure (skip-restore-on-failed-paste) AND the teardown below drops the snapshot
-                // WITHOUT restoring, so it stays recoverable — surface that (mirrors the direct
-                // fallback above and the end-of-session insert), instead of claiming nothing landed.
-                flashError("Couldn’t paste the text — it’s on the clipboard to paste manually.");
+              // Believe the ANSWER, not the attempt — Q9's rule, applied to the arm it did not
+              // reach. The non-direct branch used to ASSERT the text was on the clipboard because
+              // Rust skips the restore on a failed paste. That assumption is false for the
+              // PRE-WRITE failures: `inject::paste` can return Err from `Clipboard::new()` and
+              // from `set_text`, both strictly before anything reaches the clipboard, and both
+              // reject this promise. Those failures are exactly correlated with a broken clipboard
+              // (Wayland with no data-control manager, headless/remote session, arboard init
+              // error) — the same environment failure that made the paste fail. So verify it the
+              // way the direct arm already does: a clipboard-only insert types nothing, so
+              // re-issuing it cannot duplicate text, and its `landed` is an answer rather than a
+              // guess.
+              try {
+                const copied = await injectText({ text: toType, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+                flashError(
+                  copied.landed
+                    ? "Couldn’t insert the text — it’s on the clipboard to paste manually."
+                    : "Couldn’t insert the text.",
+                );
+              } catch (e2) {
+                console.error("clipboard fallback after failed live insert failed:", e2);
+                flashError("Couldn’t insert the text.");
               }
               teardownAfterFatalInject();
               return;
@@ -874,7 +879,17 @@ async function ensureListeners(): Promise<void> {
     // Always bank the finished document for the "stop"-timing single insert (it reads bankedDoc
     // back). Typed live ignores it (resets committedDoc/injectedText below and appends from there),
     // and clipboard-only now ignores it too (it copies just the current window per phrase).
-    if (committedDoc) bankedDoc += committedDoc + sep;
+    // Bounded, the mirror of Rust's MAX_SIDECAR_BYTES on the same accumulation. Rust caps each
+    // `final` field at MAX_TRANSCRIPT and caps the banked sidecar `Vec` at 8 MiB precisely because
+    // "a server looping final/boundary grew this without limit" — but this string, the frontend's
+    // copy of the same thing, had no ceiling and no frame-count limit. It grows once per boundary
+    // frame for the whole session in the shared WebKitGTK renderer, and at `closed` a second full
+    // copy is allocated, crossed over the IPC in one call, and on direct typing synthesized key by
+    // key. Same budget and same trade as Rust's: drop the overflow rather than the session, so a
+    // real dictation (an hour is ~50 KB) is untouched and what was already typed still stands.
+    if (committedDoc && bankedDoc.length + committedDoc.length + sep.length <= MAX_BANKED_DOC) {
+      bankedDoc += committedDoc + sep;
+    }
     committedDoc = "";
     clipBaseline = "";
     injectedText = "";
@@ -1101,13 +1116,19 @@ async function ensureListeners(): Promise<void> {
             // direct typing needs an explicit copy — and that copy can ALSO fail. Tell the truth
             // either way (mirrors the per-phrase handler), so a double failure doesn't promise a
             // clipboard recovery that isn't there.
-            let onClipboard = t.method !== "direct";
-            if (t.method === "direct") {
-              try {
-                ({ landed: onClipboard } = await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
-              } catch (e2) {
-                console.error("clipboard fallback after failed insert failed:", e2);
-              }
+            // Verified for EVERY method, not asserted for the non-direct ones — see the
+            // per-phrase twin above for why "paste failed, so Rust left it on the clipboard" is
+            // false whenever the failure came from `Clipboard::new()` or `set_text`. This is the
+            // call carrying the ENTIRE session transcript, so a false promise here loses the whole
+            // dictation with no other copy, and `teardownAfterFatalInject`'s
+            // `discardInjectionSnapshot()` then drops the snapshot without restoring on the same
+            // false premise. A clipboard-only insert synthesizes no keystrokes, so asking again
+            // costs nothing and cannot duplicate text.
+            let onClipboard = false;
+            try {
+              ({ landed: onClipboard } = await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
+            } catch (e2) {
+              console.error("clipboard fallback after failed insert failed:", e2);
             }
             flashError(
               onClipboard

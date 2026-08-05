@@ -675,6 +675,18 @@ export default function Dictionary() {
       return;
     }
     let cancelled = false;
+    // Join the SAME generation counter `load()` uses. This effect fetches the same endpoint into
+    // the same store slice but had only its own `cancelled` flag, which is inert against a
+    // `load()` already in flight — and `loadGen`'s own comment states the invariant it was added
+    // for: "the backend-identity guard alone can't disambiguate two overlapping load() calls for
+    // the SAME backend". Its deps include the effective address, so repointing the SELECTED
+    // backend mid-Refresh let this effect commit the NEW server's rules and the older `load()`
+    // then overwrite `fetchRes`/`rules`/`edits`/`base`/`editableFields` with the OLD server's —
+    // after which `save()` PATCHes the new host with the old host's slugs and `_fp` fingerprints,
+    // under the write gate (`editable_fields`, `locked`, `role`) belonging to the other server.
+    loadGen.current += 1;
+    const myGen = loadGen.current;
+    const stale = () => cancelled || myGen !== loadGen.current;
     setLoading(true);
     setResult(null);
     // Reset the recent-word pool before refetching so a backend switch can't strand backend A's
@@ -686,7 +698,7 @@ export default function Dictionary() {
       backendId: backend.id,
     })
       .then((res) => {
-        if (cancelled) return;
+        if (stale()) return;
         setFetchRes(res);
         const list = ruleListOf(res);
         setRules(list);
@@ -700,14 +712,14 @@ export default function Dictionary() {
       // leave the screen stuck on `loading` + an unhandled rejection. Mirror the getRecentWords
       // sibling's .catch and clear loading so the empty/error state can render.
       .catch(() => {
-        if (!cancelled) setLoading(false);
+        if (!stale()) setLoading(false);
       });
     getRecentWords({
       serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
       backendId: backend.id,
     })
       .then((rw) => {
-        if (cancelled) return;
+        if (stale()) return;
         setRecentWords((rw.words ?? []).slice(0, MAX_RECENT_WORDS));
         setRecentMax(rw.max ?? undefined);
       })
