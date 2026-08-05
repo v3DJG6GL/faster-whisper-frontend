@@ -4,7 +4,7 @@ import { Target, X } from "lucide-react";
 import { Waveform } from "@/components/Waveform";
 import { setChipHitRegion, chipPointerOver, emitOverlayAction, showMainAtScreen } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { safeDisplayText } from "@/lib/sanitize";
+import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { quickLaunchMeta } from "@/lib/screens";
 import { newSpeakMemo, stepSpeaking } from "@/lib/speaking";
 import { dictationVisual, isActiveDictation, isProcessing, type DictationTone } from "@/lib/dictationVisual";
@@ -768,7 +768,14 @@ export default function Overlay() {
           )}
           title={targetWarn ? skipLabel : undefined}
         >
-          {state.targetTitle}
+          {/* The only remaining render of remote-authored identity that was not defanged. On
+              Linux `atspi_guard` already runs the app name through `bounded_server_text`; on
+              Windows `fold_foreground` sets `title` straight from `exe_basename`, which only
+              lowercases and strips `.exe`. H13's refutation ("an NTFS filename cannot contain
+              control characters") holds for Cc but not for U+202E/U+2066/U+200B — and this is the
+              segment that tells the user WHERE the transcript is about to be typed, sitting right
+              next to the blocked / not-a-text-field trust signal. */}
+          {safeDisplayText(state.targetTitle, 130)}
         </span>
         {targetWarn && expanded && <span className="whitespace-nowrap">· {skipLabel}</span>}
       </span>,
@@ -947,7 +954,15 @@ export default function Overlay() {
                                 {/* Tail only: the chip is right-pinned and ~800px wide, so this is
                                     what was visible anyway — but the string is server-streamed and
                                     unbounded, and it re-lays-out several times a second. */}
-                                {state.partial.slice(-400)}
+                                {/* `transport::stream` bounds the transcript with `bounded`, NOT
+                                    `bounded_server_text`, deliberately — a transcript legitimately
+                                    contains newlines. So Cf/bidi survive to the frontend by design,
+                                    and this preview exists precisely so the user can supervise what
+                                    is about to be typed. Without this the previewed copy can be
+                                    reordered while the copy that actually lands is cleaned by
+                                    `sanitize_injected`. `stripControlChars` is that function's TS
+                                    mirror and keeps Tab/LF, so wrapping is unaffected. */}
+                                {stripControlChars(state.partial.slice(-400))}
                               </span>
                             </div>
                             {faded && (

@@ -10,7 +10,7 @@ import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/UsageStats";
 import { SetupChecklist } from "@/components/SetupChecklist";
 import { startLive, stopLive, cancelLive, requestStopIfStarting } from "@/lib/streaming";
-import { safeDisplayText } from "@/lib/sanitize";
+import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile } from "@/lib/dictation";
 import type { Backend, Profile } from "@/lib/types";
 
@@ -84,7 +84,10 @@ const MAX_PARTIAL_CHARS = 4000;
 
 function LiveTranscriptText() {
   const partial = useApp((s) => s.partial);
-  return <>{partial.slice(-MAX_PARTIAL_CHARS) || <span className="text-faint">…</span>}</>;
+  // Cf/bidi survive the Rust bound by design (see the Overlay twin): the transcript keeps its
+  // newlines, so `bounded` is used instead of `bounded_server_text`. Strip them here, at the one
+  // surface whose whole purpose is letting the user supervise the text before it is typed.
+  return <>{stripControlChars(partial.slice(-MAX_PARTIAL_CHARS)) || <span className="text-faint">…</span>}</>;
 }
 
 export default function Home() {
