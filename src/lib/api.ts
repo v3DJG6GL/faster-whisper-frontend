@@ -485,9 +485,14 @@ export async function injectText(args: {
    *  a second earlier can't be applied to a different window. Omit when there is no identified
    *  target — an unidentified window deliberately still falls through. */
   expectAppId?: string | null;
-}): Promise<void> {
-  if (!isTauri) return;
-  await invoke("inject_text", {
+  /** Resolves TRUE when the text landed — typed, pasted, or deliberately left on the clipboard —
+   *  and FALSE only when Rust skipped the whole insert because one of our own windows held focus.
+   *  Callers must not advance their typed baseline on a false: the skip can happen at the SINK,
+   *  after the caller already resolved a real other window, and there is nothing on the clipboard
+   *  to recover from. Non-Tauri (browser dev) reports true — there is no injection to miss. */
+}): Promise<boolean> {
+  if (!isTauri) return true;
+  return await invoke<boolean>("inject_text", {
     text: args.text,
     method: args.method,
     autoEnter: args.autoEnter,

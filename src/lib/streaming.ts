@@ -735,8 +735,9 @@ async function ensureListeners(): Promise<void> {
             // catch (631) guards; beginInjection was the lone await between guard and paste left open.
             // Any snapshot taken is restored by cancelLive's unconditional chained endInjection.
             if (insertCfg !== cfg) return;
+            let landed = true;
             try {
-              await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+              landed = await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
             } catch (e) {
               // A live phrase insert failed: surface it, then tear the session down (mirrors
               // stream://error) so the mic + system-mute don't leak — once status is "error" no
@@ -770,14 +771,23 @@ async function ensureListeners(): Promise<void> {
             // A real paste just clobbered the user's clipboard with the transcript → it owes a
             // restore at phrase end. Direct typing never touches the clipboard, so don't — and our own
             // window (guard-skipped, !t.isSelf) clobbered nothing either.
-            if (t.method === "paste" && !t.isSelf) {
+            //
+            // `landed` is the SINK's answer, and `t.isSelf` is the answer we resolved ~1s earlier.
+            // Both are needed. `t.isSelf` covers a start-time skip; `landed` covers the case this
+            // block used to get wrong — our own window taking focus DURING the insert, where
+            // `t.isSelf` is false because we really did resolve another window, and Rust's skip is
+            // indistinguishable from success. Booking that phrase advanced `injectedText`, so the
+            // next final's common-prefix slice skipped it and it was dropped for good — with a
+            // green "Inserted" pulse claiming otherwise, and nothing on the clipboard to recover
+            // from, because the sink skip returns before any clipboard write.
+            const delivered = !t.isSelf && landed;
+            if (t.method === "paste" && delivered) {
               clipDirty = true;
               clipHoldsOurs = true;
             }
-            // Advance the TYPED baseline + pulse ONLY when the phrase actually landed (NOT our own
-            // window, where the guard typed nothing): leaving it un-advanced re-types the skipped
-            // text after a focus switch, and a green pulse there would be a false confirmation.
-            if (!t.isSelf) {
+            // Advance the TYPED baseline + pulse ONLY when the phrase actually landed: leaving it
+            // un-advanced re-sends the skipped text with the next insert, which is the whole point.
+            if (delivered) {
               injectedText = target;
               sessionTyped = true;
               signalInsert("typed");
@@ -1009,8 +1019,9 @@ async function ensureListeners(): Promise<void> {
           // refocused window. Identity-check, mirroring the post-inject guard below + the live tasks;
           // a normal stop keeps insertCfg===cfg so the end-of-session insert still lands.
           if (insertCfg !== cfg) return;
+          let landed = true;
           try {
-            await injectText({
+            landed = await injectText({
               text,
               method: t.method,
               autoEnter: cfg.autoEnter,
@@ -1055,10 +1066,33 @@ async function ensureListeners(): Promise<void> {
           // session's globals — mirrors the live per-phrase tasks' post-inject guard.
           if (insertCfg !== cfg) return;
           // Single end-of-session insert — record the outcome for the done marker (no separate
-          // per-phrase pulse; this IS the whole session).
-          if (!t.isSelf) {
+          // per-phrase pulse; this IS the whole session). Same `landed` term as the per-phrase
+          // path, and it matters more here: this ONE call carries the entire transcript, so a sink
+          // skip booked as success stamped a "typed" done marker on a dictation that went nowhere
+          // — while every other failure mode on this path deliberately copies the text to the
+          // clipboard and says so.
+          if (!t.isSelf && landed) {
             if (t.method === "clipboard") sessionClipboard = true;
             else sessionTyped = true;
+          } else if (!t.isSelf && !landed) {
+            // Our own window took focus mid-insert: nothing was typed and — unlike every other
+            // failure on this path — nothing reached the clipboard either, because the sink skip
+            // returns before any write. Offer the same recovery, but believe the ANSWER rather than
+            // the attempt: this retry goes back through the same own-window guard, so while our
+            // window still holds focus it writes nothing and reports false. Claiming a clipboard
+            // recovery there would be the false confirmation this whole fix removes.
+            let onClipboard = false;
+            try {
+              onClipboard = await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+            } catch (e2) {
+              console.error("clipboard fallback after a sink-skipped insert failed:", e2);
+            }
+            if (onClipboard) {
+              sessionClipboard = true;
+              flashError("Focus moved to this app — the transcript is on the clipboard to paste manually.");
+            } else {
+              flashError("Focus moved to this app — nothing was inserted.");
+            }
           }
         });
         settleToIdleAfterInjection(startedAt, cfg);

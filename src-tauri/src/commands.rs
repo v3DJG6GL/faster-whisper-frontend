@@ -1513,7 +1513,16 @@ pub async fn inject_text(
     // `None` = no identified target (our own window, or a cold a11y bridge), which skips the
     // re-check below.
     expect_app_id: Option<String>,
-) -> Result<(), String> {
+    // `Ok(true)` = the text LANDED (typed, pasted, or deliberately left on the clipboard).
+    // `Ok(false)` = nothing was delivered and nothing was written anywhere, so the caller must NOT
+    // advance its typed baseline. Exactly two sites return `false`: the own-window guards, at entry
+    // and at the sink. Everything else returns `true`, including both clipboard degrades (the
+    // clipboard IS a landing) and the cancel paths (the caller discards that phrase on its own).
+    //
+    // The default for any future early return must be `true`. `false` means "send it again", and a
+    // wrong `false` re-types a phrase the user already has — visibly duplicated text, which is
+    // worse than the silent drop this return value exists to fix.
+) -> Result<bool, String> {
     // Strip control characters (except Tab/LF; CR is normalized to LF) from the server-transcribed
     // text before it reaches ANY injection path — clipboard-only, Wayland paste, or X11 paste/direct
     // — so a malicious/garbled server can't smuggle terminal-escape sequences onto the clipboard or
@@ -1540,7 +1549,7 @@ pub async fn inject_text(
         .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
     {
         tracing::info!("[inject] skipped: our own window holds focus");
-        return Ok(());
+        return Ok(false);
     }
     // Clipboard-only: put the text on the clipboard and inject NO keystrokes, so it can't
     // fire actions in the wrong window — the user pastes it themselves. No modifier gate needed
@@ -1549,7 +1558,7 @@ pub async fn inject_text(
         if !text.is_empty() {
             crate::inject::set_clipboard_persistent(&text);
         }
-        return Ok(());
+        return Ok(true);
     }
     // Nothing to type and no Enter to send → bail before the keystroke paths. Without this, the
     // Wayland PASTE branch below would set_clipboard("") — clobbering the user's clipboard with an
@@ -1557,7 +1566,7 @@ pub async fn inject_text(
     // emitted only control chars). Mirrors the X11 inject::inject guard. (empty + auto_enter still
     // falls through below to send the bare Enter.)
     if text.is_empty() && !auto_enter {
-        return Ok(());
+        return Ok(true);
     }
     // Pasting into a remote-desktop client (mstsc & co) needs different clipboard handling: the
     // local clipboard reaches the remote host ASYNCHRONOUSLY, so the paste gets a longer settle
@@ -1624,7 +1633,7 @@ pub async fn inject_text(
         .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
     {
         tracing::info!("[inject] skipped at the sink: our own window took focus mid-injection");
-        return Ok(());
+        return Ok(false);
     }
     // The per-app rule — including "never type into this app" — was resolved against the window
     // focused when this insert was QUEUED, and getting here takes real time: a focus IPC, up to
@@ -1672,12 +1681,12 @@ pub async fn inject_text(
         if crate::inject::injection_cancelled(epoch) && !crate::inject::cancel_wants_recovery(epoch)
         {
             tracing::info!("[inject] diverted to clipboard, but cancelled first — skipping");
-            return Ok(());
+            return Ok(true);
         }
         if !text.is_empty() {
             crate::inject::set_clipboard_persistent(&text);
         }
-        return Ok(());
+        return Ok(true);
     }
     // Now that the method is final and focus has been read once, at the sink.
     let remote_target = method != "direct"
@@ -1772,7 +1781,7 @@ pub async fn inject_text(
             if crate::inject::injection_cancelled(epoch) && !crate::inject::cancel_wants_recovery(epoch)
             {
                 tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
-                return Ok(());
+                return Ok(true);
             }
             let set_res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
                 .await
@@ -1810,5 +1819,5 @@ pub async fn inject_text(
         tracing::info!("[inject] aborted by a failed session — transcript left on the clipboard");
         crate::inject::set_clipboard_persistent(&recovery_text);
     }
-    res
+    res.map(|()| true)
 }
