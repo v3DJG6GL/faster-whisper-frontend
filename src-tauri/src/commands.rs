@@ -1969,18 +1969,23 @@ pub async fn inject_text(
     // mid-sentence and the window it was going into has already been refocused by the teardown.
     // Leave the transcript on the clipboard so it is recoverable — the same courtesy the
     // stop-mode path extends. A user-initiated cancel deliberately does not land here.
-    if crate::inject::injection_cancelled(epoch)
+    let recovered = crate::inject::injection_cancelled(epoch)
         && crate::inject::cancel_wants_recovery(epoch)
-        && !recovery_text.is_empty()
-    {
+        && !recovery_text.is_empty();
+    if recovered {
         tracing::info!("[inject] aborted by a failed session — transcript left on the clipboard");
         crate::inject::set_clipboard_persistent(&recovery_text);
     }
     res.map(|landed| match landed {
         crate::inject::Landed::Yes => InjectOutcome { landed: true, diverted: false },
-        // Nothing was written and nothing is on the clipboard, so the caller re-sends. Unlike the
-        // Wayland guard this reaches the recovery block above on the way out, which is the shape
-        // P4 asked for.
+        // "Nothing written" is only true if the recovery block above did not just write the
+        // transcript to the clipboard. When it did, the text IS somewhere the user can reach, and
+        // saying otherwise both mis-describes the state and makes the caller re-issue an insert
+        // that would land in the same place. This is also what the Wayland arm reports for the
+        // same event, so the two platforms now answer the same question the same way.
+        crate::inject::Landed::NothingWritten if recovered => {
+            InjectOutcome { landed: true, diverted: true }
+        }
         crate::inject::Landed::NothingWritten => InjectOutcome { landed: false, diverted: false },
         crate::inject::Landed::OnClipboard => InjectOutcome { landed: true, diverted: true },
     })
