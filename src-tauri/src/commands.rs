@@ -1772,11 +1772,23 @@ pub async fn inject_text(
 
     // Kept for the error-abort recovery below: the X11 branch moves `text` into spawn_blocking.
     let recovery_text = text.clone();
+    // The probe the two typing backends re-ask focus with. Built once here so `virtual_keyboard`
+    // (served by a bare `std::thread`, no `AppHandle`) and `inject` (served by the blocking pool)
+    // take the same predicate the entry guard above uses.
+    let probe_app = app.clone();
+    let own_window_focused = move || {
+        probe_app
+            .webview_windows()
+            .iter()
+            .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+    };
     let res = if crate::inject::is_wayland() {
-        // Every Wayland arm either lands or returns early with its own `InjectOutcome`, so the
-        // block's own value is the plain success/failure and maps to `Landed::Yes`. The X11 arm
-        // below reports its outcome properly, because that is where the sink guards live.
-        let wayland_res: Result<(), String> = if text.is_empty() && auto_enter && method != "direct" {
+        // Each Wayland arm now reports its own `Landed`, like the X11 arm below: the two TYPING
+        // arms (bare auto-Enter via the portal, and `direct` via the virtual keyboard) were the
+        // last sinks in the tree with no own-window re-check, so they could not previously say
+        // anything but "landed". Their guards live inside the backends, at the keystroke, because
+        // that is the far side of the widest guard-to-sink gap on any path.
+        let wayland_res: Result<crate::inject::Landed, String> = if text.is_empty() && auto_enter && method != "direct" {
             // Auto-enter with no text on the PASTE path (the per-phrase / tail Enter): press Enter
             // WITHOUT touching the clipboard — paste would set_clipboard("") and clobber it, so route
             // the bare Enter through the portal type path instead. (Direct falls through to the VK-first
@@ -1788,10 +1800,12 @@ pub async fn inject_text(
             // Prefer the virtual keyboard (Caps Lock-/layout-correct typing). Fall back
             // to the portal keycode path when the protocol is unavailable (e.g. GNOME)
             // or a job fails.
-            match crate::virtual_keyboard::type_text(vkbd.inner(), &text, auto_enter, epoch).await {
-                Ok(()) => {
+            let vk_probe: std::sync::Arc<dyn Fn() -> bool + Send + Sync> =
+                std::sync::Arc::new(own_window_focused.clone());
+            match crate::virtual_keyboard::type_text(vkbd.inner(), &text, auto_enter, epoch, vk_probe).await {
+                Ok(landed) => {
                     tracing::info!("[inject] typed via virtual keyboard");
-                    Ok(())
+                    Ok(landed)
                 }
                 // Fall back to the portal ONLY when the VK failed before transmitting any key (protocol
                 // unavailable, keymap upload failed). A mid-typing failure already landed a prefix, so
@@ -1930,7 +1944,7 @@ pub async fn inject_text(
             }
             r
         };
-        wayland_res.map(|()| crate::inject::Landed::Yes)
+        wayland_res
     } else {
         // The X11/Windows twin of the two Wayland sink guards above. This arm hands off to the
         // blocking pool, and everything past that point — `Enigo::new`, `Clipboard::new`, an

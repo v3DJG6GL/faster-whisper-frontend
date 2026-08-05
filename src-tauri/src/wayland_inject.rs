@@ -32,7 +32,7 @@ pub struct Job {
     // whose physical V position isn't keysym 'v' (Dvorak/Colemak/Bepo).
     chord_codes: Vec<String>,
     auto_enter: bool,
-    reply: oneshot::Sender<Result<(), String>>,
+    reply: oneshot::Sender<Result<crate::inject::Landed, String>>,
 }
 
 /// Sender to the persistent RemoteDesktop typer task (started lazily on the first
@@ -347,7 +347,7 @@ mod imp {
         text: &str,
         auto_enter: bool,
         epoch: u64,
-    ) -> Result<(), String> {
+    ) -> Result<crate::inject::Landed, String> {
         submit(app, typer, text.to_string(), false, Vec::new(), auto_enter, epoch).await
     }
 
@@ -360,7 +360,7 @@ mod imp {
         chord_codes: Vec<String>,
         auto_enter: bool,
         epoch: u64,
-    ) -> Result<(), String> {
+    ) -> Result<crate::inject::Landed, String> {
         submit(app, typer, String::new(), true, chord_codes, auto_enter, epoch).await
     }
 
@@ -445,6 +445,17 @@ mod imp {
         mods
     }
 
+    /// Is one of our own windows focused right now? The same predicate `inject_text` uses at its
+    /// entry guard and at both X11/Windows sink guards — kept here rather than passed in because
+    /// `session_loop` already owns an `AppHandle`. Safe from this task: Tauri's `is_focused` posts
+    /// to the event loop and waits on a channel, so the toolkit call runs on the main thread
+    /// whichever thread asks, and this task never blocks the event loop.
+    fn own_window_focused(app: &AppHandle) -> bool {
+        app.webview_windows()
+            .iter()
+            .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+    }
+
     /// Queue a job for the persistent typer, starting the task (one consent dialog)
     /// on first use, and await its completion.
     async fn submit(
@@ -455,7 +466,7 @@ mod imp {
         chord_codes: Vec<String>,
         auto_enter: bool,
         epoch: u64,
-    ) -> Result<(), String> {
+    ) -> Result<crate::inject::Landed, String> {
         let tx = {
             let mut guard = typer.0.lock().await;
             let alive = matches!(guard.as_ref(), Some(tx) if !tx.is_closed());
@@ -546,7 +557,7 @@ mod imp {
             // `press!`/`release!` mirror the shared session and keep `held` in sync.
             // Both use `?`, so a failure bails out of the inner block — after which
             // the cleanup below releases whatever is still held.
-            let res: Result<(), String> = async {
+            let res: Result<crate::inject::Landed, String> = async {
                 macro_rules! press {
                     ($code:expr) => {{
                         let code: i32 = $code;
@@ -576,7 +587,25 @@ mod imp {
                 // still fires Ctrl+V, or still presses Enter, with nothing to abandon mid-loop.
                 if crate::inject::injection_cancelled(job.epoch) {
                     tracing::info!("[wayland-inject] cancelled before typing — dropping the job");
-                    return Ok(());
+                    return Ok(crate::inject::Landed::Yes);
+                }
+                // Own-window re-check at the SINK, not only at `inject_text`'s entry. This is the
+                // last Wayland arm without one: the paste branch got its guards at the clipboard
+                // write and at the chord, and the X11/Windows twin got one per typed chunk — but
+                // everything reaching HERE crossed the widest gap on any path. Between the entry
+                // guard and this point sit the <=500ms held-modifier wait, the latch consume, a
+                // `focused_app_now` AT-SPI round trip, `ensure_started`'s thread spawn + portal
+                // session (and possibly the KDE "Control input devices" consent modal), and the
+                // queue wait behind any job already typing. A focus change anywhere in there
+                // otherwise types the server's transcript into our own settings, API-key or
+                // dictionary fields — where `sanitize_injected` deliberately preserves `\n`, so
+                // it commits them.
+                //
+                // `NothingWritten` is the truthful answer and makes the caller's re-send safe:
+                // no key has been synthesized yet.
+                if own_window_focused(app) {
+                    tracing::info!("[wayland-inject] skipped before typing: our own window holds focus");
+                    return Ok(crate::inject::Landed::NothingWritten);
                 }
                 if job.paste {
                     // Resolve the chord to keycodes HERE (the charmap is built) so the MAIN key maps by
@@ -603,7 +632,7 @@ mod imp {
                         release!(KEY_ENTER);
                     }
                     tokio::time::sleep(Duration::from_millis(40)).await;
-                    return Ok(());
+                    return Ok(crate::inject::Landed::Yes);
                 }
                 // KWin interprets each injected keycode under the LIVE Caps Lock, and our
                 // charmap only models Shift/AltGr (not Lock) — so with Caps ON, alphabetic
@@ -611,6 +640,9 @@ mod imp {
                 // affected (alphabetic) keys while Caps is on. (zwp_virtual_keyboard would
                 // sidestep this, but KWin doesn't advertise it, so we're on this path.)
                 let caps = caps_lock_on();
+                // Characters actually sent to the compositor, and the countdown to the next focus
+                // probe. See the probe below for why it is periodic rather than per character.
+                let mut typed: usize = 0;
                 for c in job.text.chars() {
                     // Between characters, not just before the job: this loop runs at roughly a
                     // hundred characters a second and follows the user's focus as they move.
@@ -619,7 +651,24 @@ mod imp {
                         // RETURN, not break: `break` fell through to the unconditional auto-Enter
                         // below, so a cancelled transcript was truncated mid-sentence and then
                         // SUBMITTED. The virtual-keyboard path already returns here.
-                        return Ok(());
+                        return Ok(crate::inject::Landed::Yes);
+                    }
+                    // Follow focus the same way, for the same reason: this loop runs for SECONDS
+                    // on a long transcript, and a click into one of our own windows part-way
+                    // through otherwise lands every remaining character there. The X11/Windows
+                    // twin re-asks once per 512-char chunk (Q32); at ~10ms per character here,
+                    // every 32 characters is the same ~third-of-a-second cadence. Periodic rather
+                    // than per character on purpose — each probe is a round trip to the UI thread,
+                    // and the notes record that coupling as the accepted cost of this mechanism.
+                    //
+                    // The already-typed prefix stays: re-sending it would duplicate text on screen
+                    // (hazard P16), so the untyped tail is dropped and this reports `Yes` — the
+                    // same trade Q32 settled for the mid-typing cancel right above.
+                    if typed % 32 == 0 && typed > 0 && own_window_focused(app) {
+                        tracing::info!(
+                            "[wayland-inject] stopped mid-typing: our own window took focus ({typed} chars in)"
+                        );
+                        return Ok(crate::inject::Landed::Yes);
                     }
                     let Some(spec) = key_spec_for(c, &charmap) else {
                         continue; // char not reachable on this layout — skip
@@ -727,19 +776,30 @@ mod imp {
                         release!(KEY_CAPSLOCK);
                     }
                     tokio::time::sleep(Duration::from_millis(6)).await;
+                    // Counted only for characters this layout could actually reach — the `continue`
+                    // above skips the rest, and those cost no wall clock to pace the probe against.
+                    typed += 1;
                 }
                 // Same missing third check as the paste branch above. The in-loop guard is
                 // `&& emitted`, so for a bare-Enter job (`order == ["Return"]`) it is
                 // short-circuited at the only iteration — a cancel arriving during the keymap
                 // upload and its compositor round-trip, the widest gap on this path, still
                 // pressed Return.
-                if job.auto_enter && !crate::inject::injection_cancelled(job.epoch) {
+                // The focus term is the sibling of the cancel term: the loop above probes every 32
+                // characters, so up to 32 characters plus this Enter can still follow a focus
+                // change — and an Enter is the one keystroke that ACTS rather than inserts, firing
+                // whatever button holds focus in our own window (Q31's finding, on the arm that
+                // reaches it after typing rather than bare).
+                if job.auto_enter
+                    && !crate::inject::injection_cancelled(job.epoch)
+                    && !own_window_focused(app)
+                {
                     press!(KEY_ENTER);
                     release!(KEY_ENTER);
                 }
                 // Let KWin process the queued events before the caller proceeds.
                 tokio::time::sleep(Duration::from_millis(40)).await;
-                Ok(())
+                Ok(crate::inject::Landed::Yes)
             }
             .await;
 
@@ -786,7 +846,7 @@ pub async fn type_text(
     _text: &str,
     _auto_enter: bool,
     _epoch: u64,
-) -> Result<(), String> {
+) -> Result<crate::inject::Landed, String> {
     Err("Wayland text injection is only available on Linux".into())
 }
 
@@ -797,6 +857,6 @@ pub async fn paste(
     _chord_codes: Vec<String>,
     _auto_enter: bool,
     _epoch: u64,
-) -> Result<(), String> {
+) -> Result<crate::inject::Landed, String> {
     Err("Wayland text injection is only available on Linux".into())
 }

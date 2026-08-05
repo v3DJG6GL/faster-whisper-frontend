@@ -34,9 +34,16 @@ pub struct VkError {
 pub struct VkJob {
     text: String,
     auto_enter: bool,
-    reply: oneshot::Sender<Result<(), VkError>>,
+    reply: oneshot::Sender<Result<crate::inject::Landed, VkError>>,
     /// See `crate::inject::injection_epoch` — lets the per-key loop abandon a superseded job.
     epoch: u64,
+    /// "Is one of our own windows focused right now?" — passed in rather than read from an
+    /// `AppHandle` because this job is served by a bare `std::thread` that owns the (sync,
+    /// !Send-across-await) Wayland connection and has no handle. Same predicate and same
+    /// cross-thread safety argument as `inject::OwnWindowFocused`: Tauri's `is_focused` posts to
+    /// the event loop and waits on a channel, so the toolkit call runs on the main thread
+    /// whichever thread asks.
+    own_window_focused: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 #[cfg_attr(windows, allow(dead_code))] // Active is only constructed by the Linux worker startup
@@ -69,12 +76,13 @@ pub async fn type_text(
     text: &str,
     auto_enter: bool,
     epoch: u64,
-) -> Result<(), VkError> {
+    own_window_focused: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
+) -> Result<crate::inject::Landed, VkError> {
     let tx = ensure_started(vk)
         .await
         .map_err(|message| VkError { message, after_typing: false })?;
     let (reply, reply_rx) = oneshot::channel();
-    tx.send(VkJob { text: text.to_string(), auto_enter, reply, epoch })
+    tx.send(VkJob { text: text.to_string(), auto_enter, reply, epoch, own_window_focused })
         .map_err(|_| VkError { message: "virtual keyboard thread gone".into(), after_typing: false })?;
     reply_rx
         .await
@@ -167,7 +175,12 @@ mod imp {
             }
         };
         while let Some(job) = rx.blocking_recv() {
-            let res = conn.type_text(&job.text, job.auto_enter, job.epoch);
+            let res = conn.type_text(
+                &job.text,
+                job.auto_enter,
+                job.epoch,
+                job.own_window_focused.as_ref(),
+            );
             let failed = res.is_err();
             let _ = job.reply.send(res);
             if failed {
@@ -211,7 +224,13 @@ mod imp {
             Ok(Self { conn, queue, state, vk, start: Instant::now() })
         }
 
-        fn type_text(&mut self, text: &str, auto_enter: bool, epoch: u64) -> Result<(), VkError> {
+        fn type_text(
+            &mut self,
+            text: &str,
+            auto_enter: bool,
+            epoch: u64,
+            own_window_focused: &(dyn Fn() -> bool + Send + Sync),
+        ) -> Result<crate::inject::Landed, VkError> {
             // Helper: an error raised BEFORE any key was transmitted (keymap upload, limit, the
             // pre-key roundtrip) is safe to fall back to the portal. `before` builds those.
             let before = |e: String| VkError { message: e, after_typing: false };
@@ -235,7 +254,7 @@ mod imp {
                 order.push("Return".to_string());
             }
             if order.is_empty() {
-                return Ok(());
+                return Ok(crate::inject::Landed::Yes);
             }
             // Before the keymap upload, not only between keys: a bare auto-Enter job is a
             // single-element `order`, so the in-loop check below (which requires `emitted`)
@@ -244,7 +263,17 @@ mod imp {
             // fallback would then type the very text the user cancelled.
             if crate::inject::injection_cancelled(epoch) {
                 tracing::info!("[vkbd] cancelled before typing — dropping the job");
-                return Ok(());
+                return Ok(crate::inject::Landed::Yes);
+            }
+            // Own-window re-check at the sink, the sibling of the cancel check above and of the
+            // guard the X11/Windows and Wayland-paste arms already carry. `inject_text`'s entry
+            // guard ran before the <=500ms held-modifier wait, the latch consume, a `focused_app_now`
+            // AT-SPI round trip and `ensure_started`'s thread spawn + Wayland connect — and this
+            // job may also have queued behind another. `NothingWritten` is truthful (no key has
+            // been transmitted) and makes the caller's re-send safe rather than duplicating text.
+            if own_window_focused() {
+                tracing::info!("[vkbd] skipped before typing: our own window holds focus");
+                return Ok(crate::inject::Landed::NothingWritten);
             }
             // Distinct symbols, in first-seen order → one keycode each (xkb = idx + 8).
             let mut unique: Vec<String> = Vec::new();
@@ -276,7 +305,31 @@ mod imp {
             // failure (compositor crash mid-typing) leaves an already-landed prefix, so the portal
             // must NOT re-type the whole text (it would duplicate it). Track that with `emitted`.
             let mut emitted = false;
-            for name in &order {
+            let last = order.len() - 1;
+            for (i, name) in order.iter().enumerate() {
+                // Follow focus while typing, not only before the job. This loop runs at ~8ms per
+                // key, so a long transcript occupies it for seconds and a click into one of our
+                // own windows part-way through otherwise lands every remaining key there. Probed
+                // every 64 keys (~0.5s, the cadence the X11/Windows twin gets from its 512-char
+                // chunks) rather than per key, because each probe is a round trip to the UI thread
+                // and that coupling is the accepted cost of this mechanism.
+                //
+                // Also probed immediately before the FINAL key of an auto-Enter job whatever the
+                // count: Return is the one keystroke that ACTS rather than inserts, so firing it
+                // into our own window presses whatever button holds focus (Q31).
+                let probe_here = (i > 0 && i % 64 == 0) || (auto_enter && i == last);
+                if probe_here && own_window_focused() {
+                    tracing::info!("[vkbd] stopped: our own window took focus ({i} keys in)");
+                    // The prefix already on screen stays — re-sending it would duplicate text
+                    // (hazard P16) — so the tail is dropped and this reports as landed, the same
+                    // trade Q32 settled for the mid-typing cancel below. With nothing emitted yet
+                    // the truthful answer is `NothingWritten`, which makes a re-send safe.
+                    return Ok(if emitted {
+                        crate::inject::Landed::Yes
+                    } else {
+                        crate::inject::Landed::NothingWritten
+                    });
+                }
                 // Same mid-typing cancellation as the portal path: this loop sleeps between every
                 // key, so a long transcript otherwise keeps going long after the user stopped.
                 // Reported as an already-typed prefix (`after_typing: true`) so the portal
@@ -291,7 +344,7 @@ mod imp {
                         // the only iteration, so a cancel in that gap still synthesized Return.
                         // `Ok(())` and not an error, for the same reason the pre-loop check gives:
                         // `after_typing: false` sends the portal fallback to type the cancelled text.
-                        return Ok(());
+                        return Ok(crate::inject::Landed::Yes);
                     }
                     return Err(VkError { message: "cancelled".into(), after_typing: true });
                 }
@@ -309,7 +362,7 @@ mod imp {
             }
             // Drain so the compositor has processed everything before we report done.
             self.queue.roundtrip(&mut self.state).map_err(|e| VkError { message: e.to_string(), after_typing: emitted })?;
-            Ok(())
+            Ok(crate::inject::Landed::Yes)
         }
     }
 
