@@ -626,10 +626,27 @@ mod imp {
                     // check before the auto-Enter. This path got the first two (K12 turned the
                     // in-loop `break` into a `return`) but never the third, so a cancel landing
                     // during the paste chord still submitted the transcript.
+                    //
+                    // The CANCEL check alone is not the same question as "is it still safe to
+                    // press this". The chord above is ~80ms of real portal round trips (more for
+                    // a custom 3-key chord), and Return is the one synthesized key that ACTS
+                    // rather than inserts: in our own settings, API-key or dictionary UI it
+                    // presses whatever button holds focus. Its three siblings each carry an
+                    // own-window probe at this exact point — `inject.rs` (X11/Windows), the
+                    // portal typing arm above, and `virtual_keyboard.rs`'s `i == last` — and this
+                    // arm was the one left with a cancel-only condition. `Landed::Yes` stays
+                    // correct on the skip: the chord already landed the text, so reporting
+                    // anything else would make the caller re-send and duplicate it.
                     if job.auto_enter && !crate::inject::injection_cancelled(job.epoch) {
-                        tokio::time::sleep(Duration::from_millis(6)).await;
-                        press!(KEY_ENTER);
-                        release!(KEY_ENTER);
+                        if own_window_focused(app) {
+                            tracing::info!(
+                                "[wayland-inject] auto-Enter skipped: our own window took focus during the paste chord"
+                            );
+                        } else {
+                            tokio::time::sleep(Duration::from_millis(6)).await;
+                            press!(KEY_ENTER);
+                            release!(KEY_ENTER);
+                        }
                     }
                     tokio::time::sleep(Duration::from_millis(40)).await;
                     return Ok(crate::inject::Landed::Yes);

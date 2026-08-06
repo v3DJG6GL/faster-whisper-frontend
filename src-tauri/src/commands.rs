@@ -1227,6 +1227,11 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
         }
         Some(text) => {
             tracing::info!("[clip] begin_injection: snapshot {} chars", text.len());
+            // This arm means the clipboard holds something that is NOT our text, so any earlier
+            // recovery has already been superseded and its flag must not suppress THIS session's
+            // restore. Tied to the snapshot rather than to session start because it is the same
+            // question: what is on the clipboard right now.
+            crate::inject::clear_recovery_on_clipboard();
             if let Ok(mut g) = snap.0.lock() {
                 *g = Some(text);
             }
@@ -1246,6 +1251,17 @@ pub fn end_injection(snap: State<ClipboardSnapshot>, guard: State<crate::atspi_g
         // already consumed above, so it can't leak into a later session either way.
         if focused_remote_target(guard.inner()) {
             tracing::info!("[clip] end_injection: remote-desktop target — restore skipped");
+            return;
+        }
+        // An error-abort recovery just put the abandoned transcript on the clipboard for the
+        // user to paste manually. Restoring `prev` 400ms later would erase it — the same
+        // erasure the per-paste restore declines a few hundred lines below, on the one path
+        // that guard cannot cover (it needs the job's epoch; this command has none). The
+        // snapshot is consumed either way, so it cannot leak into a later session.
+        if crate::inject::take_recovery_on_clipboard() {
+            tracing::info!(
+                "[clip] end_injection: a recovered transcript is on the clipboard — restore skipped"
+            );
             return;
         }
         tracing::info!("[clip] end_injection: restore {} chars (delayed)", prev.len());
@@ -1997,6 +2013,10 @@ pub async fn inject_text(
     if recovered {
         tracing::info!("[inject] aborted by a failed session — transcript left on the clipboard");
         crate::inject::set_clipboard_persistent(&recovery_text);
+        // Tell the SESSION-level restore not to serve the user's old clipboard over the top.
+        // The per-paste restore above already declines on this condition; `end_injection` runs
+        // after this job is gone and cannot ask the same question by epoch.
+        crate::inject::note_recovery_on_clipboard();
     }
     res.map(|landed| match landed {
         crate::inject::Landed::Yes => InjectOutcome { landed: true, diverted: false },

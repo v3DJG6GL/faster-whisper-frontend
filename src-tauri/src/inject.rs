@@ -10,7 +10,7 @@
 //! a native libei path is M7) and `arboard` for the clipboard.
 
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -72,6 +72,38 @@ pub fn cancel_wants_recovery(epoch: u64) -> bool {
 /// Has the injection that started at `epoch` been cancelled since?
 pub fn injection_cancelled(epoch: u64) -> bool {
     INJECT_EPOCH.load(Ordering::SeqCst) != epoch
+}
+
+/// Set when an error-abort recovery has just put an abandoned transcript on the clipboard, so
+/// the SESSION-level restore does not erase it.
+///
+/// `inject_text`'s own per-paste restore already asks this question via
+/// `injection_cancelled(epoch) && cancel_wants_recovery(epoch)`, but that guard needs the job's
+/// epoch and `end_injection` has none — it runs after the job is gone, chained on the same
+/// `stream://error` teardown that armed the recovery, and would serve the user's old clipboard
+/// 400ms later over the top. That leaves the transcript neither typed nor recoverable while both
+/// layers log success.
+///
+/// A one-shot flag rather than an epoch comparison: `INJECT_EPOCH` only ever advances on a
+/// cancel or an abort, so `RECOVER_AT_EPOCH == INJECT_EPOCH` stays true indefinitely after one
+/// error abort and would suppress every later legitimate restore. Armed at the recovery write,
+/// consumed by the first restore that follows, and cleared when a new session snapshots the
+/// clipboard so a recovery nobody restored after cannot suppress a future one.
+static RECOVERY_ON_CLIPBOARD: AtomicBool = AtomicBool::new(false);
+
+/// Record that the clipboard now holds a recovered transcript (see `RECOVERY_ON_CLIPBOARD`).
+pub fn note_recovery_on_clipboard() {
+    RECOVERY_ON_CLIPBOARD.store(true, Ordering::SeqCst);
+}
+
+/// Take the recovery flag: true exactly once per recovery, for the restore that would erase it.
+pub fn take_recovery_on_clipboard() -> bool {
+    RECOVERY_ON_CLIPBOARD.swap(false, Ordering::SeqCst)
+}
+
+/// Drop a recovery flag nobody consumed (a new session is starting).
+pub fn clear_recovery_on_clipboard() {
+    RECOVERY_ON_CLIPBOARD.store(false, Ordering::SeqCst);
 }
 
 /// The last text WE placed on the clipboard for an insertion (transcript paste, clipboard-only
