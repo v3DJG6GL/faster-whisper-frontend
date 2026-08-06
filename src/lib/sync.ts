@@ -415,7 +415,10 @@ export function isCodeList(v: unknown): v is string[] {
  *  UI cannot produce more. */
 const MAX_CHORD_CODES = 16;
 
-/** Ceiling on the LENGTH of one code, matching `MAX_CHORD_CODE_LEN` in commands.rs. The count cap
+/** Ceiling on the LENGTH of one code, paired with `MAX_CHORD_CODE_LEN` in commands.rs — the same
+ *  number, but not the same measure: this counts UTF-16 code units and Rust counts UTF-8 bytes, so
+ *  the two disagree on non-ASCII input (Rust is the stricter of the pair). Every real code is
+ *  ASCII, where the measures coincide, and both bound the field regardless. The count cap
  *  above bounds how many codes a chord has, never how long one is — 16 codes of ~1.2 MB each fit
  *  inside `SYNC_MAX_BODY` and reach `chordConflicts`' O(k·m) subset scan, a `config.json` rewritten
  *  on every autosave, and `codeToLabel`'s raw fall-through render. Every real `KeyboardEvent.code`

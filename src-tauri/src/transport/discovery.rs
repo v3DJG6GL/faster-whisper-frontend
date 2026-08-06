@@ -130,9 +130,11 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     models: vec![],
                     boot_id: None,
                     server_version: None,
-                    // serde's `invalid_type` Display echoes the OFFENDING VALUE verbatim and
-                    // untruncated, so `{"data":"<1 MiB of RTL-override text>"}` — well inside
-                    // MAX_META_BODY — yields a ~1 MiB error string with the bidi class intact.
+                    // serde's `invalid_type` Display echoes the OFFENDING VALUE untruncated, so
+                    // `{"data":"<1 MiB string>"}` — well inside MAX_META_BODY — yields a ~1 MiB
+                    // error string (measured: a 1 MB value produces 1,000,069 bytes). serde
+                    // formats it with `{:?}`, which already escapes the bidi class, so this is a
+                    // volume defect rather than a spoofing one — but volume is the whole harm here.
                     // Every sibling field on these arms is already `bounded_name`d, and both
                     // static error arms plus `friendly_err` are bounded to 300; this was the one
                     // unbounded server-authored string left in `ConnectionInfo`. Its three renders

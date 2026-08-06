@@ -1246,11 +1246,6 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
         }
         Some(text) => {
             tracing::info!("[clip] begin_injection: snapshot {} chars", text.len());
-            // This arm means the clipboard holds something that is NOT our text, so any earlier
-            // recovery has already been superseded and its flag must not suppress THIS session's
-            // restore. Tied to the snapshot rather than to session start because it is the same
-            // question: what is on the clipboard right now.
-            crate::inject::clear_recovery_on_clipboard();
             if let Ok(mut g) = snap.0.lock() {
                 *g = Some(text);
             }
@@ -1263,6 +1258,12 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
 /// Restore the clipboard snapshot taken by `begin_injection` (end of a live session).
 #[tauri::command]
 pub fn end_injection(snap: State<ClipboardSnapshot>, guard: State<crate::atspi_guard::AtspiGuard>) {
+    // Taken UNCONDITIONALLY, above the snapshot test. Inside `if let Some(prev)` it would be
+    // unreachable on every session that took no snapshot (direct-typing method, restore-clipboard
+    // off, or a clipboard read that timed out) — and `streaming.ts` calls this on every teardown,
+    // no-op or not. A flag armed by such a session would then survive to suppress a LATER
+    // session's legitimate restore. Consuming it here makes it strictly one-shot per teardown.
+    let recovered_on_clipboard = crate::inject::take_recovery_on_clipboard();
     let prev = snap.0.lock().ok().and_then(|mut g| g.take());
     if let Some(prev) = prev {
         // Remote-desktop target: skip the restore (same contract as the per-paste path) — the
@@ -1277,7 +1278,7 @@ pub fn end_injection(snap: State<ClipboardSnapshot>, guard: State<crate::atspi_g
         // erasure the per-paste restore declines a few hundred lines below, on the one path
         // that guard cannot cover (it needs the job's epoch; this command has none). The
         // snapshot is consumed either way, so it cannot leak into a later session.
-        if crate::inject::take_recovery_on_clipboard() {
+        if recovered_on_clipboard {
             tracing::info!(
                 "[clip] end_injection: a recovered transcript is on the clipboard — restore skipped"
             );
@@ -1330,6 +1331,9 @@ pub fn discard_injection_snapshot(snap: State<ClipboardSnapshot>) {
     if let Ok(mut g) = snap.0.lock() {
         let _ = g.take();
     }
+    // The other way a session ends. Dropping the snapshot means no restore will ever be attempted
+    // against it, so a recovery flag has nothing left to protect and must not outlive this session.
+    crate::inject::clear_recovery_on_clipboard();
 }
 
 /// The focused application's id + title + (when deep detection is on) whether its focused
@@ -1938,6 +1942,12 @@ pub async fn inject_text(
                     && !recovery_text.is_empty()
                 {
                     crate::inject::set_clipboard_persistent(&recovery_text);
+                    // The SECOND recovery write, and it needs the same session-restore guard as
+                    // the one at the end of this function — this early `return` is precisely why
+                    // (the block that arms it never evaluates). The two preconditions co-occur
+                    // naturally: the error teardown refocuses our own window, which is what makes
+                    // this guard fire in the first place.
+                    crate::inject::note_recovery_on_clipboard();
                     return Ok(InjectOutcome { landed: true, diverted: true });
                 }
                 return Ok(InjectOutcome { landed: false, diverted: false });

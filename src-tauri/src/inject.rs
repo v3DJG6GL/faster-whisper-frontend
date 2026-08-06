@@ -86,9 +86,18 @@ pub fn injection_cancelled(epoch: u64) -> bool {
 ///
 /// A one-shot flag rather than an epoch comparison: `INJECT_EPOCH` only ever advances on a
 /// cancel or an abort, so `RECOVER_AT_EPOCH == INJECT_EPOCH` stays true indefinitely after one
-/// error abort and would suppress every later legitimate restore. Armed at the recovery write,
-/// consumed by the first restore that follows, and cleared when a new session snapshots the
-/// clipboard so a recovery nobody restored after cannot suppress a future one.
+/// error abort and would suppress every later legitimate restore.
+///
+/// Armed at BOTH recovery writes, and consumed at the top of `end_injection` — unconditionally,
+/// above its snapshot test, so a session that never took a snapshot still clears it — or by
+/// `discard_injection_snapshot`, the other way a session ends. Those two are the only session
+/// teardowns, so the flag cannot outlive the session that armed it, which is what makes it safe
+/// without a per-phrase clear. An earlier draft cleared it in `begin_injection` instead; that was
+/// both redundant and racy, since `is_own_injected` is a single-slot compare and
+/// `set_clipboard_persistent` serves the selection on a detached thread — so for a moment after
+/// the recovery write the clipboard still holds the previous phrase while `LAST_INJECTED` already
+/// holds the recovery text, and a fast error-recovery re-trigger's `begin_injection` would land in
+/// that gap, read our own stale transcript as the user's, and clear a flag still owed a restore.
 static RECOVERY_ON_CLIPBOARD: AtomicBool = AtomicBool::new(false);
 
 /// Record that the clipboard now holds a recovered transcript (see `RECOVERY_ON_CLIPBOARD`).
