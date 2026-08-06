@@ -161,7 +161,14 @@ mod imp {
                 ActivationType::Hold => ChordKind::Hold { profile_id: p.id.clone() },
                 ActivationType::Latch => ChordKind::Latch { profile_id: p.id.clone() },
             };
-            push(kind, keys, &format!("profile '{}'", p.id));
+            // `what` is interpolated into the duplicate-chord warning below, so the untrusted id
+            // is defanged here rather than at the log line — same reason as `emit`'s. This one
+            // fires on every `apply_bindings`: startup, resume, and every pull touching profiles.
+            push(
+                kind,
+                keys,
+                &format!("profile '{}'", crate::transport::bounded_server_text(&p.id, 120)),
+            );
         }
         // The quick-add window shortcut (not a Profile) — matched alongside the chords.
         if let Some(keys) = codes_to_keys(quick_add_hotkey) {
@@ -242,7 +249,13 @@ mod imp {
         }
         // Log every fired trigger (same shape as the CLI path's emit_trigger): the chord →
         // session causality is otherwise invisible in the log — see win_hotkeys::emit.
-        tracing::info!("[trigger] {profile_id}/{action} (evdev)");
+        // `profile_id` is blob- and import-authored (`sanitizeProfiles` type-checks `id` as a
+        // string and never clamps it), so it is defanged for the log exactly as the CLI twin in
+        // `triggers.rs` is: an embedded newline forges records in the Windows support log users
+        // are asked to send, and an unbounded id turns every chord press into a large disk write.
+        // This is the highest-frequency of the four sites — it fires on every trigger.
+        let profile_id_log = crate::transport::bounded_server_text(profile_id, 120);
+        tracing::info!("[trigger] {profile_id_log}/{action} (evdev)");
         let _ = app.emit(
             "trigger",
             TriggerPayload {

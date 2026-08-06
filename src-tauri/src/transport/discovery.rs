@@ -130,7 +130,20 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     models: vec![],
                     boot_id: None,
                     server_version: None,
-                    error: Some(format!("Unexpected /v1/models response: {e}")),
+                    // serde's `invalid_type` Display echoes the OFFENDING VALUE verbatim and
+                    // untruncated, so `{"data":"<1 MiB of RTL-override text>"}` — well inside
+                    // MAX_META_BODY — yields a ~1 MiB error string with the bidi class intact.
+                    // Every sibling field on these arms is already `bounded_name`d, and both
+                    // static error arms plus `friendly_err` are bounded to 300; this was the one
+                    // unbounded server-authored string left in `ConnectionInfo`. Its three renders
+                    // pass it through raw into a wrapping Notice — millions of line boxes in the
+                    // window that owns the debounced config save — and it is the text the user
+                    // reads to decide whether to keep pointing at this address, immediately
+                    // before the restore offer that applies a whole settings blob.
+                    error: Some(super::bounded_server_text(
+                        &format!("Unexpected /v1/models response: {e}"),
+                        300,
+                    )),
                 },
             }
         }

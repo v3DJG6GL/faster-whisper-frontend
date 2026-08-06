@@ -404,12 +404,23 @@ function safeQuickAddTarget(v: unknown): QuickAddTarget | null {
 }
 
 export function isCodeList(v: unknown): v is string[] {
-  return Array.isArray(v) && v.length <= MAX_CHORD_CODES && v.every((c) => typeof c === "string");
+  return (
+    Array.isArray(v) &&
+    v.length <= MAX_CHORD_CODES &&
+    v.every((c) => typeof c === "string" && c.length <= MAX_CHORD_CODE_LEN)
+  );
 }
 
 /** Ceiling on the codes in ONE chord. Every real binding is ≤6 (modifiers + a key); the capture
  *  UI cannot produce more. */
 const MAX_CHORD_CODES = 16;
+
+/** Ceiling on the LENGTH of one code, matching `MAX_CHORD_CODE_LEN` in commands.rs. The count cap
+ *  above bounds how many codes a chord has, never how long one is — 16 codes of ~1.2 MB each fit
+ *  inside `SYNC_MAX_BODY` and reach `chordConflicts`' O(k·m) subset scan, a `config.json` rewritten
+ *  on every autosave, and `codeToLabel`'s raw fall-through render. Every real `KeyboardEvent.code`
+ *  token is well under 32. A chord failing this is rejected whole, as an over-long one already is. */
+const MAX_CHORD_CODE_LEN = 64;
 
 /** Turn OFF the later member of every chord collision in an inbound binding set, including a
  *  collision with the (possibly also inbound) quick-add chord. See the call site for why a

@@ -274,7 +274,13 @@ mod imp {
                 ActivationType::Hold => ChordKind::Hold { profile_id: p.id.clone() },
                 ActivationType::Latch => ChordKind::Latch { profile_id: p.id.clone() },
             };
-            push(kind, keys, &format!("profile '{}'", p.id));
+            // `what` is interpolated into the duplicate-chord warning below, so the untrusted id
+            // is defanged here rather than at the log line — same reason as `emit`'s.
+            push(
+                kind,
+                keys,
+                &format!("profile '{}'", crate::transport::bounded_server_text(&p.id, 120)),
+            );
         }
         if let Some(keys) = quick_add_hotkey.iter().map(|c| code_to_vk(c)).collect::<Option<Vec<_>>>() {
             if !keys.is_empty() {
@@ -757,7 +763,10 @@ mod imp {
         // Log every fired trigger (same shape as the CLI path's emit_trigger): the chord →
         // session causality is otherwise invisible in the log, which made the key-chatter
         // instant-stop bug diagnosable only by timing forensics.
-        tracing::info!("[trigger] {profile_id}/{action} (winhook)");
+        // Defanged for the same reason as the evdev twin, and this is the platform where it
+        // matters most: the Windows support log is the artifact users are asked to send.
+        let profile_id_log = crate::transport::bounded_server_text(profile_id, 120);
+        tracing::info!("[trigger] {profile_id_log}/{action} (winhook)");
         let _ = app.emit(
             "trigger",
             TriggerPayload { profile_id: profile_id.to_string(), action: action.to_string() },

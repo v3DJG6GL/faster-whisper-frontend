@@ -445,6 +445,15 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
     // launch, where truncating would silently rewrite a valid stored chord with the autosave
     // armed, and rejecting would refuse to load a working config.
     const MAX_CHORD_CODES: usize = 16;
+    // ...and the other dimension of the same field, which the cap above does not bound: how long
+    // ONE code is. 16 codes of ~1.2 MB each pass both the count check and `isCodeList`, under the
+    // 20 MB ceiling. Same three sinks as the count: `chordConflicts` in the preview's render body
+    // before consent (where `canonicalizeCodes`' `localeCompare` tie-break and `isStrictSubset`
+    // now compare megabyte strings), a permanently ~20 MB `config.json` re-serialized on every
+    // 400ms-debounced autosave and re-parsed at every launch, and `codeToLabel`'s fall-through
+    // rendering the raw string as a key cap. Every real code is a `KeyboardEvent.code`-style
+    // token — the longest in the tree is well under 32 — so this rejects only forgeries.
+    const MAX_CHORD_CODE_LEN: usize = 64;
     let meta = std::fs::metadata(&path).map_err(|e| format!("Could not read the file: {e}"))?;
     if meta.len() > MAX_IMPORT_BYTES {
         return Err("That file is too large to be a settings export.".into());
@@ -536,6 +545,12 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
         if parsed.iter().any(|p| p.hotkey.len() > MAX_CHORD_CODES) {
             return Err("That file has a shortcut with far more keys than the app supports.".into());
         }
+        if parsed
+            .iter()
+            .any(|p| p.hotkey.iter().any(|c| c.len() > MAX_CHORD_CODE_LEN))
+        {
+            return Err("That file has a shortcut key name far longer than the app supports.".into());
+        }
         *list = serde_json::to_value(parsed).map_err(|e| e.to_string())?;
     }
     for bucket in ["linux", "windows"] {
@@ -561,7 +576,11 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
         let ok = qa.is_null()
             || qa
                 .as_array()
-                .is_some_and(|a| a.len() <= MAX_CHORD_CODES && a.iter().all(|c| c.is_string()));
+                .is_some_and(|a| {
+                    a.len() <= MAX_CHORD_CODES
+                        && a.iter()
+                            .all(|c| c.as_str().is_some_and(|s| s.len() <= MAX_CHORD_CODE_LEN))
+                });
         if !ok {
             return Err("The file's quick-add shortcut is invalid.".into());
         }
