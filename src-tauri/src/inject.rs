@@ -419,7 +419,22 @@ pub fn set_clipboard(text: &str) -> Result<(), String> {
 /// clipboard" would have adopted as the user's content and re-restored forever (the mstsc
 /// stale-paste bug hid behind exactly this `let _ =`). `is_own_injected` now breaks that chain,
 /// but the failure itself still needs to show up in the log.
-fn serve_clipboard_blocking(text: String, what: &str) {
+///
+/// `report`, when present, receives the outcome AS SOON AS IT IS KNOWABLE and before this
+/// function blocks — see `set_clipboard_persistent` for why that split exists and what it can and
+/// cannot answer.
+fn serve_clipboard_blocking(
+    text: String,
+    what: &str,
+    report: Option<std::sync::mpsc::SyncSender<Result<(), String>>>,
+) {
+    let tell = |r: Result<(), String>| {
+        if let Some(tx) = report.as_ref() {
+            // The caller may already have timed out and dropped the receiver; that is a normal
+            // outcome, not an error — it means it decided to believe the optimistic answer.
+            let _ = tx.send(r);
+        }
+    };
     #[cfg(target_os = "linux")]
     {
         use arboard::SetExtLinux;
@@ -427,22 +442,39 @@ fn serve_clipboard_blocking(text: String, what: &str) {
             // Blocks here serving the selection until another app replaces it — that's what
             // keeps the text on the clipboard after a plain set would return + drop it.
             Ok(mut cb) => {
+                // Report BEFORE the wait, not after: `set().wait()` does not return until another
+                // app takes the selection, which may be never. Connecting to the clipboard is the
+                // whole answer that can be given synchronously on this platform, and it is the one
+                // that matters — it is what fails when the session has no clipboard at all.
+                tell(Ok(()));
                 if let Err(e) = cb.set().wait().text(text) {
-                    tracing::warn!("[clip] {what} failed: {e}");
+                    // The residual this design cannot answer synchronously. The caller has already
+                    // been told Ok, so this stays a log line — see `set_clipboard_persistent`.
+                    tracing::warn!("[clip] {what} failed after the handshake: {e}");
                 }
             }
-            Err(e) => tracing::warn!("[clip] {what}: clipboard unavailable: {e}"),
+            Err(e) => {
+                tracing::warn!("[clip] {what}: clipboard unavailable: {e}");
+                tell(Err(e.to_string()));
+            }
         }
     }
     #[cfg(not(target_os = "linux"))]
     {
         match arboard::Clipboard::new() {
             Ok(mut cb) => {
-                if let Err(e) = cb.set_text(text) {
+                // No `wait()` off Linux: `set_text` completes, so the FULL outcome is knowable
+                // here and the residual above does not exist on this platform.
+                let r = cb.set_text(text).map_err(|e| e.to_string());
+                if let Err(ref e) = r {
                     tracing::warn!("[clip] {what} failed: {e}");
                 }
+                tell(r);
             }
-            Err(e) => tracing::warn!("[clip] {what}: clipboard unavailable: {e}"),
+            Err(e) => {
+                tracing::warn!("[clip] {what}: clipboard unavailable: {e}");
+                tell(Err(e.to_string()));
+            }
         }
     }
 }
@@ -450,10 +482,43 @@ fn serve_clipboard_blocking(text: String, what: &str) {
 /// Put `text` on the clipboard and KEEP it there for the user to paste later. Used by the
 /// clipboard-only insert method, where (unlike paste) nothing consumes the clipboard
 /// immediately, so it must persist via a live owner.
-pub fn set_clipboard_persistent(text: &str) {
+/// Returns whether the text actually reached the clipboard, as far as that is knowable.
+///
+/// This used to be `-> ()`, and every caller reported success as a compile-time constant: six
+/// sites answered `landed: true` on the strength of a call that spawned a thread and returned.
+/// That is not only a reassuring message — on the DIVERT path it is data loss. `streaming.ts`
+/// computes `delivered = !t.isSelf && landed`, then advances `injectedText` so the phrase leaves
+/// the re-send stream permanently, clears `clipDirty` so no restore is owed, and pulses the
+/// "on the clipboard" glyph. On a machine where the clipboard does not work, a routine divert
+/// therefore dropped the phrase for good while the UI confirmed it was pasteable.
+///
+/// The answer cannot come from re-issuing a clipboard insert and believing it — that was tried
+/// (R21) and reverted, because `inject_text` short-circuits `method == "clipboard"` and the value
+/// it returns is a constant. It has to come from the thread that does the work, so the thread
+/// reports through a `sync_channel(1)` at the first point the outcome is knowable: after
+/// `Clipboard::new()`, before the blocking `set().wait()`.
+///
+/// **Ambiguity fails OPEN — deliberately.** A timeout or a dead channel returns `Ok`. The hazard
+/// the ledger records twice (P16, Q33) is that a wrong `false` makes the caller RE-TYPE text the
+/// user already has, which is worse than a wrong `true` at every current call site, since none of
+/// them has transmitted a keystroke. A slow-but-working compositor must not be misreported.
+///
+/// **What it does not cover:** on Linux, `set().wait()` failing after the handshake. That cannot
+/// be answered synchronously by construction — the call does not return until another app takes
+/// the selection. It stays a log line. The dominant real failure, and the one this closes, is
+/// having no clipboard connection at all.
+pub fn set_clipboard_persistent(text: &str) -> Result<(), String> {
     note_injected(text);
     let text = text.to_string();
-    std::thread::spawn(move || serve_clipboard_blocking(text, "clipboard-only set"));
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
+    std::thread::spawn(move || serve_clipboard_blocking(text, "clipboard-only set", Some(tx)));
+    // Normally sub-millisecond: this waits for a local connect, not for a paste. The bound exists
+    // so a wedged compositor cannot park an injection, and it is long enough that a slow one still
+    // gets to answer for itself rather than being reported as broken.
+    match rx.recv_timeout(Duration::from_millis(200)) {
+        Ok(r) => r,
+        Err(_) => Ok(()),
+    }
 }
 
 /// Restore clipboard text captured (time-bounded) by the caller before the paste, after a short delay so the paste
@@ -463,7 +528,9 @@ pub fn restore_clipboard_later(prev: Option<String>) {
     if let Some(prev) = prev {
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(400));
-            serve_clipboard_blocking(prev, "clipboard restore");
+            // No report channel: nothing user-facing rests on a RESTORE succeeding (the ledger
+            // verified all four call sites), and this already runs detached behind a 400ms sleep.
+            serve_clipboard_blocking(prev, "clipboard restore", None);
         });
     }
 }
@@ -556,7 +623,14 @@ fn paste(
         // advances its baseline, the phrase leaves the re-send stream, and the text is gone. This
         // is the rule `set_clipboard_persistent`'s own doc states — nothing consumes the clipboard
         // here, so it must persist via a live owner.
-        set_clipboard_persistent(text);
+        // Believe the answer now that there is one. `NothingWritten` is safe here specifically
+        // because no chord was pressed on this arm — the caller re-sends, and re-sending cannot
+        // duplicate text that was never typed. (The `set_text` above went through a local
+        // `Clipboard` that is dropped on return, so it is not a fallback.)
+        if let Err(e) = set_clipboard_persistent(text) {
+            tracing::warn!("[clip] paste: clipboard divert failed, reporting nothing written: {e}");
+            return Ok(Landed::NothingWritten);
+        }
         return Ok(Landed::OnClipboard);
     }
     let res = paste_keystroke(enigo, chord);

@@ -1634,7 +1634,14 @@ pub async fn inject_text(
     // since nothing is typed (the own-window guard above already ran).
     if method == "clipboard" {
         if !text.is_empty() {
-            crate::inject::set_clipboard_persistent(&text);
+            // The whole point of the handshake: this arm's `landed: true` used to be a constant,
+            // and it is the arm that runs for every phrase when the insert method IS the
+            // clipboard. Reporting false is safe here because no keystroke is ever synthesized on
+            // this path, so the caller's re-send cannot duplicate anything.
+            if let Err(e) = crate::inject::set_clipboard_persistent(&text) {
+                tracing::warn!("[inject] clipboard-only insert failed: {e}");
+                return Ok(InjectOutcome { landed: false, diverted: false });
+            }
         }
         return Ok(InjectOutcome { landed: true, diverted: false });
     }
@@ -1799,7 +1806,13 @@ pub async fn inject_text(
             return Ok(InjectOutcome { landed: true, diverted: false });
         }
         if !text.is_empty() {
-            crate::inject::set_clipboard_persistent(&text);
+            // The divert the ledger's D1 named as the data-loss path: on `landed: true` the
+            // caller advances its baseline and the phrase leaves the re-send stream for good.
+            // Nothing has been typed on this arm either, so `false` is both truthful and safe.
+            if let Err(e) = crate::inject::set_clipboard_persistent(&text) {
+                tracing::warn!("[inject] divert to clipboard failed: {e}");
+                return Ok(InjectOutcome { landed: false, diverted: false });
+            }
         }
         // The one site that reports a DIVERT: the caller asked to type or paste and we did neither.
         return Ok(InjectOutcome { landed: true, diverted: true });
@@ -1941,7 +1954,13 @@ pub async fn inject_text(
                     && crate::inject::cancel_wants_recovery(epoch)
                     && !recovery_text.is_empty()
                 {
-                    crate::inject::set_clipboard_persistent(&recovery_text);
+                    // Arm the session-restore guard ONLY if the recovery actually landed. Arming
+                    // it on a failed write would suppress the restore of the user's own clipboard
+                    // to protect a transcript that is not there — losing both.
+                    if let Err(e) = crate::inject::set_clipboard_persistent(&recovery_text) {
+                        tracing::warn!("[inject] recovery to clipboard failed at the write guard: {e}");
+                        return Ok(InjectOutcome { landed: false, diverted: false });
+                    }
                     // The SECOND recovery write, and it needs the same session-restore guard as
                     // the one at the end of this function — this early `return` is precisely why
                     // (the block that arms it never evaluates). The two preconditions co-occur
@@ -1975,7 +1994,15 @@ pub async fn inject_text(
                 // reporting the divert without this promises a clipboard that no longer holds the
                 // text, and the caller has already advanced past that phrase. Same rule the X11
                 // twin follows at its own chord guard.
-                crate::inject::set_clipboard_persistent(&text);
+                // With an answer available, the comment above becomes enforceable rather than
+                // aspirational: if the persistent re-set fails, the plain `set_clipboard` above is
+                // exactly the write that does not stick, so promising a divert would be the false
+                // confirmation this arm was added to avoid. No chord was pressed, so the caller's
+                // re-send is safe.
+                if let Err(e) = crate::inject::set_clipboard_persistent(&text) {
+                    tracing::warn!("[inject] divert at the paste chord failed: {e}");
+                    return Ok(InjectOutcome { landed: false, diverted: false });
+                }
                 return Ok(InjectOutcome { landed: true, diverted: true });
             }
             let r = crate::wayland_inject::paste(&app, typer.inner(), paste_shortcut, auto_enter, epoch).await;
@@ -2036,16 +2063,32 @@ pub async fn inject_text(
     // mid-sentence and the window it was going into has already been refocused by the teardown.
     // Leave the transcript on the clipboard so it is recoverable — the same courtesy the
     // stop-mode path extends. A user-initiated cancel deliberately does not land here.
-    let recovered = crate::inject::injection_cancelled(epoch)
+    let mut recovered = crate::inject::injection_cancelled(epoch)
         && crate::inject::cancel_wants_recovery(epoch)
         && !recovery_text.is_empty();
     if recovered {
-        tracing::info!("[inject] aborted by a failed session — transcript left on the clipboard");
-        crate::inject::set_clipboard_persistent(&recovery_text);
-        // Tell the SESSION-level restore not to serve the user's old clipboard over the top.
-        // The per-paste restore above already declines on this condition; `end_injection` runs
-        // after this job is gone and cannot ask the same question by epoch.
-        crate::inject::note_recovery_on_clipboard();
+        // `recovered` is what upgrades `NothingWritten` to `landed: true, diverted: true` below,
+        // i.e. the claim "the text IS somewhere the user can reach". Now that the write can say
+        // otherwise, that claim follows the write instead of assuming it: on failure the outcome
+        // falls back to plain `NothingWritten`, which is truthful and safe — this arm is reached
+        // only when no key was transmitted.
+        match crate::inject::set_clipboard_persistent(&recovery_text) {
+            Ok(()) => {
+                tracing::info!(
+                    "[inject] aborted by a failed session — transcript left on the clipboard"
+                );
+                // Tell the SESSION-level restore not to serve the user's old clipboard over the
+                // top. The per-paste restore above already declines on this condition;
+                // `end_injection` runs after this job is gone and cannot ask the same question by
+                // epoch. Armed only on success, so a failed recovery does not suppress the
+                // restore of the clipboard the user actually still has.
+                crate::inject::note_recovery_on_clipboard();
+            }
+            Err(e) => {
+                tracing::warn!("[inject] aborted by a failed session, and the clipboard recovery failed too: {e}");
+                recovered = false;
+            }
+        }
     }
     res.map(|landed| match landed {
         crate::inject::Landed::Yes => InjectOutcome { landed: true, diverted: false },
