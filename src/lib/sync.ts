@@ -661,6 +661,37 @@ function sanitizeAppRules(rules: unknown): AppRule[] {
     // An all-invisible appId normalizes to "", which matches nothing and displays as nothing —
     // a zombie row on the audit screen. Drop it rather than store it.
     .filter((r) => r.appId.length > 0)
+    // Rules are MATCHED by appId and `resolveInjectionTarget` takes the FIRST match, so two rules
+    // sharing an appId shadow each other. `upsertAppRule` knows this and dedupes on the local
+    // editor path — with a comment naming the hazard — and this inbound twin had neither that
+    // guard nor Q12's `dedupeById` (which was applied to backends/profiles only, and keys on `id`,
+    // so it would not catch two distinct ids sharing an appId anyway).
+    //
+    // Without it a peer prepends `{appId:"konsole", block:false, insertMethod:"direct"}` ahead of
+    // the user's own `{appId:"konsole", block:true}`: the resolver picks the attacker's entry and
+    // TYPES the transcript into the app the user marked "never type here", while AppRules.tsx
+    // still draws the Ban icon and "Blocked — never typed here" for the shadowed rule. App rules
+    // raise no SecurityChange, so this lands on the unattended startup/focus pull.
+    //
+    // Keep-FIRST on both keys, which is what the resolver already does — so the surviving row is
+    // the one that was being enforced, and display goes back into agreement with enforcement.
+    // Behaviour-preserving for every legitimate config: duplicates are unreachable from the UI,
+    // `upsertAppRule` guarantees uniqueness. Placed in the sync sanitizer only, never in
+    // `wellFormedAppRules` — that floor runs over the user's own config.json at every launch with
+    // the autosave armed (Q12's rule).
+    .filter(
+      (() => {
+        const ids = new Set<string>();
+        const appIds = new Set<string>();
+        return (r: AppRule) => {
+          const key = r.appId.trim().toLowerCase();
+          if (ids.has(r.id) || appIds.has(key)) return false;
+          ids.add(r.id);
+          appIds.add(key);
+          return true;
+        };
+      })(),
+    )
     .slice(0, MAX_SYNCED_ENTRIES);
 }
 
