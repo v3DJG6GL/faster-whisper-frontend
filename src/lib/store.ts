@@ -403,7 +403,12 @@ function scrubBackendFromSettings(settings: AppSettings, id: string): AppSetting
   let next = settings;
   if (next.quickAddList?.backendId === id) next = { ...next, quickAddList: null };
   const sync = next.sync;
-  if (sync && (sync.backendId === id || id in sync.urlOverrides)) {
+  // hasOwn, not `in`, for the same reason as `setUsage`'s: a blob-authored id like `constructor`
+  // is inherited-present, so `in` reports a reference this map does not hold and rebuilds
+  // `settings` when nothing pointed at the backend — the spurious churn this function's docstring
+  // says it exists to avoid, which then triggers a config save and a push. `isReservedBackendId`
+  // rejects only the `__…__` namespace, so those ids survive `sanitizeBackends`.
+  if (sync && (sync.backendId === id || hasOwn(sync.urlOverrides, id))) {
     const urlOverrides = { ...sync.urlOverrides };
     delete urlOverrides[id];
     next = {
@@ -474,7 +479,9 @@ export const useApp = create<AppState>((set) => ({
     set((s) => {
       const sync = s.settings.sync ?? DEFAULT_SYNC;
       const next = url?.trim() ? url.trim() : null;
-      const cur = sync.urlOverrides[backendId] ?? null;
+      // Own-property read, same reason as the `in` above: an inherited `constructor` hands `cur`
+      // a function, so the `cur === next` short-circuit could never fire for such an id.
+      const cur = (hasOwn(sync.urlOverrides, backendId) ? sync.urlOverrides[backendId] : null) ?? null;
       if (cur === next) return {};
       const urlOverrides = { ...sync.urlOverrides };
       if (next) urlOverrides[backendId] = next;

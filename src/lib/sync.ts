@@ -1045,6 +1045,29 @@ function canSync(): boolean {
   return Boolean(isTauri && syncMeta()?.enabled && syncBackend());
 }
 
+/** Re-resolve the sync target AT the request and return its address, or `null` if the backend the
+ *  caller captured is no longer the one to talk to.
+ *
+ *  `pullNow`/`pushNow` capture `backend` once at entry and then await real IPC — `ensureStateFor`
+ *  (a keyring delete + `saveSyncState` on first contact) and, on push, `composeBlob`'s
+ *  `readBackendKeys`, which carries a 10s timeout precisely because a locked wallet parks it. The
+ *  address is only built afterwards, and `effectiveServerUrl(backend, live settings)` then mixes a
+ *  LIVE override map with the STALE `backend.serverUrl` — the two halves of one address disagreeing.
+ *  Any store change schedules a push 3s later (a pull schedules one too), so a push is routinely in
+ *  flight while the user is in Settings; correcting the sync backend's address there makes
+ *  `upsertBackend` build a new array whose subscriber only calls `schedulePush()`, which the
+ *  `inFlight` gate drops — and the in-flight PUT still goes to the ABANDONED host, where
+ *  `sync_push` attaches that backend's stored bearer key and uploads a body that on the
+ *  `cats.backends` path carries EVERY backend's plaintext key.
+ *
+ *  This is the same live-target check K5/Q13/R13/R14/R15/R16 applied across the screens; the `gen`
+ *  epoch does not cover it, because both `myGen` checks run only after the request has been sent. */
+function liveSyncTarget(captured: Backend): string | null {
+  const live = syncBackend();
+  if (!live || live.id !== captured.id || live.serverUrl !== captured.serverUrl) return null;
+  return effectiveServerUrl(live, useApp.getState().settings);
+}
+
 /** Keyring account holding the snapshot's API keys. The snapshot is the 3-way merge base and,
  *  for a toggled-OFF backends category, the source of what gets pushed back — so it has to keep
  *  the real keys. It does NOT have to keep them in a FILE: sync-state.json sat next to config.json
@@ -1124,11 +1147,47 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
   // Same reason as `reconcileBackendSecrets`: `Object.keys` on a server-supplied STRING yields one
   // id per code unit, and these ids are PERSISTED — a 4 MiB value becomes a ~40 MB sync-state.json
   // that is re-read and re-expanded on every launch, long after the blob that caused it is gone.
-  const ids = isPlainObject(secrets) ? Object.keys(secrets) : [];
+  //
+  // R2 gave this read the SHAPE check and no COUNT cap, and it is the one container read in the
+  // engine whose result is persisted twice — to sync-state.json AND to the OS keyring. Iterate the
+  // snapshot's BACKEND LIST and read by id, which is Q11's settled fix for the sibling read in
+  // `reconcileBackendSecrets`, rather than iterating the attacker's map. `state.snapshot` is the
+  // RAW remote blob, so `secrets` is server-authored: a well-formed
+  // `{"backends":{"list":[],"secrets":{…350 000 junk ids…}}}` sits inside SYNC_MAX_BODY and raises
+  // NO SecurityChange (`securityChanges` iterates `backends.list`, which is empty), so it applies
+  // on the unattended startup/focus pull. Every one of those ids would land in
+  // `snapshotSecretIds`, be written to sync-state.json and re-parsed at EVERY launch, and be
+  // `JSON.stringify`d into a single keyring entry — where on Windows wincred's 2560-byte credential
+  // limit makes the write fail into a `.catch(console.error)` while the ids persist anyway, so
+  // every later launch reads back nothing, latches `snapshotSecretsUnavailable`, and drops the
+  // backends category from every push for the session.
+  //
+  // Bounding by the list is the bound that matters (a secret for a backend the snapshot does not
+  // list can never be composed — `composeBlob` builds `secrets` from the local backend list, so
+  // legitimate keys are always a subset), and MAX_SYNCED_ENTRIES caps it by construction since the
+  // raw list is itself server-authored.
+  const secretsMap = isPlainObject(secrets) ? (secrets as Record<string, unknown>) : undefined;
+  const listed = Array.isArray(state.snapshot?.backends?.list) ? state.snapshot.backends.list : [];
+  const ids: string[] = [];
+  if (secretsMap) {
+    const seen = new Set<string>();
+    for (const b of listed) {
+      if (ids.length >= MAX_SYNCED_ENTRIES) break;
+      const id: unknown = (b as { id?: unknown } | null)?.id;
+      if (typeof id !== "string" || seen.has(id)) continue;
+      if (typeof ownProp(secretsMap, id) !== "string") continue;
+      seen.add(id);
+      ids.push(id);
+    }
+  }
   const hadStash = state.snapshotSecretIds !== undefined;
   state.snapshotSecretIds = ids.length > 0 ? ids : undefined;
   if (ids.length > 0) {
-    await stashSnapshotSecrets(secrets!);
+    // Stash the NARROWED map, not the original: stashing the attacker's map would put the ids
+    // straight back into the keyring entry the id list was just bounded to keep out of.
+    await stashSnapshotSecrets(
+      Object.fromEntries(ids.map((id) => [id, ownProp(secretsMap!, id) as string])),
+    );
   } else if (hadStash) {
     // The stash must never outlive the snapshot it belongs to. When the new snapshot carries no
     // secrets (locked wallet, or a remote snapshot with no backends category) the old bundle was
@@ -1193,10 +1252,14 @@ export async function pullNow(manual = false): Promise<void> {
   setRuntime({ syncStatus: "syncing", syncError: null });
   try {
     await ensureStateFor(backend.id);
-    const res = await syncPull({
-      serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
-      backendId: backend.id,
-    });
+    const pullUrl = liveSyncTarget(backend);
+    if (pullUrl === null) {
+      // The target moved while we were in the keyring. Don't read the abandoned host — the next
+      // window-focus pull runs against the corrected address on its own.
+      setRuntime({ syncStatus: "ok" });
+      return;
+    }
+    const res = await syncPull({ serverUrl: pullUrl, backendId: backend.id });
     if (myGen !== gen) return; // superseded mid-flight — this result is for the wrong server
     if (!res.ok || !res.state) {
       handleTransportFailure(res.status, res.error);
@@ -1262,8 +1325,17 @@ export async function pushNow(manual = false): Promise<void> {
       return;
     }
     for (let attempt = 0; attempt < 3; attempt++) {
+      // Re-asked per ATTEMPT, not once before the loop: a conflict retry re-composes and re-sends,
+      // so the address can go stale between attempts too. This is the request that carries every
+      // backend's plaintext key, so it is the one that must not go to an abandoned host.
+      const pushUrl = liveSyncTarget(backend);
+      if (pushUrl === null) {
+        setRuntime({ syncStatus: "ok" });
+        schedulePush(0); // let the corrected address receive this state instead
+        return;
+      }
       const res = await syncPush({
-        serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+        serverUrl: pushUrl,
         backendId: backend.id,
         blob,
         baseVersion: base,
