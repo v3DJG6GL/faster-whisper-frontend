@@ -89,6 +89,38 @@ function clearWarmTimer(): void {
 // for the chip/Home preview. Partials carry only the current utterance, so we
 // prepend this to keep earlier lines visible while the next sentence is spoken.
 let committedDoc = "";
+// Coalescing state for `stream://partial` (see the handler). MODULE scope, not the listener
+// closure, because `partial` has five writers and only one of them is that handler: `final`
+// folds the utterance into `committedDoc` and republishes, `boundary` clears it, and
+// startLiveInner / cancelLive / flashError reset it. A trailing tick armed up to
+// PARTIAL_MIN_MS earlier would otherwise fire AFTER any of those and overwrite it with the
+// pre-`final` text — a write REORDERING the unthrottled handler could not produce, since it
+// wrote synchronously in arrival order. `inSession()` cannot catch it: it stays true through
+// `boundary`, through the post-`final` drain, and into a fresh session. So every other writer
+// calls `resetPartialPreview()` and the tick has nothing stale left to publish.
+const PARTIAL_MIN_MS = 33;
+let lastPartialAt = 0;
+let partialTimer: ReturnType<typeof setTimeout> | undefined;
+let latestPartial: string | null = null;
+function resetPartialPreview(): void {
+  if (partialTimer) {
+    clearTimeout(partialTimer);
+    partialTimer = undefined;
+  }
+  latestPartial = null;
+}
+function flushPartial(): void {
+  if (latestPartial === null) return;
+  lastPartialAt = performance.now();
+  // Status is re-read HERE, not carried from the frame — same rule the level ticks follow. A
+  // trailing tick fires up to PARTIAL_MIN_MS after its frame, and asserting the frame-time
+  // "listening" then would resurrect the status the handler's own guard exists to protect.
+  const cur = useApp.getState();
+  const capturingNow = cur.status === "listening";
+  cur.setDictation(
+    capturingNow ? { status: "listening", partial: latestPartial } : { partial: latestPartial },
+  );
+}
 // The exact text we've TYPED into a non-self field so far (live mode), so we can diff the next
 // document against it and append only what's new. Advanced in the inject queue ONLY when a phrase
 // actually lands (NOT for a phrase the own-window guard skips) — so after a focus switch, text
@@ -547,23 +579,7 @@ async function ensureListeners(): Promise<void> {
   let lastLevelAt = 0;
   let levelTimer: ReturnType<typeof setTimeout> | undefined;
   let latestLevel = 0;
-  // Same coalesce for `stream://partial` — see the call site for why the server-paced one needs
-  // it more than the hardware-paced one.
-  const PARTIAL_MIN_MS = 33;
-  let lastPartialAt = 0;
-  let partialTimer: ReturnType<typeof setTimeout> | undefined;
-  let latestPartial: string | null = null;
-  const flushPartial = (): void => {
-    if (latestPartial === null) return;
-    lastPartialAt = performance.now();
-    // Status is re-read HERE, not carried from the frame — same rule the level ticks follow. A
-    // trailing tick fires up to PARTIAL_MIN_MS after its frame, and asserting the frame-time
-    // "listening" then would resurrect the status the handler's own guard exists to protect.
-    const capturingNow = useApp.getState().status === "listening";
-    setDictation(
-      capturingNow ? { status: "listening", partial: latestPartial } : { partial: latestPartial },
-    );
-  };
+  // `stream://partial`'s coalescing state lives at module scope — see it there for why.
   // Register every stream://* listener through reg() so their unlisten handles are collected, and roll
   // them ALL back if any registration rejects mid-sequence — else the survivors stay live with no
   // handle while `wired` is still false, so the next (serialized) startLive re-registers atop them and
@@ -707,6 +723,9 @@ async function ensureListeners(): Promise<void> {
     if (!inSession()) return;
     // committed+tail is the whole document so far — fold it in and show it.
     committedDoc = e.payload.committed + e.payload.tail;
+    // Drop any pending partial tick first: it holds the PRE-final text and would otherwise
+    // land up to PARTIAL_MIN_MS later and regress this publish.
+    resetPartialPreview();
     setDictation({ partial: committedDoc });
     // Live mode (append-only): type the newest phrase from `tail` immediately,
     // only ever APPENDING what's new beyond what we've already typed — we never
@@ -968,6 +987,8 @@ async function ensureListeners(): Promise<void> {
     clipBaseline = "";
     injectedText = "";
     seenDoc = "";
+    // Same reason as the final handler's: a pending tick would undo this clear.
+    resetPartialPreview();
     setDictation({ partial: "" });
     // A hard break = a finished phrase. In live mode, emit (into the window focused NOW)
     // any configured separator AND — when "Press Enter after" is on — a REAL Enter, so each
@@ -1432,6 +1453,9 @@ function flashError(message: string): void {
   // error auto-clear didn't. Clear `warming` for the same reason: a start-failure lands here with
   // warming:true AND the warm-timer backstop already cancelled (start-reject catch), so without this
   // the chip would stay stuck on "warming up…" (read ungated) and expanded until the next session.
+  // Fifth writer of `partial`: drop any pending tick so it cannot repaint a preview over the
+  // error the user is being shown.
+  resetPartialPreview();
   useApp.getState().setDictation({ status: "error", dictationError: message, level: 0, partial: "", warming: false });
   if (errorClearTimer) clearTimeout(errorClearTimer);
   errorClearTimer = setTimeout(() => {
@@ -1588,6 +1612,10 @@ async function startLiveInner(
   injectedText = "";
   seenDoc = "";
   bankedDoc = "";
+  // The listener closure outlives every session, so a tick armed by the PREVIOUS session would
+  // otherwise write its transcript into this one's just-cleared chip — `inSession()` is true and
+  // cannot tell the two apart.
+  resetPartialPreview();
   beganInjection = false;
   sessionTyped = false;
   sessionClipboard = false;
@@ -1818,6 +1846,7 @@ export async function cancelLive(): Promise<void> {
   injectedText = "";
   seenDoc = "";
   bankedDoc = "";
+  resetPartialPreview();
   // If we snapshotted the clipboard for live paste, give the user's original back and clear the
   // snapshot so it can't leak into the next session (end_injection restores + consumes it).
   // Chain it on the existing queue so it runs AFTER any in-flight paste — calling it directly
