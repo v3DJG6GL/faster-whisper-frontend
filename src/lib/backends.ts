@@ -1,7 +1,7 @@
 // Backend-resolution helpers shared by transport call sites.
 
 import type { AppSettings, Backend } from "./types";
-import { safeDisplayText } from "./sanitize";
+import { safeIdentityText } from "./sanitize";
 
 /** The preprocessing WHATWG performs BEFORE it looks for a scheme, reproduced so the tests below
  *  judge the same string the parsers do.
@@ -158,7 +158,16 @@ const SEP = " \u00b7 ";
 
 export function backendOptions(all: Backend[], max = 80): { value: string; label: string }[] {
   const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
-  const labels = all.map((b) => safeDisplayText(b.name, max));
+  // `safeIdentityText`, not `safeDisplayText`: G4 moved the three identity renders beside a trust
+  // decision onto it and this fourth site was missed. `safeDisplayText` passes the invisible class
+  // `isInvisibleKeyChar` enumerates — U+2800, U+034F, the variation selectors, the tags block —
+  // and `norm`'s `\s+` does not match any of them either, so `"Work" + 90×U+2800` and `"Work"`
+  // both draw as exactly `Work` while counting as two distinct labels: neither collides, neither
+  // is suffixed, and the Q14 guard is inert for the whole class. A rename raises no
+  // SecurityChange, so it arrives on the unattended pull. The pickers this feeds choose which
+  // server receives a profile's audio and bearer key, which receives an uploaded file, and which
+  // receives the whole synced blob — and none of them shows an address.
+  const labels = all.map((b) => safeIdentityText(b.name, max));
   const counts = new Map<string, number>();
   for (const l of labels) counts.set(norm(l), (counts.get(norm(l)) ?? 0) + 1);
   // A name that already CONTAINS the separator is forced into the suffix branch whatever the

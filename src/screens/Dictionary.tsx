@@ -411,7 +411,13 @@ function RuleCard({
                 </Button>
               )}
               {mapShown.map((row) => {
-                const ts = rule.map_meta?.[row.k];
+                // Own-property read: `map_meta` is forwarded from the pipeline-rules payload as an
+                // unvalidated object and `row.k` is server-authored on first load, so a mapping
+                // keyed `constructor`/`toString`/`valueOf` resolves to an inherited FUNCTION rather
+                // than undefined. That is truthy, so the falsy guard in the formatters below is
+                // bypassed and the "Added" column prints a fabricated date for a mapping that has
+                // no timestamp. Same fix as `connections` gets four hundred lines up.
+                const ts = ownProp(rule.map_meta ?? {}, row.k);
                 return (
                   <div key={row.id} className="flex items-center gap-3 rounded-lg border border-line bg-surface-2/40 px-2.5 py-2">
                     <Combobox

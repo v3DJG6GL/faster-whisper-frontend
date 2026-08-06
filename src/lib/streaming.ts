@@ -166,8 +166,32 @@ const PHRASE_END_QUIET_MS = 1200;
 let pendingReclassify: Profile | null = null;
 // Serialise every injection op so backspaces/types never interleave or race.
 let injectChain: Promise<void> = Promise.resolve();
+/** Pending links on `injectChain`. The queue is fed by `stream://final`, whose rate the untrusted
+ *  server chooses — Rust bounds each FIELD at MAX_TRANSCRIPT and the message at MAX_WS_MESSAGE,
+ *  but emits one Final per frame with no rate or count limit — and it drains at one
+ *  `resolveTarget()` per task, i.e. a `get_focused_app` IPC round trip plus an AT-SPI/D-Bus query
+ *  on Linux: tens of milliseconds. Each queued closure retains its `target` and `phraseClip`, so
+ *  the backlog holds up to two 4 MiB strings per link in the shared WebKitGTK renderer, and every
+ *  link is also one more AT-SPI query amplified from one frame. `bankedDoc` was given an 8 MiB
+ *  budget for exactly this shape; the queue that holds a full copy of each document had none. */
+let injectDepth = 0;
+/** Far above any legitimate backlog — real speech produces finals seconds apart and the queue
+ *  drains in tens of ms, so a depth this large means the server is emitting faster than the
+ *  machine can inject, which is the flood and not a user. Dropping the newest rather than the
+ *  oldest keeps the text already committed to the queue intact. */
+const MAX_INJECT_DEPTH = 64;
 function enqueueInject(fn: () => Promise<void>): void {
-  injectChain = injectChain.then(fn).catch((e) => console.error("inject failed:", e));
+  if (injectDepth >= MAX_INJECT_DEPTH) {
+    console.warn(`inject queue at ${injectDepth} — dropping this insert (server outpacing injection)`);
+    return;
+  }
+  injectDepth++;
+  injectChain = injectChain
+    .then(fn)
+    .catch((e) => console.error("inject failed:", e))
+    .finally(() => {
+      injectDepth--;
+    });
 }
 
 /** Enqueue a real Enter into the window focused NOW. Empty text routes through the keystroke
@@ -523,6 +547,23 @@ async function ensureListeners(): Promise<void> {
   let lastLevelAt = 0;
   let levelTimer: ReturnType<typeof setTimeout> | undefined;
   let latestLevel = 0;
+  // Same coalesce for `stream://partial` — see the call site for why the server-paced one needs
+  // it more than the hardware-paced one.
+  const PARTIAL_MIN_MS = 33;
+  let lastPartialAt = 0;
+  let partialTimer: ReturnType<typeof setTimeout> | undefined;
+  let latestPartial: string | null = null;
+  const flushPartial = (): void => {
+    if (latestPartial === null) return;
+    lastPartialAt = performance.now();
+    // Status is re-read HERE, not carried from the frame — same rule the level ticks follow. A
+    // trailing tick fires up to PARTIAL_MIN_MS after its frame, and asserting the frame-time
+    // "listening" then would resurrect the status the handler's own guard exists to protect.
+    const capturingNow = useApp.getState().status === "listening";
+    setDictation(
+      capturingNow ? { status: "listening", partial: latestPartial } : { partial: latestPartial },
+    );
+  };
   // Register every stream://* listener through reg() so their unlisten handles are collected, and roll
   // them ALL back if any registration rejects mid-sequence — else the survivors stay live with no
   // handle while `wired` is still false, so the next (serialized) startLive re-registers atop them and
@@ -619,11 +660,37 @@ async function ensureListeners(): Promise<void> {
     // inSession() guard the final/boundary/overrides-ignored handlers already carry.
     if (!inSession()) return;
     const capturing = useApp.getState().status === "listening";
-    setDictation(
-      capturing
-        ? { status: "listening", partial: committedDoc + sep + live }
-        : { partial: committedDoc + sep + live },
-    );
+    // Coalesced for the same measured reason as `stream://level` above, and against a worse
+    // pacer. `overlay.ts` subscribes on `state.partial !== prev.partial` exactly as it does on
+    // `level`, so every partial rebuilds the whole chip payload, IPC-emits it cross-window and
+    // re-renders both windows — the churn that comment records as having bloated the shared
+    // WebKitGTK renderer to multiple GB over a long session. But `level` is hardware-paced at
+    // 50-100 Hz, while the partial rate is chosen entirely by the untrusted server: Rust bounds
+    // each field at MAX_TRANSCRIPT and applies no frame-rate or frame-count limit, and
+    // `store.ts`'s patch apply does no coalescing. A server flooding partials pins the main
+    // thread of the main window AND the chip — including the cancel affordance the user would
+    // reach for. Leading edge then a trailing tick, so the preview still settles on the last
+    // text rather than freezing mid-throttle.
+    //
+    // Only the preview setState is throttled. `bumpPhraseEnd()` below stays on every frame, so
+    // per-phrase timing (Enter, clipboard restore, phrase boundary) is unchanged.
+    latestPartial = committedDoc + sep + live;
+    const pWait = PARTIAL_MIN_MS - (performance.now() - lastPartialAt);
+    if (pWait <= 0) {
+      if (partialTimer) {
+        clearTimeout(partialTimer);
+        partialTimer = undefined;
+      }
+      flushPartial();
+    } else if (!partialTimer) {
+      partialTimer = setTimeout(() => {
+        partialTimer = undefined;
+        // Closure-local like the level tick: it cannot be cleared on teardown, so re-ask the
+        // same `inSession()` question the leading edge asked rather than resurrecting a stale
+        // preview into an idle or errored chip.
+        if (inSession()) flushPartial();
+      }, pWait);
+    }
     // Still speaking → keep deferring the per-phrase actions (Enter / clipboard restore / clipboard
     // phrase boundary) until you actually pause. Armed for any live session, but only while capturing.
     if (insertCfg?.live && capturing) bumpPhraseEnd();

@@ -149,6 +149,12 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
         )
       : [];
 
+  // Same condition `RestoreFromServer` computes for its own replace warning — see the notice below.
+  const replaces =
+    (sel.backends && result.categories.backends && st.backends.length > 0) ||
+    (sel.profiles && result.categories.profiles && st.profiles.length > 0) ||
+    (sel.appRules && result.categories.appRules && st.appRules.length > 0);
+
   const apply = async () => {
     setApplying(true);
     setError(null);
@@ -197,6 +203,19 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
         <Notice>
           Machine-specific settings (microphone, recordings folder, evdev) are never imported.
         </Notice>
+        {/* The hazard notice `RestoreFromServer` has and this dialog did not, though both default
+            every present category to ON and both apply through `applyBlob` — which REPLACES rather
+            than merges. A file carrying `"backends": {"list": []}` renders as a pre-checked row
+            reading "Backends · Server connections incl. API keys (0)", with no incoming-addresses
+            block (it returns null on an empty list) and no missing-key warning, and on Import
+            deletes every configured backend, nulls every profile's backendId and takes the keyring
+            association with it. Nothing in the dialog said the selection replaces rather than adds. */}
+        {replaces && (
+          <Notice tone="warn">
+            Selected categories replace what&apos;s on this device — your current backends and
+            profiles are overwritten.
+          </Notice>
+        )}
         {result.hasSecrets && sel.backends && (
           <Notice tone="warn">This file contains API keys — they'll be stored in the system keyring.</Notice>
         )}

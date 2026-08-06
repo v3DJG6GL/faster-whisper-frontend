@@ -800,7 +800,22 @@ export default function Backends() {
                 handleSave(b);
                 // The connect step's test is still current when the URL wasn't
                 // edited — show it on the list card instead of "untested".
-                if (flow.info && b.serverUrl === flow.draft.serverUrl) {
+                //
+                // Both terms, canonical AND effective. "Address on this device" is applied LIVE
+                // from inside this editor (`setUrlOverride`, no save needed) and
+                // `effectiveServerUrl` prefers it, so checking only the canonical url caches host
+                // A's verdict onto a backend that now routes to host B: a green "connected" dot
+                // beside B's address on the card this file's own comment calls the audit surface,
+                // with `effectiveServerKind` classifying B from A's answer — which gates the
+                // decode-override editor and the endpoint warning. Permanent, since every
+                // `setConnection` caller is a user gesture and nothing re-tests on its own. The
+                // editor's stale-result effect and `handleTest` both already carry this term; this
+                // commit path, the one that writes to the store, had neither.
+                if (
+                  flow.info &&
+                  b.serverUrl === flow.draft.serverUrl &&
+                  effectiveUrl(b) === flow.draft.serverUrl
+                ) {
                   setConnection(b.id, flow.info);
                 }
               }}
