@@ -155,7 +155,10 @@ jobs:
         run: |
           # Re-install when the cached binary is a different version from the pin, not merely when
           # none is present — otherwise a stale cached build outlives every bump.
-          have=$(cargo audit --version 2>/dev/null | awk '{print $NF}')
+          # `|| true`: on a cold cache `cargo audit` is not installed and exits 101 — the runner's
+          # `bash -e -o pipefail` would otherwise kill the whole step right here, silently
+          # (stderr is discarded), instead of falling through to the install (run 269).
+          have=$(cargo audit --version 2>/dev/null | awk '{print $NF}' || true)
           if [ "$have" != "$CARGO_AUDIT_VERSION" ]; then
             cargo install cargo-audit --version "$CARGO_AUDIT_VERSION" --locked --force
           fi
