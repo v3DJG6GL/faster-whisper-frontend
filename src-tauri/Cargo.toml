@@ -156,3 +156,13 @@ windows-sys = { version = "0.61", features = [
 # `cargo update -p time` past 0.3.47 until Tauri bumps `cookie`.
 [lints.rust]
 unused_crate_dependencies = "allow"
+
+# tao 0.35.3 (crates.io) forces GTK client-side decorations on Wayland and wraps the
+# titlebar buttons in an EventBox(set_above_child) that eats their clicks — min/max/close
+# are dead on KDE Wayland at every map (first show + each close-to-tray re-show) until a
+# maximize restacks it. Fixed upstream by tao PR #1218 ("apply CSD only when necessary":
+# KWin's server-side decorations get used instead), first released in tao 0.36.0 — which
+# tauri-runtime-wry (^0.35) can't pull yet. The fix's merge commit is still versioned
+# 0.35.3, so pin it here; drop this once tauri-runtime-wry depends on tao >= 0.36.
+[patch.crates-io]
+tao = { git = "https://github.com/tauri-apps/tao", rev = "07f3742b1833b64be27b1ef991e38d557d4276c9" }
