@@ -20,6 +20,8 @@
   "minimumReleaseAge": "3 days",
   "internalChecksFilter": "strict",
   "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "automerge": true,
     "minimumReleaseAge": "3 days"
   },
 
