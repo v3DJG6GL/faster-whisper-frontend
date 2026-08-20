@@ -104,8 +104,9 @@ export default function QuickAdd() {
   const rowsRef = useRef<MapRow[]>([]);
   rowsRef.current = rows;
   // Live mirror of `find` so the once-built summon listener can tell whether the user has begun
-  // typing since the reset — the seed read is awaited (AT-SPI, up to ~1s) AFTER the field is made
-  // interactive, so a slow seed must not clobber input the user already entered.
+  // typing since the reset — the seed read is awaited (AT-SPI up to ~1s; the Windows clipboard
+  // rendezvous up to ~4s under RDP) AFTER the field is made interactive, so a slow seed must not
+  // clobber input the user already entered.
   const findRef = useRef("");
   findRef.current = find;
   const saveTimer = useRef<number | null>(null);
@@ -289,69 +290,83 @@ export default function QuickAdd() {
   useEffect(() => {
     let un: (() => void) | undefined;
     let cancelled = false;
+    const onSummon = async () => {
+      const sgen = ++summonGen.current;
+      // Instant empty-capture reset — focus the find field quietly (no dropdown yet).
+      setFind("");
+      setInsert("");
+      setOpenOnSummon(false);
+      setFocusInsert(false);
+      setShowSeq((s) => s + 1);
+      // Don't re-fetch over an unsaved edit: refresh() replaces `rows` with the server map, so
+      // re-summoning while a debounced list edit is still pending would clobber the in-progress
+      // edit — and the still-armed 600ms saveTimer would then re-save the stale server rows over
+      // it. A PENDING save (timer armed), an IN-FLIGHT one (timer fired/null, saveState still
+      // "saving" while the PATCH awaits), OR a FAILED one (saveState "error") all mean the local
+      // rows are newer-than-server, so skip the re-sync (refresh also resets saveState to "idle",
+      // which would drop the only retry signal). Let the save flush / retry.
+      // Unconditionally, ahead of the branch below: the policy this window types under must
+      // never be older than the last summon, whatever the save state is doing.
+      void refreshLocalConfig();
+      if (saveTimer.current === null && saveStateRef.current !== "error" && saveStateRef.current !== "saving") {
+        void refresh();
+      } else {
+        // The rows re-sync is skipped to protect the unsaved edit — but the recent-words pool
+        // is read-only, so keep it fresh regardless: one failed save used to freeze the
+        // dropdown (and the retry badge) on every later summon until a manual retry succeeded.
+        void fetchRecent();
+        // Failed save: retry it now instead of waiting for a click on the tiny badge (the
+        // whole stuck state was invisible enough to ship). Only when no timer is armed — an
+        // armed timer flushes the newest rows itself, and a parallel retry would double-PATCH.
+        // On success, re-sync fully — unless an edit arrived during the retry (timer re-armed),
+        // whose own flush now owns the state.
+        if (saveStateRef.current === "error") {
+          void flushSave().then((ok) => {
+            if (ok && saveTimer.current === null && sgen === summonGen.current) void refresh();
+          });
+        }
+      }
+      // Seed from whatever the user highlighted in the source app. Got a word → fill it and
+      // drop the cursor straight in "Insert" (it's captured). Nothing usable → fall back to
+      // the old behaviour: open the recent-words dropdown on the (already-focused) find field.
+      const seed = await getQuickAddSeed();
+      if (sgen !== summonGen.current) return; // a newer summon superseded this one
+      originalSelectionRef.current = seed; // remember the selected word for correct-on-close (always)
+      // The user began typing while the seed was still being read → keep their input + focus;
+      // don't overwrite the field or yank focus to Insert.
+      if (findRef.current !== "") return;
+      if (seed) {
+        setFind(seed);
+        setOpenOnSummon(false);
+        setFocusInsert(true);
+        setShowSeq((s) => s + 1);
+      } else {
+        setOpenOnSummon(true);
+        setShowSeq((s) => s + 1);
+      }
+    };
     import("@tauri-apps/api/event")
-      .then(({ listen }) =>
-        listen("quickadd://shown", async () => {
-          const sgen = ++summonGen.current;
-          // Instant empty-capture reset — focus the find field quietly (no dropdown yet).
-          setFind("");
-          setInsert("");
-          setOpenOnSummon(false);
-          setFocusInsert(false);
-          setShowSeq((s) => s + 1);
-          // Don't re-fetch over an unsaved edit: refresh() replaces `rows` with the server map, so
-          // re-summoning while a debounced list edit is still pending would clobber the in-progress
-          // edit — and the still-armed 600ms saveTimer would then re-save the stale server rows over
-          // it. A PENDING save (timer armed), an IN-FLIGHT one (timer fired/null, saveState still
-          // "saving" while the PATCH awaits), OR a FAILED one (saveState "error") all mean the local
-          // rows are newer-than-server, so skip the re-sync (refresh also resets saveState to "idle",
-          // which would drop the only retry signal). Let the save flush / retry.
-          // Unconditionally, ahead of the branch below: the policy this window types under must
-          // never be older than the last summon, whatever the save state is doing.
-          void refreshLocalConfig();
-          if (saveTimer.current === null && saveStateRef.current !== "error" && saveStateRef.current !== "saving") {
-            void refresh();
-          } else {
-            // The rows re-sync is skipped to protect the unsaved edit — but the recent-words pool
-            // is read-only, so keep it fresh regardless: one failed save used to freeze the
-            // dropdown (and the retry badge) on every later summon until a manual retry succeeded.
-            void fetchRecent();
-            // Failed save: retry it now instead of waiting for a click on the tiny badge (the
-            // whole stuck state was invisible enough to ship). Only when no timer is armed — an
-            // armed timer flushes the newest rows itself, and a parallel retry would double-PATCH.
-            // On success, re-sync fully — unless an edit arrived during the retry (timer re-armed),
-            // whose own flush now owns the state.
-            if (saveStateRef.current === "error") {
-              void flushSave().then((ok) => {
-                if (ok && saveTimer.current === null && sgen === summonGen.current) void refresh();
-              });
-            }
-          }
-          // Seed from whatever the user highlighted in the source app. Got a word → fill it and
-          // drop the cursor straight in "Insert" (it's captured). Nothing usable → fall back to
-          // the old behaviour: open the recent-words dropdown on the (already-focused) find field.
-          const seed = await getQuickAddSeed();
-          if (sgen !== summonGen.current) return; // a newer summon superseded this one
-          originalSelectionRef.current = seed; // remember the selected word for correct-on-close (always)
-          // The user began typing while the seed was still being read → keep their input + focus;
-          // don't overwrite the field or yank focus to Insert.
-          if (findRef.current !== "") return;
-          if (seed) {
-            setFind(seed);
-            setOpenOnSummon(false);
-            setFocusInsert(true);
-            setShowSeq((s) => s + 1);
-          } else {
-            setOpenOnSummon(true);
-            setShowSeq((s) => s + 1);
-          }
-        }),
-      )
-      .then((f) => {
+      .then(({ listen }) => listen("quickadd://shown", onSummon))
+      .then(async (f) => {
         // If the effect was torn down before listen() resolved (StrictMode dev mount→unmount→
         // remount), drop the subscription now instead of leaking a duplicate listener.
-        if (cancelled) f();
-        else un = f;
+        if (cancelled) {
+          f();
+          return;
+        }
+        un = f;
+        // Recovery for a summon whose `quickadd://shown` emit outran this listener's
+        // registration (first summon right after app start: page load → this lazy event-chunk
+        // import → the listen() IPC round trip — an emit with no registered JS listener is
+        // dropped, never queued). If the window is already visible and no summon has run,
+        // run one now. Safe to race a real event: the sgen guard supersedes the older run,
+        // and the backend seed read is generation-stamped and non-destructive, so this can
+        // never surface another summon's text.
+        if (summonGen.current === 0) {
+          const { getCurrentWindow } = await import("@tauri-apps/api/window");
+          const visible = await getCurrentWindow().isVisible().catch(() => false);
+          if (!cancelled && visible && summonGen.current === 0) void onSummon();
+        }
       })
       .catch(() => {}); // a rejected dynamic import / listen() must not surface as an unhandled rejection
     return () => {

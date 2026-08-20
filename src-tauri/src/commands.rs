@@ -1404,15 +1404,24 @@ pub async fn get_focused_other_app(
 #[tauri::command]
 pub async fn get_quickadd_seed(
     guard: State<'_, crate::atspi_guard::AtspiGuard>,
-    stash: State<'_, crate::quickadd::SeedStash>,
+    seed_rdv: State<'_, crate::quickadd::SeedRendezvous>,
 ) -> Result<Option<String>, String> {
-    // Windows: no AT-SPI / PRIMARY — the seed was grabbed BEFORE the window took focus
-    // (quickadd::show → win_seed copy-chord + clipboard diff) and stashed; serve (and
-    // consume) it here. Same sanitizer as the Linux paths.
+    // Windows: no AT-SPI / PRIMARY — the copy chord fired BEFORE the window took focus
+    // (quickadd::show → win_seed), but the clipboard may still be settling (Office
+    // delayed rendering, RDP clipboard redirection), so AWAIT this summon's grab via
+    // the generation-stamped rendezvous rather than reading a cache. The bound covers
+    // the grab's copy deadline plus read retries; off the async runtime because the
+    // wait is a condvar block. Same sanitizer as the Linux paths.
     #[cfg(windows)]
     {
         let _ = &guard;
-        let raw = stash.0.lock().ok().and_then(|mut s| s.take());
+        let rdv = seed_rdv.inner().clone();
+        let raw = tauri::async_runtime::spawn_blocking(move || {
+            rdv.wait(std::time::Duration::from_millis(4000))
+        })
+        .await
+        .ok()
+        .flatten();
         let seed = raw.as_deref().and_then(sanitize_seed);
         tracing::info!(
             "[quickadd-seed] windows copy grab {} chars -> seed {} chars",
@@ -1423,7 +1432,7 @@ pub async fn get_quickadd_seed(
     }
     #[cfg(not(windows))]
     {
-        let _ = &stash;
+        let _ = &seed_rdv;
         use crate::atspi_guard::SelRead;
         match crate::atspi_guard::focused_selection(guard.inner()).await {
             SelRead::Text(s) => {
@@ -1469,7 +1478,7 @@ pub async fn get_focused_selection(
     #[cfg(windows)]
     {
         let _ = &guard;
-        let sel = tauri::async_runtime::spawn_blocking(move || crate::quickadd::win_seed::grab(&app))
+        let sel = tauri::async_runtime::spawn_blocking(move || crate::quickadd::win_seed::grab(&app, None))
             .await
             .ok()
             .flatten()
