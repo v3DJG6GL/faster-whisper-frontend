@@ -58,19 +58,28 @@ jobs:
       # reports that as the container path /github/workspace while the clone
       # actually runs at the real host path, so the condition never matches,
       # the auth header is never applied, and git prompts for a username
-      # (disabled) → "could not read Username". Cloning directly with the token
-      # sidesteps that entirely. CI_TOKEN is a repo secret (read:repository).
-      # Plain git only → identical on the bash (Linux) and pwsh (Windows) legs.
+      # (disabled) → "could not read Username". Fetching directly with the
+      # run-scoped actions token sidesteps that entirely — and unlike the stored
+      # CI_TOKEN PAT it used until 2026-08-22 (run 334: the PAT started 401ing,
+      # "could not read Password"), it is minted per run, so it cannot expire,
+      # be revoked, or be affected by the owner's profile visibility. Same
+      # recipe as faster-whisper-backend. Ref and token reach git through the
+      # step env, not the script text: branch/tag names permit $ ( ) ` ; & |.
+      # `shell: bash` so the one step is identical on the Windows leg (host-mode
+      # runner defaults to pwsh, where ${VAR} is not the environment).
       - name: Checkout
+        shell: bash
+        env:
+          GIT_REF: ${{ github.ref }}
+          GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Fetch from the credentialed URL directly instead of `git remote add`:
+          # that would persist the token in .git/config, where every later step —
+          # third-party actions on mutable tags, the build.rs / proc-macros / vite
+          # plugins of every dependency — could read it or echo it into the log.
           git init -q .
-          git remote add origin https://${{ secrets.CI_TOKEN }}@forgejo.informethic.ch/${{ github.repository }}.git
-          git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin ${{ github.ref }}
+          git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 "https://x-access-token:${GIT_TOKEN}@forgejo.informethic.ch/${{ github.repository }}.git" "$GIT_REF"
           git checkout -q --force FETCH_HEAD
-          # Drop the token from .git/config: nothing below fetches or pushes, but every later
-          # step — third-party actions on mutable tags, and the build.rs / proc-macros / vite
-          # plugins of every dependency — runs in this workspace and could read it.
-          git remote set-url origin https://forgejo.informethic.ch/${{ github.repository }}.git
 
       # Linux only: setup-node downloads a node tarball and extracts it, which
       # on the host-mode Windows runner fails (bundled 7zr.exe errors extracting
