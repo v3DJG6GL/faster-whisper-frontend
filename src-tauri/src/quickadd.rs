@@ -169,7 +169,10 @@ impl SeedRendezvous {
 /// The clipboard wait continues in the background and delivers through `SeedRendezvous`,
 /// so a slow copy (Office delayed rendering, RDP clipboard redirection round-trips of
 /// hundreds of ms to seconds) fills the field late instead of never, and the user gets
-/// window feedback at the earliest safe moment.
+/// window feedback at the earliest safe moment. Exception: when focus sits in a
+/// remote-desktop client the show is held until the copy LANDS (or a short grace
+/// passes) — stealing the client's focus at injection time stops its input forwarding
+/// and can kill the chord before the remote app ever copies (see `win_seed::grab`).
 // One seed grab at a time — the flag itself lives in `win_seed`, its owner, so that the SECOND
 // caller (`commands::get_focused_selection`, the correct-on-close re-grab) is covered too and so
 // it is held for the grab's real lifetime rather than until a caller's timeout.
@@ -212,8 +215,12 @@ pub fn show(app: &AppHandle) {
                     // both), NOT once the clipboard settles. The cap only backstops a wedged
                     // clipboard prologue (`grab`'s un-timed `get_text`) — the release gate
                     // (≤3s) signals on its own timeout, so a held chord never rides this cap;
-                    // a wedged clipboard must not keep the window from opening either.
-                    let _ = ready_rx.recv_timeout(std::time::Duration::from_millis(3500));
+                    // a wedged clipboard must not keep the window from opening either. Sized
+                    // for the worst LEGIT path: release gate (3s) + prologue + the
+                    // remote-desktop forwarding grace (1.2s) — a premature backstop show
+                    // would steal the RDP client's focus right after injection, the exact
+                    // forwarding kill the grace exists to prevent.
+                    let _ = ready_rx.recv_timeout(std::time::Duration::from_millis(5000));
                     show_now(&handle);
                 });
                 return;
@@ -303,14 +310,31 @@ pub(crate) mod win_seed {
     /// clipboard text and can't even take clipboard OWNERSHIP until its UI thread
     /// drains (add-ins, AutoSave, big documents — hundreds of ms is routine), which
     /// is why the old 400 ms deadline read real selections as "nothing selected".
-    /// An RDP session is slower still: the copy lands in the REMOTE clipboard and
-    /// rdpclip syncs it back over the redirection channel asynchronously — routinely
-    /// several hundred ms to seconds — which is why the previous 800 ms deadline
-    /// read RDP selections as "nothing selected" on most tries. The headroom is
-    /// cheap now that the window shows at injection time rather than after this
-    /// wait: only the LATE "no selection → open the recent-words dropdown" fallback
-    /// pays the full deadline.
+    /// The headroom is cheap now that the window shows at injection time rather
+    /// than after this wait: only the LATE "no selection → open the recent-words
+    /// dropdown" fallback pays the full deadline.
     const COPY_DEADLINE_MS: u64 = 2500;
+
+    /// The copy deadline when the selection lives in a remote-desktop session. Every
+    /// leg crosses the network: the chord is forwarded to the remote, the remote app
+    /// copies into the REMOTE clipboard, and rdpclip announces it back over the
+    /// redirection channel asynchronously — routinely several hundred ms to seconds
+    /// on a loaded link, which is what kept blowing the shared deadline and reading
+    /// real RDP selections as "nothing selected". Costs nothing off RDP; over RDP the
+    /// no-selection dropdown fallback arrives this late, but the field itself is
+    /// usable the moment the window shows.
+    const COPY_DEADLINE_RDP_MS: u64 = 6000;
+
+    /// How long `grab` keeps our window UNSHOWN after injecting the chord into a
+    /// remote-desktop client (unless the copy lands sooner — the clipboard bump ends
+    /// the hold early). Deactivating the client is what must not happen in this
+    /// window: on focus loss RDP clients stop forwarding input and flush a
+    /// "release all keys" sync to the remote, so a show right after injection can
+    /// kill the chord before the remote app ever executes the copy. Forwarding
+    /// itself is quick (a local channel write + one network hop), so a short grace
+    /// suffices; the clipboard SYNC legs (rdpclip announcement, delayed-render
+    /// fetch) are served fine by a background client and need no focus.
+    const RDP_FORWARD_GRACE_MS: u64 = 1200;
 
     /// The Win32 clipboard sequence number: a cheap user32 counter bumped on every
     /// clipboard write, readable WITHOUT opening the clipboard.
@@ -337,6 +361,58 @@ pub(crate) mod win_seed {
     /// but kept so the Linux dev loop type-checks the module, like `clipboard_seq`'s.
     #[cfg(not(windows))]
     fn modifier_physically_down() -> bool {
+        false
+    }
+
+    /// Is the user's focus in a remote-desktop client window right now? Read BEFORE
+    /// injecting, while focus is still on the source. Matched by window class:
+    /// mstsc's shell/input/output windows (the input sink also covers the RDP
+    /// ActiveX embedded in RDCMan / mRemoteNG), RemoteApp seamless windows, the
+    /// Windows App (msrdc), and FreeRDP. An unrecognized client just keeps the
+    /// non-RDP behavior — same as before this detection existed.
+    ///
+    /// Checked as: the foreground window, plus the foreground thread's focus and
+    /// active windows (`GetGUIThreadInfo`) — focus usually sits on a CHILD
+    /// (`IHWindowClass`) whose top-level is the shell container.
+    #[cfg(windows)]
+    fn focus_is_remote_desktop_client() -> bool {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GUITHREADINFO,
+        };
+        const REMOTE_CLASSES: &[&str] = &[
+            "TscShellContainerClass", // mstsc.exe top-level
+            "IHWindowClass",          // mstsc input sink; also the embedded ActiveX (RDCMan, mRemoteNG)
+            "OPWindowClass",          // mstsc output surface (focus can land here)
+            "RAIL_WINDOW",            // RemoteApp seamless windows
+            "RdClientWindow",         // msrdc.exe (Windows App / Azure Virtual Desktop)
+            "FreeRDP",                // wfreerdp
+        ];
+        let class_of = |hwnd: windows_sys::Win32::Foundation::HWND| -> Option<String> {
+            if hwnd.is_null() {
+                return None;
+            }
+            let mut buf = [0u16; 64];
+            let n = unsafe { GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32) };
+            (n > 0).then(|| String::from_utf16_lossy(&buf[..n as usize]))
+        };
+        let mut info: GUITHREADINFO = unsafe { std::mem::zeroed() };
+        info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+        let have_info = unsafe { GetGUIThreadInfo(0, &mut info) } != 0;
+        let candidates = [
+            unsafe { GetForegroundWindow() },
+            if have_info { info.hwndFocus } else { std::ptr::null_mut() },
+            if have_info { info.hwndActive } else { std::ptr::null_mut() },
+        ];
+        candidates
+            .into_iter()
+            .filter_map(class_of)
+            .any(|c| REMOTE_CLASSES.iter().any(|k| c.eq_ignore_ascii_case(k)))
+    }
+
+    /// Non-Windows twin, like `modifier_physically_down`'s: keeps the module
+    /// type-checking in the Linux dev loop.
+    #[cfg(not(windows))]
+    fn focus_is_remote_desktop_client() -> bool {
         false
     }
 
@@ -443,16 +519,30 @@ pub(crate) mod win_seed {
             tracing::info!("[quickadd-seed] modifier went down during the prologue; skipping the copy grab");
             return None;
         }
+        // Read while focus is still on the source (the last pre-injection moment): a
+        // remote-desktop client gets the longer network deadline AND keeps our window
+        // unshown until the copy lands / the forwarding grace passes — see the consts.
+        let remote = focus_is_remote_desktop_client();
+        if remote {
+            tracing::info!("[quickadd-seed] remote-desktop client focused; holding the window for the copy");
+        }
         enigo.key(Key::Control, Direction::Press).ok()?;
         let copied = enigo.key(Key::Insert, Direction::Click);
         let _ = enigo.key(Key::Control, Direction::Release); // release even if the click failed
         copied.ok()?;
         // The chord is in the source app's input queue — focus may move now. The window
-        // shows while the (potentially slow: Office delayed render, RDP clipboard sync)
-        // copy below is still landing; the seed follows through the rendezvous.
-        ready.signal();
+        // shows while the (potentially slow: Office delayed render) copy below is still
+        // landing; the seed follows through the rendezvous. NOT over remote desktop:
+        // there the chord still has to be forwarded across the network, and stealing
+        // the client's focus stops that forwarding — the show waits for the clipboard
+        // bump (or the grace) inside the poll below.
+        let injected_at = Instant::now();
+        if !remote {
+            ready.signal();
+        }
         // The copy lands asynchronously in the source app.
-        let deadline = Instant::now() + Duration::from_millis(COPY_DEADLINE_MS);
+        let deadline = injected_at
+            + Duration::from_millis(if remote { COPY_DEADLINE_RDP_MS } else { COPY_DEADLINE_MS });
         #[cfg(windows)]
         {
             // Phase 1: wait for the copy to LAND by watching the sequence number — NOT by
@@ -460,15 +550,32 @@ pub(crate) mod win_seed {
             // holds it open at the moment the source app writes makes the COPY ITSELF fail
             // (Office's classic "cannot empty the clipboard"), which this grab then
             // misreported as "nothing selected". No bump by the deadline ⇒ no selection.
+            let grace = injected_at + Duration::from_millis(RDP_FORWARD_GRACE_MS);
             loop {
                 std::thread::sleep(Duration::from_millis(15));
                 if clipboard_seq() != seq0 {
                     break;
                 }
+                // Remote-desktop hold expired without a bump yet: the chord is long since
+                // forwarded, so the window may take focus now — the announcement/render
+                // legs don't need the client focused. (No-op when already signalled.)
+                if Instant::now() >= grace {
+                    ready.signal();
+                }
                 if Instant::now() >= deadline {
                     return None; // clipboard untouched — nothing to restore
                 }
             }
+            // Copy landed — over remote desktop this is what ends the hold (usually well
+            // before the grace). The elapsed time is the diagnostic for "deadline too
+            // short" reports.
+            if remote {
+                tracing::info!(
+                    "[quickadd-seed] copy landed {}ms after injection (remote client)",
+                    injected_at.elapsed().as_millis()
+                );
+            }
+            ready.signal();
             // Phase 2: the copy landed — read the text exactly once (this pull is what
             // triggers Office's delayed rendering). Retry a transient read failure within
             // the same deadline; a persistent one means non-text content (an image copy) —

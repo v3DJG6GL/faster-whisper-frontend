@@ -105,7 +105,7 @@ export default function QuickAdd() {
   rowsRef.current = rows;
   // Live mirror of `find` so the once-built summon listener can tell whether the user has begun
   // typing since the reset — the seed read is awaited (AT-SPI up to ~1s; the Windows clipboard
-  // rendezvous up to ~4s under RDP) AFTER the field is made interactive, so a slow seed must not
+  // rendezvous up to ~6.5s under RDP) AFTER the field is made interactive, so a slow seed must not
   // clobber input the user already entered.
   const findRef = useRef("");
   findRef.current = find;

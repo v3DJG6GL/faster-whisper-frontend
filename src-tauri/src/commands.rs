@@ -1410,14 +1410,15 @@ pub async fn get_quickadd_seed(
     // (quickadd::show → win_seed), but the clipboard may still be settling (Office
     // delayed rendering, RDP clipboard redirection), so AWAIT this summon's grab via
     // the generation-stamped rendezvous rather than reading a cache. The bound covers
-    // the grab's copy deadline plus read retries; off the async runtime because the
-    // wait is a condvar block. Same sanitizer as the Linux paths.
+    // the grab's LONGEST copy deadline (the 6s remote-desktop one) plus read retries —
+    // a settle wakes it immediately, so the local path never pays it; off the async
+    // runtime because the wait is a condvar block. Same sanitizer as the Linux paths.
     #[cfg(windows)]
     {
         let _ = &guard;
         let rdv = seed_rdv.inner().clone();
         let raw = tauri::async_runtime::spawn_blocking(move || {
-            rdv.wait(std::time::Duration::from_millis(4000))
+            rdv.wait(std::time::Duration::from_millis(6500))
         })
         .await
         .ok()
