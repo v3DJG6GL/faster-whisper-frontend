@@ -383,14 +383,23 @@ pub(crate) mod win_seed {
     /// events carry enigo's `dwExtraInfo` marker so our own LL hook / raw-input feed
     /// keeps ignoring our injections exactly as before.
     #[cfg(windows)]
-    fn send_copy_chord() -> bool {
+    const SCAN_LCTRL: u16 = 0x1D;
+    #[cfg(windows)]
+    const SCAN_INSERT: u16 = 0x52; // + KEYEVENTF_EXTENDEDKEY = the dedicated (E0) Insert
+
+    /// One synthetic keyboard event shaped like a physical keyboard's (see
+    /// `send_copy_chord` for why the scan code is load-bearing). Carries enigo's
+    /// `dwExtraInfo` marker so our own LL hook / raw-input feed ignores it.
+    #[cfg(windows)]
+    fn key_event(
+        vk: u16,
+        scan: u16,
+        flags: u32,
+    ) -> windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT {
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-            SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-            KEYEVENTF_KEYUP, VK_CONTROL, VK_INSERT,
+            INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
         };
-        const SCAN_LCTRL: u16 = 0x1D;
-        const SCAN_INSERT: u16 = 0x52; // + KEYEVENTF_EXTENDEDKEY = the dedicated (E0) Insert
-        let key = |vk: u16, scan: u16, flags: u32| INPUT {
+        INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
@@ -401,21 +410,87 @@ pub(crate) mod win_seed {
                     dwExtraInfo: enigo::EVENT_MARKER as usize,
                 },
             },
-        };
-        let chord = [
-            key(VK_CONTROL, SCAN_LCTRL, 0),
-            key(VK_INSERT, SCAN_INSERT, KEYEVENTF_EXTENDEDKEY),
-            key(VK_INSERT, SCAN_INSERT, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP),
-            key(VK_CONTROL, SCAN_LCTRL, KEYEVENTF_KEYUP),
-        ];
+        }
+    }
+
+    /// Send `events` as ONE `SendInput` batch — inserted serially into the input
+    /// stream, so no concurrent user keystroke can interleave inside it. True iff
+    /// every event was accepted.
+    #[cfg(windows)]
+    fn send_events(events: &[windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT]) -> bool {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT};
         let sent = unsafe {
             SendInput(
-                chord.len() as u32,
-                chord.as_ptr(),
+                events.len() as u32,
+                events.as_ptr(),
                 std::mem::size_of::<INPUT>() as i32,
             )
         };
-        sent == chord.len() as u32
+        sent == events.len() as u32
+    }
+
+    #[cfg(windows)]
+    fn send_copy_chord() -> bool {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VK_CONTROL, VK_INSERT,
+        };
+        send_events(&[
+            key_event(VK_CONTROL, SCAN_LCTRL, 0),
+            key_event(VK_INSERT, SCAN_INSERT, KEYEVENTF_EXTENDEDKEY),
+            key_event(VK_INSERT, SCAN_INSERT, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP),
+            key_event(VK_CONTROL, SCAN_LCTRL, KEYEVENTF_KEYUP),
+        ])
+    }
+
+    /// Neutralize the summoning chord's bare-modifier release BEFORE it happens —
+    /// AutoHotkey's "#MenuMaskKey" technique. Windows and apps activate menus on a bare
+    /// Alt/Win press-and-release with NO intervening key event: Firefox-family reveals +
+    /// focuses its menu bar (a toggle — quick-add seeded only every 2nd try there),
+    /// classic Win32 apps like Notepad++ enter the menu loop (re-entered on EVERY try,
+    /// since deactivation cancels it), Chrome moves focus to its toolbar menu when a
+    /// PAGE field has focus (but not when the omnibox does — why the URL bar always
+    /// seeded). The chord's keys reach the focused app (our hook only observes), and a
+    /// focused RDP client forwards them to the remote one — where the follow-up copy
+    /// chord then landed in a MENU instead of the text field. A Ctrl tap injected while
+    /// the chord is still held turns its release into a combo; Ctrl taps have no menu
+    /// semantics anywhere, which is why AutoHotkey masks with Ctrl. Real scan code so
+    /// the mask forwards over RDP like everything else.
+    #[cfg(windows)]
+    fn send_menu_mask() -> bool {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{KEYEVENTF_KEYUP, VK_CONTROL};
+        send_events(&[
+            key_event(VK_CONTROL, SCAN_LCTRL, 0),
+            key_event(VK_CONTROL, SCAN_LCTRL, KEYEVENTF_KEYUP),
+        ])
+    }
+
+    /// Are the keys with menu-release semantics (Alt / Win, either side) physically
+    /// down right now? ONLY their bare release activates anything — Ctrl and Shift
+    /// taps have no menu meaning — so a chord without Alt/Win needs no mask, and
+    /// skipping it there avoids the mask's own side-effect surface (a transient
+    /// Ctrl+Shift can read as the legacy input-language switch hotkey).
+    #[cfg(windows)]
+    fn alt_or_win_physically_down() -> bool {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            GetAsyncKeyState, VK_LWIN, VK_MENU, VK_RWIN,
+        };
+        [VK_MENU, VK_LWIN, VK_RWIN]
+            .iter()
+            .any(|&vk| unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8000 != 0)
+    }
+
+    /// Is Ctrl (either side) logically down right now? When it is, the chord release
+    /// needs no mask — the menu-activation rule requires a BARE Alt/Win tap, and a
+    /// Ctrl-modified release never activates one (AutoHotkey skips its mask on the
+    /// same condition). More importantly, masking then would inject a Ctrl-up beside
+    /// the user's physically HELD Ctrl — the one genuinely hazardous variant (an
+    /// isolated Ctrl-up next to a held Win can itself pop the Start menu). AltGr
+    /// chords are covered for free: AltGr is RAlt plus a system-generated LCtrl, so
+    /// they arrive pre-masked and this skip applies.
+    #[cfg(windows)]
+    fn ctrl_logically_down() -> bool {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL};
+        (unsafe { GetAsyncKeyState(VK_CONTROL as i32) } as u16) & 0x8000 != 0
     }
 
     /// Is any shortcut modifier physically down RIGHT NOW, straight from the OS?
@@ -552,6 +627,23 @@ pub(crate) mod win_seed {
             }
         }
         let _release = Release;
+        // The summoning chord is usually still physically held right now — that is
+        // exactly what the release gate below waits out. Mask its release FIRST, while
+        // the modifiers are down: without this, the bare Alt/Win tap that follows puts
+        // the focused (possibly remote) app into menu mode and the copy chord lands in
+        // a menu instead of the field — see `send_menu_mask`. Fire-time masking is
+        // also the only timing that works through an RDP client (a mask injected at
+        // release time would be forwarded AFTER the release). Skipped when nothing is
+        // held (already released / the close re-grab — nothing to mask), when the hold
+        // has no Alt/Win (nothing HAS menu semantics — see `alt_or_win_physically_down`),
+        // and when Ctrl is part of the hold (no mask needed, and injecting one would be
+        // the risky case — see `ctrl_logically_down`). Known residual: a Win-containing
+        // chord held past the autorepeat delay can re-arm the Start menu after this
+        // mask (Win repeats count as fresh bare presses; Alt does not repeat-re-arm).
+        #[cfg(windows)]
+        if alt_or_win_physically_down() && !ctrl_logically_down() {
+            let _ = send_menu_mask();
+        }
         // The summoning chord's modifiers must be UP before injecting: a still-held
         // Shift would mutate the copy chord (Ctrl+Shift+Insert is PASTE in many
         // terminals). Mirrors inject_text's release gate, except on timeout we SKIP
