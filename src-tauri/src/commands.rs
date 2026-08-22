@@ -1428,11 +1428,19 @@ pub async fn get_quickadd_seed(
         .ok()
         .flatten();
         let seed = raw.as_deref().and_then(sanitize_seed);
-        tracing::info!(
-            "[quickadd-seed] windows copy grab {} chars -> seed {} chars",
-            raw.as_deref().map_or(0, str::len),
-            seed.as_deref().map_or(0, str::len)
-        );
+        // `None` and `Some("")` used to both print "0 chars", which made "the grab found
+        // nothing" indistinguishable from "the reader aborted (window closed) / timed out"
+        // in exactly the field reports this line exists for.
+        match &raw {
+            None => tracing::info!(
+                "[quickadd-seed] windows copy grab returned no text (no copy landed, summon superseded, or wait timed out)"
+            ),
+            Some(t) => tracing::info!(
+                "[quickadd-seed] windows copy grab {} bytes -> seed {} bytes",
+                t.len(),
+                seed.as_deref().map_or(0, str::len)
+            ),
+        }
         return Ok(seed);
     }
     #[cfg(not(windows))]
@@ -1483,7 +1491,7 @@ pub async fn get_focused_selection(
     #[cfg(windows)]
     {
         let _ = &guard;
-        let sel = tauri::async_runtime::spawn_blocking(move || crate::quickadd::win_seed::grab(&app, None))
+        let sel = tauri::async_runtime::spawn_blocking(move || crate::quickadd::win_seed::grab(&app, None, None))
             .await
             .ok()
             .flatten()

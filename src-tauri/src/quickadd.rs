@@ -104,6 +104,9 @@ impl SeedRendezvous {
         // would instantly lose the single-flight and this generation would settle None
         // only after a pointless spawn).
         if win_seed::SEED_GRAB_ACTIVE.load(Ordering::Acquire) {
+            // With grab-side supersede polling this window is one poll tick (~15ms)
+            // after a close-then-resummon, plus the close re-grab's real duration.
+            tracing::info!("[quickadd-seed] a previous grab still owns the copy chord; this summon gets no seed");
             cell.state = SeedState::Settled(None);
             self.0.cv.notify_all();
             return Summon::NoSeed;
@@ -124,6 +127,19 @@ impl SeedRendezvous {
                 self.0.cv.notify_all();
             }
         }
+    }
+
+    /// Is `generation` still the one a reader could receive? False the moment a hide
+    /// (`clear`) or a newer summon supersedes it. An in-flight grab polls this to stop
+    /// early: its result is undeliverable anyway, and holding `SEED_GRAB_ACTIVE` for
+    /// the rest of a long remote-desktop deadline turns the user's natural retry press
+    /// into a guaranteed-seedless `Summon::NoSeed`.
+    fn is_current(&self, generation: u64) -> bool {
+        self.0
+            .cell
+            .lock()
+            .map(|cell| cell.generation == generation)
+            .unwrap_or(false)
     }
 
     /// Window hidden: invalidate the current generation so nothing lingers into the
@@ -205,9 +221,13 @@ pub fn show(app: &AppHandle) {
                     std::thread::spawn(move || {
                         // A grab panic must not leave the generation InFlight forever
                         // (every later summon would see AlreadyInFlight and never grab).
-                        let seed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                            || win_seed::grab(&grabber, Some(ready_tx)),
-                        ))
+                        let seed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            win_seed::grab(
+                                &grabber,
+                                Some(ready_tx),
+                                Some((settle.clone(), generation)),
+                            )
+                        }))
                         .unwrap_or(None);
                         settle.settle(generation, seed);
                     });
@@ -291,9 +311,10 @@ pub fn hide_quick_add(app: AppHandle) {
 /// before `show_now` for the summon seed, or after the window hid for the
 /// correct-on-close re-read (`commands::get_focused_selection`).
 ///
-/// Uses cross-platform APIs (enigo / arboard / HeldKeys) plus one cfg-gated Win32
-/// call (`GetClipboardSequenceNumber`), so it still compiles on every platform and
-/// the Linux dev loop type-checks it — only the call sites are `#[cfg(windows)]`.
+/// Uses cross-platform APIs (arboard / HeldKeys; enigo on the never-called non-Windows
+/// twin) plus cfg-gated Win32 calls (`GetClipboardSequenceNumber`, `SendInput`), so it
+/// still compiles on every platform and the Linux dev loop type-checks it — only the
+/// call sites are `#[cfg(windows)]`.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) mod win_seed {
     /// See the note above `show`: one seed grab at a time, process-wide. Owned here rather
@@ -302,6 +323,7 @@ pub(crate) mod win_seed {
     pub(super) static SEED_GRAB_ACTIVE: std::sync::atomic::AtomicBool =
         std::sync::atomic::AtomicBool::new(false);
 
+    #[cfg(not(windows))]
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
     use std::time::{Duration, Instant};
     use tauri::{AppHandle, Manager};
@@ -341,6 +363,59 @@ pub(crate) mod win_seed {
     #[cfg(windows)]
     fn clipboard_seq() -> u32 {
         unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() }
+    }
+
+    /// Inject Ctrl+Insert as ONE `SendInput` batch of four events shaped exactly like a
+    /// physical keyboard's: the real make codes in `wScan` (left-Ctrl 0x1D; Insert 0x52
+    /// with `KEYEVENTF_EXTENDEDKEY` standing in for the E0 prefix) alongside the
+    /// virtual keys. Locally focused apps act on the VK — but a focused RDP client
+    /// forwards ONLY the scan code + extended bit ([MS-RDPBCGR]: keyboard input is
+    /// restricted to scancodes; no VK crosses the wire), which is where the enigo path
+    /// this replaces was malformed: it mapped VK→scan with `MAPVK_VK_TO_VSC_EX` under
+    /// the foreground window's layout and stored the result unmasked, so Insert went
+    /// out with wScan=0xE052 (the E0 prefix INSIDE the 8-bit-scan field low-level
+    /// consumers read) — or wScan=0 when the map failed, the classic works-locally/
+    /// dies-remotely event. And a forwarded 0x52 WITHOUT the extended bit is
+    /// numpad-0/Ins on the remote: NumLock on turns the "copy" into Ctrl+0 (reset zoom
+    /// in browsers) — why RDP selections never seeded while local ones always did.
+    /// Hardcoded scans are layout-proof; one batch keeps a concurrent user keystroke
+    /// from interleaving mid-chord (enigo issued three separate `SendInput`s). The
+    /// events carry enigo's `dwExtraInfo` marker so our own LL hook / raw-input feed
+    /// keeps ignoring our injections exactly as before.
+    #[cfg(windows)]
+    fn send_copy_chord() -> bool {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
+            KEYEVENTF_KEYUP, VK_CONTROL, VK_INSERT,
+        };
+        const SCAN_LCTRL: u16 = 0x1D;
+        const SCAN_INSERT: u16 = 0x52; // + KEYEVENTF_EXTENDEDKEY = the dedicated (E0) Insert
+        let key = |vk: u16, scan: u16, flags: u32| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: scan,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: enigo::EVENT_MARKER as usize,
+                },
+            },
+        };
+        let chord = [
+            key(VK_CONTROL, SCAN_LCTRL, 0),
+            key(VK_INSERT, SCAN_INSERT, KEYEVENTF_EXTENDEDKEY),
+            key(VK_INSERT, SCAN_INSERT, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP),
+            key(VK_CONTROL, SCAN_LCTRL, KEYEVENTF_KEYUP),
+        ];
+        let sent = unsafe {
+            SendInput(
+                chord.len() as u32,
+                chord.as_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            )
+        };
+        sent == chord.len() as u32
     }
 
     /// Is any shortcut modifier physically down RIGHT NOW, straight from the OS?
@@ -442,9 +517,21 @@ pub(crate) mod win_seed {
     /// `ready`, when given, is signalled the moment it is safe for our window to take
     /// focus (chord injected, or grab abandoned) — see `Ready`. The correct-on-close
     /// re-grab passes `None`: its window is already hidden.
-    pub fn grab(app: &AppHandle, ready: Option<std::sync::mpsc::Sender<()>>) -> Option<String> {
+    ///
+    /// `cancel`, when given, is the rendezvous + generation this grab settles under: the
+    /// clipboard polls bail as soon as the generation is superseded (window closed / new
+    /// summon), because the result is undeliverable and holding `SEED_GRAB_ACTIVE` for
+    /// the rest of a 6s remote-desktop deadline makes the user's retry press seedless.
+    /// The close re-grab passes `None` — its caller awaits the result directly.
+    pub fn grab(
+        app: &AppHandle,
+        ready: Option<std::sync::mpsc::Sender<()>>,
+        cancel: Option<(super::SeedRendezvous, u64)>,
+    ) -> Option<String> {
         use std::sync::atomic::Ordering;
         let mut ready = Ready(ready);
+        let superseded =
+            || cancel.as_ref().is_some_and(|(rdv, generation)| !rdv.is_current(*generation));
         // The single-flight lives HERE, not in `show`, because `show` is only one of two callers:
         // `commands::get_focused_selection` (the correct-on-close re-grab, which runs ~400ms after
         // the window hides and can last ~1.3s) calls straight through. A summon landing in that
@@ -502,19 +589,16 @@ pub(crate) mod win_seed {
         let prev = cb.get_text().ok(); // None = empty or non-text (image/files)
         #[cfg(windows)]
         let seq0 = clipboard_seq();
-        // Ctrl+Insert, the CUA copy chord — Win32 edit controls, browsers, Office, Qt,
-        // and terminals all honor it, and unlike Ctrl+C it is never a terminal
-        // interrupt. Injected events are skipped by our own keyboard hook
-        // (LLKHF_INJECTED), so this can't disturb chord matching.
-        let mut enigo = Enigo::new(&Settings::default()).ok()?;
-        // Third read, at the SINK. The authoritative check above runs before `Clipboard::new()`,
-        // an explicitly UN-timed blocking `get_text()`, `clipboard_seq()` and `Enigo::new()` — so
-        // the gate that decides "no modifier is down" is separated from the chord it guards by an
-        // unbounded wait, and a second chord press in that gap is likely, not exotic. With Shift
-        // physically down, the Ctrl+Insert below becomes Ctrl+Shift+Insert, which is PASTE in
-        // most terminals and many editors: it would dump the user's clipboard into the focused
-        // source app, the exact mutation the gate's own comment names. Same rule as the injection
-        // sinks — re-ask at the sink, not only before the prologue.
+        // Third read, at the SINK. The authoritative check above runs before `Clipboard::new()`
+        // and an explicitly UN-timed blocking `get_text()` (over RDP that read can stall for
+        // seconds: the local clipboard may be delay-rendered by the client, so reading it pulls
+        // the bytes across the channel) — so the gate that decides "no modifier is down" is
+        // separated from the chord it guards by an unbounded wait, and a second chord press in
+        // that gap is likely, not exotic. With Shift physically down, the Ctrl+Insert below
+        // becomes Ctrl+Shift+Insert, which is PASTE in most terminals and many editors: it would
+        // dump the user's clipboard into the focused source app, the exact mutation the gate's
+        // own comment names. Same rule as the injection sinks — re-ask at the sink, not only
+        // before the prologue.
         if modifier_physically_down() {
             tracing::info!("[quickadd-seed] modifier went down during the prologue; skipping the copy grab");
             return None;
@@ -526,10 +610,25 @@ pub(crate) mod win_seed {
         if remote {
             tracing::info!("[quickadd-seed] remote-desktop client focused; holding the window for the copy");
         }
-        enigo.key(Key::Control, Direction::Press).ok()?;
-        let copied = enigo.key(Key::Insert, Direction::Click);
-        let _ = enigo.key(Key::Control, Direction::Release); // release even if the click failed
-        copied.ok()?;
+        // Ctrl+Insert, the CUA copy chord — Win32 edit controls, browsers, Office, Qt,
+        // and terminals all honor it, and unlike Ctrl+C it is never a terminal
+        // interrupt. Injected events are skipped by our own keyboard hook
+        // (LLKHF_INJECTED + marker), so this can't disturb chord matching.
+        #[cfg(windows)]
+        if !send_copy_chord() {
+            tracing::warn!("[quickadd-seed] SendInput rejected the copy chord (UIPI / desktop switch?)");
+            return None;
+        }
+        // Non-Windows twin of the injection (never called — kept so the Linux dev loop
+        // type-checks the module). Windows injects via `send_copy_chord`: see there.
+        #[cfg(not(windows))]
+        {
+            let mut enigo = Enigo::new(&Settings::default()).ok()?;
+            enigo.key(Key::Control, Direction::Press).ok()?;
+            let copied = enigo.key(Key::Insert, Direction::Click);
+            let _ = enigo.key(Key::Control, Direction::Release); // release even if the click failed
+            copied.ok()?;
+        }
         // The chord is in the source app's input queue — focus may move now. The window
         // shows while the (potentially slow: Office delayed render) copy below is still
         // landing; the seed follows through the rendezvous. NOT over remote desktop:
@@ -562,7 +661,23 @@ pub(crate) mod win_seed {
                 if Instant::now() >= grace {
                     ready.signal();
                 }
+                // Reader gone (window closed / superseded): stop wasting the
+                // single-flight slot on an undeliverable result. Clipboard untouched.
+                if superseded() {
+                    tracing::info!(
+                        "[quickadd-seed] summon superseded {}ms after injection; abandoning the grab",
+                        injected_at.elapsed().as_millis()
+                    );
+                    return None;
+                }
                 if Instant::now() >= deadline {
+                    // The one line that distinguishes "the copy never landed" (this)
+                    // from "the reader gave up" (commands.rs's fetch log) in the field.
+                    tracing::info!(
+                        "[quickadd-seed] no clipboard bump within {}ms (remote={}); treating as no selection",
+                        injected_at.elapsed().as_millis(),
+                        remote
+                    );
                     return None; // clipboard untouched — nothing to restore
                 }
             }
@@ -582,6 +697,26 @@ pub(crate) mod win_seed {
             // put the user's text back and give up.
             loop {
                 match cb.get_text() {
+                    // The sequence bump is the format ANNOUNCEMENT, not the data. Over RDP
+                    // the CF_UNICODETEXT bytes cross the channel only when a read pulls
+                    // them, and a stalled fetch can come back as an EMPTY string rather
+                    // than an error (FreeRDP documents exactly that fallback on its own
+                    // timeout). An empty "copy" of a real selection doesn't exist — keep
+                    // polling for the bytes; at the deadline restore and report nothing.
+                    Ok(text) if text.is_empty() => {
+                        if Instant::now() >= deadline || superseded() {
+                            match prev {
+                                Some(p) => {
+                                    let _ = cb.set_text(p);
+                                }
+                                None => {
+                                    let _ = cb.clear();
+                                }
+                            }
+                            return None;
+                        }
+                        std::thread::sleep(Duration::from_millis(25));
+                    }
                     Ok(text) => {
                         match &prev {
                             // A sequence bump proves a copy HAPPENED, so text equal to the
@@ -605,7 +740,9 @@ pub(crate) mod win_seed {
                         return Some(text);
                     }
                     Err(_) => {
-                        if Instant::now() >= deadline {
+                        // Superseded mid-retry: the copy DID land (we're past the bump), so
+                        // restore the user's clipboard exactly like the deadline path.
+                        if Instant::now() >= deadline || superseded() {
                             match prev {
                                 Some(p) => {
                                     let _ = cb.set_text(p); // copied content is non-text — restore
@@ -628,6 +765,9 @@ pub(crate) mod win_seed {
         #[cfg(not(windows))]
         loop {
             std::thread::sleep(Duration::from_millis(25));
+            if superseded() {
+                return None;
+            }
             let now = cb.get_text().ok();
             if now != prev {
                 match prev {
