@@ -8,6 +8,7 @@ import type {
   DictationStatus,
   FocusedApp,
   Profile,
+  SyncCategory,
   SyncSettings,
   ThemeName,
   UsageStats,
@@ -44,7 +45,18 @@ const MAX_QUICK_LAUNCH = 100;
 export const DEFAULT_SYNC: SyncSettings = {
   enabled: false,
   backendId: null,
-  categories: { general: true, recording: true, backends: true, profiles: true, appRules: true },
+  categories: {
+    general: true,
+    recording: true,
+    chip: true,
+    backends: true,
+    profiles: true,
+    dictionary: true,
+    appRules: true,
+  },
+  // Every default preserves the pre-sub-toggle behavior exactly: the folder
+  // was never synced, chords always were.
+  sub: { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true },
   urlOverrides: {},
 };
 
@@ -141,10 +153,26 @@ function withSettingsDefaults(raw: unknown): AppSettings {
     sync: {
       ...DEFAULT_SYNC,
       ...(s.sync ?? {}),
-      categories: { ...DEFAULT_SYNC.categories, ...(s.sync?.categories ?? {}) },
+      categories: completeCategories(s.sync?.categories),
+      sub: { ...DEFAULT_SYNC.sub!, ...(s.sync?.sub ?? {}) },
       urlOverrides: { ...(s.sync?.urlOverrides ?? {}) },
     },
   };
+}
+
+/** Fill missing category toggles — with a one-time split migration: a config
+ *  persisted before "chip" / "dictionary" existed carried the chip fields
+ *  under "Recording & Chip" and the quick-add chord under General, so a user
+ *  who had those groups OFF must not find the split-out halves silently ON. */
+function completeCategories(
+  saved: Partial<Record<SyncCategory, boolean>> | undefined,
+): Record<SyncCategory, boolean> {
+  const cats = { ...DEFAULT_SYNC.categories, ...(saved ?? {}) };
+  if (saved) {
+    if (saved.chip === undefined && typeof saved.recording === "boolean") cats.chip = saved.recording;
+    if (saved.dictionary === undefined && typeof saved.general === "boolean") cats.dictionary = saved.general;
+  }
+  return cats;
 }
 
 /** Element-level shape checks for the two lists that arrive typed only by assertion. The FILE

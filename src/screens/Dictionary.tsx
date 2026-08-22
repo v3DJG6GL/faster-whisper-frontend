@@ -18,8 +18,10 @@ import {
   ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, Notice, Stack, Toggle, TextInput } from "@/components/ui";
+import { Badge, Button, Card, Labeled, Notice, SectionLabel, Stack, Toggle, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
+import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
+import { IS_LINUX } from "@/lib/platform";
 import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
@@ -619,6 +621,23 @@ export default function Dictionary() {
   const [recentWords, setRecentWords] = useState<string[]>([]);
   const [recentMax, setRecentMax] = useState<number | undefined>(undefined);
 
+  // Human-readable "backend · list" readout for the Quick add card's pin. The list's display
+  // label is only known when the pinned backend is the one whose rules are loaded; otherwise
+  // the slug identifies it well enough (it IS the stored value).
+  const pinnedLabel = useMemo(() => {
+    if (!quickAddList) return null;
+    const b = backends.find((x) => x.id === quickAddList.backendId);
+    const backendName = b ? (backendLabels[b.id] ?? safeDisplayText(b.name, 80)) : null;
+    const rule =
+      quickAddList.backendId === selectedId
+        ? rules.find((r) => r.name === quickAddList.slug)
+        : undefined;
+    const listName = rule
+      ? safeDisplayText(rule.label, 60) || safeDisplayText(rule.name, 60)
+      : safeDisplayText(quickAddList.slug, 60);
+    return backendName ? `${backendName} · ${listName}` : listName;
+  }, [quickAddList, backends, backendLabels, selectedId, rules]);
+
   // editable_fields is also forwarded as an opaque server value — coerce to a plain object,
   // and to an array per type, so a malformed shape can't make `.includes`/`.filter` throw.
   const efRaw = fetchRes?.state?.editable_fields as unknown;
@@ -883,6 +902,43 @@ export default function Dictionary() {
           )}
         </div>
       )}
+
+      {/* Quick add: the global shortcut + which list it feeds — the feature's complete local
+          config, side by side (the pairing Onboarding's quick-add step already uses). Lives HERE
+          rather than Settings → General because the app already treats Dictionary as quick-add's
+          home (the setup checklist and the quick-add window's empty state both route here). Above
+          the server-gated states block on purpose: the shortcut stays configurable when no
+          compatible backend is reachable. */}
+      <Card className="px-6 py-4">
+        <SectionLabel>Quick add</SectionLabel>
+        <div className="mt-3 grid grid-cols-1 gap-5 sm:grid-cols-2">
+          <Labeled label="Shortcut">
+            <QuickAddShortcutField allowClear />
+          </Labeled>
+          <Labeled label="Pinned list">
+            {pinnedLabel ? (
+              <div className="flex min-h-[34px] items-center gap-2 text-[13.5px] text-text">
+                <Crosshair className="size-4 shrink-0 text-accent" />
+                <span className="truncate">{pinnedLabel}</span>
+              </div>
+            ) : (
+              <div className="flex min-h-[34px] items-center text-[12.5px] leading-snug text-faint">
+                No list pinned — use the crosshair on a word-mapping list below.
+              </div>
+            )}
+          </Labeled>
+        </div>
+        <p className="mt-2.5 text-[11.5px] leading-snug text-faint">
+          Press the shortcut over any app to map a misheard word onto the pinned list.
+          {IS_LINUX && (
+            <>
+              {" "}
+              On Wayland this needs the evdev backend (Settings → Permissions); otherwise bind a
+              desktop shortcut to <span className="font-mono text-[10.5px]">app --quick-add</span>.
+            </>
+          )}
+        </p>
+      </Card>
 
       {/* States */}
       {candidates.length === 0 ? (

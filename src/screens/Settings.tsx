@@ -5,7 +5,7 @@ import { swap } from "@/lib/arr";
 import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screens";
-import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
+import { IS_LINUX } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
 import {
@@ -27,8 +27,6 @@ import {
 import type { AudioDevice, OverlayQuickAction, RecordingSettings } from "@/lib/types";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
 import { SyncTab } from "@/screens/SettingsSync";
-import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
-import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 
 const TABS = ["General", "Audio", "Recording", "Chip", "Sync", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
@@ -434,51 +432,6 @@ function QuickLaunchEditor({
   );
 }
 
-/** Capture row for the global "open the quick-add window" hotkey. Reuses the shared
- *  useHotkeyCapture hook (same as the Profiles editor); conflicts are checked against
- *  the Profile chords. On Wayland the chord registers via the evdev backend; on
- *  Windows via the always-on hook backend. */
-function QuickAddShortcutRow({ lowLevelActive }: { lowLevelActive: boolean }) {
-  const codes = useApp((st) => st.settings.general.quickAddHotkey);
-  const profiles = useApp((st) => st.profiles);
-  const updateGeneral = useApp((st) => st.updateGeneral);
-  const [capturing, setCapturing] = useState(false);
-  const { heldCodes, warn } = useHotkeyCapture({
-    capturing,
-    lowLevelActive,
-    others: profiles,
-    selfKind: "quickadd",
-    onCommit: (c) => {
-      updateGeneral({ quickAddHotkey: c });
-      setCapturing(false);
-    },
-    onCancel: () => setCapturing(false),
-  });
-  return (
-    <div className="py-4">
-      <div className="text-[14px] font-medium text-text">Quick-add shortcut</div>
-      <div className="mb-3 mt-0.5 max-w-xl text-[12.5px] leading-snug text-dim">
-        A global hotkey that opens the quick-add window.
-        {IS_LINUX && (
-          <>
-            {" "}
-            On Wayland this needs the evdev backend (Permissions); otherwise bind a desktop shortcut
-            to <span className="font-mono text-[11px] text-faint">app --quick-add</span>.
-          </>
-        )}
-      </div>
-      <HotkeyCaptureControl
-        codes={codes}
-        capturing={capturing}
-        heldCodes={heldCodes}
-        warn={warn}
-        onToggle={() => setCapturing((c) => !c)}
-        onClear={() => updateGeneral({ quickAddHotkey: [] })}
-      />
-    </div>
-  );
-}
-
 export default function Settings() {
   const [tab, setTab] = useState<Tab>("General");
   const s = useApp((st) => st.settings);
@@ -490,10 +443,6 @@ export default function Settings() {
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
   const [evdevMsg, setEvdevMsg] = useState<string | null>(null);
   const [evdevBusy, setEvdevBusy] = useState(false);
-  // A low-level backend owns the chords when evdev is enabled AND permitted (Linux) or always
-  // on Windows (the hook backend) — drives whether the quick-add capture accepts modifier-only /
-  // AltGr chords (else plugin validation).
-  const lowLevelActive = IS_WINDOWS || (!!evdev?.permitted && s.general.evdevEnabled);
 
   useEffect(() => {
     void evdevStatus().then(setEvdev).catch(() => {}); // match the file's other chains; ignore an IPC reject
@@ -655,10 +604,10 @@ export default function Settings() {
                 disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
               />
             </SettingRow>
-            <SettingRow title="Sound cues" desc="A short tone when dictation starts and stops.">
+            <SettingRow title="Sound cues" desc="A short tone when dictation starts and stops." last>
               <Toggle checked={s.general.soundEffects} onChange={(v) => updateGeneral({ soundEffects: v })} />
             </SettingRow>
-            <QuickAddShortcutRow lowLevelActive={lowLevelActive} />
+            {/* The quick-add shortcut moved to the Dictionary screen, next to the pinned list. */}
           </Card>
         )}
 

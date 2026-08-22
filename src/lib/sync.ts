@@ -55,22 +55,41 @@ import type {
   SyncCategory,
   ThemeName,
 } from "./types";
+import { CHIP_FIELDS } from "./syncTypes";
 import type {
   SyncBackends,
   SyncBlob,
+  SyncChip,
   SyncDeviceInfo,
+  SyncDictionary,
   SyncGeneral,
+  SyncRecording,
   SyncRemoteState,
   SyncState,
 } from "./syncTypes";
+import type { SyncSubSettings } from "./types";
 
 export const ALL_CATEGORIES: SyncCategory[] = [
   "general",
   "recording",
+  "chip",
   "backends",
   "profiles",
+  "dictionary",
   "appRules",
 ];
+
+/** This device's field-level opt-outs (Settings → Sync sub-toggles), with the
+ *  behavior-preserving defaults for configs from before they existed. */
+export function subSettings(): SyncSubSettings {
+  return (
+    useApp.getState().settings.sync?.sub ?? {
+      recordingsDir: false,
+      profileHotkeys: true,
+      quickAddHotkey: true,
+    }
+  );
+}
 
 /** This machine's appRules bucket. macOS has no app-rules backend; it falls
  *  into the linux bucket harmlessly (rules never match anything there). */
@@ -130,6 +149,67 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   ]);
 }
 
+// ── blob migration: pre-split shapes → the current category layout ──────────
+
+const CHIP_FIELD_SET: ReadonlySet<string> = new Set(CHIP_FIELDS);
+
+/** Own-property partition helpers. Own-props only: the blob is JSON-parsed, so
+ *  `__proto__`/`constructor` are ordinary own keys and inherited members must
+ *  never be copied (the same hygiene as `typedLike`). */
+function pickFields(obj: Record<string, unknown>, fields: ReadonlySet<string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(obj)) if (fields.has(k)) out[k] = obj[k];
+  return out;
+}
+function omitFields(obj: Record<string, unknown>, fields: ReadonlySet<string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(obj)) if (!fields.has(k)) out[k] = obj[k];
+  return out;
+}
+
+/**
+ * Normalize a blob from before the category split (one "recording" holding
+ * the chip fields, the quick-add chord under `general`, the pin under
+ * `backends`) into the current layout. Runs on EVERY inbound blob — server
+ * pulls, the persisted snapshot, import files — so the engine, the merge, and
+ * the previews only ever see one shape, and the 3-way base stays comparable
+ * with freshly composed blobs after an upgrade.
+ *
+ * Also the enforcement point for the category boundaries: chip-classified
+ * keys are ALWAYS stripped out of `recording` (and vice-versa applied via the
+ * apply-side filters), so a blob cannot smuggle e.g. `saveRecordings` past
+ * the recording toggle (and its consent gate) by hiding it in another
+ * category. Existing new-shape entries win over migrated legacy ones.
+ */
+export function migrateBlob(blob: SyncBlob): SyncBlob {
+  const out: SyncBlob = { ...blob };
+  if (isPlainObject(out.recording)) {
+    const rec = out.recording as Record<string, unknown>;
+    const chipPart = pickFields(rec, CHIP_FIELD_SET);
+    if (Object.keys(chipPart).length > 0) {
+      out.recording = omitFields(rec, CHIP_FIELD_SET) as SyncRecording;
+      if (out.chip === undefined) out.chip = chipPart as SyncChip;
+    }
+  }
+  const g = out.general as (SyncGeneral & { quickAddHotkey?: unknown }) | undefined;
+  if (isPlainObject(g) && hasOwn(g, "quickAddHotkey")) {
+    const { quickAddHotkey, ...rest } = g;
+    out.general = rest as SyncGeneral;
+    if (isCodeList(quickAddHotkey) && out.dictionary?.quickAddHotkey === undefined) {
+      out.dictionary = { ...(out.dictionary ?? {}), quickAddHotkey };
+    }
+  }
+  const b = out.backends as (SyncBackends & { quickAddList?: unknown }) | undefined;
+  if (isPlainObject(b) && hasOwn(b, "quickAddList")) {
+    const { quickAddList, ...rest } = b;
+    out.backends = rest as SyncBackends;
+    if (out.dictionary?.quickAddList === undefined && quickAddList !== undefined) {
+      out.dictionary = { ...(out.dictionary ?? {}), quickAddList: safeQuickAddTarget(quickAddList) };
+    }
+  }
+  return out;
+}
+
 // ── extract: live config → category payloads ───────────────────────────────
 
 function extractGeneral(settings: AppSettings): SyncGeneral {
@@ -144,15 +224,80 @@ function extractGeneral(settings: AppSettings): SyncGeneral {
     restoreClipboard: g.restoreClipboard,
     soundEffects: g.soundEffects,
     deepFieldDetection: g.deepFieldDetection,
-    quickAddHotkey: g.quickAddHotkey,
     openAtLogin: g.openAtLogin,
     // evdevEnabled is machine-local: deliberately absent.
+    // quickAddHotkey lives in the `dictionary` category now.
   };
 }
 
-function extractRecording(settings: AppSettings): SyncBlob["recording"] {
-  const { recordingsDir: _local, ...rest } = settings.recording;
-  return rest;
+/** The recording-proper fields (chip fields split out). `recordingsDir` is a
+ *  machine path: live value only when the sub-toggle is on, else the
+ *  snapshot's passthrough — never omitted-because-opted-out, which would read
+ *  as a local change and erase the field for the devices that do sync it. */
+function extractRecording(
+  settings: AppSettings,
+  syncDir: boolean,
+  snapshot: SyncBlob | undefined,
+): SyncBlob["recording"] {
+  const { recordingsDir, ...rest } = settings.recording;
+  const out = omitFields(rest, CHIP_FIELD_SET) as SyncRecording;
+  const dir = syncDir ? recordingsDir : snapshot?.recording?.recordingsDir;
+  if (dir !== undefined) out.recordingsDir = dir;
+  return out;
+}
+
+function extractChip(settings: AppSettings): SyncBlob["chip"] {
+  return pickFields(settings.recording as unknown as Record<string, unknown>, CHIP_FIELD_SET) as SyncChip;
+}
+
+/** Profiles, with the "Profile shortcuts" sub-toggle applied: when OFF, each
+ *  known profile ships the SNAPSHOT's chord (this device's chord edits stay
+ *  local) — a profile the snapshot doesn't know yet ships its live chord, so
+ *  peers never receive a chord-less profile (`sanitizeProfiles` requires a
+ *  code list). */
+function extractProfiles(
+  profiles: Profile[],
+  homeProfileId: string | null,
+  syncHotkeys: boolean,
+  snapshot: SyncBlob | undefined,
+): SyncBlob["profiles"] {
+  let list = profiles;
+  if (!syncHotkeys) {
+    const snapList = snapshot?.profiles?.list;
+    const snapChords = new Map(
+      (Array.isArray(snapList) ? snapList : [])
+        .filter((p) => !!p && typeof p === "object" && typeof p.id === "string" && isCodeList(p.hotkey))
+        .map((p) => [p.id, p.hotkey]),
+    );
+    list = profiles.map((p) => {
+      const snap = snapChords.get(p.id);
+      return snap ? { ...p, hotkey: snap } : p;
+    });
+  }
+  return { list, homeProfileId };
+}
+
+/** The quick-add pointers. Chord: live when the sub-toggle is on, snapshot
+ *  passthrough when off (same never-erase rule as recordingsDir).
+ *
+ *  The pin is SLAVED to the backends category (`syncPin` = cats.backends),
+ *  exactly as when it rode inside that payload: it references a backend id,
+ *  so on a device that doesn't sync its backend list the ids differ per
+ *  machine — syncing the pin there would make every pull null the local pin
+ *  through the dangling-reference scrub and every push overwrite the peer's,
+ *  a slow ping-pong that destroys both pins. Backends OFF → passthrough. */
+function extractDictionary(
+  settings: AppSettings,
+  syncChord: boolean,
+  syncPin: boolean,
+  snapshot: SyncBlob | undefined,
+): SyncBlob["dictionary"] {
+  const out: SyncDictionary = {};
+  const pin = syncPin ? (settings.quickAddList ?? null) : snapshot?.dictionary?.quickAddList;
+  if (pin !== undefined) out.quickAddList = pin;
+  const chord = syncChord ? settings.general.quickAddHotkey : snapshot?.dictionary?.quickAddHotkey;
+  if (chord !== undefined) out.quickAddHotkey = chord;
+  return out;
 }
 
 type StoreSlice = Pick<Config, "settings" | "backends" | "profiles"> & { appRules: AppRule[] };
@@ -166,15 +311,20 @@ export async function composeBlob(
   cfg: StoreSlice,
   cats: Record<SyncCategory, boolean>,
   snapshot: SyncBlob | undefined,
-  opts: { includeSecrets: boolean },
+  opts: { includeSecrets: boolean; sub: SyncSubSettings },
 ): Promise<SyncBlob> {
   const blob: SyncBlob = {};
   blob.general = cats.general ? extractGeneral(cfg.settings) : snapshot?.general;
-  blob.recording = cats.recording ? extractRecording(cfg.settings) : snapshot?.recording;
+  blob.recording = cats.recording
+    ? extractRecording(cfg.settings, opts.sub.recordingsDir, snapshot)
+    : snapshot?.recording;
+  blob.chip = cats.chip ? extractChip(cfg.settings) : snapshot?.chip;
+  blob.dictionary = cats.dictionary
+    ? extractDictionary(cfg.settings, opts.sub.quickAddHotkey, cats.backends, snapshot)
+    : snapshot?.dictionary;
   if (cats.backends) {
     blob.backends = {
       list: cfg.backends,
-      quickAddList: cfg.settings.quickAddList ?? null,
     };
     if (opts.includeSecrets) {
       const secrets = await withTimeout(
@@ -208,7 +358,7 @@ export async function composeBlob(
     blob.backends = snapshot?.backends;
   }
   blob.profiles = cats.profiles
-    ? { list: cfg.profiles, homeProfileId: cfg.settings.homeProfileId ?? null }
+    ? extractProfiles(cfg.profiles, cfg.settings.homeProfileId ?? null, opts.sub.profileHotkeys, snapshot)
     : snapshot?.profiles;
   // appRules: even when ON, this device only owns ITS OS bucket — the other
   // bucket passes through from the snapshot untouched.
@@ -449,8 +599,8 @@ function disableConflictingProfiles(
     // Keep whichever came first — the quick-add peer always wins, since it is a single global
     // chord the user may have bound locally, not one of many list entries.
     //
-    // …but only when the profiles it beats came from the same blob. `general` has no consent
-    // arm, so a blob carrying ONLY `general.quickAddHotkey` reaches this with the user's own
+    // …but only when the profiles it beats came from the same blob. `dictionary` has no consent
+    // arm, so a blob carrying ONLY `dictionary.quickAddHotkey` reaches this with the user's own
     // local profile list, and the unconditional win then switches those profiles off and
     // persists that — worst case `["ControlLeft"]`, a strict subset of virtually every real
     // chord, which disables dictation app-wide with nothing malformed to point at and no
@@ -769,6 +919,7 @@ export async function applyBlob(
   let staleRestart = false;
   try {
     const settings = st.settings;
+    const sub = settings.sync?.sub ?? { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true };
     let nextSettings: AppSettings = settings;
     let nextBackends = st.backends;
     let nextProfiles = st.profiles;
@@ -794,6 +945,11 @@ export async function applyBlob(
       const {
         evdevEnabled: _evdev,
         autoEnter: _autoEnter,
+        // The chord belongs to the `dictionary` category now — migrateBlob moves it there on
+        // every inbound path, and stripping it here too means a hand-crafted blob can't apply
+        // it past the dictionary toggle by leaving it in `general` (same defense-in-depth as
+        // the evdev strip above; the local field itself still lives in settings.general).
+        quickAddHotkey: _qa,
         ...general
       } = incoming as Record<string, unknown>;
       nextSettings = {
@@ -806,12 +962,6 @@ export async function applyBlob(
             (general as { pasteShortcut?: unknown }).pasteShortcut,
             nextSettings.general.pasteShortcut,
           ),
-          // Sibling of the chord clamp above. `quickAddHotkey` is a chord too, and it lands in
-          // the same `canonicalizeCodes` / `conflicts()` consumers — a non-list (or a list with a
-          // numeric entry) throws in a component body AND in the debounced save.
-          quickAddHotkey: isCodeList((general as { quickAddHotkey?: unknown }).quickAddHotkey)
-            ? ((general as { quickAddHotkey: string[] }).quickAddHotkey)
-            : nextSettings.general.quickAddHotkey,
           // Closed vocabularies: an unknown variant is rejected by `save_config`'s typed parse,
           // which then fails EVERY later save (see `oneOf`).
           insertMethod: oneOf<InsertMethod>(
@@ -830,6 +980,10 @@ export async function applyBlob(
     // Same shape check, same reason as the `general` arm above — `blob.recording` reaches
     // `typedLike` directly.
     if (cats.recording && isPlainObject(blob.recording)) {
+      // Chip-classified keys can NEVER apply through the recording category (nor vice-versa
+      // below): migrateBlob partitions honest blobs, and the filter here stops a crafted one
+      // from riding e.g. `indicatorPosition` past a switched-off chip toggle.
+      const rec = omitFields(blob.recording as Record<string, unknown>, CHIP_FIELD_SET);
       nextSettings = {
         ...nextSettings,
         recording: {
@@ -842,16 +996,35 @@ export async function applyBlob(
           // omission silently reset trimSilence / muteSystemAudio / latchAutoStopMin too.
           // A peer that genuinely wants it off still sends the literal `false`.
           ...settings.recording,
-          ...typedLike(blob.recording, settings.recording),
-          // machine-local: keep this device's folder no matter what arrived
-          recordingsDir: settings.recording.recordingsDir,
+          ...typedLike(rec as Partial<typeof settings.recording>, settings.recording),
+          // The folder is a machine path: applied only when this device's sub-toggle opts in
+          // AND a well-typed value arrived; otherwise keep this device's folder no matter what.
+          // `null` is a LEGITIMATE value ("use the default location", Rust Option<String>) and
+          // must apply — treating it as "keep local" made a peer's next push resurrect the old
+          // path and silently revert a reset-to-default after one round trip.
+          recordingsDir:
+            sub.recordingsDir && (typeof rec.recordingsDir === "string" || rec.recordingsDir === null)
+              ? rec.recordingsDir
+              : settings.recording.recordingsDir,
+        },
+      };
+    }
+    // The chip half of the old "Recording & Chip" group — same merge-over-current rule, and
+    // the mirror-image field filter (only chip-classified keys may apply here).
+    if (cats.chip && isPlainObject(blob.chip)) {
+      const chip = pickFields(blob.chip as Record<string, unknown>, CHIP_FIELD_SET);
+      nextSettings = {
+        ...nextSettings,
+        recording: {
+          ...nextSettings.recording,
+          ...typedLike(chip as Partial<typeof settings.recording>, settings.recording),
           indicatorPosition: oneOf<IndicatorPosition>(
-            blob.recording.indicatorPosition,
+            chip.indicatorPosition,
             INDICATOR_POSITIONS,
             settings.recording.indicatorPosition,
           ),
           overlayStatsMetric: oneOf<OverlayStatsMetric>(
-            blob.recording.overlayStatsMetric,
+            chip.overlayStatsMetric,
             OVERLAY_STATS_METRICS,
             settings.recording.overlayStatsMetric,
           ),
@@ -889,16 +1062,20 @@ export async function applyBlob(
         staleRestart = retries > 0;
         return;
       }
-      // `quickAddList` was the one leaf written into `settings` with NO type check anywhere —
-      // not here, not in `import_settings_file`, and not by the scrub below, which only asks
-      // whether `.backendId` names a backend in the blob (an attacker just names one it also
-      // sent). Rust's `QuickAddTarget` requires `backend_id` AND `slug` as bare `String`s with
-      // no serde default, so `{"backendId":"<known>","slug":7}` rejected the whole `Config` and
-      // froze every later save for the session.
-      nextSettings = { ...nextSettings, quickAddList: safeQuickAddTarget(blob.backends.quickAddList) };
     }
     if (cats.profiles && blob.profiles) {
       nextProfiles = sanitizeProfiles(blob.profiles.list);
+      // "Profile shortcuts" sub-toggle OFF: chords are per-machine — re-pin each profile this
+      // device already knows to ITS chord (the recordingsDir precedent, per list element). A
+      // profile new to this device keeps the inbound chord: there is no local value, and
+      // `sanitizeProfiles` requires a code list, so stripping would drop the profile whole.
+      if (!sub.profileHotkeys) {
+        const localChords = new Map(st.profiles.map((p) => [p.id, p.hotkey]));
+        nextProfiles = nextProfiles.map((p) => {
+          const local = localChords.get(p.id);
+          return local && !catEqual(local, p.hotkey) ? { ...p, hotkey: local } : p;
+        });
+      }
       // `??` only replaces null/undefined, so a JSON `0` or `false` survived it — and the scrub
       // below is gated on truthiness, so a falsy non-string skipped that too and reached Rust's
       // `Option<String>`. Same wedge as `quickAddList`.
@@ -906,6 +1083,31 @@ export async function applyBlob(
         ...nextSettings,
         homeProfileId: typeof blob.profiles.homeProfileId === "string" ? blob.profiles.homeProfileId : null,
       };
+    }
+    if (cats.dictionary && isPlainObject(blob.dictionary)) {
+      const d = blob.dictionary as { quickAddHotkey?: unknown; quickAddList?: unknown };
+      // The chord: only when this device's sub-toggle opts in, and only a well-formed code
+      // list — it lands in the same `canonicalizeCodes` / `conflicts()` consumers as the
+      // profile chords, where a numeric entry throws in a component body AND in the debounced
+      // save. Absent/malformed/opted-out → keep this device's chord.
+      if (sub.quickAddHotkey && isCodeList(d.quickAddHotkey)) {
+        nextSettings = {
+          ...nextSettings,
+          general: { ...nextSettings.general, quickAddHotkey: d.quickAddHotkey },
+        };
+      }
+      // The pin: `quickAddList` is written into `settings` with NO other type check anywhere —
+      // Rust's `QuickAddTarget` requires `backend_id` AND `slug` as bare `String`s with no
+      // serde default, so `{"backendId":"<known>","slug":7}` would reject the whole `Config`
+      // and freeze every later save for the session; `safeQuickAddTarget` clamps to null.
+      //
+      // Applied only when a backends LIST arrived in the same blob (`cats.backends &&
+      // blob.backends`) — the pre-split gating, when the pin rode inside that payload. Without
+      // the referent list, the dangling-reference scrub below can only compare against THIS
+      // device's backends, and a peer's perfectly valid pin would null the local one.
+      if (cats.backends && blob.backends && hasOwn(blob.dictionary as Record<string, unknown>, "quickAddList")) {
+        nextSettings = { ...nextSettings, quickAddList: safeQuickAddTarget(d.quickAddList) };
+      }
     }
     if (cats.appRules && blob.appRules) {
       nextAppRules = sanitizeAppRules(blob.appRules[MY_BUCKET]);
@@ -1313,14 +1515,12 @@ export async function pushNow(manual = false): Promise<void> {
   try {
     await ensureStateFor(backend.id);
     const s = useApp.getState();
-    const cats = s.settings.sync?.categories ?? {
-      general: true, recording: true, backends: true, profiles: true, appRules: true,
-    };
+    const cats = s.settings.sync?.categories ?? fullCats();
     let blob = await composeBlob(
       { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
       cats,
       state.snapshot,
-      { includeSecrets: true },
+      { includeSecrets: true, sub: subSettings() },
     );
     let base = state.version ?? 0;
     if (!manual && hashBlob(blob) === state.hash && base > 0) {
@@ -1363,7 +1563,9 @@ export async function pushNow(manual = false): Promise<void> {
       }
       if (res.status === 409 && res.conflict) {
         const remote = res.conflict;
-        const remoteBlob = (remote.blob ?? {}) as SyncBlob;
+        // Normalize a pre-split peer's blob before merging — the 3-way base and the local
+        // compose are already in the current shape.
+        const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
         const { merged, conflicts } = mergeBlobs(state.snapshot, blob, remoteBlob);
         if (conflicts.length > 0) {
           raiseConflict({ categories: conflicts, merged, local: blob, remote: remoteBlob,
@@ -1409,10 +1611,11 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
     s.settings.sync?.categories ?? cats,
     state.snapshot,
-    { includeSecrets: true },
+    { includeSecrets: true, sub: subSettings() },
   );
   if (myGen !== gen) return; // superseded — don't apply the old server's blob
-  const remoteBlob = (remote.blob ?? {}) as SyncBlob;
+  // Normalize a pre-split peer's blob before merging (the base and local are current-shape).
+  const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
   const { merged, conflicts } = mergeBlobs(state.snapshot, local, remoteBlob);
   if (conflicts.length > 0) {
     raiseConflict({ categories: conflicts, merged, local, remote: remoteBlob,
@@ -1460,7 +1663,15 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
 }
 
 function fullCats(): Record<SyncCategory, boolean> {
-  return { general: true, recording: true, backends: true, profiles: true, appRules: true };
+  return {
+    general: true,
+    recording: true,
+    chip: true,
+    backends: true,
+    profiles: true,
+    dictionary: true,
+    appRules: true,
+  };
 }
 
 function handleTransportFailure(status: number, error?: string): void {
@@ -1742,6 +1953,10 @@ export async function initSync(): Promise<void> {
   started = true;
   await configReady;
   state = (await loadSyncState()) ?? {};
+  // Normalize a pre-split snapshot to the current category layout. Without this the 3-way
+  // base stays old-shape while fresh composes are new-shape, so the first sync after an
+  // upgrade would read EVERY category as changed-on-both-sides and raise spurious conflicts.
+  if (state.snapshot) state.snapshot = migrateBlob(state.snapshot);
   await restoreSnapshotSecrets();
   // Migrate a pre-split state file: it still holds the keys in cleartext and records no ids.
   // Rewriting now moves them to the keyring and strips the file, rather than waiting for

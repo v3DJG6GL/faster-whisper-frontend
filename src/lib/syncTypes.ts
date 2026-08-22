@@ -15,7 +15,9 @@ import type {
 
 /** The `general` category: settings.theme + the portable general fields.
  *  Machine-local fields (evdevEnabled) are excluded by construction — this
- *  type simply doesn't have them. */
+ *  type simply doesn't have them. The quick-add chord lived here before the
+ *  `dictionary` category existed; `migrateBlob` moves it on every inbound
+ *  path, so post-migration blobs never carry it here. */
 export interface SyncGeneral {
   theme: ThemeName;
   startMinimized: boolean;
@@ -29,27 +31,72 @@ export interface SyncGeneral {
   restoreClipboard: boolean;
   soundEffects: boolean;
   deepFieldDetection: boolean;
-  quickAddHotkey: string[];
 }
 
-/** The `recording` category: everything on RecordingSettings except the
- *  machine-local recordingsDir. */
-export type SyncRecording = Omit<RecordingSettings, "recordingsDir">;
+/** The fields of RecordingSettings that belong to the `chip` category — the
+ *  overlay chip's look and behaviour, split out of the old catch-all
+ *  "Recording & Chip" group so save-recordings/retention (consent-grade) and
+ *  chip styling toggle independently. The single classification list the
+ *  compose partition, the apply filters, and `migrateBlob` all share. */
+export const CHIP_FIELDS = [
+  "indicatorPosition",
+  "persistentDock",
+  "overlayPeek",
+  "peekTimeoutSec",
+  "peekWhileActive",
+  "dimAfterSec",
+  "hoverRevealMs",
+  "quickLaunch",
+  "realtimePreview",
+  "realtimePreviewOnHover",
+  "showProfileOnOverlay",
+  "showProfileOnHover",
+  "showStatsOnOverlay",
+  "overlayStatsOnHover",
+  "overlayStatsMetric",
+  "showTargetOnOverlay",
+  "showTargetOnHover",
+  "showTargetOnlySpeaking",
+] as const satisfies readonly (keyof RecordingSettings)[];
+
+export type ChipField = (typeof CHIP_FIELDS)[number];
+
+/** The `chip` category: the chip subset of RecordingSettings. */
+export type SyncChip = Pick<RecordingSettings, ChipField>;
+
+/** The `recording` category: RecordingSettings minus the chip fields.
+ *  `recordingsDir` is a machine-specific path: present only when the writing
+ *  device's "Recordings folder" sub-toggle is on (default off), else passed
+ *  through from the snapshot so an opted-out device never erases it. */
+export type SyncRecording = Partial<Pick<RecordingSettings, "recordingsDir">> &
+  Omit<RecordingSettings, ChipField | "recordingsDir">;
 
 /** The `backends` category. `secrets` ({backendId: apiKey}) is present in the
  *  server blob always (user decision — it's their own server) and in an export
- *  file only when "Include API keys" was checked. quickAddList rides with its
- *  referent (a backend id + a server-side rule slug). */
+ *  file only when "Include API keys" was checked. The quick-add pin lived here
+ *  before the `dictionary` category existed (migrateBlob moves it). */
 export interface SyncBackends {
   list: Backend[];
-  quickAddList: QuickAddTarget | null;
   secrets?: Record<string, string>;
 }
 
-/** The `profiles` category. homeProfileId rides with its referent. */
+/** The `profiles` category. homeProfileId rides with its referent. The wire
+ *  shape is unchanged by the "Profile shortcuts" sub-toggle: chords stay
+ *  INSIDE the elements — an opted-out device substitutes the snapshot's chord
+ *  per profile on compose and re-pins its local chord per profile on apply. */
 export interface SyncProfiles {
   list: Profile[];
   homeProfileId: string | null;
+}
+
+/** The `dictionary` category: the two LOCAL-config pointers of the quick-add
+ *  feature. (The word list itself is live server state per account — it needs
+ *  no sync category at all.) `quickAddHotkey` is absent when no device has
+ *  ever synced it (the sub-toggle passthrough keeps it absent rather than
+ *  erasing a peer's chord). */
+export interface SyncDictionary {
+  quickAddHotkey?: string[];
+  quickAddList?: QuickAddTarget | null;
 }
 
 /** The `appRules` category, bucketed per-OS: appIds are AT-SPI names on Linux
@@ -66,8 +113,10 @@ export interface SyncAppRules {
 export interface SyncBlob {
   general?: SyncGeneral;
   recording?: SyncRecording;
+  chip?: SyncChip;
   backends?: SyncBackends;
   profiles?: SyncProfiles;
+  dictionary?: SyncDictionary;
   appRules?: SyncAppRules;
 }
 

@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BrandMark } from "@/components/Sidebar";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
+import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
 import { Button, Labeled, Notice, Segmented, Select, TextInput } from "@/components/ui";
 import {
   evdevStatus, getPipelineRules, importSettingsFile, pickImportFile, setBackendKey,
@@ -18,7 +19,7 @@ import {
 } from "@/lib/api";
 import { insecureUrlWarning, normalizeUrl, nameFromUrl } from "@/lib/backends";
 import { quickAddPeer } from "@/lib/conflicts";
-import { ALL_CATEGORIES, applyBlob } from "@/lib/sync";
+import { ALL_CATEGORIES, applyBlob, migrateBlob } from "@/lib/sync";
 import { starterProfiles } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
@@ -129,7 +130,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     if (!blob) return;
     setBusy(true);
     try {
-      await applyBlob(blob, ALL_ON);
+      // Normalize a pre-split server blob first — the apply arms filter fields to their new
+      // categories, so an unmigrated old blob would silently drop the chip settings, the
+      // quick-add chord, and the pin (they'd sit in locations the arms no longer read).
+      await applyBlob(migrateBlob(blob), ALL_ON);
       // Turn sync on for this device, against the restored backend that matches
       // the gate's URL (the restore may have replaced Backend #1's entry).
       const s = st.getState();
@@ -480,7 +484,7 @@ function QuickAddStep({
           </Labeled>
         )}
         <Labeled label="Quick-add hotkey">
-          <QuickAddHotkeyInline />
+          <QuickAddShortcutField />
         </Labeled>
       </div>
       <div className="mt-7 flex w-full max-w-[430px] items-center justify-between">
@@ -504,45 +508,8 @@ function QuickAddStep({
         </div>
       </div>
       {quickAddHotkey.length === 0 && (
-        <p className="mt-3 text-[11px] text-faint">No quick-add hotkey set — add one in Settings → General.</p>
+        <p className="mt-3 text-[11px] text-faint">No quick-add hotkey set — add one on the Dictionary screen.</p>
       )}
     </>
-  );
-}
-
-/** The quick-add chord with an inline re-capture — same recorder + conflict
- *  gate as Settings → General, scoped to the onboarding card. */
-function QuickAddHotkeyInline() {
-  const codes = useApp((s) => s.settings.general.quickAddHotkey);
-  const profiles = useApp((s) => s.profiles);
-  const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
-  const updateGeneral = useApp((s) => s.updateGeneral);
-  const [capturing, setCapturing] = useState(false);
-  const [lowLevel, setLowLevel] = useState(IS_WINDOWS);
-  useEffect(() => {
-    if (IS_WINDOWS) return;
-    void evdevStatus()
-      .then((s) => setLowLevel(!!(s.permitted && evdevEnabled)))
-      .catch(() => {});
-  }, [evdevEnabled]);
-  const { heldCodes, warn } = useHotkeyCapture({
-    capturing,
-    lowLevelActive: lowLevel,
-    others: profiles,
-    selfKind: "quickadd",
-    onCommit: (c) => {
-      updateGeneral({ quickAddHotkey: c });
-      setCapturing(false);
-    },
-    onCancel: () => setCapturing(false),
-  });
-  return (
-    <HotkeyCaptureControl
-      codes={codes}
-      capturing={capturing}
-      heldCodes={heldCodes}
-      warn={warn}
-      onToggle={() => setCapturing((c) => !c)}
-    />
   );
 }

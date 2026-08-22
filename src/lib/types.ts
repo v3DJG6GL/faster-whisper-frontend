@@ -179,10 +179,36 @@ export interface QuickAddTarget {
 }
 
 /** The toggleable settings-sync categories (what travels in the synced blob /
- *  an export file). Machine-local fields (mic device, recordings folder,
- *  evdev, the sync meta itself) are excluded by construction — see
- *  lib/sync.ts for the authoritative category → config-path mapping. */
-export type SyncCategory = "general" | "recording" | "backends" | "profiles" | "appRules";
+ *  an export file). Machine-local fields (mic device, evdev, the sync meta
+ *  itself) are excluded by construction — see lib/sync.ts for the
+ *  authoritative category → config-path mapping. Pre-split blobs (one
+ *  "recording" holding the chip fields, the quick-add chord under "general",
+ *  the pin under "backends") are normalized by `migrateBlob` on every inbound
+ *  path, so the engine only ever sees this shape. */
+export type SyncCategory =
+  | "general"
+  | "recording"
+  | "chip"
+  | "backends"
+  | "profiles"
+  | "dictionary"
+  | "appRules";
+
+/** Field-level opt-outs INSIDE a synced category — the sub-toggles indented
+ *  under a group row in Settings → Sync. Machine-local like the rest of
+ *  SyncSettings. An opted-out field still round-trips through pushes
+ *  untouched (the compose passes the snapshot's value through), so flipping
+ *  one off can never erase the field for other devices. */
+export interface SyncSubSettings {
+  /** Sync `recording.recordingsDir` — a machine-specific filesystem path.
+   *  Default OFF (the pre-sub-toggle behavior: never synced). */
+  recordingsDir: boolean;
+  /** Sync each profile's hotkey chord. OFF = chords stay per-machine
+   *  (inbound profiles keep this device's chord for ids it already has). */
+  profileHotkeys: boolean;
+  /** Sync the quick-add shortcut chord. OFF = per-machine. */
+  quickAddHotkey: boolean;
+}
 
 /** Settings-sync metadata. MACHINE-LOCAL by contract: lives in the config for
  *  persistence, but the sync engine strips it from every blob/export — each
@@ -197,6 +223,10 @@ export interface SyncSettings {
    *  pushes AND applies from pulls. OFF categories still round-trip through
    *  pushes untouched (compose/preserve) so this device never erases them. */
   categories: Record<SyncCategory, boolean>;
+  /** Per-device field-level opt-outs inside a category (see SyncSubSettings).
+   *  Optional: configs persisted before the sub-toggles existed lack it —
+   *  the store's completeSettings fills the defaults. */
+  sub?: SyncSubSettings;
   /** Per-device server-address overrides, keyed by Backend id: "use this URL
    *  on this machine" while the canonical serverUrl stays synced. Solves the
    *  localhost-vs-LAN split without URL ping-pong. Never synced. */

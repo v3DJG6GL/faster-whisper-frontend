@@ -563,26 +563,30 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
             }
         }
     }
-    for key in ["general", "recording"] {
+    for key in ["general", "recording", "chip", "dictionary"] {
         if let Some(v) = categories.get(key) {
             if !v.is_null() && !v.is_object() {
                 return Err(format!("The file's {key} settings are invalid."));
             }
         }
     }
-    // `general` is checked as an OBJECT only above, so its one chord-shaped leaf never met the
-    // element and length checks the profile list gets. It reaches the same preview scan.
-    if let Some(qa) = categories.get("general").and_then(|g| g.get("quickAddHotkey")) {
-        let ok = qa.is_null()
-            || qa
-                .as_array()
-                .is_some_and(|a| {
-                    a.len() <= MAX_CHORD_CODES
-                        && a.iter()
-                            .all(|c| c.as_str().is_some_and(|s| s.len() <= MAX_CHORD_CODE_LEN))
-                });
-        if !ok {
-            return Err("The file's quick-add shortcut is invalid.".into());
+    // The categories are checked as OBJECTS only above, so the chord-shaped leaf never met the
+    // element and length checks the profile list gets. It reaches the same preview scan. The
+    // chord lives under `dictionary` since the category split; `general` is where files written
+    // before it carried it — validate whichever this file has.
+    for cat in ["dictionary", "general"] {
+        if let Some(qa) = categories.get(cat).and_then(|g| g.get("quickAddHotkey")) {
+            let ok = qa.is_null()
+                || qa
+                    .as_array()
+                    .is_some_and(|a| {
+                        a.len() <= MAX_CHORD_CODES
+                            && a.iter()
+                                .all(|c| c.as_str().is_some_and(|s| s.len() <= MAX_CHORD_CODE_LEN))
+                    });
+            if !ok {
+                return Err("The file's quick-add shortcut is invalid.".into());
+            }
         }
     }
 

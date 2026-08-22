@@ -4,13 +4,16 @@
 
 import { useApp } from "./store";
 import { appVersion, exportSettingsFile, syncDeviceInfo } from "./api";
-import { ALL_CATEGORIES, applyBlob, composeBlob } from "./sync";
+import { ALL_CATEGORIES, applyBlob, composeBlob, migrateBlob } from "./sync";
 import type { SyncCategory } from "./types";
 import type { ExportEnvelope, ImportResult, SyncBlob } from "./syncTypes";
 
 /** Compose the export envelope from the CURRENT store state. All categories
  *  are always included (an export is a backup — the choosing happens on
- *  import); `includeSecrets` gates the plaintext API keys (default off). */
+ *  import); `includeSecrets` gates the plaintext API keys (default off). The
+ *  sub-toggle set is fixed to the export contract, independent of this
+ *  device's sync sub-toggles: chords travel (a backup without them restores
+ *  chord-less profiles), the machine-specific recordings folder never does. */
 export async function buildEnvelope(includeSecrets: boolean): Promise<ExportEnvelope> {
   const s = useApp.getState();
   const allOn = Object.fromEntries(ALL_CATEGORIES.map((c) => [c, true])) as Record<
@@ -21,7 +24,7 @@ export async function buildEnvelope(includeSecrets: boolean): Promise<ExportEnve
     { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
     allOn,
     undefined,
-    { includeSecrets },
+    { includeSecrets, sub: { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true } },
   );
   const device = await syncDeviceInfo();
   return {
@@ -50,7 +53,9 @@ export async function applyImport(
   result: ImportResult,
 ): Promise<void> {
   if (useApp.getState().status !== "idle") throw new Error("dictating");
-  const blob: SyncBlob = { ...result.categories };
+  // Normalize a file written before the category split (chip fields inside
+  // recording, the quick-add chord/pin under general/backends).
+  const blob: SyncBlob = migrateBlob({ ...result.categories });
   if (selection.backends && blob.backends && Object.keys(result.secrets).length > 0) {
     blob.backends = { ...blob.backends, secrets: result.secrets };
   }

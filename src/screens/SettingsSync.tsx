@@ -3,9 +3,10 @@
 // per-device category toggles + status/manual controls + conflict dialog).
 // The engine lives in lib/sync.ts; this screen only drives it.
 
-import { useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { DownloadCloud, UploadCloud, RefreshCw, Loader2 } from "lucide-react";
+import { cn } from "@/lib/cn";
 import { useApp, DEFAULT_SYNC } from "@/lib/store";
 import {
   Button,
@@ -21,12 +22,14 @@ import {
 import { importSettingsFile, pickImportFile, pickSavePath, syncDelete } from "@/lib/api";
 import { applyImport, exportToFile } from "@/lib/exportImport";
 import {
+  ALL_CATEGORIES,
   applyBlob,
   approvePendingReview,
   dismissSyncConflict,
   getPendingConflict,
   getPendingReview,
   isCodeList,
+  migrateBlob,
   pullNow,
   pushNow,
   rejectPendingReview,
@@ -40,8 +43,8 @@ import { ownProp } from "@/lib/own";
 import { conflicts as chordConflicts, quickAddPeer } from "@/lib/conflicts";
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
-import type { Backend, SyncCategory } from "@/lib/types";
-import type { ImportResult, SyncRemoteState } from "@/lib/syncTypes";
+import type { Backend, SyncCategory, SyncSubSettings } from "@/lib/types";
+import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/syncTypes";
 
 const MY_BUCKET = IS_WINDOWS ? ("windows" as const) : ("linux" as const);
 const OTHER_BUCKET = IS_WINDOWS ? ("linux" as const) : ("windows" as const);
@@ -54,12 +57,50 @@ const OTHER_BUCKET = IS_WINDOWS ? ("linux" as const) : ("windows" as const);
 const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
 const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
-  { key: "general", title: "General", desc: "Theme, insertion, sounds, quick-add shortcut, launch at login." },
-  { key: "recording", title: "Recording & Chip", desc: "Chip styling, visibility and timing settings." },
+  { key: "general", title: "General", desc: "Theme, insertion, sounds, launch at login." },
+  { key: "recording", title: "Recording", desc: "Save recordings, retention window, silence trim, system-audio mute." },
+  { key: "chip", title: "Chip", desc: "Styling, visibility, timing, quick-launch buttons." },
   { key: "backends", title: "Backends", desc: "Server connections incl. API keys (stored on your own server)." },
-  { key: "profiles", title: "Profiles", desc: "Dictation profiles incl. their hotkeys." },
+  { key: "profiles", title: "Profiles", desc: "Dictation profiles: name, backend, activation, chip tag." },
+  { key: "dictionary", title: "Dictionary", desc: "Quick-add shortcut and pinned list. The word list itself lives on your server and always follows your account." },
   { key: "appRules", title: "App rules", desc: `Per-app rules for this OS (${MY_BUCKET}); other-OS rules pass through untouched.` },
 ];
+
+/** The indented field-level opt-outs rendered under their parent category row
+ *  in "What this device syncs". Keys index SyncSettings.sub. */
+const SUB_META: {
+  key: keyof SyncSubSettings;
+  parent: SyncCategory;
+  title: string;
+  desc: string;
+}[] = [
+  {
+    key: "recordingsDir",
+    parent: "recording",
+    title: "Recordings folder",
+    desc: "A machine-specific path — sync only between identical setups.",
+  },
+  {
+    key: "profileHotkeys",
+    parent: "profiles",
+    title: "Profile shortcuts",
+    desc: "Off = each machine keeps its own chords.",
+  },
+  {
+    key: "quickAddHotkey",
+    parent: "dictionary",
+    title: "Quick-add shortcut",
+    desc: "Off = each machine keeps its own chord.",
+  },
+];
+
+/** Initial per-category selection for the two preview dialogs: every category
+ *  present in the blob starts checked. */
+function presentSel(blob: SyncBlob): Record<SyncCategory, boolean> {
+  return Object.fromEntries(
+    ALL_CATEGORIES.map((c) => [c, blob[c] !== undefined]),
+  ) as Record<SyncCategory, boolean>;
+}
 
 /** "just now" / "4m ago" / "3h ago" / a date — for the last-synced line. */
 export function relTime(ms: number): string {
@@ -94,22 +135,20 @@ function Modal({ children, onClose }: { children: ReactNode; onClose: () => void
 export function ImportPreview({ result, onClose }: { result: ImportResult; onClose: () => void }) {
   const evdevEnabled = useApp((st) => st.settings.general.evdevEnabled);
   const dictating = useApp((st) => st.status !== "idle");
-  const present = (c: SyncCategory) => result.categories[c] !== undefined;
-  const [sel, setSel] = useState<Record<SyncCategory, boolean>>({
-    general: present("general"),
-    recording: present("recording"),
-    backends: present("backends"),
-    profiles: present("profiles"),
-    appRules: present("appRules"),
-  });
+  // Normalize a pre-split file once for everything this dialog previews —
+  // `applyImport` migrates again on apply (idempotent), so preview and apply
+  // read the same shape.
+  const categories = useMemo(() => migrateBlob(result.categories), [result.categories]);
+  const present = (c: SyncCategory) => categories[c] !== undefined;
+  const [sel, setSel] = useState<Record<SyncCategory, boolean>>(() => presentSel(categories));
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const counts: Partial<Record<SyncCategory, string>> = {
-    backends: result.categories.backends ? `${arr(result.categories.backends.list).length}` : undefined,
-    profiles: result.categories.profiles ? `${arr(result.categories.profiles.list).length}` : undefined,
-    appRules: result.categories.appRules
-      ? `${arr(result.categories.appRules[MY_BUCKET]).length} this OS · ${arr(result.categories.appRules[OTHER_BUCKET]).length} other OS`
+    backends: categories.backends ? `${arr(categories.backends.list).length}` : undefined,
+    profiles: categories.profiles ? `${arr(categories.profiles.list).length}` : undefined,
+    appRules: categories.appRules
+      ? `${arr(categories.appRules[MY_BUCKET]).length} this OS · ${arr(categories.appRules[OTHER_BUCKET]).length} other OS`
       : undefined,
   };
 
@@ -127,12 +166,13 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // on a hand-authored file. Bonus: the preview now predicts exactly what apply would install.
   const st = useApp.getState();
   const wouldProfiles =
-    sel.profiles && result.categories.profiles
-      ? sanitizeProfiles(result.categories.profiles.list)
+    sel.profiles && categories.profiles
+      ? sanitizeProfiles(categories.profiles.list)
       : st.profiles;
-  const rawQa = result.categories.general?.quickAddHotkey;
+  // Post-migration the chord lives in the dictionary category.
+  const rawQa = categories.dictionary?.quickAddHotkey;
   const wouldQa =
-    sel.general && result.categories.general
+    sel.dictionary && rawQa !== undefined
       ? (isCodeList(rawQa) ? rawQa : [])
       : st.settings.general.quickAddHotkey;
   const peers = (wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles).slice(
@@ -143,17 +183,17 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     chordConflicts(peers, !IS_WINDOWS && !evdevEnabled).length > 0;
 
   const missingKeys =
-    sel.backends && result.categories.backends
-      ? arr<Backend>(result.categories.backends.list).filter(
+    sel.backends && categories.backends
+      ? arr<Backend>(categories.backends.list).filter(
           (b) => b.hasApiKey && !ownProp(result.secrets, b.id),
         )
       : [];
 
   // Same condition `RestoreFromServer` computes for its own replace warning — see the notice below.
   const replaces =
-    (sel.backends && result.categories.backends && st.backends.length > 0) ||
-    (sel.profiles && result.categories.profiles && st.profiles.length > 0) ||
-    (sel.appRules && result.categories.appRules && st.appRules.length > 0);
+    (sel.backends && categories.backends && st.backends.length > 0) ||
+    (sel.profiles && categories.profiles && st.profiles.length > 0) ||
+    (sel.appRules && categories.appRules && st.appRules.length > 0);
 
   const apply = async () => {
     setApplying(true);
@@ -219,8 +259,8 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
         {result.hasSecrets && sel.backends && (
           <Notice tone="warn">This file contains API keys — they'll be stored in the system keyring.</Notice>
         )}
-        {sel.backends && result.categories.backends && (
-          <IncomingAddresses list={result.categories.backends.list} />
+        {sel.backends && categories.backends && (
+          <IncomingAddresses list={categories.backends.list} />
         )}
         {missingKeys.length > 0 && (
           <Notice tone="warn">
@@ -277,15 +317,10 @@ export function RestoreFromServer({
 }) {
   const evdevEnabled = useApp((st) => st.settings.general.evdevEnabled);
   const dictating = useApp((st) => st.status !== "idle");
-  const blob = state.blob ?? {};
+  // Normalize a pre-split server blob for the preview AND the apply below.
+  const blob = useMemo(() => migrateBlob((state.blob ?? {}) as SyncBlob), [state.blob]);
   const present = (c: SyncCategory) => blob[c] !== undefined;
-  const [sel, setSel] = useState<Record<SyncCategory, boolean>>({
-    general: present("general"),
-    recording: present("recording"),
-    backends: present("backends"),
-    profiles: present("profiles"),
-    appRules: present("appRules"),
-  });
+  const [sel, setSel] = useState<Record<SyncCategory, boolean>>(() => presentSel(blob));
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -304,9 +339,10 @@ export function RestoreFromServer({
   // dialog renders before them and `chordConflicts` walks the elements in a render body.
   const st = useApp.getState();
   const wouldProfiles = sel.profiles && blob.profiles ? sanitizeProfiles(blob.profiles.list) : st.profiles;
-  const rawQa = blob.general?.quickAddHotkey;
+  // Post-migration the chord lives in the dictionary category.
+  const rawQa = blob.dictionary?.quickAddHotkey;
   const wouldQa =
-    sel.general && blob.general
+    sel.dictionary && rawQa !== undefined
       ? (isCodeList(rawQa) ? rawQa : [])
       : st.settings.general.quickAddHotkey;
   const peers = (wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles).slice(
@@ -761,16 +797,55 @@ export function SyncTab() {
         )}
 
         <SectionLabel>What this device syncs</SectionLabel>
-        {CATEGORY_META.map(({ key, title, desc }) => (
-          <SettingRow key={key} title={title} desc={desc} disabled={!sync.enabled}>
-            <Toggle
-              checked={sync.categories[key]}
-              disabled={!sync.enabled}
-              onChange={(v) => updateSync({ categories: { ...sync.categories, [key]: v } })}
-              ariaLabel={`Sync ${title}`}
-            />
-          </SettingRow>
-        ))}
+        {CATEGORY_META.map(({ key, title, desc }) => {
+          const subs = SUB_META.filter((s) => s.parent === key);
+          const subVals = sync.sub ?? DEFAULT_SYNC.sub!;
+          return (
+            <Fragment key={key}>
+              <SettingRow title={title} desc={desc} disabled={!sync.enabled}>
+                <Toggle
+                  checked={sync.categories[key]}
+                  disabled={!sync.enabled}
+                  onChange={(v) => updateSync({ categories: { ...sync.categories, [key]: v } })}
+                  ariaLabel={`Sync ${title}`}
+                />
+              </SettingRow>
+              {subs.map((s) => {
+                const active = sync.enabled && sync.categories[key];
+                return (
+                  <div
+                    key={s.key}
+                    className={cn(
+                      "relative flex items-center gap-4 border-b border-line py-2.5 pl-9",
+                      !active && "opacity-40",
+                    )}
+                  >
+                    {/* connector elbow: this option belongs to the row above */}
+                    <span
+                      aria-hidden
+                      className="absolute left-3.5 top-[-4px] h-[24px] w-[12px] rounded-bl-lg border-b border-l border-line-strong"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13.5px] font-medium text-text">{s.title}</div>
+                      <div className="text-[12px] text-faint">{s.desc}</div>
+                    </div>
+                    <Toggle
+                      checked={subVals[s.key]}
+                      disabled={!active}
+                      onChange={(v) => updateSync({ sub: { ...subVals, [s.key]: v } })}
+                      ariaLabel={`Sync ${s.title}`}
+                    />
+                  </div>
+                );
+              })}
+            </Fragment>
+          );
+        })}
+        <div className="mt-3 rounded-[10px] border border-dashed border-line-strong px-4 py-2.5 text-[12px] leading-snug text-faint">
+          <span className="font-semibold text-dim">Never synced:</span> microphone, this device's
+          recordings folder (unless enabled above), the Linux input backend, and these sync settings
+          themselves.
+        </div>
 
         <div className="flex items-center gap-3 py-4">
           <StatusDot
