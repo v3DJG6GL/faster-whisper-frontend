@@ -145,6 +145,11 @@ pub fn run() {
             commands::spawn_suspend_watch(app.handle().clone());
             // Keep the OS autostart entry in sync with the saved preference.
             commands::sync_autostart(app.handle(), cfg.settings.general.open_at_login);
+            // KDE-Wayland: write the chip's KWin placement rule now, ahead of the first
+            // show — a first-ever run otherwise maps the chip centred (unruled) and it
+            // jumps to its edge only once the rule lands.
+            #[cfg(target_os = "linux")]
+            overlay::prewarm_chip_rule(&cfg);
             // Enforce the saved-recording retention window once per launch, so it also applies
             // to a machine that dictated for months and only just enabled it.
             commands::apply_recordings_retention(app.handle(), &cfg);

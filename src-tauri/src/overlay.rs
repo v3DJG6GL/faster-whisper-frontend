@@ -62,6 +62,30 @@ fn position(win: &WebviewWindow, edge: &str) {
     let _ = win.set_position(PhysicalPosition::new(x, y));
 }
 
+/// KDE-Wayland: pre-warm the chip's KWin placement rule at app startup, BEFORE the first
+/// `show_overlay`. On the very first run the window otherwise maps UNRULED — KWin's default
+/// placement centres it — and only snaps to its edge once `place_chip`'s detached thread
+/// lands (hundreds of ms of external tool calls). On later runs the previous session's rule
+/// persists in kwinrulesrc and already covers the first map, so this mainly fixes run one
+/// (and a changed edge/monitor since last quit). Detached thread — the kwrite/dbus tools
+/// can block (see `place_chip`'s comment); the show path never waits on this.
+#[cfg(target_os = "linux")]
+pub fn prewarm_chip_rule(cfg: &crate::config::Config) {
+    use crate::config::IndicatorPosition;
+    if !kwin::is_kde_wayland() {
+        return;
+    }
+    let edge = match cfg.settings.recording.indicator_position {
+        IndicatorPosition::Top => "top",
+        IndicatorPosition::Bottom => "bottom",
+        // Chip disabled: leave the user's kwinrulesrc untouched.
+        IndicatorPosition::Off => return,
+    };
+    std::thread::spawn(move || {
+        kwin::place_chip(kwin::chip_position(edge, CHIP_W, CHIP_H));
+    });
+}
+
 /// Show the chip at the requested edge ("top" | "bottom"), without focusing it. The window is
 /// anchored flush against that edge; the resting inset and the edge-peek tuck are pure CSS
 /// inside the webview (see Overlay.tsx).

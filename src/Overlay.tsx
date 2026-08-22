@@ -122,19 +122,24 @@ const HOVER_WATCHDOG_MS = 1500;
  * transcript when you speak, and collapses back on silence.
  */
 export default function Overlay() {
+  // Pre-handshake placeholder. It mirrors the STORE defaults (store.ts recording block) —
+  // if the first real update is ever missed, the chip must impersonate a calm docked idle
+  // dot with auto-hide armed, not a fake "armed" session that sits on screen forever
+  // (the old placeholder said status:"listening" + auto-hide off, which is exactly what
+  // users saw frozen mid-screen from app start until their first dictation).
   const [state, setState] = useState<ChipState>({
-    status: "listening",
-    level: 0.2,
+    status: "idle",
+    level: 0,
     partial: "",
     dictationError: "",
     position: "top",
     theme: "dark",
-    persistentDock: false,
-    overlayPeek: false,
-    peekTimeoutSec: 30,
+    persistentDock: true,
+    overlayPeek: true,
+    peekTimeoutSec: 5,
     peekWhileActive: false,
-    dimAfterSec: 10,
-    hoverRevealMs: 1000,
+    dimAfterSec: 2.5,
+    hoverRevealMs: 500,
     quickLaunch: [],
   });
 
@@ -144,8 +149,8 @@ export default function Overlay() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     import("@tauri-apps/api/event")
-      .then(({ listen }) =>
-        listen<ChipState>("dictation://update", (e) => {
+      .then(({ listen, emit }) => {
+        const registered = listen<ChipState>("dictation://update", (e) => {
           const theme = e.payload.theme ?? "auto";
           // Follow the app's theme (the chip is a separate webview); "auto" resolves
           // against this webview's own prefers-color-scheme — same OS, same answer.
@@ -158,10 +163,11 @@ export default function Overlay() {
             theme,
             persistentDock: e.payload.persistentDock ?? false,
             overlayPeek: e.payload.overlayPeek ?? false,
-            peekTimeoutSec: e.payload.peekTimeoutSec ?? 30,
+            // Absent-field fallbacks mirror the store defaults (store.ts recording block).
+            peekTimeoutSec: e.payload.peekTimeoutSec ?? 5,
             peekWhileActive: e.payload.peekWhileActive ?? false,
-            dimAfterSec: e.payload.dimAfterSec ?? 10,
-            hoverRevealMs: e.payload.hoverRevealMs ?? 1000,
+            dimAfterSec: e.payload.dimAfterSec ?? 2.5,
+            hoverRevealMs: e.payload.hoverRevealMs ?? 500,
             quickLaunch: e.payload.quickLaunch ?? [],
             targetTitle: e.payload.targetTitle ?? "",
             targetSkip: e.payload.targetSkip ?? "",
@@ -173,8 +179,16 @@ export default function Overlay() {
             profileOnHover: e.payload.profileOnHover ?? false,
             previewOnHover: e.payload.previewOnHover ?? false,
           });
-        }),
-      )
+        });
+        return registered.then((un) => {
+          // Handshake with the main window's controller: a Tauri emit with no registered
+          // listener is dropped (never queued), and this webview boots in parallel with the
+          // main one — so the first broadcast often outran this listen(). Announce readiness
+          // AFTER registration; the controller answers with a fresh full-state push.
+          void emit("overlay://ready").catch(() => {});
+          return un;
+        });
+      })
       .then((un) => {
         // If the effect was torn down before listen() resolved (StrictMode's
         // mount→unmount→remount), drop the subscription instead of leaking it.
