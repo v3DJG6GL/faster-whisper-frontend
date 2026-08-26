@@ -21,6 +21,8 @@ export interface QueueItem {
   status: ItemStatus;
   result?: BatchResult;
   error?: string;
+  /** Wall time the file took end to end — feeds the whole-run estimate. */
+  tookMs?: number;
 }
 
 /** The pipeline stages of a run, in server order (the progress rail). */
@@ -29,6 +31,62 @@ export type RailStage = "separating" | "transcribing" | "diarizing";
 export interface StageTime {
   start: number;
   end?: number;
+}
+
+/** Model/device chips observed for a stage — kept after the stage finishes
+ *  so done rows hold their evidence. */
+export interface StageMeta {
+  model?: string;
+  device?: string;
+  compute?: string;
+}
+
+/** Rough share of a run's wall time per stage — sizes the segments of the
+ *  overall pipeline bar and weights the overall percentage. */
+export const STAGE_WEIGHTS: Record<RailStage, number> = {
+  separating: 25,
+  transcribing: 60,
+  diarizing: 15,
+};
+
+/** The stages of a run in server order — transcribe always, the optional
+ *  stages only when the run switched them on. */
+export function railStages(opts: TranscribeOptions | undefined): RailStage[] {
+  return [
+    ...(opts?.separateBgm ? (["separating"] as const) : []),
+    "transcribing" as const,
+    ...(opts?.diarize ? (["diarizing"] as const) : []),
+  ];
+}
+
+/** Index of the server's current stage on the rail (waiting/unknown light
+ *  the transcribe row). */
+export function railIndex(stage: string | undefined, stages: RailStage[]): number {
+  const i = stages.indexOf(railOf(stage));
+  return i < 0 ? stages.indexOf("transcribing") : i;
+}
+
+/** Weighted 0..1 fraction across the whole pipeline (done stages count in
+ *  full, the active stage by its own fraction). Null when nothing runs. */
+export function overallFraction(s: {
+  queue: QueueItem[];
+  progress: BatchProgress | null;
+  lastOptions?: TranscribeOptions;
+}): number | null {
+  if (!s.queue.some((it) => it.status === "running" || it.status === "queued")) return null;
+  const stages = railStages(s.lastOptions);
+  const active = s.progress?.stage ? railIndex(s.progress.stage, stages) : 0;
+  let total = 0;
+  let done = 0;
+  stages.forEach((st, i) => {
+    const w = STAGE_WEIGHTS[st];
+    total += w;
+    if (i < active) done += w;
+    else if (i === active && typeof s.progress?.progress === "number") {
+      done += w * s.progress.progress;
+    }
+  });
+  return total > 0 ? done / total : 0;
 }
 
 /** Everything the pump needs from the screen, captured once per run — the
@@ -53,6 +111,8 @@ interface TranscribeRunState {
   progress: BatchProgress | null;
   /** Wall-clock spans of the RUNNING file's stages (reset per file). */
   stageTimes: Partial<Record<RailStage, StageTime>>;
+  /** Model/device chips per stage of the RUNNING file (reset per file). */
+  stageMeta: Partial<Record<RailStage, StageMeta>>;
   /** Per-file speaker renames / palette-index picks (label-keyed). */
   renames: Record<string, Record<string, string>>;
   speakerColors: Record<string, Record<string, number>>;
@@ -69,6 +129,7 @@ export const useTranscribeRun = create<TranscribeRunState>(() => ({
   selectedPath: null,
   progress: null,
   stageTimes: {},
+  stageMeta: {},
   renames: {},
   speakerColors: {},
   lastOptions: undefined,
@@ -101,6 +162,7 @@ export function resetForInputChange() {
     selectedPath: null,
     progress: null,
     stageTimes: {},
+    stageMeta: {},
   }));
 }
 
@@ -154,7 +216,21 @@ function foldProgress(p: BatchProgress) {
     } else if (!stageTimes[cur]) {
       stageTimes = { ...stageTimes, [cur]: { start: now } };
     }
-    return { progress: p, stageTimes };
+    // Chips outlive their stage: a done row keeps showing which model and
+    // device did the work. "waiting" reports null meta, so it never taints
+    // the transcribe row with the previous stage's chips.
+    let stageMeta = s.stageMeta;
+    if (p.model && p.stage !== "waiting") {
+      stageMeta = {
+        ...stageMeta,
+        [cur]: {
+          model: p.model,
+          device: p.device ?? undefined,
+          compute: p.compute ?? undefined,
+        },
+      };
+    }
+    return { progress: p, stageTimes, stageMeta };
   });
 }
 
@@ -180,7 +256,12 @@ async function pump(
       // shows elapsed time before the first poll lands (and at all on
       // standard servers, which are never polled).
       const first: RailStage = options?.separateBgm ? "separating" : "transcribing";
-      set({ progress: null, stageTimes: { [first]: { start: Date.now() } } });
+      const fileT0 = Date.now();
+      set({
+        progress: null,
+        stageMeta: {},
+        stageTimes: { [first]: { start: fileT0 } },
+      });
       const poller = pid
         ? window.setInterval(() => {
             getTranscribeProgress({
@@ -207,14 +288,18 @@ async function pump(
           options: pid ? { ...options, progressId: pid } : options,
         });
         if (epoch !== get().epoch) return;
-        patchItem(next.path, { status: "done", result: res });
+        patchItem(next.path, {
+          status: "done",
+          result: res,
+          tookMs: Date.now() - fileT0,
+        });
         set({ selectedPath: next.path }); // follow the latest finished file
       } catch (e) {
         if (epoch !== get().epoch) return;
         patchItem(next.path, { status: "failed", error: String(e) });
       } finally {
         if (poller !== undefined) window.clearInterval(poller);
-        if (epoch === get().epoch) set({ progress: null, stageTimes: {} });
+        if (epoch === get().epoch) set({ progress: null, stageTimes: {}, stageMeta: {} });
       }
     }
   } finally {
@@ -253,6 +338,7 @@ export function cancelRun() {
     epoch: s.epoch + 1,
     progress: null,
     stageTimes: {},
+    stageMeta: {},
     queue: s.queue.map((it) =>
       it.status === "queued" || it.status === "running"
         ? { ...it, status: "cancelled" as const }

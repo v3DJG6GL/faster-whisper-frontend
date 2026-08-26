@@ -132,6 +132,23 @@ pub struct BatchProgress {
     pub progress: Option<f64>,
     #[serde(default)]
     pub duration: Option<f64>,
+    /// Seconds of audio decoded so far (transcribe stage).
+    #[serde(default)]
+    pub position: Option<f64>,
+    /// Diarization pipeline's current step name.
+    #[serde(default)]
+    pub step: Option<String>,
+    /// The last decoded segment's text (transcribe stage live tail). The
+    /// server speaks snake_case; we re-emit camelCase to the webview.
+    #[serde(default, alias = "last_text")]
+    pub last_text: Option<String>,
+    /// Active stage's model / device / compute type.
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub device: Option<String>,
+    #[serde(default)]
+    pub compute: Option<String>,
 }
 
 /// Poll the server-side progress entry for `progress_id`. Cheap and frequent —
@@ -160,10 +177,17 @@ pub async fn progress(
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
     Ok(BatchProgress {
-        // Server string rendered as a UI label — bound it.
+        // Server strings rendered as UI labels — bound every one of them.
         stage: parsed
             .stage
             .map(|s| super::bounded_server_text(&s, 32)),
+        step: parsed.step.map(|s| super::bounded_server_text(&s, 48)),
+        last_text: parsed
+            .last_text
+            .map(|s| super::bounded_server_text(&s, 400)),
+        model: parsed.model.map(|s| super::bounded_server_text(&s, 128)),
+        device: parsed.device.map(|s| super::bounded_server_text(&s, 32)),
+        compute: parsed.compute.map(|s| super::bounded_server_text(&s, 32)),
         ..parsed
     })
 }

@@ -7,7 +7,20 @@ import { appVersion } from "@/lib/api";
 import { VISIBLE_SCREENS } from "@/lib/screens";
 import { PRIDE_FLAG_URI } from "@/lib/prideFlag";
 import { dictationVisual } from "@/lib/dictationVisual";
+import { overallFraction, useTranscribeRun } from "@/lib/transcribeRun";
 import { StatusDot } from "./ui";
+
+/** Live percentage of an in-flight Transcribe run — visible from every tab,
+ *  so leaving the screen never means losing sight of the run. */
+function TranscribeRunBadge() {
+  const frac = useTranscribeRun(overallFraction);
+  if (frac === null) return null;
+  return (
+    <span className="ml-auto font-mono text-[10.5px] tabular-nums text-accent">
+      {Math.round(frac * 100)}%
+    </span>
+  );
+}
 
 export function BrandMark() {
   // The unified app mark — the same artwork as src-tauri/icons/icon.svg (five-bar
@@ -117,6 +130,7 @@ export function Sidebar() {
                 />
                 {label}
                 {setupDot(id, backendCount, profileCount)}
+                {id === "transcribe" && <TranscribeRunBadge />}
               </>
             )}
           </NavLink>

@@ -13,9 +13,10 @@ import { LANGUAGES } from "@/lib/languages";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
 import { pickAudioFiles, pickExportPath, saveTextFile, isTauri } from "@/lib/api";
 import {
-  addFiles, cancelRun, removeFile as removeFileAction, resetForInputChange,
-  retryFile, selectPath, setRename, setSpeakerColor as setSpeakerColorAction,
-  startRun, useTranscribeRun,
+  addFiles, cancelRun, overallFraction, railIndex, railStages,
+  removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
+  setRename, setSpeakerColor as setSpeakerColorAction, startRun,
+  useTranscribeRun, STAGE_WEIGHTS,
   type RailStage, type RunContext,
 } from "@/lib/transcribeRun";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
@@ -84,32 +85,38 @@ function fmtElapsed(ms: number): string {
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
 }
 
-/** The pipeline stages of the CURRENT run, in server order — mirrors the
- *  design canvas' stage rail. Transcribe is always present; the optional
- *  stages appear only when this run switched them on (so the rail never
- *  promises a stage the server won't enter). */
+/** Display names + one-line explanations for the rail rows (the stage order
+ *  itself lives in transcribeRun.railStages). */
 const RAIL_NAMES: Record<RailStage, string> = {
   separating: "Separate music",
   transcribing: "Transcribe",
   diarizing: "Identify speakers",
 };
-function railStages(opts: TranscribeOptions | undefined): RailStage[] {
-  return [
-    ...(opts?.separateBgm ? (["separating"] as const) : []),
-    "transcribing" as const,
-    ...(opts?.diarize ? (["diarizing"] as const) : []),
-  ];
+const RAIL_DESCRIPTIONS: Record<RailStage, string> = {
+  separating: "Vocals kept, music removed — the transcript decodes from the clean stem.",
+  transcribing: "",
+  diarizing: "Labels each segment with who is speaking.",
+};
+
+/** Remaining-time estimate in ms: linear projection from the current rate,
+ *  only once it is stable (≥5% done, ≥10 s elapsed) so it never appears as
+ *  a wild early guess. */
+function etaMs(frac: number | null, elapsedMs: number): number | null {
+  if (frac === null || frac < 0.05 || frac >= 1 || elapsedMs < 10_000) return null;
+  return (elapsedMs * (1 - frac)) / frac;
 }
 
-/** Where the server currently is on the rail. "waiting" is the semaphore
- *  queue before the decode — it lights the transcribe row (with its own
- *  label) so the rail keeps moving strictly forward. */
-function railIndex(stage: string | undefined, stages: RailStage[]): number {
-  const key: RailStage = stage === "separating" || stage === "diarizing"
-    ? stage
-    : "transcribing";
-  const i = stages.indexOf(key);
-  return i < 0 ? stages.indexOf("transcribing") : i;
+/** "about X left", rounded coarsely (5 s under ten minutes, whole minutes
+ *  above) so consecutive polls never make the estimate jitter. */
+function aboutLeft(ms: number): string {
+  const s = Math.max(5, Math.round(ms / 1000 / 5) * 5);
+  if (s < 600) {
+    const m = Math.floor(s / 60);
+    return m > 0
+      ? `about ${m}m ${String(s % 60).padStart(2, "0")}s left`
+      : `about ${s}s left`;
+  }
+  return `about ${Math.round(s / 60)}m left`;
 }
 
 /** "SPEAKER_00" → "Speaker 1"; anything else verbatim (already bounded by Rust). */
@@ -146,6 +153,7 @@ export default function Transcribe() {
   const selectedPath = useTranscribeRun((s) => s.selectedPath);
   const progress = useTranscribeRun((s) => s.progress);
   const stageTimes = useTranscribeRun((s) => s.stageTimes);
+  const stageMeta = useTranscribeRun((s) => s.stageMeta);
   const renames = useTranscribeRun((s) => s.renames);
   const speakerColors = useTranscribeRun((s) => s.speakerColors);
   const lastOptions = useTranscribeRun((s) => s.lastOptions);
@@ -634,11 +642,6 @@ export default function Transcribe() {
               ? `Transcribe ${files.length} files`
               : "Transcribe"}
         </Button>
-        {busy && (
-          <Button variant="default" onClick={cancelRun}>
-            Cancel
-          </Button>
-        )}
         {busy && queue.length > 1 && (
           <span className="font-mono text-[11px] text-faint">
             {doneCount} of {queue.length} done
@@ -648,35 +651,122 @@ export default function Transcribe() {
       </div>
 
       {busy && (() => {
-        // Stage rail (per the design canvas): the file passes through each
-        // stage in order — done rows get a check plus their measured time,
-        // the active row a live bar (or a spinner while no fraction is known
-        // yet — a partial static bar would read as stuck progress), upcoming
-        // rows wait dimmed. Until the first poll answers, the FIRST stage is
-        // the active one ("unknown" polls never overwrite a known stage, so
-        // the rail only ever moves forward).
+        // Run-detail panel (per the approved design canvas): identity plus an
+        // overall pipeline bar segmented at the stage boundaries, then one
+        // instrumented row per stage — %, elapsed, ~left, throughput, model +
+        // device chips, the decoder's live tail, and the diarizer's current
+        // step. "unknown" polls never overwrite a known stage, so the panel
+        // only ever moves forward; until the first poll answers, the first
+        // stage counts as active.
         const stages = railStages(lastOptions);
         const active = progress?.stage ? railIndex(progress.stage, stages) : 0;
         const now = Date.now();
+        const runningItem = queue.find((it) => it.status === "running") ?? null;
+        const fileIdx = queue.findIndex((it) => it.status === "running");
+        const overall = overallFraction({ queue, progress, lastOptions }) ?? 0;
+        const starts = Object.values(stageTimes).map((t) => t.start);
+        const runElapsed = starts.length ? now - Math.min(...starts) : 0;
+        const audioDur = progress?.duration ?? null;
+        const doneItems = queue.filter((it) => it.status === "done");
+        const queuedCount = queue.filter((it) => it.status === "queued").length;
+        // Whole-run estimate: the current file's projection plus the average
+        // measured wall time of the finished files for each queued one.
+        const curLeft = etaMs(overall, runElapsed);
+        const tooks = doneItems.map((it) => it.tookMs).filter((t): t is number => !!t);
+        const avgTook = tooks.length ? tooks.reduce((a, b) => a + b, 0) / tooks.length : null;
+        const runLeft =
+          queuedCount > 0 && avgTook !== null && curLeft !== null
+            ? curLeft + avgTook * queuedCount
+            : null;
         return (
-          <div className="mt-4">
-            {stages.map((st, i) => {
-              const state = i < active ? "done" : i === active ? "active" : "pending";
-              const frac =
-                state === "active" && typeof progress?.progress === "number"
-                  ? progress.progress
-                  : null;
-              const waiting = state === "active" && progress?.stage === "waiting";
-              const time = stageTimes[st];
-              const elapsed =
-                state === "active" && time
-                  ? fmtElapsed(now - time.start)
-                  : state === "done" && time?.end
-                    ? fmtElapsed(time.end - time.start)
+          <Card className="mt-4 px-5 py-4">
+            <div className="flex items-center gap-3">
+              <FileAudio className="size-[18px] shrink-0 text-accent" />
+              <span className="min-w-0 truncate text-[13.5px] font-medium text-text">
+                {runningItem ? basename(runningItem.path) : "Preparing…"}
+              </span>
+              {audioDur ? (
+                <span className="shrink-0 font-mono text-[11px] text-faint">
+                  {fmtDuration(audioDur)} audio
+                </span>
+              ) : null}
+              <span className="flex-1" />
+              <span className="font-mono text-[18px] font-medium tabular-nums text-accent">
+                {Math.round(overall * 100)}%
+              </span>
+              <Button variant="default" size="sm" onClick={cancelRun}>
+                Cancel
+              </Button>
+            </div>
+
+            <div className="mt-3.5 flex gap-1">
+              {stages.map((st, i) => {
+                const frac =
+                  i < active ? 1
+                    : i === active && typeof progress?.progress === "number" ? progress.progress
+                      : 0;
+                return (
+                  <div
+                    key={st}
+                    className="h-1.5 overflow-hidden rounded-pill bg-surface-2"
+                    style={{ flexGrow: STAGE_WEIGHTS[st], flexBasis: 0 }}
+                  >
+                    {frac > 0 && (
+                      <div
+                        className={cn(
+                          "h-full rounded-pill transition-[width] duration-500",
+                          i < active ? "bg-ok" : "bg-accent",
+                        )}
+                        style={{ width: `${Math.max(2, Math.round(frac * 100))}%` }}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-2 flex items-baseline justify-between font-mono text-[11px] tabular-nums text-faint">
+              <span>
+                {queue.length > 1 && fileIdx >= 0 ? `file ${fileIdx + 1} of ${queue.length}` : "\u00a0"}
+              </span>
+              <span>
+                elapsed <span className="text-dim">{fmtElapsed(runElapsed)}</span>
+                {curLeft !== null ? <> · <span className="text-text">{aboutLeft(curLeft)}</span></> : null}
+              </span>
+            </div>
+
+            <div className="mt-3 border-t border-line">
+              {stages.map((st, i) => {
+                const state = i < active ? "done" : i === active ? "active" : "pending";
+                const frac =
+                  state === "active" && typeof progress?.progress === "number"
+                    ? progress.progress
                     : null;
-              return (
-                <div key={st} className={cn("flex gap-3", state === "pending" && "opacity-55")}>
-                  <div className="flex flex-col items-center self-stretch">
+                const waiting = state === "active" && progress?.stage === "waiting";
+                const time = stageTimes[st];
+                const meta = stageMeta[st];
+                const stageElapsedMs =
+                  state === "active" && time ? now - time.start
+                    : state === "done" && time?.end ? time.end - time.start
+                      : null;
+                const stageLeft =
+                  state === "active" && stageElapsedMs !== null ? etaMs(frac, stageElapsedMs) : null;
+                // ×-realtime: live from the decoded position; finished stages
+                // from the audio duration once the decoder reports it.
+                const speed =
+                  st === "transcribing" && state === "active" && progress?.position &&
+                  stageElapsedMs && stageElapsedMs > 5000
+                    ? progress.position / (stageElapsedMs / 1000)
+                    : state === "done" && audioDur && stageElapsedMs
+                      ? audioDur / (stageElapsedMs / 1000)
+                      : null;
+                return (
+                  <div
+                    key={st}
+                    className={cn(
+                      "flex gap-3.5 border-b border-line py-3.5 last:border-b-0",
+                      state === "pending" && "opacity-55",
+                    )}
+                  >
                     <span
                       className={cn(
                         "grid size-6 shrink-0 place-items-center rounded-full font-mono text-[11px]",
@@ -693,47 +783,106 @@ export default function Transcribe() {
                         i + 1
                       )}
                     </span>
-                    {i < stages.length - 1 && <span className="w-px flex-1 bg-line" />}
-                  </div>
-                  <div className={cn("min-w-0 flex-1", i < stages.length - 1 && "pb-3.5")}>
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span
-                        className={cn(
-                          "text-[13px]",
-                          state === "active" ? "text-text" : "text-dim",
-                        )}
-                      >
-                        {RAIL_NAMES[st]}
-                        {waiting && (
-                          <span className="text-faint"> — waiting for a server slot…</span>
-                        )}
-                      </span>
-                      <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
-                        {frac !== null && (
-                          <>
-                            {Math.round(frac * 100)}%
-                            {st === "transcribing" && progress?.duration
-                              ? ` of ${fmtDuration(progress.duration)}`
-                              : ""}
-                          </>
-                        )}
-                        {state === "done" && "done"}
-                        {elapsed ? `${frac !== null || state === "done" ? " · " : ""}${elapsed}` : ""}
-                      </span>
-                    </div>
-                    {frac !== null && (
-                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-pill bg-surface-2">
-                        <div
-                          className="h-full rounded-pill bg-accent transition-[width] duration-500"
-                          style={{ width: `${Math.max(2, Math.round(frac * 100))}%` }}
-                        />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span
+                          className={cn(
+                            "text-[13px] font-medium",
+                            state === "active" ? "text-text" : "text-dim",
+                          )}
+                        >
+                          {RAIL_NAMES[st]}
+                          {waiting && (
+                            <span className="font-normal text-faint"> — waiting for a server slot…</span>
+                          )}
+                        </span>
+                        <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
+                          {state === "done" && "done"}
+                          {frac !== null && (
+                            <span className="text-text">{Math.round(frac * 100)}%</span>
+                          )}
+                          {st === "diarizing" && state === "active" && progress?.step
+                            ? ` · ${safeDisplayText(progress.step)}`
+                            : ""}
+                          {st === "transcribing" && state === "active" && progress?.position && audioDur
+                            ? ` · ${fmtDuration(progress.position)} of ${fmtDuration(audioDur)} audio`
+                            : ""}
+                        </span>
                       </div>
-                    )}
+                      {RAIL_DESCRIPTIONS[st] && state === "pending" && (
+                        <div className="mt-0.5 text-[12px] text-dim">{RAIL_DESCRIPTIONS[st]}</div>
+                      )}
+                      {frac !== null && (
+                        <div className="mt-2 h-1.5 overflow-hidden rounded-pill bg-surface-2">
+                          <div
+                            className="h-full rounded-pill bg-accent transition-[width] duration-500"
+                            style={{ width: `${Math.max(2, Math.round(frac * 100))}%` }}
+                          />
+                        </div>
+                      )}
+                      {(meta || stageElapsedMs !== null) && (
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                          <span className="flex flex-wrap gap-1.5">
+                            {meta?.model && (
+                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
+                                {safeDisplayText(meta.model)}
+                              </span>
+                            )}
+                            {meta?.device && (
+                              <span
+                                className={cn(
+                                  "rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px]",
+                                  meta.device === "cuda" ? "text-ok" : "text-warn",
+                                )}
+                              >
+                                {safeDisplayText(meta.device)}
+                                {meta.compute ? ` · ${safeDisplayText(meta.compute)}` : ""}
+                              </span>
+                            )}
+                          </span>
+                          <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
+                            {stageElapsedMs !== null
+                              ? state === "done"
+                                ? fmtElapsed(stageElapsedMs)
+                                : `running ${fmtElapsed(stageElapsedMs)}`
+                              : ""}
+                            {speed ? ` · ${speed.toFixed(1)}× realtime` : ""}
+                            {stageLeft !== null ? ` · ${aboutLeft(stageLeft)}` : ""}
+                          </span>
+                        </div>
+                      )}
+                      {st === "transcribing" && state === "active" && progress?.lastText && (
+                        <div className="mt-2 flex items-center gap-2.5 rounded-lg bg-surface-2/60 px-3 py-1.5">
+                          <span className="size-[7px] shrink-0 rounded-full bg-live" />
+                          {progress.position ? (
+                            <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
+                              {fmtTimestamp(progress.position)}
+                            </span>
+                          ) : null}
+                          <span className="min-w-0 truncate text-[12px] text-dim">
+                            {safeDisplayText(progress.lastText)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+
+            {queue.length > 1 && (
+              <div className="mt-3 flex items-baseline justify-between border-t border-line pt-3 font-mono text-[11px] tabular-nums text-faint">
+                <span>
+                  {doneItems.length} done · {queuedCount} queued
+                </span>
+                {runLeft !== null && (
+                  <span>
+                    whole run: <span className="text-text">{aboutLeft(runLeft)}</span>
+                  </span>
+                )}
+              </div>
+            )}
+          </Card>
         );
       })()}
 

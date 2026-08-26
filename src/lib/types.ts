@@ -489,10 +489,20 @@ export interface TranscribeOptions {
 export interface BatchProgress {
   /** waiting | separating | transcribing | diarizing | unknown */
   stage?: string;
-  /** 0..1 during the transcribing stage; absent/null elsewhere. */
+  /** 0..1 during a measured stage; absent/null elsewhere. */
   progress?: number | null;
   /** Audio duration in seconds, once the decoder knows it. */
   duration?: number | null;
+  /** Seconds of audio decoded so far (transcribe stage). */
+  position?: number | null;
+  /** Diarization pipeline's current step name. */
+  step?: string | null;
+  /** The last decoded segment's text (transcribe stage live tail). */
+  lastText?: string | null;
+  /** Active stage's model / device / compute type. */
+  model?: string | null;
+  device?: string | null;
+  compute?: string | null;
 }
 
 /** Result of a batch transcription. */
