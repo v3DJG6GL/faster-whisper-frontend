@@ -239,6 +239,7 @@ export interface TranscribeSettings {
   /** Speaker-count hint; 0 = auto (let the pipeline decide). */
   numSpeakers?: number;
   translate?: boolean;
+  separateBgm?: boolean;
   exportFormat?: "txt" | "srt" | "vtt" | "lrc" | "json";
   speakerColorMode?: "off" | "name" | "line" | "line-only";
   wordTimestamps?: boolean;
@@ -476,6 +477,8 @@ export interface TranscribeOptions {
   numSpeakers?: number;
   minSpeakers?: number;
   maxSpeakers?: number;
+  /** Strip background music (UVR) server-side before decoding. */
+  separateBgm?: boolean;
   /** Route translate to POST /v1/audio/translations (standard servers). */
   useTranslationsEndpoint?: boolean;
 }

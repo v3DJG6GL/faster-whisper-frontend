@@ -58,6 +58,8 @@ pub struct BatchOptions {
     pub num_speakers: Option<u32>,
     pub min_speakers: Option<u32>,
     pub max_speakers: Option<u32>,
+    /// Strip background music (UVR) server-side before decoding.
+    pub separate_bgm: Option<bool>,
     /// Route a translate run to POST /v1/audio/translations (the OpenAI
     /// endpoint) instead of the full backend's `task` form field — used when
     /// the backend is a plain OpenAI-compatible server.
@@ -218,6 +220,9 @@ async fn post(
     }
     if let Some(n) = opts.max_speakers {
         form = form.text("max_speakers", n.to_string());
+    }
+    if let Some(s) = opts.separate_bgm {
+        form = form.text("separate_bgm", if s { "true" } else { "false" });
     }
 
     if !language.is_empty() && language != "auto" {

@@ -97,6 +97,7 @@ export default function Transcribe() {
   const [diarize, setDiarize] = useState(() => settings.transcribe?.diarize ?? false);
   const [numSpeakers, setNumSpeakers] = useState(() => settings.transcribe?.numSpeakers ?? 0);
   const [translate, setTranslate] = useState(() => settings.transcribe?.translate ?? false);
+  const [separateBgm, setSeparateBgm] = useState(() => settings.transcribe?.separateBgm ?? false);
   // Per-file speaker renames (label → display name). Ephemeral by design —
   // renames describe ONE recording's voices, not a persistent mapping.
   const [renames, setRenames] = useState<Record<string, Record<string, string>>>({});
@@ -240,7 +241,7 @@ export default function Transcribe() {
     setQueue(items);
     queueRef.current = items; // pump may start before the state render lands
     const options: TranscribeOptions | undefined =
-      diarize || translate
+      diarize || translate || separateBgm
         ? {
             ...(translate
               ? { task: "translate" as const, useTranslationsEndpoint: isStandard }
@@ -248,6 +249,7 @@ export default function Transcribe() {
             ...(diarize && !isStandard
               ? { diarize: true, ...(numSpeakers > 0 ? { numSpeakers } : {}) }
               : {}),
+            ...(separateBgm && !isStandard ? { separateBgm: true } : {}),
           }
         : undefined;
     optionsRef.current = options;
@@ -486,7 +488,7 @@ export default function Transcribe() {
           <SettingRow
             title="Translate to English"
             desc="Whisper's translate task instead of transcribing in the source language."
-            last
+            last={isStandard}
           >
             <Toggle
               checked={translate}
@@ -497,6 +499,22 @@ export default function Transcribe() {
               }}
             />
           </SettingRow>
+          {!isStandard && (
+            <SettingRow
+              title="Separate background music"
+              desc="Strip music before transcribing (UVR). Adds processing time per file."
+              last
+            >
+              <Toggle
+                checked={separateBgm}
+                ariaLabel="Separate background music"
+                onChange={(v) => {
+                  setSeparateBgm(v);
+                  persistOptions({ separateBgm: v });
+                }}
+              />
+            </SettingRow>
+          )}
         </Card>
       </div>
 
