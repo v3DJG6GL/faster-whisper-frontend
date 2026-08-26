@@ -481,6 +481,18 @@ export interface TranscribeOptions {
   separateBgm?: boolean;
   /** Route translate to POST /v1/audio/translations (standard servers). */
   useTranslationsEndpoint?: boolean;
+  /** Client-generated hex id for live progress polling (full backend only). */
+  progressId?: string;
+}
+
+/** Live progress of an in-flight file transcription. */
+export interface BatchProgress {
+  /** waiting | separating | transcribing | diarizing | unknown */
+  stage?: string;
+  /** 0..1 during the transcribing stage; absent/null elsewhere. */
+  progress?: number | null;
+  /** Audio duration in seconds, once the decoder knows it. */
+  duration?: number | null;
 }
 
 /** Result of a batch transcription. */

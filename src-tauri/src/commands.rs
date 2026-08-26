@@ -175,7 +175,13 @@ pub async fn transcribe_file(
     options: Option<transport::batch::BatchOptions>,
 ) -> Result<transport::batch::BatchResult, String> {
     let key = resolve_key(api_key, backend_id);
-    transport::batch::transcribe(
+    // Cancellation: cancel_file_transcription bumps the epoch; this select
+    // polls it and DROPS the reqwest future on a change, which closes the
+    // connection (the server cancels its handler task on the disconnect —
+    // the in-flight decode thread finishes server-side, but the request,
+    // its semaphore slot and its progress entry all end).
+    let epoch = FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
+    let fut = transport::batch::transcribe(
         &server_url,
         key.as_deref(),
         &model,
@@ -185,9 +191,43 @@ pub async fn transcribe_file(
         override_profile.as_deref(),
         &file_path,
         options,
-    )
-    .await
-    .map_err(|e| e.to_string())
+    );
+    tokio::pin!(fut);
+    loop {
+        tokio::select! {
+            r = &mut fut => return r.map_err(|e| e.to_string()),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
+                if FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                    return Err("cancelled".into());
+                }
+            }
+        }
+    }
+}
+
+/// Epoch for aborting in-flight `transcribe_file` calls (see above). Same
+/// shape as session.rs's CANCELLED_BATCH_EPOCH for dictation clips.
+static FILE_TRANSCRIBE_EPOCH: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Abort every in-flight file transcription (the Transcribe screen's Cancel).
+#[tauri::command]
+pub fn cancel_file_transcription() {
+    FILE_TRANSCRIBE_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Poll the live progress of an in-flight file transcription.
+#[tauri::command]
+pub async fn get_transcribe_progress(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    progress_id: String,
+) -> Result<transport::batch::BatchProgress, String> {
+    let key = resolve_key(api_key, backend_id);
+    transport::batch::progress(&server_url, key.as_deref(), &progress_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// List the server's selectable override-profile names (for the per-Backend /

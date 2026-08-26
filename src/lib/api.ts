@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AudioDevice,
+  BatchProgress,
   BatchResult,
   Capabilities,
   Config,
@@ -110,6 +111,28 @@ export async function transcribeFile(args: {
     overrideProfile: args.overrideProfile ?? null,
     filePath: args.filePath,
     options: args.options ?? null,
+  });
+}
+
+/** Abort every in-flight file transcription (Transcribe screen's Cancel). */
+export async function cancelFileTranscription(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("cancel_file_transcription");
+}
+
+/** Poll the live progress of an in-flight file transcription. */
+export async function getTranscribeProgress(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  progressId: string;
+}): Promise<BatchProgress> {
+  if (!isTauri) throw new Error("Not running in the desktop app.");
+  return invoke<BatchProgress>("get_transcribe_progress", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    progressId: args.progressId,
   });
 }
 

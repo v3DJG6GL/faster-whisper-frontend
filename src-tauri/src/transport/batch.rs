@@ -60,6 +60,9 @@ pub struct BatchOptions {
     pub max_speakers: Option<u32>,
     /// Strip background music (UVR) server-side before decoding.
     pub separate_bgm: Option<bool>,
+    /// Client-generated hex id the server keys live progress under
+    /// (GET /v1/audio/transcriptions/progress/<id> while the POST runs).
+    pub progress_id: Option<String>,
     /// Route a translate run to POST /v1/audio/translations (the OpenAI
     /// endpoint) instead of the full backend's `task` form field — used when
     /// the backend is a plain OpenAI-compatible server.
@@ -111,6 +114,58 @@ struct VerboseJson {
     warnings: Vec<String>,
     #[serde(default)]
     overrides_ignored: Vec<String>,
+}
+
+/// Progress ids are client-generated lowercase hex (a UUID without dashes) —
+/// validated before they reach a form field or, critically, a URL path.
+fn is_progress_id(s: &str) -> bool {
+    (8..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+/// Live progress of an in-flight file transcription (see BatchOptions::progress_id).
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchProgress {
+    #[serde(default)]
+    pub stage: Option<String>,
+    #[serde(default)]
+    pub progress: Option<f64>,
+    #[serde(default)]
+    pub duration: Option<f64>,
+}
+
+/// Poll the server-side progress entry for `progress_id`. Cheap and frequent —
+/// uses the shared client's default timeout.
+pub async fn progress(
+    server_url: &str,
+    api_key: Option<&str>,
+    progress_id: &str,
+) -> anyhow::Result<BatchProgress> {
+    if !is_progress_id(progress_id) {
+        bail!("malformed progress id");
+    }
+    let base = base_url(server_url);
+    let resp = with_auth(
+        client().get(format!("{base}/v1/audio/transcriptions/progress/{progress_id}")),
+        api_key,
+    )
+    .send()
+    .await
+    .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
+    let status = resp.status();
+    if !status.is_success() {
+        bail!("HTTP {}", status.as_u16());
+    }
+    let parsed: BatchProgress = json_capped::<BatchProgress>(resp)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+    Ok(BatchProgress {
+        // Server string rendered as a UI label — bound it.
+        stage: parsed
+            .stage
+            .map(|s| super::bounded_server_text(&s, 32)),
+        ..parsed
+    })
 }
 
 fn mime_for(path: &Path) -> &'static str {
@@ -223,6 +278,11 @@ async fn post(
     }
     if let Some(s) = opts.separate_bgm {
         form = form.text("separate_bgm", if s { "true" } else { "false" });
+    }
+    if let Some(pid) = opts.progress_id.as_deref() {
+        if is_progress_id(pid) {
+            form = form.text("progress_id", pid.to_string());
+        }
     }
 
     if !language.is_empty() && language != "auto" {

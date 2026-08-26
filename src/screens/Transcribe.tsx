@@ -12,7 +12,8 @@ import { useOverrideContext } from "@/lib/useOverrideContext";
 import { LANGUAGES } from "@/lib/languages";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
 import {
-  pickAudioFiles, pickExportPath, saveTextFile, transcribeFile, isTauri,
+  cancelFileTranscription, getTranscribeProgress, pickAudioFiles,
+  pickExportPath, saveTextFile, transcribeFile, isTauri,
 } from "@/lib/api";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
@@ -22,7 +23,9 @@ import {
   type ExportFormat, type SpeakerColorMode,
 } from "@/lib/transcriptExport";
 import { cn } from "@/lib/cn";
-import type { BatchResult, DecodeOverrides, TranscribeOptions } from "@/lib/types";
+import type {
+  BatchProgress, BatchResult, DecodeOverrides, TranscribeOptions,
+} from "@/lib/types";
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;
@@ -65,6 +68,22 @@ const SPEAKER_TONES = [
   { text: "text-ok", bg: "bg-ok/10", dot: "bg-ok" },
 ] as const;
 
+/** Human label for a server progress stage (absent/unknown ⇒ generic). */
+function stageLabel(p: BatchProgress | null): string {
+  switch (p?.stage) {
+    case "waiting":
+      return "Waiting for a server slot…";
+    case "separating":
+      return "Separating music…";
+    case "transcribing":
+      return "Transcribing…";
+    case "diarizing":
+      return "Identifying speakers…";
+    default:
+      return "Transcribing…";
+  }
+}
+
 /** "SPEAKER_00" → "Speaker 1"; anything else verbatim (already bounded by Rust). */
 function prettySpeaker(label: string): string {
   const m = /^SPEAKER_(\d+)$/.exec(label);
@@ -89,6 +108,9 @@ export default function Transcribe() {
 
   const [backendId, setBackendId] = useState(backends[0]?.id ?? "");
   const [language, setLanguage] = useState(backends[0]?.language ?? "auto");
+  // "" = use the Backend's configured model; anything else is a per-run pick
+  // from the models the server advertised on the last connection test.
+  const [model, setModel] = useState("");
   const [files, setFiles] = useState<string[]>([]);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -106,6 +128,8 @@ export default function Transcribe() {
   // settings edit (those live on the Backend / Profile editors).
   const [runOverrides, setRunOverrides] = useState<DecodeOverrides>({});
   const [showOverrides, setShowOverrides] = useState(false);
+  // Live progress of the RUNNING file (polled from the server; null between files).
+  const [progress, setProgress] = useState<BatchProgress | null>(null);
   // Per-file speaker renames (label → display name). Ephemeral by design —
   // renames describe ONE recording's voices, not a persistent mapping.
   const [renames, setRenames] = useState<Record<string, Record<string, string>>>({});
@@ -170,6 +194,16 @@ export default function Transcribe() {
   // Backend's stored decode defaults (the Profiles editor's merge precedent).
   const inheritedBaseline = { ...resolved, ...backend?.decodeOverrides };
 
+  // Per-run model pick: the Backend's configured model plus whatever the last
+  // connection test advertised (ConnectionInfo.models). "" = backend default.
+  const advertised = (backend && connections[backend.id]?.models) || [];
+  const modelOptions = [
+    { value: "", label: backend ? `Default · ${backend.model}` : "Default" },
+    ...advertised
+      .filter((m) => m.id !== backend?.model)
+      .map((m) => ({ value: m.id, label: m.id })),
+  ];
+
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
   const doneCount = queue.filter((it) => it.status === "done").length;
   const selected = queue.find((it) => it.path === selectedPath && it.status === "done");
@@ -230,11 +264,28 @@ export default function Transcribe() {
         const next = queueRef.current.find((it) => it.status === "queued");
         if (!next) break;
         patchItem(next.path, { status: "running" });
+        // Live progress (full backend only): a fresh hex id per file keys the
+        // server-side entry; a 1 s poll paints the bar. Best-effort — a poll
+        // error (older backend, standard server) just leaves the bar
+        // indeterminate.
+        const standard = effectiveServerKind(backend, useApp.getState().connections[backend.id]) === "standard";
+        const pid = standard ? null : crypto.randomUUID().replace(/-/g, "");
+        const serverUrl = effectiveServerUrl(backend, useApp.getState().settings);
+        setProgress(null);
+        const poller = pid
+          ? window.setInterval(() => {
+              getTranscribeProgress({ serverUrl, backendId: backend.id, progressId: pid })
+                .then((p) => {
+                  if (epoch === epochRef.current) setProgress(p);
+                })
+                .catch(() => {});
+            }, 1000)
+          : undefined;
         try {
           const res = await transcribeFile({
-            serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+            serverUrl,
             backendId: backend.id,
-            model: backend.model,
+            model: model || backend.model,
             language,
             // Empty backend prompt = inherit the server DEFAULT_PROMPT → omit the field.
             prompt: backend.prompt || undefined,
@@ -244,7 +295,7 @@ export default function Transcribe() {
               : undefined,
             overrideProfile: backend.overrideProfile,
             filePath: next.path,
-            options,
+            options: pid ? { ...options, progressId: pid } : options,
           });
           if (epoch !== epochRef.current) return;
           patchItem(next.path, { status: "done", result: res });
@@ -253,6 +304,9 @@ export default function Transcribe() {
         } catch (e) {
           if (epoch !== epochRef.current) return;
           patchItem(next.path, { status: "failed", error: String(e) });
+        } finally {
+          if (poller !== undefined) window.clearInterval(poller);
+          if (epoch === epochRef.current) setProgress(null);
         }
       }
     } finally {
@@ -285,10 +339,21 @@ export default function Transcribe() {
     void pump(epoch, options, runOverrides);
   };
 
-  const cancelRemaining = () => {
+  const cancelRun = () => {
+    // Abort the in-flight file (the Rust epoch bump drops the HTTP request,
+    // which also cancels the server's handler task) AND skip everything
+    // queued. Bumping the screen epoch makes the pump exit and ignores the
+    // aborted call's rejection.
+    epochRef.current++;
     setQueue((q) =>
-      q.map((it) => (it.status === "queued" ? { ...it, status: "cancelled" } : it)),
+      q.map((it) =>
+        it.status === "queued" || it.status === "running"
+          ? { ...it, status: "cancelled" }
+          : it,
+      ),
     );
+    setProgress(null);
+    void cancelFileTranscription().catch(() => {});
   };
 
   const retry = (path: string) => {
@@ -447,7 +512,7 @@ export default function Transcribe() {
         </button>
       )}
 
-      <div className="mt-6 grid grid-cols-2 gap-4">
+      <div className="mt-6 grid grid-cols-3 gap-4">
         <div>
           <label className="mb-2 block text-[12px] font-medium text-dim">Backend</label>
           <Select
@@ -458,10 +523,23 @@ export default function Transcribe() {
               // results, else the prior backend's transcript/error shows under the new selection.
               resetForInputChange();
               setBackendId(v);
+              setModel(""); // a per-run model pick belongs to ONE backend
               const b = backends.find((x) => x.id === v);
               if (b) setLanguage(b.language ?? "auto");
             }}
             options={backendOptions(backends)}
+          />
+        </div>
+        <div>
+          <label className="mb-2 block text-[12px] font-medium text-dim">Model</label>
+          <Select
+            ariaLabel="Model"
+            value={model}
+            onChange={(v) => {
+              resetForInputChange();
+              setModel(v);
+            }}
+            options={modelOptions}
           />
         </div>
         <div>
@@ -580,8 +658,8 @@ export default function Transcribe() {
               : "Transcribe"}
         </Button>
         {busy && (
-          <Button variant="default" onClick={cancelRemaining}>
-            Cancel remaining
+          <Button variant="default" onClick={cancelRun}>
+            Cancel
           </Button>
         )}
         {busy && queue.length > 1 && (
@@ -591,6 +669,30 @@ export default function Transcribe() {
         )}
         {!isTauri && <span className="text-[12px] text-faint">Available in the desktop app.</span>}
       </div>
+
+      {busy && (
+        <div className="mt-4">
+          <div className="mb-1.5 flex items-center justify-between text-[12px]">
+            <span className="text-dim">{stageLabel(progress)}</span>
+            {typeof progress?.progress === "number" && (
+              <span className="font-mono text-[11px] tabular-nums text-faint">
+                {Math.round(progress.progress * 100)}%
+                {progress.duration ? ` of ${fmtDuration(progress.duration)}` : ""}
+              </span>
+            )}
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-pill bg-surface-2">
+            {typeof progress?.progress === "number" ? (
+              <div
+                className="h-full rounded-pill bg-accent transition-[width] duration-500"
+                style={{ width: `${Math.max(2, Math.round(progress.progress * 100))}%` }}
+              />
+            ) : (
+              <div className="h-full w-1/3 animate-chip-breathe rounded-pill bg-think" />
+            )}
+          </div>
+        </div>
+      )}
 
       {queue.length > 1 && (
         <Card className="mt-6 px-5 py-1">
@@ -643,7 +745,11 @@ export default function Transcribe() {
                 </span>
               )}
               {it.status === "running" && (
-                <span className="font-mono text-[11px] text-think">transcribing…</span>
+                <span className="font-mono text-[11px] text-think">
+                  {typeof progress?.progress === "number"
+                    ? `${Math.round(progress.progress * 100)}%`
+                    : stageLabel(progress).toLowerCase()}
+                </span>
               )}
               {it.status === "cancelled" && (
                 <span className="font-mono text-[11px] text-faint">cancelled</span>
