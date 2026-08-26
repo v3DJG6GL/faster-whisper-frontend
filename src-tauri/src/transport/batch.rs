@@ -20,6 +20,12 @@ const FILE_TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(3600);
 const MAX_OVERRIDE_NOTICES: usize = 50;
 /// A BCP-47 tag; the longest real ones are ~35 characters.
 const LANGUAGE_MAX: usize = 64;
+/// Speaker labels are identity-adjacent server strings ("SPEAKER_00" or
+/// whatever a third-party server invents) — bound them like `language`.
+const SPEAKER_MAX: usize = 64;
+/// The server clamps speaker hints to 1..32; a well-behaved response can't
+/// exceed that, so anything longer is a hostile/broken server.
+const MAX_SPEAKERS_LISTED: usize = 64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +33,35 @@ pub struct Segment {
     pub start: f64,
     pub end: f64,
     pub text: String,
+    /// Diarization label, when the server ran the stage. Single word — the
+    /// camelCase rename is a no-op, so it round-trips to TS unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Word {
+    pub word: String,
+    pub start: f64,
+    pub end: f64,
+}
+
+/// Per-run stage options for the Transcribe screen (dictation passes None).
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchOptions {
+    /// "translate" → whisper's translate-to-English task; anything else /
+    /// absent → plain transcription (the field is then omitted on the wire).
+    pub task: Option<String>,
+    pub diarize: Option<bool>,
+    pub num_speakers: Option<u32>,
+    pub min_speakers: Option<u32>,
+    pub max_speakers: Option<u32>,
+    /// Route a translate run to POST /v1/audio/translations (the OpenAI
+    /// endpoint) instead of the full backend's `task` form field — used when
+    /// the backend is a plain OpenAI-compatible server.
+    pub use_translations_endpoint: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -40,6 +75,17 @@ pub struct BatchResult {
     /// Per-segment timestamps from verbose_json. Empty when the server omits them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub segments: Vec<Segment>,
+    /// Flat word-level timestamps (verbose_json `words`). Deliberately
+    /// unbounded like `text` — that IS the output.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<Word>,
+    /// Distinct diarization labels in order of first appearance.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub speakers: Vec<String>,
+    /// Soft-failed optional stages (e.g. diarization unavailable) explain
+    /// themselves here instead of failing the whole request.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     /// Client decode overrides the server refused because the field is
     /// admin-locked (verbose_json only). Empty ⇒ omitted to the frontend.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -55,6 +101,12 @@ struct VerboseJson {
     duration: Option<f64>,
     #[serde(default)]
     segments: Vec<Segment>,
+    #[serde(default)]
+    words: Vec<Word>,
+    #[serde(default)]
+    speakers: Vec<String>,
+    #[serde(default)]
+    warnings: Vec<String>,
     #[serde(default)]
     overrides_ignored: Vec<String>,
 }
@@ -86,6 +138,7 @@ pub async fn transcribe(
     overrides: Option<&serde_json::Value>,
     override_profile: Option<&str>,
     file_path: &str,
+    options: Option<BatchOptions>,
 ) -> anyhow::Result<BatchResult> {
     let path = Path::new(file_path);
     let filename = path
@@ -103,7 +156,7 @@ pub async fn transcribe(
         .with_context(|| format!("reading {file_path}"))?;
     let part = Part::bytes(bytes).file_name(filename).mime_str(mime)?;
     // File upload (Transcribe screen): a long recording can decode for many minutes — allow it.
-    post(server_url, api_key, model, language, prompt, overrides, override_profile, part, Some(FILE_TRANSCRIBE_TIMEOUT)).await
+    post(server_url, api_key, model, language, prompt, overrides, override_profile, part, Some(FILE_TRANSCRIBE_TIMEOUT), options).await
 }
 
 /// Transcribe an in-memory WAV (used by batch-mode dictation recording).
@@ -120,7 +173,8 @@ pub async fn transcribe_wav_bytes(
     let part = Part::bytes(wav).file_name("recording.wav").mime_str("audio/wav")?;
     // Dictation batch: short clips; keep the 120 s client default (the record path's only
     // stuck-session backstop, since the streaming-style finalize watchdog is stream-only).
-    post(server_url, api_key, model, language, prompt, overrides, override_profile, part, None).await
+    // No stage options: dictation never diarizes/translates.
+    post(server_url, api_key, model, language, prompt, overrides, override_profile, part, None, None).await
 }
 
 async fn post(
@@ -133,11 +187,38 @@ async fn post(
     override_profile: Option<&str>,
     file_part: Part,
     timeout: Option<Duration>,
+    options: Option<BatchOptions>,
 ) -> anyhow::Result<BatchResult> {
+    let opts = options.unwrap_or_default();
+    let translate = opts.task.as_deref() == Some("translate");
+    // Standard OpenAI servers have no `task` field — translation is its own
+    // endpoint there. The full backend accepts both spellings.
+    let use_translations_route = translate && opts.use_translations_endpoint.unwrap_or(false);
+
     let mut form = reqwest::multipart::Form::new()
         .part("file", file_part)
         .text("model", model.to_string())
-        .text("response_format", "verbose_json");
+        .text("response_format", "verbose_json")
+        // Explicit word granularity: the full backend defaults words ON for
+        // verbose_json anyway (same wire result), and standard servers need
+        // the explicit ask — so word timestamps work against both kinds.
+        .text("timestamp_granularities[]", "word");
+
+    if translate && !use_translations_route {
+        form = form.text("task", "translate");
+    }
+    if let Some(d) = opts.diarize {
+        form = form.text("diarize", if d { "true" } else { "false" });
+    }
+    if let Some(n) = opts.num_speakers {
+        form = form.text("num_speakers", n.to_string());
+    }
+    if let Some(n) = opts.min_speakers {
+        form = form.text("min_speakers", n.to_string());
+    }
+    if let Some(n) = opts.max_speakers {
+        form = form.text("max_speakers", n.to_string());
+    }
 
     if !language.is_empty() && language != "auto" {
         form = form.text("language", language.to_string());
@@ -164,7 +245,12 @@ async fn post(
     }
 
     let base = base_url(server_url);
-    let mut req = with_auth(client().post(format!("{base}/v1/audio/transcriptions")), api_key)
+    let endpoint = if use_translations_route {
+        "/v1/audio/translations"
+    } else {
+        "/v1/audio/transcriptions"
+    };
+    let mut req = with_auth(client().post(format!("{base}{endpoint}")), api_key)
         .multipart(form);
     // Per-request override of the shared client's 120 s default (reqwest's RequestBuilder::timeout
     // replaces the client-level timeout for this request only). Only the file-upload path sets it;
@@ -199,7 +285,32 @@ async fn post(
             .language
             .map(|s| super::bounded_server_text(&s, LANGUAGE_MAX)),
         duration: parsed.duration,
-        segments: parsed.segments,
+        // Segment text stays untouched (it IS the output); the speaker label
+        // is an identity-adjacent server string rendered as a chip and pasted
+        // into exports — bound it like `language`.
+        segments: parsed
+            .segments
+            .into_iter()
+            .map(|mut s| {
+                s.speaker = s
+                    .speaker
+                    .map(|sp| super::bounded_server_text(&sp, SPEAKER_MAX));
+                s
+            })
+            .collect(),
+        words: parsed.words,
+        speakers: parsed
+            .speakers
+            .iter()
+            .take(MAX_SPEAKERS_LISTED)
+            .map(|s| super::bounded_server_text(s, SPEAKER_MAX))
+            .collect(),
+        warnings: parsed
+            .warnings
+            .iter()
+            .take(MAX_OVERRIDE_NOTICES)
+            .map(|s| super::bounded_server_text(s, super::MAX_ERROR_TEXT))
+            .collect(),
         overrides_ignored: parsed
             .overrides_ignored
             .iter()

@@ -445,6 +445,27 @@ export interface TranscriptSegment {
   start: number;
   end: number;
   text: string;
+  /** Diarization label (e.g. "SPEAKER_00") when the server ran the stage. */
+  speaker?: string;
+}
+
+/** A word-level timestamp from verbose_json's flat `words` list. */
+export interface TranscriptWord {
+  word: string;
+  start: number;
+  end: number;
+}
+
+/** Per-run stage options for a Transcribe-screen run (wire: BatchOptions). */
+export interface TranscribeOptions {
+  /** "translate" = whisper's translate-to-English task. */
+  task?: "transcribe" | "translate";
+  diarize?: boolean;
+  numSpeakers?: number;
+  minSpeakers?: number;
+  maxSpeakers?: number;
+  /** Route translate to POST /v1/audio/translations (standard servers). */
+  useTranslationsEndpoint?: boolean;
 }
 
 /** Result of a batch transcription. */
@@ -454,6 +475,12 @@ export interface BatchResult {
   duration?: number;
   /** Per-segment timestamps from verbose_json. */
   segments?: TranscriptSegment[];
+  /** Flat word-level timestamps (may be absent/empty even when asked for). */
+  words?: TranscriptWord[];
+  /** Distinct diarization labels in order of first appearance. */
+  speakers?: string[];
+  /** Soft-failed optional stages explain themselves here (e.g. diarization). */
+  warnings?: string[];
   /** Decode overrides the server refused because the field is admin-locked. */
   overridesIgnored?: string[];
 }

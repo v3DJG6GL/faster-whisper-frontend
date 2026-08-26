@@ -15,6 +15,7 @@ import type {
   PipelineSaveResult,
   RecentWords,
   ResolvedOverrideProfile,
+  TranscribeOptions,
   UsageBucket,
   UsageStats,
 } from "./types";
@@ -93,6 +94,9 @@ export async function transcribeFile(args: {
   decodeOverrides?: DecodeOverrides | null;
   overrideProfile?: string | null;
   filePath: string;
+  /** Per-run stage options (translate / diarization). Omitted keys = absent
+   *  on the wire, so the server's own defaults apply. */
+  options?: TranscribeOptions | null;
 }): Promise<BatchResult> {
   if (!isTauri) throw new Error("Transcription requires the desktop app.");
   return invoke<BatchResult>("transcribe_file", {
@@ -105,6 +109,7 @@ export async function transcribeFile(args: {
     decodeOverrides: args.decodeOverrides ?? null,
     overrideProfile: args.overrideProfile ?? null,
     filePath: args.filePath,
+    options: args.options ?? null,
   });
 }
 

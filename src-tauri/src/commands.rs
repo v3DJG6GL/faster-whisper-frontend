@@ -171,6 +171,8 @@ pub async fn transcribe_file(
     decode_overrides: Option<serde_json::Value>,
     override_profile: Option<String>,
     file_path: String,
+    // Per-run stage options (translate / diarization). None ≡ all absent.
+    options: Option<transport::batch::BatchOptions>,
 ) -> Result<transport::batch::BatchResult, String> {
     let key = resolve_key(api_key, backend_id);
     transport::batch::transcribe(
@@ -182,6 +184,7 @@ pub async fn transcribe_file(
         decode_overrides.as_ref(),
         override_profile.as_deref(),
         &file_path,
+        options,
     )
     .await
     .map_err(|e| e.to_string())
