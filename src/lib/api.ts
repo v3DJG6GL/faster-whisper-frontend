@@ -813,6 +813,27 @@ export async function pickSavePath(defaultName: string): Promise<string | null> 
   return typeof selected === "string" ? selected : null;
 }
 
+/** Save dialog for a transcript export → absolute path (or null if cancelled). */
+export async function pickExportPath(
+  defaultName: string,
+  formatName: string,
+  extension: string,
+): Promise<string | null> {
+  if (!isTauri) return null;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const selected = await save({
+    defaultPath: defaultName,
+    filters: [{ name: formatName, extensions: [extension] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+/** Write a plain text file via the Rust side (atomic tmp+rename). */
+export async function saveTextFile(path: string, contents: string): Promise<void> {
+  if (!isTauri) throw new Error("Not running in the desktop app.");
+  await invoke("save_text_file", { path, contents });
+}
+
 /** Native "open file" dialog for a settings export → absolute path (or null). */
 export async function pickImportFile(): Promise<string | null> {
   if (!isTauri) return null;

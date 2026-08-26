@@ -406,6 +406,33 @@ pub fn export_settings_file(path: String, envelope: serde_json::Value) -> Result
     Ok(())
 }
 
+/// Write a plain text file (transcript exports) to the path the user picked
+/// in the save dialog. Same atomic tmp+rename + cleanup-on-both-failures shape
+/// as `export_settings_file`, minus the 0600 secrecy (a transcript is what the
+/// user is deliberately exporting — plain permissions are correct).
+#[tauri::command]
+pub fn save_text_file(path: String, contents: String) -> Result<(), String> {
+    use std::io::Write as _;
+    let path = PathBuf::from(path);
+    let mut tmp = path.clone().into_os_string();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    let write = || -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(contents.as_bytes())?;
+        f.sync_all()
+    };
+    if let Err(e) = write() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
 /// A parsed + validated settings export, ready for the import-preview UI.
 /// `categories` is the normalized SyncBlob (secrets stripped out into
 /// `secrets`), `warnings` are human-readable notes for the preview.

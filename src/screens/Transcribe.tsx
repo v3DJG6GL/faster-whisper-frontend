@@ -1,17 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  UploadCloud, FileAudio, X, Loader2, Copy, Check, Plus, RotateCcw,
+  UploadCloud, FileAudio, X, Loader2, Copy, Check, Plus, RotateCcw, Download,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import {
-  Button, Card, Notice, PageHeader, Select, SettingRow, Stepper, Toggle,
+  Button, Card, Notice, PageHeader, Segmented, Select, SettingRow, Stepper, Toggle,
 } from "@/components/ui";
 import { LANGUAGES } from "@/lib/languages";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
-import { pickAudioFiles, transcribeFile, isTauri } from "@/lib/api";
+import {
+  pickAudioFiles, pickExportPath, saveTextFile, transcribeFile, isTauri,
+} from "@/lib/api";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import {
+  EXPORT_EXTENSIONS, generateExport,
+  type ExportFormat, type SpeakerColorMode,
+} from "@/lib/transcriptExport";
 import { cn } from "@/lib/cn";
 import type { BatchResult, TranscribeOptions } from "@/lib/types";
 
@@ -96,6 +102,18 @@ export default function Transcribe() {
   const [renames, setRenames] = useState<Record<string, Record<string, string>>>({});
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  // Export panel state, seeded from the persisted screen defaults.
+  const [showExport, setShowExport] = useState(false);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>(
+    () => settings.transcribe?.exportFormat ?? "srt",
+  );
+  const [colorMode, setColorMode] = useState<SpeakerColorMode>(
+    () => settings.transcribe?.speakerColorMode ?? "off",
+  );
+  const [wordTs, setWordTs] = useState(() => settings.transcribe?.wordTimestamps ?? false);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveTimer = useRef<number | undefined>(undefined);
 
   // Abandons in-flight work: the pump loop and every commit site compare
   // against the CURRENT epoch, so a stale completion can't strand its result
@@ -301,8 +319,44 @@ export default function Transcribe() {
     copyTimer.current = window.setTimeout(() => setCopied(false), 1500);
   };
 
-  // Clear a still-pending "Copied" timer if the screen unmounts mid-window.
-  useEffect(() => () => window.clearTimeout(copyTimer.current), []);
+  const doExport = async () => {
+    if (!result || !selectedPath) return;
+    setSaveError(null);
+    const ext = EXPORT_EXTENSIONS[exportFormat];
+    const stem = basename(selectedPath).replace(/\.[^.]+$/, "");
+    let path: string | null;
+    try {
+      path = await pickExportPath(`${stem}.${ext}`, exportFormat.toUpperCase(), ext);
+    } catch (e) {
+      console.error("export save dialog failed:", e);
+      return;
+    }
+    if (!path) return; // cancelled
+    try {
+      const contents = generateExport(result, {
+        format: exportFormat,
+        renames: fileRenames,
+        speakerColors: hasSpeakers ? colorMode : "off",
+        wordTimestamps: wordTs,
+      });
+      await saveTextFile(path, contents);
+    } catch (e) {
+      setSaveError(String(e));
+      return;
+    }
+    setSaved(true);
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => setSaved(false), 1500);
+  };
+
+  // Clear still-pending confirmation timers if the screen unmounts mid-window.
+  useEffect(
+    () => () => {
+      window.clearTimeout(copyTimer.current);
+      window.clearTimeout(saveTimer.current);
+    },
+    [],
+  );
 
   // ── render ───────────────────────────────────────────────────────────────
   const viewOptions: { value: View; label: string }[] = [
@@ -600,8 +654,83 @@ export default function Transcribe() {
                 {copied ? <Check className="size-4 text-ok" /> : <Copy className="size-4" />}
                 {copied ? "Copied" : "Copy"}
               </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => setShowExport((v) => !v)}
+                aria-expanded={showExport}
+              >
+                <Download className="size-4" />
+                Export · {exportFormat.toUpperCase()}
+              </Button>
             </div>
           </div>
+
+          {showExport && (
+            <div className="mb-4 flex flex-wrap items-end gap-4 rounded-xl border border-line bg-surface-2/60 p-4">
+              <div>
+                <label className="mb-2 block text-[12px] font-medium text-dim">Format</label>
+                <Select
+                  ariaLabel="Export format"
+                  className="w-32"
+                  value={exportFormat}
+                  onChange={(v) => {
+                    setExportFormat(v);
+                    persistOptions({ exportFormat: v });
+                  }}
+                  options={[
+                    { value: "srt", label: "SRT" },
+                    { value: "vtt", label: "VTT" },
+                    { value: "txt", label: "TXT" },
+                    { value: "lrc", label: "LRC" },
+                    { value: "json", label: "JSON" },
+                  ]}
+                />
+              </div>
+              {(exportFormat === "lrc" || exportFormat === "json") &&
+                !!result.words?.length && (
+                  <div className="flex h-10 items-center gap-2.5">
+                    <Toggle
+                      checked={wordTs}
+                      ariaLabel="Word timestamps"
+                      onChange={(v) => {
+                        setWordTs(v);
+                        persistOptions({ wordTimestamps: v });
+                      }}
+                    />
+                    <span className="text-[12.5px] text-dim">Word timestamps</span>
+                  </div>
+                )}
+              {hasSpeakers && (exportFormat === "srt" || exportFormat === "vtt") && (
+                <div>
+                  <label className="mb-2 block text-[12px] font-medium text-dim">
+                    Speaker colors
+                  </label>
+                  <Segmented
+                    ariaLabel="Speaker colors"
+                    value={colorMode}
+                    onChange={(v) => {
+                      setColorMode(v);
+                      persistOptions({ speakerColorMode: v });
+                    }}
+                    options={[
+                      { value: "off", label: "Off" },
+                      { value: "name", label: "Name" },
+                      { value: "line", label: "Line" },
+                      { value: "line-only", label: "Line only" },
+                    ]}
+                  />
+                </div>
+              )}
+              <Button variant="accent" size="sm" className="h-10" onClick={doExport}>
+                {saved ? <Check className="size-4" /> : <Download className="size-4" />}
+                {saved ? "Saved" : "Save file"}
+              </Button>
+              {saveError && (
+                <span className="text-[12px] text-warn">{stripControlChars(saveError)}</span>
+              )}
+            </div>
+          )}
 
           {effectiveView === "speakers" && (
             <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-line pb-3">
