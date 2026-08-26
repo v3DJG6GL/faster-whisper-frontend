@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import {
   UploadCloud, FileAudio, X, Loader2, Copy, Check, Plus, RotateCcw, Download,
 } from "lucide-react";
@@ -11,10 +11,13 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { LANGUAGES } from "@/lib/languages";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
+import { pickAudioFiles, pickExportPath, saveTextFile, isTauri } from "@/lib/api";
 import {
-  cancelFileTranscription, getTranscribeProgress, pickAudioFiles,
-  pickExportPath, saveTextFile, transcribeFile, isTauri,
-} from "@/lib/api";
+  addFiles, cancelRun, removeFile as removeFileAction, resetForInputChange,
+  retryFile, selectPath, setRename, setSpeakerColor as setSpeakerColorAction,
+  startRun, useTranscribeRun,
+  type RailStage, type RunContext,
+} from "@/lib/transcribeRun";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
@@ -49,14 +52,6 @@ const MAX_IGNORED_SHOWN = 50;
 const MAX_SEGMENT_ROWS = 5_000;
 
 type View = "text" | "time" | "speakers";
-type ItemStatus = "queued" | "running" | "done" | "failed" | "cancelled";
-
-interface QueueItem {
-  path: string;
-  status: ItemStatus;
-  result?: BatchResult;
-  error?: string;
-}
 
 /** Chip styling from a speaker's CSS color (a --spk-N token, so it follows
  *  the light/dark theme): readable text, a soft fill, and a solid dot. */
@@ -80,11 +75,19 @@ function stageLabel(p: BatchProgress | null): string {
   }
 }
 
+/** m:ss-style elapsed time for the rail's stage rows. */
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
 /** The pipeline stages of the CURRENT run, in server order — mirrors the
  *  design canvas' stage rail. Transcribe is always present; the optional
  *  stages appear only when this run switched them on (so the rail never
  *  promises a stage the server won't enter). */
-type RailStage = "separating" | "transcribing" | "diarizing";
 const RAIL_NAMES: Record<RailStage, string> = {
   separating: "Separate music",
   transcribing: "Transcribe",
@@ -136,9 +139,16 @@ export default function Transcribe() {
   // "" = use the Backend's configured model; anything else is a per-run pick
   // from the models the server advertised on the last connection test.
   const [model, setModel] = useState("");
-  const [files, setFiles] = useState<string[]>([]);
-  const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // Run state lives in the transcribeRun store so it (and the pump driving
+  // it) survives this screen unmounting on a tab switch.
+  const files = useTranscribeRun((s) => s.files);
+  const queue = useTranscribeRun((s) => s.queue);
+  const selectedPath = useTranscribeRun((s) => s.selectedPath);
+  const progress = useTranscribeRun((s) => s.progress);
+  const stageTimes = useTranscribeRun((s) => s.stageTimes);
+  const renames = useTranscribeRun((s) => s.renames);
+  const speakerColors = useTranscribeRun((s) => s.speakerColors);
+  const lastOptions = useTranscribeRun((s) => s.lastOptions);
   const [view, setView] = useState<View>("text");
   const [copied, setCopied] = useState(false);
   // Reset per result, so a new (possibly huge) transcript starts collapsed again.
@@ -153,15 +163,6 @@ export default function Transcribe() {
   // settings edit (those live on the Backend / Profile editors).
   const [runOverrides, setRunOverrides] = useState<DecodeOverrides>({});
   const [showOverrides, setShowOverrides] = useState(false);
-  // Live progress of the RUNNING file (polled from the server; null between files).
-  const [progress, setProgress] = useState<BatchProgress | null>(null);
-  // Per-file speaker renames (label → display name). Ephemeral by design —
-  // renames describe ONE recording's voices, not a persistent mapping.
-  const [renames, setRenames] = useState<Record<string, Record<string, string>>>({});
-  // Per-file speaker color overrides (label → palette INDEX — the UI resolves
-  // it to a theme-aware --spk-N token, exports to the matching hex). Same
-  // lifetime as renames; flows into chips AND exports.
-  const [speakerColors, setSpeakerColors] = useState<Record<string, Record<string, number>>>({});
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   // Export panel state, seeded from the persisted screen defaults.
@@ -177,17 +178,6 @@ export default function Transcribe() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
 
-  // Abandons in-flight work: the pump loop and every commit site compare
-  // against the CURRENT epoch, so a stale completion can't strand its result
-  // against changed inputs (same idea as the old single-run runId).
-  const epochRef = useRef(0);
-  const runningRef = useRef(false);
-  // The options/overrides of the current/last run, so Retry re-runs a failed
-  // file with the same stages instead of silently dropping them.
-  const optionsRef = useRef<TranscribeOptions | undefined>(undefined);
-  const overridesRef = useRef<DecodeOverrides>({});
-  const queueRef = useRef<QueueItem[]>(queue);
-  queueRef.current = queue;
   // The "Copied" confirmation timer. Held in a ref so a rapid second Copy click clears the first
   // timer before re-arming — otherwise the stale timer fires mid-window and flips the label off
   // early (every other transient timer in the app is cleared the same way).
@@ -234,6 +224,21 @@ export default function Transcribe() {
   ];
 
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
+
+  // 1 s heartbeat while a run is active, so the rail's elapsed times count
+  // even when no server poll lands (standard servers, waiting stages).
+  const [, tick] = useReducer((x: number) => x + 1, 0);
+  useEffect(() => {
+    if (!busy) return;
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [busy]);
+
+  // A newly selected (possibly huge) transcript starts collapsed again —
+  // also covers the pump auto-following the latest finished file.
+  useEffect(() => {
+    setShowFullText(false);
+  }, [selectedPath]);
   const doneCount = queue.filter((it) => it.status === "done").length;
   const selected = queue.find((it) => it.path === selectedPath && it.status === "done");
   const result = selected?.result ?? null;
@@ -242,10 +247,7 @@ export default function Transcribe() {
     updateSettings({ transcribe: { ...settings.transcribe, ...patch } });
   };
 
-  const resetForInputChange = () => {
-    epochRef.current++;
-    setQueue([]);
-    setSelectedPath(null);
+  const clearCopied = () => {
     setCopied(false);
     if (copyTimer.current) {
       window.clearTimeout(copyTimer.current);
@@ -266,91 +268,40 @@ export default function Transcribe() {
       picking.current = false;
     }
     if (paths.length) {
-      resetForInputChange(); // changed inputs abandon any settled results
-      setFiles((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))]);
+      clearCopied();
+      addFiles(paths); // changed inputs abandon any settled results
     }
   };
 
   const removeFile = (path: string) => {
     if (busy) return;
-    resetForInputChange();
-    setFiles((prev) => prev.filter((p) => p !== path));
+    clearCopied();
+    removeFileAction(path);
   };
 
-  const patchItem = (path: string, patch: Partial<QueueItem>) => {
-    setQueue((q) => q.map((it) => (it.path === path ? { ...it, ...patch } : it)));
-  };
-
-  const pump = async (
-    epoch: number,
-    options: TranscribeOptions | undefined,
-    overrides: DecodeOverrides,
-  ) => {
-    if (runningRef.current || !backend) return;
-    runningRef.current = true;
-    try {
-      while (epoch === epochRef.current) {
-        const next = queueRef.current.find((it) => it.status === "queued");
-        if (!next) break;
-        patchItem(next.path, { status: "running" });
-        // Live progress (full backend only): a fresh hex id per file keys the
-        // server-side entry; a 1 s poll paints the bar. Best-effort — a poll
-        // error (older backend, standard server) just leaves the bar
-        // indeterminate.
-        const standard = effectiveServerKind(backend, useApp.getState().connections[backend.id]) === "standard";
-        const pid = standard ? null : crypto.randomUUID().replace(/-/g, "");
-        const serverUrl = effectiveServerUrl(backend, useApp.getState().settings);
-        setProgress(null);
-        const poller = pid
-          ? window.setInterval(() => {
-              getTranscribeProgress({ serverUrl, backendId: backend.id, progressId: pid })
-                .then((p) => {
-                  if (epoch === epochRef.current) setProgress(p);
-                })
-                .catch(() => {});
-            }, 1000)
-          : undefined;
-        try {
-          const res = await transcribeFile({
-            serverUrl,
-            backendId: backend.id,
-            model: model || backend.model,
-            language,
-            // Empty backend prompt = inherit the server DEFAULT_PROMPT → omit the field.
-            prompt: backend.prompt || undefined,
-            // Per-run overrides win over the Backend's stored defaults.
-            decodeOverrides: Object.keys({ ...backend.decodeOverrides, ...overrides }).length
-              ? { ...backend.decodeOverrides, ...overrides }
-              : undefined,
-            overrideProfile: backend.overrideProfile,
-            filePath: next.path,
-            options: pid ? { ...options, progressId: pid } : options,
-          });
-          if (epoch !== epochRef.current) return;
-          patchItem(next.path, { status: "done", result: res });
-          setSelectedPath(next.path); // follow the latest finished file
-          setShowFullText(false);
-        } catch (e) {
-          if (epoch !== epochRef.current) return;
-          patchItem(next.path, { status: "failed", error: String(e) });
-        } finally {
-          if (poller !== undefined) window.clearInterval(poller);
-          if (epoch === epochRef.current) setProgress(null);
-        }
-      }
-    } finally {
-      runningRef.current = false;
-    }
+  /** Everything the detached pump needs, frozen at run/retry time. */
+  const buildCtx = (overrides: DecodeOverrides): RunContext | null => {
+    if (!backend) return null;
+    // Per-run overrides win over the Backend's stored defaults.
+    const merged = { ...backend.decodeOverrides, ...overrides };
+    return {
+      backendId: backend.id,
+      serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+      model: model || backend.model,
+      language,
+      // Empty backend prompt = inherit the server DEFAULT_PROMPT → omit the field.
+      prompt: backend.prompt || undefined,
+      decodeOverrides: Object.keys(merged).length ? merged : undefined,
+      overrideProfile: backend.overrideProfile,
+      standard:
+        effectiveServerKind(backend, useApp.getState().connections[backend.id]) === "standard",
+    };
   };
 
   const run = () => {
     if (!files.length || !backend || busy) return;
-    const epoch = ++epochRef.current;
-    setSelectedPath(null);
-    setCopied(false);
-    const items: QueueItem[] = files.map((path) => ({ path, status: "queued" }));
-    setQueue(items);
-    queueRef.current = items; // pump may start before the state render lands
+    clearCopied();
+    setShowFullText(false);
     const options: TranscribeOptions | undefined =
       diarize || translate || separateBgm
         ? {
@@ -363,32 +314,14 @@ export default function Transcribe() {
             ...(separateBgm && !isStandard ? { separateBgm: true } : {}),
           }
         : undefined;
-    optionsRef.current = options;
-    overridesRef.current = runOverrides;
-    void pump(epoch, options, runOverrides);
-  };
-
-  const cancelRun = () => {
-    // Abort the in-flight file (the Rust epoch bump drops the HTTP request,
-    // which also cancels the server's handler task) AND skip everything
-    // queued. Bumping the screen epoch makes the pump exit and ignores the
-    // aborted call's rejection.
-    epochRef.current++;
-    setQueue((q) =>
-      q.map((it) =>
-        it.status === "queued" || it.status === "running"
-          ? { ...it, status: "cancelled" }
-          : it,
-      ),
-    );
-    setProgress(null);
-    void cancelFileTranscription().catch(() => {});
+    const ctx = buildCtx(runOverrides);
+    if (ctx) startRun(options, runOverrides, ctx);
   };
 
   const retry = (path: string) => {
     if (busy) return;
-    patchItem(path, { status: "queued", error: undefined });
-    void pump(epochRef.current, optionsRef.current, overridesRef.current);
+    const ctx = buildCtx(useTranscribeRun.getState().lastOverrides);
+    if (ctx) retryFile(path, ctx);
   };
 
   // ── selected-result derivations ──────────────────────────────────────────
@@ -409,20 +342,12 @@ export default function Transcribe() {
   const colorOf = (label: string) => `var(--spk-${colorIdxOf(label) + 1})`;
 
   const setSpeakerColor = (label: string, idx: number) => {
-    if (!selectedPath) return;
-    setSpeakerColors((c) => ({
-      ...c,
-      [selectedPath]: { ...c[selectedPath], [label]: idx },
-    }));
+    if (selectedPath) setSpeakerColorAction(selectedPath, label, idx);
   };
 
   const commitRename = () => {
     if (editingSpeaker && selectedPath) {
-      const name = stripControlChars(renameDraft).trim();
-      setRenames((r) => ({
-        ...r,
-        [selectedPath]: { ...r[selectedPath], [editingSpeaker]: name },
-      }));
+      setRename(selectedPath, editingSpeaker, stripControlChars(renameDraft).trim());
     }
     setEditingSpeaker(null);
   };
@@ -570,6 +495,7 @@ export default function Transcribe() {
             onChange={(v) => {
               // A backend change is an input change: abandon any in-flight run + clear stale
               // results, else the prior backend's transcript/error shows under the new selection.
+              clearCopied();
               resetForInputChange();
               setBackendId(v);
               setModel(""); // a per-run model pick belongs to ONE backend
@@ -585,6 +511,7 @@ export default function Transcribe() {
             ariaLabel="Model"
             value={model}
             onChange={(v) => {
+              clearCopied();
               resetForInputChange();
               setModel(v);
             }}
@@ -597,6 +524,7 @@ export default function Transcribe() {
             ariaLabel="Language"
             value={language}
             onChange={(v) => {
+              clearCopied();
               resetForInputChange();
               setLanguage(v);
             }}
@@ -721,11 +649,15 @@ export default function Transcribe() {
 
       {busy && (() => {
         // Stage rail (per the design canvas): the file passes through each
-        // stage in order — done rows get a check, the active row carries the
-        // live bar, upcoming rows wait dimmed. Until the first poll answers,
-        // the first stage counts as active with an indeterminate bar.
-        const stages = railStages(optionsRef.current);
+        // stage in order — done rows get a check plus their measured time,
+        // the active row a live bar (or a spinner while no fraction is known
+        // yet — a partial static bar would read as stuck progress), upcoming
+        // rows wait dimmed. Until the first poll answers, the FIRST stage is
+        // the active one ("unknown" polls never overwrite a known stage, so
+        // the rail only ever moves forward).
+        const stages = railStages(lastOptions);
         const active = progress?.stage ? railIndex(progress.stage, stages) : 0;
+        const now = Date.now();
         return (
           <div className="mt-4">
             {stages.map((st, i) => {
@@ -735,6 +667,13 @@ export default function Transcribe() {
                   ? progress.progress
                   : null;
               const waiting = state === "active" && progress?.stage === "waiting";
+              const time = stageTimes[st];
+              const elapsed =
+                state === "active" && time
+                  ? fmtElapsed(now - time.start)
+                  : state === "done" && time?.end
+                    ? fmtElapsed(time.end - time.start)
+                    : null;
               return (
                 <div key={st} className={cn("flex gap-3", state === "pending" && "opacity-55")}>
                   <div className="flex flex-col items-center self-stretch">
@@ -746,7 +685,13 @@ export default function Transcribe() {
                         state === "pending" && "bg-surface-2 text-faint",
                       )}
                     >
-                      {state === "done" ? <Check className="size-3.5" /> : i + 1}
+                      {state === "done" ? (
+                        <Check className="size-3.5" />
+                      ) : state === "active" && frac === null ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        i + 1
+                      )}
                     </span>
                     {i < stages.length - 1 && <span className="w-px flex-1 bg-line" />}
                   </div>
@@ -763,28 +708,25 @@ export default function Transcribe() {
                           <span className="text-faint"> — waiting for a server slot…</span>
                         )}
                       </span>
-                      {frac !== null && (
-                        <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
-                          {Math.round(frac * 100)}%
-                          {st === "transcribing" && progress?.duration
-                            ? ` of ${fmtDuration(progress.duration)}`
-                            : ""}
-                        </span>
-                      )}
-                      {state === "done" && (
-                        <span className="shrink-0 font-mono text-[11px] text-faint">done</span>
-                      )}
-                    </div>
-                    {state === "active" && (
-                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-pill bg-surface-2">
-                        {frac !== null ? (
-                          <div
-                            className="h-full rounded-pill bg-accent transition-[width] duration-500"
-                            style={{ width: `${Math.max(2, Math.round(frac * 100))}%` }}
-                          />
-                        ) : (
-                          <div className="h-full w-1/3 animate-chip-breathe rounded-pill bg-think" />
+                      <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
+                        {frac !== null && (
+                          <>
+                            {Math.round(frac * 100)}%
+                            {st === "transcribing" && progress?.duration
+                              ? ` of ${fmtDuration(progress.duration)}`
+                              : ""}
+                          </>
                         )}
+                        {state === "done" && "done"}
+                        {elapsed ? `${frac !== null || state === "done" ? " · " : ""}${elapsed}` : ""}
+                      </span>
+                    </div>
+                    {frac !== null && (
+                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-pill bg-surface-2">
+                        <div
+                          className="h-full rounded-pill bg-accent transition-[width] duration-500"
+                          style={{ width: `${Math.max(2, Math.round(frac * 100))}%` }}
+                        />
                       </div>
                     )}
                   </div>
@@ -874,7 +816,7 @@ export default function Transcribe() {
                   size="sm"
                   className={cn(it.path === selectedPath && "text-accent")}
                   onClick={() => {
-                    setSelectedPath(it.path);
+                    selectPath(it.path);
                     setShowFullText(false);
                   }}
                 >
