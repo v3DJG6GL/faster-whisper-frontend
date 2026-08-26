@@ -188,6 +188,7 @@ pub fn run() {
             commands::read_backend_keys,  // P30: bulk keyring read (export/sync)
             commands::export_settings_file, // P30: settings export to file
             commands::save_text_file,       // transcript exports (Transcribe screen)
+            commands::read_media_file,      // playback blob fallback (Transcribe screen)
             commands::cancel_file_transcription, // abort in-flight Transcribe runs
             commands::get_transcribe_progress,   // live progress poll (Transcribe screen)
             commands::import_settings_file, // P30: settings import (parse+validate)

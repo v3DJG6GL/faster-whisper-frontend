@@ -446,6 +446,26 @@ pub fn export_settings_file(path: String, envelope: serde_json::Value) -> Result
     Ok(())
 }
 
+/// Read a media file the user picked into memory for in-card playback. The
+/// asset-protocol path is preferred, but Linux WebKitGTK's media stack is
+/// unreliable over custom URI schemes — when the <audio> element errors, the
+/// webview falls back to this and plays from a blob URL. Raw IPC response
+/// (no base64/JSON round-trip); capped so a mispicked multi-GB video can't
+/// balloon the webview.
+#[tauri::command]
+pub async fn read_media_file(path: String) -> Result<tauri::ipc::Response, String> {
+    const MAX_MEDIA_BYTES: u64 = 512 * 1024 * 1024;
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_MEDIA_BYTES {
+        return Err("file too large to buffer for playback".into());
+    }
+    let bytes = tauri::async_runtime::spawn_blocking(move || std::fs::read(&path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// Write a plain text file (transcript exports) to the path the user picked
 /// in the save dialog. Same atomic tmp+rename + cleanup-on-both-failures shape
 /// as `export_settings_file`, minus the 0600 secrecy (a transcript is what the

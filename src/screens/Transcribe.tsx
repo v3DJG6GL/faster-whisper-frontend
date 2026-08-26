@@ -13,7 +13,9 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { LANGUAGES } from "@/lib/languages";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
-import { pickAudioFiles, pickExportPath, saveTextFile, testConnection, isTauri } from "@/lib/api";
+import {
+  pickAudioFiles, pickExportPath, readMediaFile, saveTextFile, testConnection, isTauri,
+} from "@/lib/api";
 import {
   addFiles, cancelRun, clearEdits, overallFraction, railIndex, railStages,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
@@ -36,6 +38,18 @@ import type {
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;
+}
+
+/** Best-effort MIME for the playback blob (helps WebKitGTK pick a decoder). */
+function mediaMime(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    mp3: "audio/mpeg", wav: "audio/wav", flac: "audio/flac", ogg: "audio/ogg",
+    oga: "audio/ogg", opus: "audio/ogg", m4a: "audio/mp4", aac: "audio/aac",
+    wma: "audio/x-ms-wma", mp4: "video/mp4", mkv: "video/x-matroska",
+    webm: "video/webm", mov: "video/quicktime",
+  };
+  return map[ext] ?? "application/octet-stream";
 }
 
 /** How much of a returned transcript to lay out before the user asks for the rest.
@@ -202,6 +216,11 @@ export default function Transcribe() {
   const [rate, setRate] = useState(1);
   const [follow, setFollow] = useState(true);
   const [audioBroken, setAudioBroken] = useState(false);
+  // Blob-URL fallback when the asset protocol can't feed the media stack
+  // (Linux WebKitGTK). Revoked on file change/unmount.
+  const [blobSrc, setBlobSrc] = useState<string | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
+  const blobTriedRef = useRef(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
@@ -479,7 +498,38 @@ export default function Transcribe() {
     setFollow(true);
     setEditMode(false);
     setReassignRow(null);
+    if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+    blobUrlRef.current = null;
+    blobTriedRef.current = false;
+    setBlobSrc(null);
   }, [selectedPath]);
+  useEffect(
+    () => () => {
+      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+    },
+    [],
+  );
+
+  /** The <audio> errored on the asset URL — buffer the file through Rust and
+   *  retry from a blob once; a second failure means the webview genuinely
+   *  can't decode this codec, so surface that instead of hiding the player. */
+  const onAudioError = () => {
+    if (blobTriedRef.current || !selectedPath) {
+      setAudioBroken(true);
+      return;
+    }
+    blobTriedRef.current = true;
+    readMediaFile(selectedPath)
+      .then((buf) => {
+        const url = URL.createObjectURL(new Blob([buf], { type: mediaMime(selectedPath) }));
+        blobUrlRef.current = url;
+        setBlobSrc(url);
+      })
+      .catch((e) => {
+        console.error("playback blob fallback failed:", e);
+        setAudioBroken(true);
+      });
+  };
 
   const seekTo = (t: number) => {
     const a = audioRef.current;
@@ -1240,9 +1290,9 @@ export default function Transcribe() {
             <div className="mb-3 flex items-center gap-3.5 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2.5">
               {/* key forces a clean reload per file */}
               <audio
-                key={selectedPath ?? "none"}
+                key={blobSrc ?? selectedPath ?? "none"}
                 ref={audioRef}
-                src={audioSrc}
+                src={blobSrc ?? audioSrc}
                 preload="metadata"
                 onLoadedMetadata={(e) => {
                   setAudioLen(e.currentTarget.duration || 0);
@@ -1252,7 +1302,7 @@ export default function Transcribe() {
                 onPlay={() => setPlaying(true)}
                 onPause={() => setPlaying(false)}
                 onEnded={() => setPlaying(false)}
-                onError={() => setAudioBroken(true)}
+                onError={onAudioError}
               />
               <button
                 type="button"
@@ -1314,6 +1364,13 @@ export default function Transcribe() {
                 <ArrowDownToLine className="size-3" />
                 Follow
               </button>
+            </div>
+          )}
+
+          {audioBroken && (
+            <div className="mb-3 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2 text-[12px] text-dim">
+              Playback isn't available for this file — the app couldn't decode it
+              (missing audio codec in the system webview).
             </div>
           )}
 

@@ -71,7 +71,7 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libasound2", "libxkbcommon0"]
+        "depends": ["libasound2", "libxkbcommon0", "gstreamer1.0-plugins-good"]
       }
     },
     "category": "Utility",

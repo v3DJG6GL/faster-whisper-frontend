@@ -857,6 +857,13 @@ export async function saveTextFile(path: string, contents: string): Promise<void
   await invoke("save_text_file", { path, contents });
 }
 
+/** Read a media file's raw bytes for the playback blob fallback (Linux
+ *  WebKitGTK is unreliable with media over the asset protocol). */
+export async function readMediaFile(path: string): Promise<ArrayBuffer> {
+  if (!isTauri) throw new Error("Not running in the desktop app.");
+  return invoke<ArrayBuffer>("read_media_file", { path });
+}
+
 /** Native "open file" dialog for a settings export → absolute path (or null). */
 export async function pickImportFile(): Promise<string | null> {
   if (!isTauri) return null;
