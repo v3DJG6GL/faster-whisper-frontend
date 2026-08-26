@@ -4,8 +4,11 @@ import {
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import {
-  Button, Card, Notice, PageHeader, Segmented, Select, SettingRow, Stepper, Toggle,
+  Button, Card, DisclosureToggle, Notice, PageHeader, Segmented, Select,
+  SettingRow, Stepper, Toggle,
 } from "@/components/ui";
+import { DecodeFields } from "@/components/DecodeFields";
+import { useOverrideContext } from "@/lib/useOverrideContext";
 import { LANGUAGES } from "@/lib/languages";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
 import {
@@ -19,7 +22,7 @@ import {
   type ExportFormat, type SpeakerColorMode,
 } from "@/lib/transcriptExport";
 import { cn } from "@/lib/cn";
-import type { BatchResult, TranscribeOptions } from "@/lib/types";
+import type { BatchResult, DecodeOverrides, TranscribeOptions } from "@/lib/types";
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;
@@ -98,6 +101,11 @@ export default function Transcribe() {
   const [numSpeakers, setNumSpeakers] = useState(() => settings.transcribe?.numSpeakers ?? 0);
   const [translate, setTranslate] = useState(() => settings.transcribe?.translate ?? false);
   const [separateBgm, setSeparateBgm] = useState(() => settings.transcribe?.separateBgm ?? false);
+  // Per-RUN decode overrides layered over the Backend's stored defaults —
+  // deliberately not persisted: this is "for this file, try beam 5", not a
+  // settings edit (those live on the Backend / Profile editors).
+  const [runOverrides, setRunOverrides] = useState<DecodeOverrides>({});
+  const [showOverrides, setShowOverrides] = useState(false);
   // Per-file speaker renames (label → display name). Ephemeral by design —
   // renames describe ONE recording's voices, not a persistent mapping.
   const [renames, setRenames] = useState<Record<string, Record<string, string>>>({});
@@ -121,9 +129,10 @@ export default function Transcribe() {
   // against changed inputs (same idea as the old single-run runId).
   const epochRef = useRef(0);
   const runningRef = useRef(false);
-  // The options of the current/last run, so Retry re-runs a failed file with
-  // the same stages instead of silently dropping them.
+  // The options/overrides of the current/last run, so Retry re-runs a failed
+  // file with the same stages instead of silently dropping them.
   const optionsRef = useRef<TranscribeOptions | undefined>(undefined);
+  const overridesRef = useRef<DecodeOverrides>({});
   const queueRef = useRef<QueueItem[]>(queue);
   queueRef.current = queue;
   // The "Copied" confirmation timer. Held in a ref so a rapid second Copy click clears the first
@@ -148,6 +157,18 @@ export default function Transcribe() {
   // "unknown" must never gate (serverKind.ts contract) — only a PROVEN
   // standard server hides the full-backend-only stages.
   const isStandard = serverKind === "standard";
+
+  // Capability gate + inherited baseline for the per-run decode editor —
+  // the same context the Backend/Profile editors use.
+  const { caps, resolved } = useOverrideContext({
+    serverUrl: backend ? effectiveServerUrl(backend, settings) : "",
+    backendId: backend?.id,
+    profileName: backend?.overrideProfile ?? undefined,
+    serverKind,
+  });
+  // What a blank per-run field inherits: profile baseline, overridden by the
+  // Backend's stored decode defaults (the Profiles editor's merge precedent).
+  const inheritedBaseline = { ...resolved, ...backend?.decodeOverrides };
 
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
   const doneCount = queue.filter((it) => it.status === "done").length;
@@ -197,7 +218,11 @@ export default function Transcribe() {
     setQueue((q) => q.map((it) => (it.path === path ? { ...it, ...patch } : it)));
   };
 
-  const pump = async (epoch: number, options: TranscribeOptions | undefined) => {
+  const pump = async (
+    epoch: number,
+    options: TranscribeOptions | undefined,
+    overrides: DecodeOverrides,
+  ) => {
     if (runningRef.current || !backend) return;
     runningRef.current = true;
     try {
@@ -213,7 +238,10 @@ export default function Transcribe() {
             language,
             // Empty backend prompt = inherit the server DEFAULT_PROMPT → omit the field.
             prompt: backend.prompt || undefined,
-            decodeOverrides: backend.decodeOverrides,
+            // Per-run overrides win over the Backend's stored defaults.
+            decodeOverrides: Object.keys({ ...backend.decodeOverrides, ...overrides }).length
+              ? { ...backend.decodeOverrides, ...overrides }
+              : undefined,
             overrideProfile: backend.overrideProfile,
             filePath: next.path,
             options,
@@ -253,7 +281,8 @@ export default function Transcribe() {
           }
         : undefined;
     optionsRef.current = options;
-    void pump(epoch, options);
+    overridesRef.current = runOverrides;
+    void pump(epoch, options, runOverrides);
   };
 
   const cancelRemaining = () => {
@@ -265,7 +294,7 @@ export default function Transcribe() {
   const retry = (path: string) => {
     if (busy) return;
     patchItem(path, { status: "queued", error: undefined });
-    void pump(epochRef.current, optionsRef.current);
+    void pump(epochRef.current, optionsRef.current, overridesRef.current);
   };
 
   // ── selected-result derivations ──────────────────────────────────────────
@@ -516,6 +545,29 @@ export default function Transcribe() {
             </SettingRow>
           )}
         </Card>
+      </div>
+
+      <div className="mt-5">
+        <DisclosureToggle open={showOverrides} onToggle={() => setShowOverrides((v) => !v)}>
+          Decode overrides
+          {Object.keys(runOverrides).length > 0 && (
+            <span className="text-faint"> · {Object.keys(runOverrides).length} set for this run</span>
+          )}
+        </DisclosureToggle>
+        {showOverrides && (
+          <Card className="mt-3 p-5">
+            <p className="mb-4 text-[12.5px] text-dim">
+              Only for this run — your Backend and Profile defaults are untouched. Empty = inherit.
+            </p>
+            <DecodeFields
+              value={runOverrides}
+              onChange={setRunOverrides}
+              inherited={inheritedBaseline}
+              serverKind={serverKind}
+              canCustomize={caps?.can_request_decode_overrides}
+            />
+          </Card>
+        )}
       </div>
 
       <div className="mt-6 flex items-center gap-3">
