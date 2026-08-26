@@ -216,6 +216,23 @@ pub fn cancel_file_transcription() {
     FILE_TRANSCRIBE_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
 
+/// Ask the SERVER to abort the in-flight transcription behind `progress_id`.
+/// Companion to `cancel_file_transcription` (which only drops our end of the
+/// connection — the server's pipeline stages would otherwise run to
+/// completion). Best-effort by design.
+#[tauri::command]
+pub async fn cancel_backend_transcription(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    progress_id: String,
+) -> Result<(), String> {
+    let key = resolve_key(api_key, backend_id);
+    transport::batch::cancel(&server_url, key.as_deref(), &progress_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Poll the live progress of an in-flight file transcription.
 #[tauri::command]
 pub async fn get_transcribe_progress(

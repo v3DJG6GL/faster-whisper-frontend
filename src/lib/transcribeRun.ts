@@ -8,7 +8,8 @@
 
 import { create } from "zustand";
 import {
-  cancelFileTranscription, getTranscribeProgress, transcribeFile,
+  cancelBackendTranscription, cancelFileTranscription, getTranscribeProgress,
+  transcribeFile,
 } from "./api";
 import type {
   BatchProgress, BatchResult, DecodeOverrides, TranscribeOptions,
@@ -272,6 +273,15 @@ function foldProgress(p: BatchProgress) {
   });
 }
 
+/** The in-flight file's server-side progress id + where to send a cancel for
+ *  it. Module-level (not store state): only cancelRun reads it, and it must
+ *  survive component unmounts exactly like the pump itself. */
+let activeCancel: {
+  serverUrl: string;
+  backendId?: string | null;
+  progressId: string;
+} | null = null;
+
 /** Sequential queue pump. Runs detached from the component; every commit
  *  compares against the CURRENT epoch so a cancel/input-change abandons it. */
 async function pump(
@@ -290,6 +300,9 @@ async function pump(
       // server-side entry; a 1 s poll paints the rail. Best-effort — a poll
       // error (older backend, standard server) just leaves it indeterminate.
       const pid = ctx.standard ? null : crypto.randomUUID().replace(/-/g, "");
+      activeCancel = pid
+        ? { serverUrl: ctx.serverUrl, backendId: ctx.backendId, progressId: pid }
+        : null;
       // Seed the first stage's clock from the request start, so the rail
       // shows elapsed time before the first poll lands (and at all on
       // standard servers, which are never polled).
@@ -336,6 +349,7 @@ async function pump(
         if (epoch !== get().epoch) return;
         patchItem(next.path, { status: "failed", error: String(e) });
       } finally {
+        activeCancel = null;
         if (poller !== undefined) window.clearInterval(poller);
         if (epoch === get().epoch) set({ progress: null, stageTimes: {}, stageMeta: {} });
       }
@@ -368,10 +382,14 @@ export function retryFile(path: string, ctx: RunContext) {
 }
 
 export function cancelRun() {
-  // Abort the in-flight file (the Rust epoch bump drops the HTTP request,
-  // which also cancels the server's handler task) AND skip everything
-  // queued. Bumping the epoch makes the pump exit and ignores the aborted
-  // call's rejection.
+  // Abort the in-flight file AND skip everything queued. Two sides to the
+  // abort: the server is told to stop the actual work (dropping the HTTP
+  // request alone leaves its pipeline stages running to completion), and
+  // the Rust epoch bump drops our end of the request. Bumping the epoch
+  // makes the pump exit and ignores the aborted call's rejection.
+  const target = activeCancel;
+  activeCancel = null;
+  if (target) void cancelBackendTranscription(target).catch(() => {});
   set((s) => ({
     epoch: s.epoch + 1,
     progress: null,

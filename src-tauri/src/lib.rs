@@ -189,7 +189,8 @@ pub fn run() {
             commands::export_settings_file, // P30: settings export to file
             commands::save_text_file,       // transcript exports (Transcribe screen)
             commands::read_media_file,      // playback blob fallback (Transcribe screen)
-            commands::cancel_file_transcription, // abort in-flight Transcribe runs
+            commands::cancel_file_transcription, // abort in-flight Transcribe runs (client side)
+            commands::cancel_backend_transcription, // …and tell the server to stop the work
             commands::get_transcribe_progress,   // live progress poll (Transcribe screen)
             commands::import_settings_file, // P30: settings import (parse+validate)
             commands::list_audio_devices,

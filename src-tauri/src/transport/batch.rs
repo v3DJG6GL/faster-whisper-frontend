@@ -192,6 +192,34 @@ pub async fn progress(
     })
 }
 
+/// Ask the server to abort the in-flight transcription posted with this
+/// progress id. Dropping the upload connection alone does NOT stop the
+/// server-side work (its pipeline stages run in executor threads), so the
+/// Cancel button calls this too. Best-effort: an older/standard server
+/// without the endpoint just answers 404.
+pub async fn cancel(
+    server_url: &str,
+    api_key: Option<&str>,
+    progress_id: &str,
+) -> anyhow::Result<()> {
+    if !is_progress_id(progress_id) {
+        bail!("malformed progress id");
+    }
+    let base = base_url(server_url);
+    let resp = with_auth(
+        client().post(format!("{base}/v1/audio/transcriptions/cancel/{progress_id}")),
+        api_key,
+    )
+    .send()
+    .await
+    .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
+    let status = resp.status();
+    if !status.is_success() {
+        bail!("HTTP {}", status.as_u16());
+    }
+    Ok(())
+}
+
 fn mime_for(path: &Path) -> &'static str {
     match path
         .extension()

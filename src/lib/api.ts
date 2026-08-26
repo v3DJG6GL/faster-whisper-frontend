@@ -120,6 +120,24 @@ export async function cancelFileTranscription(): Promise<void> {
   await invoke("cancel_file_transcription");
 }
 
+/** Tell the SERVER to abort the in-flight transcription behind `progressId`
+ *  (cancelFileTranscription only drops our end of the connection — without
+ *  this the server's pipeline runs to completion). Best-effort. */
+export async function cancelBackendTranscription(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  progressId: string;
+}): Promise<void> {
+  if (!isTauri) return;
+  await invoke("cancel_backend_transcription", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    progressId: args.progressId,
+  });
+}
+
 /** Poll the live progress of an in-flight file transcription. */
 export async function getTranscribeProgress(args: {
   serverUrl: string;
