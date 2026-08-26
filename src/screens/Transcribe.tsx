@@ -7,7 +7,7 @@ import {
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
 import {
-  Button, Card, DisclosureToggle, Notice, PageHeader, Select,
+  Button, Card, DisclosureToggle, Notice, PageHeader, Segmented, Select,
   SettingRow, Stepper, Toggle,
 } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
@@ -132,6 +132,8 @@ function stageLabel(p: BatchProgress | null): string {
       return "Waiting for a server slot…";
     case "separating":
       return "Separating music…";
+    case "analyzing":
+      return "Analyzing audio…";
     case "transcribing":
       return "Transcribing…";
     case "diarizing":
@@ -246,7 +248,10 @@ export default function Transcribe() {
   const edits = useTranscribeRun((s) => s.edits);
   const speakerEdits = useTranscribeRun((s) => s.speakerEdits);
   const lastOptions = useTranscribeRun((s) => s.lastOptions);
+  const lastOverrides = useTranscribeRun((s) => s.lastOverrides);
   const [copied, setCopied] = useState(false);
+  // "Silence skipping ate the file" notice — dismissed per file path.
+  const [vadNoticeDismissed, setVadNoticeDismissed] = useState<string | null>(null);
   // Reset per result, so a new (possibly huge) transcript starts collapsed again.
   const [showFullText, setShowFullText] = useState(false);
   // Per-run stage options, seeded from the persisted screen defaults.
@@ -339,6 +344,13 @@ export default function Transcribe() {
   // the shared hook (session connection cache + one background probe).
   const advertised = useBackendModels(backend);
 
+  // The Skip-silence row's "Default" label: what a blank vad_filter inherits —
+  // the Backend/profile baseline first, else the server-reported default.
+  // undefined = unknown (older server) → plain "Default".
+  const vadBaseline = inheritedBaseline.vad_filter;
+  const vadInherited =
+    typeof vadBaseline === "boolean" ? vadBaseline : caps?.vad_filter_default;
+
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
 
   // 1 s heartbeat while a run is active, so the rail's elapsed times count
@@ -420,6 +432,7 @@ export default function Transcribe() {
     if (!files.length || !backend || busy) return;
     clearCopied();
     setShowFullText(false);
+    setVadNoticeDismissed(null); // fresh results argue their own case
     const options: TranscribeOptions | undefined =
       diarize || translate || separateBgm
         ? {
@@ -439,6 +452,17 @@ export default function Transcribe() {
   const retry = (path: string) => {
     if (busy) return;
     const ctx = buildCtx(useTranscribeRun.getState().lastOverrides);
+    if (ctx) retryFile(path, ctx);
+  };
+
+  /** The VAD notice's one-click fix: force vad_filter off (visible in the
+   *  Skip-silence row + decode editor, since it's the same key) and re-run
+   *  the file with the otherwise-unchanged run settings. */
+  const retryWithoutVad = (path: string) => {
+    if (busy) return;
+    const next: DecodeOverrides = { ...runOverrides, vad_filter: false };
+    setRunOverrides(next);
+    const ctx = buildCtx(next);
     if (ctx) retryFile(path, ctx);
   };
 
@@ -1044,7 +1068,6 @@ export default function Transcribe() {
             <SettingRow
               title="Separate background music"
               desc="Strip music before transcribing (UVR). Adds processing time per file."
-              last
             >
               <Toggle
                 checked={separateBgm}
@@ -1053,6 +1076,48 @@ export default function Transcribe() {
                   setSeparateBgm(v);
                   persistOptions({ separateBgm: v });
                 }}
+              />
+            </SettingRow>
+          )}
+          {!isStandard && (
+            // Promoted view of runOverrides.vad_filter — the SAME key the
+            // Decode-overrides editor edits (one source of truth, two doors:
+            // changing it here makes the disclosure count "1 set for this
+            // run", and reset works from either place). Tri-state, not a
+            // Toggle: the server has its own default, and an unset boolean
+            // must stay distinct from an explicit false.
+            <SettingRow
+              title="Skip silence"
+              desc="Voice-activity detection drops silent stretches before decoding — faster, and prevents made-up text in quiet parts. For this run only."
+              last
+            >
+              <Segmented
+                value={
+                  runOverrides.vad_filter === true
+                    ? "on"
+                    : runOverrides.vad_filter === false
+                      ? "off"
+                      : "inherit"
+                }
+                ariaLabel="Skip silence"
+                disabled={caps?.can_request_decode_overrides === false}
+                onChange={(v) => {
+                  const next = { ...runOverrides };
+                  if (v === "inherit") delete next.vad_filter;
+                  else next.vad_filter = v === "on";
+                  setRunOverrides(next);
+                }}
+                options={[
+                  {
+                    value: "inherit",
+                    label:
+                      vadInherited === undefined
+                        ? "Default"
+                        : `Default · ${vadInherited ? "on" : "off"}`,
+                  },
+                  { value: "on", label: "On" },
+                  { value: "off", label: "Off" },
+                ]}
               />
             </SettingRow>
           )}
@@ -1151,6 +1216,10 @@ export default function Transcribe() {
           queuedCount > 0 && avgTook !== null && curLeft !== null
             ? curLeft + avgTook * queuedCount
             : null;
+        // Effective VAD for this run — labels the "analyzing" phase honestly
+        // (per-run override, else the inherited default, else the server's
+        // shipped default of on).
+        const vadOn = lastOverrides.vad_filter ?? vadInherited ?? true;
         return (
           <Card className="mt-4 px-5 py-4">
             <div className="flex items-center gap-3">
@@ -1215,6 +1284,9 @@ export default function Transcribe() {
                     ? progress.progress
                     : null;
                 const waiting = state === "active" && progress?.stage === "waiting";
+                // Inside model.transcribe() before the first segment: audio
+                // decode + Silero VAD (used to be misattributed to "waiting").
+                const analyzing = state === "active" && progress?.stage === "analyzing";
                 const time = stageTimes[st];
                 const meta = stageMeta[st];
                 const stageElapsedMs =
@@ -1268,6 +1340,11 @@ export default function Transcribe() {
                           {waiting && (
                             <span className="font-normal text-faint"> — waiting for a server slot…</span>
                           )}
+                          {analyzing && (
+                            <span className="font-normal text-faint">
+                              {" "}— {vadOn ? "skipping silence…" : "analyzing audio…"}
+                            </span>
+                          )}
                         </span>
                         <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
                           {state === "done" && "done"}
@@ -1312,6 +1389,25 @@ export default function Transcribe() {
                                 {meta.compute ? ` · ${safeDisplayText(meta.compute)}` : ""}
                               </span>
                             )}
+                            {/* VAD receipt: how much audio survived silence
+                                skipping. Quiet when healthy; loud when the
+                                filter ate the file (the finished-run notice
+                                then offers the one-click fix). */}
+                            {st === "transcribing" &&
+                              typeof progress?.vadRetained === "number" && (
+                                <span
+                                  className={cn(
+                                    "rounded-md px-2 py-0.5 font-mono text-[10.5px]",
+                                    progress.vadRetained < 0.3
+                                      ? "bg-warn/10 text-warn"
+                                      : "bg-surface-2 text-dim",
+                                  )}
+                                >
+                                  silence skipped · kept{" "}
+                                  {audioDur ? `${fmtDuration(audioDur * progress.vadRetained)} ` : ""}
+                                  ({Math.round(progress.vadRetained * 100)}%)
+                                </span>
+                              )}
                           </span>
                           <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
                             {stageElapsedMs !== null
@@ -2018,6 +2114,40 @@ export default function Transcribe() {
           )}
         </Card>
       )}
+
+      {/* VAD ate the file: the server's silence filter kept under 30% of the
+          audio (the backend's own "likely cause: VAD ate audio" heuristic).
+          durationAfterVad is only sent when the filter actually ran. */}
+      {result?.durationAfterVad !== undefined &&
+        selected &&
+        result.duration &&
+        result.durationAfterVad < 0.3 * result.duration &&
+        vadNoticeDismissed !== selected.path && (
+          <Notice className="mt-3">
+            <div className="font-medium">Silence skipping removed most of this file</div>
+            <div className="mt-0.5">
+              Only {fmtDuration(result.durationAfterVad)} of {fmtDuration(result.duration)} was
+              treated as speech. If words are missing, run it again without the filter.
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <Button
+                variant="default"
+                size="sm"
+                disabled={busy}
+                onClick={() => retryWithoutVad(selected.path)}
+              >
+                Retry without skipping
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setVadNoticeDismissed(selected.path)}
+              >
+                Dismiss
+              </Button>
+            </div>
+          </Notice>
+        )}
 
       {result?.warnings && result.warnings.length > 0 && (
         <Notice className="mt-3">

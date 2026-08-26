@@ -58,6 +58,10 @@ pub struct Capabilities {
     /// explicit allowed names; `[]` = none.
     #[serde(default)]
     pub allowed_override_profiles: Vec<String>,
+    /// Server-wide VAD default (additive, newer backends only) — labels the
+    /// client's Skip-silence "Default" segment. Absent on older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vad_filter_default: Option<bool>,
 }
 
 /// A single override-profile's decode-relevant values + locked client keys,

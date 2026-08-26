@@ -77,6 +77,10 @@ pub struct BatchResult {
     pub language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
+    /// Seconds of audio that survived the server's VAD (only when the filter
+    /// ran) — lets the UI warn when silence-skipping ate most of the file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_after_vad: Option<f64>,
     /// Per-segment timestamps from verbose_json. Empty when the server omits them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub segments: Vec<Segment>,
@@ -104,6 +108,8 @@ struct VerboseJson {
     language: Option<String>,
     #[serde(default)]
     duration: Option<f64>,
+    #[serde(default)]
+    duration_after_vad: Option<f64>,
     #[serde(default)]
     segments: Vec<Segment>,
     #[serde(default)]
@@ -149,6 +155,10 @@ pub struct BatchProgress {
     pub device: Option<String>,
     #[serde(default)]
     pub compute: Option<String>,
+    /// Fraction of the audio the VAD kept (0..1), once decoding starts; null
+    /// when the filter was off. snake_case on the wire like `last_text`.
+    #[serde(default, alias = "vad_retained")]
+    pub vad_retained: Option<f64>,
 }
 
 /// Poll the server-side progress entry for `progress_id`. Cheap and frequent —
@@ -402,6 +412,7 @@ async fn post(
             .language
             .map(|s| super::bounded_server_text(&s, LANGUAGE_MAX)),
         duration: parsed.duration,
+        duration_after_vad: parsed.duration_after_vad,
         // Segment text stays untouched (it IS the output); the speaker label
         // is an identity-adjacent server string rendered as a chip and pasted
         // into exports — bound it like `language`.

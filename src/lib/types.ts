@@ -324,6 +324,9 @@ export interface Capabilities {
   can_request_decode_overrides: boolean;
   /** ["*"] = unrestricted (free choice); explicit names = restricted; [] = none. */
   allowed_override_profiles: string[];
+  /** Server-wide VAD default (newer backends) — labels the Skip-silence
+   *  control's "Default" segment. Absent on older servers. */
+  vad_filter_default?: boolean;
 }
 
 /** A baseline shown (ghosted) under the decode editor: backend defaults and/or a
@@ -527,6 +530,9 @@ export interface BatchProgress {
   model?: string | null;
   device?: string | null;
   compute?: string | null;
+  /** Fraction of the audio the VAD kept (0..1) once decoding starts; null
+   *  when the filter was off. Persists for the rest of the run. */
+  vadRetained?: number | null;
 }
 
 /** Result of a batch transcription. */
@@ -534,6 +540,9 @@ export interface BatchResult {
   text: string;
   language?: string;
   duration?: number;
+  /** Seconds of audio that survived the server's VAD (only when the filter
+   *  ran) — drives the "silence skipping ate the file" notice. */
+  durationAfterVad?: number;
   /** Per-segment timestamps from verbose_json. */
   segments?: TranscriptSegment[];
   /** Flat word-level timestamps (may be absent/empty even when asked for). */
