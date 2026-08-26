@@ -553,10 +553,32 @@ pub struct AppSettings {
     /// and an unset value round-trips byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync: Option<serde_json::Value>,
+    /// Transcribe-screen preferences (export format, display toggles, history
+    /// retention). Frontend-owned opaque JSON like `sync` — Rust stores +
+    /// round-trips it, and reads exactly ONE key (`historyRetentionDays`, via
+    /// `transcribe_retention_days`) for the history pruning sweep. Was silently
+    /// DROPPED before this field existed (serde ignored the unknown key), so
+    /// these preferences never survived a restart. `#[serde(default, skip…)]`
+    /// so older configs load and an unset value round-trips byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcribe: Option<serde_json::Value>,
     /// "Skip for now" on the first-run gate: fall back to the Home checklist
     /// instead of re-gating every launch. `#[serde(default)]` so older configs load.
     #[serde(default)]
     pub setup_dismissed: bool,
+}
+
+impl AppSettings {
+    /// History retention window in days (0 = keep forever) from the opaque
+    /// `transcribe` blob — the one transcribe key Rust interprets.
+    pub fn transcribe_retention_days(&self) -> u32 {
+        self.transcribe
+            .as_ref()
+            .and_then(|v| v.get("historyRetentionDays"))
+            .and_then(|v| v.as_u64())
+            .map(|d| d.min(u64::from(u32::MAX)) as u32)
+            .unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -623,6 +645,7 @@ impl Default for Config {
                     quick_launch: Vec::new(),
                 },
                 sync: None,
+                transcribe: None,
                 setup_dismissed: false,
             },
             // Fresh installs start EMPTY — no seeded backend or profiles. The

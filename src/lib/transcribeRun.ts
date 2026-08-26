@@ -11,6 +11,7 @@ import {
   cancelBackendTranscription, cancelFileTranscription, getTranscribeProgress,
   transcribeFile,
 } from "./api";
+import { upsertRecord, type TranscriptRecord } from "./transcriptHistory";
 import type {
   BatchProgress, BatchResult, DecodeOverrides, TranscribeOptions,
 } from "./types";
@@ -161,17 +162,26 @@ export function patchItem(path: string, patch: Partial<QueueItem>) {
   }));
 }
 
-/** Changed inputs abandon any settled results (bumps the epoch so a stale
- *  in-flight completion can't land against them). */
+/** Changed inputs abandon pending work (epoch bump so a stale in-flight
+ *  completion can't land) — but SETTLED results survive: adding one more file
+ *  used to wipe every finished transcript from view, and they are in the
+ *  history now, so keep showing them. */
 export function resetForInputChange() {
-  set((s) => ({
-    epoch: s.epoch + 1,
-    queue: [],
-    selectedPath: null,
-    progress: null,
-    stageTimes: {},
-    stageMeta: {},
-  }));
+  set((s) => {
+    const settled = s.queue.filter(
+      (it) => it.status === "done" || it.status === "failed",
+    );
+    return {
+      epoch: s.epoch + 1,
+      queue: settled,
+      selectedPath: settled.some((it) => it.path === s.selectedPath)
+        ? s.selectedPath
+        : null,
+      progress: null,
+      stageTimes: {},
+      stageMeta: {},
+    };
+  });
 }
 
 export function addFiles(paths: string[]) {
@@ -188,10 +198,104 @@ export function selectPath(path: string | null) {
   set({ selectedPath: path });
 }
 
+// ── history bridge ───────────────────────────────────────────────────────────
+// The latest history record per file path. A finished run registers here; a
+// reopened record re-registers, so later corrections re-save under the SAME
+// id instead of forking a new entry.
+const historyByPath: Record<string, TranscriptRecord> = {};
+let persistTimer: number | undefined;
+
+/** Re-save `path`'s record with the CURRENT overlays, debounced — every
+ *  rename/recolor/correction lands in the history within a second, without a
+ *  disk write per keystroke. */
+function schedulePersistEdits(path: string) {
+  if (!historyByPath[path]) return;
+  window.clearTimeout(persistTimer);
+  persistTimer = window.setTimeout(() => {
+    const rec = historyByPath[path];
+    if (!rec) return;
+    const s = get();
+    const updated: TranscriptRecord = {
+      ...rec,
+      renames: s.renames[path],
+      speakerColors: s.speakerColors[path],
+      edits: s.edits[path],
+      speakerEdits: s.speakerEdits[path],
+    };
+    historyByPath[path] = updated;
+    upsertRecord(updated);
+  }, 800);
+}
+
+/** Every settled run — success or failure — becomes a history record the
+ *  moment it lands (failures keep their error and are retryable from the
+ *  History screen). Registers under the path so later corrections re-save
+ *  the same record. */
+function recordRun(
+  path: string,
+  ctx: RunContext,
+  options: TranscribeOptions | undefined,
+  outcome: { status: "done" | "failed"; result?: BatchResult; error?: string; tookMs?: number },
+) {
+  const s = get();
+  const rec: TranscriptRecord = {
+    schemaVersion: 1,
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    sourcePath: path,
+    sourceName: path.split(/[\\/]/).pop() || path,
+    status: outcome.status,
+    error: outcome.error,
+    tookMs: outcome.tookMs,
+    backendId: ctx.backendId,
+    model: ctx.model,
+    language: outcome.result?.language ?? undefined,
+    options,
+    result: outcome.result,
+    renames: s.renames[path],
+    speakerColors: s.speakerColors[path],
+    edits: s.edits[path],
+    speakerEdits: s.speakerEdits[path],
+  };
+  historyByPath[path] = rec;
+  upsertRecord(rec);
+}
+
+/** Load a history record back into the workbench: one settled queue row,
+ *  selected, with its overlays restored. Refused mid-run (the pump owns the
+ *  queue then). */
+export function openHistoryRecord(rec: TranscriptRecord): boolean {
+  if (get().running) return false;
+  historyByPath[rec.sourcePath] = rec;
+  set((s) => ({
+    epoch: s.epoch + 1,
+    queue: [
+      {
+        path: rec.sourcePath,
+        status: rec.status,
+        result: rec.result,
+        error: rec.error,
+        tookMs: rec.tookMs,
+      },
+    ],
+    selectedPath: rec.sourcePath,
+    progress: null,
+    stageTimes: {},
+    stageMeta: {},
+    lastOptions: rec.options ?? s.lastOptions,
+    renames: { ...s.renames, [rec.sourcePath]: rec.renames ?? {} },
+    speakerColors: { ...s.speakerColors, [rec.sourcePath]: rec.speakerColors ?? {} },
+    edits: { ...s.edits, [rec.sourcePath]: rec.edits ?? {} },
+    speakerEdits: { ...s.speakerEdits, [rec.sourcePath]: rec.speakerEdits ?? {} },
+  }));
+  return true;
+}
+
 export function setRename(path: string, label: string, name: string) {
   set((s) => ({
     renames: { ...s.renames, [path]: { ...s.renames[path], [label]: name } },
   }));
+  schedulePersistEdits(path);
 }
 
 export function setSpeakerColor(path: string, label: string, idx: number) {
@@ -201,6 +305,7 @@ export function setSpeakerColor(path: string, label: string, idx: number) {
       [path]: { ...s.speakerColors[path], [label]: idx },
     },
   }));
+  schedulePersistEdits(path);
 }
 
 /** Record (or with null, drop) a text correction for one segment. */
@@ -211,6 +316,7 @@ export function setSegmentEdit(path: string, index: number, text: string | null)
     else file[index] = text;
     return { edits: { ...s.edits, [path]: file } };
   });
+  schedulePersistEdits(path);
 }
 
 /** Reassign (or with null, restore) one segment's speaker label. */
@@ -221,6 +327,7 @@ export function setSegmentSpeaker(path: string, index: number, label: string | n
     else file[index] = label;
     return { speakerEdits: { ...s.speakerEdits, [path]: file } };
   });
+  schedulePersistEdits(path);
 }
 
 /** Discard every correction for one file (the edit banner's Discard). */
@@ -232,6 +339,7 @@ export function clearEdits(path: string) {
     delete speakerEdits[path];
     return { edits, speakerEdits };
   });
+  schedulePersistEdits(path);
 }
 
 /** Fold a progress poll into the store. "unknown" is the server saying "no
@@ -339,15 +447,14 @@ async function pump(
           options: pid ? { ...options, progressId: pid } : options,
         });
         if (epoch !== get().epoch) return;
-        patchItem(next.path, {
-          status: "done",
-          result: res,
-          tookMs: Date.now() - fileT0,
-        });
+        const tookMs = Date.now() - fileT0;
+        patchItem(next.path, { status: "done", result: res, tookMs });
         set({ selectedPath: next.path }); // follow the latest finished file
+        recordRun(next.path, ctx, options, { status: "done", result: res, tookMs });
       } catch (e) {
         if (epoch !== get().epoch) return;
         patchItem(next.path, { status: "failed", error: String(e) });
+        recordRun(next.path, ctx, options, { status: "failed", error: String(e) });
       } finally {
         activeCancel = null;
         if (poller !== undefined) window.clearInterval(poller);

@@ -15,6 +15,7 @@ import { applyTheme, watchSystemTheme } from "@/lib/theme";
 import { Onboarding } from "@/screens/Onboarding";
 import Home from "@/screens/Home";
 import Transcribe from "@/screens/Transcribe";
+import HistoryScreen from "@/screens/History";
 import Profiles from "@/screens/Profiles";
 import Backends from "@/screens/Backends";
 import Dictionary from "@/screens/Dictionary";
@@ -176,6 +177,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/transcribe" element={<Transcribe />} />
+            <Route path="/history" element={<HistoryScreen />} />
             <Route path="/profiles" element={<Profiles />} />
             <Route path="/backends" element={<Backends />} />
             <Route path="/dictionary" element={<Dictionary />} />

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   UploadCloud, FileAudio, X, Loader2, Copy, Check, Plus, RotateCcw, Download,
   Pencil, Play, Pause, ArrowDownToLine, Circle, Minus,
@@ -24,6 +25,10 @@ import {
   useTranscribeRun, STAGE_WEIGHTS,
   type RailStage, type RunContext,
 } from "@/lib/transcribeRun";
+import {
+  loadHistory, useTranscriptHistory, type TranscriptRecord,
+} from "@/lib/transcriptHistory";
+import { openHistoryRecord } from "@/lib/transcribeRun";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
@@ -96,6 +101,25 @@ type ContractRow = {
   why: string;
   onToggle?: () => void;
 };
+
+/** "today 21:04 · 11m 10s · de · 4 speakers" — the recent-strip meta line. */
+function recentMeta(rec: TranscriptRecord): string {
+  const d = new Date(rec.createdAt);
+  const parts: string[] = [];
+  if (!Number.isNaN(d.getTime())) {
+    const startOf = (x: Date) =>
+      new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((startOf(new Date()) - startOf(d)) / 86_400_000);
+    const day =
+      diff <= 0 ? "today" : diff === 1 ? "yesterday" : d.toLocaleDateString();
+    parts.push(`${day} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+  }
+  if (rec.result?.duration) parts.push(fmtDuration(rec.result.duration));
+  if (rec.language) parts.push(safeDisplayText(rec.language, 12));
+  const spk = rec.result?.speakers?.length ?? 0;
+  if (spk > 1) parts.push(`${spk} speakers`);
+  return parts.join(" · ");
+}
 
 /** Human label for a server progress stage (absent/unknown ⇒ generic). */
 function stageLabel(p: BatchProgress | null): string {
@@ -177,6 +201,15 @@ export default function Transcribe() {
   const connections = useApp((s) => s.connections);
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
+  // Recent transcripts for the idle-screen strip (full list: History screen).
+  const historyRecords = useTranscriptHistory((s) => s.records);
+  const recentRecords = useMemo(
+    () => historyRecords.filter((r) => r.status === "done").slice(0, 3),
+    [historyRecords],
+  );
+  useEffect(() => {
+    void loadHistory();
+  }, []);
 
   const [backendId, setBackendId] = useState(backends[0]?.id ?? "");
   const [language, setLanguage] = useState(backends[0]?.language ?? "auto");
@@ -871,6 +904,45 @@ export default function Transcribe() {
           <div className="mt-4 text-[14px] text-text">Choose files to transcribe</div>
           <div className="mt-1 text-[12.5px] text-dim">Audio or video — wav, mp3, m4a, ogg, webm, flac…</div>
         </button>
+      )}
+
+      {/* Recent transcripts, one click from the idle screen (VS Code's
+          dual-access recents: short list here, full History screen a click
+          away). Finished runs land in the history automatically. */}
+      {!files.length && !queue.length && recentRecords.length > 0 && (
+        <Card className="mt-6 px-5 py-1">
+          <div className="flex items-baseline gap-2 py-2">
+            <span className="font-mono text-[10.5px] uppercase tracking-label text-faint">
+              recent
+            </span>
+            <span className="flex-1" />
+            <Link to="/history" className="ring-signal rounded text-[12px] text-accent">
+              All history →
+            </Link>
+          </div>
+          {recentRecords.map((rec, i) => (
+            <div
+              key={rec.id}
+              className={cn(
+                "flex items-center gap-3 py-2.5",
+                i < recentRecords.length - 1 && "border-b border-line",
+              )}
+            >
+              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ok/15 text-ok">
+                <Check className="size-3.5" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-text">
+                {safeDisplayText(rec.sourceName, 120)}
+              </span>
+              <span className="shrink-0 font-mono text-[11px] text-faint">
+                {recentMeta(rec)}
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => openHistoryRecord(rec)}>
+                Open
+              </Button>
+            </div>
+          ))}
+        </Card>
       )}
 
       <div className="mt-6 grid grid-cols-3 gap-4">

@@ -104,6 +104,7 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     config::save(&dir, &config).map_err(|e| e.to_string())?;
     sync_autostart(&app, config.settings.general.open_at_login);
     apply_recordings_retention(&app, &config);
+    crate::transcripts::apply_transcripts_retention(&app, &config);
     Ok(())
 }
 

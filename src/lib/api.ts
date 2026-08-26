@@ -875,6 +875,26 @@ export async function saveTextFile(path: string, contents: string): Promise<void
   await invoke("save_text_file", { path, contents });
 }
 
+/** Persist one transcription-history record (opaque JSON, atomic write).
+ *  `record` is pre-serialized by the caller so Rust never re-encodes it. */
+export async function saveTranscriptRecord(id: string, record: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("save_transcript_record", { id, record });
+}
+
+/** All locally stored transcription-history records (unordered; each carries
+ *  its own createdAt). [] outside Tauri or when none exist. */
+export async function listTranscriptRecords(): Promise<unknown[]> {
+  if (!isTauri) return [];
+  return invoke<unknown[]>("list_transcript_records");
+}
+
+/** Delete one history record's file from disk. */
+export async function deleteTranscriptRecord(id: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("delete_transcript_record", { id });
+}
+
 /** Read a media file's raw bytes for the playback blob fallback (Linux
  *  WebKitGTK is unreliable with media over the asset protocol). */
 export async function readMediaFile(path: string): Promise<ArrayBuffer> {

@@ -115,7 +115,7 @@ export type ThemeName = "dark" | "light" | "auto";
 export type OverlayStatsMetric = "words" | "audio" | "both";
 /** A navigable app screen, referenced by the sidebar, the overlay quick-launch,
  *  and cross-window navigation (kept in sync with the router in App.tsx). */
-export type OverlayScreen = "home" | "transcribe" | "profiles" | "backends" | "dictionary" | "app-rules" | "statistics" | "settings";
+export type OverlayScreen = "home" | "transcribe" | "history" | "profiles" | "backends" | "dictionary" | "app-rules" | "statistics" | "settings";
 /** A dictation action the overlay quick-launch can trigger (beyond screen nav). */
 export type OverlayActionKind = "toggle-dictation" | "cycle-active-profile" | "open-quick-add";
 /** One quick-launch chip button: a screen nav target or a dictation action. A flat
@@ -250,6 +250,9 @@ export interface TranscribeSettings {
   showTimestamps?: boolean;
   showSpeakerNames?: boolean;
   colorizeSpeakers?: boolean;
+  /** Transcription-history retention window in days; 0/absent = keep forever.
+   *  The one transcribe key Rust reads (its startup/save pruning sweep). */
+  historyRetentionDays?: number;
 }
 
 export interface AppSettings {

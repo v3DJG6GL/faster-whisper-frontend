@@ -13,6 +13,7 @@ mod overlay;
 mod quickadd;
 mod session;
 mod sound;
+mod transcripts;
 mod transport;
 mod tray;
 mod triggers;
@@ -153,6 +154,8 @@ pub fn run() {
             // Enforce the saved-recording retention window once per launch, so it also applies
             // to a machine that dictated for months and only just enabled it.
             commands::apply_recordings_retention(app.handle(), &cfg);
+            // Same once-per-launch sweep for the transcription history.
+            transcripts::apply_transcripts_retention(app.handle(), &cfg);
             // Start hidden to the tray if requested (reachable via the tray menu) —
             // but only on login launches (--autostart), never on a manual start.
             if cfg.settings.general.start_minimized
@@ -188,6 +191,9 @@ pub fn run() {
             commands::read_backend_keys,  // P30: bulk keyring read (export/sync)
             commands::export_settings_file, // P30: settings export to file
             commands::save_text_file,       // transcript exports (Transcribe screen)
+            transcripts::save_transcript_record, // transcription history (local store)
+            transcripts::list_transcript_records,
+            transcripts::delete_transcript_record,
             commands::read_media_file,      // playback blob fallback (Transcribe screen)
             commands::cancel_file_transcription, // abort in-flight Transcribe runs (client side)
             commands::cancel_backend_transcription, // …and tell the server to stop the work
