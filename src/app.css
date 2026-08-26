@@ -54,6 +54,18 @@
   --c-ok: #93b76f;
   --c-warn: #e0a33a;
   --c-think: #6faed9; /* cool steel blue: machine working (finalizing/inserting/warm-up) — the only cool hue, so it can't be read as off-grey, armed-amber, live-green, or error-red */
+  /* Speaker-chip palette (Transcribe screen): eight hue-separated tones at
+     matched brightness, indexed — exports resolve the same indexes to the
+     DEFAULT_SPEAKER_COLORS hexes in transcriptExport.ts. Coral stays
+     reserved for the recording pulse. */
+  --spk-1: #ff9e2c; /* amber (accent) */
+  --spk-2: #6faed9; /* sky (think) */
+  --spk-3: #36d07a; /* green (live) */
+  --spk-4: #c792ea; /* lilac */
+  --spk-5: #e8d44d; /* lemon */
+  --spk-6: #4dd0c4; /* teal */
+  --spk-7: #f286b6; /* rose */
+  --spk-8: #9aa7ff; /* periwinkle */
   /* Ambient-glow stops (body::before). Same-hue zero-alpha endpoints on purpose:
      WebKitGTK interpolates gradient ends toward `transparent`/color-mix-to-transparent
      unpremultiplied (i.e. toward black), which shows as a dirty grey band on the
@@ -82,6 +94,15 @@
   --c-ok: #5e8a3c;
   --c-warn: #b9791f;
   --c-think: #33719f; /* cool steel blue: machine working (darker for light bg) */
+  /* Speaker-chip palette, darkened for cream backgrounds (same hue order). */
+  --spk-1: #bf6f12;
+  --spk-2: #33719f;
+  --spk-3: #1f9d57;
+  --spk-4: #8a4fc0;
+  --spk-5: #96830f;
+  --spk-6: #0f8a7e;
+  --spk-7: #c03a78;
+  --spk-8: #5261d0;
   /* Quieter wash than dark — amber over cream turns muddy well before 9%. */
   --c-glow-a: rgba(191, 111, 18, 0.05);
   --c-glow-b: rgba(191, 111, 18, 0.03);

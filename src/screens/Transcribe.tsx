@@ -19,7 +19,7 @@ import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
-  EXPORT_EXTENSIONS, generateExport,
+  DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExport,
   type ExportFormat, type SpeakerColorMode,
 } from "@/lib/transcriptExport";
 import { cn } from "@/lib/cn";
@@ -58,15 +58,11 @@ interface QueueItem {
   error?: string;
 }
 
-/** Speaker chip tones, assigned by first appearance. Coral (--c-rec) stays
- *  reserved for the live recording pulse, per the design system. */
-const SPEAKER_TONES = [
-  { text: "text-accent", bg: "bg-accent-soft", dot: "bg-accent" },
-  { text: "text-think", bg: "bg-think/15", dot: "bg-think" },
-  { text: "text-live", bg: "bg-live/15", dot: "bg-live" },
-  { text: "text-warn", bg: "bg-warn/10", dot: "bg-warn" },
-  { text: "text-ok", bg: "bg-ok/10", dot: "bg-ok" },
-] as const;
+/** Chip styling from a speaker's CSS color (a --spk-N token, so it follows
+ *  the light/dark theme): readable text, a soft fill, and a solid dot. */
+function chipStyle(color: string) {
+  return { color, backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)` };
+}
 
 /** Human label for a server progress stage (absent/unknown ⇒ generic). */
 function stageLabel(p: BatchProgress | null): string {
@@ -82,6 +78,35 @@ function stageLabel(p: BatchProgress | null): string {
     default:
       return "Transcribing…";
   }
+}
+
+/** The pipeline stages of the CURRENT run, in server order — mirrors the
+ *  design canvas' stage rail. Transcribe is always present; the optional
+ *  stages appear only when this run switched them on (so the rail never
+ *  promises a stage the server won't enter). */
+type RailStage = "separating" | "transcribing" | "diarizing";
+const RAIL_NAMES: Record<RailStage, string> = {
+  separating: "Separate music",
+  transcribing: "Transcribe",
+  diarizing: "Identify speakers",
+};
+function railStages(opts: TranscribeOptions | undefined): RailStage[] {
+  return [
+    ...(opts?.separateBgm ? (["separating"] as const) : []),
+    "transcribing" as const,
+    ...(opts?.diarize ? (["diarizing"] as const) : []),
+  ];
+}
+
+/** Where the server currently is on the rail. "waiting" is the semaphore
+ *  queue before the decode — it lights the transcribe row (with its own
+ *  label) so the rail keeps moving strictly forward. */
+function railIndex(stage: string | undefined, stages: RailStage[]): number {
+  const key: RailStage = stage === "separating" || stage === "diarizing"
+    ? stage
+    : "transcribing";
+  const i = stages.indexOf(key);
+  return i < 0 ? stages.indexOf("transcribing") : i;
 }
 
 /** "SPEAKER_00" → "Speaker 1"; anything else verbatim (already bounded by Rust). */
@@ -133,6 +158,10 @@ export default function Transcribe() {
   // Per-file speaker renames (label → display name). Ephemeral by design —
   // renames describe ONE recording's voices, not a persistent mapping.
   const [renames, setRenames] = useState<Record<string, Record<string, string>>>({});
+  // Per-file speaker color overrides (label → palette INDEX — the UI resolves
+  // it to a theme-aware --spk-N token, exports to the matching hex). Same
+  // lifetime as renames; flows into chips AND exports.
+  const [speakerColors, setSpeakerColors] = useState<Record<string, Record<string, number>>>({});
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   // Export panel state, seeded from the persisted screen defaults.
@@ -369,9 +398,23 @@ export default function Transcribe() {
   const effectiveView: View =
     view === "speakers" && !hasSpeakers ? "text" : view === "time" && !hasSegments ? "text" : view;
   const fileRenames = (selectedPath && renames[selectedPath]) || {};
+  const fileColors = (selectedPath && speakerColors[selectedPath]) || {};
   const displayName = (label: string) =>
     safeDisplayText(fileRenames[label]?.trim() || prettySpeaker(label));
-  const toneOf = (label: string) => SPEAKER_TONES[Math.max(0, speakers.indexOf(label)) % SPEAKER_TONES.length];
+  // User-picked palette index first, else first-appearance order — the chips
+  // (via theme tokens) and the exported SRT/VTT (via hexes) stay in step.
+  const colorIdxOf = (label: string) =>
+    fileColors[label] ??
+    Math.max(0, speakers.indexOf(label)) % DEFAULT_SPEAKER_COLORS.length;
+  const colorOf = (label: string) => `var(--spk-${colorIdxOf(label) + 1})`;
+
+  const setSpeakerColor = (label: string, idx: number) => {
+    if (!selectedPath) return;
+    setSpeakerColors((c) => ({
+      ...c,
+      [selectedPath]: { ...c[selectedPath], [label]: idx },
+    }));
+  };
 
   const commitRename = () => {
     if (editingSpeaker && selectedPath) {
@@ -433,6 +476,12 @@ export default function Transcribe() {
         format: exportFormat,
         renames: fileRenames,
         speakerColors: hasSpeakers ? colorMode : "off",
+        colors: Object.fromEntries(
+          Object.entries(fileColors).map(([l, i]) => [
+            l,
+            DEFAULT_SPEAKER_COLORS[i % DEFAULT_SPEAKER_COLORS.length],
+          ]),
+        ),
         wordTimestamps: wordTs,
       });
       await saveTextFile(path, contents);
@@ -670,29 +719,81 @@ export default function Transcribe() {
         {!isTauri && <span className="text-[12px] text-faint">Available in the desktop app.</span>}
       </div>
 
-      {busy && (
-        <div className="mt-4">
-          <div className="mb-1.5 flex items-center justify-between text-[12px]">
-            <span className="text-dim">{stageLabel(progress)}</span>
-            {typeof progress?.progress === "number" && (
-              <span className="font-mono text-[11px] tabular-nums text-faint">
-                {Math.round(progress.progress * 100)}%
-                {progress.duration ? ` of ${fmtDuration(progress.duration)}` : ""}
-              </span>
-            )}
+      {busy && (() => {
+        // Stage rail (per the design canvas): the file passes through each
+        // stage in order — done rows get a check, the active row carries the
+        // live bar, upcoming rows wait dimmed. Until the first poll answers,
+        // the first stage counts as active with an indeterminate bar.
+        const stages = railStages(optionsRef.current);
+        const active = progress?.stage ? railIndex(progress.stage, stages) : 0;
+        return (
+          <div className="mt-4">
+            {stages.map((st, i) => {
+              const state = i < active ? "done" : i === active ? "active" : "pending";
+              const frac =
+                state === "active" && typeof progress?.progress === "number"
+                  ? progress.progress
+                  : null;
+              const waiting = state === "active" && progress?.stage === "waiting";
+              return (
+                <div key={st} className={cn("flex gap-3", state === "pending" && "opacity-55")}>
+                  <div className="flex flex-col items-center self-stretch">
+                    <span
+                      className={cn(
+                        "grid size-6 shrink-0 place-items-center rounded-full font-mono text-[11px]",
+                        state === "done" && "bg-ok/15 text-ok",
+                        state === "active" && "bg-accent-soft text-accent",
+                        state === "pending" && "bg-surface-2 text-faint",
+                      )}
+                    >
+                      {state === "done" ? <Check className="size-3.5" /> : i + 1}
+                    </span>
+                    {i < stages.length - 1 && <span className="w-px flex-1 bg-line" />}
+                  </div>
+                  <div className={cn("min-w-0 flex-1", i < stages.length - 1 && "pb-3.5")}>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span
+                        className={cn(
+                          "text-[13px]",
+                          state === "active" ? "text-text" : "text-dim",
+                        )}
+                      >
+                        {RAIL_NAMES[st]}
+                        {waiting && (
+                          <span className="text-faint"> — waiting for a server slot…</span>
+                        )}
+                      </span>
+                      {frac !== null && (
+                        <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
+                          {Math.round(frac * 100)}%
+                          {st === "transcribing" && progress?.duration
+                            ? ` of ${fmtDuration(progress.duration)}`
+                            : ""}
+                        </span>
+                      )}
+                      {state === "done" && (
+                        <span className="shrink-0 font-mono text-[11px] text-faint">done</span>
+                      )}
+                    </div>
+                    {state === "active" && (
+                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-pill bg-surface-2">
+                        {frac !== null ? (
+                          <div
+                            className="h-full rounded-pill bg-accent transition-[width] duration-500"
+                            style={{ width: `${Math.max(2, Math.round(frac * 100))}%` }}
+                          />
+                        ) : (
+                          <div className="h-full w-1/3 animate-chip-breathe rounded-pill bg-think" />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          <div className="h-1.5 overflow-hidden rounded-pill bg-surface-2">
-            {typeof progress?.progress === "number" ? (
-              <div
-                className="h-full rounded-pill bg-accent transition-[width] duration-500"
-                style={{ width: `${Math.max(2, Math.round(progress.progress * 100))}%` }}
-              />
-            ) : (
-              <div className="h-full w-1/3 animate-chip-breathe rounded-pill bg-think" />
-            )}
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {queue.length > 1 && (
         <Card className="mt-6 px-5 py-1">
@@ -911,43 +1012,61 @@ export default function Transcribe() {
           {effectiveView === "speakers" && (
             <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-line pb-3">
               {speakers.map((label) => {
-                const tone = toneOf(label);
+                const color = colorOf(label);
                 return editingSpeaker === label ? (
-                  <input
-                    key={label}
-                    autoFocus
-                    value={renameDraft}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    onBlur={commitRename}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") commitRename();
-                      else if (e.key === "Escape") setEditingSpeaker(null);
-                    }}
-                    aria-label={`Rename ${prettySpeaker(label)}`}
-                    className="ring-signal h-7 w-36 rounded-pill border border-accent/40 bg-surface-2 px-3 text-[12px] text-text outline-none"
-                  />
+                  <span key={label} className="inline-flex items-center gap-2">
+                    <input
+                      autoFocus
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onBlur={commitRename}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitRename();
+                        else if (e.key === "Escape") setEditingSpeaker(null);
+                      }}
+                      aria-label={`Rename ${prettySpeaker(label)}`}
+                      className="ring-signal h-7 w-36 rounded-pill border border-accent/40 bg-surface-2 px-3 text-[12px] text-text outline-none"
+                    />
+                    <span className="inline-flex items-center gap-1">
+                      {DEFAULT_SPEAKER_COLORS.map((_, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          title="Use this color"
+                          aria-label={`Color ${prettySpeaker(label)} ${idx + 1}`}
+                          // preventDefault keeps focus in the rename input, so
+                          // picking a color doesn't blur-commit and close it.
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => setSpeakerColor(label, idx)}
+                          className={cn(
+                            "size-4 rounded-full transition-transform hover:scale-110",
+                            colorIdxOf(label) === idx &&
+                              "ring-2 ring-text/60 ring-offset-1 ring-offset-surface",
+                          )}
+                          style={{ backgroundColor: `var(--spk-${idx + 1})` }}
+                        />
+                      ))}
+                    </span>
+                  </span>
                 ) : (
                   <button
                     key={label}
                     type="button"
-                    title="Rename this speaker"
+                    title="Rename or recolor this speaker"
                     onClick={() => {
                       setEditingSpeaker(label);
                       setRenameDraft(fileRenames[label] ?? "");
                     }}
-                    className={cn(
-                      "ring-signal inline-flex items-center gap-1.5 rounded-pill py-0.5 pl-2 pr-2.5 text-[12px] font-medium",
-                      tone.text,
-                      tone.bg,
-                    )}
+                    className="ring-signal inline-flex items-center gap-1.5 rounded-pill py-0.5 pl-2 pr-2.5 text-[12px] font-medium"
+                    style={chipStyle(color)}
                   >
-                    <span className={cn("size-[7px] rounded-full", tone.dot)} />
+                    <span className="size-[7px] rounded-full" style={{ backgroundColor: color }} />
                     {displayName(label)}
                   </button>
                 );
               })}
               <span className="text-[11.5px] text-faint">
-                click a name to rename — renames apply to Copy and exports
+                click a name to rename or pick its color — both apply to Copy and exports
               </span>
             </div>
           )}
@@ -969,13 +1088,13 @@ export default function Transcribe() {
                   </span>
                   {effectiveView === "speakers" && seg.speaker && (
                     <span
-                      className={cn(
-                        "mt-0.5 inline-flex shrink-0 items-center gap-1.5 self-start rounded-pill py-0.5 pl-2 pr-2.5 text-[12px] font-medium",
-                        toneOf(seg.speaker).text,
-                        toneOf(seg.speaker).bg,
-                      )}
+                      className="mt-0.5 inline-flex shrink-0 items-center gap-1.5 self-start rounded-pill py-0.5 pl-2 pr-2.5 text-[12px] font-medium"
+                      style={chipStyle(colorOf(seg.speaker))}
                     >
-                      <span className={cn("size-[7px] rounded-full", toneOf(seg.speaker).dot)} />
+                      <span
+                        className="size-[7px] rounded-full"
+                        style={{ backgroundColor: colorOf(seg.speaker) }}
+                      />
                       {displayName(seg.speaker)}
                     </span>
                   )}

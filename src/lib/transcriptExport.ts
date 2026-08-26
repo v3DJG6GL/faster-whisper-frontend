@@ -24,14 +24,21 @@ export interface ExportOptions {
   wordTimestamps?: boolean;
 }
 
-/** Default per-speaker colors (the app's dark-theme chip palette; coral stays
- *  reserved for recording). Cycled by first-appearance order. */
+/** Default per-speaker colors, cycled by first-appearance order. Eight
+ *  hue-separated tones at matched brightness so neighbours stay tellable
+ *  apart on the dark theme (the old 5-tone cycle put two near-identical
+ *  ambers next to each other and repeated from speaker 6 on). Coral stays
+ *  reserved for the live-recording pulse. Shared with the speaker chips on
+ *  the Transcribe screen. */
 export const DEFAULT_SPEAKER_COLORS = [
-  "#ff9e2c", // accent
-  "#6faed9", // think
-  "#36d07a", // live
-  "#e0a33a", // warn
-  "#93b76f", // ok
+  "#ff9e2c", // amber (accent)
+  "#6faed9", // sky (think)
+  "#36d07a", // green (live)
+  "#c792ea", // lilac
+  "#e8d44d", // lemon
+  "#4dd0c4", // teal
+  "#f286b6", // rose
+  "#9aa7ff", // periwinkle
 ] as const;
 
 export const EXPORT_EXTENSIONS: Record<ExportFormat, string> = {
