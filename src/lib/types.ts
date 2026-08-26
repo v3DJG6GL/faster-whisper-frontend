@@ -235,6 +235,13 @@ export interface SyncSettings {
 
 /** Persisted defaults for the Transcribe screen's per-run options. */
 export interface TranscribeSettings {
+  /** Last-used backend/model/language picks, restored when the screen mounts
+   *  (they were plain component state before — reset on every tab switch).
+   *  `model` "" = the Backend's configured model; both only apply while
+   *  `backendId` still exists. */
+  backendId?: string;
+  model?: string;
+  language?: string;
   diarize?: boolean;
   /** Speaker-count hint; 0 = auto (let the pipeline decide). */
   numSpeakers?: number;

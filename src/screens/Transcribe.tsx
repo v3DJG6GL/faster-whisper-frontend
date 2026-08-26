@@ -211,11 +211,23 @@ export default function Transcribe() {
     void loadHistory();
   }, []);
 
-  const [backendId, setBackendId] = useState(backends[0]?.id ?? "");
-  const [language, setLanguage] = useState(backends[0]?.language ?? "auto");
+  // Backend/model/language picks persist in settings.transcribe (they were
+  // component state before, so leaving the screen reset them). The saved pick
+  // only applies while that backend still exists; model/language ride on it.
+  const savedBackend =
+    settings.transcribe?.backendId &&
+    backends.some((b) => b.id === settings.transcribe?.backendId)
+      ? settings.transcribe.backendId
+      : undefined;
+  const [backendId, setBackendId] = useState(savedBackend ?? backends[0]?.id ?? "");
+  const [language, setLanguage] = useState(
+    (savedBackend ? settings.transcribe?.language : undefined) ??
+      backends.find((b) => b.id === (savedBackend ?? backends[0]?.id))?.language ??
+      "auto",
+  );
   // "" = use the Backend's configured model; anything else is a per-run pick
   // from the models the server advertised on the last connection test.
-  const [model, setModel] = useState("");
+  const [model, setModel] = useState(savedBackend ? (settings.transcribe?.model ?? "") : "");
   // Run state lives in the transcribeRun store so it (and the pump driving
   // it) survives this screen unmounting on a tab switch.
   const files = useTranscribeRun((s) => s.files);
@@ -959,7 +971,9 @@ export default function Transcribe() {
               setBackendId(v);
               setModel(""); // a per-run model pick belongs to ONE backend
               const b = backends.find((x) => x.id === v);
-              if (b) setLanguage(b.language ?? "auto");
+              const lang = b?.language ?? "auto";
+              if (b) setLanguage(lang);
+              persistOptions({ backendId: v, model: "", language: lang });
             }}
             options={backendOptions(backends)}
           />
@@ -973,6 +987,7 @@ export default function Transcribe() {
               clearCopied();
               resetForInputChange();
               setModel(v);
+              persistOptions({ backendId, model: v });
             }}
             options={modelOptions}
           />
@@ -986,6 +1001,7 @@ export default function Transcribe() {
               clearCopied();
               resetForInputChange();
               setLanguage(v);
+              persistOptions({ backendId, language: v });
             }}
             options={LANGUAGES}
           />
