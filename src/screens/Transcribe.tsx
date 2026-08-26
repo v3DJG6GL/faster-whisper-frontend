@@ -13,7 +13,7 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { LANGUAGES } from "@/lib/languages";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
-import { pickAudioFiles, pickExportPath, saveTextFile, isTauri } from "@/lib/api";
+import { pickAudioFiles, pickExportPath, saveTextFile, testConnection, isTauri } from "@/lib/api";
 import {
   addFiles, cancelRun, clearEdits, overallFraction, railIndex, railStages,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
@@ -243,9 +243,32 @@ export default function Transcribe() {
 
   // Per-run model pick: the Backend's configured model plus whatever the last
   // connection test advertised (ConnectionInfo.models). "" = backend default.
+  // The connections store is session-memory and only the Backends screen ran
+  // tests — so until this screen probes on its own, the list stayed at
+  // "Default" forever. Probe once per backend per session, in the background.
+  useEffect(() => {
+    if (!backend || !isTauri || connections[backend.id]) return;
+    let stale = false;
+    testConnection({
+      serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+      backendId: backend.id,
+    })
+      .then((info) => {
+        if (!stale) useApp.getState().setConnection(backend.id, info);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backend?.id, connections[backend?.id ?? ""]]);
+
   const advertised = (backend && connections[backend.id]?.models) || [];
   const modelOptions = [
-    { value: "", label: backend ? `Default · ${backend.model}` : "Default" },
+    {
+      value: "",
+      label: backend?.model ? `Default · ${backend.model}` : "Default · server model",
+    },
     ...advertised
       .filter((m) => m.id !== backend?.model)
       .map((m) => ({ value: m.id, label: m.id })),
