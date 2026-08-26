@@ -1323,8 +1323,17 @@ export default function Transcribe() {
                 aria-valuemax={Math.round(audioLen)}
                 aria-valuenow={Math.round(curTime)}
                 tabIndex={0}
-                className="relative h-5 flex-1 cursor-pointer"
+                className="relative h-5 flex-1 cursor-pointer touch-none"
+                // Pointer capture makes this a real drag scrubber: after the
+                // press, moves anywhere on screen keep seeking until release.
                 onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+                  seekTo(frac * (audioLen || 0));
+                }}
+                onPointerMove={(e) => {
+                  if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
                   seekTo(frac * (audioLen || 0));
@@ -1471,7 +1480,10 @@ export default function Transcribe() {
                         else if (e.key === "Escape") setEditingSpeaker(null);
                       }}
                       aria-label={`Rename ${prettySpeaker(label)}`}
-                      className="ring-signal h-7 w-36 rounded-pill border border-accent/40 bg-surface-2 px-3 text-[12px] text-text outline-none"
+                      className="ring-signal h-7 w-36 rounded-pill border bg-surface-2 px-3 text-[12px] text-text outline-none"
+                      // The border tracks the speaker's own color (live, so
+                      // picking a swatch recolors it immediately).
+                      style={{ borderColor: `color-mix(in srgb, ${color} 55%, transparent)` }}
                     />
                     <span className="inline-flex items-center gap-1">
                       {DEFAULT_SPEAKER_COLORS.map((_, idx) => (
