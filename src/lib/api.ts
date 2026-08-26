@@ -683,12 +683,12 @@ export async function onAppNavigate(cb: (screen: string) => void): Promise<() =>
   return subscribe<string>("app://navigate", cb);
 }
 
-/** Native "open file" dialog → absolute path (or null if cancelled / not in Tauri). */
-export async function pickAudioFile(): Promise<string | null> {
-  if (!isTauri) return null;
+/** Native "open files" dialog → absolute paths ([] if cancelled / not in Tauri). */
+export async function pickAudioFiles(): Promise<string[]> {
+  if (!isTauri) return [];
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({
-    multiple: false,
+    multiple: true,
     directory: false,
     filters: [
       {
@@ -697,7 +697,8 @@ export async function pickAudioFile(): Promise<string | null> {
       },
     ],
   });
-  return typeof selected === "string" ? selected : null;
+  if (Array.isArray(selected)) return selected.filter((p): p is string => typeof p === "string");
+  return typeof selected === "string" ? [selected] : [];
 }
 
 /** Native "choose folder" dialog → absolute path (or null if cancelled / not in Tauri).

@@ -233,9 +233,21 @@ export interface SyncSettings {
   urlOverrides: Record<string, string>;
 }
 
+/** Persisted defaults for the Transcribe screen's per-run options. */
+export interface TranscribeSettings {
+  diarize?: boolean;
+  /** Speaker-count hint; 0 = auto (let the pipeline decide). */
+  numSpeakers?: number;
+  translate?: boolean;
+  exportFormat?: "txt" | "srt" | "vtt" | "lrc" | "json";
+  speakerColorMode?: "off" | "name" | "line" | "line-only";
+  wordTimestamps?: boolean;
+}
+
 export interface AppSettings {
   theme: ThemeName;
   microphoneId: string | null;
+  transcribe?: TranscribeSettings; // Transcribe-screen defaults (per-run options)
   homeProfileId?: string | null; // which Profile the Home button targets (null = first enabled)
   quickAddList?: QuickAddTarget | null; // pinned "Word mappings" list the QuickAdd window targets
   general: GeneralSettings;
