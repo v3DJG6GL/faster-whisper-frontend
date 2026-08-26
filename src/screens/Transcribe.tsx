@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   UploadCloud, FileAudio, X, Loader2, Copy, Check, Plus, RotateCcw, Download,
-  Pencil, Play, Pause, ArrowDownToLine,
+  Pencil, Play, Pause, ArrowDownToLine, Circle, Minus,
 } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
@@ -29,7 +29,7 @@ import { effectiveServerKind } from "@/lib/serverKind";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
   DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExport,
-  type ExportFormat,
+  type ExportFormat, type ExportOptions,
 } from "@/lib/transcriptExport";
 import { cn } from "@/lib/cn";
 import type {
@@ -74,6 +74,28 @@ const MAX_SEGMENT_ROWS = 5_000;
 function chipStyle(color: string) {
   return { color, backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)` };
 }
+
+/** The five export formats as always-visible cards (5 options is below every
+ *  buttons-vs-dropdown threshold — NN/g, Fluent, Apple HIG). The one-liner
+ *  says what the format is FOR; the "in this file" contract says what it
+ *  will contain. */
+const FORMAT_CARDS: { value: ExportFormat; label: string; use: string }[] = [
+  { value: "srt", label: "SRT", use: "video subtitles — VLC, mpv, YouTube" },
+  { value: "vtt", label: "VTT", use: "web video captions — HTML5 players" },
+  { value: "txt", label: "TXT", use: "plain text — read, paste, edit" },
+  { value: "lrc", label: "LRC", use: "synced lyrics — music players" },
+  { value: "json", label: "JSON", use: "full data — every field & word" },
+];
+
+/** One row of the export panel's "in this file" contract. `always` = inherent
+ *  to the format; on/off rows mirror the view toggles (clickable); `na` rows
+ *  stay visible WITH the reason the format can't carry them — never hidden. */
+type ContractRow = {
+  label: string;
+  state: "always" | "on" | "off" | "na";
+  why: string;
+  onToggle?: () => void;
+};
 
 /** Human label for a server progress stage (absent/unknown ⇒ generic). */
 function stageLabel(p: BatchProgress | null): string {
@@ -628,6 +650,143 @@ export default function Transcribe() {
     copyTimer.current = window.setTimeout(() => setCopied(false), 1500);
   };
 
+  /** One source of truth for Save AND the live preview: the display toggles
+   *  map onto the generator options (colors on → "line" mode; names/timestamps
+   *  gate their prefixes). */
+  const exportOpts = (): ExportOptions => ({
+    format: exportFormat,
+    renames: fileRenames,
+    speakerColors: hasSpeakers && colorize ? "line" : "off",
+    speakerNames: showNames,
+    timestamps: showTs,
+    colors: Object.fromEntries(
+      Object.entries(fileColors).map(([l, i]) => [
+        l,
+        DEFAULT_SPEAKER_COLORS[i % DEFAULT_SPEAKER_COLORS.length],
+      ]),
+    ),
+    wordTimestamps: wordTs,
+  });
+
+  /** The "in this file" rows for the selected format (see ContractRow). */
+  const exportContract = (): ContractRow[] => {
+    const hasWords = !!result?.words?.length;
+    const namesRow: ContractRow | null = hasSpeakers
+      ? {
+          label: "Speaker names",
+          state: showNames ? "on" : "off",
+          why: showNames ? "on — mirrors the view toggle" : "off — click to include",
+          onToggle: () => {
+            setShowNames(!showNames);
+            persistOptions({ showSpeakerNames: !showNames });
+          },
+        }
+      : null;
+    const colorsOn = (why: string): ContractRow | null =>
+      hasSpeakers
+        ? {
+            label: "Speaker colors",
+            state: colorize ? "on" : "off",
+            why: colorize ? why : "off — click to include",
+            onToggle: () => {
+              setColorize(!colorize);
+              persistOptions({ colorizeSpeakers: !colorize });
+            },
+          }
+        : null;
+    const colorsNa = (why: string): ContractRow | null =>
+      hasSpeakers ? { label: "Speaker colors", state: "na", why } : null;
+    const wordsNa = (why: string): ContractRow => ({
+      label: "Word timestamps",
+      state: "na",
+      why,
+    });
+    const rows: (ContractRow | null)[] = (() => {
+      switch (exportFormat) {
+        case "srt":
+          return [
+            { label: "Cue timings", state: "always" as const, why: "always — the timing is the format" },
+            namesRow,
+            colorsOn("on — <font> tags, render in VLC & mpv"),
+            wordsNa("SRT can't carry them — use LRC or JSON"),
+          ];
+        case "vtt":
+          return [
+            { label: "Cue timings", state: "always" as const, why: "always — the timing is the format" },
+            namesRow,
+            colorsOn("on — styled cues; render in browsers, video players show plain text"),
+            wordsNa("not exported for VTT — use LRC or JSON"),
+          ];
+        case "txt":
+          return [
+            {
+              label: "Timestamps",
+              state: (showTs ? "on" : "off") as ContractRow["state"],
+              why: showTs ? "on — [mm:ss] line prefixes, mirrors the view toggle" : "off — click to include",
+              onToggle: () => {
+                setShowTs(!showTs);
+                persistOptions({ showTimestamps: !showTs });
+              },
+            },
+            namesRow,
+            colorsNa("plain text can't carry color"),
+            wordsNa("TXT can't carry them — use LRC or JSON"),
+          ];
+        case "lrc":
+          return [
+            { label: "Line timings", state: "always" as const, why: "always — [mm:ss.xx] tags are the format" },
+            namesRow,
+            colorsNa("LRC can't carry color"),
+            hasWords
+              ? {
+                  label: "Word timestamps",
+                  state: (wordTs ? "on" : "off") as ContractRow["state"],
+                  why: wordTs
+                    ? "on — enhanced-LRC <mm:ss.xx> word tags (karaoke players)"
+                    : "off — click to include",
+                  onToggle: () => {
+                    setWordTs(!wordTs);
+                    persistOptions({ wordTimestamps: !wordTs });
+                  },
+                }
+              : wordsNa("this run captured no word timing"),
+          ];
+        case "json":
+          return [
+            { label: "Segment timestamps", state: "always" as const, why: "always — start/end on every segment" },
+            hasSpeakers
+              ? { label: "Speakers", state: "always" as const, why: "always — labels, your renames and colors, as data" }
+              : null,
+            hasWords
+              ? { label: "Word timestamps", state: "always" as const, why: "always — the words array" }
+              : wordsNa("this run captured no word timing"),
+          ];
+      }
+    })();
+    return rows.filter((r): r is ContractRow => r !== null);
+  };
+
+  /** First cues of the ACTUAL file, re-serialized on every card/toggle
+   *  change — the panel's answer to "what am I getting?". */
+  const exportPreview = (): string | null => {
+    if (!result?.segments?.length) return null;
+    const full = editedResult();
+    const segs = (full.segments ?? []).slice(0, 3);
+    const lastEnd = segs[segs.length - 1]?.end ?? 0;
+    const sample: BatchResult = {
+      ...full,
+      segments: segs,
+      words: full.words?.filter((w) => w.start < lastEnd + 0.05),
+      text: segs.map((s) => s.text.trim()).join(" "),
+    };
+    return generateExport(sample, exportOpts());
+  };
+
+  const exportFileName = () => {
+    const stem = selectedPath ? basename(selectedPath).replace(/\.[^.]+$/, "") : "transcript";
+    return `${stem}.${EXPORT_EXTENSIONS[exportFormat]}`;
+  };
+
   const doExport = async () => {
     if (!result || !selectedPath) return;
     setSaveError(null);
@@ -642,23 +801,7 @@ export default function Transcribe() {
     }
     if (!path) return; // cancelled
     try {
-      // The two display switches map onto the generator's color modes:
-      // colors on → "line" (names on) / "line-only"-equivalent (names off);
-      // colors off → plain, with speakerNames gating the prefix.
-      const contents = generateExport(editedResult(), {
-        format: exportFormat,
-        renames: fileRenames,
-        speakerColors: hasSpeakers && colorize ? "line" : "off",
-        speakerNames: showNames,
-        timestamps: showTs,
-        colors: Object.fromEntries(
-          Object.entries(fileColors).map(([l, i]) => [
-            l,
-            DEFAULT_SPEAKER_COLORS[i % DEFAULT_SPEAKER_COLORS.length],
-          ]),
-        ),
-        wordTimestamps: wordTs,
-      });
+      const contents = generateExport(editedResult(), exportOpts());
       await saveTextFile(path, contents);
     } catch (e) {
       setSaveError(String(e));
@@ -1247,7 +1390,7 @@ export default function Transcribe() {
                 aria-expanded={showExport}
               >
                 <Download className="size-4" />
-                Export · {exportFormat.toUpperCase()}
+                Export
               </Button>
             </div>
           </div>
@@ -1416,51 +1559,119 @@ export default function Transcribe() {
           )}
 
           {showExport && (
-            <div className="mb-4 flex flex-wrap items-end gap-4 rounded-xl border border-line bg-surface-2/60 p-4">
-              <div>
-                <label className="mb-2 block text-[12px] font-medium text-dim">Format</label>
-                <Select
-                  ariaLabel="Export format"
-                  className="w-32"
-                  value={exportFormat}
-                  onChange={(v) => {
-                    setExportFormat(v);
-                    persistOptions({ exportFormat: v });
-                  }}
-                  options={[
-                    { value: "srt", label: "SRT" },
-                    { value: "vtt", label: "VTT" },
-                    { value: "txt", label: "TXT" },
-                    { value: "lrc", label: "LRC" },
-                    { value: "json", label: "JSON" },
-                  ]}
-                />
-              </div>
-              {(exportFormat === "lrc" || exportFormat === "json") &&
-                !!result.words?.length && (
-                  <div className="flex h-10 items-center gap-2.5">
-                    <Toggle
-                      checked={wordTs}
-                      ariaLabel="Word timestamps"
-                      onChange={(v) => {
-                        setWordTs(v);
-                        persistOptions({ wordTimestamps: v });
+            <div className="mb-4 rounded-xl border border-line bg-surface-2/60 p-4">
+              {/* Format cards — radio semantics, always visible. */}
+              <div role="radiogroup" aria-label="Export format" className="flex gap-2.5">
+                {FORMAT_CARDS.map((f) => {
+                  const on = exportFormat === f.value;
+                  return (
+                    <button
+                      key={f.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => {
+                        setExportFormat(f.value);
+                        persistOptions({ exportFormat: f.value });
                       }}
-                    />
-                    <span className="text-[12.5px] text-dim">Word timestamps</span>
-                  </div>
+                      className={cn(
+                        "ring-signal min-w-0 flex-1 rounded-xl border px-3 py-2 text-left transition-colors",
+                        on
+                          ? "border-accent/55 bg-accent-soft"
+                          : "border-line bg-surface-2 hover:border-line-strong",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "block font-mono text-[13px] font-medium",
+                          on ? "text-accent" : "text-text",
+                        )}
+                      >
+                        {f.label}
+                      </span>
+                      <span className="mt-0.5 block text-[10.5px] leading-snug text-faint">
+                        {f.use}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* "In this file": the contract. Rows mirror the view toggles
+                  (clicking flips them, live); impossible rows say why. */}
+              <div className="mt-3 rounded-xl border border-line bg-surface/50 px-4 py-2">
+                <div className="py-1 font-mono text-[10.5px] uppercase tracking-label text-faint">
+                  in this file
+                </div>
+                {exportContract().map((r) => {
+                  const icon =
+                    r.state === "na" ? (
+                      <Minus className="size-3.5 shrink-0 text-faint" />
+                    ) : r.state === "off" ? (
+                      <Circle className="size-3.5 shrink-0 text-faint" />
+                    ) : (
+                      <Check className="size-3.5 shrink-0 text-ok" />
+                    );
+                  const inner = (
+                    <>
+                      {icon}
+                      <span
+                        className={cn(
+                          "shrink-0",
+                          r.state === "na"
+                            ? "text-faint"
+                            : r.state === "off"
+                              ? "text-dim"
+                              : "text-text",
+                        )}
+                      >
+                        {r.label}
+                      </span>
+                      <span className="truncate text-[11.5px] text-faint">{r.why}</span>
+                    </>
+                  );
+                  return r.onToggle ? (
+                    <button
+                      key={r.label}
+                      type="button"
+                      aria-pressed={r.state === "on"}
+                      onClick={r.onToggle}
+                      className="ring-signal flex w-full items-center gap-2.5 rounded-md py-1.5 text-left text-[12.5px]"
+                    >
+                      {inner}
+                    </button>
+                  ) : (
+                    <div
+                      key={r.label}
+                      className="flex w-full items-center gap-2.5 py-1.5 text-[12.5px]"
+                    >
+                      {inner}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Live preview: the first cues serialized in the real format. */}
+              <pre className="mt-3 max-h-44 overflow-auto whitespace-pre rounded-xl border border-line bg-surface px-3.5 py-3 font-mono text-[11.5px] leading-relaxed text-dim">
+                {exportPreview() ?? "No segments to preview."}
+              </pre>
+
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <span className="font-mono text-[11.5px] text-faint">{exportFileName()}</span>
+                <span className="flex-1" />
+                {editCount > 0 && (
+                  <span className="font-mono text-[11px] text-faint">
+                    {editCount} correction{editCount === 1 ? "" : "s"} included
+                  </span>
                 )}
-              <Button variant="accent" size="sm" className="h-10" onClick={doExport}>
-                {saved ? <Check className="size-4" /> : <Download className="size-4" />}
-                {saved ? "Saved" : "Save file"}
-              </Button>
-              {saveError && (
-                <span className="text-[12px] text-warn">{stripControlChars(saveError)}</span>
-              )}
-              <span className="basis-full text-[12px] text-faint">
-                The file matches the view: your corrections, and timestamps · speaker names ·
-                colors exactly as switched on above.
-              </span>
+                {saveError && (
+                  <span className="text-[12px] text-warn">{stripControlChars(saveError)}</span>
+                )}
+                <Button variant="accent" size="sm" onClick={doExport}>
+                  {saved ? <Check className="size-4" /> : <Download className="size-4" />}
+                  {saved ? "Saved" : `Save ${exportFormat.toUpperCase()}`}
+                </Button>
+              </div>
             </div>
           )}
 

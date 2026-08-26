@@ -120,8 +120,8 @@ describe("json", () => {
       generateExport(RESULT, { format: "json", renames: { SPEAKER_01: "Reto" } }),
     );
     expect(out.speakers).toEqual([
-      { label: "SPEAKER_00", name: "Speaker 1" },
-      { label: "SPEAKER_01", name: "Reto" },
+      { label: "SPEAKER_00", name: "Speaker 1", color: "#ff9e2c" },
+      { label: "SPEAKER_01", name: "Reto", color: "#6faed9" },
     ]);
     expect(out.segments[1].speakerName).toBe("Reto");
     expect(out.words).toHaveLength(4);

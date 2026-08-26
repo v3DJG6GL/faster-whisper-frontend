@@ -270,6 +270,9 @@ function jsonExport(result: BatchResult, ctx: Ctx): string {
       speakers: ctx.order.map((label) => ({
         label,
         name: nameOf(ctx, label),
+        // The user-chosen (or default) chip color — data for downstream
+        // renderers, so recoloring in the app survives into the export.
+        color: colorOf(ctx, label),
       })),
       segments: (result.segments ?? []).map((s) => ({
         start: s.start,
