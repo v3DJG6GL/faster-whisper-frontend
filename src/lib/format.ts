@@ -30,6 +30,16 @@ export function fmtDuration(seconds: number): string {
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
+/** Seconds → segment timestamp: `0:05.2` · `1:23.4` · `1:02:05.0`. */
+export function fmtTimestamp(seconds: number): string {
+  const s = Math.max(0, seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const ss = sec.toFixed(1).padStart(4, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
 /** Seconds → terse duration for chart axis ticks: `47s` · `33m` · `1.7h`. */
 export function fmtDurationAxis(seconds: number): string {
   const s = Math.max(0, Math.round(seconds || 0));

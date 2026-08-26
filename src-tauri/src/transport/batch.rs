@@ -21,6 +21,14 @@ const MAX_OVERRIDE_NOTICES: usize = 50;
 /// A BCP-47 tag; the longest real ones are ~35 characters.
 const LANGUAGE_MAX: usize = 64;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Segment {
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchResult {
@@ -29,6 +37,9 @@ pub struct BatchResult {
     pub language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
+    /// Per-segment timestamps from verbose_json. Empty when the server omits them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub segments: Vec<Segment>,
     /// Client decode overrides the server refused because the field is
     /// admin-locked (verbose_json only). Empty ⇒ omitted to the frontend.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -42,6 +53,8 @@ struct VerboseJson {
     language: Option<String>,
     #[serde(default)]
     duration: Option<f64>,
+    #[serde(default)]
+    segments: Vec<Segment>,
     #[serde(default)]
     overrides_ignored: Vec<String>,
 }
@@ -186,6 +199,7 @@ async fn post(
             .language
             .map(|s| super::bounded_server_text(&s, LANGUAGE_MAX)),
         duration: parsed.duration,
+        segments: parsed.segments,
         overrides_ignored: parsed
             .overrides_ignored
             .iter()

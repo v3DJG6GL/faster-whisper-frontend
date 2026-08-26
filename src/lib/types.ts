@@ -440,11 +440,20 @@ export interface Config {
   version?: number; // schema version (absent/legacy ⇒ 1; current ⇒ 2)
 }
 
+/** A single segment from verbose_json with its timestamps. */
+export interface TranscriptSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
 /** Result of a batch transcription. */
 export interface BatchResult {
   text: string;
   language?: string;
   duration?: number;
+  /** Per-segment timestamps from verbose_json. */
+  segments?: TranscriptSegment[];
   /** Decode overrides the server refused because the field is admin-locked. */
   overridesIgnored?: string[];
 }

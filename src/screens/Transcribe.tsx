@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { UploadCloud, FileAudio, X, Loader2, Copy, Check } from "lucide-react";
+import { UploadCloud, FileAudio, X, Loader2, Copy, Check, Clock } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, Notice, PageHeader, Select } from "@/components/ui";
 import { LANGUAGES } from "@/lib/languages";
-import { fmtDuration } from "@/lib/format";
+import { fmtDuration, fmtTimestamp } from "@/lib/format";
 import { pickAudioFile, transcribeFile, isTauri } from "@/lib/api";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { stripControlChars } from "@/lib/sanitize";
@@ -34,20 +34,13 @@ export default function Transcribe() {
   const [result, setResult] = useState<BatchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  // Reset per result, so a new (possibly huge) transcript starts collapsed again.
   const [showFullText, setShowFullText] = useState(false);
-  // Identifies the in-flight transcription. Removing/replacing the file (or a new run) bumps it,
-  // so a request that resolves AFTER the user moved on can't strand its (now-stale) result/error
-  // against a different/absent file. The file picker + the clear (X) are reachable during a run.
+  const [showTimestamps, setShowTimestamps] = useState(false);
   const runId = useRef(0);
-  // The "Copied" confirmation timer. Held in a ref so a rapid second Copy click clears the first
-  // timer before re-arming — otherwise the stale timer fires mid-window and flips the label off
-  // early (every other transient timer in the app is cleared the same way).
   const copyTimer = useRef<number | undefined>(undefined);
+  // Prevents a double-click from opening two native file dialogs.
+  const picking = useRef(false);
 
-  // The store boots with a seeded backend, then config hydration (and later edits/removals)
-  // can replace the list with different ids. Re-sync the selection when the current id falls
-  // out of the list, so the Backend dropdown and language don't reference a backend that's gone.
   useEffect(() => {
     if (backends.length && !backends.some((b) => b.id === backendId)) {
       setBackendId(backends[0].id);
@@ -57,16 +50,11 @@ export default function Transcribe() {
 
   const backend = backends.find((b) => b.id === backendId) ?? backends[0];
 
-  // Abandon any in-flight run + clear a settled result/error so a stale transcript/error never shows
-  // against changed inputs (file, backend, language). Bumping runId makes an in-flight commit a no-op
-  // (run() commits only while runId.current === myRun).
   const resetForInputChange = () => {
     runId.current++;
     setResult(null);
     setError(null);
     setBusy(false);
-    // Also clear the "Copied" confirmation (+ its timer): else a new transcript can mount with the
-    // Copy button still showing "Copied" within the residual ~1.5s window — a false confirmation.
     setCopied(false);
     if (copyTimer.current) {
       window.clearTimeout(copyTimer.current);
@@ -75,24 +63,25 @@ export default function Transcribe() {
   };
 
   const choose = async () => {
+    if (picking.current) return;
+    picking.current = true;
     let path: string | null;
     try {
       path = await pickAudioFile();
     } catch (e) {
-      // pickAudioFile dynamic-imports @tauri-apps/plugin-dialog and calls open() — both can reject.
-      // Leave the current selection unchanged and don't let it float as an unhandled rejection
-      // (mirrors run()'s try/catch and Settings.changeRecDir's .catch). A cancel resolves to null, not a reject.
       console.error("pick audio file failed:", e);
       return;
+    } finally {
+      picking.current = false;
     }
     if (path) {
-      resetForInputChange(); // a changed file abandons any in-flight run for the old file
+      resetForInputChange();
       setFilePath(path);
     }
   };
 
   const clearFile = () => {
-    resetForInputChange(); // abandon any in-flight run — its result must not land against no file
+    resetForInputChange();
     setFilePath(null);
   };
 
@@ -102,24 +91,21 @@ export default function Transcribe() {
     setBusy(true);
     setError(null);
     setResult(null);
-    setCopied(false); // an unchanged-inputs re-run also invalidates a prior "Copied"
+    setCopied(false);
     try {
       const res = await transcribeFile({
         serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
         backendId: backend.id,
         model: backend.model,
         language,
-        // Empty backend prompt = inherit the server DEFAULT_PROMPT → omit the field.
         prompt: backend.prompt || undefined,
         decodeOverrides: backend.decodeOverrides,
         overrideProfile: backend.overrideProfile,
         filePath,
       });
-      // Only commit if this is still the current request — the user may have cleared/changed
-      // the file (or started another run) while this one was in flight.
       if (runId.current === myRun) {
         setResult(res);
-        setShowFullText(false); // a new transcript starts collapsed again
+        setShowFullText(false);
       }
     } catch (e) {
       if (runId.current === myRun) setError(String(e));
@@ -128,12 +114,22 @@ export default function Transcribe() {
     }
   };
 
+  const hasSegments = !!(result?.segments && result.segments.length > 0);
+
+  const buildTimestampedText = (): string => {
+    if (!result?.segments) return result?.text ?? "";
+    return result.segments
+      .map((seg) => `[${fmtTimestamp(seg.start)} → ${fmtTimestamp(seg.end)}]  ${seg.text.trim()}`)
+      .join("\n");
+  };
+
   const copy = async () => {
     if (!result) return;
+    const text = showTimestamps && hasSegments ? buildTimestampedText() : result.text;
     try {
-      await navigator.clipboard.writeText(stripControlChars(result.text));
+      await navigator.clipboard.writeText(stripControlChars(text));
     } catch (e) {
-      console.error("clipboard copy failed:", e); // don't flash "Copied" if the write failed
+      console.error("clipboard copy failed:", e);
       return;
     }
     setCopied(true);
@@ -141,7 +137,6 @@ export default function Transcribe() {
     copyTimer.current = window.setTimeout(() => setCopied(false), 1500);
   };
 
-  // Clear a still-pending "Copied" timer if the screen unmounts mid-window.
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);
 
   return (
@@ -195,8 +190,6 @@ export default function Transcribe() {
             ariaLabel="Backend"
             value={backendId}
             onChange={(v) => {
-              // A backend change is an input change: abandon any in-flight run + clear a stale
-              // result/error, else the prior backend's transcript/error shows under the new selection.
               resetForInputChange();
               setBackendId(v);
               const b = backends.find((x) => x.id === v);
@@ -241,20 +234,43 @@ export default function Transcribe() {
                 ? ` · ${result.duration < 60 ? `${result.duration.toFixed(1)}s` : fmtDuration(result.duration)}`
                 : ""}
             </div>
-            <Button variant="ghost" size="sm" onClick={copy}>
-              {copied ? <Check className="size-4 text-ok" /> : <Copy className="size-4" />}
-              {copied ? "Copied" : "Copy"}
-            </Button>
+            <div className="flex items-center gap-2">
+              {hasSegments && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowTimestamps((v) => !v)}
+                  aria-pressed={showTimestamps}
+                >
+                  <Clock className={`size-4 ${showTimestamps ? "text-accent" : ""}`} />
+                  Timestamps
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={copy}>
+                {copied ? <Check className="size-4 text-ok" /> : <Copy className="size-4" />}
+                {copied ? "Copied" : "Copy"}
+              </Button>
+            </div>
           </div>
-          {/* `transport::batch` deliberately leaves `text` untouched ("that IS the output"), so
-              bidi overrides and other invisible format characters from an untrusted server reach
-              this node by design. The Copy button above already strips them; without the same
-              treatment here what the user READS can be reordered relative to what they paste.
-              Same reasoning, and the same helper, as the live partial preview. */}
-          <div className="select-text whitespace-pre-wrap text-[14px] leading-relaxed text-text">
-            {stripControlChars(showFullText ? result.text : result.text.slice(0, TRANSCRIPT_PREVIEW_CHARS))}
-          </div>
-          {!showFullText && result.text.length > TRANSCRIPT_PREVIEW_CHARS && (
+
+          {showTimestamps && hasSegments ? (
+            <div className="select-text text-[14px] leading-relaxed text-text">
+              {result.segments!.map((seg, i) => (
+                <div key={i} className="flex gap-3 py-0.5">
+                  <span className="shrink-0 font-mono text-[12px] tabular-nums text-faint">
+                    {fmtTimestamp(seg.start)}
+                  </span>
+                  <span className="whitespace-pre-wrap">{stripControlChars(seg.text.trim())}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="select-text whitespace-pre-wrap text-[14px] leading-relaxed text-text">
+              {stripControlChars(showFullText ? result.text : result.text.slice(0, TRANSCRIPT_PREVIEW_CHARS))}
+            </div>
+          )}
+
+          {!showTimestamps && !showFullText && result.text.length > TRANSCRIPT_PREVIEW_CHARS && (
             <div className="mt-3 flex items-center gap-3">
               <Button variant="ghost" size="sm" onClick={() => setShowFullText(true)}>
                 Show full transcript
