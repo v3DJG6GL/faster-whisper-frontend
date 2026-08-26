@@ -242,6 +242,9 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             );
             emit_if_active(&appc, epoch, "stream://final", FinalPayload { committed, tail, last });
         }
+        StreamEvent::RecordingSaved(path) => {
+            emit_if_active(&appc, epoch, "stream://recording", path);
+        }
         StreamEvent::Boundary { separator } => {
             tracing::info!("[stream] session {epoch} boundary (hard break)");
             emit_if_active(&appc, epoch, "stream://boundary", separator);
@@ -821,9 +824,11 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
                 &res.text,
                 crate::transport::stream::MAX_TRANSCRIPT,
             );
-            // Label the saved recording with its transcript (sibling .txt), same as streaming.
+            // Label the saved recording with its transcript (sibling .txt), same as streaming —
+            // and tell the client where it landed so its history record can link the audio.
             if let Some(p) = &saved_path {
                 crate::audio::save_transcript_sidecar(p, &text);
+                emit_if_active(&app, epoch, "stream://recording", p.to_string_lossy().to_string());
             }
             // Surface server-locked decode overrides the same way the streaming path's
             // `ready` frame does. The batch POST hands the same list back in its result,

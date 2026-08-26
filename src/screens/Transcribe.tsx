@@ -208,7 +208,8 @@ export default function Transcribe() {
   // Recent transcripts for the idle-screen strip (full list: History screen).
   const historyRecords = useTranscriptHistory((s) => s.records);
   const recentRecords = useMemo(
-    () => historyRecords.filter((r) => r.status === "done").slice(0, 3),
+    // Files only — dictations belong to the History screen's timeline.
+    () => historyRecords.filter((r) => r.status === "done" && r.kind !== "dictation").slice(0, 3),
     [historyRecords],
   );
   useEffect(() => {

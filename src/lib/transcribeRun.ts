@@ -240,6 +240,7 @@ function recordRun(
   const s = get();
   const rec: TranscriptRecord = {
     schemaVersion: 1,
+    kind: "file",
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     sourcePath: path,

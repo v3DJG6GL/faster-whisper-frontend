@@ -25,6 +25,11 @@ pub enum StreamEvent {
     /// Long-silence hard break: the server reset its document. The client should
     /// reset its injection baseline and optionally type `separator` between docs.
     Boundary { separator: String },
+    /// The session's audio was saved to this path ("Keep audio recordings" on).
+    /// Emitted before `Closed` so the client can link its history record to the
+    /// file. Epoch-gated like every other event — a cancelled session's save
+    /// never reaches the UI.
+    RecordingSaved(String),
     Error(String),
     Closed,
 }
@@ -526,6 +531,7 @@ pub async fn run<F>(
                 if !transcript.is_empty() {
                     crate::audio::save_transcript_sidecar(&path, &transcript);
                 }
+                on_event(StreamEvent::RecordingSaved(path.to_string_lossy().into_owned()));
             }
         }
     }

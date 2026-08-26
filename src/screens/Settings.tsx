@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Mic, Check, Play, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus, FolderOpen } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { swap } from "@/lib/arr";
@@ -28,7 +29,7 @@ import type { AudioDevice, OverlayQuickAction, RecordingSettings } from "@/lib/t
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
 import { SyncTab } from "@/screens/SettingsSync";
 
-const TABS = ["General", "Audio", "Recording", "Chip", "Sync", "Permissions"] as const;
+const TABS = ["General", "Audio", "Recording & history", "Chip", "Sync", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
 
 // The keys of RecordingSettings whose value is a boolean (the chip-visibility flags).
@@ -440,9 +441,24 @@ export default function Settings() {
   const chipOff = s.recording.indicatorPosition === "off";
   const updateGeneral = useApp((st) => st.updateGeneral);
   const updateRecording = useApp((st) => st.updateRecording);
+  const updateSettings = useApp((st) => st.updateSettings);
+  /** History settings ride the opaque settings.transcribe blob (merge-patch). */
+  const updateTranscribe = (patch: Partial<NonNullable<typeof s.transcribe>>) =>
+    updateSettings({ transcribe: { ...s.transcribe, ...patch } });
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
   const [evdevMsg, setEvdevMsg] = useState<string | null>(null);
   const [evdevBusy, setEvdevBusy] = useState(false);
+
+  // Deep link: /settings?tab=<name> opens straight onto that tab (the History
+  // screen's retention readout uses it). Consumed once, like Profiles ?edit.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const t = searchParams.get("tab");
+    if (t && (TABS as readonly string[]).includes(t)) {
+      setTab(t as Tab);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     void evdevStatus().then(setEvdev).catch(() => {}); // match the file's other chains; ignore an IPC reject
@@ -613,7 +629,7 @@ export default function Settings() {
 
         {tab === "Audio" && <AudioTab />}
 
-        {tab === "Recording" && (
+        {tab === "Recording & history" && (
           <Card className="px-6">
             <SettingRow title="Keep audio recordings" desc="Save a .wav of each dictation locally.">
               <Toggle checked={s.recording.saveRecordings} onChange={(v) => updateRecording({ saveRecordings: v })} />
@@ -695,7 +711,6 @@ export default function Settings() {
             <SettingRow
               title="Auto-stop hands-free after silence"
               desc="End a hands-free (latch) session after this long with no speech, so it can't run for hours. Set to Never to keep it open until you stop it yourself."
-              last
             >
               <Stepper
                 ariaLabel="auto-stop hands-free after silence"
@@ -707,6 +722,57 @@ export default function Settings() {
                 decimals={0}
                 unit="min"
                 zeroLabel="Never"
+              />
+            </SettingRow>
+            {/* ── History: what the History screen keeps, with its own clocks.
+                Dictations get a stricter default (7 days) than file transcripts;
+                turning dictation history OFF also wipes the stored entries (the
+                Rust retention sweep runs on every save). Sessions into apps
+                blocked by App rules, and empty/cancelled ones, are never saved. */}
+            <SettingRow
+              title="Keep dictation history"
+              desc="Save each dictation session to the History screen — text plus a link to its recording, on this machine only. Turning this off also deletes the stored dictation entries."
+            >
+              <Toggle
+                checked={s.transcribe?.keepDictationHistory ?? true}
+                onChange={(v) => updateTranscribe({ keepDictationHistory: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              title="Delete dictations after"
+              desc="Dictations are usually typed into their target and done — a short window is plenty, and safer."
+              disabled={s.transcribe?.keepDictationHistory === false}
+            >
+              <Select
+                value={String(s.transcribe?.dictationRetentionDays ?? 7)}
+                disabled={s.transcribe?.keepDictationHistory === false}
+                onChange={(v) => updateTranscribe({ dictationRetentionDays: Number(v) })}
+                ariaLabel="Delete dictations after"
+                options={[
+                  { value: "0", label: "Keep forever" },
+                  { value: "1", label: "1 day" },
+                  { value: "7", label: "7 days" },
+                  { value: "30", label: "30 days" },
+                  { value: "90", label: "90 days" },
+                ]}
+              />
+            </SettingRow>
+            <SettingRow
+              title="Delete file transcriptions after"
+              desc="How long finished Transcribe runs stay in History — corrections and speaker names go with them."
+              last
+            >
+              <Select
+                value={String(s.transcribe?.historyRetentionDays ?? 0)}
+                onChange={(v) => updateTranscribe({ historyRetentionDays: Number(v) })}
+                ariaLabel="Delete file transcriptions after"
+                options={[
+                  { value: "0", label: "Keep forever" },
+                  { value: "7", label: "7 days" },
+                  { value: "30", label: "30 days" },
+                  { value: "90", label: "90 days" },
+                  { value: "365", label: "1 year" },
+                ]}
               />
             </SettingRow>
           </Card>

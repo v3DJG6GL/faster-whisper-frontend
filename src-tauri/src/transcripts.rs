@@ -23,6 +23,14 @@ fn transcripts_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Dictation-session records live in a subdirectory so their (stricter)
+/// retention window can sweep independently of file transcriptions. The
+/// top-level listing skips non-`.json` entries, so the subdir is invisible
+/// to the pre-existing sweep.
+fn dictations_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    transcripts_dir(app).map(|d| d.join("dictation"))
+}
+
 /// Record ids are frontend-generated UUIDs — hex + dashes only, so an id can
 /// never traverse out of the transcripts directory.
 fn valid_id(id: &str) -> bool {
@@ -33,14 +41,23 @@ fn valid_id(id: &str) -> bool {
 /// Write (create or replace) one history record. Atomic tmp+rename with
 /// owner-only permissions, cleanup on both failure paths.
 #[tauri::command]
-pub fn save_transcript_record(app: AppHandle, id: String, record: String) -> Result<(), String> {
+pub fn save_transcript_record(
+    app: AppHandle,
+    id: String,
+    record: String,
+    dictation: Option<bool>,
+) -> Result<(), String> {
     if !valid_id(&id) {
         return Err("malformed record id".into());
     }
     if record.len() as u64 > MAX_RECORD_BYTES {
         return Err("transcript record too large".into());
     }
-    let dir = transcripts_dir(&app)?;
+    let dir = if dictation.unwrap_or(false) {
+        dictations_dir(&app)?
+    } else {
+        transcripts_dir(&app)?
+    };
     crate::audio::create_dir_private(&dir)
         .map_err(|e| format!("could not create the transcripts folder: {e}"))?;
     let path = dir.join(format!("{id}.json"));
@@ -61,10 +78,15 @@ pub fn save_transcript_record(app: AppHandle, id: String, record: String) -> Res
 /// is the frontend's job (records carry their own createdAt).
 #[tauri::command]
 pub fn list_transcript_records(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
-    let dir = transcripts_dir(&app)?;
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Ok(out); // no folder yet = empty history
+    read_records_into(&transcripts_dir(&app)?, &mut out);
+    read_records_into(&dictations_dir(&app)?, &mut out);
+    Ok(out)
+}
+
+fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return; // no folder yet = nothing to add
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -81,17 +103,21 @@ pub fn list_transcript_records(app: AppHandle) -> Result<Vec<serde_json::Value>,
             out.push(v);
         }
     }
-    Ok(out)
 }
 
 /// Delete one record's file. The user-facing "Delete" — actually removes data.
+/// Tries both stores: ids are UUIDs, so the same id can only exist in one.
 #[tauri::command]
 pub fn delete_transcript_record(app: AppHandle, id: String) -> Result<(), String> {
     if !valid_id(&id) {
         return Err("malformed record id".into());
     }
-    let dir = transcripts_dir(&app)?;
-    std::fs::remove_file(dir.join(format!("{id}.json"))).map_err(|e| e.to_string())
+    let name = format!("{id}.json");
+    let file_path = transcripts_dir(&app)?.join(&name);
+    if file_path.exists() {
+        return std::fs::remove_file(file_path).map_err(|e| e.to_string());
+    }
+    std::fs::remove_file(dictations_dir(&app)?.join(&name)).map_err(|e| e.to_string())
 }
 
 /// Delete records older than `days` (0 = keep forever). Same shape and
@@ -127,16 +153,48 @@ pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
     removed
 }
 
-/// Enforce the history retention window (settings.transcribe.historyRetentionDays,
-/// 0/absent = keep forever). Called on startup and after every config save,
-/// mirroring `apply_recordings_retention`.
+/// Enforce both history retention windows. Called on startup and after every
+/// config save, mirroring `apply_recordings_retention`.
+/// - File transcriptions: `historyRetentionDays` (0/absent = keep forever).
+/// - Dictations: their own, stricter `dictationRetentionDays` (default 7) —
+///   and when `keepDictationHistory` is off, the whole dictation store is
+///   wiped (the setting's copy promises exactly that).
 pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Config) {
     let days = config.settings.transcribe_retention_days();
-    if days == 0 {
-        return;
+    if days > 0 {
+        if let Ok(dir) = transcripts_dir(app) {
+            prune_transcripts(&dir, days);
+        }
     }
-    if let Ok(dir) = transcripts_dir(app) {
-        prune_transcripts(&dir, days);
+    if let Ok(dir) = dictations_dir(app) {
+        if !config.settings.keep_dictation_history() {
+            wipe_records(&dir);
+        } else {
+            let ddays = config.settings.dictation_retention_days();
+            if ddays > 0 {
+                prune_transcripts(&dir, ddays);
+            }
+        }
+    }
+}
+
+/// Remove every record in `dir` regardless of age ("Keep dictation history"
+/// turned off). Only touches `.json` files, like the prune.
+fn wipe_records(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("json")
+            && std::fs::remove_file(&path).is_ok()
+        {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        tracing::info!("[transcripts] dictation history off: removed {removed} record(s)");
     }
 }
 

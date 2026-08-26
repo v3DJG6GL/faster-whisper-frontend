@@ -22,6 +22,7 @@
 // baseline so the next utterance starts fresh, and optionally type a separator.
 
 import { useApp } from "./store";
+import { attachRecordingPath, recordDictation } from "./transcriptHistory";
 import { effectiveServerUrl } from "./backends";
 import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
 import {
@@ -170,6 +171,61 @@ function signalInsert(kind: "typed" | "clipboard"): void {
  *  clipboard wins over nothing. */
 function endOutcome(): "typed" | "clipboard" | "none" {
   return sessionTyped ? "typed" : sessionClipboard ? "clipboard" : "none";
+}
+
+// ── Dictation history capture ────────────────────────────────────────────────
+// Everything known at session START, frozen at module scope: by settle time the
+// startLiveInner locals (backend/model/language) are long gone and settleIdle
+// itself clears activeProfile. Cleared by cancelLive so a cancelled session's
+// late `closed` can never record it.
+let sessionMeta: {
+  startedAt: number;
+  backendId: string;
+  model: string;
+  language: string;
+  profileName?: string;
+  profileTag?: string;
+  activation?: "hold" | "latch";
+  appId?: string;
+  appTitle?: string;
+  blocked: boolean;
+} | null = null;
+// The saved .wav's path (Rust `stream://recording`, epoch-gated). Usually lands
+// BEFORE settle (both save sites run before the terminal closed/final) — but a
+// slow disk can invert that, so a late arrival patches the already-saved record.
+let sessionRecordingPath: string | null = null;
+let capturedRecordId: string | null = null;
+
+/** Save the finished session to History — the settleIdle hook. Skips: empty
+ *  sessions, App-rules-blocked targets, and the "Keep dictation history" off
+ *  switch. Runs once per session (capturedRecordId latch). */
+function captureDictationHistory(): void {
+  const meta = sessionMeta;
+  if (!meta || capturedRecordId) return;
+  if (meta.blocked) return; // blocked apps are never recorded (the setting's promise)
+  if (useApp.getState().settings.transcribe?.keepDictationHistory === false) return;
+  const text = (bankedDoc + committedDoc).trim();
+  if (!text) return;
+  try {
+    capturedRecordId = recordDictation({
+      text,
+      startedAt: meta.startedAt,
+      durationMs: Math.max(0, Date.now() - meta.startedAt),
+      backendId: meta.backendId,
+      model: meta.model,
+      language: meta.language,
+      appId: meta.appId,
+      appTitle: meta.appTitle,
+      profileName: meta.profileName,
+      profileTag: meta.profileTag,
+      activation: meta.activation,
+      insertMethod: endOutcome(),
+      recordingPath: sessionRecordingPath ?? undefined,
+    });
+  } catch (e) {
+    // History is a convenience — it must never break the session settle.
+    console.error("dictation history capture failed:", e);
+  }
 }
 // Whether we've taken at least one clipboard snapshot this session (live paste) — set the first
 // time a phrase is actually pasted (the snapshot is re-taken PER PHRASE, just before each paste),
@@ -472,6 +528,9 @@ function consumePendingHoldStart(): void {
  *  collapse linger and Home's 10 s "done" card both keep showing the finished transcript
  *  after settle (the next startLive clears it). Fires a queued fast re-press start last. */
 function settleIdle(): void {
+  // Before the state flip: the capture reads the session docs (reset only by
+  // the NEXT startLiveInner / cancelLive) and must run while they're intact.
+  captureDictationHistory();
   useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
   consumePendingHoldStart();
 }
@@ -956,6 +1015,13 @@ async function ensureListeners(): Promise<void> {
         bumpPhraseEnd();
       }
     }
+  });
+
+  await reg<string>("stream://recording", (e) => {
+    // The saved .wav's path. Stash for the capture at settle; if the session
+    // already settled (slow disk), patch the record it produced.
+    sessionRecordingPath = e.payload;
+    if (capturedRecordId) attachRecordingPath(capturedRecordId, e.payload);
   });
 
   await reg<string>("stream://boundary", (e) => {
@@ -1609,6 +1675,26 @@ async function startLiveInner(
       endpoint === "stream" &&
       (method === "clipboard" || activation !== "hold"),
   };
+  // Freeze the history-capture metadata for this session (see sessionMeta).
+  // The profile was stamped into the store synchronously before startLive.
+  {
+    const profId = useApp.getState().activeProfile;
+    const prof = profId ? useApp.getState().profiles.find((p) => p.id === profId) : undefined;
+    sessionMeta = {
+      startedAt: Date.now(),
+      backendId: backend.id,
+      model,
+      language,
+      profileName: prof?.name,
+      profileTag: prof?.tag?.trim() || undefined,
+      activation,
+      appId: targetApp?.isSelf ? undefined : targetApp?.appId,
+      appTitle: targetApp?.isSelf ? undefined : targetApp?.title?.trim() || undefined,
+      blocked: rule?.block ?? false,
+    };
+    sessionRecordingPath = null;
+    capturedRecordId = null;
+  }
   committedDoc = "";
   injectedText = "";
   seenDoc = "";
@@ -1843,6 +1929,7 @@ export async function cancelLive(): Promise<void> {
   clearWarmTimer();
   clearStuckWatchdog();
   stopTargetPoll();
+  sessionMeta = null; // a cancelled session is never recorded to History
   committedDoc = "";
   injectedText = "";
   seenDoc = "";

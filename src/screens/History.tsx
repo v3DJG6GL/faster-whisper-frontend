@@ -1,18 +1,22 @@
-// Transcription history: every finished (or failed) batch run, stored locally
-// as one JSON record per run. Rows are recognition cues (name · time ·
-// duration · language · speakers · model · snippet); Open restores the FULL
-// workbench state on the Transcribe screen. Search covers names AND corrected
-// transcript text — a linear scan is plenty at this scale.
+// History: one day-bucketed timeline for BOTH record kinds — file
+// transcriptions and dictation sessions — filtered by an All/Files/Dictations
+// segment (the call-log pattern) plus "dictated into" app chips. File rows
+// open the full workbench; dictation rows expand INLINE: full text, the saved
+// recording playable in place, Copy as the main action, and "Open in
+// workbench" to re-run the recording through batch transcription (word
+// timestamps → karaoke). Search is global; when the active segment hides
+// matches, a banner names them (NN/g scoped-search guidance).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Check, Download, RotateCcw, Search, Trash2, X,
+  Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, Mic, MicOff,
+  Pause, Play, RotateCcw, Search, Trash2, X,
 } from "lucide-react";
-import { Button, Card, PageHeader, Select, TextInput } from "@/components/ui";
+import { Badge, Button, Card, PageHeader, Segmented, TextInput } from "@/components/ui";
 import { useApp } from "@/lib/store";
 import { fmtDuration } from "@/lib/format";
-import { pickExportPath, saveTextFile } from "@/lib/api";
+import { pickExportPath, readMediaFile, saveTextFile } from "@/lib/api";
 import {
   deleteRecord, loadHistory, recordEditedResult, recordText,
   useTranscriptHistory, type TranscriptRecord,
@@ -44,41 +48,221 @@ function timeOf(iso: string): string {
     : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+const isDictation = (r: TranscriptRecord) => r.kind === "dictation";
+
+/** Human app label from a dictation record — the stored window title, else the
+ *  app id's last dot-segment, capitalized ("org.mozilla.thunderbird" → "Thunderbird"). */
+function appLabel(r: TranscriptRecord): string {
+  if (r.sourceName && r.sourceName !== "Dictation") return r.sourceName;
+  const seg = r.appId?.split(".").pop()?.trim();
+  return seg ? seg.charAt(0).toUpperCase() + seg.slice(1) : "Dictation";
+}
+
+type Segment = "all" | "file" | "dictation";
+
+/** Inline player for a dictation's saved .wav. Loads via readMediaFile → blob
+ *  URL (the asset protocol can't feed WebKitGTK's media stack; blob: is in the
+ *  CSP). A missing/expired file degrades to a one-line note, not an error. */
+function RecordingPlayer({ path }: { path: string }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [src, setSrc] = useState<string | null>(null);
+  const [gone, setGone] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [cur, setCur] = useState(0);
+  const [len, setLen] = useState(0);
+  const [rate, setRate] = useState(1);
+
+  useEffect(() => {
+    let stale = false;
+    let url: string | null = null;
+    readMediaFile(path)
+      .then((buf) => {
+        if (stale) return;
+        url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+        setSrc(url);
+      })
+      .catch(() => {
+        if (!stale) setGone(true);
+      });
+    return () => {
+      stale = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [path]);
+
+  if (gone) {
+    return (
+      <div className="mt-3 text-[12px] text-faint">
+        Audio unavailable — removed by retention, or recordings were off.
+      </div>
+    );
+  }
+  if (!src) return null;
+
+  const toggle = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.paused) void a.play();
+    else a.pause();
+  };
+  const cycleRate = () => {
+    const next = rate === 1 ? 1.5 : rate === 1.5 ? 2 : 1;
+    setRate(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+  };
+  const seekTo = (e: React.PointerEvent<HTMLDivElement>) => {
+    const a = audioRef.current;
+    if (!a || !len) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    a.currentTime = frac * len;
+    setCur(frac * len);
+  };
+
+  return (
+    <div className="mt-3 flex h-9 items-center gap-3 rounded-xl border border-line bg-surface-2 px-3">
+      <audio
+        ref={audioRef}
+        src={src}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        onTimeUpdate={(e) => setCur(e.currentTarget.currentTime)}
+        onLoadedMetadata={(e) => setLen(e.currentTarget.duration)}
+      />
+      <button
+        type="button"
+        onClick={toggle}
+        aria-label={playing ? "Pause" : "Play"}
+        className="ring-signal grid size-6 shrink-0 place-items-center rounded-md text-accent"
+      >
+        {playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
+      </button>
+      <span className="font-mono text-[11px] text-dim">{fmtDuration(cur)}</span>
+      <div
+        role="slider"
+        aria-label="Seek"
+        aria-valuemin={0}
+        aria-valuemax={Math.round(len)}
+        aria-valuenow={Math.round(cur)}
+        tabIndex={0}
+        className="relative h-4 flex-1 cursor-pointer touch-none"
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          seekTo(e);
+        }}
+        onPointerMove={(e) => {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) seekTo(e);
+        }}
+        onKeyDown={(e) => {
+          const a = audioRef.current;
+          if (!a) return;
+          if (e.key === "ArrowLeft") a.currentTime = Math.max(0, a.currentTime - 5);
+          if (e.key === "ArrowRight") a.currentTime = Math.min(len, a.currentTime + 5);
+        }}
+      >
+        <div className="absolute left-0 top-1/2 h-1 w-full -translate-y-1/2 rounded-full bg-line" />
+        <div
+          className="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-accent"
+          style={{ width: `${len ? (cur / len) * 100 : 0}%` }}
+        />
+        <div
+          className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-text"
+          style={{ left: `${len ? (cur / len) * 100 : 0}%` }}
+        />
+      </div>
+      <span className="font-mono text-[11px] text-faint">{fmtDuration(len)}</span>
+      <button
+        type="button"
+        onClick={cycleRate}
+        className="ring-signal rounded-md border border-line px-1.5 py-0.5 font-mono text-[10.5px] text-dim hover:text-text"
+        aria-label="Playback speed"
+      >
+        {rate}×
+      </button>
+    </div>
+  );
+}
+
 export default function History() {
   const navigate = useNavigate();
   const records = useTranscriptHistory((s) => s.records);
   const loaded = useTranscriptHistory((s) => s.loaded);
   const running = useTranscribeRun((s) => s.running);
   const settings = useApp((s) => s.settings);
+  const backends = useApp((s) => s.backends);
   const updateSettings = useApp((s) => s.updateSettings);
   const [query, setQuery] = useState("");
+  const [segment, setSegment] = useState<Segment>("all");
+  const [appFilter, setAppFilter] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   // Two-step delete: first click arms the row, second click deletes.
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const copyTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     void loadHistory();
   }, []);
+  useEffect(() => () => window.clearTimeout(copyTimer.current), []);
 
-  const filtered = useMemo(() => {
+  // Search first (global — both kinds, names AND text), THEN the segment/app
+  // facets, so hidden matches can be counted and surfaced.
+  const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return records;
     return records.filter(
       (r) =>
         r.sourceName.toLowerCase().includes(q) ||
+        (r.appId ?? "").toLowerCase().includes(q) ||
         recordText(r).toLowerCase().includes(q),
     );
   }, [records, query]);
 
+  const fileMatches = useMemo(() => searched.filter((r) => !isDictation(r)), [searched]);
+  const dictMatches = useMemo(() => searched.filter(isDictation), [searched]);
+
+  // "dictated into" chips: top apps across the (searched) dictations.
+  const apps = useMemo(() => {
+    const counts = new Map<string, { label: string; n: number }>();
+    for (const r of dictMatches) {
+      const key = r.appId ?? appLabel(r);
+      const cur = counts.get(key);
+      if (cur) cur.n++;
+      else counts.set(key, { label: appLabel(r), n: 1 });
+    }
+    return [...counts.entries()]
+      .map(([id, v]) => ({ id, ...v }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 6);
+  }, [dictMatches]);
+
+  const visible = useMemo(() => {
+    let out = segment === "file" ? fileMatches : segment === "dictation" ? dictMatches : searched;
+    if (appFilter && segment === "dictation") {
+      out = out.filter((r) => (r.appId ?? appLabel(r)) === appFilter);
+    }
+    return out;
+  }, [searched, fileMatches, dictMatches, segment, appFilter]);
+
+  // Matches the active segment hides (never silently — NN/g scoped search).
+  const hiddenMatches =
+    query.trim() && segment !== "all"
+      ? searched.length - (segment === "file" ? fileMatches.length : dictMatches.length)
+      : 0;
+
   const buckets = useMemo(() => {
     const out: { label: string; items: TranscriptRecord[] }[] = [];
-    for (const rec of filtered) {
+    for (const rec of visible) {
       const label = dayBucket(rec.createdAt);
       const last = out[out.length - 1];
       if (last && last.label === label) last.items.push(rec);
       else out.push({ label, items: [rec] });
     }
     return out;
-  }, [filtered]);
+  }, [visible]);
+
+  const dictationOff = settings.transcribe?.keepDictationHistory === false;
 
   const open = (rec: TranscriptRecord) => {
     if (openHistoryRecord(rec)) navigate("/transcribe");
@@ -88,6 +272,25 @@ export default function History() {
     if (running) return;
     addFiles([rec.sourcePath]);
     navigate("/transcribe");
+  };
+
+  /** Dictation → workbench: the recording is just an audio file, so batch
+   *  transcription (word timestamps) gives it the full karaoke treatment. */
+  const openRecordingInWorkbench = (rec: TranscriptRecord) => {
+    if (running || !rec.sourcePath) return;
+    addFiles([rec.sourcePath]);
+    navigate("/transcribe");
+  };
+
+  const copyText = (rec: TranscriptRecord) => {
+    void navigator.clipboard
+      .writeText(stripControlChars(recordText(rec)))
+      .then(() => {
+        setCopiedId(rec.id);
+        window.clearTimeout(copyTimer.current);
+        copyTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
+      })
+      .catch((e) => console.error("history copy failed:", e));
   };
 
   const quickExport = async (rec: TranscriptRecord) => {
@@ -125,56 +328,386 @@ export default function History() {
     }
   };
 
-  const retention = String(settings.transcribe?.historyRetentionDays ?? 0);
+  const deleteButton = (rec: TranscriptRecord) => (
+    <Button
+      variant="ghost"
+      size="sm"
+      className={cn(armedDelete === rec.id && "text-rec")}
+      title={armedDelete === rec.id ? "Click again to delete from disk" : "Delete"}
+      onClick={() => {
+        if (armedDelete === rec.id) {
+          deleteRecord(rec.id);
+          setArmedDelete(null);
+          if (expandedId === rec.id) setExpandedId(null);
+        } else {
+          setArmedDelete(rec.id);
+        }
+      }}
+    >
+      <Trash2 className="size-3.5" />
+      {armedDelete === rec.id && "Delete?"}
+    </Button>
+  );
+
+  const copyButton = (rec: TranscriptRecord, accent = false) => (
+    <Button
+      variant={accent ? "default" : "ghost"}
+      size="sm"
+      title="Copy the dictated text"
+      onClick={() => copyText(rec)}
+    >
+      {copiedId === rec.id ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      {accent && (copiedId === rec.id ? "Copied" : "Copy text")}
+    </Button>
+  );
+
+  const dictMeta = (rec: TranscriptRecord) => {
+    const parts = [
+      timeOf(rec.createdAt),
+      rec.result?.duration ? fmtDuration(rec.result.duration) : "",
+      rec.wordCount ? `${rec.wordCount} words` : "",
+      rec.language && rec.language !== "auto" ? safeDisplayText(rec.language, 12) : "",
+      rec.insertMethod === "clipboard"
+        ? "clipboard only"
+        : rec.insertMethod === "none"
+          ? "not inserted"
+          : "",
+    ].filter(Boolean);
+    return parts.join(" · ");
+  };
+
+  const glyph = (rec: TranscriptRecord) => {
+    if (isDictation(rec)) {
+      return (
+        <span className="grid size-6 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent" title="Dictation">
+          <Mic className="size-3.5" />
+        </span>
+      );
+    }
+    const ok = rec.status === "done";
+    return (
+      <span
+        className={cn(
+          "grid size-6 shrink-0 place-items-center rounded-lg",
+          ok ? "bg-ok/15 text-ok" : "bg-rec/15 text-rec",
+        )}
+        title={ok ? "File transcription" : "File transcription · failed"}
+      >
+        {ok ? <FileAudio className="size-3.5" /> : <X className="size-3.5" />}
+      </span>
+    );
+  };
+
+  const dictationExpanded = (rec: TranscriptRecord) => {
+    const backendName = backends.find((b) => b.id === rec.backendId)?.name;
+    return (
+      <div key={rec.id} className="my-2 rounded-xl border border-accent/25 bg-accent-soft/30 px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          {glyph(rec)}
+          <span className="text-[13px] font-medium text-text">{safeDisplayText(appLabel(rec), 60)}</span>
+          {rec.profileTag && <Badge tone="accent">{safeDisplayText(rec.profileTag, 20)}</Badge>}
+          <span className="flex-1 font-mono text-[11px] text-faint">{dictMeta(rec)}</span>
+          {copyButton(rec, true)}
+          {deleteButton(rec)}
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Collapse"
+            onClick={() => setExpandedId(null)}
+          >
+            <ChevronUp className="size-3.5" />
+          </Button>
+        </div>
+        {rec.sourcePath ? (
+          <RecordingPlayer path={rec.sourcePath} />
+        ) : (
+          <div className="mt-3 text-[12px] text-faint">
+            No recording linked — “Keep audio recordings” was off for this session.
+          </div>
+        )}
+        <div className="mt-3 max-h-56 select-text overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
+          {stripControlChars(recordText(rec))}
+        </div>
+        <div className="mt-3 flex items-center gap-4 border-t border-line pt-3">
+          {rec.profileName && (
+            <span className="font-mono text-[11px] text-faint">
+              profile <span className="text-dim">{safeDisplayText(rec.profileName, 40)}{rec.activation ? ` · ${rec.activation}` : ""}</span>
+            </span>
+          )}
+          {backendName && (
+            <span className="font-mono text-[11px] text-faint">
+              backend <span className="text-dim">{safeDisplayText(backendName, 40)}</span>
+            </span>
+          )}
+          {rec.model && (
+            <span className="font-mono text-[11px] text-faint">
+              model <span className="text-dim">{safeDisplayText(rec.model.split("/").pop() ?? rec.model, 40)}</span>
+            </span>
+          )}
+          {rec.insertMethod && (
+            <span className="font-mono text-[11px] text-faint">
+              inserted <span className="text-dim">{rec.insertMethod}</span>
+            </span>
+          )}
+          {rec.sourcePath && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto"
+              disabled={running}
+              title={
+                running
+                  ? "Wait for the current run to finish"
+                  : "Transcribe the recording with word timestamps — karaoke, corrections, exports"
+              }
+              onClick={() => openRecordingInWorkbench(rec)}
+            >
+              <ExternalLink className="size-3.5" />
+              Open in workbench
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const dictationRow = (rec: TranscriptRecord, last: boolean) => (
+    <div
+      key={rec.id}
+      role="button"
+      tabIndex={0}
+      onClick={() => setExpandedId(rec.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setExpandedId(rec.id);
+        }
+      }}
+      className={cn(
+        "ring-signal flex w-full cursor-pointer items-center gap-3 rounded-md py-3 text-left",
+        !last && "border-b border-line",
+      )}
+    >
+      {glyph(rec)}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2.5">
+          <span className="truncate text-[13px] font-medium text-text">
+            {safeDisplayText(appLabel(rec), 60)}
+          </span>
+          {rec.profileTag && <Badge tone="accent">{safeDisplayText(rec.profileTag, 20)}</Badge>}
+          <span className="shrink-0 font-mono text-[11px] text-faint">{dictMeta(rec)}</span>
+        </div>
+        <div className="truncate text-[12px] text-faint">
+          {stripControlChars(recordText(rec)).slice(0, 160)}
+        </div>
+      </div>
+      {/* Action clicks must not also expand the row (the whole row is a button). */}
+      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
+      <span className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+        {copyButton(rec)}
+        {deleteButton(rec)}
+      </span>
+    </div>
+  );
+
+  const fileRow = (rec: TranscriptRecord, last: boolean) => {
+    const ok = rec.status === "done";
+    const speakers = ok ? speakerOrder(rec.result ?? { text: "" }).length : 0;
+    const edited =
+      !!Object.keys(rec.edits ?? {}).length || !!Object.keys(rec.speakerEdits ?? {}).length;
+    const snippet = ok
+      ? stripControlChars(recordText(rec)).slice(0, 160)
+      : stripControlChars(rec.error ?? "failed").slice(0, 160);
+    return (
+      <div key={rec.id} className={cn("flex items-center gap-3 py-3", !last && "border-b border-line")}>
+        {glyph(rec)}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2.5">
+            <span className="truncate text-[13px] font-medium text-text">
+              {safeDisplayText(rec.sourceName, 120)}
+            </span>
+            <span className="shrink-0 font-mono text-[11px] text-faint">
+              {timeOf(rec.createdAt)}
+              {rec.result?.duration ? ` · ${fmtDuration(rec.result.duration)}` : ""}
+              {rec.language ? ` · ${safeDisplayText(rec.language, 12)}` : ""}
+              {speakers > 1 ? ` · ${speakers} speakers` : ""}
+              {rec.model ? ` · ${safeDisplayText(rec.model.split("/").pop() ?? rec.model, 40)}` : ""}
+            </span>
+            {edited && <span className="shrink-0 font-mono text-[11px] text-accent">· edited</span>}
+          </div>
+          <div className={cn("truncate text-[12px]", ok ? "text-faint" : "text-rec")}>{snippet}</div>
+        </div>
+        {ok && (
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Export with your current format and display settings"
+            onClick={() => void quickExport(rec)}
+          >
+            <Download className="size-3.5" />
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={running}
+          title={
+            running
+              ? "Wait for the current run to finish"
+              : "Transcribe this file again with your current settings"
+          }
+          onClick={() => retry(rec)}
+        >
+          <RotateCcw className="size-3.5" />
+        </Button>
+        {deleteButton(rec)}
+        {ok && (
+          <Button
+            variant="default"
+            size="sm"
+            disabled={running}
+            title={running ? "Wait for the current run to finish" : "Open in the workbench"}
+            onClick={() => open(rec)}
+          >
+            Open
+          </Button>
+        )}
+      </div>
+    );
+  };
+
+  const segLabel = segment === "file" ? "files" : "dictations";
 
   return (
     <div className="mx-auto max-w-[820px] px-10 py-12">
       <PageHeader eyebrow="transcribe" title="History">
-        Every transcription is kept here — stored only on this machine, with your
-        corrections, speaker names and colors.
+        Everything you transcribed or dictated — stored only on this machine.
       </PageHeader>
 
       <div className="mt-8 flex items-center gap-3">
+        <Segmented
+          value={segment}
+          onChange={(v) => {
+            setSegment(v);
+            if (v !== "dictation") setAppFilter(null);
+          }}
+          options={[
+            { value: "all", label: `All · ${searched.length}` },
+            { value: "file", label: `Files · ${fileMatches.length}` },
+            { value: "dictation", label: `Dictations · ${dictMatches.length}` },
+          ]}
+        />
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-faint" />
           <TextInput
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search names and transcript text…"
+            placeholder="Search names, apps and text…"
             aria-label="Search history"
             className="pl-10"
           />
         </div>
-        <span className="shrink-0 font-mono text-[11px] text-faint">
-          {records.length} transcript{records.length === 1 ? "" : "s"}
-        </span>
-        <Select
-          value={retention}
-          onChange={(v) =>
-            updateSettings({
-              transcribe: { ...settings.transcribe, historyRetentionDays: Number(v) },
-            })
-          }
-          ariaLabel="Delete history after"
-          className="w-36"
-          options={[
-            { value: "0", label: "Keep forever" },
-            { value: "7", label: "7 days" },
-            { value: "30", label: "30 days" },
-            { value: "90", label: "90 days" },
-            { value: "365", label: "1 year" },
-          ]}
-        />
+        <button
+          type="button"
+          onClick={() => navigate(`/settings?tab=${encodeURIComponent("Recording & history")}`)}
+          className="ring-signal shrink-0 rounded-md font-mono text-[11px] text-faint hover:text-text"
+          title="Retention and dictation-history settings"
+        >
+          retention · Settings
+        </button>
       </div>
+
+      {segment === "dictation" && apps.length > 1 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="font-mono text-[11px] text-faint">dictated into</span>
+          {apps.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              aria-pressed={appFilter === a.id}
+              onClick={() => setAppFilter((f) => (f === a.id ? null : a.id))}
+              className={cn(
+                "ring-signal rounded-pill border px-2.5 py-0.5 text-[11.5px] transition-colors",
+                appFilter === a.id
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-line text-dim hover:text-text",
+              )}
+            >
+              {safeDisplayText(a.label, 30)} · {a.n}
+            </button>
+          ))}
+          {appFilter && (
+            <button
+              type="button"
+              onClick={() => setAppFilter(null)}
+              className="ring-signal rounded-md text-[11.5px] text-faint hover:text-text"
+            >
+              clear
+            </button>
+          )}
+        </div>
+      )}
+
+      {segment === "dictation" && dictationOff && (
+        <Card className="mt-4 flex items-center gap-3 px-5 py-3.5">
+          <MicOff className="size-4 shrink-0 text-faint" />
+          <span className="flex-1 text-[12.5px] text-dim">
+            Dictation history is off — sessions aren’t being saved. File transcriptions are still kept.
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              updateSettings({
+                transcribe: { ...settings.transcribe, keepDictationHistory: true },
+              })
+            }
+          >
+            Turn on
+          </Button>
+        </Card>
+      )}
+
+      {hiddenMatches > 0 && (
+        <div className="mt-4 flex items-center gap-2.5 rounded-xl border border-accent/25 bg-accent-soft/40 px-4 py-2.5 text-[12.5px] text-dim">
+          <Search className="size-3.5 shrink-0 text-accent" />
+          <span className="flex-1">
+            {visible.length} match{visible.length === 1 ? "" : "es"} in {segLabel} —{" "}
+            {hiddenMatches} more in {segment === "file" ? "dictations" : "files"}
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => setSegment("all")}>
+            Show all
+          </Button>
+        </div>
+      )}
 
       {loaded && !records.length && (
         <Card className="mt-6 p-8 text-center text-[13px] text-dim">
-          Nothing here yet — transcribe a file and it will be kept automatically.
+          Nothing here yet — transcribe a file or dictate something and it will be kept automatically.
         </Card>
       )}
-      {loaded && records.length > 0 && !filtered.length && (
+      {loaded && records.length > 0 && !visible.length && (
         <Card className="mt-6 p-8 text-center text-[13px] text-dim">
-          No transcript matches "{safeDisplayText(query, 80)}".
+          {query.trim()
+            ? `No ${segment === "all" ? "entries" : segLabel} match "${safeDisplayText(query, 80)}".`
+            : `No ${segment === "all" ? "entries" : segLabel}${appFilter ? " for this app" : ""} yet.`}
+          <div className="mt-3 flex items-center justify-center gap-2">
+            {query.trim() && segment !== "all" && searched.length > visible.length && (
+              <Button variant="default" size="sm" onClick={() => setSegment("all")}>
+                Show all types · {searched.length}
+              </Button>
+            )}
+            {query.trim() && (
+              <Button variant="ghost" size="sm" onClick={() => setQuery("")}>
+                Clear search
+              </Button>
+            )}
+            {appFilter && (
+              <Button variant="ghost" size="sm" onClick={() => setAppFilter(null)}>
+                Clear app filter
+              </Button>
+            )}
+          </div>
         </Card>
       )}
 
@@ -185,103 +718,11 @@ export default function History() {
           </div>
           <Card className="mt-2 px-5 py-1">
             {bucket.items.map((rec, i) => {
-              const ok = rec.status === "done";
-              const speakers = ok ? speakerOrder(rec.result ?? { text: "" }).length : 0;
-              const edited =
-                !!Object.keys(rec.edits ?? {}).length ||
-                !!Object.keys(rec.speakerEdits ?? {}).length;
-              const snippet = ok
-                ? stripControlChars(recordText(rec)).slice(0, 160)
-                : stripControlChars(rec.error ?? "failed").slice(0, 160);
-              return (
-                <div
-                  key={rec.id}
-                  className={cn(
-                    "flex items-center gap-3 py-3",
-                    i < bucket.items.length - 1 && "border-b border-line",
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "grid size-6 shrink-0 place-items-center rounded-full",
-                      ok ? "bg-ok/15 text-ok" : "bg-rec/15 text-rec",
-                    )}
-                  >
-                    {ok ? <Check className="size-3.5" /> : <X className="size-3.5" />}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2.5">
-                      <span className="truncate text-[13px] font-medium text-text">
-                        {safeDisplayText(rec.sourceName, 120)}
-                      </span>
-                      <span className="shrink-0 font-mono text-[11px] text-faint">
-                        {timeOf(rec.createdAt)}
-                        {rec.result?.duration ? ` · ${fmtDuration(rec.result.duration)}` : ""}
-                        {rec.language ? ` · ${safeDisplayText(rec.language, 12)}` : ""}
-                        {speakers > 1 ? ` · ${speakers} speakers` : ""}
-                        {rec.model ? ` · ${safeDisplayText(rec.model.split("/").pop() ?? rec.model, 40)}` : ""}
-                      </span>
-                      {edited && (
-                        <span className="shrink-0 font-mono text-[11px] text-accent">· edited</span>
-                      )}
-                    </div>
-                    <div className={cn("truncate text-[12px]", ok ? "text-faint" : "text-rec")}>
-                      {snippet}
-                    </div>
-                  </div>
-                  {ok && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="Export with your current format and display settings"
-                      onClick={() => void quickExport(rec)}
-                    >
-                      <Download className="size-3.5" />
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={running}
-                    title={
-                      running
-                        ? "Wait for the current run to finish"
-                        : "Transcribe this file again with your current settings"
-                    }
-                    onClick={() => retry(rec)}
-                  >
-                    <RotateCcw className="size-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={cn(armedDelete === rec.id && "text-rec")}
-                    title={armedDelete === rec.id ? "Click again to delete from disk" : "Delete"}
-                    onClick={() => {
-                      if (armedDelete === rec.id) {
-                        deleteRecord(rec.id);
-                        setArmedDelete(null);
-                      } else {
-                        setArmedDelete(rec.id);
-                      }
-                    }}
-                  >
-                    <Trash2 className="size-3.5" />
-                    {armedDelete === rec.id && "Delete?"}
-                  </Button>
-                  {ok && (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      disabled={running}
-                      title={running ? "Wait for the current run to finish" : "Open in the workbench"}
-                      onClick={() => open(rec)}
-                    >
-                      Open
-                    </Button>
-                  )}
-                </div>
-              );
+              const last = i === bucket.items.length - 1;
+              if (isDictation(rec)) {
+                return expandedId === rec.id ? dictationExpanded(rec) : dictationRow(rec, last);
+              }
+              return fileRow(rec, last);
             })}
           </Card>
         </div>

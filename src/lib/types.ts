@@ -259,8 +259,14 @@ export interface TranscribeSettings {
   showSpeakerNames?: boolean;
   colorizeSpeakers?: boolean;
   /** Transcription-history retention window in days; 0/absent = keep forever.
-   *  The one transcribe key Rust reads (its startup/save pruning sweep). */
+   *  Read by Rust (its startup/save pruning sweep). */
   historyRetentionDays?: number;
+  /** Record dictation sessions to History. Default (absent) = true; turning
+   *  it off also wipes the stored dictation records (Rust sweep). */
+  keepDictationHistory?: boolean;
+  /** Dictation-history retention in days; absent = the 7-day default, 0 =
+   *  keep forever. Read by Rust, swept independently of file transcripts. */
+  dictationRetentionDays?: number;
 }
 
 export interface AppSettings {

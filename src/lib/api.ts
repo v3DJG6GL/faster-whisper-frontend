@@ -877,9 +877,13 @@ export async function saveTextFile(path: string, contents: string): Promise<void
 
 /** Persist one transcription-history record (opaque JSON, atomic write).
  *  `record` is pre-serialized by the caller so Rust never re-encodes it. */
-export async function saveTranscriptRecord(id: string, record: string): Promise<void> {
+export async function saveTranscriptRecord(
+  id: string,
+  record: string,
+  dictation = false,
+): Promise<void> {
   if (!isTauri) return;
-  await invoke("save_transcript_record", { id, record });
+  await invoke("save_transcript_record", { id, record, dictation });
 }
 
 /** All locally stored transcription-history records (unordered; each carries

@@ -12,6 +12,12 @@ import type { BatchResult, TranscribeOptions } from "./types";
 
 export interface TranscriptRecord {
   schemaVersion: 1;
+  /** Absent (pre-v2 records) = "file". Dictation records reuse the same
+   *  shape: sourceName carries the target-app label, sourcePath the saved
+   *  recording's path ("" when recordings are off/expired), result.text the
+   *  session text and result.duration its length in seconds — so search,
+   *  snippets, buckets and the meta line work unchanged. */
+  kind?: "file" | "dictation";
   id: string; // crypto.randomUUID()
   createdAt: string; // ISO
   sourcePath: string;
@@ -32,6 +38,15 @@ export interface TranscriptRecord {
   speakerColors?: Record<string, number>;
   edits?: Record<number, string>;
   speakerEdits?: Record<number, string>;
+  // ── dictation-only metadata ──
+  /** Focused app id at session start (also the filter facet). */
+  appId?: string;
+  profileName?: string;
+  profileTag?: string;
+  activation?: "hold" | "latch";
+  /** What actually happened to the text (endOutcome). */
+  insertMethod?: "typed" | "clipboard" | "none";
+  wordCount?: number;
 }
 
 interface HistoryState {
@@ -92,9 +107,61 @@ export function upsertRecord(rec: TranscriptRecord): void {
   useTranscriptHistory.setState((s) => ({
     records: newestFirst([rec, ...s.records.filter((r) => r.id !== rec.id)]),
   }));
-  void saveTranscriptRecord(rec.id, JSON.stringify(rec)).catch((e) =>
+  void saveTranscriptRecord(rec.id, JSON.stringify(rec), rec.kind === "dictation").catch((e) =>
     console.error("history save failed:", e),
   );
+}
+
+/** Everything a finished dictation session hands over (streaming.ts). */
+export interface DictationCapture {
+  text: string;
+  startedAt: number; // Date.now() at session start
+  durationMs: number;
+  backendId: string;
+  model: string;
+  language: string;
+  appId?: string;
+  appTitle?: string;
+  profileName?: string;
+  profileTag?: string;
+  activation?: "hold" | "latch";
+  insertMethod: "typed" | "clipboard" | "none";
+  recordingPath?: string;
+}
+
+/** Save a finished dictation session as a history record; returns its id so
+ *  the recording path can be attached when it arrives after the fact. */
+export function recordDictation(cap: DictationCapture): string {
+  const rec: TranscriptRecord = {
+    schemaVersion: 1,
+    kind: "dictation",
+    id: crypto.randomUUID(),
+    createdAt: new Date(cap.startedAt).toISOString(),
+    sourcePath: cap.recordingPath ?? "",
+    sourceName: cap.appTitle?.trim() || cap.appId?.trim() || "Dictation",
+    status: "done",
+    tookMs: cap.durationMs,
+    backendId: cap.backendId,
+    model: cap.model,
+    language: cap.language,
+    result: { text: cap.text, duration: cap.durationMs / 1000 },
+    appId: cap.appId,
+    profileName: cap.profileName,
+    profileTag: cap.profileTag,
+    activation: cap.activation,
+    insertMethod: cap.insertMethod,
+    wordCount: cap.text.split(/\s+/).filter(Boolean).length,
+  };
+  upsertRecord(rec);
+  return rec.id;
+}
+
+/** Late-link the saved recording (the Rust event can land after the session
+ *  settles). No-op when the record is gone (deleted, or capture skipped). */
+export function attachRecordingPath(id: string, path: string): void {
+  const rec = useTranscriptHistory.getState().records.find((r) => r.id === id);
+  if (!rec || rec.sourcePath === path) return;
+  upsertRecord({ ...rec, sourcePath: path });
 }
 
 /** Remove one record — mirror and disk. */

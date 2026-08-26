@@ -575,12 +575,34 @@ impl AppSettings {
     /// History retention window in days (0 = keep forever) from the opaque
     /// `transcribe` blob — the one transcribe key Rust interprets.
     pub fn transcribe_retention_days(&self) -> u32 {
+        self.transcribe_days("historyRetentionDays", 0)
+    }
+
+    /// Dictation-history retention window (days; 0 = keep forever). Defaults to
+    /// 7 — dictations are typed into their target and done, so their record
+    /// expires faster than file transcriptions by design.
+    pub fn dictation_retention_days(&self) -> u32 {
+        self.transcribe_days("dictationRetentionDays", 7)
+    }
+
+    /// Whether dictation sessions are recorded to History at all. Default on —
+    /// consistent with "Keep audio recordings", which already stores each
+    /// dictation's text sidecar. Off also wipes the existing dictation store.
+    pub fn keep_dictation_history(&self) -> bool {
         self.transcribe
             .as_ref()
-            .and_then(|v| v.get("historyRetentionDays"))
+            .and_then(|v| v.get("keepDictationHistory"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    }
+
+    fn transcribe_days(&self, key: &str, default: u32) -> u32 {
+        self.transcribe
+            .as_ref()
+            .and_then(|v| v.get(key))
             .and_then(|v| v.as_u64())
             .map(|d| d.min(u64::from(u32::MAX)) as u32)
-            .unwrap_or(0)
+            .unwrap_or(default)
     }
 }
 
