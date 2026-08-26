@@ -241,8 +241,15 @@ export interface TranscribeSettings {
   translate?: boolean;
   separateBgm?: boolean;
   exportFormat?: "txt" | "srt" | "vtt" | "lrc" | "json";
+  /** Legacy export color mode — superseded by the three display toggles
+   *  below; still read once as their migration default (old synced blobs). */
   speakerColorMode?: "off" | "name" | "line" | "line-only";
   wordTimestamps?: boolean;
+  /** Display toggles (the view IS the export): "[mm:ss]" prefixes, speaker
+   *  name chips/prefixes, per-speaker line coloring. */
+  showTimestamps?: boolean;
+  showSpeakerNames?: boolean;
+  colorizeSpeakers?: boolean;
 }
 
 export interface AppSettings {

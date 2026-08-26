@@ -22,6 +22,14 @@ export interface ExportOptions {
   colors?: Record<string, string>;
   /** LRC only: emit enhanced-LRC inline word tags from `words`. */
   wordTimestamps?: boolean;
+  /** Emit speaker-name prefixes / voice tags at all (default true). Off +
+   *  a color mode = the colored line carries no name (the old "line-only"
+   *  is exactly names:false + colors:on in the screen's toggle model). */
+  speakerNames?: boolean;
+  /** TXT only: per-segment "[mm:ss]" line prefixes instead of speaker-turn
+   *  paragraphs (the screen's Timestamps toggle; cue formats always carry
+   *  times — that is the format). */
+  timestamps?: boolean;
 }
 
 /** Default per-speaker colors, cycled by first-appearance order. Eight
@@ -96,6 +104,8 @@ interface Ctx {
   opts: ExportOptions;
   order: string[];
   hasSpeakers: boolean;
+  /** hasSpeakers AND the speakerNames option — name prefixes wanted. */
+  names: boolean;
 }
 
 function nameOf(ctx: Ctx, label: string): string {
@@ -116,8 +126,28 @@ function vttEscape(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** 61.2 → "01:01" / 3661 → "1:01:01" — human timestamps for TXT lines. */
+function txtTime(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h > 0 ? `${h}:${pad2(m)}:${pad2(sec)}` : `${pad2(m)}:${pad2(sec)}`;
+}
+
 function txtExport(result: BatchResult, ctx: Ctx): string {
-  if (!ctx.hasSpeakers || !result.segments?.length) {
+  if (ctx.opts.timestamps && result.segments?.length) {
+    // Timestamps on: one "[mm:ss] Name: text" line per segment.
+    return (
+      result.segments
+        .map((seg) => {
+          const prefix = seg.speaker && ctx.names ? `${nameOf(ctx, seg.speaker)}: ` : "";
+          return `[${txtTime(seg.start)}] ${prefix}${clean(seg.text)}`;
+        })
+        .join("\n") + "\n"
+    );
+  }
+  if (!ctx.names || !result.segments?.length) {
     return stripControlChars(result.text).trim() + "\n";
   }
   // One paragraph per speaking TURN (consecutive same-speaker segments merge).
@@ -146,10 +176,13 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
 function srtLine(ctx: Ctx, seg: TranscriptSegment): string {
   const text = clean(seg.text);
   if (!seg.speaker || !ctx.hasSpeakers) return text;
-  const name = nameOf(ctx, seg.speaker);
   const mode = ctx.opts.speakerColors ?? "off";
-  if (mode === "off") return `${name}: ${text}`;
+  if (mode === "off") {
+    return ctx.names ? `${nameOf(ctx, seg.speaker)}: ${text}` : text;
+  }
   const color = colorOf(ctx, seg.speaker);
+  if (!ctx.names) return `<font color="${color}">${text}</font>`;
+  const name = nameOf(ctx, seg.speaker);
   // <font color> is the de-facto SRT styling convention (VLC/mpv honor it).
   if (mode === "name") return `<font color="${color}">${name}:</font> ${text}`;
   if (mode === "line") return `<font color="${color}">${name}: ${text}</font>`;
@@ -186,12 +219,16 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
     if (!seg.speaker || !ctx.hasSpeakers) {
       out.push(text);
     } else {
-      const name = vttEscape(nameOf(ctx, seg.speaker));
       const cls = `spk${Math.max(0, ctx.order.indexOf(seg.speaker)) + 1}`;
-      if (mode === "off") out.push(`<v ${name}>${text}</v>`);
-      else if (mode === "name") out.push(`<c.${cls}>${name}:</c> ${text}`);
-      else if (mode === "line") out.push(`<c.${cls}>${name}: ${text}</c>`);
-      else out.push(`<c.${cls}>${text}</c>`);
+      if (!ctx.names) {
+        out.push(mode === "off" ? text : `<c.${cls}>${text}</c>`);
+      } else {
+        const name = vttEscape(nameOf(ctx, seg.speaker));
+        if (mode === "off") out.push(`<v ${name}>${text}</v>`);
+        else if (mode === "name") out.push(`<c.${cls}>${name}:</c> ${text}`);
+        else if (mode === "line") out.push(`<c.${cls}>${name}: ${text}</c>`);
+        else out.push(`<c.${cls}>${text}</c>`);
+      }
     }
     out.push("");
   });
@@ -208,7 +245,7 @@ function lrcExport(result: BatchResult, ctx: Ctx): string {
   const useWords = !!ctx.opts.wordTimestamps && words.length > 0;
   const out: string[] = [];
   for (const seg of result.segments ?? []) {
-    const prefix = seg.speaker && ctx.hasSpeakers ? `${nameOf(ctx, seg.speaker)}: ` : "";
+    const prefix = seg.speaker && ctx.names ? `${nameOf(ctx, seg.speaker)}: ` : "";
     if (useWords) {
       const ws = wordsFor(words, seg);
       if (ws.length) {
@@ -252,7 +289,12 @@ function jsonExport(result: BatchResult, ctx: Ctx): string {
 /** Render `result` in the requested format. Pure — safe to golden-test. */
 export function generateExport(result: BatchResult, opts: ExportOptions): string {
   const order = speakerOrder(result);
-  const ctx: Ctx = { opts, order, hasSpeakers: order.length > 0 };
+  const ctx: Ctx = {
+    opts,
+    order,
+    hasSpeakers: order.length > 0,
+    names: order.length > 0 && opts.speakerNames !== false,
+  };
   switch (opts.format) {
     case "txt":
       return txtExport(result, ctx);

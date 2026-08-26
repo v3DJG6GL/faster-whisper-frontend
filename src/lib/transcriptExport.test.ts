@@ -144,3 +144,43 @@ describe("sanitisation", () => {
     expect(out).toContain("BadName: pay 005$ now");
   });
 });
+
+describe("display-toggle model (speakerNames / timestamps)", () => {
+  it("srt: names off + color mode drops the name, keeps the colored line", () => {
+    const out = generateExport(RESULT, {
+      format: "srt",
+      speakerColors: "line",
+      speakerNames: false,
+    });
+    expect(out).toContain('<font color="#ff9e2c">Hello there.</font>');
+    expect(out).not.toContain("Speaker 1");
+  });
+
+  it("srt: names off + colors off is plain text", () => {
+    const out = generateExport(RESULT, { format: "srt", speakerNames: false });
+    expect(out).toContain("Hello there.");
+    expect(out).not.toContain("Speaker 1");
+    expect(out).not.toContain("<font");
+  });
+
+  it("vtt: names off drops voice tags and name prefixes", () => {
+    const out = generateExport(RESULT, { format: "vtt", speakerNames: false });
+    expect(out).not.toContain("<v ");
+    expect(out).toContain("Hello there.");
+  });
+
+  it("txt: timestamps on emits per-segment [mm:ss] lines", () => {
+    const out = generateExport(RESULT, { format: "txt", timestamps: true });
+    expect(out).toContain("[00:00] Speaker 1: Hello there.");
+  });
+
+  it("txt: timestamps on + names off has bare timestamped lines", () => {
+    const out = generateExport(RESULT, {
+      format: "txt",
+      timestamps: true,
+      speakerNames: false,
+    });
+    expect(out).toContain("[00:00] Hello there.");
+    expect(out).not.toContain("Speaker 1");
+  });
+});

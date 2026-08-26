@@ -1,10 +1,12 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   UploadCloud, FileAudio, X, Loader2, Copy, Check, Plus, RotateCcw, Download,
+  Pencil, Play, Pause, ArrowDownToLine,
 } from "lucide-react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
 import {
-  Button, Card, DisclosureToggle, Notice, PageHeader, Segmented, Select,
+  Button, Card, DisclosureToggle, Notice, PageHeader, Select,
   SettingRow, Stepper, Toggle,
 } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
@@ -13,9 +15,10 @@ import { LANGUAGES } from "@/lib/languages";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
 import { pickAudioFiles, pickExportPath, saveTextFile, isTauri } from "@/lib/api";
 import {
-  addFiles, cancelRun, overallFraction, railIndex, railStages,
+  addFiles, cancelRun, clearEdits, overallFraction, railIndex, railStages,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
-  setRename, setSpeakerColor as setSpeakerColorAction, startRun,
+  setRename, setSegmentEdit, setSegmentSpeaker,
+  setSpeakerColor as setSpeakerColorAction, startRun,
   useTranscribeRun, STAGE_WEIGHTS,
   type RailStage, type RunContext,
 } from "@/lib/transcribeRun";
@@ -24,7 +27,7 @@ import { effectiveServerKind } from "@/lib/serverKind";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
   DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExport,
-  type ExportFormat, type SpeakerColorMode,
+  type ExportFormat,
 } from "@/lib/transcriptExport";
 import { cn } from "@/lib/cn";
 import type {
@@ -51,8 +54,6 @@ const MAX_IGNORED_SHOWN = 50;
  *  character preview above (each segment is a DOM row; an hour of speech is ~1-2k rows,
  *  fine; a hostile response could carry far more). */
 const MAX_SEGMENT_ROWS = 5_000;
-
-type View = "text" | "time" | "speakers";
 
 /** Chip styling from a speaker's CSS color (a --spk-N token, so it follows
  *  the light/dark theme): readable text, a soft fill, and a solid dot. */
@@ -156,8 +157,9 @@ export default function Transcribe() {
   const stageMeta = useTranscribeRun((s) => s.stageMeta);
   const renames = useTranscribeRun((s) => s.renames);
   const speakerColors = useTranscribeRun((s) => s.speakerColors);
+  const edits = useTranscribeRun((s) => s.edits);
+  const speakerEdits = useTranscribeRun((s) => s.speakerEdits);
   const lastOptions = useTranscribeRun((s) => s.lastOptions);
-  const [view, setView] = useState<View>("text");
   const [copied, setCopied] = useState(false);
   // Reset per result, so a new (possibly huge) transcript starts collapsed again.
   const [showFullText, setShowFullText] = useState(false);
@@ -178,10 +180,28 @@ export default function Transcribe() {
   const [exportFormat, setExportFormat] = useState<ExportFormat>(
     () => settings.transcribe?.exportFormat ?? "srt",
   );
-  const [colorMode, setColorMode] = useState<SpeakerColorMode>(
-    () => settings.transcribe?.speakerColorMode ?? "off",
-  );
   const [wordTs, setWordTs] = useState(() => settings.transcribe?.wordTimestamps ?? false);
+  // Display toggles — the view IS the export (Copy and Save match what is on
+  // screen). Defaults migrate from the legacy speakerColorMode once.
+  const [showTs, setShowTs] = useState(() => settings.transcribe?.showTimestamps ?? false);
+  const [showNames, setShowNames] = useState(
+    () => settings.transcribe?.showSpeakerNames ?? (settings.transcribe?.speakerColorMode !== "line-only"),
+  );
+  const [colorize, setColorize] = useState(() => {
+    const legacy = settings.transcribe?.speakerColorMode;
+    return settings.transcribe?.colorizeSpeakers ?? (legacy ? legacy !== "off" : true);
+  });
+  // Pre-export corrections mode.
+  const [editMode, setEditMode] = useState(false);
+  const [reassignRow, setReassignRow] = useState<number | null>(null);
+  // Built-in playback with karaoke follow.
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [curTime, setCurTime] = useState(0);
+  const [audioLen, setAudioLen] = useState(0);
+  const [rate, setRate] = useState(1);
+  const [follow, setFollow] = useState(true);
+  const [audioBroken, setAudioBroken] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
@@ -336,8 +356,6 @@ export default function Transcribe() {
   const speakers = result ? speakersOf(result) : [];
   const hasSegments = !!result?.segments?.length;
   const hasSpeakers = speakers.length > 0;
-  const effectiveView: View =
-    view === "speakers" && !hasSpeakers ? "text" : view === "time" && !hasSegments ? "text" : view;
   const fileRenames = (selectedPath && renames[selectedPath]) || {};
   const fileColors = (selectedPath && speakerColors[selectedPath]) || {};
   const displayName = (label: string) =>
@@ -360,23 +378,169 @@ export default function Transcribe() {
     setEditingSpeaker(null);
   };
 
+  // Corrections layered over the server transcript — the segments every
+  // surface renders, copies and exports.
+  const fileEdits = (selectedPath && edits[selectedPath]) || {};
+  const fileSpkEdits = (selectedPath && speakerEdits[selectedPath]) || {};
+  const editCount = Object.keys(fileEdits).length + Object.keys(fileSpkEdits).length;
+  const effSegments = useMemo(
+    () =>
+      (result?.segments ?? []).map((seg, i) => ({
+        ...seg,
+        text: fileEdits[i] ?? seg.text,
+        speaker: fileSpkEdits[i] ?? seg.speaker,
+        edited: fileEdits[i] !== undefined || fileSpkEdits[i] !== undefined,
+      })),
+    [result, fileEdits, fileSpkEdits],
+  );
+
+  // Word index ranges per segment (karaoke + word-level exports). One pass:
+  // words arrive time-ordered; each word belongs to the first segment whose
+  // window it falls into.
+  const segWordRanges = useMemo(() => {
+    const words = result?.words ?? [];
+    const segs = result?.segments ?? [];
+    let wi = 0;
+    return segs.map((seg) => {
+      while (wi < words.length && words[wi].start < seg.start - 0.05) wi++;
+      const from = wi;
+      while (wi < words.length && words[wi].start < seg.end + 0.05) wi++;
+      return [from, wi] as const;
+    });
+  }, [result]);
+
+  /** The result with corrections applied — what Save writes. Words of a
+   *  text-edited segment are dropped (their timings no longer match). */
+  const editedResult = (): BatchResult => {
+    if (!result) return { text: "" };
+    if (!editCount) return result;
+    const segs = effSegments.map(({ edited: _edited, ...seg }) => seg);
+    const textEdited = new Set(Object.keys(fileEdits).map(Number));
+    const words = (result.words ?? []).filter((_w, wi) =>
+      !segWordRanges.some(([from, to], si) => textEdited.has(si) && wi >= from && wi < to),
+    );
+    return {
+      ...result,
+      text: segs.map((seg) => seg.text.trim()).join(" "),
+      segments: segs,
+      ...(words.length ? { words } : { words: [] }),
+    };
+  };
+
   const copyText = (): string => {
     if (!result) return "";
-    if (effectiveView === "time" && result.segments) {
-      return result.segments
-        .map((s) => `[${fmtTimestamp(s.start)} → ${fmtTimestamp(s.end)}]  ${s.text.trim()}`)
-        .join("\n");
-    }
-    if (effectiveView === "speakers" && result.segments) {
-      return result.segments
-        .map((s) => {
-          const who = s.speaker ? `${displayName(s.speaker)}: ` : "";
-          return `[${fmtTimestamp(s.start)}]  ${who}${s.text.trim()}`;
-        })
-        .join("\n");
-    }
-    return result.text;
+    if (!effSegments.length) return result.text;
+    return effSegments
+      .map((seg) => {
+        const ts = showTs ? `[${fmtTimestamp(seg.start)}] ` : "";
+        const who = showNames && seg.speaker ? `${displayName(seg.speaker)}: ` : "";
+        return `${ts}${who}${seg.text.trim()}`;
+      })
+      .join("\n");
   };
+
+  // ── playback + karaoke follow ────────────────────────────────────────────
+  // The picked file plays straight from disk via the asset protocol; word
+  // timestamps drive the highlight (timeupdate ticks a few times a second).
+  const audioSrc = useMemo(
+    () => (selectedPath && isTauri ? convertFileSrc(selectedPath) : undefined),
+    [selectedPath],
+  );
+
+  useEffect(() => {
+    // New file: stop playback, forget position/errors, re-arm follow.
+    setPlaying(false);
+    setCurTime(0);
+    setAudioLen(0);
+    setAudioBroken(false);
+    setFollow(true);
+    setEditMode(false);
+    setReassignRow(null);
+  }, [selectedPath]);
+
+  const seekTo = (t: number) => {
+    const a = audioRef.current;
+    if (!a || !Number.isFinite(t)) return;
+    a.currentTime = Math.max(0, Math.min(audioLen || t, t));
+    setCurTime(a.currentTime);
+  };
+
+  const togglePlay = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.paused) void a.play().catch(() => setAudioBroken(true));
+    else a.pause();
+  };
+
+  const cycleRate = () => {
+    const next = rate >= 2 ? 1 : rate === 1 ? 1.5 : 2;
+    setRate(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+  };
+
+  // Current segment / word under the playhead (words are time-ordered).
+  const activeSegIdx = useMemo(() => {
+    if (!playing && curTime === 0) return -1;
+    const segs = result?.segments ?? [];
+    for (let i = segs.length - 1; i >= 0; i--) {
+      if (curTime >= segs[i].start) return curTime < segs[i].end + 0.3 ? i : -1;
+    }
+    return -1;
+  }, [result, curTime, playing]);
+  const activeWordIdx = useMemo(() => {
+    const words = result?.words ?? [];
+    let lo = 0;
+    let hi = words.length - 1;
+    let best = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (words[mid].start <= curTime) {
+        best = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    return best >= 0 && curTime < (words[best].end ?? 0) + 0.4 ? best : -1;
+  }, [result, curTime]);
+
+  // Follow: keep the active row centred while playing; any manual wheel
+  // scroll disarms it (the chip re-arms).
+  useEffect(() => {
+    if (!follow || !playing || activeSegIdx < 0) return;
+    document
+      .getElementById(`seg-row-${activeSegIdx}`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [activeSegIdx, follow, playing]);
+  useEffect(() => {
+    if (!playing || !follow) return;
+    const disarm = () => setFollow(false);
+    window.addEventListener("wheel", disarm, { passive: true });
+    window.addEventListener("touchmove", disarm, { passive: true });
+    return () => {
+      window.removeEventListener("wheel", disarm);
+      window.removeEventListener("touchmove", disarm);
+    };
+  }, [playing, follow]);
+
+  // Space play/pause, arrows ±5 s — never while typing somewhere.
+  useEffect(() => {
+    if (!audioSrc || !result) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (e.key === " ") {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        seekTo(curTime - 5);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        seekTo(curTime + 5);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   const copy = async () => {
     if (!result) return;
@@ -405,10 +569,15 @@ export default function Transcribe() {
     }
     if (!path) return; // cancelled
     try {
-      const contents = generateExport(result, {
+      // The two display switches map onto the generator's color modes:
+      // colors on → "line" (names on) / "line-only"-equivalent (names off);
+      // colors off → plain, with speakerNames gating the prefix.
+      const contents = generateExport(editedResult(), {
         format: exportFormat,
         renames: fileRenames,
-        speakerColors: hasSpeakers ? colorMode : "off",
+        speakerColors: hasSpeakers && colorize ? "line" : "off",
+        speakerNames: showNames,
+        timestamps: showTs,
         colors: Object.fromEntries(
           Object.entries(fileColors).map(([l, i]) => [
             l,
@@ -437,12 +606,6 @@ export default function Transcribe() {
   );
 
   // ── render ───────────────────────────────────────────────────────────────
-  const viewOptions: { value: View; label: string }[] = [
-    { value: "text", label: "Text" },
-    ...(hasSegments ? [{ value: "time" as const, label: "Timestamps" }] : []),
-    ...(hasSpeakers ? [{ value: "speakers" as const, label: "Speakers" }] : []),
-  ];
-
   return (
     <div className="mx-auto max-w-[820px] px-10 py-12">
       <PageHeader eyebrow="batch" title="Transcribe a file">
@@ -994,29 +1157,11 @@ export default function Transcribe() {
               {hasSpeakers ? ` · ${speakers.length} speakers` : ""}
             </div>
             <div className="flex items-center gap-2">
-              {viewOptions.length > 1 && (
-                <div
-                  role="group"
-                  aria-label="Transcript view"
-                  className="inline-flex rounded-pill border border-line bg-surface-2 p-[3px]"
-                >
-                  {viewOptions.map((o) => (
-                    <button
-                      key={o.value}
-                      type="button"
-                      aria-pressed={o.value === effectiveView}
-                      onClick={() => setView(o.value)}
-                      className={cn(
-                        "ring-signal rounded-pill px-3 py-0.5 text-[12px] font-medium transition-colors",
-                        o.value === effectiveView
-                          ? "bg-accent text-accent-ink"
-                          : "text-dim hover:text-text",
-                      )}
-                    >
-                      {o.label}
-                    </button>
-                  ))}
-                </div>
+              {hasSegments && !editMode && (
+                <Button variant="ghost" size="sm" onClick={() => setEditMode(true)}>
+                  <Pencil className="size-4" />
+                  Edit
+                </Button>
               )}
               <Button variant="ghost" size="sm" onClick={copy}>
                 {copied ? <Check className="size-4 text-ok" /> : <Copy className="size-4" />}
@@ -1033,6 +1178,153 @@ export default function Transcribe() {
               </Button>
             </div>
           </div>
+
+          {editMode && (
+            <div className="mb-3 flex items-center gap-3 rounded-xl border border-accent/35 bg-accent-soft px-4 py-2.5">
+              <Pencil className="size-4 shrink-0 text-accent" />
+              <span className="text-[13px] font-medium text-accent">Editing transcript</span>
+              <span className="text-[12px] text-dim">
+                {editCount
+                  ? `${editCount} correction${editCount === 1 ? "" : "s"} — they apply to Copy and every export`
+                  : "click a sentence to correct it · click a speaker chip to reassign"}
+              </span>
+              <span className="flex-1" />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  if (selectedPath) clearEdits(selectedPath);
+                  setEditMode(false);
+                  setReassignRow(null);
+                }}
+              >
+                Discard
+              </Button>
+              <Button
+                variant="accent"
+                size="sm"
+                onClick={() => {
+                  setEditMode(false);
+                  setReassignRow(null);
+                }}
+              >
+                Done
+              </Button>
+            </div>
+          )}
+
+          {audioSrc && !audioBroken && (
+            <div className="mb-3 flex items-center gap-3.5 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2.5">
+              {/* key forces a clean reload per file */}
+              <audio
+                key={selectedPath ?? "none"}
+                ref={audioRef}
+                src={audioSrc}
+                preload="metadata"
+                onLoadedMetadata={(e) => {
+                  setAudioLen(e.currentTarget.duration || 0);
+                  e.currentTarget.playbackRate = rate;
+                }}
+                onTimeUpdate={(e) => setCurTime(e.currentTarget.currentTime)}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+                onEnded={() => setPlaying(false)}
+                onError={() => setAudioBroken(true)}
+              />
+              <button
+                type="button"
+                aria-label={playing ? "Pause" : "Play"}
+                onClick={togglePlay}
+                className="ring-signal grid size-9 shrink-0 place-items-center rounded-full bg-accent text-accent-ink"
+              >
+                {playing ? <Pause className="size-4" /> : <Play className="ml-0.5 size-4" />}
+              </button>
+              <span className="shrink-0 font-mono text-[12px] tabular-nums text-text">
+                {fmtTimestamp(curTime)}
+                <span className="text-faint"> / {fmtTimestamp(audioLen || result.duration || 0)}</span>
+              </span>
+              <div
+                role="slider"
+                aria-label="Seek"
+                aria-valuemin={0}
+                aria-valuemax={Math.round(audioLen)}
+                aria-valuenow={Math.round(curTime)}
+                tabIndex={0}
+                className="relative h-5 flex-1 cursor-pointer"
+                onPointerDown={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+                  seekTo(frac * (audioLen || 0));
+                }}
+              >
+                <div className="absolute inset-x-0 top-1/2 h-[5px] -translate-y-1/2 overflow-hidden rounded-pill bg-surface-2">
+                  <div
+                    className="h-full rounded-pill bg-accent"
+                    style={{ width: `${audioLen ? Math.min(100, (curTime / audioLen) * 100) : 0}%` }}
+                  />
+                </div>
+                <span
+                  className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-text shadow"
+                  style={{ left: `${audioLen ? Math.min(100, (curTime / audioLen) * 100) : 0}%` }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={cycleRate}
+                className="ring-signal shrink-0 rounded-pill border border-line px-2.5 py-0.5 font-mono text-[11.5px] text-dim hover:text-text"
+                title="Playback speed"
+              >
+                {rate}×
+              </button>
+              <button
+                type="button"
+                onClick={() => setFollow((v) => !v)}
+                aria-pressed={follow}
+                title="Auto-scroll to the spoken segment"
+                className={cn(
+                  "ring-signal inline-flex shrink-0 items-center gap-1.5 rounded-pill border px-2.5 py-0.5 text-[11.5px] font-medium",
+                  follow
+                    ? "border-accent/35 bg-accent-soft text-accent"
+                    : "border-line bg-surface-2 text-dim",
+                )}
+              >
+                <ArrowDownToLine className="size-3" />
+                Follow
+              </button>
+            </div>
+          )}
+
+          {hasSegments && (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              {(
+                [
+                  ["Timestamps", showTs, (v: boolean) => { setShowTs(v); persistOptions({ showTimestamps: v }); }, true],
+                  ["Speaker names", showNames, (v: boolean) => { setShowNames(v); persistOptions({ showSpeakerNames: v }); }, hasSpeakers],
+                  ["Colors", colorize, (v: boolean) => { setColorize(v); persistOptions({ colorizeSpeakers: v }); }, hasSpeakers],
+                ] as const
+              ).map(([label, on, setter, available]) =>
+                available ? (
+                  <button
+                    key={label}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setter(!on)}
+                    className={cn(
+                      "ring-signal inline-flex h-7 items-center rounded-pill border px-3 text-[12px] font-medium transition-colors",
+                      on
+                        ? "border-accent/35 bg-accent-soft text-accent"
+                        : "border-line bg-surface-2 text-dim hover:text-text",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ) : null,
+              )}
+              <span className="text-[11.5px] text-faint">
+                the view is the export — Copy and files match what you see
+              </span>
+            </div>
+          )}
 
           {showExport && (
             <div className="mb-4 flex flex-wrap items-end gap-4 rounded-xl border border-line bg-surface-2/60 p-4">
@@ -1069,27 +1361,6 @@ export default function Transcribe() {
                     <span className="text-[12.5px] text-dim">Word timestamps</span>
                   </div>
                 )}
-              {hasSpeakers && (exportFormat === "srt" || exportFormat === "vtt") && (
-                <div>
-                  <label className="mb-2 block text-[12px] font-medium text-dim">
-                    Speaker colors
-                  </label>
-                  <Segmented
-                    ariaLabel="Speaker colors"
-                    value={colorMode}
-                    onChange={(v) => {
-                      setColorMode(v);
-                      persistOptions({ speakerColorMode: v });
-                    }}
-                    options={[
-                      { value: "off", label: "Off" },
-                      { value: "name", label: "Name" },
-                      { value: "line", label: "Line" },
-                      { value: "line-only", label: "Line only" },
-                    ]}
-                  />
-                </div>
-              )}
               <Button variant="accent" size="sm" className="h-10" onClick={doExport}>
                 {saved ? <Check className="size-4" /> : <Download className="size-4" />}
                 {saved ? "Saved" : "Save file"}
@@ -1097,10 +1368,14 @@ export default function Transcribe() {
               {saveError && (
                 <span className="text-[12px] text-warn">{stripControlChars(saveError)}</span>
               )}
+              <span className="basis-full text-[12px] text-faint">
+                The file matches the view: your corrections, and timestamps · speaker names ·
+                colors exactly as switched on above.
+              </span>
             </div>
           )}
 
-          {effectiveView === "speakers" && (
+          {hasSpeakers && showNames && (
             <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-line pb-3">
               {speakers.map((label) => {
                 const color = colorOf(label);
@@ -1166,36 +1441,174 @@ export default function Transcribe() {
               bidi overrides and other invisible format characters from an untrusted server reach
               this node by design. The Copy button above already strips them; without the same
               treatment here what the user READS can be reordered relative to what they paste. */}
-          {effectiveView === "text" ? (
+          {!hasSegments ? (
             <div className="select-text whitespace-pre-wrap text-[14px] leading-relaxed text-text">
               {stripControlChars(showFullText ? result.text : result.text.slice(0, TRANSCRIPT_PREVIEW_CHARS))}
             </div>
           ) : (
             <div className="select-text text-[14px] leading-relaxed text-text">
-              {(result.segments ?? []).slice(0, MAX_SEGMENT_ROWS).map((seg, i) => (
-                <div key={i} className="flex gap-3 py-0.5">
-                  <span className="shrink-0 pt-0.5 font-mono text-[12px] tabular-nums text-faint">
-                    {fmtTimestamp(seg.start)}
-                  </span>
-                  {effectiveView === "speakers" && seg.speaker && (
-                    <span
-                      className="mt-0.5 inline-flex shrink-0 items-center gap-1.5 self-start rounded-pill py-0.5 pl-2 pr-2.5 text-[12px] font-medium"
-                      style={chipStyle(colorOf(seg.speaker))}
-                    >
+              {effSegments.slice(0, MAX_SEGMENT_ROWS).map((seg, i) => {
+                const isActive = i === activeSegIdx && !editMode;
+                const range = segWordRanges[i];
+                const words = result.words ?? [];
+                // Word spans only on the ACTIVE, untouched segment — keeps
+                // the DOM light and karaoke honest (edited text has no
+                // matching word timings any more).
+                const karaoke =
+                  isActive && !seg.edited && range && range[0] < range[1];
+                const lineColor =
+                  colorize && seg.speaker ? { color: colorOf(seg.speaker) } : undefined;
+                return (
+                  <div
+                    key={i}
+                    id={`seg-row-${i}`}
+                    className={cn(
+                      "relative flex gap-3 rounded-lg px-1.5 py-0.5 -mx-1.5",
+                      isActive && "bg-accent-soft/40",
+                      editMode && seg.edited && "border-l-2 border-ok/60 pl-2",
+                    )}
+                  >
+                    {showTs && (
+                      <button
+                        type="button"
+                        title="Jump here"
+                        onClick={() => seekTo(seg.start)}
+                        className={cn(
+                          "ring-signal shrink-0 cursor-pointer self-start pt-0.5 font-mono text-[12px] tabular-nums",
+                          isActive ? "text-accent" : "text-faint hover:text-dim",
+                        )}
+                      >
+                        {fmtTimestamp(seg.start)}
+                      </button>
+                    )}
+                    {showNames && seg.speaker && (
+                      <button
+                        type="button"
+                        title={editMode ? "Reassign this segment's speaker" : undefined}
+                        disabled={!editMode}
+                        onClick={() => setReassignRow(reassignRow === i ? null : i)}
+                        className={cn(
+                          "mt-0.5 inline-flex shrink-0 items-center gap-1.5 self-start rounded-pill py-0.5 pl-2 pr-2.5 text-[12px] font-medium",
+                          editMode && "ring-signal cursor-pointer",
+                        )}
+                        style={chipStyle(colorOf(seg.speaker))}
+                      >
+                        <span
+                          className="size-[7px] rounded-full"
+                          style={{ backgroundColor: colorOf(seg.speaker) }}
+                        />
+                        {displayName(seg.speaker)}
+                      </button>
+                    )}
+                    {editMode && reassignRow === i && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-10"
+                          onClick={() => setReassignRow(null)}
+                        />
+                        <div className="absolute left-16 top-7 z-20 flex w-44 flex-col gap-0.5 rounded-xl border border-line-strong bg-surface p-1.5 shadow-xl">
+                          {speakers.map((label) => (
+                            <button
+                              key={label}
+                              type="button"
+                              onClick={() => {
+                                if (selectedPath) {
+                                  const orig = result.segments?.[i]?.speaker;
+                                  setSegmentSpeaker(
+                                    selectedPath,
+                                    i,
+                                    label === orig ? null : label,
+                                  );
+                                }
+                                setReassignRow(null);
+                              }}
+                              className={cn(
+                                "ring-signal flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px]",
+                                label === seg.speaker && "bg-surface-2",
+                              )}
+                              style={{ color: colorOf(label) }}
+                            >
+                              <span
+                                className="size-[7px] rounded-full"
+                                style={{ backgroundColor: colorOf(label) }}
+                              />
+                              {displayName(label)}
+                              {label === seg.speaker ? " ✓" : ""}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                    {editMode ? (
                       <span
-                        className="size-[7px] rounded-full"
-                        style={{ backgroundColor: colorOf(seg.speaker) }}
-                      />
-                      {displayName(seg.speaker)}
-                    </span>
-                  )}
-                  <span className="whitespace-pre-wrap">{stripControlChars(seg.text.trim())}</span>
-                </div>
-              ))}
+                        contentEditable
+                        suppressContentEditableWarning
+                        role="textbox"
+                        aria-label={`Correct segment ${i + 1}`}
+                        onBlur={(e) => {
+                          if (!selectedPath) return;
+                          const t = stripControlChars(e.currentTarget.textContent ?? "").trim();
+                          const orig = (result.segments?.[i]?.text ?? "").trim();
+                          setSegmentEdit(selectedPath, i, t && t !== orig ? t : null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.currentTarget.blur();
+                          } else if (e.key === "Escape") {
+                            e.currentTarget.textContent = (result.segments?.[i]?.text ?? "").trim();
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        className="-mx-1 min-w-0 flex-1 whitespace-pre-wrap rounded px-1 outline-none focus:bg-surface-2/70"
+                        style={lineColor}
+                      >
+                        {seg.text.trim()}
+                      </span>
+                    ) : karaoke ? (
+                      <span className="min-w-0 flex-1 whitespace-pre-wrap" style={lineColor}>
+                        {words.slice(range[0], range[1]).map((w, k) => {
+                          const wi = range[0] + k;
+                          const current = wi === activeWordIdx;
+                          return (
+                            <span
+                              key={wi}
+                              onClick={() => seekTo(w.start)}
+                              className={cn(
+                                "cursor-pointer",
+                                current && "rounded bg-accent px-0.5 font-medium text-accent-ink",
+                              )}
+                            >
+                              {stripControlChars(w.word)}
+                            </span>
+                          );
+                        })}
+                      </span>
+                    ) : (
+                      <span
+                        className="min-w-0 flex-1 whitespace-pre-wrap"
+                        style={lineColor}
+                        onClick={audioSrc && !audioBroken ? () => seekTo(seg.start) : undefined}
+                      >
+                        {stripControlChars(seg.text.trim())}
+                        {seg.edited && (
+                          <span className="ml-2 align-middle font-mono text-[10.5px] text-ok">· edited</span>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
-          {effectiveView === "text" && !showFullText && result.text.length > TRANSCRIPT_PREVIEW_CHARS && (
+          {audioSrc && !audioBroken && hasSegments && !editMode && (
+            <div className="mt-3 border-t border-line pt-2.5 font-mono text-[11px] text-faint">
+              space play/pause · ←/→ skip 5 s · click a word or timestamp to jump there
+            </div>
+          )}
+
+          {!hasSegments && !showFullText && result.text.length > TRANSCRIPT_PREVIEW_CHARS && (
             <div className="mt-3 flex items-center gap-3">
               <Button variant="ghost" size="sm" onClick={() => setShowFullText(true)}>
                 Show full transcript

@@ -116,6 +116,11 @@ interface TranscribeRunState {
   /** Per-file speaker renames / palette-index picks (label-keyed). */
   renames: Record<string, Record<string, string>>;
   speakerColors: Record<string, Record<string, number>>;
+  /** Per-file pre-export corrections: segment index → replacement text /
+   *  reassigned speaker label. Same lifetime as renames; both flow into
+   *  Copy and every export. */
+  edits: Record<string, Record<number, string>>;
+  speakerEdits: Record<string, Record<number, string>>;
   /** Options/overrides of the current or last run (rail layout + Retry). */
   lastOptions?: TranscribeOptions;
   lastOverrides: DecodeOverrides;
@@ -132,6 +137,8 @@ export const useTranscribeRun = create<TranscribeRunState>(() => ({
   stageMeta: {},
   renames: {},
   speakerColors: {},
+  edits: {},
+  speakerEdits: {},
   lastOptions: undefined,
   lastOverrides: {},
   epoch: 0,
@@ -193,6 +200,37 @@ export function setSpeakerColor(path: string, label: string, idx: number) {
       [path]: { ...s.speakerColors[path], [label]: idx },
     },
   }));
+}
+
+/** Record (or with null, drop) a text correction for one segment. */
+export function setSegmentEdit(path: string, index: number, text: string | null) {
+  set((s) => {
+    const file = { ...s.edits[path] };
+    if (text === null) delete file[index];
+    else file[index] = text;
+    return { edits: { ...s.edits, [path]: file } };
+  });
+}
+
+/** Reassign (or with null, restore) one segment's speaker label. */
+export function setSegmentSpeaker(path: string, index: number, label: string | null) {
+  set((s) => {
+    const file = { ...s.speakerEdits[path] };
+    if (label === null) delete file[index];
+    else file[index] = label;
+    return { speakerEdits: { ...s.speakerEdits, [path]: file } };
+  });
+}
+
+/** Discard every correction for one file (the edit banner's Discard). */
+export function clearEdits(path: string) {
+  set((s) => {
+    const edits = { ...s.edits };
+    const speakerEdits = { ...s.speakerEdits };
+    delete edits[path];
+    delete speakerEdits[path];
+    return { edits, speakerEdits };
+  });
 }
 
 /** Fold a progress poll into the store. "unknown" is the server saying "no
