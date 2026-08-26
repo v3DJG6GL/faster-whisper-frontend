@@ -17,7 +17,7 @@ import {
   evdevStatus, getPipelineRules, importSettingsFile, pickImportFile, setBackendKey,
   syncPull, testConnection,
 } from "@/lib/api";
-import { insecureUrlWarning, normalizeUrl, nameFromUrl } from "@/lib/backends";
+import { insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
 import { quickAddPeer } from "@/lib/conflicts";
 import { ALL_CATEGORIES, applyBlob, migrateBlob } from "@/lib/sync";
 import { starterProfiles } from "@/lib/starters";
@@ -88,26 +88,17 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         setError(res.error || "Couldn’t reach the server.");
         return;
       }
-      // The tested server becomes Backend #1 no matter which branch follows.
+      // The tested server becomes Backend #1 no matter which branch follows —
+      // via the shared factory, so (unlike before) the server's detected model
+      // and the standard-server batch endpoint are picked up here too.
       // Key goes to the OS keyring FIRST (mirrors the Backends editor).
-      const id = crypto.randomUUID();
-      if (key) await setBackendKey(id, key);
-      const backend: Backend = {
-        id,
-        name: nameFromUrl(serverUrl),
-        serverUrl,
-        hasApiKey: key.length > 0,
-        model: "whisper-1",
-        endpoint: "stream",
-        language: "auto",
-        prompt: "",
-        responseFormat: "verbose_json",
-      };
+      const backend: Backend = newBackendDraft({ serverUrl, hasApiKey: key.length > 0, info: res });
+      if (key) await setBackendKey(backend.id, key);
       st.getState().upsertBackend(backend);
       gateBackend.current = backend;
-      st.getState().setConnection(id, res);
+      st.getState().setConnection(backend.id, res);
       setInfo(res);
-      setBackendId(id);
+      setBackendId(backend.id);
       // Full backend → this account may have synced settings; discover, don't ask.
       if (res.bootId) {
         const p = await syncPull({ serverUrl, apiKey: key || null });

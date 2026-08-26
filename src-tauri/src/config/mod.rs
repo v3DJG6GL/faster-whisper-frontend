@@ -221,6 +221,9 @@ pub struct Profile {
     /// Override the Backend's endpoint (stream vs batch); None = inherit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<EndpointKind>,
+    /// Override the Backend's model; None/empty = inherit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// Override the Backend's language; None/empty = inherit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
@@ -718,6 +721,7 @@ fn migrate_legacy(text: &str) -> Option<Config> {
                 backend_id: m.profile_id,
                 tag: None,
                 endpoint: None,
+                model: None,
                 language: None,
                 prompt: None,
                 decode_overrides: None,

@@ -2,36 +2,23 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, StatusDot, TextInput } from "@/components/ui";
+import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, StatusDot, TextArea, TextInput } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
+import { LanguageSelect } from "@/components/LanguageSelect";
+import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
-import { LANGUAGES, languageLabel } from "@/lib/languages";
+import { languageLabel } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey, syncPull } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/syncTypes";
 import { ALL_CATEGORIES } from "@/lib/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
-import { authorityOf, effectiveServerUrl, insecureUrlWarning, nameFromUrl, normalizeUrl } from "@/lib/backends";
+import { authorityOf, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { RestoreFromServer, relTime } from "./SettingsSync";
-import { cn } from "@/lib/cn";
-
-function blankBackend(): Backend {
-  return {
-    id: crypto.randomUUID(),
-    name: "New backend",
-    serverUrl: "http://localhost:8000",
-    hasApiKey: false,
-    model: "whisper-1",
-    endpoint: "stream",
-    language: "auto",
-    prompt: "",
-    responseFormat: "verbose_json",
-  };
-}
 
 function Editor({
   initial,
@@ -51,6 +38,10 @@ function Editor({
   onCancel: () => void;
 }) {
   const setConnection = useApp((s) => s.setConnection);
+  // Model suggestions: a fresh in-editor test wins; else the session cache
+  // (fed by the list card's tests and the Transcribe screen's probes). No
+  // background probe here — the editor's URL may be mid-edit.
+  const storedConn = useApp((s) => ownProp(s.connections, initial.id));
   const syncEnabled = useApp((s) => s.settings.sync?.enabled ?? false);
   // Same guard: an inherited value here would put a FUNCTION into a controlled input's `value`.
   const urlOverride = useApp((s) => {
@@ -251,7 +242,13 @@ function Editor({
           )}
         </Labeled>
         <Labeled label="Model">
-          <TextInput value={b.model} onChange={(e) => set({ model: e.target.value })} placeholder="whisper-1 / large-v3" />
+          <ModelPicker
+            ariaLabel="Model"
+            value={b.model}
+            onChange={(v) => set({ model: v })}
+            models={result?.ok ? result.models : storedConn?.ok ? storedConn.models : []}
+            placeholder="whisper-1 / large-v3"
+          />
         </Labeled>
         <Labeled label="API key (optional)">
           <TextInput
@@ -265,7 +262,7 @@ function Editor({
           />
         </Labeled>
         <Labeled label="Default language">
-          <Select value={b.language} onChange={(v) => set({ language: v })} options={LANGUAGES} />
+          <LanguageSelect ariaLabel="Default language" value={b.language} onChange={(v) => set({ language: v })} />
         </Labeled>
         <Labeled label="Endpoint">
           <Segmented
@@ -321,40 +318,15 @@ function Editor({
         </Notice>
       )}
 
-      {result?.ok && result.models.length > 0 && (
-        <div className="mt-4">
-          <div className="mb-2 text-[12px] font-medium text-dim">Models on this server — click to use</div>
-          <div className="flex flex-wrap gap-2">
-            {result.models.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                aria-pressed={b.model === m.id}
-                onClick={() => set({ model: m.id })}
-                className={cn(
-                  "ring-signal rounded-pill border px-3 py-1 font-mono text-[12px] transition-colors",
-                  b.model === m.id
-                    ? "border-accent bg-accent-soft text-accent"
-                    : "border-line bg-surface-2 text-dim hover:text-text",
-                )}
-              >
-                {m.id}
-                {m.loaded && <span className="ml-1.5 text-ok">●</span>}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       <Labeled label="Default vocabulary / prompt (optional)" className="mt-4">
-        <textarea
+        <TextArea
+          aria-label="Default vocabulary / prompt"
           value={b.prompt}
           onChange={(e) => set({ prompt: e.target.value })}
           rows={2}
           // Ghost the selected server override-profile's DEFAULT_PROMPT as the
           // inherited baseline; empty here means "inherit the server prompt".
           placeholder={resolvedPrompt || "Bias terms — names, jargon…"}
-          className="ring-signal w-full resize-none rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[13px] text-text placeholder:text-faint"
         />
       </Labeled>
 
@@ -449,22 +421,6 @@ type AddFlow =
   | { step: "offer"; draft: Backend; key: string; info: ConnectionInfo; remote: SyncRemoteState }
   | { step: "edit"; draft: Backend; key?: string; info?: ConnectionInfo };
 
-/** A draft Backend prefilled from a successful connection test: name from the
- *  host, the server's loaded model, batch endpoint for standard servers. */
-function draftFromConnection(serverUrl: string, key: string, info: ConnectionInfo): Backend {
-  return {
-    id: crypto.randomUUID(),
-    name: nameFromUrl(serverUrl),
-    serverUrl,
-    hasApiKey: key.length > 0,
-    model: info.models.find((m) => m.loaded)?.id ?? info.models[0]?.id ?? "whisper-1",
-    endpoint: classifyConnection(info) === "standard" ? "batch" : "stream",
-    language: "auto",
-    prompt: "",
-    responseFormat: "verbose_json",
-  };
-}
-
 function ConnectStep({
   onCancel,
   onManual,
@@ -500,7 +456,7 @@ function ConnectStep({
         setError(info.error || "Couldn’t reach the server.");
         return;
       }
-      const draft = draftFromConnection(serverUrl, typedKey, info);
+      const draft = newBackendDraft({ serverUrl, hasApiKey: typedKey.length > 0, info });
       // Full backend → this account may have synced settings; discover, don't
       // ask (mirrors onboarding). Standard servers are never probed.
       if (info.bootId) {
@@ -770,7 +726,7 @@ export default function Backends() {
           {flow.step === "connect" ? (
             <ConnectStep
               onCancel={() => setFlow(null)}
-              onManual={() => setFlow({ step: "edit", draft: blankBackend() })}
+              onManual={() => setFlow({ step: "edit", draft: newBackendDraft() })}
               onDone={(r) =>
                 setFlow(
                   r.remote

@@ -1,6 +1,7 @@
 // Backend-resolution helpers shared by transport call sites.
 
-import type { AppSettings, Backend } from "./types";
+import type { AppSettings, Backend, ConnectionInfo } from "./types";
+import { classifyConnection } from "./serverKind";
 import { safeIdentityText } from "./sanitize";
 
 /** The preprocessing WHATWG performs BEFORE it looks for a scheme, reproduced so the tests below
@@ -93,6 +94,37 @@ export function insecureUrlWarning(url: string): string | null {
   if (parsed.protocol !== "http:") return null;
   if (isLocalAddress(parsed.hostname)) return null;
   return `This address is not encrypted and is outside your own network. Your API key, your microphone audio and everything you dictate would travel readable by anyone on the route. Use https:// if the server supports it.`;
+}
+
+/** THE fresh-Backend factory — every surface that mints one (Backends manual
+ *  add, Backends connect-first add, Onboarding) goes through here, so the
+ *  defaults can't diverge. With a connection: name from the host, the server's
+ *  loaded (else first) model, batch endpoint for standard servers. */
+export function newBackendDraft(conn?: {
+  serverUrl: string;
+  hasApiKey: boolean;
+  info: ConnectionInfo;
+}): Backend {
+  const base: Backend = {
+    id: crypto.randomUUID(),
+    name: "New backend",
+    serverUrl: "http://localhost:8000",
+    hasApiKey: false,
+    model: "whisper-1",
+    endpoint: "stream",
+    language: "auto",
+    prompt: "",
+    responseFormat: "verbose_json",
+  };
+  if (!conn) return base;
+  return {
+    ...base,
+    name: nameFromUrl(conn.serverUrl),
+    serverUrl: conn.serverUrl,
+    hasApiKey: conn.hasApiKey,
+    model: conn.info.models.find((m) => m.loaded)?.id ?? conn.info.models[0]?.id ?? "whisper-1",
+    endpoint: classifyConnection(conn.info) === "standard" ? "batch" : "stream",
+  };
 }
 
 /** A human default name for a backend at `url` — its host, or a fallback. */

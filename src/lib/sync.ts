@@ -513,6 +513,7 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       endpoint: p.endpoint == null ? p.endpoint : oneOf<EndpointKind>(p.endpoint, ENDPOINT_KINDS, "stream"),
       name: typeof p.name === "string" ? p.name : "",
       tag: typeof p.tag === "string" ? p.tag : undefined,
+      model: typeof p.model === "string" ? p.model : undefined,
       language: typeof p.language === "string" ? p.language : undefined,
       prompt: typeof p.prompt === "string" ? p.prompt : undefined,
       // The two leaves the pass above still carried by reference. `enabled` is a bare `bool`

@@ -58,7 +58,7 @@ function Highlight({ text, query }: { text: string; query: string }): ReactNode 
 
 export function Combobox({
   value, onChange, onSelect, suggestions, disabled, placeholder, className, footerMax, autoFocus,
-  openOnFocus = true,
+  openOnFocus = true, footerLabel = "recent words", suffix, ariaLabel,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -78,6 +78,14 @@ export function Combobox({
    *  the field quietly (e.g. after "add another") — typing, ArrowDown or a click
    *  still open it; only the implicit focus-open is suppressed. */
   openOnFocus?: boolean;
+  /** What the popover footer calls the suggestion pool ("recent words", "models
+   *  on this server", …). */
+  footerLabel?: string;
+  /** Optional per-option adornment rendered after the label (e.g. a "loaded" dot). */
+  suffix?: (item: string) => ReactNode;
+  /** Accessible name for the input — composite parents (a Labeled wrapping this
+   *  component) can't auto-clone one onto the nested TextInput. */
+  ariaLabel?: string;
 }) {
   const baseId = useId();
   const listId = `${baseId}-list`;
@@ -180,6 +188,7 @@ export function Combobox({
         disabled={disabled}
         placeholder={placeholder}
         autoFocus={autoFocus}
+        aria-label={ariaLabel}
         spellCheck={false}
         autoComplete="off"
         role="combobox"
@@ -224,11 +233,12 @@ export function Combobox({
                   )}
                 >
                   <Highlight text={w} query={value} />
+                  {suffix?.(w)}
                 </li>
               ))}
             </ul>
             <div className="flex items-center justify-between gap-3 border-t border-line px-3 py-1.5 text-[11px] text-faint">
-              <span>recent words{footerMax ? ` · up to ${footerMax}` : ""}</span>
+              <span>{footerLabel}{footerMax ? ` · up to ${footerMax}` : ""}</span>
               <span className="font-mono tracking-wide">↑↓ ↵ esc</span>
             </div>
           </div>,

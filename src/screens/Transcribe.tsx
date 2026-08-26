@@ -11,11 +11,14 @@ import {
   SettingRow, Stepper, Toggle,
 } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
+import { LanguageSelect } from "@/components/LanguageSelect";
+import { ModelPicker } from "@/components/ModelPicker";
+import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import { LANGUAGES } from "@/lib/languages";
+import { useBackendModels } from "@/lib/useBackendModels";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
 import {
-  pickAudioFiles, pickExportPath, readMediaFile, saveTextFile, testConnection, isTauri,
+  pickAudioFiles, pickExportPath, readMediaFile, saveTextFile, isTauri,
 } from "@/lib/api";
 import {
   addFiles, cancelRun, clearEdits, overallFraction, railIndex, railStages,
@@ -37,8 +40,9 @@ import {
   type ExportFormat, type ExportOptions,
 } from "@/lib/transcriptExport";
 import { cn } from "@/lib/cn";
-import type {
-  BatchProgress, BatchResult, DecodeOverrides, TranscribeOptions,
+import {
+  NO_OVERRIDE_PROFILE,
+  type BatchProgress, type BatchResult, type DecodeOverrides, type TranscribeOptions,
 } from "@/lib/types";
 
 function basename(path: string): string {
@@ -253,6 +257,9 @@ export default function Transcribe() {
   // deliberately not persisted: this is "for this file, try beam 5", not a
   // settings edit (those live on the Backend / Profile editors).
   const [runOverrides, setRunOverrides] = useState<DecodeOverrides>({});
+  // Per-run server override-profile pick; "" = inherit the Backend's. Same
+  // not-persisted contract as runOverrides.
+  const [runOverrideProfile, setRunOverrideProfile] = useState("");
   const [showOverrides, setShowOverrides] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -327,38 +334,9 @@ export default function Transcribe() {
   // Backend's stored decode defaults (the Profiles editor's merge precedent).
   const inheritedBaseline = { ...resolved, ...backend?.decodeOverrides };
 
-  // Per-run model pick: the Backend's configured model plus whatever the last
-  // connection test advertised (ConnectionInfo.models). "" = backend default.
-  // The connections store is session-memory and only the Backends screen ran
-  // tests — so until this screen probes on its own, the list stayed at
-  // "Default" forever. Probe once per backend per session, in the background.
-  useEffect(() => {
-    if (!backend || !isTauri || connections[backend.id]) return;
-    let stale = false;
-    testConnection({
-      serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
-      backendId: backend.id,
-    })
-      .then((info) => {
-        if (!stale) useApp.getState().setConnection(backend.id, info);
-      })
-      .catch(() => {});
-    return () => {
-      stale = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend?.id, connections[backend?.id ?? ""]]);
-
-  const advertised = (backend && connections[backend.id]?.models) || [];
-  const modelOptions = [
-    {
-      value: "",
-      label: backend?.model ? `Default · ${backend.model}` : "Default · server model",
-    },
-    ...advertised
-      .filter((m) => m.id !== backend?.model)
-      .map((m) => ({ value: m.id, label: m.id })),
-  ];
+  // Per-run model pick: "" = backend default. The advertised list comes from
+  // the shared hook (session connection cache + one background probe).
+  const advertised = useBackendModels(backend);
 
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
 
@@ -429,7 +407,9 @@ export default function Transcribe() {
       // Empty backend prompt = inherit the server DEFAULT_PROMPT → omit the field.
       prompt: backend.prompt || undefined,
       decodeOverrides: Object.keys(merged).length ? merged : undefined,
-      overrideProfile: backend.overrideProfile,
+      // Per-run pick wins ("" = inherit); NO_OVERRIDE_PROFILE passes through
+      // verbatim (it forces "no profile" server-side).
+      overrideProfile: runOverrideProfile || backend.overrideProfile,
       standard:
         effectiveServerKind(backend, useApp.getState().connections[backend.id]) === "standard",
     };
@@ -970,6 +950,7 @@ export default function Transcribe() {
               resetForInputChange();
               setBackendId(v);
               setModel(""); // a per-run model pick belongs to ONE backend
+              setRunOverrideProfile(""); // so does a server-profile name
               const b = backends.find((x) => x.id === v);
               const lang = b?.language ?? "auto";
               if (b) setLanguage(lang);
@@ -980,7 +961,7 @@ export default function Transcribe() {
         </div>
         <div>
           <label className="mb-2 block text-[12px] font-medium text-dim">Model</label>
-          <Select
+          <ModelPicker
             ariaLabel="Model"
             value={model}
             onChange={(v) => {
@@ -989,12 +970,13 @@ export default function Transcribe() {
               setModel(v);
               persistOptions({ backendId, model: v });
             }}
-            options={modelOptions}
+            models={advertised}
+            defaultLabel={backend?.model ? `Default · ${backend.model}` : "Default · server model"}
           />
         </div>
         <div>
           <label className="mb-2 block text-[12px] font-medium text-dim">Language</label>
-          <Select
+          <LanguageSelect
             ariaLabel="Language"
             value={language}
             onChange={(v) => {
@@ -1003,7 +985,6 @@ export default function Transcribe() {
               setLanguage(v);
               persistOptions({ backendId, language: v });
             }}
-            options={LANGUAGES}
           />
         </div>
       </div>
@@ -1083,6 +1064,9 @@ export default function Transcribe() {
           {Object.keys(runOverrides).length > 0 && (
             <span className="text-faint"> · {Object.keys(runOverrides).length} set for this run</span>
           )}
+          {runOverrideProfile && (
+            <span className="text-faint"> · server profile set for this run</span>
+          )}
         </DisclosureToggle>
         {showOverrides && (
           <Card className="mt-3 p-5">
@@ -1096,6 +1080,27 @@ export default function Transcribe() {
               serverKind={serverKind}
               canCustomize={caps?.can_request_decode_overrides}
             />
+            <div className="mt-4 border-t border-line pt-4">
+              <div className="mb-3 text-[12px] font-medium text-dim">
+                Server override profile{" "}
+                <span className="text-faint">· only for this run — empty inherits the backend</span>
+              </div>
+              <OverrideProfilePicker
+                serverUrl={backend ? effectiveServerUrl(backend, settings) : ""}
+                backendId={backend?.id ?? ""}
+                serverKind={serverKind}
+                canRequest={caps?.can_request_override_profile}
+                value={runOverrideProfile}
+                inheritLabel={
+                  !backend?.overrideProfile
+                    ? "Backend default"
+                    : backend.overrideProfile === NO_OVERRIDE_PROFILE
+                      ? "Backend default · none"
+                      : `Backend default · ${safeDisplayText(backend.overrideProfile, 40)}`
+                }
+                onChange={(v) => setRunOverrideProfile(v.trim() ? v : "")}
+              />
+            </div>
           </Card>
         )}
       </div>

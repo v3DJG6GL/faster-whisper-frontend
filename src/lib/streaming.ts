@@ -1518,7 +1518,7 @@ export async function startLive(
   backend: Backend,
   deviceId: string | null,
   activation: ActivationKind,
-  pov?: { language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; overrideProfile?: string; endpoint?: EndpointKind },
+  pov?: { model?: string; language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; overrideProfile?: string; endpoint?: EndpointKind },
 ): Promise<void> {
   if (startingSession) return;
   startingSession = true;
@@ -1552,7 +1552,7 @@ async function startLiveInner(
   backend: Backend,
   deviceId: string | null,
   activation: ActivationKind,
-  pov?: { language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; overrideProfile?: string; endpoint?: EndpointKind },
+  pov?: { model?: string; language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; overrideProfile?: string; endpoint?: EndpointKind },
 ): Promise<void> {
   await ensureListeners();
   const setDictation = useApp.getState().setDictation;
@@ -1565,6 +1565,7 @@ async function startLiveInner(
   lastSpokeAt = performance.now();
   autoStopMs = activation !== "hold" && rec.latchAutoStopMin > 0 ? rec.latchAutoStopMin * 60_000 : 0;
   // Effective values: a set per-Profile override wins; else inherit the Backend.
+  const model = pov?.model?.trim() ? pov.model.trim() : backend.model;
   const language = pov?.language?.trim() ? pov.language.trim() : backend.language;
   // prompt is a 3-state sentinel sent to the backend: undefined → omit (inherit the
   // server DEFAULT_PROMPT); "" → explicit clear (no initial_prompt); value → use it.
@@ -1677,7 +1678,7 @@ async function startLiveInner(
       await startRecord({
         serverUrl: sessionServerUrl,
         backendId: backend.id,
-        model: backend.model,
+        model,
         language,
         prompt,
         decodeOverrides,
@@ -1692,7 +1693,7 @@ async function startLiveInner(
       await startStream({
         serverUrl: sessionServerUrl,
         backendId: backend.id,
-        model: backend.model,
+        model,
         language,
         prompt,
         decodeOverrides,

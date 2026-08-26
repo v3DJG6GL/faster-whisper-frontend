@@ -2,14 +2,17 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
+import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextArea, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { starterProfiles } from "@/lib/starters";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { DecodeFields } from "@/components/DecodeFields";
+import { LanguageSelect } from "@/components/LanguageSelect";
+import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
-import { LANGUAGES, languageLabel } from "@/lib/languages";
+import { languageLabel } from "@/lib/languages";
+import { useBackendModels } from "@/lib/useBackendModels";
 import { conflictsByProfile, quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/conflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { evdevStatus, type EvdevStatus } from "@/lib/api";
@@ -64,13 +67,17 @@ function Editor({
   const [showOverrides, setShowOverrides] = useState(
     // prompt is tri-state: `!== undefined` so an explicit clear ("") still counts
     // as a set override (a truthy check would treat clear as "inherit").
-    !!(initial.language || initial.endpoint || initial.prompt !== undefined || initial.overrideProfile ||
+    !!(initial.model || initial.language || initial.endpoint || initial.prompt !== undefined ||
+      initial.overrideProfile ||
       (initial.decodeOverrides && Object.keys(initial.decodeOverrides).length)),
   );
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
   // Resolve the target backend so the decode editor can show its defaults as the
   // inherited baseline and gate to the backend's detected capability.
   const backend = backends.find((b) => b.id === p.backendId);
+  // The backend's advertised models feed the per-profile model override picker
+  // (probes once per session when the connection cache is empty).
+  const models = useBackendModels(backend);
   const serverKind = backend
     ? effectiveServerKind(backend, p.backendId ? ownProp(connections, p.backendId) : undefined)
     : "unknown";
@@ -113,6 +120,7 @@ function Editor({
       // Empty = derive the chip tag from the name → store as undefined (omitted).
       tag: p.tag?.trim() ? p.tag.trim() : undefined,
       // Empty override = inherit from the Backend → store as undefined (omitted).
+      model: p.model?.trim() ? p.model.trim() : undefined,
       language: p.language?.trim() ? p.language : undefined,
       // prompt is tri-state: undefined = inherit, "" = explicit clear (suppress the
       // inherited prompt), value = override. Preserve "" — do NOT prune it to
@@ -187,7 +195,7 @@ function Editor({
 
       <DisclosureToggle open={showOverrides} onToggle={() => setShowOverrides((v) => !v)} className="mt-5">
         Overrides{" "}
-        {p.language || p.endpoint || p.prompt !== undefined || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) ? (
+        {p.model || p.language || p.endpoint || p.prompt !== undefined || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) ? (
           <span className="text-accent">· set</span>
         ) : (
           <span className="text-faint">· inherit backend</span>
@@ -198,10 +206,22 @@ function Editor({
         <>
           <div className="mt-3 grid grid-cols-2 gap-4 rounded-xl border border-line bg-surface-2/40 p-4">
             <Labeled label="Language">
-              <Select
+              <LanguageSelect
+                ariaLabel="Language"
                 value={p.language ?? ""}
                 onChange={(v) => set({ language: v })}
-                options={[{ value: "", label: "Inherit from backend" }, ...LANGUAGES]}
+                inheritLabel="Inherit from backend"
+              />
+            </Labeled>
+            <Labeled label="Model">
+              <ModelPicker
+                ariaLabel="Model"
+                value={p.model ?? ""}
+                onChange={(v) => set({ model: v || undefined })}
+                models={models}
+                defaultLabel={
+                  backend?.model ? `Inherit · ${backend.model}` : "Inherit from backend"
+                }
               />
             </Labeled>
             <div>
@@ -256,7 +276,8 @@ function Editor({
                   )}
                 </div>
               </div>
-              <textarea
+              <TextArea
+                aria-label="Vocabulary / prompt"
                 value={p.prompt ?? ""}
                 onChange={(e) => set({ prompt: e.target.value })}
                 rows={2}
@@ -267,7 +288,6 @@ function Editor({
                     ? "(cleared — no prompt sent)"
                     : inheritedPrompt || "Inherit from backend"
                 }
-                className="ring-signal w-full resize-none rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[13px] text-text placeholder:text-faint"
               />
             </div>
           </div>
@@ -375,6 +395,7 @@ function ProfileRow({
             {p.tag?.trim() && <Badge tone="accent">{safeDisplayText(p.tag.trim(), 40)}</Badge>}
             <Badge>{meta.label}</Badge>
             {p.language && <Badge>{safeDisplayText(languageLabel(p.language), 40)}</Badge>}
+            {p.model && <Badge>{safeDisplayText(p.model.split("/").pop() ?? p.model, 40)}</Badge>}
             {p.endpoint && <Badge>{p.endpoint}</Badge>}
           </div>
           <div className="mt-1.5 flex items-center gap-3">

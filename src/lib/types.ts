@@ -69,6 +69,7 @@ export interface Profile {
   backendId: string | null; // references a Backend
   tag?: string; // short label for the overlay chip; empty/undefined = derive from name
   endpoint?: EndpointKind; // override Backend.endpoint (stream vs batch transport); undefined = inherit
+  model?: string; // override Backend.model; empty/undefined = inherit
   language?: string; // override Backend.language; empty/undefined = inherit
   prompt?: string; // override Backend.prompt; tri-state: undefined = inherit, "" = explicit clear (suppress the inherited prompt, send no initial_prompt), value = override
   decodeOverrides?: DecodeOverrides; // Phase-B: per-Profile decode overrides

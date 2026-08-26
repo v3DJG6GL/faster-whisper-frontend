@@ -2,6 +2,7 @@ import {
   type ReactNode,
   type ReactElement,
   type InputHTMLAttributes,
+  type TextareaHTMLAttributes,
   cloneElement,
   forwardRef,
   isValidElement,
@@ -293,6 +294,22 @@ export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLIn
         ref={ref}
         className={cn(
           "ring-signal h-10 w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[13px] text-text",
+          "placeholder:text-faint",
+          className,
+        )}
+        {...props}
+      />
+    );
+  },
+);
+
+export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
+  function TextArea({ className, ...props }, ref) {
+    return (
+      <textarea
+        ref={ref}
+        className={cn(
+          "ring-signal w-full resize-none rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[13px] text-text",
           "placeholder:text-faint",
           className,
         )}
