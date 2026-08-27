@@ -30,6 +30,17 @@ export function fmtDuration(seconds: number): string {
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
+/** Seconds → exact duration (no minute rounding): `47s` · `11m 07s` · `1h 04m 12s`.
+ *  For audio lengths and anything where "11m" vs "11m 23s" matters. */
+export function fmtDurationExact(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds || 0));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  if (m < 60) return `${m}m ${ss}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m ${ss}s`;
+}
+
 /** Seconds → segment timestamp: `0:05.2` · `1:23.4` · `1:02:05.0`. */
 export function fmtTimestamp(seconds: number): string {
   const s = Math.max(0, seconds);

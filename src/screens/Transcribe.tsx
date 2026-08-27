@@ -16,7 +16,7 @@ import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useBackendModels } from "@/lib/useBackendModels";
-import { fmtDuration, fmtTimestamp } from "@/lib/format";
+import { fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import {
   pickAudioFiles, pickExportPath, readMediaFile, saveTextFile, isTauri,
 } from "@/lib/api";
@@ -118,7 +118,7 @@ function recentMeta(rec: TranscriptRecord): string {
       diff <= 0 ? "today" : diff === 1 ? "yesterday" : d.toLocaleDateString();
     parts.push(`${day} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   }
-  if (rec.result?.duration) parts.push(fmtDuration(rec.result.duration));
+  if (rec.result?.duration) parts.push(fmtDurationExact(rec.result.duration));
   if (rec.language) parts.push(safeDisplayText(rec.language, 12));
   const spk = rec.result?.speakers?.length ?? 0;
   if (spk > 1) parts.push(`${spk} speakers`);
@@ -1322,7 +1322,7 @@ export default function Transcribe() {
               </span>
               {audioDur ? (
                 <span className="shrink-0 font-mono text-[11px] text-faint">
-                  {fmtDuration(audioDur)} audio
+                  {fmtDurationExact(audioDur)} audio
                 </span>
               ) : null}
               <span className="flex-1" />
@@ -1476,7 +1476,7 @@ export default function Transcribe() {
                             ? ` · ${safeDisplayText(progress.step)}`
                             : ""}
                           {st === "transcribing" && state === "active" && progress?.position && audioDur
-                            ? ` · ${fmtDuration(progress.position)} of ${fmtDuration(audioDur)} audio`
+                            ? ` · ${fmtDurationExact(progress.position)} of ${fmtDurationExact(audioDur)} audio`
                             : ""}
                         </span>
                       </div>
@@ -1533,7 +1533,7 @@ export default function Transcribe() {
                                   )}
                                 >
                                   silence skipped · kept{" "}
-                                  {audioDur ? `${fmtDuration(audioDur * progress.vadRetained)} ` : ""}
+                                  {audioDur ? `${fmtDurationExact(audioDur * progress.vadRetained)} ` : ""}
                                   ({Math.round(progress.vadRetained * 100)}%)
                                 </span>
                               )}
@@ -1683,7 +1683,7 @@ export default function Transcribe() {
                       {it.result.duration
                         ? it.result.duration < 60
                           ? `${it.result.duration.toFixed(0)}s`
-                          : fmtDuration(it.result.duration)
+                          : fmtDurationExact(it.result.duration)
                         : ""}
                       {it.result.language ? ` · ${it.result.language}` : ""}
                       {speakersOf(it.result).length
@@ -1742,7 +1742,7 @@ export default function Transcribe() {
               {queue.length > 1 && selectedPath ? ` · ${basename(selectedPath)}` : ""}
               {result.language ? ` · ${result.language}` : ""}
               {result.duration
-                ? ` · ${result.duration < 60 ? `${result.duration.toFixed(1)}s` : fmtDuration(result.duration)}`
+                ? ` · ${result.duration < 60 ? `${result.duration.toFixed(1)}s` : fmtDurationExact(result.duration)}`
                 : ""}
               {hasSpeakers ? ` · ${speakers.length} speakers` : ""}
             </div>
@@ -2378,7 +2378,7 @@ export default function Transcribe() {
           <Notice className="mt-3">
             <div className="font-medium">Silence skipping removed most of this file</div>
             <div className="mt-0.5">
-              Only {fmtDuration(result.durationAfterVad)} of {fmtDuration(result.duration)} was
+              Only {fmtDurationExact(result.durationAfterVad)} of {fmtDurationExact(result.duration)} was
               treated as speech. If words are missing, run it again without the filter.
             </div>
             <div className="mt-2 flex items-center gap-2">
