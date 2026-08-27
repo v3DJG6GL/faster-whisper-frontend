@@ -886,6 +886,23 @@ export async function saveTranscriptRecord(
   await invoke("save_transcript_record", { id, record, dictation });
 }
 
+/** Copy a run's input audio next to its history record (media/<id>.<ext>) so
+ *  playback survives the original moving. Null = no copy (outside Tauri, or
+ *  the source is over the 2 GB cap). */
+export async function saveTranscriptMedia(
+  id: string,
+  sourcePath: string,
+): Promise<string | null> {
+  if (!isTauri) return null;
+  return await invoke<string | null>("save_transcript_media", { id, sourcePath });
+}
+
+/** Size of the audio-copy store — the Settings toggle's usage readout. */
+export async function transcriptMediaStats(): Promise<{ bytes: number; files: number }> {
+  if (!isTauri) return { bytes: 0, files: 0 };
+  return await invoke<{ bytes: number; files: number }>("transcript_media_stats");
+}
+
 /** All locally stored transcription-history records (unordered; each carries
  *  its own createdAt). [] outside Tauri or when none exist. */
 export async function listTranscriptRecords(): Promise<unknown[]> {

@@ -10,6 +10,7 @@ import { IS_LINUX } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
 import {
+  transcriptMediaStats,
   listAudioDevices,
   startMicTest,
   stopMicTest,
@@ -28,6 +29,13 @@ import {
 import type { AudioDevice, OverlayQuickAction, RecordingSettings } from "@/lib/types";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
 import { SyncTab } from "@/screens/SettingsSync";
+
+/** "1.2 GB" / "84 MB" for the audio-copy usage readout. */
+function fmtBytes(n: number): string {
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
+  if (n >= 1024 ** 2) return `${Math.round(n / 1024 ** 2)} MB`;
+  return `${Math.max(1, Math.round(n / 1024))} KB`;
+}
 
 const TABS = ["General", "Audio", "Recording & history", "Chip", "Sync", "Permissions"] as const;
 type Tab = (typeof TABS)[number];
@@ -445,6 +453,20 @@ export default function Settings() {
   /** History settings ride the opaque settings.transcribe blob (merge-patch). */
   const updateTranscribe = (patch: Partial<NonNullable<typeof s.transcribe>>) =>
     updateSettings({ transcribe: { ...s.transcribe, ...patch } });
+  // Audio-copy store usage — the "Keep a copy of the audio" readout.
+  const [mediaStats, setMediaStats] = useState<{ bytes: number; files: number } | null>(null);
+  useEffect(() => {
+    if (tab !== "Recording & history") return;
+    void transcriptMediaStats().then(setMediaStats).catch(() => {});
+  }, [tab]);
+  // One dictation clock for text AND audio: display the stricter of the two
+  // legacy values (the keys keep syncing separately for older builds), write
+  // both on change.
+  const dictDaysA = s.recording.recordingsRetentionDays ?? 0;
+  const dictDaysB = s.transcribe?.dictationRetentionDays ?? 7;
+  const dictDays =
+    dictDaysA === 0 ? dictDaysB : dictDaysB === 0 ? dictDaysA : Math.min(dictDaysA, dictDaysB);
+  const dictOff = s.transcribe?.keepDictationHistory === false && !s.recording.saveRecordings;
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
   const [evdevMsg, setEvdevMsg] = useState<string | null>(null);
   const [evdevBusy, setEvdevBusy] = useState(false);
@@ -630,108 +652,13 @@ export default function Settings() {
         {tab === "Audio" && <AudioTab />}
 
         {tab === "Recording & history" && (
-          <Card className="px-6">
-            <SettingRow title="Keep audio recordings" desc="Save a .wav of each dictation locally.">
-              <Toggle checked={s.recording.saveRecordings} onChange={(v) => updateRecording({ saveRecordings: v })} />
-            </SettingRow>
+          <Card className="px-6 pb-2">
+            {/* Grouped by SUBJECT, one retention clock per subject — see the
+                design canvas ("Settings · Recording & history v2"). */}
+            <SectionLabel className="mb-1 mt-4">Dictation</SectionLabel>
             <SettingRow
-              title="Trim silence"
-              desc="Save only the parts you actually spoke (the same speech detection that drives the chip), so a long hands-free session doesn't store hours of silence."
-              disabled={!s.recording.saveRecordings}
-            >
-              <Toggle
-                checked={s.recording.trimSilence}
-                disabled={!s.recording.saveRecordings}
-                onChange={(v) => updateRecording({ trimSilence: v })}
-              />
-            </SettingRow>
-            <SettingRow
-              title="Delete recordings after"
-              desc="Saved recordings and their transcripts are a plain-text record of everything you dictate. Old ones are removed on launch and whenever you change this."
-              disabled={!s.recording.saveRecordings}
-            >
-              <Select
-                value={String(s.recording.recordingsRetentionDays ?? 0)}
-                disabled={!s.recording.saveRecordings}
-                onChange={(v) => updateRecording({ recordingsRetentionDays: Number(v) })}
-                ariaLabel="Delete recordings after"
-                options={[
-                  { value: "0", label: "Keep forever" },
-                  { value: "7", label: "7 days" },
-                  { value: "30", label: "30 days" },
-                  { value: "90", label: "90 days" },
-                  { value: "365", label: "1 year" },
-                ]}
-              />
-            </SettingRow>
-            {/* Recordings folder: where saved .wav files live, plus open / relocate / reset. Its own
-                block (a mono path readout + an action row) rather than a SettingRow — the path is the
-                point, and three actions don't fit a row's trailing slot. */}
-            <div className="border-b border-line py-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="text-[14px] font-medium text-text">Recordings folder</div>
-                  <div className="mt-0.5 text-[12.5px] leading-snug text-dim">
-                    {customRecDir ? "A custom folder." : "The default app folder."} Saved files stay until you remove
-                    them.
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Button size="sm" onClick={openRecDir} title="Open in your file manager">
-                    <FolderOpen size={14} strokeWidth={2} />
-                    Open
-                  </Button>
-                  <Button size="sm" onClick={changeRecDir}>
-                    Change…
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={resetRecDir}
-                    disabled={!customRecDir}
-                    title="Revert to the default location"
-                  >
-                    Reset
-                  </Button>
-                </div>
-              </div>
-              <div
-                title={recDirDisplay ?? undefined}
-                className="mt-3 truncate rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-[11.5px] text-dim"
-              >
-                {recDirDisplay ?? "resolving…"}
-              </div>
-            </div>
-            <SettingRow
-              title="Silence other apps while recording"
-              desc="Mute system audio for the duration of a dictation."
-            >
-              <Toggle checked={s.recording.muteSystemAudio} onChange={(v) => updateRecording({ muteSystemAudio: v })} />
-            </SettingRow>
-            <SettingRow
-              title="Auto-stop hands-free after silence"
-              desc="End a hands-free (latch) session after this long with no speech, so it can't run for hours. Set to Never to keep it open until you stop it yourself."
-            >
-              <Stepper
-                ariaLabel="auto-stop hands-free after silence"
-                value={s.recording.latchAutoStopMin}
-                onChange={(v) => updateRecording({ latchAutoStopMin: v })}
-                min={0}
-                max={120}
-                step={1}
-                decimals={0}
-                unit="min"
-                zeroLabel="Never"
-              />
-            </SettingRow>
-            {/* ── History: what the History screen keeps, with its own clocks.
-                Dictations get a stricter default (7 days) than file transcripts;
-                turning dictation history OFF also wipes the stored entries (the
-                Rust retention sweep runs on every save). Sessions into apps
-                blocked by App rules, and empty/cancelled ones, are never saved. */}
-            <SettingRow
-              title="Keep dictation history"
-              desc="Save each dictation session to the History screen — text plus a link to its recording, on this machine only. Turning this off also deletes the stored dictation entries."
+              title="Keep dictations in History"
+              desc="Each session appears on the History screen — its text, target app, and its audio (below), on this machine only. Turning this off also deletes the stored entries."
             >
               <Toggle
                 checked={s.transcribe?.keepDictationHistory ?? true}
@@ -739,14 +666,75 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
+              title="Save dictation audio"
+              desc="Keep each session's sound as a .wav next to its text, for replay from History."
+            >
+              <Toggle checked={s.recording.saveRecordings} onChange={(v) => updateRecording({ saveRecordings: v })} />
+            </SettingRow>
+            <div className="pl-6">
+              <SettingRow
+                title="Trim silence"
+                desc="Save only the parts you actually spoke (the same speech detection that drives the chip), so a long hands-free session doesn't store hours of silence."
+                disabled={!s.recording.saveRecordings}
+              >
+                <Toggle
+                  checked={s.recording.trimSilence}
+                  disabled={!s.recording.saveRecordings}
+                  onChange={(v) => updateRecording({ trimSilence: v })}
+                />
+              </SettingRow>
+              {/* Audio folder: where saved .wav files live, plus open / relocate / reset. Its own
+                  block (a mono path readout + an action row) rather than a SettingRow — the path is
+                  the point, and three actions don't fit a row's trailing slot. */}
+              <div className="border-b border-line py-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="text-[14px] font-medium text-text">Audio folder</div>
+                    <div className="mt-0.5 text-[12.5px] leading-snug text-dim">
+                      {customRecDir ? "A custom folder." : "The default app folder."}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button size="sm" onClick={openRecDir} title="Open in your file manager">
+                      <FolderOpen size={14} strokeWidth={2} />
+                      Open
+                    </Button>
+                    <Button size="sm" onClick={changeRecDir}>
+                      Change…
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={resetRecDir}
+                      disabled={!customRecDir}
+                      title="Revert to the default location"
+                    >
+                      Reset
+                    </Button>
+                  </div>
+                </div>
+                <div
+                  title={recDirDisplay ?? undefined}
+                  className="mt-3 truncate rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-[11.5px] text-dim"
+                >
+                  {recDirDisplay ?? "resolving…"}
+                </div>
+              </div>
+            </div>
+            <SettingRow
               title="Delete dictations after"
-              desc="Dictations are usually typed into their target and done — a short window is plenty, and safer."
-              disabled={s.transcribe?.keepDictationHistory === false}
+              desc="One clock for the whole session — text and audio leave together. Dictations are usually typed into their target and done; a short window is plenty. Old ones are removed on launch and whenever you change this."
+              disabled={dictOff}
+              last
             >
               <Select
-                value={String(s.transcribe?.dictationRetentionDays ?? 7)}
-                disabled={s.transcribe?.keepDictationHistory === false}
-                onChange={(v) => updateTranscribe({ dictationRetentionDays: Number(v) })}
+                value={String(dictDays)}
+                disabled={dictOff}
+                onChange={(v) => {
+                  const n = Number(v);
+                  updateRecording({ recordingsRetentionDays: n });
+                  updateTranscribe({ dictationRetentionDays: n });
+                }}
                 ariaLabel="Delete dictations after"
                 options={[
                   { value: "0", label: "Keep forever" },
@@ -754,12 +742,29 @@ export default function Settings() {
                   { value: "7", label: "7 days" },
                   { value: "30", label: "30 days" },
                   { value: "90", label: "90 days" },
+                  { value: "365", label: "1 year" },
                 ]}
+              />
+            </SettingRow>
+
+            <SectionLabel className="mb-1 mt-4">File transcriptions</SectionLabel>
+            <SettingRow
+              title="Keep a copy of the audio"
+              desc={
+                "Store the input file with its transcript so playback in History keeps working when the original moves. Deleted together with the transcript." +
+                (mediaStats && mediaStats.files > 0
+                  ? ` Currently ${fmtBytes(mediaStats.bytes)} · ${mediaStats.files} file${mediaStats.files === 1 ? "" : "s"}.`
+                  : "")
+              }
+            >
+              <Toggle
+                checked={s.transcribe?.keepAudioCopies ?? true}
+                onChange={(v) => updateTranscribe({ keepAudioCopies: v })}
               />
             </SettingRow>
             <SettingRow
               title="Delete file transcriptions after"
-              desc="How long finished Transcribe runs stay in History — corrections and speaker names go with them."
+              desc="Transcript, corrections, speaker names and the audio copy leave together."
               last
             >
               <Select
@@ -773,6 +778,31 @@ export default function Settings() {
                   { value: "90", label: "90 days" },
                   { value: "365", label: "1 year" },
                 ]}
+              />
+            </SettingRow>
+
+            <SectionLabel className="mb-1 mt-4">While recording</SectionLabel>
+            <SettingRow
+              title="Silence other apps"
+              desc="Mute system audio for the duration of a dictation."
+            >
+              <Toggle checked={s.recording.muteSystemAudio} onChange={(v) => updateRecording({ muteSystemAudio: v })} />
+            </SettingRow>
+            <SettingRow
+              title="Auto-stop hands-free after silence"
+              desc="End a hands-free (latch) session after this long with no speech, so it can't run for hours. Set to Never to keep it open until you stop it yourself."
+              last
+            >
+              <Stepper
+                ariaLabel="auto-stop hands-free after silence"
+                value={s.recording.latchAutoStopMin}
+                onChange={(v) => updateRecording({ latchAutoStopMin: v })}
+                min={0}
+                max={120}
+                step={1}
+                decimals={0}
+                unit="min"
+                zeroLabel="Never"
               />
             </SettingRow>
           </Card>

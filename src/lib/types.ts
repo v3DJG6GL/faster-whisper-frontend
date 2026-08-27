@@ -267,6 +267,9 @@ export interface TranscribeSettings {
   /** Dictation-history retention in days; absent = the 7-day default, 0 =
    *  keep forever. Read by Rust, swept independently of file transcripts. */
   dictationRetentionDays?: number;
+  /** Copy each file-transcription input into the app's media store so History
+   *  playback survives the original moving. Default (absent) = true. */
+  keepAudioCopies?: boolean;
 }
 
 export interface AppSettings {

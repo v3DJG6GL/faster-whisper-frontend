@@ -22,6 +22,9 @@ export interface TranscriptRecord {
   createdAt: string; // ISO
   sourcePath: string;
   sourceName: string;
+  /** App-managed audio copy (transcripts/media/<id>.<ext>) — playback falls
+   *  back to it when the original at sourcePath is gone. File records only. */
+  mediaPath?: string;
   status: "done" | "failed";
   error?: string;
   tookMs?: number;

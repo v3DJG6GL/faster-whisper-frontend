@@ -275,6 +275,12 @@ export default function Transcribe() {
     () => settings.transcribe?.exportFormat ?? "srt",
   );
   const [wordTs, setWordTs] = useState(() => settings.transcribe?.wordTimestamps ?? false);
+  // Export-preview height: null = auto up to 40vh; a number once the user
+  // drags the visible resize handle (WebKitGTK's native corner grip is
+  // invisible on dark UIs, so the handle row IS the affordance).
+  const [previewH, setPreviewH] = useState<number | null>(null);
+  const previewRef = useRef<HTMLPreElement | null>(null);
+  const previewDrag = useRef<{ startY: number; startH: number } | null>(null);
   // Display toggles — the view IS the export (Copy and Save match what is on
   // screen). Defaults migrate from the legacy speakerColorMode once.
   const [showTs, setShowTs] = useState(() => settings.transcribe?.showTimestamps ?? false);
@@ -296,6 +302,11 @@ export default function Transcribe() {
   const [rate, setRate] = useState(1);
   const [follow, setFollow] = useState(true);
   const [audioBroken, setAudioBroken] = useState(false);
+  // Why playback is unavailable — a missing file and an undecodable codec are
+  // different failures and get different sentences.
+  const [brokenWhy, setBrokenWhy] = useState<"gone" | "codec">("codec");
+  // Set when playback fell back to the app's stored audio copy.
+  const [audioNote, setAudioNote] = useState<"copy" | null>(null);
   // Blob-URL fallback when the asset protocol can't feed the media stack
   // (Linux WebKitGTK). Revoked on file change/unmount.
   const [blobSrc, setBlobSrc] = useState<string | null>(null);
@@ -567,6 +578,8 @@ export default function Transcribe() {
     setCurTime(0);
     setAudioLen(0);
     setAudioBroken(false);
+    setBrokenWhy("codec");
+    setAudioNote(null);
     setFollow(true);
     setEditMode(false);
     setReassignRow(null);
@@ -582,24 +595,42 @@ export default function Transcribe() {
     [],
   );
 
-  /** The <audio> errored on the asset URL — buffer the file through Rust and
-   *  retry from a blob once; a second failure means the webview genuinely
-   *  can't decode this codec, so surface that instead of hiding the player. */
+  /** The <audio> errored on the asset URL — resolve through the fallback
+   *  chain ONCE: buffer the original through Rust; if the original is gone,
+   *  the app's stored audio copy; if neither reads, say the file is gone.
+   *  A second <audio> error with a blob already loaded means the webview
+   *  genuinely can't decode this codec — a different sentence. */
   const onAudioError = () => {
     if (blobTriedRef.current || !selectedPath) {
       setAudioBroken(true);
+      setBrokenWhy("codec");
       return;
     }
     blobTriedRef.current = true;
+    const asBlob = (buf: ArrayBuffer, path: string) => {
+      const url = URL.createObjectURL(new Blob([buf], { type: mediaMime(path) }));
+      blobUrlRef.current = url;
+      setBlobSrc(url);
+    };
+    const mediaPath = selected?.mediaPath;
     readMediaFile(selectedPath)
-      .then((buf) => {
-        const url = URL.createObjectURL(new Blob([buf], { type: mediaMime(selectedPath) }));
-        blobUrlRef.current = url;
-        setBlobSrc(url);
-      })
-      .catch((e) => {
-        console.error("playback blob fallback failed:", e);
-        setAudioBroken(true);
+      .then((buf) => asBlob(buf, selectedPath))
+      .catch(() => {
+        // Original unreadable (moved/deleted) — fall back to the app's copy.
+        if (!mediaPath) {
+          setAudioBroken(true);
+          setBrokenWhy("gone");
+          return;
+        }
+        readMediaFile(mediaPath)
+          .then((buf) => {
+            asBlob(buf, mediaPath);
+            setAudioNote("copy");
+          })
+          .catch(() => {
+            setAudioBroken(true);
+            setBrokenWhy("gone");
+          });
       });
   };
 
@@ -816,12 +847,16 @@ export default function Transcribe() {
     return rows.filter((r): r is ContractRow => r !== null);
   };
 
+  /** How many leading cues the preview serializes — enough to show real
+   *  content past a VTT STYLE block, still cheap to re-serialize per toggle. */
+  const PREVIEW_CUES = 12;
+
   /** First cues of the ACTUAL file, re-serialized on every card/toggle
    *  change — the panel's answer to "what am I getting?". */
   const exportPreview = (): string | null => {
     if (!result?.segments?.length) return null;
     const full = editedResult();
-    const segs = (full.segments ?? []).slice(0, 3);
+    const segs = (full.segments ?? []).slice(0, PREVIEW_CUES);
     const lastEnd = segs[segs.length - 1]?.end ?? 0;
     const sample: BatchResult = {
       ...full,
@@ -1552,6 +1587,10 @@ export default function Transcribe() {
 
       {result && (
         <Card className="mt-6 p-5">
+          {/* Sticky toolbar: identity + player + display toggles + legend stay
+              pinned while the transcript scrolls (position: sticky against the
+              app's main scroll container; opaque-ish bg so rows slide under). */}
+          <div className="sticky -top-px z-10 -mx-5 -mt-5 rounded-t-card border-b border-line bg-surface/95 px-5 pb-0.5 pt-5 backdrop-blur-md">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div className="font-mono text-[11px] uppercase tracking-label text-faint">
               transcript
@@ -1709,10 +1748,17 @@ export default function Transcribe() {
             </div>
           )}
 
+          {audioNote === "copy" && !audioBroken && (
+            <div className="-mt-2 mb-3 px-1 text-[11.5px] text-faint">
+              Playing the app's saved copy — the original file was moved or deleted.
+            </div>
+          )}
+
           {audioBroken && (
             <div className="mb-3 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2 text-[12px] text-dim">
-              Playback isn't available for this file — the app couldn't decode it
-              (missing audio codec in the system webview).
+              {brokenWhy === "gone"
+                ? "Playback isn't available — the original file is gone and no copy was kept (it predates audio copies, or “Keep a copy of the audio” was off)."
+                : "Playback isn't available — this format can't be decoded by the system webview. The transcript and exports still work."}
             </div>
           )}
 
@@ -1747,6 +1793,87 @@ export default function Transcribe() {
               </span>
             </div>
           )}
+
+          {hasSpeakers && showNames && (
+            <div className="mb-2.5 flex flex-wrap items-center gap-2">
+              {speakers.map((label) => {
+                const color = colorOf(label);
+                return editingSpeaker === label ? (
+                  <span key={label} className="inline-flex items-center gap-2">
+                    {/* The speaker color OWNS the field: its solid border is
+                        the focus indicator (no app-wide accent ring competing
+                        with it) and a dot inside doubles the preview. Picking
+                        a swatch repaints both instantly. */}
+                    <span className="relative inline-flex items-center">
+                      <span
+                        aria-hidden
+                        className="pointer-events-none absolute left-3 size-2 rounded-full"
+                        style={{ backgroundColor: color }}
+                      />
+                      <input
+                        autoFocus
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onBlur={commitRename}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitRename();
+                          else if (e.key === "Escape") setEditingSpeaker(null);
+                        }}
+                        aria-label={`Rename ${prettySpeaker(label)}`}
+                        className="h-7 w-36 rounded-pill border-2 bg-surface-2 pl-7 pr-3 text-[12px] text-text outline-none"
+                        style={{ borderColor: color }}
+                      />
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      {DEFAULT_SPEAKER_COLORS.map((_, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          title="Use this color"
+                          aria-label={`Color ${prettySpeaker(label)} ${idx + 1}`}
+                          aria-pressed={colorIdxOf(label) === idx}
+                          // preventDefault keeps focus in the rename input, so
+                          // picking a color doesn't blur-commit and close it.
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => setSpeakerColor(label, idx)}
+                          className={cn(
+                            "grid size-4 place-items-center rounded-full transition-transform hover:scale-110",
+                            colorIdxOf(label) === idx && "scale-110",
+                          )}
+                          style={{ backgroundColor: `var(--spk-${idx + 1})` }}
+                        >
+                          {/* Check on the selected swatch — selection no longer
+                              reads by hue alone. */}
+                          {colorIdxOf(label) === idx && (
+                            <Check className="size-2.5 text-black/70" strokeWidth={4} />
+                          )}
+                        </button>
+                      ))}
+                    </span>
+                  </span>
+                ) : (
+                  <button
+                    key={label}
+                    type="button"
+                    title="Rename or recolor this speaker"
+                    onClick={() => {
+                      setEditingSpeaker(label);
+                      setRenameDraft(fileRenames[label] ?? "");
+                    }}
+                    className="ring-signal inline-flex items-center gap-1.5 rounded-pill py-0.5 pl-2 pr-2.5 text-[12px] font-medium"
+                    style={chipStyle(color)}
+                  >
+                    <span className="size-[7px] rounded-full" style={{ backgroundColor: color }} />
+                    {displayName(label)}
+                  </button>
+                );
+              })}
+              <span className="text-[11.5px] text-faint">
+                click a name to rename or pick its color — both apply to Copy and exports
+              </span>
+            </div>
+          )}
+          </div>
 
           {showExport && (
             <div className="mb-4 rounded-xl border border-line bg-surface-2/60 p-4">
@@ -1841,13 +1968,50 @@ export default function Transcribe() {
                 })}
               </div>
 
-              {/* Live preview: the first cues serialized in the real format. */}
-              <pre className="mt-3 max-h-44 overflow-auto whitespace-pre rounded-xl border border-line bg-surface px-3.5 py-3 font-mono text-[11.5px] leading-relaxed text-dim">
+              {/* Live preview: the first cues serialized in the real format.
+                  Grows with its content up to 40vh; the handle below drags it
+                  as tall as you like. */}
+              <pre
+                ref={previewRef}
+                style={previewH !== null ? { height: previewH, maxHeight: "none" } : undefined}
+                className="mt-3 max-h-[40vh] overflow-auto whitespace-pre rounded-xl border border-line bg-surface px-3.5 py-3 font-mono text-[11.5px] leading-relaxed text-dim"
+              >
                 {exportPreview() ?? "No segments to preview."}
               </pre>
+              <div className="flex justify-center pt-1.5">
+                <div
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label="Resize preview"
+                  title="Drag to resize the preview"
+                  className="h-1.5 w-11 cursor-row-resize touch-none rounded-pill bg-line hover:bg-faint"
+                  onPointerDown={(e) => {
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                    previewDrag.current = {
+                      startY: e.clientY,
+                      startH: previewRef.current?.getBoundingClientRect().height ?? 176,
+                    };
+                  }}
+                  onPointerMove={(e) => {
+                    const d = previewDrag.current;
+                    if (!d || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                    setPreviewH(
+                      Math.max(96, Math.min(1400, d.startH + (e.clientY - d.startY))),
+                    );
+                  }}
+                  onPointerUp={() => {
+                    previewDrag.current = null;
+                  }}
+                />
+              </div>
 
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <span className="font-mono text-[11.5px] text-faint">{exportFileName()}</span>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <span className="font-mono text-[11.5px] text-faint">
+                  {exportFileName()}
+                  {(result?.segments?.length ?? 0) > PREVIEW_CUES
+                    ? ` · first ${PREVIEW_CUES} of ${result?.segments?.length} cues`
+                    : ""}
+                </span>
                 <span className="flex-1" />
                 {editCount > 0 && (
                   <span className="font-mono text-[11px] text-faint">
@@ -1865,70 +2029,7 @@ export default function Transcribe() {
             </div>
           )}
 
-          {hasSpeakers && showNames && (
-            <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-line pb-3">
-              {speakers.map((label) => {
-                const color = colorOf(label);
-                return editingSpeaker === label ? (
-                  <span key={label} className="inline-flex items-center gap-2">
-                    <input
-                      autoFocus
-                      value={renameDraft}
-                      onChange={(e) => setRenameDraft(e.target.value)}
-                      onBlur={commitRename}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") commitRename();
-                        else if (e.key === "Escape") setEditingSpeaker(null);
-                      }}
-                      aria-label={`Rename ${prettySpeaker(label)}`}
-                      className="ring-signal h-7 w-36 rounded-pill border bg-surface-2 px-3 text-[12px] text-text outline-none"
-                      // The border tracks the speaker's own color (live, so
-                      // picking a swatch recolors it immediately).
-                      style={{ borderColor: `color-mix(in srgb, ${color} 55%, transparent)` }}
-                    />
-                    <span className="inline-flex items-center gap-1">
-                      {DEFAULT_SPEAKER_COLORS.map((_, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          title="Use this color"
-                          aria-label={`Color ${prettySpeaker(label)} ${idx + 1}`}
-                          // preventDefault keeps focus in the rename input, so
-                          // picking a color doesn't blur-commit and close it.
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => setSpeakerColor(label, idx)}
-                          className={cn(
-                            "size-4 rounded-full transition-transform hover:scale-110",
-                            colorIdxOf(label) === idx &&
-                              "ring-2 ring-text/60 ring-offset-1 ring-offset-surface",
-                          )}
-                          style={{ backgroundColor: `var(--spk-${idx + 1})` }}
-                        />
-                      ))}
-                    </span>
-                  </span>
-                ) : (
-                  <button
-                    key={label}
-                    type="button"
-                    title="Rename or recolor this speaker"
-                    onClick={() => {
-                      setEditingSpeaker(label);
-                      setRenameDraft(fileRenames[label] ?? "");
-                    }}
-                    className="ring-signal inline-flex items-center gap-1.5 rounded-pill py-0.5 pl-2 pr-2.5 text-[12px] font-medium"
-                    style={chipStyle(color)}
-                  >
-                    <span className="size-[7px] rounded-full" style={{ backgroundColor: color }} />
-                    {displayName(label)}
-                  </button>
-                );
-              })}
-              <span className="text-[11.5px] text-faint">
-                click a name to rename or pick its color — both apply to Copy and exports
-              </span>
-            </div>
-          )}
+          {/* legend moved into the sticky toolbar above */}
 
           {/* `transport::batch` deliberately leaves `text` untouched ("that IS the output"), so
               bidi overrides and other invisible format characters from an untrusted server reach
@@ -1956,7 +2057,8 @@ export default function Transcribe() {
                     key={i}
                     id={`seg-row-${i}`}
                     className={cn(
-                      "relative flex gap-3 rounded-lg px-1.5 py-0.5 -mx-1.5",
+                      // scroll-margin keeps seeks/follow clear of the sticky bar
+                      "relative -mx-1.5 flex scroll-mt-44 gap-3 rounded-lg px-1.5 py-0.5",
                       isActive && "bg-accent-soft/40",
                       editMode && seg.edited && "border-l-2 border-ok/60 pl-2",
                     )}

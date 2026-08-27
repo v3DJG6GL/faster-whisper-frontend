@@ -9,8 +9,9 @@
 import { create } from "zustand";
 import {
   cancelBackendTranscription, cancelFileTranscription, getTranscribeProgress,
-  transcribeFile,
+  saveTranscriptMedia, transcribeFile,
 } from "./api";
+import { useApp } from "./store";
 import { upsertRecord, type TranscriptRecord } from "./transcriptHistory";
 import type {
   BatchProgress, BatchResult, DecodeOverrides, TranscribeOptions,
@@ -25,6 +26,8 @@ export interface QueueItem {
   error?: string;
   /** Wall time the file took end to end — feeds the whole-run estimate. */
   tookMs?: number;
+  /** App-managed audio copy — playback falls back to it when `path` is gone. */
+  mediaPath?: string;
 }
 
 /** The pipeline stages of a run, in server order (the progress rail). */
@@ -236,7 +239,7 @@ function recordRun(
   ctx: RunContext,
   options: TranscribeOptions | undefined,
   outcome: { status: "done" | "failed"; result?: BatchResult; error?: string; tookMs?: number },
-) {
+): TranscriptRecord {
   const s = get();
   const rec: TranscriptRecord = {
     schemaVersion: 1,
@@ -260,6 +263,27 @@ function recordRun(
   };
   historyByPath[path] = rec;
   upsertRecord(rec);
+  return rec;
+}
+
+/** Copy the finished run's input audio into the app's media store (unless the
+ *  setting is off), then late-link the path into the record and queue row —
+ *  exactly the dictation recording-path pattern. Best-effort: a failed copy
+ *  never touches the run outcome. */
+function copyRunMedia(path: string, rec: TranscriptRecord) {
+  if (useApp.getState().settings.transcribe?.keepAudioCopies === false) return;
+  void saveTranscriptMedia(rec.id, path)
+    .then((mediaPath) => {
+      if (!mediaPath) return;
+      patchItem(path, { mediaPath });
+      const cur = historyByPath[path];
+      if (cur && cur.id === rec.id) {
+        const updated = { ...cur, mediaPath };
+        historyByPath[path] = updated;
+        upsertRecord(updated);
+      }
+    })
+    .catch((e) => console.error("audio copy failed:", e));
 }
 
 /** Load a history record back into the workbench: one settled queue row,
@@ -277,6 +301,7 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
         result: rec.result,
         error: rec.error,
         tookMs: rec.tookMs,
+        mediaPath: rec.mediaPath,
       },
     ],
     selectedPath: rec.sourcePath,
@@ -451,7 +476,8 @@ async function pump(
         const tookMs = Date.now() - fileT0;
         patchItem(next.path, { status: "done", result: res, tookMs });
         set({ selectedPath: next.path }); // follow the latest finished file
-        recordRun(next.path, ctx, options, { status: "done", result: res, tookMs });
+        const rec = recordRun(next.path, ctx, options, { status: "done", result: res, tookMs });
+        copyRunMedia(next.path, rec);
       } catch (e) {
         if (epoch !== get().epoch) return;
         patchItem(next.path, { status: "failed", error: String(e) });

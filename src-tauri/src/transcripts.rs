@@ -31,6 +31,17 @@ fn dictations_dir(app: &AppHandle) -> Result<PathBuf, String> {
     transcripts_dir(app).map(|d| d.join("dictation"))
 }
 
+/// Audio copies of file-transcription inputs live beside the records, named
+/// by record id (`media/<id>.<ext>`), so playback keeps working when the
+/// original file moves. Same opaque contract: Rust never reads the audio.
+fn media_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    transcripts_dir(app).map(|d| d.join("media"))
+}
+
+/// Copy cap — beyond this the copy is silently skipped (the record keeps
+/// playing from the original while it exists).
+const MAX_MEDIA_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
 /// Record ids are frontend-generated UUIDs — hex + dashes only, so an id can
 /// never traverse out of the transcripts directory.
 fn valid_id(id: &str) -> bool {
@@ -107,10 +118,14 @@ fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) {
 
 /// Delete one record's file. The user-facing "Delete" — actually removes data.
 /// Tries both stores: ids are UUIDs, so the same id can only exist in one.
+/// The record's audio copy (if any) goes with it.
 #[tauri::command]
 pub fn delete_transcript_record(app: AppHandle, id: String) -> Result<(), String> {
     if !valid_id(&id) {
         return Err("malformed record id".into());
+    }
+    if let Ok(dir) = media_dir(&app) {
+        remove_media_for(&dir, &id);
     }
     let name = format!("{id}.json");
     let file_path = transcripts_dir(&app)?.join(&name);
@@ -118,6 +133,116 @@ pub fn delete_transcript_record(app: AppHandle, id: String) -> Result<(), String
         return std::fs::remove_file(file_path).map_err(|e| e.to_string());
     }
     std::fs::remove_file(dictations_dir(&app)?.join(&name)).map_err(|e| e.to_string())
+}
+
+/// Copy a run's input audio next to its record (`media/<id>.<ext>`), so the
+/// workbench can still play it after the original moves. Verbatim copy, no
+/// transcode; over-cap sources return Ok(None) ("no copy" — not an error).
+/// Runs on a blocking thread: a multi-GB copy must not park the runtime.
+#[tauri::command]
+pub async fn save_transcript_media(
+    app: AppHandle,
+    id: String,
+    source_path: String,
+) -> Result<Option<String>, String> {
+    if !valid_id(&id) {
+        return Err("malformed record id".into());
+    }
+    let dir = media_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let src = PathBuf::from(&source_path);
+        let meta = std::fs::metadata(&src).map_err(|e| e.to_string())?;
+        if !meta.is_file() {
+            return Err("not a file".into());
+        }
+        if meta.len() > MAX_MEDIA_BYTES {
+            tracing::info!("[transcripts] media copy skipped (over cap): {source_path}");
+            return Ok(None);
+        }
+        crate::audio::create_dir_private(&dir)
+            .map_err(|e| format!("could not create the media folder: {e}"))?;
+        let ext = src
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .filter(|e| !e.is_empty() && e.len() <= 5 && e.bytes().all(|b| b.is_ascii_alphanumeric()))
+            .unwrap_or_else(|| "bin".into());
+        let dest = dir.join(format!("{id}.{ext}"));
+        let tmp = dir.join(format!("{id}.{ext}.tmp"));
+        if let Err(e) = std::fs::copy(&src, &tmp) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+        // Owner-only like the records themselves (copy inherits source perms).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        }
+        if let Err(e) = std::fs::rename(&tmp, &dest) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+        Ok(Some(dest.to_string_lossy().to_string()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Total size of the audio-copy store — the Settings toggle's usage readout.
+#[tauri::command]
+pub fn transcript_media_stats(app: AppHandle) -> Result<serde_json::Value, String> {
+    let mut bytes: u64 = 0;
+    let mut files: u32 = 0;
+    if let Ok(entries) = std::fs::read_dir(media_dir(&app)?) {
+        for entry in entries.flatten() {
+            if let Ok(m) = entry.metadata() {
+                if m.is_file() {
+                    bytes += m.len();
+                    files += 1;
+                }
+            }
+        }
+    }
+    Ok(serde_json::json!({ "bytes": bytes, "files": files }))
+}
+
+/// Remove every media file named after `id` (any extension).
+fn remove_media_for(dir: &Path, id: &str) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.file_stem().and_then(|s| s.to_str()) == Some(id) {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
+/// Drop media files whose record is gone — covers retention pruning, wipes,
+/// and half-finished copies (`.tmp` stems never match a record id). One clock:
+/// a copy lives exactly as long as its transcript.
+fn sweep_orphan_media(app: &AppHandle) {
+    let (Ok(dir), Ok(records)) = (media_dir(app), transcripts_dir(app)) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !records.join(format!("{stem}.json")).exists() && std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        tracing::info!("[transcripts] media sweep: removed {removed} orphaned audio cop(y/ies)");
+    }
 }
 
 /// Delete records older than `days` (0 = keep forever). Same shape and
@@ -176,6 +301,7 @@ pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Conf
             }
         }
     }
+    sweep_orphan_media(app);
 }
 
 /// Remove every record in `dir` regardless of age ("Keep dictation history"
