@@ -301,6 +301,9 @@ export default function Transcribe() {
   const [audioLen, setAudioLen] = useState(0);
   const [rate, setRate] = useState(1);
   const [follow, setFollow] = useState(true);
+  /** The segment list's own scroll container — follow scrolls THIS, not the
+   *  page, so the toolbar/player above stay put while the karaoke advances. */
+  const transcriptBoxRef = useRef<HTMLDivElement | null>(null);
   const [audioBroken, setAudioBroken] = useState(false);
   // Why playback is unavailable — a missing file and an undecodable codec are
   // different failures and get different sentences.
@@ -685,24 +688,38 @@ export default function Transcribe() {
     return best >= 0 && curTime < (words[best].end ?? 0) + 0.4 ? best : -1;
   }, [result, curTime]);
 
-  // Follow: keep the active row centred while playing; any manual wheel
-  // scroll disarms it (the chip re-arms).
+  // Follow: keep the active row centred while playing — by scrolling the
+  // transcript BOX only (its own scroll container), never the page.
+  // scrollIntoView would walk up to the page scroller and drag the whole
+  // layout along; the rect math below stays inside the box by construction.
   useEffect(() => {
     if (!follow || !playing || activeSegIdx < 0) return;
-    document
-      .getElementById(`seg-row-${activeSegIdx}`)
-      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    const box = transcriptBoxRef.current;
+    const row = document.getElementById(`seg-row-${activeSegIdx}`);
+    if (!box || !row) return;
+    const delta = row.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    box.scrollTo({
+      top: box.scrollTop + delta - (box.clientHeight - row.clientHeight) / 2,
+      behavior: "smooth",
+    });
   }, [activeSegIdx, follow, playing]);
+  // Manual wheel/touch INSIDE the transcript box disarms follow (the chip
+  // re-arms); scrolling anywhere else on the page leaves it armed — a stray
+  // tick over the sidebar used to kill it. Listener-level, not onScroll:
+  // the follow scroll itself must never self-disarm.
   useEffect(() => {
     if (!playing || !follow) return;
+    const box = transcriptBoxRef.current;
+    if (!box) return;
     const disarm = () => setFollow(false);
-    window.addEventListener("wheel", disarm, { passive: true });
-    window.addEventListener("touchmove", disarm, { passive: true });
+    box.addEventListener("wheel", disarm, { passive: true });
+    box.addEventListener("touchmove", disarm, { passive: true });
     return () => {
-      window.removeEventListener("wheel", disarm);
-      window.removeEventListener("touchmove", disarm);
+      box.removeEventListener("wheel", disarm);
+      box.removeEventListener("touchmove", disarm);
     };
-  }, [playing, follow]);
+    // editMode/showFullText remount the box — re-attach to the fresh node.
+  }, [playing, follow, editMode, showFullText]);
 
   // Space play/pause, arrows ±5 s — never while typing somewhere.
   useEffect(() => {
@@ -2149,7 +2166,12 @@ export default function Transcribe() {
               {stripControlChars(showFullText ? result.text : result.text.slice(0, TRANSCRIPT_PREVIEW_CHARS))}
             </div>
           ) : (
-            <div className="select-text text-[14px] leading-relaxed text-text">
+            <div
+              ref={transcriptBoxRef}
+              // -mx/px pair: the rows' -mx-1.5 highlight bleed lands in the
+              // box's own padding instead of overflowing the scroll container.
+              className="-mx-1.5 max-h-[65vh] select-text overflow-y-auto overscroll-contain px-1.5 text-[14px] leading-relaxed text-text"
+            >
               {effSegments.slice(0, MAX_SEGMENT_ROWS).map((seg, i) => {
                 const isActive = i === activeSegIdx && !editMode;
                 const range = segWordRanges[i];
