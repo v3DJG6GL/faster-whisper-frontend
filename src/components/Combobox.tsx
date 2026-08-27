@@ -93,6 +93,11 @@ export function Combobox({
 
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
+  // Filter only while the user is TYPING in this popover session. Reopening
+  // over a committed value must show the whole pool again — otherwise a picked
+  // model filters every sibling out of the list and the dropdown looks like
+  // the server only has one model.
+  const [typed, setTyped] = useState(false);
   const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -100,7 +105,8 @@ export function Combobox({
   // Set when ArrowDown is pressed before suggestions have loaded — see below.
   const wantFirstRef = useRef(false);
 
-  const candidates = disabled ? [] : rank(suggestions, value);
+  const query = typed ? value : "";
+  const candidates = disabled ? [] : rank(suggestions, query);
   const showPopover = open && candidates.length > 0;
 
   // Position the portaled popover under the input; track scroll/resize while open.
@@ -198,11 +204,12 @@ export function Combobox({
         aria-controls={showPopover ? listId : undefined}
         aria-autocomplete="list"
         aria-activedescendant={showPopover && active >= 0 ? optId(active) : undefined}
-        onChange={(e) => { wantFirstRef.current = false; onChange(e.target.value); setOpen(true); setActive(-1); }}
-        onFocus={() => { if (!disabled && openOnFocus) setOpen(true); }}
+        onChange={(e) => { wantFirstRef.current = false; onChange(e.target.value); setTyped(true); setOpen(true); setActive(-1); }}
+        onFocus={() => { if (!disabled && openOnFocus) { setTyped(false); setOpen(true); } }}
         // A click in an already-focused field (e.g. after Esc closed the popover)
         // doesn't refire onFocus — reopen explicitly so the user can get it back.
-        onClick={() => { if (!disabled) setOpen(true); }}
+        // (A caret-move click while the popover is open keeps the typed filter.)
+        onClick={() => { if (!disabled) { if (!open) setTyped(false); setOpen(true); } }}
         onBlur={() => { setOpen(false); setActive(-1); }}
         onKeyDown={onKeyDown}
       />
@@ -232,7 +239,7 @@ export function Combobox({
                     i === active ? "border-accent bg-accent-soft text-accent" : "border-transparent text-text",
                   )}
                 >
-                  <Highlight text={w} query={value} />
+                  <Highlight text={w} query={query} />
                   {suffix?.(w)}
                 </li>
               ))}
