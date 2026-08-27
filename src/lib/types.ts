@@ -194,7 +194,8 @@ export type SyncCategory =
   | "profiles"
   | "dictionary"
   | "appRules"
-  | "transcription";
+  | "transcription"
+  | "fileTranscriptions";
 
 /** Field-level opt-outs INSIDE a synced category — the sub-toggles indented
  *  under a group row in Settings → Sync. Machine-local like the rest of

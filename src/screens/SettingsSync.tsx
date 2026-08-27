@@ -56,19 +56,27 @@ const OTHER_BUCKET = IS_WINDOWS ? ("linux" as const) : ("windows" as const);
  *  error boundary in the app that unmounts the whole window. */
 const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
-const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
+/** `group` renders as a slim header over consecutive rows sharing it — the
+ *  Recording & history TAB's groups become independently toggleable rows
+ *  under one heading, instead of one catch-all toggle. */
+const CATEGORY_META: { key: SyncCategory; title: string; desc: string; group?: string }[] = [
   { key: "general", title: "General", desc: "Theme, insertion, sounds, launch at login." },
-  // The Recording & history TAB splits into two sync rows (its groups toggle
-  // independently): the dictation-audio behavior, and everything history.
   {
     key: "recording",
-    title: "Dictation audio",
-    desc: "Save dictation audio, silence trim, system-audio mute, hands-free auto-stop.",
+    group: "Recording & history",
+    title: "Dictation",
+    desc: "Save dictation audio, silence trim, the dictation history & retention clock, system-audio mute, hands-free auto-stop.",
+  },
+  {
+    key: "fileTranscriptions",
+    group: "Recording & history",
+    title: "File transcriptions",
+    desc: "History retention and audio copies.",
   },
   {
     key: "transcription",
-    title: "History & Transcribe defaults",
-    desc: "Retention for dictations AND file transcriptions, audio copies, and the Transcribe screen's option, display and export defaults.",
+    title: "Transcribe defaults",
+    desc: "The Transcribe screen's option, display and export defaults — diarization, translate, music separation, timestamps, colors, format.",
   },
   { key: "chip", title: "Chip", desc: "Styling, visibility, timing, quick-launch buttons." },
   { key: "backends", title: "Backends", desc: "Server connections incl. API keys (stored on your own server)." },
@@ -539,7 +547,8 @@ function SecurityReviewDialog() {
     "api-key": "API key changed",
     "recording-retention": "Saved recordings would be deleted",
     "save-recordings": "Saving every dictation would be turned on",
-    "history-retention": "History would start being deleted",
+    "history-retention": "File transcriptions would start being deleted",
+    "dictation-retention": "Dictations would start being deleted",
   };
   const label = (c: SecurityChange) => LABELS[c.kind];
   const shown = pending.changes.slice(0, MAX_REVIEW_ROWS);
@@ -815,11 +824,17 @@ export function SyncTab() {
         )}
 
         <SectionLabel>What this device syncs</SectionLabel>
-        {CATEGORY_META.map(({ key, title, desc }) => {
+        {CATEGORY_META.map(({ key, title, desc, group }, i) => {
           const subs = SUB_META.filter((s) => s.parent === key);
           const subVals = sync.sub ?? DEFAULT_SYNC.sub!;
+          const groupStarts = group && CATEGORY_META[i - 1]?.group !== group;
           return (
             <Fragment key={key}>
+              {groupStarts && (
+                <div className="mt-3 font-mono text-[10.5px] uppercase tracking-label text-accent">
+                  {group}
+                </div>
+              )}
               <SettingRow title={title} desc={desc} disabled={!sync.enabled}>
                 <Toggle
                   checked={sync.categories[key]}

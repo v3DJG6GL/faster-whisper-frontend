@@ -56,7 +56,13 @@ import type {
   ThemeName,
   TranscribeSettings,
 } from "./types";
-import { CHIP_FIELDS, TRANSCRIPTION_FIELDS, TRANSCRIPTION_PICK_FIELDS } from "./syncTypes";
+import {
+  CHIP_FIELDS,
+  DICTATION_HISTORY_FIELDS,
+  FILE_TRANSCRIPTION_FIELDS,
+  TRANSCRIPTION_FIELDS,
+  TRANSCRIPTION_PICK_FIELDS,
+} from "./syncTypes";
 import type {
   SyncBackends,
   SyncBlob,
@@ -66,6 +72,7 @@ import type {
   SyncGeneral,
   SyncRecording,
   SyncRemoteState,
+  SyncFileTranscriptions,
   SyncState,
   SyncTranscription,
 } from "./syncTypes";
@@ -80,6 +87,7 @@ export const ALL_CATEGORIES: SyncCategory[] = [
   "dictionary",
   "appRules",
   "transcription",
+  "fileTranscriptions",
 ];
 
 /** This device's field-level opt-outs (Settings → Sync sub-toggles), with the
@@ -203,6 +211,27 @@ export function migrateBlob(blob: SyncBlob): SyncBlob {
       out.dictionary = { ...(out.dictionary ?? {}), quickAddHotkey };
     }
   }
+  // v0.1.63 shipped ONE `transcription` category carrying the history flags
+  // too; they now live with their subject (dictation clock → `recording`,
+  // file clock → `fileTranscriptions`). Split an old-shape entry, existing
+  // new-shape entries winning — same contract as the chip split above.
+  if (isPlainObject(out.transcription)) {
+    const tr = out.transcription as Record<string, unknown>;
+    const dictPart = pickFields(tr, DICTATION_HISTORY_SET);
+    const filePart = pickFields(tr, FILE_TRANSCRIPTION_SET);
+    if (Object.keys(dictPart).length || Object.keys(filePart).length) {
+      out.transcription = omitFields(
+        tr,
+        new Set([...DICTATION_HISTORY_SET, ...FILE_TRANSCRIPTION_SET]),
+      ) as SyncTranscription;
+      if (Object.keys(dictPart).length && isPlainObject(out.recording)) {
+        out.recording = { ...dictPart, ...(out.recording as object) } as SyncRecording;
+      }
+      if (Object.keys(filePart).length && out.fileTranscriptions === undefined) {
+        out.fileTranscriptions = filePart as SyncFileTranscriptions;
+      }
+    }
+  }
   const b = out.backends as (SyncBackends & { quickAddList?: unknown }) | undefined;
   if (isPlainObject(b) && hasOwn(b, "quickAddList")) {
     const { quickAddList, ...rest } = b;
@@ -245,6 +274,12 @@ function extractRecording(
 ): SyncBlob["recording"] {
   const { recordingsDir, ...rest } = settings.recording;
   const out = omitFields(rest, CHIP_FIELD_SET) as SyncRecording;
+  // The dictation-history flags live in settings.transcribe but belong to
+  // this category (the tab's "Dictation" group governs the same sessions).
+  Object.assign(
+    out,
+    pickFields((settings.transcribe ?? {}) as Record<string, unknown>, DICTATION_HISTORY_SET),
+  );
   const dir = syncDir ? recordingsDir : snapshot?.recording?.recordingsDir;
   if (dir !== undefined) out.recordingsDir = dir;
   return out;
@@ -260,6 +295,8 @@ function extractChip(settings: AppSettings): SyncBlob["chip"] {
  *  peers never receive a chord-less profile (`sanitizeProfiles` requires a
  *  code list). */
 const TRANSCRIPTION_FIELD_SET: ReadonlySet<string> = new Set(TRANSCRIPTION_FIELDS);
+const DICTATION_HISTORY_SET: ReadonlySet<string> = new Set(DICTATION_HISTORY_FIELDS);
+const FILE_TRANSCRIPTION_SET: ReadonlySet<string> = new Set(FILE_TRANSCRIPTION_FIELDS);
 const TRANSCRIPTION_PICK_SET: ReadonlySet<string> = new Set(TRANSCRIPTION_PICK_FIELDS);
 
 /** The `transcription` category: the classified subset of settings.transcribe.
@@ -280,6 +317,13 @@ function extractTranscription(
         TRANSCRIPTION_PICK_SET,
       );
   return { ...out, ...(picks as SyncTranscription) };
+}
+
+function extractFileTranscriptions(settings: AppSettings): SyncFileTranscriptions {
+  return pickFields(
+    (settings.transcribe ?? {}) as Record<string, unknown>,
+    FILE_TRANSCRIPTION_SET,
+  ) as SyncFileTranscriptions;
 }
 
 function extractProfiles(
@@ -352,6 +396,9 @@ export async function composeBlob(
   blob.transcription = cats.transcription
     ? extractTranscription(cfg.settings, opts.sub.transcribePicks ?? false, snapshot)
     : snapshot?.transcription;
+  blob.fileTranscriptions = cats.fileTranscriptions
+    ? extractFileTranscriptions(cfg.settings)
+    : snapshot?.fileTranscriptions;
   if (cats.backends) {
     blob.backends = {
       list: cfg.backends,
@@ -1055,6 +1102,17 @@ export async function applyBlob(
       // below): migrateBlob partitions honest blobs, and the filter here stops a crafted one
       // from riding e.g. `indicatorPosition` past a switched-off chip toggle.
       const rec = omitFields(blob.recording as Record<string, unknown>, CHIP_FIELD_SET);
+      // The dictation-history flags ride this category but LIVE in
+      // settings.transcribe — route them there (validated), and keep them out
+      // of the recording block below.
+      const dictHist = sanitizeTranscription(pickFields(rec, DICTATION_HISTORY_SET));
+      if (Object.keys(dictHist).length) {
+        nextSettings = {
+          ...nextSettings,
+          transcribe: { ...settings.transcribe, ...nextSettings.transcribe, ...dictHist },
+        };
+      }
+      for (const k of DICTATION_HISTORY_FIELDS) delete rec[k];
       nextSettings = {
         ...nextSettings,
         recording: {
@@ -1096,6 +1154,19 @@ export async function applyBlob(
           ...sanitizeTranscription({ ...classified, ...picks }),
         },
       };
+    }
+    // The `fileTranscriptions` category — same routing into the opaque
+    // transcribe blob, same per-field validation.
+    if (cats.fileTranscriptions && isPlainObject(blob.fileTranscriptions)) {
+      const ft = sanitizeTranscription(
+        pickFields(blob.fileTranscriptions as Record<string, unknown>, FILE_TRANSCRIPTION_SET),
+      );
+      if (Object.keys(ft).length) {
+        nextSettings = {
+          ...nextSettings,
+          transcribe: { ...settings.transcribe, ...nextSettings.transcribe, ...ft },
+        };
+      }
     }
     // The chip half of the old "Recording & Chip" group — same merge-over-current rule, and
     // the mirror-image field filter (only chip-classified keys may apply here).
@@ -1760,6 +1831,7 @@ function fullCats(): Record<SyncCategory, boolean> {
     dictionary: true,
     appRules: true,
     transcription: true,
+    fileTranscriptions: true,
   };
 }
 
@@ -1791,7 +1863,8 @@ export interface SecurityChange {
     | "api-key"
     | "recording-retention"
     | "save-recordings"
-    | "history-retention";
+    | "history-retention"
+    | "dictation-retention";
   /** The backend a `backends`-category change applies to; the recording kinds have no backend and
    *  set this to an empty string (the dialog omits it). */
   backend: string;
@@ -1806,8 +1879,10 @@ export interface SecurityChange {
 /** Which category each held-back change lives in, so the apply can suppress exactly that one and
  *  let everything else through. */
 function catOf(kind: SecurityChange["kind"]): SyncCategory {
-  if (kind === "recording-retention" || kind === "save-recordings") return "recording";
-  if (kind === "history-retention") return "transcription";
+  if (kind === "recording-retention" || kind === "save-recordings" || kind === "dictation-retention") {
+    return "recording";
+  }
+  if (kind === "history-retention") return "fileTranscriptions";
   return "backends";
 }
 
@@ -1857,35 +1932,42 @@ function securityChanges(
       });
     }
   }
-  // The transcription category's two retention clocks drive sweeps that DELETE
-  // stored history (dictation sessions incl. audio; file transcripts incl.
-  // their audio copies). Same rule as the recording clock above: only a change
-  // that starts deleting, or deletes sooner, needs consent.
-  if (cats.transcription && isPlainObject(incoming.transcription)) {
-    const clocks: {
-      key: "dictationRetentionDays" | "historyRetentionDays";
-      fallback: number;
-      what: string;
-    }[] = [
-      { key: "dictationRetentionDays", fallback: 7, what: "dictations" },
-      { key: "historyRetentionDays", fallback: 0, what: "file transcriptions" },
-    ];
-    for (const { key, fallback, what } of clocks) {
-      const rawNext = ownProp(incoming.transcription as Record<string, unknown>, key);
-      const nextDays = typeof rawNext === "number" && Number.isFinite(rawNext) ? rawNext : fallback;
-      const rawHere = local.transcription?.[key];
-      const hereDays = typeof rawHere === "number" ? rawHere : fallback;
-      if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
-        out.push({
-          kind: "history-retention",
-          backend: "",
-          detail:
-            hereDays === 0
-              ? `${what} older than ${nextDays} day(s) would start being deleted (currently kept forever)`
-              : `${what} would be deleted after ${nextDays} day(s) instead of ${hereDays}`,
-        });
-      }
+  // The two history retention clocks drive sweeps that DELETE stored history
+  // (dictation sessions incl. audio; file transcripts incl. their audio
+  // copies). Same rule as the recording clock above: only a change that
+  // starts deleting, or deletes sooner, needs consent. The dictation clock
+  // rides the `recording` category; the file clock its own category.
+  const clockCheck = (
+    container: unknown,
+    localContainer: unknown,
+    key: "dictationRetentionDays" | "historyRetentionDays",
+    fallback: number,
+    what: string,
+    kind: SecurityChange["kind"],
+  ) => {
+    if (!isPlainObject(container)) return;
+    const rawNext = ownProp(container, key);
+    const nextDays = typeof rawNext === "number" && Number.isFinite(rawNext) ? rawNext : fallback;
+    const rawHere = isPlainObject(localContainer) ? ownProp(localContainer, key) : undefined;
+    const hereDays = typeof rawHere === "number" ? rawHere : fallback;
+    if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
+      out.push({
+        kind,
+        backend: "",
+        detail:
+          hereDays === 0
+            ? `${what} older than ${nextDays} day(s) would start being deleted (currently kept forever)`
+            : `${what} would be deleted after ${nextDays} day(s) instead of ${hereDays}`,
+      });
     }
+  };
+  if (cats.recording) {
+    clockCheck(incoming.recording, local.recording, "dictationRetentionDays", 7,
+      "dictations", "dictation-retention");
+  }
+  if (cats.fileTranscriptions) {
+    clockCheck(incoming.fileTranscriptions, local.fileTranscriptions, "historyRetentionDays", 0,
+      "file transcriptions", "history-retention");
   }
   if (!cats.backends || !incoming.backends) return out;
   const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));

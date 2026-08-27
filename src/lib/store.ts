@@ -54,6 +54,7 @@ export const DEFAULT_SYNC: SyncSettings = {
     dictionary: true,
     appRules: true,
     transcription: true,
+    fileTranscriptions: true,
   },
   // Every default preserves the pre-sub-toggle behavior exactly: the folder
   // was never synced, chords always were; the Transcribe picks never were.

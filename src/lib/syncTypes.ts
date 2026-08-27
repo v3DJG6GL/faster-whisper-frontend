@@ -70,7 +70,8 @@ export type SyncChip = Pick<RecordingSettings, ChipField>;
  *  device's "Recordings folder" sub-toggle is on (default off), else passed
  *  through from the snapshot so an opted-out device never erases it. */
 export type SyncRecording = Partial<Pick<RecordingSettings, "recordingsDir">> &
-  Omit<RecordingSettings, ChipField | "recordingsDir">;
+  Omit<RecordingSettings, ChipField | "recordingsDir"> &
+  Partial<Pick<TranscribeSettings, (typeof DICTATION_HISTORY_FIELDS)[number]>>;
 
 /** The `backends` category. `secrets` ({backendId: apiKey}) is present in the
  *  server blob always (user decision — it's their own server) and in an export
@@ -108,14 +109,15 @@ export interface SyncAppRules {
   windows: AppRule[];
 }
 
-/** The `transcription` category: the History/retention half of
- *  settings.transcribe plus the Transcribe screen's option defaults. The
- *  single classification list the compose pick, the apply filter, and the
- *  sanitizer share. The last-used backendId/model/language picks are NOT
- *  here — they travel only when the "Last-used backend & model" sub-toggle
- *  opts in (TRANSCRIPTION_PICK_FIELDS), else pass through from the snapshot
- *  so an opted-out device never erases them. speakerColorMode is legacy
- *  (superseded by the display toggles) and stays local. */
+/** The `transcription` category: the Transcribe SCREEN's option defaults
+ *  only. History/retention flags live with their subject instead — the
+ *  dictation clock rides the `recording` category, the file-transcription
+ *  clock the `fileTranscriptions` category — so the Sync page can mirror the
+ *  Recording & history tab's groups with independent toggles. The last-used
+ *  backendId/model/language picks travel only when the "Last-used backend &
+ *  model" sub-toggle opts in (TRANSCRIPTION_PICK_FIELDS), else pass through
+ *  from the snapshot so an opted-out device never erases them.
+ *  speakerColorMode is legacy (superseded by the display toggles), local. */
 export const TRANSCRIPTION_FIELDS = [
   "diarize",
   "numSpeakers",
@@ -126,11 +128,26 @@ export const TRANSCRIPTION_FIELDS = [
   "showTimestamps",
   "showSpeakerNames",
   "colorizeSpeakers",
-  "historyRetentionDays",
+] as const satisfies readonly (keyof TranscribeSettings)[];
+
+/** Dictation-history flags: stored in settings.transcribe but SYNCED inside
+ *  the `recording` category, because they govern the same sessions the
+ *  recording toggles do (the tab's "Dictation" group). */
+export const DICTATION_HISTORY_FIELDS = [
   "keepDictationHistory",
   "dictationRetentionDays",
+] as const satisfies readonly (keyof TranscribeSettings)[];
+
+/** The `fileTranscriptions` category (the tab's "File transcriptions" group):
+ *  history retention + audio copies. */
+export const FILE_TRANSCRIPTION_FIELDS = [
+  "historyRetentionDays",
   "keepAudioCopies",
 ] as const satisfies readonly (keyof TranscribeSettings)[];
+
+export type SyncFileTranscriptions = Partial<
+  Pick<TranscribeSettings, (typeof FILE_TRANSCRIPTION_FIELDS)[number]>
+>;
 
 /** The per-machine-by-default Transcribe picks behind the sub-toggle. */
 export const TRANSCRIPTION_PICK_FIELDS = [
@@ -159,6 +176,7 @@ export interface SyncBlob {
   dictionary?: SyncDictionary;
   appRules?: SyncAppRules;
   transcription?: SyncTranscription;
+  fileTranscriptions?: SyncFileTranscriptions;
 }
 
 /** The export-file envelope (single pretty-printed JSON file). */
