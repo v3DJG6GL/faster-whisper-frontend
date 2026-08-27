@@ -982,45 +982,6 @@ export default function Transcribe() {
         </button>
       )}
 
-      {/* Recent transcripts, one click from the idle screen (VS Code's
-          dual-access recents: short list here, full History screen a click
-          away). Finished runs land in the history automatically. */}
-      {!files.length && !queue.length && recentRecords.length > 0 && (
-        <Card className="mt-6 px-5 py-1">
-          <div className="flex items-baseline gap-2 py-2">
-            <span className="font-mono text-[10.5px] uppercase tracking-label text-faint">
-              recent
-            </span>
-            <span className="flex-1" />
-            <Link to="/history" className="ring-signal rounded text-[12px] text-accent">
-              All history →
-            </Link>
-          </div>
-          {recentRecords.map((rec, i) => (
-            <div
-              key={rec.id}
-              className={cn(
-                "flex items-center gap-3 py-2.5",
-                i < recentRecords.length - 1 && "border-b border-line",
-              )}
-            >
-              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ok/15 text-ok">
-                <Check className="size-3.5" />
-              </span>
-              <span className="min-w-0 flex-1 truncate text-[13px] text-text">
-                {safeDisplayText(rec.sourceName, 120)}
-              </span>
-              <span className="shrink-0 font-mono text-[11px] text-faint">
-                {recentMeta(rec)}
-              </span>
-              <Button variant="ghost" size="sm" onClick={() => openHistoryRecord(rec)}>
-                Open
-              </Button>
-            </div>
-          ))}
-        </Card>
-      )}
-
       <div className="mt-6 grid grid-cols-3 gap-4">
         <div>
           <label className="mb-2 block text-[12px] font-medium text-dim">Backend</label>
@@ -1044,7 +1005,30 @@ export default function Transcribe() {
           />
         </div>
         <div>
-          <label className="mb-2 block text-[12px] font-medium text-dim">Model</label>
+          {/* Reset lives in the LABEL row (decode-editor treatment: accent dot
+              = overridden, ↺ right-aligned) — under the field it added height
+              to this cell only and broke the three-column baseline. */}
+          <div className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-dim">
+            <label>Model</label>
+            {model !== "" && (
+              <>
+                <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearCopied();
+                    resetForInputChange();
+                    setModel("");
+                    persistOptions({ backendId, model: "" });
+                  }}
+                  title={backend?.model ? `Default · ${backend.model}` : "Default · server model"}
+                  className="ring-signal ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1 text-[11px] font-normal text-faint hover:text-text"
+                >
+                  <RotateCcw className="size-3" /> use default
+                </button>
+              </>
+            )}
+          </div>
           <ModelPicker
             ariaLabel="Model"
             value={model}
@@ -1056,6 +1040,7 @@ export default function Transcribe() {
             }}
             models={advertised}
             defaultLabel={backend?.model ? `Default · ${backend.model}` : "Default · server model"}
+            hideReset
           />
         </div>
         <div>
@@ -1075,122 +1060,156 @@ export default function Transcribe() {
 
       <div className="mt-6">
         <div className="mb-2.5 font-mono text-[11px] uppercase tracking-label text-faint">processing</div>
+        {/* Rows in PIPELINE order — the card previews the run rail: separate
+            music → skip silence (analysis) → transcribe (translate is the
+            decode's task) → identify speakers. The hairline + dots say
+            "sequence" without over-claiming stages (skip-silence and translate
+            live inside the transcribe stage). */}
         <Card className="px-5 py-1">
-          {!isStandard && (
+          {isStandard ? (
             <SettingRow
-              title="Speaker diarization"
-              desc={
-                diarAvailable
-                  ? "Label who is speaking in each segment. Runs on the server after transcription."
-                  : "Not available on this server (DIARIZATION_ENABLED is off)."
-              }
-              disabled={!diarAvailable}
-            >
-              <div className="flex items-center gap-4">
-                {diarize && diarAvailable && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[12px] text-dim">Speakers</span>
-                    <Stepper
-                      value={numSpeakers}
-                      onChange={(v) => {
-                        setNumSpeakers(v);
-                        persistOptions({ numSpeakers: v });
-                      }}
-                      min={0}
-                      max={32}
-                      zeroLabel="auto"
-                      ariaLabel="Expected speakers"
-                    />
-                  </div>
-                )}
-                <Toggle
-                  checked={diarize && diarAvailable}
-                  disabled={!diarAvailable}
-                  ariaLabel="Speaker diarization"
-                  onChange={(v) => {
-                    setDiarize(v);
-                    persistOptions({ diarize: v });
-                  }}
-                />
-              </div>
-            </SettingRow>
-          )}
-          <SettingRow
-            title="Translate to English"
-            desc="Whisper's translate task instead of transcribing in the source language."
-            last={isStandard}
-          >
-            <Toggle
-              checked={translate}
-              ariaLabel="Translate to English"
-              onChange={(v) => {
-                setTranslate(v);
-                persistOptions({ translate: v });
-              }}
-            />
-          </SettingRow>
-          {!isStandard && (
-            <SettingRow
-              title="Separate background music"
-              desc={
-                bgmAvailable
-                  ? "Strip music before transcribing (UVR). Adds processing time per file."
-                  : "Not available on this server (BGM_SEPARATION_ENABLED is off)."
-              }
-              disabled={!bgmAvailable}
-            >
-              <Toggle
-                checked={separateBgm && bgmAvailable}
-                disabled={!bgmAvailable}
-                ariaLabel="Separate background music"
-                onChange={(v) => {
-                  setSeparateBgm(v);
-                  persistOptions({ separateBgm: v });
-                }}
-              />
-            </SettingRow>
-          )}
-          {!isStandard && (
-            // Promoted view of runOverrides.vad_filter — the SAME key the
-            // Decode-overrides editor edits (one source of truth, two doors:
-            // changing it here makes the disclosure count "1 set for this
-            // run", and reset works from either place). Tri-state, not a
-            // Toggle: the server has its own default, and an unset boolean
-            // must stay distinct from an explicit false.
-            <SettingRow
-              title="Skip silence"
-              desc="Voice-activity detection drops silent stretches before decoding — faster, and prevents made-up text in quiet parts. For this run only."
+              title="Translate to English"
+              desc="The decode itself outputs English instead of the source language (Whisper's translate task)."
               last
             >
-              <Segmented
-                value={
-                  runOverrides.vad_filter === true
-                    ? "on"
-                    : runOverrides.vad_filter === false
-                      ? "off"
-                      : "inherit"
-                }
-                ariaLabel="Skip silence"
-                disabled={caps?.can_request_decode_overrides === false}
+              <Toggle
+                checked={translate}
+                ariaLabel="Translate to English"
                 onChange={(v) => {
-                  const next = { ...runOverrides };
-                  if (v === "inherit") delete next.vad_filter;
-                  else next.vad_filter = v === "on";
-                  setRunOverrides(next);
+                  setTranslate(v);
+                  persistOptions({ translate: v });
                 }}
-                options={[
-                  {
-                    value: "inherit",
-                    label:
-                      vadInherited === undefined
-                        ? "Default"
-                        : `Default · ${vadInherited ? "on" : "off"}`,
-                  },
-                  { value: "on", label: "On" },
-                  { value: "off", label: "Off" },
-                ]}
               />
             </SettingRow>
+          ) : (
+            <div className="relative pl-6">
+              <span
+                aria-hidden
+                className="absolute bottom-[26px] left-[6px] top-[26px] w-px bg-line-strong"
+              />
+              <div className="relative">
+                <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
+                <SettingRow
+                  title="Separate background music"
+                  desc={
+                    bgmAvailable
+                      ? "Runs first — strips music so everything after sees clean vocals (UVR). Adds processing time per file."
+                      : "Not available on this server (BGM_SEPARATION_ENABLED is off)."
+                  }
+                  disabled={!bgmAvailable}
+                >
+                  <Toggle
+                    checked={separateBgm && bgmAvailable}
+                    disabled={!bgmAvailable}
+                    ariaLabel="Separate background music"
+                    onChange={(v) => {
+                      setSeparateBgm(v);
+                      persistOptions({ separateBgm: v });
+                    }}
+                  />
+                </SettingRow>
+              </div>
+              <div className="relative">
+                <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
+                {/* Promoted view of runOverrides.vad_filter — the SAME key the
+                    Decode-overrides editor edits (one source of truth, two
+                    doors: changing it here makes the disclosure count "1 set
+                    for this run", and reset works from either place).
+                    Tri-state, not a Toggle: the server has its own default,
+                    and an unset boolean must stay distinct from an explicit
+                    false. */}
+                <SettingRow
+                  title="Skip silence"
+                  desc="During audio analysis — silence never reaches the decoder: faster, and prevents made-up text in quiet parts. For this run only."
+                >
+                  <Segmented
+                    value={
+                      runOverrides.vad_filter === true
+                        ? "on"
+                        : runOverrides.vad_filter === false
+                          ? "off"
+                          : "inherit"
+                    }
+                    ariaLabel="Skip silence"
+                    disabled={caps?.can_request_decode_overrides === false}
+                    onChange={(v) => {
+                      const next = { ...runOverrides };
+                      if (v === "inherit") delete next.vad_filter;
+                      else next.vad_filter = v === "on";
+                      setRunOverrides(next);
+                    }}
+                    options={[
+                      {
+                        value: "inherit",
+                        label:
+                          vadInherited === undefined
+                            ? "Default"
+                            : `Default · ${vadInherited ? "on" : "off"}`,
+                      },
+                      { value: "on", label: "On" },
+                      { value: "off", label: "Off" },
+                    ]}
+                  />
+                </SettingRow>
+              </div>
+              <div className="relative">
+                <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
+                <SettingRow
+                  title="Translate to English"
+                  desc="The decode itself outputs English instead of the source language (Whisper's translate task)."
+                >
+                  <Toggle
+                    checked={translate}
+                    ariaLabel="Translate to English"
+                    onChange={(v) => {
+                      setTranslate(v);
+                      persistOptions({ translate: v });
+                    }}
+                  />
+                </SettingRow>
+              </div>
+              <div className="relative">
+                <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
+                <SettingRow
+                  title="Speaker diarization"
+                  desc={
+                    diarAvailable
+                      ? "Runs last — labels each segment with who is speaking."
+                      : "Not available on this server (DIARIZATION_ENABLED is off)."
+                  }
+                  disabled={!diarAvailable}
+                  last
+                >
+                  <div className="flex items-center gap-4">
+                    {diarize && diarAvailable && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[12px] text-dim">Speakers</span>
+                        <Stepper
+                          value={numSpeakers}
+                          onChange={(v) => {
+                            setNumSpeakers(v);
+                            persistOptions({ numSpeakers: v });
+                          }}
+                          min={0}
+                          max={32}
+                          zeroLabel="auto"
+                          ariaLabel="Expected speakers"
+                        />
+                      </div>
+                    )}
+                    <Toggle
+                      checked={diarize && diarAvailable}
+                      disabled={!diarAvailable}
+                      ariaLabel="Speaker diarization"
+                      onChange={(v) => {
+                        setDiarize(v);
+                        persistOptions({ diarize: v });
+                      }}
+                    />
+                  </div>
+                </SettingRow>
+              </div>
+            </div>
           )}
         </Card>
       </div>
@@ -2399,6 +2418,53 @@ export default function Transcribe() {
           </span>
           {result.overridesIgnored.length > MAX_IGNORED_SHOWN ? " …" : ""}.
         </Notice>
+      )}
+
+      {/* Recent transcripts — reference material, so it lives at the END of
+          the page (out of the pick → configure → run path) and stays visible
+          in every state: a run that just finished appears here too (the
+          history store is reactive). Full list: History screen. */}
+      {recentRecords.length > 0 && (
+        <Card className="mt-6 overflow-hidden py-1">
+          <div className="flex items-baseline gap-2 px-5 py-2">
+            <span className="font-mono text-[11px] uppercase tracking-label text-faint">
+              recent
+            </span>
+            <span className="flex-1" />
+            <Link to="/history" className="ring-signal rounded text-[12px] text-accent">
+              All history →
+            </Link>
+          </div>
+          {recentRecords.map((rec, i) => (
+            <div
+              key={rec.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => openHistoryRecord(rec)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  openHistoryRecord(rec);
+                }
+              }}
+              className={cn(
+                "flex cursor-pointer items-center gap-3 px-5 py-2.5 hover:bg-text/[0.03]",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60",
+                i < recentRecords.length - 1 && "border-b border-line",
+              )}
+            >
+              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ok/15 text-ok">
+                <Check className="size-3.5" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-text">
+                {safeDisplayText(rec.sourceName, 120)}
+              </span>
+              <span className="shrink-0 font-mono text-[11px] text-faint">
+                {recentMeta(rec)}
+              </span>
+            </div>
+          ))}
+        </Card>
       )}
     </div>
   );

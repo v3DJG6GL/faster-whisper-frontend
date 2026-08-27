@@ -22,6 +22,7 @@ export function ModelPicker({
   placeholder,
   ariaLabel = "Model",
   disabled,
+  hideReset,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -34,6 +35,10 @@ export function ModelPicker({
   placeholder?: string;
   ariaLabel?: string;
   disabled?: boolean;
+  /** Suppress the built-in "use default" reset under the field — for call
+   *  sites that render their own reset in the field's label row (grid layouts,
+   *  where a hint below one cell breaks the row's baseline). */
+  hideReset?: boolean;
 }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
@@ -72,10 +77,10 @@ export function ModelPicker({
         footerLabel="models on this server"
         suffix={(id) => (loaded.has(id) ? <span className="ml-1.5 text-ok">●</span> : null)}
       />
-      {(isCustom || (defaultLabel !== undefined && value !== "")) && (
+      {(isCustom || (!hideReset && defaultLabel !== undefined && value !== "")) && (
         <div className="mt-1.5 flex items-center gap-2 text-[11px] text-faint">
           {isCustom && <span>custom — not in the server’s list, sent as typed</span>}
-          {defaultLabel !== undefined && value !== "" && (
+          {!hideReset && defaultLabel !== undefined && value !== "" && (
             <button
               type="button"
               onClick={() => commit("")}
