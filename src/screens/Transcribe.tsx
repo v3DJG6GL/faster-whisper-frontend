@@ -2,7 +2,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   UploadCloud, FileAudio, X, Loader2, Copy, Check, Plus, RotateCcw, Download,
-  Pencil, Play, Pause, ArrowDownToLine, Circle, Minus,
+  Pencil, Play, Pause, ArrowDownToLine, Circle, Minus, ChevronsRight,
 } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
@@ -24,9 +24,9 @@ import {
   addFiles, cancelRun, clearEdits, overallFraction, railIndex, railStages,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setRename, setSegmentEdit, setSegmentSpeaker,
-  setSpeakerColor as setSpeakerColorAction, startRun,
+  setSpeakerColor as setSpeakerColorAction, skippedStages, startRun,
   useTranscribeRun, STAGE_WEIGHTS,
-  type RailStage, type RunContext,
+  type RailStage, type RunContext, type StepState,
 } from "@/lib/transcribeRun";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
@@ -362,6 +362,13 @@ export default function Transcribe() {
   const vadInherited =
     typeof vadBaseline === "boolean" ? vadBaseline : caps?.vad_filter_default;
 
+  // Pre-flight availability of the optional pipeline stages (additive
+  // capability fields). Only an explicit false disables the toggle — absent
+  // means an older backend, and we never gate a knob we can't prove is
+  // unsupported (the run would then just soft-fail into a "skipped" rail row).
+  const bgmAvailable = caps?.bgm_separation_enabled !== false;
+  const diarAvailable = caps?.diarization_enabled !== false;
+
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
 
   // 1 s heartbeat while a run is active, so the rail's elapsed times count
@@ -450,10 +457,10 @@ export default function Transcribe() {
             ...(translate
               ? { task: "translate" as const, useTranslationsEndpoint: isStandard }
               : {}),
-            ...(diarize && !isStandard
+            ...(diarize && diarAvailable && !isStandard
               ? { diarize: true, ...(numSpeakers > 0 ? { numSpeakers } : {}) }
               : {}),
-            ...(separateBgm && !isStandard ? { separateBgm: true } : {}),
+            ...(separateBgm && bgmAvailable && !isStandard ? { separateBgm: true } : {}),
           }
         : undefined;
     const ctx = buildCtx(runOverrides);
@@ -1055,10 +1062,15 @@ export default function Transcribe() {
           {!isStandard && (
             <SettingRow
               title="Speaker diarization"
-              desc="Label who is speaking in each segment. Runs on the server after transcription."
+              desc={
+                diarAvailable
+                  ? "Label who is speaking in each segment. Runs on the server after transcription."
+                  : "Not available on this server (DIARIZATION_ENABLED is off)."
+              }
+              disabled={!diarAvailable}
             >
               <div className="flex items-center gap-4">
-                {diarize && (
+                {diarize && diarAvailable && (
                   <div className="flex items-center gap-2">
                     <span className="text-[12px] text-dim">Speakers</span>
                     <Stepper
@@ -1075,7 +1087,8 @@ export default function Transcribe() {
                   </div>
                 )}
                 <Toggle
-                  checked={diarize}
+                  checked={diarize && diarAvailable}
+                  disabled={!diarAvailable}
                   ariaLabel="Speaker diarization"
                   onChange={(v) => {
                     setDiarize(v);
@@ -1102,10 +1115,16 @@ export default function Transcribe() {
           {!isStandard && (
             <SettingRow
               title="Separate background music"
-              desc="Strip music before transcribing (UVR). Adds processing time per file."
+              desc={
+                bgmAvailable
+                  ? "Strip music before transcribing (UVR). Adds processing time per file."
+                  : "Not available on this server (BGM_SEPARATION_ENABLED is off)."
+              }
+              disabled={!bgmAvailable}
             >
               <Toggle
-                checked={separateBgm}
+                checked={separateBgm && bgmAvailable}
+                disabled={!bgmAvailable}
                 ariaLabel="Separate background music"
                 onChange={(v) => {
                   setSeparateBgm(v);
@@ -1233,10 +1252,13 @@ export default function Transcribe() {
         // stage counts as active.
         const stages = railStages(lastOptions);
         const active = progress?.stage ? railIndex(progress.stage, stages) : 0;
+        // Requested stages the server jumped over (feature disabled there) —
+        // shown as "skipped", never as done, and worth no progress credit.
+        const skipped = skippedStages({ progress, stageTimes, lastOptions });
         const now = Date.now();
         const runningItem = queue.find((it) => it.status === "running") ?? null;
         const fileIdx = queue.findIndex((it) => it.status === "running");
-        const overall = overallFraction({ queue, progress, lastOptions }) ?? 0;
+        const overall = overallFraction({ queue, progress, stageTimes, lastOptions }) ?? 0;
         const starts = Object.values(stageTimes).map((t) => t.start);
         const runElapsed = starts.length ? now - Math.min(...starts) : 0;
         const audioDur = progress?.duration ?? null;
@@ -1278,6 +1300,20 @@ export default function Transcribe() {
 
             <div className="mt-3.5 flex gap-1">
               {stages.map((st, i) => {
+                // A skipped stage's lane collapses to a slim hatched stub —
+                // planned, not travelled — and drops out of the bar's math.
+                if (skipped.has(st)) {
+                  return (
+                    <div
+                      key={st}
+                      className="h-1.5 w-8 flex-none rounded-pill border border-dashed border-line-strong"
+                      style={{
+                        background:
+                          "repeating-linear-gradient(-45deg, var(--c-line) 0 3px, transparent 3px 7px)",
+                      }}
+                    />
+                  );
+                }
                 const frac =
                   i < active ? 1
                     : i === active && typeof progress?.progress === "number" ? progress.progress
@@ -1313,7 +1349,13 @@ export default function Transcribe() {
 
             <div className="mt-3 border-t border-line">
               {stages.map((st, i) => {
-                const state = i < active ? "done" : i === active ? "active" : "pending";
+                // Skipped wins over pending too: the server may announce a
+                // decline for a stage the rail hasn't reached yet (diarization
+                // is declined moments before its slot).
+                const state: StepState =
+                  skipped.has(st) ? "skipped"
+                    : i === active ? "active"
+                      : i > active ? "pending" : "done";
                 const frac =
                   state === "active" && typeof progress?.progress === "number"
                     ? progress.progress
@@ -1353,10 +1395,17 @@ export default function Transcribe() {
                         state === "done" && "bg-ok/15 text-ok",
                         state === "active" && "bg-accent-soft text-accent",
                         state === "pending" && "bg-surface-2 text-faint",
+                        // Dashed ring, no fill: the slot exists, nothing ran
+                        // in it — deliberately borrows neither success nor
+                        // error styling.
+                        state === "skipped" &&
+                          "border-[1.5px] border-dashed border-faint/70 text-faint",
                       )}
                     >
                       {state === "done" ? (
                         <Check className="size-3.5" />
+                      ) : state === "skipped" ? (
+                        <ChevronsRight className="size-3.5" />
                       ) : state === "active" && frac === null ? (
                         <Loader2 className="size-3.5 animate-spin" />
                       ) : (
@@ -1383,6 +1432,7 @@ export default function Transcribe() {
                         </span>
                         <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
                           {state === "done" && "done"}
+                          {state === "skipped" && <span className="text-warn">skipped</span>}
                           {frac !== null && (
                             <span className="text-text">{Math.round(frac * 100)}%</span>
                           )}
@@ -1396,6 +1446,14 @@ export default function Transcribe() {
                       </div>
                       {RAIL_DESCRIPTIONS[st] && state === "pending" && (
                         <div className="mt-0.5 text-[12px] text-dim">{RAIL_DESCRIPTIONS[st]}</div>
+                      )}
+                      {state === "skipped" && (
+                        <div className="mt-0.5 text-[12px] text-dim">
+                          <span className="text-warn">Not enabled on this server</span>
+                          {st === "separating"
+                            ? " — transcribing the original audio instead."
+                            : " — segments stay unlabeled."}
+                        </div>
                       )}
                       {frac !== null && (
                         <div className="mt-2 h-1.5 overflow-hidden rounded-pill bg-surface-2">
@@ -1491,93 +1549,144 @@ export default function Transcribe() {
       })()}
 
       {queue.length > 1 && (
-        <Card className="mt-6 px-5 py-1">
-          {queue.map((it, i) => (
-            <div
-              key={it.path}
-              className={cn(
-                "flex items-center gap-3 py-3",
-                i < queue.length - 1 && "border-b border-line",
-              )}
-            >
-              <span
-                className={cn(
-                  "grid size-6 shrink-0 place-items-center rounded-full",
-                  it.status === "done" && "bg-ok/15 text-ok",
-                  it.status === "running" && "bg-think/15 text-think",
-                  it.status === "failed" && "bg-rec/15 text-rec",
-                  (it.status === "queued" || it.status === "cancelled") && "bg-surface-2 text-faint",
-                )}
-              >
-                {it.status === "done" ? (
-                  <Check className="size-3.5" />
-                ) : it.status === "running" ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : it.status === "failed" ? (
-                  <X className="size-3.5" />
-                ) : (
-                  <span className="font-mono text-[11px]">{i + 1}</span>
-                )}
-              </span>
-              <span
-                className={cn(
-                  "min-w-0 flex-1 truncate text-[13px]",
-                  it.status === "cancelled" ? "text-faint line-through" : "text-text",
-                )}
-              >
-                {basename(it.path)}
-              </span>
-              {it.status === "done" && it.result && (
-                <span className="font-mono text-[11px] text-faint">
-                  {it.result.duration
-                    ? it.result.duration < 60
-                      ? `${it.result.duration.toFixed(0)}s`
-                      : fmtDuration(it.result.duration)
-                    : ""}
-                  {it.result.language ? ` · ${it.result.language}` : ""}
-                  {speakersOf(it.result).length
-                    ? ` · ${speakersOf(it.result).length} speakers`
-                    : ""}
-                </span>
-              )}
-              {it.status === "running" && (
-                <span className="font-mono text-[11px] text-think">
-                  {typeof progress?.progress === "number"
-                    ? `${Math.round(progress.progress * 100)}%`
-                    : stageLabel(progress).toLowerCase()}
-                </span>
-              )}
-              {it.status === "cancelled" && (
-                <span className="font-mono text-[11px] text-faint">cancelled</span>
-              )}
-              {it.status === "failed" && (
-                <>
-                  <span
-                    className="max-w-[240px] truncate font-mono text-[11px] text-rec"
-                    title={stripControlChars(it.error ?? "")}
-                  >
-                    {stripControlChars(it.error ?? "failed")}
-                  </span>
-                  <Button variant="ghost" size="sm" onClick={() => retry(it.path)} disabled={busy}>
-                    <RotateCcw className="size-3.5" /> Retry
-                  </Button>
-                </>
-              )}
-              {it.status === "done" && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={cn(it.path === selectedPath && "text-accent")}
-                  onClick={() => {
-                    selectPath(it.path);
-                    setShowFullText(false);
-                  }}
+        <Card className="mt-6 overflow-hidden py-1">
+          {/* Master list of the run's files. Selection lives on the ROW (rail
+              + wash + filename weight), not on a button label — the transcript
+              panel below silently follows it, so which file is open must read
+              at a glance. Finished rows are options: click anywhere, Enter/
+              Space, or ↑/↓ across the finished set. */}
+          <div
+            role="listbox"
+            aria-label="Transcribed files"
+            onKeyDown={(e) => {
+              if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+              const doneItems = queue.filter((q) => q.status === "done");
+              if (!doneItems.length) return;
+              e.preventDefault();
+              const idx = doneItems.findIndex((q) => q.path === selectedPath);
+              const next =
+                e.key === "ArrowDown"
+                  ? doneItems[Math.min(doneItems.length - 1, idx + 1)]
+                  : doneItems[Math.max(0, (idx < 0 ? doneItems.length : idx) - 1)];
+              selectPath(next.path);
+              setShowFullText(false);
+            }}
+          >
+            {queue.map((it, i) => {
+              const viewable = it.status === "done";
+              const isSel = viewable && it.path === selectedPath;
+              const view = () => {
+                selectPath(it.path);
+                setShowFullText(false);
+              };
+              return (
+                <div
+                  key={it.path}
+                  role="option"
+                  aria-selected={viewable ? isSel : undefined}
+                  aria-disabled={!viewable || undefined}
+                  tabIndex={viewable ? 0 : undefined}
+                  onClick={viewable ? view : undefined}
+                  onKeyDown={
+                    viewable
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            view();
+                          }
+                        }
+                      : undefined
+                  }
+                  className={cn(
+                    "relative flex items-center gap-3 px-5 py-3",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60",
+                    i < queue.length - 1 && "border-b border-line",
+                    viewable && "cursor-pointer hover:bg-text/[0.03]",
+                    isSel && "bg-accent/[0.06] hover:bg-accent/[0.08]",
+                  )}
                 >
-                  {it.path === selectedPath ? "Viewing" : "View"}
-                </Button>
-              )}
-            </div>
-          ))}
+                  {isSel && (
+                    <span
+                      aria-hidden
+                      className="absolute inset-y-2 left-0 w-[2.5px] rounded-pill bg-accent"
+                    />
+                  )}
+                  <span
+                    className={cn(
+                      "grid size-6 shrink-0 place-items-center rounded-full",
+                      it.status === "done" && "bg-ok/15 text-ok",
+                      it.status === "running" && "bg-think/15 text-think",
+                      it.status === "failed" && "bg-rec/15 text-rec",
+                      (it.status === "queued" || it.status === "cancelled") && "bg-surface-2 text-faint",
+                    )}
+                  >
+                    {it.status === "done" ? (
+                      <Check className="size-3.5" />
+                    ) : it.status === "running" ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : it.status === "failed" ? (
+                      <X className="size-3.5" />
+                    ) : (
+                      <span className="font-mono text-[11px]">{i + 1}</span>
+                    )}
+                  </span>
+                  <span
+                    className={cn(
+                      "min-w-0 flex-1 truncate text-[13px]",
+                      it.status === "cancelled"
+                        ? "text-faint line-through"
+                        : viewable && !isSel
+                          ? "text-dim"
+                          : "text-text",
+                    )}
+                  >
+                    {basename(it.path)}
+                  </span>
+                  {it.status === "done" && it.result && (
+                    <span className="font-mono text-[11px] text-faint">
+                      {it.result.duration
+                        ? it.result.duration < 60
+                          ? `${it.result.duration.toFixed(0)}s`
+                          : fmtDuration(it.result.duration)
+                        : ""}
+                      {it.result.language ? ` · ${it.result.language}` : ""}
+                      {speakersOf(it.result).length
+                        ? ` · ${speakersOf(it.result).length} speakers`
+                        : ""}
+                    </span>
+                  )}
+                  {it.status === "running" && (
+                    <span className="font-mono text-[11px] text-think">
+                      {typeof progress?.progress === "number"
+                        ? `${Math.round(progress.progress * 100)}%`
+                        : stageLabel(progress).toLowerCase()}
+                    </span>
+                  )}
+                  {it.status === "cancelled" && (
+                    <span className="font-mono text-[11px] text-faint">cancelled</span>
+                  )}
+                  {it.status === "failed" && (
+                    <>
+                      <span
+                        className="max-w-[240px] truncate font-mono text-[11px] text-rec"
+                        title={stripControlChars(it.error ?? "")}
+                      >
+                        {stripControlChars(it.error ?? "failed")}
+                      </span>
+                      <Button variant="ghost" size="sm" onClick={() => retry(it.path)} disabled={busy}>
+                        <RotateCcw className="size-3.5" /> Retry
+                      </Button>
+                    </>
+                  )}
+                  {isSel && (
+                    <span className="shrink-0 rounded-pill bg-accent-soft px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-label text-accent">
+                      Viewing
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </Card>
       )}
 

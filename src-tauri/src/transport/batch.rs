@@ -159,6 +159,11 @@ pub struct BatchProgress {
     /// when the filter was off. snake_case on the wire like `last_text`.
     #[serde(default, alias = "vad_retained")]
     pub vad_retained: Option<f64>,
+    /// Requested pipeline stages the server declined to run (feature disabled
+    /// there) — e.g. ["separating"]. Authoritative "skipped" signal for the
+    /// client's rail; absent on older backends (the client then infers).
+    #[serde(default)]
+    pub skipped: Option<Vec<String>>,
 }
 
 /// Poll the server-side progress entry for `progress_id`. Cheap and frequent —
@@ -198,6 +203,13 @@ pub async fn progress(
         model: parsed.model.map(|s| super::bounded_server_text(&s, 128)),
         device: parsed.device.map(|s| super::bounded_server_text(&s, 32)),
         compute: parsed.compute.map(|s| super::bounded_server_text(&s, 32)),
+        // Only two stage names are ever legitimate here — cap accordingly.
+        skipped: parsed.skipped.map(|v| {
+            v.into_iter()
+                .take(4)
+                .map(|s| super::bounded_server_text(&s, 32))
+                .collect()
+        }),
         ..parsed
     })
 }

@@ -336,6 +336,11 @@ export interface Capabilities {
   /** Server-wide VAD default (newer backends) — labels the Skip-silence
    *  control's "Default" segment. Absent on older servers. */
   vad_filter_default?: boolean;
+  /** Whether the optional pipeline stages exist on this server (newer
+   *  backends) — pre-flight-disables the Separate-music / diarization
+   *  toggles. Absent = unknown ⇒ assume available. */
+  bgm_separation_enabled?: boolean;
+  diarization_enabled?: boolean;
 }
 
 /** A baseline shown (ghosted) under the decode editor: backend defaults and/or a
@@ -542,6 +547,10 @@ export interface BatchProgress {
   /** Fraction of the audio the VAD kept (0..1) once decoding starts; null
    *  when the filter was off. Persists for the rest of the run. */
   vadRetained?: number | null;
+  /** Requested pipeline stages the server declined to run (feature disabled
+   *  there) — e.g. ["separating"]. Authoritative skip signal; absent on
+   *  older backends (the rail then infers from observed stages). */
+  skipped?: string[] | null;
 }
 
 /** Result of a batch transcription. */

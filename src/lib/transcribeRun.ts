@@ -36,6 +36,10 @@ export type RailStage = "separating" | "transcribing" | "diarizing";
 export interface StageTime {
   start: number;
   end?: number;
+  /** Stamped only by a real progress poll. A merely seeded clock stays
+   *  unobserved — which is how a stage the server jumped over is told apart
+   *  from one that ran (see skippedStages). */
+  observed?: boolean;
 }
 
 /** Model/device chips observed for a stage — kept after the stage finishes
@@ -71,19 +75,55 @@ export function railIndex(stage: string | undefined, stages: RailStage[]): numbe
   return i < 0 ? stages.indexOf("transcribing") : i;
 }
 
+/** A rail row's visual state. "skipped" is first-class: a requested stage the
+ *  server declined to run is neither done nor pending, and must not read as
+ *  either. */
+export type StepState = "pending" | "active" | "done" | "skipped";
+
+/** Requested stages the server won't run. Two sources, authoritative first:
+ *  the progress payload's `skipped` list (newer backends name the stages they
+ *  declined the moment they decline them), else inference — a genuine
+ *  pipeline stage past them has been observed while they never were.
+ *  "waiting" convicts nothing in the inference: the semaphore queue runs both
+ *  before separation and before the decode, so it maps onto the transcribe
+ *  row without proving the earlier stage won't still happen. */
+export function skippedStages(s: {
+  progress: BatchProgress | null;
+  stageTimes: Partial<Record<RailStage, StageTime>>;
+  lastOptions?: TranscribeOptions;
+}): Set<RailStage> {
+  const out = new Set<RailStage>();
+  const stages = railStages(s.lastOptions);
+  for (const r of s.progress?.skipped ?? []) {
+    if ((stages as string[]).includes(r)) out.add(r as RailStage);
+  }
+  const stage = s.progress?.stage;
+  if (!stage || stage === "waiting" || stage === "unknown") return out;
+  const active = railIndex(stage, stages);
+  stages.forEach((st, i) => {
+    if (i < active && !s.stageTimes[st]?.observed) out.add(st);
+  });
+  return out;
+}
+
 /** Weighted 0..1 fraction across the whole pipeline (done stages count in
- *  full, the active stage by its own fraction). Null when nothing runs. */
+ *  full, the active stage by its own fraction, skipped stages drop out of the
+ *  denominator entirely — no credit for work that never happened). Null when
+ *  nothing runs. */
 export function overallFraction(s: {
   queue: QueueItem[];
   progress: BatchProgress | null;
+  stageTimes: Partial<Record<RailStage, StageTime>>;
   lastOptions?: TranscribeOptions;
 }): number | null {
   if (!s.queue.some((it) => it.status === "running" || it.status === "queued")) return null;
   const stages = railStages(s.lastOptions);
   const active = s.progress?.stage ? railIndex(s.progress.stage, stages) : 0;
+  const skipped = skippedStages(s);
   let total = 0;
   let done = 0;
   stages.forEach((st, i) => {
+    if (skipped.has(st)) return;
     const w = STAGE_WEIGHTS[st];
     total += w;
     if (i < active) done += w;
@@ -380,14 +420,19 @@ function foldProgress(p: BatchProgress) {
     const prev = s.progress ? railOf(s.progress.stage) : null;
     const cur = railOf(p.stage);
     let stageTimes = s.stageTimes;
+    // Every poll marks its stage observed — a stage whose clock only ever got
+    // seeded (never polled) is one the server jumped over.
     if (prev !== cur) {
       stageTimes = { ...stageTimes };
       if (prev && stageTimes[prev] && !stageTimes[prev].end) {
         stageTimes[prev] = { ...stageTimes[prev], end: now };
       }
-      if (!stageTimes[cur]) stageTimes[cur] = { start: now };
-    } else if (!stageTimes[cur]) {
-      stageTimes = { ...stageTimes, [cur]: { start: now } };
+      stageTimes[cur] = { start: now, ...stageTimes[cur], observed: true };
+    } else if (!stageTimes[cur]?.observed) {
+      stageTimes = {
+        ...stageTimes,
+        [cur]: { start: now, ...stageTimes[cur], observed: true },
+      };
     }
     // Chips outlive their stage: a done row keeps showing which model and
     // device did the work. "waiting" reports null meta, so it never taints

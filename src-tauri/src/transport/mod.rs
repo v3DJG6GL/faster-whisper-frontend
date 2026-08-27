@@ -62,6 +62,14 @@ pub struct Capabilities {
     /// client's Skip-silence "Default" segment. Absent on older servers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vad_filter_default: Option<bool>,
+    /// Whether the server runs the optional pipeline stages at all (additive,
+    /// newer backends only) — pre-flight-disables the client's "Separate
+    /// music" / "Speaker diarization" toggles. Absent = unknown ⇒ assume
+    /// available (never gate a knob we can't prove is unsupported).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bgm_separation_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diarization_enabled: Option<bool>,
 }
 
 /// A single override-profile's decode-relevant values + locked client keys,
