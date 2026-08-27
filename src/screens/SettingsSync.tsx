@@ -103,7 +103,7 @@ const SUB_META: {
     key: "transcribePicks",
     parent: "transcription",
     title: "Last-used backend & model",
-    desc: "Off = each machine keeps its own Transcribe picks.",
+    desc: "Which server, Whisper model and language the Transcribe screen last used.",
   },
   {
     key: "profileHotkeys",
