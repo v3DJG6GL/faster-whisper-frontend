@@ -16,7 +16,7 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// Folder where saved dictation `.wav` files go (when "Keep recordings" is on). A
 /// non-empty `custom` (the user's chosen folder, from Settings) wins; otherwise the
 /// default lives under the app data dir. None only if neither can be resolved.
-fn resolve_recordings_dir(app: &AppHandle, custom: Option<String>) -> Option<PathBuf> {
+pub(crate) fn resolve_recordings_dir(app: &AppHandle, custom: Option<String>) -> Option<PathBuf> {
     if let Some(c) = custom {
         let c = c.trim();
         if !c.is_empty() {

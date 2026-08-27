@@ -207,6 +207,101 @@ pub fn transcript_media_stats(app: AppHandle) -> Result<serde_json::Value, Strin
     Ok(serde_json::json!({ "bytes": bytes, "files": files }))
 }
 
+/// Storage readout for the Recording & history tab's strip: per-store counts
+/// and sizes. `recordings_dir` is the settings' custom folder (None = default),
+/// same contract as `recordings_dir_path`.
+#[tauri::command]
+pub fn transcript_store_stats(
+    app: AppHandle,
+    recordings_dir: Option<String>,
+) -> Result<serde_json::Value, String> {
+    fn count_json(dir: &Path) -> u32 {
+        std::fs::read_dir(dir)
+            .map(|e| {
+                e.flatten()
+                    .filter(|x| x.path().extension().and_then(|s| s.to_str()) == Some("json"))
+                    .count() as u32
+            })
+            .unwrap_or(0)
+    }
+    fn dir_bytes(dir: &Path) -> (u64, u32) {
+        let (mut bytes, mut files) = (0u64, 0u32);
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Ok(m) = entry.metadata() {
+                    if m.is_file() {
+                        bytes += m.len();
+                        files += 1;
+                    }
+                }
+            }
+        }
+        (bytes, files)
+    }
+    let (media_bytes, media_files) = dir_bytes(&media_dir(&app)?);
+    let (rec_bytes, rec_files) = crate::commands::resolve_recordings_dir(&app, recordings_dir)
+        .map(|d| dir_bytes(&d))
+        .unwrap_or((0, 0));
+    Ok(serde_json::json!({
+        "dictationCount": count_json(&dictations_dir(&app)?),
+        "fileCount": count_json(&transcripts_dir(&app)?),
+        "mediaBytes": media_bytes,
+        "mediaFiles": media_files,
+        "recordingsBytes": rec_bytes,
+        "recordingsFiles": rec_files,
+    }))
+}
+
+/// "Delete all dictations now": every stored session record AND every file in
+/// the recordings folder (.wav + .txt sidecars — the folder is app-managed).
+/// The retention clocks stay as set.
+#[tauri::command]
+pub fn delete_all_dictations(
+    app: AppHandle,
+    recordings_dir: Option<String>,
+) -> Result<u32, String> {
+    let mut removed = wipe_records(&dictations_dir(&app)?) as u32;
+    if let Some(dir) = crate::commands::resolve_recordings_dir(&app, recordings_dir) {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let ext = path.extension().and_then(|e| e.to_str());
+                if matches!(ext, Some("wav") | Some("txt"))
+                    && std::fs::remove_file(&path).is_ok()
+                {
+                    removed += 1;
+                }
+            }
+        }
+    }
+    tracing::info!("[transcripts] delete-all dictations: removed {removed} file(s)");
+    Ok(removed)
+}
+
+/// "Clear file-transcription history": every file record with its corrections;
+/// the orphan sweep then drops their audio copies.
+#[tauri::command]
+pub fn clear_file_transcriptions(app: AppHandle) -> Result<u32, String> {
+    let removed = wipe_records(&transcripts_dir(&app)?) as u32;
+    sweep_orphan_media(&app);
+    Ok(removed)
+}
+
+/// "Remove stored audio copies": frees the media store; the transcripts stay.
+#[tauri::command]
+pub fn remove_transcript_media(app: AppHandle) -> Result<u32, String> {
+    let mut removed = 0u32;
+    if let Ok(entries) = std::fs::read_dir(media_dir(&app)?) {
+        for entry in entries.flatten() {
+            if std::fs::remove_file(entry.path()).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    tracing::info!("[transcripts] media store cleared: removed {removed} file(s)");
+    Ok(removed)
+}
+
 /// Remove every media file named after `id` (any extension).
 fn remove_media_for(dir: &Path, id: &str) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -306,9 +401,9 @@ pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Conf
 
 /// Remove every record in `dir` regardless of age ("Keep dictation history"
 /// turned off). Only touches `.json` files, like the prune.
-fn wipe_records(dir: &Path) {
+fn wipe_records(dir: &Path) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
+        return 0;
     };
     let mut removed = 0;
     for entry in entries.flatten() {
@@ -320,8 +415,9 @@ fn wipe_records(dir: &Path) {
         }
     }
     if removed > 0 {
-        tracing::info!("[transcripts] dictation history off: removed {removed} record(s)");
+        tracing::info!("[transcripts] record wipe: removed {removed} record(s)");
     }
+    removed
 }
 
 #[cfg(test)]

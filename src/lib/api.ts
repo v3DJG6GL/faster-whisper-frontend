@@ -897,6 +897,47 @@ export async function saveTranscriptMedia(
   return await invoke<string | null>("save_transcript_media", { id, sourcePath });
 }
 
+/** Per-store storage readout for the Recording & history tab's strip. */
+export interface TranscriptStoreStats {
+  dictationCount: number;
+  fileCount: number;
+  mediaBytes: number;
+  mediaFiles: number;
+  recordingsBytes: number;
+  recordingsFiles: number;
+}
+
+const EMPTY_STORE_STATS: TranscriptStoreStats = {
+  dictationCount: 0, fileCount: 0, mediaBytes: 0, mediaFiles: 0,
+  recordingsBytes: 0, recordingsFiles: 0,
+};
+
+export async function transcriptStoreStats(
+  recordingsDir: string | null,
+): Promise<TranscriptStoreStats> {
+  if (!isTauri) return EMPTY_STORE_STATS;
+  return await invoke<TranscriptStoreStats>("transcript_store_stats", { recordingsDir });
+}
+
+/** "Delete all dictations now" — session records AND the recordings folder's
+ *  .wav/.txt files. Returns how many files were removed. */
+export async function deleteAllDictations(recordingsDir: string | null): Promise<number> {
+  if (!isTauri) return 0;
+  return await invoke<number>("delete_all_dictations", { recordingsDir });
+}
+
+/** "Clear file-transcription history" — every record + its audio copy. */
+export async function clearFileTranscriptions(): Promise<number> {
+  if (!isTauri) return 0;
+  return await invoke<number>("clear_file_transcriptions");
+}
+
+/** "Remove stored audio copies" — the media store only; transcripts stay. */
+export async function removeTranscriptMedia(): Promise<number> {
+  if (!isTauri) return 0;
+  return await invoke<number>("remove_transcript_media");
+}
+
 /** Size of the audio-copy store — the Settings toggle's usage readout. */
 export async function transcriptMediaStats(): Promise<{ bytes: number; files: number }> {
   if (!isTauri) return { bytes: 0, files: 0 };

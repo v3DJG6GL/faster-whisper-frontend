@@ -9,8 +9,13 @@ import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screens
 import { IS_LINUX } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
+import { loadHistory } from "@/lib/transcriptHistory";
 import {
-  transcriptMediaStats,
+  transcriptStoreStats,
+  deleteAllDictations,
+  clearFileTranscriptions,
+  removeTranscriptMedia,
+  type TranscriptStoreStats,
   listAudioDevices,
   startMicTest,
   stopMicTest,
@@ -453,12 +458,41 @@ export default function Settings() {
   /** History settings ride the opaque settings.transcribe blob (merge-patch). */
   const updateTranscribe = (patch: Partial<NonNullable<typeof s.transcribe>>) =>
     updateSettings({ transcribe: { ...s.transcribe, ...patch } });
-  // Audio-copy store usage — the "Keep a copy of the audio" readout.
-  const [mediaStats, setMediaStats] = useState<{ bytes: number; files: number } | null>(null);
+  // Per-store storage readout (the tab's strip + the action rows' counts).
+  const [storeStats, setStoreStats] = useState<TranscriptStoreStats | null>(null);
+  const refreshStoreStats = useCallback(() => {
+    void transcriptStoreStats(s.recording.recordingsDir ?? null)
+      .then(setStoreStats)
+      .catch(() => {});
+  }, [s.recording.recordingsDir]);
   useEffect(() => {
-    if (tab !== "Recording & history") return;
-    void transcriptMediaStats().then(setMediaStats).catch(() => {});
-  }, [tab]);
+    if (tab === "Recording & history") refreshStoreStats();
+  }, [tab, refreshStoreStats]);
+  // Inline two-step confirmation for the destructive store actions — the
+  // confirm names the exact count/size (never a bare "are you sure").
+  const [confirming, setConfirming] = useState<null | "dict" | "media" | "clear">(null);
+  const [storeMsg, setStoreMsg] = useState<string | null>(null);
+  const runStoreAction = (kind: "dict" | "media" | "clear") => {
+    const done = (n: number, what: string) => {
+      setStoreMsg(`Removed ${n} ${what}.`);
+      setConfirming(null);
+      refreshStoreStats();
+      void loadHistory(true).catch(() => {});
+    };
+    if (kind === "dict") {
+      void deleteAllDictations(s.recording.recordingsDir ?? null)
+        .then((n) => done(n, "dictation file(s)"))
+        .catch((e) => setStoreMsg(String(e)));
+    } else if (kind === "media") {
+      void removeTranscriptMedia()
+        .then((n) => done(n, "audio cop(y/ies)"))
+        .catch((e) => setStoreMsg(String(e)));
+    } else {
+      void clearFileTranscriptions()
+        .then((n) => done(n, "transcript(s)"))
+        .catch((e) => setStoreMsg(String(e)));
+    }
+  };
   // One dictation clock for text AND audio: display the stricter of the two
   // legacy values (the keys keep syncing separately for older builds), write
   // both on change.
@@ -652,6 +686,33 @@ export default function Settings() {
         {tab === "Audio" && <AudioTab />}
 
         {tab === "Recording & history" && (
+          <>
+          {/* Storage strip: what the app holds, before any toggle. */}
+          <Card className="mb-4 px-5 py-4">
+            <div className="flex gap-3">
+              {(
+                [
+                  [String(storeStats?.dictationCount ?? "–"), "dictation history · sessions"],
+                  [
+                    storeStats ? fmtBytes(storeStats.recordingsBytes) : "–",
+                    `dictation audio · ${storeStats?.recordingsFiles ?? 0} files`,
+                  ],
+                  [
+                    storeStats ? fmtBytes(storeStats.mediaBytes) : "–",
+                    `transcript audio copies · ${storeStats?.mediaFiles ?? 0} files`,
+                  ],
+                ] as const
+              ).map(([num, cap]) => (
+                <div key={cap} className="flex-1 rounded-xl border border-line bg-surface-2/50 px-3.5 py-3">
+                  <div className="font-mono text-[16px] font-medium text-text">{num}</div>
+                  <div className="mt-0.5 text-[11.5px] text-faint">{cap}</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 text-[11.5px] text-faint">
+              counts refresh when you open this tab · the groups below decide how long each store lives
+            </div>
+          </Card>
           <Card className="px-6 pb-2">
             {/* Grouped by SUBJECT, one retention clock per subject — see the
                 design canvas ("Settings · Recording & history v2"). */}
@@ -725,7 +786,6 @@ export default function Settings() {
               title="Delete dictations after"
               desc="One clock for the whole session — text and audio leave together. Dictations are usually typed into their target and done; a short window is plenty. Old ones are removed on launch and whenever you change this."
               disabled={dictOff}
-              last
             >
               <Select
                 value={String(dictDays)}
@@ -747,13 +807,41 @@ export default function Settings() {
               />
             </SettingRow>
 
+            <SettingRow
+              title="Delete all dictations now"
+              desc={`Removes all ${storeStats?.dictationCount ?? 0} stored sessions and their audio. The retention clock stays as set.`}
+              last
+            >
+              {confirming === "dict" ? (
+                <span className="flex items-center gap-2">
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("dict")}>
+                    Delete {storeStats?.dictationCount ?? 0} sessions
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                    Cancel
+                  </Button>
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => {
+                    setStoreMsg(null);
+                    setConfirming("dict");
+                  }}
+                >
+                  Delete all…
+                </Button>
+              )}
+            </SettingRow>
+
             <SectionLabel className="mb-1 mt-4">File transcriptions</SectionLabel>
             <SettingRow
               title="Keep a copy of the audio"
               desc={
                 "Store the input file with its transcript so playback in History keeps working when the original moves. Deleted together with the transcript." +
-                (mediaStats && mediaStats.files > 0
-                  ? ` Currently ${fmtBytes(mediaStats.bytes)} · ${mediaStats.files} file${mediaStats.files === 1 ? "" : "s"}.`
+                (storeStats && storeStats.mediaFiles > 0
+                  ? ` Currently ${fmtBytes(storeStats.mediaBytes)} · ${storeStats.mediaFiles} file${storeStats.mediaFiles === 1 ? "" : "s"}.`
                   : "")
               }
             >
@@ -765,7 +853,6 @@ export default function Settings() {
             <SettingRow
               title="Delete file transcriptions after"
               desc="Transcript, corrections, speaker names and the audio copy leave together."
-              last
             >
               <Select
                 value={String(s.transcribe?.historyRetentionDays ?? 0)}
@@ -780,6 +867,63 @@ export default function Settings() {
                 ]}
               />
             </SettingRow>
+
+            <SettingRow
+              title="Remove stored audio copies"
+              desc={`Frees ${storeStats ? fmtBytes(storeStats.mediaBytes) : "0 KB"}. Transcripts, corrections and speaker names stay — only playback for moved originals is lost.`}
+            >
+              {confirming === "media" ? (
+                <span className="flex items-center gap-2">
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("media")}>
+                    Remove {storeStats?.mediaFiles ?? 0} copies
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                    Cancel
+                  </Button>
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => {
+                    setStoreMsg(null);
+                    setConfirming("media");
+                  }}
+                >
+                  Remove copies…
+                </Button>
+              )}
+            </SettingRow>
+            <SettingRow
+              title="Clear file-transcription history"
+              desc={`Removes all ${storeStats?.fileCount ?? 0} transcripts with their corrections and audio copies.`}
+              last
+            >
+              {confirming === "clear" ? (
+                <span className="flex items-center gap-2">
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("clear")}>
+                    Clear {storeStats?.fileCount ?? 0} transcripts
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                    Cancel
+                  </Button>
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => {
+                    setStoreMsg(null);
+                    setConfirming("clear");
+                  }}
+                >
+                  Clear…
+                </Button>
+              )}
+            </SettingRow>
+            {storeMsg && (
+              <div className="py-2 text-[12px] text-dim">{storeMsg}</div>
+            )}
 
             <SectionLabel className="mb-1 mt-4">While recording</SectionLabel>
             <SettingRow
@@ -806,6 +950,7 @@ export default function Settings() {
               />
             </SettingRow>
           </Card>
+          </>
         )}
 
         {tab === "Chip" && (

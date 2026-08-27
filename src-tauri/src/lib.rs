@@ -196,6 +196,10 @@ pub fn run() {
             transcripts::delete_transcript_record,
             transcripts::save_transcript_media,
             transcripts::transcript_media_stats,
+            transcripts::transcript_store_stats,
+            transcripts::delete_all_dictations,
+            transcripts::clear_file_transcriptions,
+            transcripts::remove_transcript_media,
             commands::read_media_file,      // playback blob fallback (Transcribe screen)
             commands::cancel_file_transcription, // abort in-flight Transcribe runs (client side)
             commands::cancel_backend_transcription, // …and tell the server to stop the work
