@@ -61,12 +61,12 @@ const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
   {
     key: "recording",
     title: "Dictation audio",
-    desc: "Save dictation audio, its retention clock, silence trim, system-audio mute, hands-free auto-stop.",
+    desc: "The audio half of Recording & history: save dictation audio, silence trim, system-audio mute, hands-free auto-stop.",
   },
   {
     key: "transcription",
-    title: "Transcription & history",
-    desc: "History retention (dictations, file transcriptions), audio copies, and the Transcribe screen's defaults.",
+    title: "Recording & history",
+    desc: "The rest of that tab plus the Transcribe screen's defaults: history retention for dictations and file transcriptions, audio copies, display and export options.",
   },
   { key: "chip", title: "Chip", desc: "Styling, visibility, timing, quick-launch buttons." },
   { key: "backends", title: "Backends", desc: "Server connections incl. API keys (stored on your own server)." },
