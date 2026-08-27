@@ -58,15 +58,17 @@ const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
 const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
   { key: "general", title: "General", desc: "Theme, insertion, sounds, launch at login." },
+  // The Recording & history TAB splits into two sync rows (its groups toggle
+  // independently): the dictation-audio behavior, and everything history.
   {
     key: "recording",
     title: "Dictation audio",
-    desc: "The audio half of Recording & history: save dictation audio, silence trim, system-audio mute, hands-free auto-stop.",
+    desc: "Save dictation audio, silence trim, system-audio mute, hands-free auto-stop.",
   },
   {
     key: "transcription",
-    title: "Recording & history",
-    desc: "The rest of that tab plus the Transcribe screen's defaults: history retention for dictations and file transcriptions, audio copies, display and export options.",
+    title: "History & Transcribe defaults",
+    desc: "Retention for dictations AND file transcriptions, audio copies, and the Transcribe screen's option, display and export defaults.",
   },
   { key: "chip", title: "Chip", desc: "Styling, visibility, timing, quick-launch buttons." },
   { key: "backends", title: "Backends", desc: "Server connections incl. API keys (stored on your own server)." },
