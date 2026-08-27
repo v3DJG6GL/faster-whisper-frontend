@@ -193,7 +193,8 @@ export type SyncCategory =
   | "backends"
   | "profiles"
   | "dictionary"
-  | "appRules";
+  | "appRules"
+  | "transcription";
 
 /** Field-level opt-outs INSIDE a synced category — the sub-toggles indented
  *  under a group row in Settings → Sync. Machine-local like the rest of
@@ -209,6 +210,10 @@ export interface SyncSubSettings {
   profileHotkeys: boolean;
   /** Sync the quick-add shortcut chord. OFF = per-machine. */
   quickAddHotkey: boolean;
+  /** Sync the Transcribe screen's last-used backend/model/language picks.
+   *  Default OFF — "which server did I use last" is context, not preference.
+   *  Optional: configs persisted before this sub-toggle existed lack it. */
+  transcribePicks?: boolean;
 }
 
 /** Settings-sync metadata. MACHINE-LOCAL by contract: lives in the config for

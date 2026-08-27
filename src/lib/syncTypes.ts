@@ -11,6 +11,7 @@ import type {
   QuickAddTarget,
   RecordingSettings,
   ThemeName,
+  TranscribeSettings,
 } from "./types";
 
 /** The `general` category: settings.theme + the portable general fields.
@@ -107,6 +108,45 @@ export interface SyncAppRules {
   windows: AppRule[];
 }
 
+/** The `transcription` category: the History/retention half of
+ *  settings.transcribe plus the Transcribe screen's option defaults. The
+ *  single classification list the compose pick, the apply filter, and the
+ *  sanitizer share. The last-used backendId/model/language picks are NOT
+ *  here — they travel only when the "Last-used backend & model" sub-toggle
+ *  opts in (TRANSCRIPTION_PICK_FIELDS), else pass through from the snapshot
+ *  so an opted-out device never erases them. speakerColorMode is legacy
+ *  (superseded by the display toggles) and stays local. */
+export const TRANSCRIPTION_FIELDS = [
+  "diarize",
+  "numSpeakers",
+  "translate",
+  "separateBgm",
+  "exportFormat",
+  "wordTimestamps",
+  "showTimestamps",
+  "showSpeakerNames",
+  "colorizeSpeakers",
+  "historyRetentionDays",
+  "keepDictationHistory",
+  "dictationRetentionDays",
+  "keepAudioCopies",
+] as const satisfies readonly (keyof TranscribeSettings)[];
+
+/** The per-machine-by-default Transcribe picks behind the sub-toggle. */
+export const TRANSCRIPTION_PICK_FIELDS = [
+  "backendId",
+  "model",
+  "language",
+] as const satisfies readonly (keyof TranscribeSettings)[];
+
+export type SyncTranscription = Partial<
+  Pick<
+    TranscribeSettings,
+    | (typeof TRANSCRIPTION_FIELDS)[number]
+    | (typeof TRANSCRIPTION_PICK_FIELDS)[number]
+  >
+>;
+
 /** The synced document: one optional entry per category. Also the `categories`
  *  payload of an export file. An absent category means "nothing stored" (never
  *  "delete") — apply skips it, compose preserves whatever the server had. */
@@ -118,6 +158,7 @@ export interface SyncBlob {
   profiles?: SyncProfiles;
   dictionary?: SyncDictionary;
   appRules?: SyncAppRules;
+  transcription?: SyncTranscription;
 }
 
 /** The export-file envelope (single pretty-printed JSON file). */

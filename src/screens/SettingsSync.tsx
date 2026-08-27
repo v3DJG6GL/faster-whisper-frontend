@@ -58,7 +58,16 @@ const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
 const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
   { key: "general", title: "General", desc: "Theme, insertion, sounds, launch at login." },
-  { key: "recording", title: "Recording", desc: "Save recordings, retention window, silence trim, system-audio mute." },
+  {
+    key: "recording",
+    title: "Dictation audio",
+    desc: "Save dictation audio, its retention clock, silence trim, system-audio mute, hands-free auto-stop.",
+  },
+  {
+    key: "transcription",
+    title: "Transcription & history",
+    desc: "History retention (dictations, file transcriptions), audio copies, and the Transcribe screen's defaults.",
+  },
   { key: "chip", title: "Chip", desc: "Styling, visibility, timing, quick-launch buttons." },
   { key: "backends", title: "Backends", desc: "Server connections incl. API keys (stored on your own server)." },
   { key: "profiles", title: "Profiles", desc: "Dictation profiles: name, backend, activation, chip tag." },
@@ -77,8 +86,14 @@ const SUB_META: {
   {
     key: "recordingsDir",
     parent: "recording",
-    title: "Recordings folder",
+    title: "Audio folder",
     desc: "A machine-specific path — sync only between identical setups.",
+  },
+  {
+    key: "transcribePicks",
+    parent: "transcription",
+    title: "Last-used backend & model",
+    desc: "Off = each machine keeps its own Transcribe picks.",
   },
   {
     key: "profileHotkeys",
@@ -522,6 +537,7 @@ function SecurityReviewDialog() {
     "api-key": "API key changed",
     "recording-retention": "Saved recordings would be deleted",
     "save-recordings": "Saving every dictation would be turned on",
+    "history-retention": "History would start being deleted",
   };
   const label = (c: SecurityChange) => LABELS[c.kind];
   const shown = pending.changes.slice(0, MAX_REVIEW_ROWS);
@@ -830,7 +846,7 @@ export function SyncTab() {
                       <div className="text-[12px] text-faint">{s.desc}</div>
                     </div>
                     <Toggle
-                      checked={subVals[s.key]}
+                      checked={subVals[s.key] ?? false}
                       disabled={!active}
                       onChange={(v) => updateSync({ sub: { ...subVals, [s.key]: v } })}
                       ariaLabel={`Sync ${s.title}`}

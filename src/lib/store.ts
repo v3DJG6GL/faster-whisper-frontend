@@ -53,10 +53,11 @@ export const DEFAULT_SYNC: SyncSettings = {
     profiles: true,
     dictionary: true,
     appRules: true,
+    transcription: true,
   },
   // Every default preserves the pre-sub-toggle behavior exactly: the folder
-  // was never synced, chords always were.
-  sub: { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true },
+  // was never synced, chords always were; the Transcribe picks never were.
+  sub: { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: false },
   urlOverrides: {},
 };
 

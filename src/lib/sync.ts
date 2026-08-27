@@ -54,8 +54,9 @@ import type {
   ResponseFormat,
   SyncCategory,
   ThemeName,
+  TranscribeSettings,
 } from "./types";
-import { CHIP_FIELDS } from "./syncTypes";
+import { CHIP_FIELDS, TRANSCRIPTION_FIELDS, TRANSCRIPTION_PICK_FIELDS } from "./syncTypes";
 import type {
   SyncBackends,
   SyncBlob,
@@ -66,6 +67,7 @@ import type {
   SyncRecording,
   SyncRemoteState,
   SyncState,
+  SyncTranscription,
 } from "./syncTypes";
 import type { SyncSubSettings } from "./types";
 
@@ -77,6 +79,7 @@ export const ALL_CATEGORIES: SyncCategory[] = [
   "profiles",
   "dictionary",
   "appRules",
+  "transcription",
 ];
 
 /** This device's field-level opt-outs (Settings → Sync sub-toggles), with the
@@ -87,6 +90,7 @@ export function subSettings(): SyncSubSettings {
       recordingsDir: false,
       profileHotkeys: true,
       quickAddHotkey: true,
+      transcribePicks: false,
     }
   );
 }
@@ -255,6 +259,29 @@ function extractChip(settings: AppSettings): SyncBlob["chip"] {
  *  local) — a profile the snapshot doesn't know yet ships its live chord, so
  *  peers never receive a chord-less profile (`sanitizeProfiles` requires a
  *  code list). */
+const TRANSCRIPTION_FIELD_SET: ReadonlySet<string> = new Set(TRANSCRIPTION_FIELDS);
+const TRANSCRIPTION_PICK_SET: ReadonlySet<string> = new Set(TRANSCRIPTION_PICK_FIELDS);
+
+/** The `transcription` category: the classified subset of settings.transcribe.
+ *  The last-used backend/model/language picks travel only when the sub-toggle
+ *  opts in; otherwise the snapshot's values pass through so an opted-out
+ *  device never erases a peer's picks. */
+function extractTranscription(
+  settings: AppSettings,
+  syncPicks: boolean,
+  snapshot: SyncBlob | undefined,
+): SyncTranscription {
+  const tr = (settings.transcribe ?? {}) as Record<string, unknown>;
+  const out = pickFields(tr, TRANSCRIPTION_FIELD_SET) as SyncTranscription;
+  const picks = syncPicks
+    ? pickFields(tr, TRANSCRIPTION_PICK_SET)
+    : pickFields(
+        (snapshot?.transcription ?? {}) as Record<string, unknown>,
+        TRANSCRIPTION_PICK_SET,
+      );
+  return { ...out, ...(picks as SyncTranscription) };
+}
+
 function extractProfiles(
   profiles: Profile[],
   homeProfileId: string | null,
@@ -322,6 +349,9 @@ export async function composeBlob(
   blob.dictionary = cats.dictionary
     ? extractDictionary(cfg.settings, opts.sub.quickAddHotkey, cats.backends, snapshot)
     : snapshot?.dictionary;
+  blob.transcription = cats.transcription
+    ? extractTranscription(cfg.settings, opts.sub.transcribePicks ?? false, snapshot)
+    : snapshot?.transcription;
   if (cats.backends) {
     blob.backends = {
       list: cfg.backends,
@@ -669,6 +699,46 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T)
  *  `recordings_retention_days`). Every other numeric leaf is `f64`. */
 const U32_KEYS = new Set(["hoverRevealMs", "recordingsRetentionDays"]);
 
+/** Per-field validation for the `transcription` category. `settings.transcribe`
+ *  is OPAQUE to Rust (serde_json::Value), so nothing downstream rejects a bad
+ *  type — this is the only gate. Wrong-typed values are dropped (keep local);
+ *  numbers are clamped to their UI ranges. Unknown keys never reach here
+ *  (pickFields allowlists first). */
+function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSettings> {
+  const out: Record<string, unknown> = {};
+  const BOOLS = [
+    "diarize", "translate", "separateBgm", "wordTimestamps", "showTimestamps",
+    "showSpeakerNames", "colorizeSpeakers", "keepDictationHistory", "keepAudioCopies",
+  ];
+  for (const k of BOOLS) {
+    const b = ownProp(v, k);
+    if (typeof b === "boolean") out[k] = b;
+  }
+  const days = (k: string, max: number) => {
+    const n = ownProp(v, k);
+    if (typeof n === "number" && Number.isFinite(n)) {
+      out[k] = Math.max(0, Math.min(max, Math.round(n)));
+    }
+  };
+  days("historyRetentionDays", 3650);
+  days("dictationRetentionDays", 3650);
+  const spk = ownProp(v, "numSpeakers");
+  if (typeof spk === "number" && Number.isFinite(spk)) {
+    out.numSpeakers = Math.max(0, Math.min(32, Math.round(spk)));
+  }
+  const fmt = ownProp(v, "exportFormat");
+  if (fmt === "srt" || fmt === "vtt" || fmt === "txt" || fmt === "lrc" || fmt === "json") {
+    out.exportFormat = fmt;
+  }
+  // The sub-toggle-gated picks: free strings, bounded. backendId is only a
+  // reference — the Transcribe screen ignores ids that don't resolve.
+  for (const k of ["backendId", "model", "language"]) {
+    const str = ownProp(v, k);
+    if (typeof str === "string" && str.length <= 256) out[k] = str;
+  }
+  return out as Partial<TranscribeSettings>;
+}
+
 function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(incoming as Record<string, unknown>)) {
@@ -920,7 +990,7 @@ export async function applyBlob(
   let staleRestart = false;
   try {
     const settings = st.settings;
-    const sub = settings.sync?.sub ?? { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true };
+    const sub = settings.sync?.sub ?? { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: false };
     let nextSettings: AppSettings = settings;
     let nextBackends = st.backends;
     let nextProfiles = st.profiles;
@@ -1007,6 +1077,23 @@ export async function applyBlob(
             sub.recordingsDir && (typeof rec.recordingsDir === "string" || rec.recordingsDir === null)
               ? rec.recordingsDir
               : settings.recording.recordingsDir,
+        },
+      };
+    }
+    // The `transcription` category: same shape check, same merge-over-current
+    // rule as `recording`. Only classified keys apply (a crafted blob can't
+    // ride arbitrary keys into the opaque transcribe blob), every value is
+    // validated per-field, and the per-machine picks apply only when this
+    // device's sub-toggle opts in.
+    if (cats.transcription && isPlainObject(blob.transcription)) {
+      const raw = blob.transcription as Record<string, unknown>;
+      const classified = pickFields(raw, TRANSCRIPTION_FIELD_SET);
+      const picks = sub.transcribePicks ? pickFields(raw, TRANSCRIPTION_PICK_SET) : {};
+      nextSettings = {
+        ...nextSettings,
+        transcribe: {
+          ...settings.transcribe,
+          ...sanitizeTranscription({ ...classified, ...picks }),
         },
       };
     }
@@ -1672,6 +1759,7 @@ function fullCats(): Record<SyncCategory, boolean> {
     profiles: true,
     dictionary: true,
     appRules: true,
+    transcription: true,
   };
 }
 
@@ -1697,7 +1785,13 @@ function handleTransportFailure(status: number, error?: string): void {
  *  unattended at startup and on every window focus — so these get the same explicit consent
  *  the file-import path already asks for. */
 export interface SecurityChange {
-  kind: "new-backend" | "server-url" | "api-key" | "recording-retention" | "save-recordings";
+  kind:
+    | "new-backend"
+    | "server-url"
+    | "api-key"
+    | "recording-retention"
+    | "save-recordings"
+    | "history-retention";
   /** The backend a `backends`-category change applies to; the recording kinds have no backend and
    *  set this to an empty string (the dialog omits it). */
   backend: string;
@@ -1712,7 +1806,9 @@ export interface SecurityChange {
 /** Which category each held-back change lives in, so the apply can suppress exactly that one and
  *  let everything else through. */
 function catOf(kind: SecurityChange["kind"]): SyncCategory {
-  return kind === "recording-retention" || kind === "save-recordings" ? "recording" : "backends";
+  if (kind === "recording-retention" || kind === "save-recordings") return "recording";
+  if (kind === "history-retention") return "transcription";
+  return "backends";
 }
 
 /** `cats` with every category that has a held-back change switched OFF. */
@@ -1759,6 +1855,36 @@ function securityChanges(
         backend: "",
         detail: "every dictation would be saved to this device as audio and text",
       });
+    }
+  }
+  // The transcription category's two retention clocks drive sweeps that DELETE
+  // stored history (dictation sessions incl. audio; file transcripts incl.
+  // their audio copies). Same rule as the recording clock above: only a change
+  // that starts deleting, or deletes sooner, needs consent.
+  if (cats.transcription && isPlainObject(incoming.transcription)) {
+    const clocks: {
+      key: "dictationRetentionDays" | "historyRetentionDays";
+      fallback: number;
+      what: string;
+    }[] = [
+      { key: "dictationRetentionDays", fallback: 7, what: "dictations" },
+      { key: "historyRetentionDays", fallback: 0, what: "file transcriptions" },
+    ];
+    for (const { key, fallback, what } of clocks) {
+      const rawNext = ownProp(incoming.transcription as Record<string, unknown>, key);
+      const nextDays = typeof rawNext === "number" && Number.isFinite(rawNext) ? rawNext : fallback;
+      const rawHere = local.transcription?.[key];
+      const hereDays = typeof rawHere === "number" ? rawHere : fallback;
+      if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
+        out.push({
+          kind: "history-retention",
+          backend: "",
+          detail:
+            hereDays === 0
+              ? `${what} older than ${nextDays} day(s) would start being deleted (currently kept forever)`
+              : `${what} would be deleted after ${nextDays} day(s) instead of ${hereDays}`,
+        });
+      }
     }
   }
   if (!cats.backends || !incoming.backends) return out;
