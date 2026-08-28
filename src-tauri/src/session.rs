@@ -245,6 +245,12 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         StreamEvent::RecordingSaved(path) => {
             emit_if_active(&appc, epoch, "stream://recording", path);
         }
+        StreamEvent::Loading => {
+            // Server is cold-loading its model — alive, just slow. The client
+            // re-arms its stuck-finalize watchdog on this so a long load can't
+            // force-idle a dictation whose transcript is seconds away.
+            emit_if_active(&appc, epoch, "stream://status", "loading");
+        }
         StreamEvent::Boundary { separator } => {
             tracing::info!("[stream] session {epoch} boundary (hard break)");
             emit_if_active(&appc, epoch, "stream://boundary", separator);

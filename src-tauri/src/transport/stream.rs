@@ -30,6 +30,10 @@ pub enum StreamEvent {
     /// file. Epoch-gated like every other event — a cancelled session's save
     /// never reaches the UI.
     RecordingSaved(String),
+    /// Keepalive while the server cold-loads its model (sent every few seconds
+    /// until `ready`/the finals). Proof of life — resets the drain's idle
+    /// window and the UI's stuck-finalize watchdog.
+    Loading,
     Error(String),
     Closed,
 }
@@ -449,22 +453,10 @@ pub async fn run<F>(
         // lost. The WHOLE block is bounded by one deadline: the flush/stop writes are
         // inside it too, so a half-open socket (suspend / dropped link) can't park
         // them indefinitely — we always fall through to the terminal `Closed` below.
-        // The deadline must comfortably exceed a slow finalize decode (VPN latency +
-        // a busy GPU queue can push it past the old 6 s, which silently DISCARDED the
-        // finished transcript) while staying under the frontend's stuck-finalize
-        // watchdog (STUCK_FINALIZE_MS in streaming.ts), which force-idles the UI if
-        // `Closed` never lands. Zero partials all session means the server most
-        // likely spent the whole time COLD-LOADING the model (large-v3 takes ~15 s+;
-        // it sends nothing until loaded, then decodes everything at once) — a 10 s
-        // drain there discarded a transcript that was seconds from arriving, so the
-        // silent case waits 30 s. A dead socket doesn't ride this: the reader task
-        // surfaces the close/error as `Closed` and the drain exits early.
-        let drain_deadline: Duration = if partials_seen == 0 {
-            Duration::from_secs(30)
-        } else {
-            Duration::from_secs(10)
-        };
-        let timed_out = tokio::time::timeout(drain_deadline, async {
+        // The writes get one flat bound (a half-open socket can't park them);
+        // the reads below get an ACTIVITY-based window instead.
+        const DRAIN_WRITE_DEADLINE: Duration = Duration::from_secs(10);
+        let _ = tokio::time::timeout(DRAIN_WRITE_DEADLINE, async {
             // Drain the PCM the capture thread queued but the main loop hadn't consumed when the stop
             // signal won the (non-biased) select — push it through the resampler and send it, so the
             // final tens of ms aren't silently dropped from the transcript. `recv().await` (not a
@@ -494,25 +486,44 @@ pub async fn run<F>(
             }
             let _ = write.send(text_msg(json!({"type":"flush"}).to_string())).await;
             let _ = write.send(text_msg(json!({"type":"stop"}).to_string())).await;
-            while let Some(from) = evt_rx.recv().await {
-                match from {
-                    FromReader::Event(e) => {
-                        if saving { accumulate_transcript(&e, &mut transcript_docs, &mut transcript_cur); }
-                        on_event(e);
-                    }
-                    FromReader::Closed => break,
+        })
+        .await;
+        // Read the remaining finals with an idle window that every server frame
+        // RESETS — the `loading` keepalives a cold model load emits every ~3 s
+        // count, so an arbitrarily long load can't get the finished transcript
+        // discarded (a 10 s flat deadline used to fire seconds before large-v3
+        // finished loading). The window must comfortably exceed a slow finalize
+        // decode (VPN latency + a busy GPU queue beat the old 6 s repeatedly).
+        // First-frame window is 30 s when the WHOLE session was silent: an old
+        // backend without keepalives cold-loads without a byte on the wire.
+        // A dead socket doesn't ride any of this — the reader task surfaces the
+        // close/error as `Closed` and the drain exits immediately. The UI-side
+        // stuck-finalize watchdog (STUCK_FINALIZE_MS, streaming.ts) re-arms on
+        // the same keepalives, so the two stay ordered: watchdog > idle window.
+        let mut saw_frame = partials_seen > 0;
+        let timed_out = loop {
+            let idle = if saw_frame {
+                Duration::from_secs(10)
+            } else {
+                Duration::from_secs(30)
+            };
+            match tokio::time::timeout(idle, evt_rx.recv()).await {
+                Err(_) => break true, // silence — dead or half-open
+                Ok(None) | Ok(Some(FromReader::Closed)) => break false,
+                Ok(Some(FromReader::Event(e))) => {
+                    saw_frame = true;
+                    if saving { accumulate_transcript(&e, &mut transcript_docs, &mut transcript_cur); }
+                    on_event(e);
                 }
             }
-        })
-        .await
-        .is_err();
+        };
         if timed_out {
             // The one silent-transcript-loss path left: the server never sent its
             // finals (or its close) within the deadline. Say so loudly — this line
             // is the difference between a diagnosable report and a mystery.
             tracing::warn!(
-                "[stream] drain deadline ({}s) hit — no final/close from the server; pending transcript discarded",
-                drain_deadline.as_secs()
+                "[stream] drain idle window hit ({}) — no frame from the server; pending transcript discarded",
+                if saw_frame { "10s since the last frame" } else { "30s, nothing all session" }
             );
         }
     }
@@ -627,6 +638,10 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
                 &str_field(&v, "message"),
                 MAX_ERROR_MESSAGE,
             )));
+            false
+        }
+        Some("loading") => {
+            on_event(StreamEvent::Loading);
             false
         }
         Some("closing") => true,

@@ -1138,6 +1138,12 @@ async function ensureListeners(): Promise<void> {
       // here would flip the chip to "listening" while the mic is still silent. Warming is
       // cleared only by real audio (the level handler) or the safety timeout.
       setDictation({ status: "listening", dictationError: null });
+    } else if (e.payload === "loading") {
+      // Keepalive while the server cold-loads its model (every ~3s): alive,
+      // just slow. Re-arm the stuck-finalize watchdog so an arbitrarily long
+      // load can't force-idle a dictation whose transcript is seconds away —
+      // the Rust drain's idle window resets on the same frames.
+      if (useApp.getState().status === "transcribing") armStuckWatchdog();
     } else if (e.payload === "closed") {
       clearStuckWatchdog(); // the stream resolved on its own
       stopTargetPoll(); // session ending — stop tracking focus for the chip
