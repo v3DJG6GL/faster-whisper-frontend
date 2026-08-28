@@ -99,6 +99,12 @@ pub struct BatchResult {
     /// admin-locked (verbose_json only). Empty ⇒ omitted to the frontend.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub overrides_ignored: Vec<String>,
+    /// URL flow only: id of the server-retained downloaded audio (fetch once
+    /// via fetch_url_media for local playback) + its advisory expiry (unix).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_media_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_media_expires_at: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +126,10 @@ struct VerboseJson {
     warnings: Vec<String>,
     #[serde(default)]
     overrides_ignored: Vec<String>,
+    #[serde(default)]
+    source_media_id: Option<String>,
+    #[serde(default)]
+    source_media_expires_at: Option<i64>,
 }
 
 /// Progress ids are client-generated lowercase hex (a UUID without dashes) —
@@ -164,6 +174,11 @@ pub struct BatchProgress {
     /// client's rail; absent on older backends (the client then infers).
     #[serde(default)]
     pub skipped: Option<Vec<String>>,
+    /// URL flow, downloading stage: bytes expected (progress is then the
+    /// downloaded fraction; null on fragmented streams). snake_case on the
+    /// wire like `last_text`.
+    #[serde(default, alias = "total_bytes")]
+    pub total_bytes: Option<u64>,
 }
 
 /// Poll the server-side progress entry for `progress_id`. Cheap and frequent —
@@ -287,7 +302,7 @@ pub async fn transcribe(
         .with_context(|| format!("reading {file_path}"))?;
     let part = Part::bytes(bytes).file_name(filename).mime_str(mime)?;
     // File upload (Transcribe screen): a long recording can decode for many minutes — allow it.
-    post(server_url, api_key, model, language, prompt, overrides, override_profile, part, Some(FILE_TRANSCRIBE_TIMEOUT), options).await
+    post(server_url, api_key, model, language, prompt, overrides, override_profile, SourcePart::File(part), Some(FILE_TRANSCRIBE_TIMEOUT), options).await
 }
 
 /// Transcribe an in-memory WAV (used by batch-mode dictation recording).
@@ -305,7 +320,66 @@ pub async fn transcribe_wav_bytes(
     // Dictation batch: short clips; keep the 120 s client default (the record path's only
     // stuck-session backstop, since the streaming-style finalize watchdog is stream-only).
     // No stage options: dictation never diarizes/translates.
-    post(server_url, api_key, model, language, prompt, overrides, override_profile, part, None, None).await
+    post(server_url, api_key, model, language, prompt, overrides, override_profile, SourcePart::File(part), None, None).await
+}
+
+/// The one client-supplied audio source of a batch request: an uploaded file
+/// part, or (full backend only) a media link the SERVER downloads (yt-dlp).
+// A Part is large but every SourcePart is built and consumed within one call
+// — boxing would buy nothing but noise.
+#[allow(clippy::large_enum_variant)]
+pub enum SourcePart {
+    File(Part),
+    Url(String),
+}
+
+/// Transcribe a pasted media link: the server downloads the audio (yt-dlp)
+/// and runs the normal pipeline. Full-backend only (gated by the
+/// `url_download_enabled` capability); the URL itself is the only payload.
+pub async fn transcribe_url(
+    server_url: &str,
+    api_key: Option<&str>,
+    model: &str,
+    language: &str,
+    prompt: Option<&str>,
+    overrides: Option<&serde_json::Value>,
+    override_profile: Option<&str>,
+    source_url: &str,
+    options: Option<BatchOptions>,
+) -> anyhow::Result<BatchResult> {
+    validate_media_url(source_url)?;
+    // Download + decode share the request: keep the same generous ceiling as
+    // a long file upload (the server's own download timeout is far tighter).
+    post(
+        server_url,
+        api_key,
+        model,
+        language,
+        prompt,
+        overrides,
+        override_profile,
+        SourcePart::Url(source_url.to_string()),
+        Some(FILE_TRANSCRIBE_TIMEOUT),
+        options,
+    )
+    .await
+}
+
+/// Belt+braces mirror of the webview's normalizeMediaUrl: explicit http(s)
+/// scheme with a real host, bounded length. The webview is the primary gate;
+/// this keeps a compromised webview from smuggling other schemes serverward.
+fn validate_media_url(source_url: &str) -> anyhow::Result<()> {
+    if source_url.len() > 2048 {
+        bail!("the link is too long");
+    }
+    let parsed = reqwest::Url::parse(source_url).context("not a valid link")?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        bail!("only http(s) links are supported");
+    }
+    if parsed.host_str().is_none_or(|h| h.is_empty()) {
+        bail!("the link has no host");
+    }
+    Ok(())
 }
 
 async fn post(
@@ -316,7 +390,7 @@ async fn post(
     prompt: Option<&str>,
     overrides: Option<&serde_json::Value>,
     override_profile: Option<&str>,
-    file_part: Part,
+    source: SourcePart,
     timeout: Option<Duration>,
     options: Option<BatchOptions>,
 ) -> anyhow::Result<BatchResult> {
@@ -326,8 +400,11 @@ async fn post(
     // endpoint there. The full backend accepts both spellings.
     let use_translations_route = translate && opts.use_translations_endpoint.unwrap_or(false);
 
-    let mut form = reqwest::multipart::Form::new()
-        .part("file", file_part)
+    let mut form = match source {
+        SourcePart::File(p) => reqwest::multipart::Form::new().part("file", p),
+        SourcePart::Url(u) => reqwest::multipart::Form::new().text("source_url", u),
+    };
+    form = form
         .text("model", model.to_string())
         .text("response_format", "verbose_json")
         // Explicit word granularity: the full backend defaults words ON for
@@ -457,5 +534,168 @@ async fn post(
             .take(MAX_OVERRIDE_NOTICES)
             .map(|s| super::bounded_server_text(s, super::MAX_ERROR_TEXT))
             .collect(),
+        // Opaque 32-hex id from OUR backend; screened like a progress id so a
+        // hostile server can't plant a path-traversing value the media fetch
+        // would interpolate into a URL path.
+        source_media_id: parsed.source_media_id.filter(|s| is_progress_id(s)),
+        source_media_expires_at: parsed.source_media_expires_at,
     })
+}
+
+/// Server preview of a pasted media link (`POST /v1/audio/url-preview`, full
+/// backend only): title / duration / uploader / proxied thumbnail — shown on
+/// the Transcribe screen's preview card before the user commits a download.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UrlPreview {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub duration: Option<f64>,
+    #[serde(default)]
+    pub uploader: Option<String>,
+    #[serde(default)]
+    pub extractor: Option<String>,
+    #[serde(default)]
+    pub estimated_bytes: Option<u64>,
+    /// Server-proxied thumbnail as a data: URI — accepted ONLY as
+    /// `data:image/…` and size-capped; anything else is dropped (a remote
+    /// URL here would defeat the proxying and the webview CSP would block
+    /// it anyway).
+    #[serde(default)]
+    pub thumbnail: Option<String>,
+}
+
+/// The preview probe is interactive (debounced keystrokes) — cap it well
+/// under the shared client's 120 s default so a slow site fails visibly fast.
+const URL_PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
+/// A 512 KB thumbnail cap server-side; anything bigger here is hostile.
+const MAX_THUMBNAIL_DATA_URI: usize = 1024 * 1024;
+
+pub async fn url_preview(
+    server_url: &str,
+    api_key: Option<&str>,
+    url: &str,
+) -> anyhow::Result<UrlPreview> {
+    validate_media_url(url)?;
+    let base = base_url(server_url);
+    let resp = with_auth(client().post(format!("{base}/v1/audio/url-preview")), api_key)
+        .timeout(URL_PREVIEW_TIMEOUT)
+        .json(&serde_json::json!({ "url": url }))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = body_capped_to(resp, MAX_ERROR_BODY).await.unwrap_or_default();
+        bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
+    }
+    let parsed: UrlPreview = json_capped::<UrlPreview>(resp)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))
+        .context("decoding preview")?;
+    Ok(UrlPreview {
+        // Media titles/uploaders are third-party remote text relayed by the
+        // server — bound them like every other server string label.
+        title: parsed.title.map(|s| super::bounded_server_text(&s, 200)),
+        uploader: parsed.uploader.map(|s| super::bounded_server_text(&s, 128)),
+        extractor: parsed.extractor.map(|s| super::bounded_server_text(&s, 64)),
+        thumbnail: parsed.thumbnail.filter(|t| {
+            t.len() <= MAX_THUMBNAIL_DATA_URI && t.starts_with("data:image/")
+        }),
+        ..parsed
+    })
+}
+
+/// Fetch the server-retained audio of a finished URL run into the local
+/// media store as `media/<record_id>.<ext>` (tmp+rename, owner-only), so the
+/// existing local-playback machinery works unchanged. `Ok(None)` when the
+/// server no longer has it (retention expired / restarted) — the transcript
+/// stays fully usable, only playback is gone. Streaming with a byte cap: the
+/// response is never fully resident.
+pub async fn download_result_media(
+    server_url: &str,
+    api_key: Option<&str>,
+    media_id: &str,
+    dest_dir: &Path,
+    record_id: &str,
+    max_bytes: u64,
+) -> anyhow::Result<Option<String>> {
+    if !is_progress_id(media_id) {
+        bail!("malformed media id");
+    }
+    let base = base_url(server_url);
+    let mut resp = with_auth(
+        client().get(format!("{base}/v1/audio/url-media/{media_id}")),
+        api_key,
+    )
+    // A 2 GB pull on a slow LAN can be slow; same generous ceiling as the run.
+    .timeout(FILE_TRANSCRIBE_TIMEOUT)
+    .send()
+    .await
+    .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
+    if resp.status().as_u16() == 404 {
+        return Ok(None); // retention expired — a state, not an error
+    }
+    let status = resp.status();
+    if !status.is_success() {
+        bail!("HTTP {}", status.as_u16());
+    }
+    let ext = match resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("audio/wav") => "wav",
+        Some("audio/mpeg") => "mp3",
+        Some("audio/mp4") => "m4a",
+        Some("audio/ogg") | Some("application/ogg") => "ogg",
+        Some("audio/webm") => "webm",
+        Some("audio/flac") => "flac",
+        Some("audio/aac") => "aac",
+        Some("audio/x-matroska") | Some("video/x-matroska") => "mka",
+        _ => "bin",
+    };
+    std::fs::create_dir_all(dest_dir).context("creating the media folder")?;
+    let dest = dest_dir.join(format!("{record_id}.{ext}"));
+    let tmp = dest_dir.join(format!("{record_id}.{ext}.tmp"));
+    let write_result: anyhow::Result<()> = async {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp).context("creating the media file")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+        }
+        let mut total: u64 = 0;
+        while let Some(chunk) = resp.chunk().await.map_err(|e| anyhow::anyhow!(friendly_err(&e)))? {
+            total += chunk.len() as u64;
+            if total > max_bytes {
+                bail!("media exceeds the local copy cap");
+            }
+            f.write_all(&chunk).context("writing the media file")?;
+        }
+        if total == 0 {
+            bail!("the server sent no audio");
+        }
+        f.flush().ok();
+        Ok(())
+    }
+    .await;
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&tmp);
+        // Over-cap mirrors save_transcript_media's contract: "no copy", not
+        // a failed run.
+        if e.to_string().contains("local copy cap") {
+            return Ok(None);
+        }
+        return Err(e);
+    }
+    std::fs::rename(&tmp, &dest)
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            anyhow::anyhow!("saving the media file: {e}")
+        })?;
+    Ok(Some(dest.to_string_lossy().to_string()))
 }

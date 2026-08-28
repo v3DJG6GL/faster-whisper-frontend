@@ -198,6 +198,10 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     for name in caps.allowed_override_profiles.iter_mut() {
         *name = bounded_name(name);
     }
+    // Server string rendered as a UI label (download-failure guidance).
+    caps.yt_dlp_version = caps
+        .yt_dlp_version
+        .map(|v| super::bounded_server_text(&v, 32));
     Some(caps)
 }
 

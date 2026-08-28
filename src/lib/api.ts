@@ -20,6 +20,7 @@ import type {
   UsageBucket,
   UsageStats,
 } from "./types";
+import type { UrlPreview } from "./urlSource";
 import type {
   ExportEnvelope,
   ImportResult,
@@ -111,6 +112,74 @@ export async function transcribeFile(args: {
     overrideProfile: args.overrideProfile ?? null,
     filePath: args.filePath,
     options: args.options ?? null,
+  });
+}
+
+/** Transcribe a pasted media link: the SERVER downloads the audio (yt-dlp)
+ *  and runs the normal pipeline. Full backend only (url_download_enabled). */
+export async function transcribeUrl(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  model: string;
+  language: string;
+  prompt?: string | null;
+  decodeOverrides?: DecodeOverrides | null;
+  overrideProfile?: string | null;
+  sourceUrl: string;
+  options?: TranscribeOptions | null;
+}): Promise<BatchResult> {
+  if (!isTauri) throw new Error("Transcription requires the desktop app.");
+  return invoke<BatchResult>("transcribe_url", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    model: args.model,
+    language: args.language,
+    prompt: args.prompt ?? null,
+    decodeOverrides: args.decodeOverrides ?? null,
+    overrideProfile: args.overrideProfile ?? null,
+    sourceUrl: args.sourceUrl,
+    options: args.options ?? null,
+  });
+}
+
+/** Metadata preview of a pasted media link (title/duration/thumbnail) —
+ *  debounced from the URL field. Advisory: a failed preview never blocks
+ *  adding the link; the run itself is the authority. */
+export async function urlPreview(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  url: string;
+}): Promise<UrlPreview> {
+  if (!isTauri) throw new Error("Not running in the desktop app.");
+  return invoke<UrlPreview>("url_preview", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    url: args.url,
+  });
+}
+
+/** Pull the server-retained audio of a finished URL run into the local media
+ *  store (media/<recordId>.<ext>). Returns the local path, or null when the
+ *  server no longer has the file (retention expired) — the transcript stays
+ *  usable, only playback is gone. */
+export async function fetchUrlMedia(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  mediaId: string;
+  recordId: string;
+}): Promise<string | null> {
+  if (!isTauri) return null;
+  return invoke<string | null>("fetch_url_media", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    mediaId: args.mediaId,
+    recordId: args.recordId,
   });
 }
 

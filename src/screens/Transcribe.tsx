@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  UploadCloud, FileAudio, X, Loader2, Check, Plus, RotateCcw, ChevronsRight,
+  UploadCloud, FileAudio, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, Link2,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import {
   Button, Card, DisclosureToggle, Notice, PageHeader, Segmented, Select,
-  SettingRow, Stepper, Toggle,
+  SettingRow, Stepper, TextInput, Toggle,
 } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
@@ -15,14 +15,17 @@ import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { TranscriptViewer, speakersOf } from "@/components/TranscriptViewer";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useBackendModels } from "@/lib/useBackendModels";
-import { fmtDurationExact, fmtTimestamp } from "@/lib/format";
-import { pickAudioFiles, isTauri } from "@/lib/api";
+import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
+import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
   addFiles, cancelRun, overallFraction, railIndex, railStages,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
-  skippedStages, startRun, useTranscribeRun, STAGE_WEIGHTS,
+  setUrlMeta, skippedStages, startRun, useTranscribeRun, STAGE_WEIGHTS,
   type RailStage, type RunContext, type StepState,
 } from "@/lib/transcribeRun";
+import {
+  displayLabel, isSourceUrl, normalizeMediaUrl, urlHost, type UrlPreview,
+} from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcriptHistory";
@@ -35,10 +38,6 @@ import {
   NO_OVERRIDE_PROFILE,
   type BatchProgress, type DecodeOverrides, type TranscribeOptions,
 } from "@/lib/types";
-
-function basename(path: string): string {
-  return path.split(/[\\/]/).pop() || path;
-}
 
 /** Bound the "server ignored N overrides" list — untrusted response, real DOM. */
 const MAX_IGNORED_SHOWN = 50;
@@ -73,6 +72,10 @@ function stageLabel(p: BatchProgress | null): string {
   switch (p?.stage) {
     case "waiting":
       return "Waiting for a server slot…";
+    case "resolving":
+      return "Resolving link…";
+    case "downloading":
+      return "Downloading…";
     case "separating":
       return "Separating music…";
     case "analyzing":
@@ -98,11 +101,13 @@ function fmtElapsed(ms: number): string {
 /** Display names + one-line explanations for the rail rows (the stage order
  *  itself lives in transcribeRun.railStages). */
 const RAIL_NAMES: Record<RailStage, string> = {
+  downloading: "Download",
   separating: "Separate music",
   transcribing: "Transcribe",
   diarizing: "Identify speakers",
 };
 const RAIL_DESCRIPTIONS: Record<RailStage, string> = {
+  downloading: "Fetches the audio from the link on the server before the pipeline runs.",
   separating: "Vocals kept, music removed — the transcript decodes from the clean stem.",
   transcribing: "",
   diarizing: "Labels each segment with who is speaking.",
@@ -187,6 +192,13 @@ export default function Transcribe() {
   // not-persisted contract as runOverrides.
   const [runOverrideProfile, setRunOverrideProfile] = useState("");
   const [showOverrides, setShowOverrides] = useState(false);
+  // Transcribe-from-URL: the draft link, its debounced server preview, and a
+  // sequence ref so a stale probe can never overwrite a newer draft's state.
+  const [urlDraft, setUrlDraft] = useState("");
+  const [urlPreviewData, setUrlPreviewData] = useState<UrlPreview | null>(null);
+  const [urlPreviewErr, setUrlPreviewErr] = useState<string | null>(null);
+  const [urlPreviewLoading, setUrlPreviewLoading] = useState(false);
+  const urlPreviewSeq = useRef(0);
   // Prevents a double-click from opening two native file dialogs.
   const picking = useRef(false);
   // Window width drives the stacked/studio arrangement (Tauri desktop window;
@@ -243,8 +255,62 @@ export default function Transcribe() {
   // unsupported (the run would then just soft-fail into a "skipped" rail row).
   const bgmAvailable = caps?.bgm_separation_enabled !== false;
   const diarAvailable = caps?.diarization_enabled !== false;
+  // Transcribe-from-URL is opt-in, unlike the two stage gates above: absent
+  // means the endpoint does not exist (older backend / standard server), so
+  // only an explicit true shows the link affordance.
+  const urlAvailable = !isStandard && caps?.url_download_enabled === true;
+  const urlMeta = useTranscribeRun((s) => s.urlMeta);
 
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
+
+  // Debounced (500 ms) link preview. Advisory only: a failed probe shows its
+  // reason but never blocks Add — the run itself is the authority.
+  useEffect(() => {
+    const url = normalizeMediaUrl(urlDraft);
+    setUrlPreviewData(null);
+    setUrlPreviewErr(null);
+    if (!url || !urlAvailable || !backend) {
+      setUrlPreviewLoading(false);
+      return;
+    }
+    const seq = ++urlPreviewSeq.current;
+    setUrlPreviewLoading(true);
+    const timer = window.setTimeout(() => {
+      urlPreview({
+        serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+        backendId: backend.id,
+        url,
+      })
+        .then((p) => {
+          if (urlPreviewSeq.current !== seq) return;
+          setUrlPreviewData(p);
+          setUrlPreviewLoading(false);
+        })
+        .catch((e) => {
+          if (urlPreviewSeq.current !== seq) return;
+          setUrlPreviewErr(safeDisplayText(String(e), 300) || "Link preview failed.");
+          setUrlPreviewLoading(false);
+        });
+    }, 500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlDraft, urlAvailable, backend?.id]);
+
+  const addLink = () => {
+    const url = normalizeMediaUrl(urlDraft);
+    if (!url || busy) return;
+    if (urlPreviewData) {
+      setUrlMeta(url, {
+        title: urlPreviewData.title ?? undefined,
+        durationSec: urlPreviewData.duration ?? undefined,
+        uploader: urlPreviewData.uploader ?? undefined,
+      });
+    }
+    addFiles([url]);
+    setUrlDraft("");
+    setUrlPreviewData(null);
+    setUrlPreviewErr(null);
+  };
 
   // 1 s heartbeat while a run is active, so the rail's elapsed times count
   // even when no server poll lands (standard servers, waiting stages).
@@ -451,11 +517,20 @@ export default function Transcribe() {
                 key={path}
                 className="flex items-center gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3"
               >
-                <FileAudio className="size-5 shrink-0 text-accent" />
-                <span className="max-w-[300px] truncate text-[13px] text-text">{basename(path)}</span>
+                {isSourceUrl(path) ? (
+                  <Link2 className="size-5 shrink-0 text-accent" />
+                ) : (
+                  <FileAudio className="size-5 shrink-0 text-accent" />
+                )}
+                <span className="max-w-[300px] truncate text-[13px] text-text">
+                  {displayLabel(path, urlMeta[path]?.title)}
+                  {isSourceUrl(path) && (
+                    <span className="ml-2 font-mono text-[11px] text-faint">{urlHost(path)}</span>
+                  )}
+                </span>
                 <button
                   type="button"
-                  aria-label={`Remove ${basename(path)}`}
+                  aria-label={`Remove ${displayLabel(path, urlMeta[path]?.title)}`}
                   disabled={busy}
                   onClick={() => removeFile(path)}
                   className="ring-signal grid size-6 place-items-center rounded-lg text-faint transition-colors hover:text-rec disabled:opacity-40"
@@ -486,6 +561,95 @@ export default function Transcribe() {
           <div className="mt-4 text-[14px] text-text">Choose files to transcribe</div>
           <div className="mt-1 text-[12.5px] text-dim">Audio or video — wav, mp3, m4a, ogg, webm, flac…</div>
         </button>
+      )}
+
+      {urlAvailable && (
+        <div className="mt-4">
+          {/* One queue, two ways in: the link row sits under the dropzone
+              behind a quiet divider — files and links mix in one run. */}
+          <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-label text-faint">
+            <span aria-hidden className="h-px flex-1 bg-line" />
+            or paste a link
+            <span aria-hidden className="h-px flex-1 bg-line" />
+          </div>
+          <div className="mt-3 flex gap-2.5">
+            <TextInput
+              value={urlDraft}
+              onChange={(e) => setUrlDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && normalizeMediaUrl(urlDraft) && !busy) addLink();
+              }}
+              disabled={busy}
+              spellCheck={false}
+              placeholder="YouTube, podcast episode, or a direct audio/video link — https://…"
+              aria-label="Media link"
+              className="font-mono text-[12.5px]"
+            />
+            <Button
+              variant="accent"
+              disabled={!normalizeMediaUrl(urlDraft) || busy}
+              onClick={addLink}
+            >
+              <Plus className="size-4" /> Add link
+            </Button>
+          </div>
+          {urlDraft.trim() !== "" && !normalizeMediaUrl(urlDraft) && (
+            <div className="mt-2 text-[12px] text-warn">
+              Include http:// or https:// at the start of the link.
+            </div>
+          )}
+          {urlPreviewLoading && (
+            <div className="mt-3 flex items-center gap-2 text-[12.5px] text-dim">
+              <Loader2 className="size-3.5 animate-spin" /> Resolving link…
+            </div>
+          )}
+          {urlPreviewErr && (
+            <Notice className="mt-3">
+              <div>{urlPreviewErr}</div>
+              <div className="mt-0.5 text-[12px] text-dim">
+                You can still add the link — the run itself decides.
+              </div>
+            </Notice>
+          )}
+          {urlPreviewData && (
+            <div className="mt-3 flex items-center gap-4 rounded-card border border-line bg-surface px-4 py-3.5">
+              {urlPreviewData.thumbnail?.startsWith("data:image/") && (
+                <img
+                  src={urlPreviewData.thumbnail}
+                  alt=""
+                  className="w-[120px] shrink-0 rounded-lg object-cover"
+                />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="line-clamp-2 text-[13.5px] font-medium text-text">
+                  {safeDisplayText(urlPreviewData.title, 120) ||
+                    displayLabel(normalizeMediaUrl(urlDraft) ?? urlDraft)}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-3.5 gap-y-1 text-[12px] text-dim">
+                  {urlPreviewData.uploader && (
+                    <span>{safeDisplayText(urlPreviewData.uploader, 60)}</span>
+                  )}
+                  {typeof urlPreviewData.duration === "number" && urlPreviewData.duration > 0 && (
+                    <span className="font-mono tabular-nums">
+                      {fmtDurationExact(urlPreviewData.duration)}
+                    </span>
+                  )}
+                  {typeof urlPreviewData.estimated_bytes === "number" &&
+                    urlPreviewData.estimated_bytes > 0 && (
+                      <span className="font-mono tabular-nums">
+                        ≈ {fmtBytes(urlPreviewData.estimated_bytes)}
+                      </span>
+                    )}
+                  {urlPreviewData.extractor && (
+                    <span className="rounded-pill bg-accent-soft px-2 py-px font-mono text-[10.5px] uppercase tracking-label text-accent">
+                      {safeDisplayText(urlPreviewData.extractor, 24)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       <div className="mt-6 grid grid-cols-3 gap-4">
@@ -769,7 +933,7 @@ export default function Transcribe() {
           {busy
             ? "Transcribing…"
             : files.length > 1
-              ? `Transcribe ${files.length} files`
+              ? `Transcribe ${files.length} ${files.some(isSourceUrl) ? "items" : "files"}`
               : "Transcribe"}
         </Button>
         {busy && queue.length > 1 && (
@@ -788,15 +952,20 @@ export default function Transcribe() {
         // step. "unknown" polls never overwrite a known stage, so the panel
         // only ever moves forward; until the first poll answers, the first
         // stage counts as active.
-        const stages = railStages(lastOptions);
+        const runningItem = queue.find((it) => it.status === "running") ?? null;
+        // URL items prepend a Download stage to the rail (per-item, so file
+        // items in the same run never show it).
+        const forUrl =
+          runningItem?.kind === "url" ||
+          (runningItem ? isSourceUrl(runningItem.path) : false);
+        const stages = railStages(lastOptions, forUrl);
         const active = progress?.stage ? railIndex(progress.stage, stages) : 0;
         // Requested stages the server jumped over (feature disabled there) —
         // shown as "skipped", never as done, and worth no progress credit.
-        const skipped = skippedStages({ progress, stageTimes, lastOptions });
+        const skipped = skippedStages({ progress, stageTimes, lastOptions, forUrl });
         const now = Date.now();
-        const runningItem = queue.find((it) => it.status === "running") ?? null;
         const fileIdx = queue.findIndex((it) => it.status === "running");
-        const overall = overallFraction({ queue, progress, stageTimes, lastOptions }) ?? 0;
+        const overall = overallFraction({ queue, progress, stageTimes, lastOptions, forUrl }) ?? 0;
         const starts = Object.values(stageTimes).map((t) => t.start);
         const runElapsed = starts.length ? now - Math.min(...starts) : 0;
         const audioDur = progress?.duration ?? null;
@@ -818,10 +987,21 @@ export default function Transcribe() {
         return (
           <Card className="mt-4 px-5 py-4">
             <div className="flex items-center gap-3">
-              <FileAudio className="size-[18px] shrink-0 text-accent" />
+              {forUrl ? (
+                <Link2 className="size-[18px] shrink-0 text-accent" />
+              ) : (
+                <FileAudio className="size-[18px] shrink-0 text-accent" />
+              )}
               <span className="min-w-0 truncate text-[13.5px] font-medium text-text">
-                {runningItem ? basename(runningItem.path) : "Preparing…"}
+                {runningItem
+                  ? displayLabel(runningItem.path, runningItem.title ?? urlMeta[runningItem.path]?.title)
+                  : "Preparing…"}
               </span>
+              {forUrl && runningItem && (
+                <span className="shrink-0 font-mono text-[11px] text-faint">
+                  {urlHost(runningItem.path)}
+                </span>
+              )}
               {audioDur ? (
                 <span className="shrink-0 font-mono text-[11px] text-faint">
                   {fmtDurationExact(audioDur)} audio
@@ -902,6 +1082,9 @@ export default function Transcribe() {
                 // Inside model.transcribe() before the first segment: audio
                 // decode + Silero VAD (used to be misattributed to "waiting").
                 const analyzing = state === "active" && progress?.stage === "analyzing";
+                // Metadata probe before the download starts — folds onto the
+                // Download row as a suffix (railOf maps it there).
+                const resolving = state === "active" && progress?.stage === "resolving";
                 const time = stageTimes[st];
                 const meta = stageMeta[st];
                 const stageElapsedMs =
@@ -916,9 +1099,16 @@ export default function Transcribe() {
                   st === "transcribing" && state === "active" && progress?.position &&
                   stageElapsedMs && stageElapsedMs > 5000
                     ? progress.position / (stageElapsedMs / 1000)
-                    : state === "done" && audioDur && stageElapsedMs
+                    : st !== "downloading" && state === "done" && audioDur && stageElapsedMs
                       ? audioDur / (stageElapsedMs / 1000)
                       : null;
+                // Download throughput (bytes/s) once the rate is stable.
+                const dlSpeed =
+                  st === "downloading" && state === "active" &&
+                  typeof frac === "number" && progress?.totalBytes &&
+                  stageElapsedMs && stageElapsedMs > 2000
+                    ? (frac * progress.totalBytes) / (stageElapsedMs / 1000)
+                    : null;
                 return (
                   <div
                     key={st}
@@ -967,6 +1157,9 @@ export default function Transcribe() {
                               {" "}— {vadOn ? "skipping silence…" : "analyzing audio…"}
                             </span>
                           )}
+                          {resolving && (
+                            <span className="font-normal text-faint"> — resolving link…</span>
+                          )}
                         </span>
                         <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
                           {state === "done" && "done"}
@@ -979,6 +1172,10 @@ export default function Transcribe() {
                             : ""}
                           {st === "transcribing" && state === "active" && progress?.position && audioDur
                             ? ` · ${fmtDurationExact(progress.position)} of ${fmtDurationExact(audioDur)} audio`
+                            : ""}
+                          {st === "downloading" && state === "active" &&
+                          typeof frac === "number" && progress?.totalBytes
+                            ? ` · ${fmtBytes(frac * progress.totalBytes)} of ${fmtBytes(progress.totalBytes)}`
                             : ""}
                         </span>
                       </div>
@@ -1047,6 +1244,7 @@ export default function Transcribe() {
                                 : `running ${fmtElapsed(stageElapsedMs)}`
                               : ""}
                             {speed ? ` · ${speed.toFixed(1)}× realtime` : ""}
+                            {dlSpeed ? ` · ${fmtBytes(dlSpeed)}/s` : ""}
                             {stageLeft !== null ? ` · ${aboutLeft(stageLeft)}` : ""}
                           </span>
                         </div>
@@ -1174,7 +1372,12 @@ export default function Transcribe() {
                           : "text-text",
                     )}
                   >
-                    {basename(it.path)}
+                    {displayLabel(it.path, it.title ?? urlMeta[it.path]?.title)}
+                    {(it.kind === "url" || isSourceUrl(it.path)) && (
+                      <span className="ml-2 font-mono text-[11px] text-faint">
+                        {urlHost(it.path)}
+                      </span>
+                    )}
                   </span>
                   {it.status === "done" && it.result && (
                     <span className="font-mono text-[11px] text-faint">
@@ -1236,7 +1439,11 @@ export default function Transcribe() {
         result={result}
         path={selectedPath}
         mediaPath={selected?.mediaPath}
-        fileLabel={queue.length > 1 ? basename(selectedPath) : undefined}
+        fileLabel={
+          queue.length > 1 || isSourceUrl(selectedPath)
+            ? displayLabel(selectedPath, selected?.title ?? urlMeta[selectedPath]?.title)
+            : undefined
+        }
         fill={studio}
         className={studio ? undefined : "mt-6"}
       />

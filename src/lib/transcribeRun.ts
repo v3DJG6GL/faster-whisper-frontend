@@ -8,9 +8,10 @@
 
 import { create } from "zustand";
 import {
-  cancelBackendTranscription, cancelFileTranscription, getTranscribeProgress,
-  saveTranscriptMedia, transcribeFile,
+  cancelBackendTranscription, cancelFileTranscription, fetchUrlMedia,
+  getTranscribeProgress, saveTranscriptMedia, transcribeFile, transcribeUrl,
 } from "./api";
+import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { useApp } from "./store";
 import { upsertRecord, type TranscriptRecord } from "./transcriptHistory";
 import type {
@@ -20,7 +21,14 @@ import type {
 export type ItemStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
 export interface QueueItem {
+  /** Identity key: a filesystem path, or (URL items) the normalized link
+   *  itself — the two can't collide (isSourceUrl). */
   path: string;
+  /** Absent = "file" (pre-URL rows). Display and transport dispatch branch
+   *  on this; every path-keyed structure works unchanged. */
+  kind?: "file" | "url";
+  /** URL items: the media title from the preview — the display name. */
+  title?: string;
   status: ItemStatus;
   result?: BatchResult;
   error?: string;
@@ -31,7 +39,7 @@ export interface QueueItem {
 }
 
 /** The pipeline stages of a run, in server order (the progress rail). */
-export type RailStage = "separating" | "transcribing" | "diarizing";
+export type RailStage = "downloading" | "separating" | "transcribing" | "diarizing";
 
 export interface StageTime {
   start: number;
@@ -53,15 +61,18 @@ export interface StageMeta {
 /** Rough share of a run's wall time per stage — sizes the segments of the
  *  overall pipeline bar and weights the overall percentage. */
 export const STAGE_WEIGHTS: Record<RailStage, number> = {
+  downloading: 15,
   separating: 25,
   transcribing: 60,
   diarizing: 15,
 };
 
 /** The stages of a run in server order — transcribe always, the optional
- *  stages only when the run switched them on. */
-export function railStages(opts: TranscribeOptions | undefined): RailStage[] {
+ *  stages only when the run switched them on, and (URL items) the leading
+ *  server-side download. */
+export function railStages(opts: TranscribeOptions | undefined, forUrl?: boolean): RailStage[] {
   return [
+    ...(forUrl ? (["downloading"] as const) : []),
     ...(opts?.separateBgm ? (["separating"] as const) : []),
     "transcribing" as const,
     ...(opts?.diarize ? (["diarizing"] as const) : []),
@@ -91,9 +102,10 @@ export function skippedStages(s: {
   progress: BatchProgress | null;
   stageTimes: Partial<Record<RailStage, StageTime>>;
   lastOptions?: TranscribeOptions;
+  forUrl?: boolean;
 }): Set<RailStage> {
   const out = new Set<RailStage>();
-  const stages = railStages(s.lastOptions);
+  const stages = railStages(s.lastOptions, s.forUrl);
   for (const r of s.progress?.skipped ?? []) {
     if ((stages as string[]).includes(r)) out.add(r as RailStage);
   }
@@ -115,9 +127,10 @@ export function overallFraction(s: {
   progress: BatchProgress | null;
   stageTimes: Partial<Record<RailStage, StageTime>>;
   lastOptions?: TranscribeOptions;
+  forUrl?: boolean;
 }): number | null {
   if (!s.queue.some((it) => it.status === "running" || it.status === "queued")) return null;
-  const stages = railStages(s.lastOptions);
+  const stages = railStages(s.lastOptions, s.forUrl);
   const active = s.progress?.stage ? railIndex(s.progress.stage, stages) : 0;
   const skipped = skippedStages(s);
   let total = 0;
@@ -166,6 +179,10 @@ interface TranscribeRunState {
    *  Copy and every export. */
   edits: Record<string, Record<number, string>>;
   speakerEdits: Record<string, Record<number, string>>;
+  /** Link metadata by URL key (title/duration/uploader from the preview) —
+   *  labels queue rows and survives resetForInputChange (re-adding the same
+   *  link keeps its name). */
+  urlMeta: Record<string, { title?: string; durationSec?: number; uploader?: string }>;
   /** Options/overrides of the current or last run (rail layout + Retry). */
   lastOptions?: TranscribeOptions;
   lastOverrides: DecodeOverrides;
@@ -184,6 +201,7 @@ export const useTranscribeRun = create<TranscribeRunState>(() => ({
   speakerColors: {},
   edits: {},
   speakerEdits: {},
+  urlMeta: {},
   lastOptions: undefined,
   lastOverrides: {},
   epoch: 0,
@@ -196,6 +214,10 @@ const get = useTranscribeRun.getState;
 /** Which rail row a server progress stage lights ("waiting"/"unknown" both
  *  belong to the transcribe row — the semaphore queue precedes the decode). */
 export function railOf(stage: string | undefined | null): RailStage {
+  // "resolving" (the metadata probe) folds onto the download row the same
+  // way "waiting"/"analyzing" fold onto transcribe — seconds-long phases
+  // don't get their own rail rows.
+  if (stage === "downloading" || stage === "resolving") return "downloading";
   return stage === "separating" || stage === "diarizing" ? stage : "transcribing";
 }
 
@@ -227,9 +249,18 @@ export function resetForInputChange() {
   });
 }
 
+export function setUrlMeta(url: string, meta: { title?: string; durationSec?: number; uploader?: string }) {
+  set((s) => ({ urlMeta: { ...s.urlMeta, [url]: { ...s.urlMeta[url], ...meta } } }));
+}
+
 export function addFiles(paths: string[]) {
   resetForInputChange();
-  set((s) => ({ files: [...s.files, ...paths.filter((p) => !s.files.includes(p))] }));
+  // URL entries normalize BEFORE the dedupe, so a re-pasted variant of a
+  // link already in the list collapses onto it (and History's re-transcribe,
+  // which replays rec.sourcePath verbatim, hits the same key).
+  const cleaned = paths
+    .map((p) => (isSourceUrl(p) ? normalizeMediaUrl(p) ?? p : p));
+  set((s) => ({ files: [...s.files, ...cleaned.filter((p) => !s.files.includes(p))] }));
 }
 
 export function removeFile(path: string) {
@@ -281,13 +312,16 @@ function recordRun(
   outcome: { status: "done" | "failed"; result?: BatchResult; error?: string; tookMs?: number },
 ): TranscriptRecord {
   const s = get();
+  const isUrl = isSourceUrl(path);
+  const title = s.urlMeta[path]?.title;
   const rec: TranscriptRecord = {
     schemaVersion: 1,
-    kind: "file",
+    kind: isUrl ? "url" : "file",
+    title: isUrl ? title : undefined,
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     sourcePath: path,
-    sourceName: path.split(/[\\/]/).pop() || path,
+    sourceName: displayLabel(path, title),
     status: outcome.status,
     error: outcome.error,
     tookMs: outcome.tookMs,
@@ -326,17 +360,48 @@ function copyRunMedia(path: string, rec: TranscriptRecord) {
     .catch((e) => console.error("audio copy failed:", e));
 }
 
+/** URL-run counterpart of copyRunMedia: pull the server-retained download
+ *  into the local media store. NOT gated on keepAudioCopies — a link run has
+ *  no other playable source, so without this copy playback simply doesn't
+ *  exist. Best-effort: null (retention expired) or an error leaves the
+ *  transcript fully usable, minus playback. */
+function fetchRunUrlMedia(path: string, rec: TranscriptRecord, ctx: RunContext, mediaId: string) {
+  void fetchUrlMedia({
+    serverUrl: ctx.serverUrl,
+    backendId: ctx.backendId,
+    mediaId,
+    recordId: rec.id,
+  })
+    .then((mediaPath) => {
+      if (!mediaPath) return;
+      patchItem(path, { mediaPath });
+      const cur = historyByPath[path];
+      if (cur && cur.id === rec.id) {
+        const updated = { ...cur, mediaPath };
+        historyByPath[path] = updated;
+        upsertRecord(updated);
+      }
+    })
+    .catch((e) => console.error("url media fetch failed:", e));
+}
+
 /** Load a history record back into the workbench: one settled queue row,
  *  selected, with its overlays restored. Refused mid-run (the pump owns the
  *  queue then). */
 export function openHistoryRecord(rec: TranscriptRecord): boolean {
   if (get().running) return false;
   historyByPath[rec.sourcePath] = rec;
+  const recIsUrl = isSourceUrl(rec.sourcePath);
   set((s) => ({
     epoch: s.epoch + 1,
+    urlMeta: recIsUrl && rec.title
+      ? { ...s.urlMeta, [rec.sourcePath]: { ...s.urlMeta[rec.sourcePath], title: rec.title } }
+      : s.urlMeta,
     queue: [
       {
         path: rec.sourcePath,
+        kind: recIsUrl ? ("url" as const) : ("file" as const),
+        title: rec.title,
         status: rec.status,
         result: rec.result,
         error: rec.error,
@@ -474,6 +539,21 @@ async function pump(
     while (epoch === get().epoch) {
       const next = get().queue.find((it) => it.status === "queued");
       if (!next) break;
+      const isUrl = next.kind === "url" || isSourceUrl(next.path);
+      // A URL item can only run against a full backend (the download happens
+      // server-side). A stale queue on a standard server fails locally with
+      // a clear message instead of a confusing server 4xx.
+      if (isUrl && ctx.standard) {
+        patchItem(next.path, {
+          status: "failed",
+          error: "This server can't download links — pick a full backend.",
+        });
+        recordRun(next.path, ctx, options, {
+          status: "failed",
+          error: "This server can't download links — pick a full backend.",
+        });
+        continue;
+      }
       patchItem(next.path, { status: "running" });
       // Live progress (full backend only): a fresh hex id per file keys the
       // server-side entry; a 1 s poll paints the rail. Best-effort — a poll
@@ -485,7 +565,9 @@ async function pump(
       // Seed the first stage's clock from the request start, so the rail
       // shows elapsed time before the first poll lands (and at all on
       // standard servers, which are never polled).
-      const first: RailStage = options?.separateBgm ? "separating" : "transcribing";
+      const first: RailStage = isUrl
+        ? "downloading"
+        : options?.separateBgm ? "separating" : "transcribing";
       const fileT0 = Date.now();
       set({
         progress: null,
@@ -506,7 +588,7 @@ async function pump(
           }, 1000)
         : undefined;
       try {
-        const res = await transcribeFile({
+        const common = {
           serverUrl: ctx.serverUrl,
           backendId: ctx.backendId,
           model: ctx.model,
@@ -514,15 +596,21 @@ async function pump(
           prompt: ctx.prompt,
           decodeOverrides: ctx.decodeOverrides,
           overrideProfile: ctx.overrideProfile,
-          filePath: next.path,
           options: pid ? { ...options, progressId: pid } : options,
-        });
+        };
+        const res = isUrl
+          ? await transcribeUrl({ ...common, sourceUrl: next.path })
+          : await transcribeFile({ ...common, filePath: next.path });
         if (epoch !== get().epoch) return;
         const tookMs = Date.now() - fileT0;
         patchItem(next.path, { status: "done", result: res, tookMs });
         set({ selectedPath: next.path }); // follow the latest finished file
         const rec = recordRun(next.path, ctx, options, { status: "done", result: res, tookMs });
-        copyRunMedia(next.path, rec);
+        if (isUrl) {
+          if (res.sourceMediaId) fetchRunUrlMedia(next.path, rec, ctx, res.sourceMediaId);
+        } else {
+          copyRunMedia(next.path, rec);
+        }
       } catch (e) {
         if (epoch !== get().epoch) return;
         patchItem(next.path, { status: "failed", error: String(e) });
@@ -546,7 +634,12 @@ export function startRun(options: TranscribeOptions | undefined,
   set({
     epoch,
     selectedPath: null,
-    queue: s.files.map((path): QueueItem => ({ path, status: "queued" })),
+    queue: s.files.map((path): QueueItem => ({
+      path,
+      status: "queued",
+      kind: isSourceUrl(path) ? "url" : "file",
+      title: s.urlMeta[path]?.title,
+    })),
     lastOptions: options,
     lastOverrides: overrides,
   });

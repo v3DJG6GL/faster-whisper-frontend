@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, Mic, MicOff,
+  Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, Link2, Mic, MicOff,
   Pause, Play, RotateCcw, Search, Trash2, X,
 } from "lucide-react";
 import { Badge, Button, Card, PageHeader, Segmented, TextInput } from "@/components/ui";
@@ -27,6 +27,7 @@ import {
   type ExportFormat,
 } from "@/lib/transcriptExport";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import { urlHost } from "@/lib/urlSource";
 import { cn } from "@/lib/cn";
 
 /** "Today" / "Yesterday" / a local date — the bucket a record sorts under. */
@@ -297,7 +298,10 @@ export default function History() {
     const t = settings.transcribe ?? {};
     const format = (t.exportFormat ?? "srt") as ExportFormat;
     const ext = EXPORT_EXTENSIONS[format];
-    const stem = rec.sourceName.replace(/\.[^.]+$/, "");
+    const stem =
+      rec.kind === "url"
+        ? rec.sourceName.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) || "transcript"
+        : rec.sourceName.replace(/\.[^.]+$/, "");
     let path: string | null;
     try {
       path = await pickExportPath(`${stem}.${ext}`, format.toUpperCase(), ext);
@@ -385,15 +389,17 @@ export default function History() {
       );
     }
     const ok = rec.status === "done";
+    const isUrl = rec.kind === "url";
+    const kindLabel = isUrl ? "Link transcription" : "File transcription";
     return (
       <span
         className={cn(
           "grid size-6 shrink-0 place-items-center rounded-lg",
           ok ? "bg-ok/15 text-ok" : "bg-rec/15 text-rec",
         )}
-        title={ok ? "File transcription" : "File transcription · failed"}
+        title={ok ? kindLabel : `${kindLabel} · failed`}
       >
-        {ok ? <FileAudio className="size-3.5" /> : <X className="size-3.5" />}
+        {!ok ? <X className="size-3.5" /> : isUrl ? <Link2 className="size-3.5" /> : <FileAudio className="size-3.5" />}
       </span>
     );
   };
@@ -528,6 +534,7 @@ export default function History() {
             </span>
             <span className="shrink-0 font-mono text-[11px] text-faint">
               {timeOf(rec.createdAt)}
+              {rec.kind === "url" && rec.sourcePath ? ` · ${safeDisplayText(urlHost(rec.sourcePath), 60)}` : ""}
               {rec.result?.duration ? ` · ${fmtDuration(rec.result.duration)}` : ""}
               {rec.language ? ` · ${safeDisplayText(rec.language, 12)}` : ""}
               {speakers > 1 ? ` · ${speakers} speakers` : ""}

@@ -91,3 +91,12 @@ export function fmtDateFull(day: number): string {
 export function localTodayDay(): number {
   return Math.floor((Date.now() - new Date().getTimezoneOffset() * 60_000) / DAY_MS);
 }
+
+/** Human byte size for download progress readouts ("41.2 MB", "980 KB"). */
+export function fmtBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "";
+  if (n < 1024) return `${Math.round(n)} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}

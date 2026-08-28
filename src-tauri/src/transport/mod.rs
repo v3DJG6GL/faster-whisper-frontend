@@ -70,6 +70,15 @@ pub struct Capabilities {
     pub bgm_separation_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diarization_enabled: Option<bool>,
+    /// Whether the server downloads pasted media links (yt-dlp). Unlike the
+    /// two flags above, the client shows the URL affordance only on
+    /// `Some(true)` — absence means the endpoint does not exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_download_enabled: Option<bool>,
+    /// Installed yt-dlp version on the server (only when the feature is on)
+    /// — surfaced in download-failure guidance. Bounded in discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yt_dlp_version: Option<String>,
 }
 
 /// A single override-profile's decode-relevant values + locked client keys,

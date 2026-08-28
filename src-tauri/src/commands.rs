@@ -206,6 +206,95 @@ pub async fn transcribe_file(
     }
 }
 
+/// Transcribe a pasted media link: the SERVER downloads the audio (yt-dlp)
+/// and runs the normal pipeline. Same cancellation contract as
+/// `transcribe_file` — the epoch poll drops the request (closing the
+/// connection), and the Transcribe screen pairs that with the server-side
+/// cancel by progress id, which also terminates the download subprocess.
+#[tauri::command]
+pub async fn transcribe_url(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    model: String,
+    language: String,
+    prompt: Option<String>,
+    decode_overrides: Option<serde_json::Value>,
+    override_profile: Option<String>,
+    source_url: String,
+    options: Option<transport::batch::BatchOptions>,
+) -> Result<transport::batch::BatchResult, String> {
+    let key = resolve_key(api_key, backend_id);
+    let epoch = FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
+    let fut = transport::batch::transcribe_url(
+        &server_url,
+        key.as_deref(),
+        &model,
+        &language,
+        prompt.as_deref(),
+        decode_overrides.as_ref(),
+        override_profile.as_deref(),
+        &source_url,
+        options,
+    );
+    tokio::pin!(fut);
+    loop {
+        tokio::select! {
+            r = &mut fut => return r.map_err(|e| e.to_string()),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
+                if FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                    return Err("cancelled".into());
+                }
+            }
+        }
+    }
+}
+
+/// Metadata preview of a pasted media link (title / duration / thumbnail) —
+/// debounced from the Transcribe screen's URL field. Advisory only.
+#[tauri::command]
+pub async fn url_preview(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    url: String,
+) -> Result<transport::batch::UrlPreview, String> {
+    let key = resolve_key(api_key, backend_id);
+    transport::batch::url_preview(&server_url, key.as_deref(), &url)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Pull the server-retained audio of a finished URL run into the local media
+/// store (`media/<record_id>.<ext>`), so playback works like any file run.
+/// `Ok(None)` = the server no longer has it (expired/restarted) — the
+/// transcript stays usable without playback.
+#[tauri::command]
+pub async fn fetch_url_media(
+    app: tauri::AppHandle,
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    media_id: String,
+    record_id: String,
+) -> Result<Option<String>, String> {
+    if !crate::transcripts::valid_id(&record_id) {
+        return Err("malformed record id".into());
+    }
+    let key = resolve_key(api_key, backend_id);
+    let dir = crate::transcripts::media_dir(&app)?;
+    transport::batch::download_result_media(
+        &server_url,
+        key.as_deref(),
+        &media_id,
+        &dir,
+        &record_id,
+        crate::transcripts::MAX_MEDIA_BYTES,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// Epoch for aborting in-flight `transcribe_file` calls (see above). Same
 /// shape as session.rs's CANCELLED_BATCH_EPOCH for dictation clips.
 static FILE_TRANSCRIBE_EPOCH: std::sync::atomic::AtomicU64 =

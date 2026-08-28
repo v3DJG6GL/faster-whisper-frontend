@@ -34,17 +34,17 @@ fn dictations_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// Audio copies of file-transcription inputs live beside the records, named
 /// by record id (`media/<id>.<ext>`), so playback keeps working when the
 /// original file moves. Same opaque contract: Rust never reads the audio.
-fn media_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn media_dir(app: &AppHandle) -> Result<PathBuf, String> {
     transcripts_dir(app).map(|d| d.join("media"))
 }
 
 /// Copy cap — beyond this the copy is silently skipped (the record keeps
 /// playing from the original while it exists).
-const MAX_MEDIA_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+pub(crate) const MAX_MEDIA_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Record ids are frontend-generated UUIDs — hex + dashes only, so an id can
 /// never traverse out of the transcripts directory.
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     (8..=64).contains(&id.len())
         && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
 }

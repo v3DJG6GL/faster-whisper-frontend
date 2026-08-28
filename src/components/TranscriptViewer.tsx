@@ -29,6 +29,7 @@ import {
 } from "@/lib/transcriptExport";
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
 import { cn } from "@/lib/cn";
+import { isSourceUrl } from "@/lib/urlSource";
 import type { BatchResult, TranscriptWord } from "@/lib/types";
 
 function basename(path: string): string {
@@ -528,11 +529,17 @@ export function TranscriptViewer({
   };
 
   // ── playback + karaoke follow ────────────────────────────────────────────
-  // The picked file plays straight from disk via the asset protocol.
-  const audioSrc = useMemo(
-    () => (isTauri ? convertFileSrc(path) : undefined),
-    [path],
-  );
+  // The picked file plays straight from disk via the asset protocol. A URL
+  // run has no local original — `path` IS the link — so playback comes from
+  // the app's fetched copy (mediaPath), and with no copy there is simply no
+  // <audio> (never convertFileSrc on a URL: that mints a guaranteed-broken
+  // asset URL and a guaranteed error event).
+  const urlSource = isSourceUrl(path);
+  const audioSrc = useMemo(() => {
+    if (!isTauri) return undefined;
+    if (urlSource) return mediaPath ? convertFileSrc(mediaPath) : undefined;
+    return convertFileSrc(path);
+  }, [path, mediaPath, urlSource]);
 
   // What the playhead loop reads each frame — a ref, so the loop never
   // re-subscribes and never closes over stale data.
@@ -646,6 +653,21 @@ export function TranscriptViewer({
       blobUrlRef.current = url;
       setBlobSrc(url);
     };
+    if (urlSource) {
+      // No local original to buffer — the fetched copy is the only source.
+      if (!mediaPath) {
+        setAudioBroken(true);
+        setBrokenWhy("gone");
+        return;
+      }
+      readMediaFile(mediaPath)
+        .then((buf) => asBlob(buf, mediaPath))
+        .catch(() => {
+          setAudioBroken(true);
+          setBrokenWhy("gone");
+        });
+      return;
+    }
     readMediaFile(path)
       .then((buf) => asBlob(buf, path))
       .catch(() => {
@@ -1402,9 +1424,18 @@ export function TranscriptViewer({
 
       {audioBroken && (
         <div className="mb-3 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2 text-[12px] text-dim">
-          {brokenWhy === "gone"
-            ? "Playback isn't available — the original file is gone and no copy was kept (it predates audio copies, or “Keep a copy of the audio” was off)."
-            : "Playback isn't available — this format can't be decoded by the system webview. The transcript and exports still work."}
+          {brokenWhy !== "gone"
+            ? "Playback isn't available — this format can't be decoded by the system webview. The transcript and exports still work."
+            : urlSource
+              ? "The downloaded audio isn't stored on this device — run the link again to restore playback. The transcript and edits still work."
+              : "Playback isn't available — the original file is gone and no copy was kept (it predates audio copies, or “Keep a copy of the audio” was off)."}
+        </div>
+      )}
+
+      {urlSource && !mediaPath && !audioBroken && (
+        <div className="mb-3 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2 text-[12px] text-dim">
+          No audio is stored for this link — run it again to restore playback.
+          The transcript and edits still work.
         </div>
       )}
 

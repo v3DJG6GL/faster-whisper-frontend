@@ -18,11 +18,14 @@ export interface TranscriptRecord {
    *  recording's path ("" when recordings are off/expired), result.text the
    *  session text and result.duration its length in seconds — so search,
    *  snippets, buckets and the meta line work unchanged. */
-  kind?: "file" | "dictation";
+  kind?: "file" | "dictation" | "url";
   id: string; // crypto.randomUUID()
   createdAt: string; // ISO
   sourcePath: string;
   sourceName: string;
+  /** URL records only: the media title from the link preview/result — the
+   *  display name (sourcePath holds the URL itself, which IS the identity). */
+  title?: string;
   /** App-managed audio copy (transcripts/media/<id>.<ext>) — playback falls
    *  back to it when the original at sourcePath is gone. File records only. */
   mediaPath?: string;

@@ -345,6 +345,13 @@ export interface Capabilities {
    *  toggles. Absent = unknown ⇒ assume available. */
   bgm_separation_enabled?: boolean;
   diarization_enabled?: boolean;
+  /** Whether this server downloads pasted media links (yt-dlp). Unlike the
+   *  two stage flags above, ABSENT means the endpoint does not exist —
+   *  the URL affordance is shown only on `=== true` (deliberate opt-in). */
+  url_download_enabled?: boolean;
+  /** Installed yt-dlp version on the server (newer backends, only when the
+   *  feature is on) — surfaced in download-failure guidance. */
+  yt_dlp_version?: string | null;
 }
 
 /** A baseline shown (ghosted) under the decode editor: backend defaults and/or a
@@ -532,7 +539,8 @@ export interface TranscribeOptions {
 
 /** Live progress of an in-flight file transcription. */
 export interface BatchProgress {
-  /** waiting | separating | transcribing | diarizing | unknown */
+  /** waiting | resolving | downloading | separating | analyzing |
+   *  transcribing | diarizing | unknown */
   stage?: string;
   /** 0..1 during a measured stage; absent/null elsewhere. */
   progress?: number | null;
@@ -555,6 +563,9 @@ export interface BatchProgress {
    *  there) — e.g. ["separating"]. Authoritative skip signal; absent on
    *  older backends (the rail then infers from observed stages). */
   skipped?: string[] | null;
+  /** URL flow, downloading stage: bytes expected (progress is then the
+   *  downloaded fraction; null total on fragmented streams). */
+  totalBytes?: number | null;
 }
 
 /** Result of a batch transcription. */
@@ -575,4 +586,8 @@ export interface BatchResult {
   warnings?: string[];
   /** Decode overrides the server refused because the field is admin-locked. */
   overridesIgnored?: string[];
+  /** URL runs only: id of the server-retained downloaded audio (fetch once
+   *  via fetchUrlMedia for local playback) + its advisory unix expiry. */
+  sourceMediaId?: string;
+  sourceMediaExpiresAt?: number;
 }
