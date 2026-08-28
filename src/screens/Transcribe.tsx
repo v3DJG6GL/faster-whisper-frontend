@@ -17,7 +17,6 @@ import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useBackendModels } from "@/lib/useBackendModels";
 import { fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import { pickAudioFiles, isTauri } from "@/lib/api";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import {
   addFiles, cancelRun, overallFraction, railIndex, railStages,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
@@ -417,6 +416,12 @@ export default function Transcribe() {
           if (v === "studio" && !wideEnough && isTauri) {
             void (async () => {
               try {
+                // Dynamic import like every other Tauri API call site — a
+                // static import here pulls window.js (and its event.js) into
+                // the main chunk and defeats their lazy loading elsewhere.
+                const { getCurrentWindow, LogicalSize } = await import(
+                  "@tauri-apps/api/window"
+                );
                 const win = getCurrentWindow();
                 const size = (await win.innerSize()).toLogical(await win.scaleFactor());
                 if (size.width < STUDIO_MIN_WINDOW) {
