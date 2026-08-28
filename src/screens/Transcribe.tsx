@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  UploadCloud, FileAudio, X, Loader2, Copy, Check, Plus, RotateCcw, Download,
-  Pencil, Play, Pause, ArrowDownToLine, Circle, Minus, ChevronsRight,
+  UploadCloud, FileAudio, X, Loader2, Check, Plus, RotateCcw, ChevronsRight,
 } from "lucide-react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
 import {
   Button, Card, DisclosureToggle, Notice, PageHeader, Segmented, Select,
@@ -14,18 +12,16 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
+import { TranscriptViewer, speakersOf } from "@/components/TranscriptViewer";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useBackendModels } from "@/lib/useBackendModels";
 import { fmtDurationExact, fmtTimestamp } from "@/lib/format";
+import { pickAudioFiles, isTauri } from "@/lib/api";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import {
-  pickAudioFiles, pickExportPath, readMediaFile, saveTextFile, isTauri,
-} from "@/lib/api";
-import {
-  addFiles, cancelRun, clearEdits, overallFraction, railIndex, railStages,
+  addFiles, cancelRun, overallFraction, railIndex, railStages,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
-  setRename, setSegmentEdit, setSegmentSpeaker,
-  setSpeakerColor as setSpeakerColorAction, skippedStages, startRun,
-  useTranscribeRun, STAGE_WEIGHTS,
+  skippedStages, startRun, useTranscribeRun, STAGE_WEIGHTS,
   type RailStage, type RunContext, type StepState,
 } from "@/lib/transcribeRun";
 import {
@@ -35,76 +31,24 @@ import { openHistoryRecord } from "@/lib/transcribeRun";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
-import {
-  DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExport,
-  type ExportFormat, type ExportOptions,
-} from "@/lib/transcriptExport";
 import { cn } from "@/lib/cn";
 import {
   NO_OVERRIDE_PROFILE,
-  type BatchProgress, type BatchResult, type DecodeOverrides, type TranscribeOptions,
+  type BatchProgress, type DecodeOverrides, type TranscribeOptions,
 } from "@/lib/types";
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
 
-/** Best-effort MIME for the playback blob (helps WebKitGTK pick a decoder). */
-function mediaMime(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    mp3: "audio/mpeg", wav: "audio/wav", flac: "audio/flac", ogg: "audio/ogg",
-    oga: "audio/ogg", opus: "audio/ogg", m4a: "audio/mp4", aac: "audio/aac",
-    wma: "audio/x-ms-wma", mp4: "video/mp4", mkv: "video/x-matroska",
-    webm: "video/webm", mov: "video/quicktime",
-  };
-  return map[ext] ?? "application/octet-stream";
-}
-
-/** How much of a returned transcript to lay out before the user asks for the rest.
- *
- *  The user picks the FILE; the server picks the RESPONSE — a small upload can be answered with a
- *  body up to the 32 MiB transport cap, and this card renders it wrapping, in one synchronous
- *  pass, with no error boundary to recover from a stalled renderer. A long transcript is also
- *  exactly what this screen is for, so this is a preview with an explicit "show the rest", not a
- *  truncation: `result.text` is untouched, and Copy still writes the FULL text. */
-const TRANSCRIPT_PREVIEW_CHARS = 50_000;
-
-/** Bound the "server ignored N overrides" list too — same untrusted response, same DOM. */
+/** Bound the "server ignored N overrides" list — untrusted response, real DOM. */
 const MAX_IGNORED_SHOWN = 50;
 
-/** Segment cap for the Timestamps/Speakers views — same renderer-stall reasoning as the
- *  character preview above (each segment is a DOM row; an hour of speech is ~1-2k rows,
- *  fine; a hostile response could carry far more). */
-const MAX_SEGMENT_ROWS = 5_000;
-
-/** Chip styling from a speaker's CSS color (a --spk-N token, so it follows
- *  the light/dark theme): readable text, a soft fill, and a solid dot. */
-function chipStyle(color: string) {
-  return { color, backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)` };
-}
-
-/** The five export formats as always-visible cards (5 options is below every
- *  buttons-vs-dropdown threshold — NN/g, Fluent, Apple HIG). The one-liner
- *  says what the format is FOR; the "in this file" contract says what it
- *  will contain. */
-const FORMAT_CARDS: { value: ExportFormat; label: string; use: string }[] = [
-  { value: "srt", label: "SRT", use: "video subtitles — VLC, mpv, YouTube" },
-  { value: "vtt", label: "VTT", use: "web video captions — HTML5 players" },
-  { value: "txt", label: "TXT", use: "plain text — read, paste, edit" },
-  { value: "lrc", label: "LRC", use: "synced lyrics — music players" },
-  { value: "json", label: "JSON", use: "full data — every field & word" },
-];
-
-/** One row of the export panel's "in this file" contract. `always` = inherent
- *  to the format; on/off rows mirror the view toggles (clickable); `na` rows
- *  stay visible WITH the reason the format can't carry them — never hidden. */
-type ContractRow = {
-  label: string;
-  state: "always" | "on" | "off" | "na";
-  why: string;
-  onToggle?: () => void;
-};
+/** Below this window width the Studio (side-by-side) arrangement can't hold a
+ *  360px config rail plus a readable transcript pane next to the fixed 228px
+ *  sidebar, so the page stays stacked. Picking Studio on a narrower window
+ *  grows the window to this width. */
+const STUDIO_MIN_WINDOW = 1400;
 
 /** "today 21:04 · 11m 10s · de · 4 speakers" — the recent-strip meta line. */
 function recentMeta(rec: TranscriptRecord): string {
@@ -186,22 +130,6 @@ function aboutLeft(ms: number): string {
   return `about ${Math.round(s / 60)}m left`;
 }
 
-/** "SPEAKER_00" → "Speaker 1"; anything else verbatim (already bounded by Rust). */
-function prettySpeaker(label: string): string {
-  const m = /^SPEAKER_(\d+)$/.exec(label);
-  return m ? `Speaker ${parseInt(m[1], 10) + 1}` : label;
-}
-
-/** Distinct speaker labels of a result, in first-appearance order. */
-function speakersOf(result: BatchResult): string[] {
-  if (result.speakers?.length) return result.speakers;
-  const seen: string[] = [];
-  for (const s of result.segments ?? []) {
-    if (s.speaker && !seen.includes(s.speaker)) seen.push(s.speaker);
-  }
-  return seen;
-}
-
 export default function Transcribe() {
   const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
@@ -243,17 +171,10 @@ export default function Transcribe() {
   const progress = useTranscribeRun((s) => s.progress);
   const stageTimes = useTranscribeRun((s) => s.stageTimes);
   const stageMeta = useTranscribeRun((s) => s.stageMeta);
-  const renames = useTranscribeRun((s) => s.renames);
-  const speakerColors = useTranscribeRun((s) => s.speakerColors);
-  const edits = useTranscribeRun((s) => s.edits);
-  const speakerEdits = useTranscribeRun((s) => s.speakerEdits);
   const lastOptions = useTranscribeRun((s) => s.lastOptions);
   const lastOverrides = useTranscribeRun((s) => s.lastOverrides);
-  const [copied, setCopied] = useState(false);
   // "Silence skipping ate the file" notice — dismissed per file path.
   const [vadNoticeDismissed, setVadNoticeDismissed] = useState<string | null>(null);
-  // Reset per result, so a new (possibly huge) transcript starts collapsed again.
-  const [showFullText, setShowFullText] = useState(false);
   // Per-run stage options, seeded from the persisted screen defaults.
   const [diarize, setDiarize] = useState(() => settings.transcribe?.diarize ?? false);
   const [numSpeakers, setNumSpeakers] = useState(() => settings.transcribe?.numSpeakers ?? 0);
@@ -267,64 +188,16 @@ export default function Transcribe() {
   // not-persisted contract as runOverrides.
   const [runOverrideProfile, setRunOverrideProfile] = useState("");
   const [showOverrides, setShowOverrides] = useState(false);
-  const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState("");
-  // Export panel state, seeded from the persisted screen defaults.
-  const [showExport, setShowExport] = useState(false);
-  const [exportFormat, setExportFormat] = useState<ExportFormat>(
-    () => settings.transcribe?.exportFormat ?? "srt",
-  );
-  const [wordTs, setWordTs] = useState(() => settings.transcribe?.wordTimestamps ?? false);
-  // Export-preview height: null = auto up to 40vh; a number once the user
-  // drags the visible resize handle (WebKitGTK's native corner grip is
-  // invisible on dark UIs, so the handle row IS the affordance).
-  const [previewH, setPreviewH] = useState<number | null>(null);
-  const previewRef = useRef<HTMLPreElement | null>(null);
-  const previewDrag = useRef<{ startY: number; startH: number } | null>(null);
-  // Display toggles — the view IS the export (Copy and Save match what is on
-  // screen). Defaults migrate from the legacy speakerColorMode once.
-  const [showTs, setShowTs] = useState(() => settings.transcribe?.showTimestamps ?? false);
-  const [showNames, setShowNames] = useState(
-    () => settings.transcribe?.showSpeakerNames ?? (settings.transcribe?.speakerColorMode !== "line-only"),
-  );
-  const [colorize, setColorize] = useState(() => {
-    const legacy = settings.transcribe?.speakerColorMode;
-    return settings.transcribe?.colorizeSpeakers ?? (legacy ? legacy !== "off" : true);
-  });
-  // Pre-export corrections mode.
-  const [editMode, setEditMode] = useState(false);
-  const [reassignRow, setReassignRow] = useState<number | null>(null);
-  // Built-in playback with karaoke follow.
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [curTime, setCurTime] = useState(0);
-  const [audioLen, setAudioLen] = useState(0);
-  const [rate, setRate] = useState(1);
-  const [follow, setFollow] = useState(true);
-  /** The segment list's own scroll container — follow scrolls THIS, not the
-   *  page, so the toolbar/player above stay put while the karaoke advances. */
-  const transcriptBoxRef = useRef<HTMLDivElement | null>(null);
-  const [audioBroken, setAudioBroken] = useState(false);
-  // Why playback is unavailable — a missing file and an undecodable codec are
-  // different failures and get different sentences.
-  const [brokenWhy, setBrokenWhy] = useState<"gone" | "codec">("codec");
-  // Set when playback fell back to the app's stored audio copy.
-  const [audioNote, setAudioNote] = useState<"copy" | null>(null);
-  // Blob-URL fallback when the asset protocol can't feed the media stack
-  // (Linux WebKitGTK). Revoked on file change/unmount.
-  const [blobSrc, setBlobSrc] = useState<string | null>(null);
-  const blobUrlRef = useRef<string | null>(null);
-  const blobTriedRef = useRef(false);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const saveTimer = useRef<number | undefined>(undefined);
-
-  // The "Copied" confirmation timer. Held in a ref so a rapid second Copy click clears the first
-  // timer before re-arming — otherwise the stale timer fires mid-window and flips the label off
-  // early (every other transient timer in the app is cleared the same way).
-  const copyTimer = useRef<number | undefined>(undefined);
   // Prevents a double-click from opening two native file dialogs.
   const picking = useRef(false);
+  // Window width drives the stacked/studio arrangement (Tauri desktop window;
+  // there is no breakpoint system, and the sidebar is a fixed 228px).
+  const [winW, setWinW] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setWinW(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   // The store boots with a seeded backend, then config hydration (and later edits/removals)
   // can replace the list with different ids. Re-sync the selection when the current id falls
@@ -383,25 +256,19 @@ export default function Transcribe() {
     return () => window.clearInterval(id);
   }, [busy]);
 
-  // A newly selected (possibly huge) transcript starts collapsed again —
-  // also covers the pump auto-following the latest finished file.
-  useEffect(() => {
-    setShowFullText(false);
-  }, [selectedPath]);
   const doneCount = queue.filter((it) => it.status === "done").length;
   const selected = queue.find((it) => it.path === selectedPath && it.status === "done");
   const result = selected?.result ?? null;
 
+  // Studio (config rail left, transcript right) needs a wide window. The
+  // persisted pick wins; auto = studio once a transcript exists.
+  const wideEnough = winW >= STUDIO_MIN_WINDOW;
+  const layoutPref = settings.transcribe?.layout;
+  const studio =
+    wideEnough && (layoutPref === "studio" || (layoutPref !== "stacked" && !!result));
+
   const persistOptions = (patch: Partial<NonNullable<typeof settings.transcribe>>) => {
     updateSettings({ transcribe: { ...settings.transcribe, ...patch } });
-  };
-
-  const clearCopied = () => {
-    setCopied(false);
-    if (copyTimer.current) {
-      window.clearTimeout(copyTimer.current);
-      copyTimer.current = undefined;
-    }
   };
 
   const choose = async () => {
@@ -417,14 +284,12 @@ export default function Transcribe() {
       picking.current = false;
     }
     if (paths.length) {
-      clearCopied();
       addFiles(paths); // changed inputs abandon any settled results
     }
   };
 
   const removeFile = (path: string) => {
     if (busy) return;
-    clearCopied();
     removeFileAction(path);
   };
 
@@ -451,8 +316,6 @@ export default function Transcribe() {
 
   const run = () => {
     if (!files.length || !backend || busy) return;
-    clearCopied();
-    setShowFullText(false);
     setVadNoticeDismissed(null); // fresh results argue their own case
     const options: TranscribeOptions | undefined =
       diarize || translate || separateBgm
@@ -487,456 +350,94 @@ export default function Transcribe() {
     if (ctx) retryFile(path, ctx);
   };
 
-  // ── selected-result derivations ──────────────────────────────────────────
-  const speakers = result ? speakersOf(result) : [];
-  const hasSegments = !!result?.segments?.length;
-  const hasSpeakers = speakers.length > 0;
-  const fileRenames = (selectedPath && renames[selectedPath]) || {};
-  const fileColors = (selectedPath && speakerColors[selectedPath]) || {};
-  const displayName = (label: string) =>
-    safeDisplayText(fileRenames[label]?.trim() || prettySpeaker(label));
-  // User-picked palette index first, else first-appearance order — the chips
-  // (via theme tokens) and the exported SRT/VTT (via hexes) stay in step.
-  const colorIdxOf = (label: string) =>
-    fileColors[label] ??
-    Math.max(0, speakers.indexOf(label)) % DEFAULT_SPEAKER_COLORS.length;
-  const colorOf = (label: string) => `var(--spk-${colorIdxOf(label) + 1})`;
-
-  const setSpeakerColor = (label: string, idx: number) => {
-    if (selectedPath) setSpeakerColorAction(selectedPath, label, idx);
-  };
-
-  const commitRename = () => {
-    if (editingSpeaker && selectedPath) {
-      setRename(selectedPath, editingSpeaker, stripControlChars(renameDraft).trim());
+  // Opening a transcript (a history pick, or a run that just finished) lands
+  // the viewer below the Recent strip in the stacked column — bring it into
+  // view so the user isn't left staring at the unchanged elements above it.
+  // Studio needs nothing: the right pane always shows the viewer. Eased by
+  // hand — WebKitGTK ignores scrollTo({behavior:"smooth"}).
+  useEffect(() => {
+    if (!result || studio) return;
+    const el = document.querySelector("[data-transcript-viewer]");
+    if (!(el instanceof HTMLElement)) return;
+    let scroller: HTMLElement | null = el.parentElement;
+    while (
+      scroller &&
+      !(
+        scroller.scrollHeight > scroller.clientHeight + 1 &&
+        /(auto|scroll)/.test(getComputedStyle(scroller).overflowY)
+      )
+    )
+      scroller = scroller.parentElement;
+    if (!scroller) return;
+    const from = scroller.scrollTop;
+    const target = Math.max(
+      0,
+      Math.min(
+        from + el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 16,
+        scroller.scrollHeight - scroller.clientHeight,
+      ),
+    );
+    const dist = target - from;
+    if (Math.abs(dist) < 1) return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      scroller.scrollTop = target;
+      return;
     }
-    setEditingSpeaker(null);
-  };
-
-  // Corrections layered over the server transcript — the segments every
-  // surface renders, copies and exports.
-  const fileEdits = (selectedPath && edits[selectedPath]) || {};
-  const fileSpkEdits = (selectedPath && speakerEdits[selectedPath]) || {};
-  const editCount = Object.keys(fileEdits).length + Object.keys(fileSpkEdits).length;
-  const effSegments = useMemo(
-    () =>
-      (result?.segments ?? []).map((seg, i) => ({
-        ...seg,
-        text: fileEdits[i] ?? seg.text,
-        speaker: fileSpkEdits[i] ?? seg.speaker,
-        edited: fileEdits[i] !== undefined || fileSpkEdits[i] !== undefined,
-      })),
-    [result, fileEdits, fileSpkEdits],
-  );
-
-  // Word index ranges per segment (karaoke + word-level exports). One pass:
-  // words arrive time-ordered; each word belongs to the first segment whose
-  // window it falls into.
-  const segWordRanges = useMemo(() => {
-    const words = result?.words ?? [];
-    const segs = result?.segments ?? [];
-    let wi = 0;
-    return segs.map((seg) => {
-      while (wi < words.length && words[wi].start < seg.start - 0.05) wi++;
-      const from = wi;
-      while (wi < words.length && words[wi].start < seg.end + 0.05) wi++;
-      return [from, wi] as const;
-    });
+    const t0 = performance.now();
+    let raf = 0;
+    const step = (now: number) => {
+      const p = Math.min(1, (now - t0) / 450);
+      scroller!.scrollTop = from + dist * (1 - Math.pow(1 - p, 3));
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+    // Trigger on the OPENED TRANSCRIPT changing, never on a layout switch or
+    // a re-render — `result` is a stable object per record/run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result]);
 
-  /** The result with corrections applied — what Save writes. Words of a
-   *  text-edited segment are dropped (their timings no longer match). */
-  const editedResult = (): BatchResult => {
-    if (!result) return { text: "" };
-    if (!editCount) return result;
-    const segs = effSegments.map(({ edited: _edited, ...seg }) => seg);
-    const textEdited = new Set(Object.keys(fileEdits).map(Number));
-    const words = (result.words ?? []).filter((_w, wi) =>
-      !segWordRanges.some(([from, to], si) => textEdited.has(si) && wi >= from && wi < to),
-    );
-    return {
-      ...result,
-      text: segs.map((seg) => seg.text.trim()).join(" "),
-      segments: segs,
-      ...(words.length ? { words } : { words: [] }),
-    };
-  };
-
-  const copyText = (): string => {
-    if (!result) return "";
-    if (!effSegments.length) return result.text;
-    return effSegments
-      .map((seg) => {
-        const ts = showTs ? `[${fmtTimestamp(seg.start)}] ` : "";
-        const who = showNames && seg.speaker ? `${displayName(seg.speaker)}: ` : "";
-        return `${ts}${who}${seg.text.trim()}`;
-      })
-      .join("\n");
-  };
-
-  // ── playback + karaoke follow ────────────────────────────────────────────
-  // The picked file plays straight from disk via the asset protocol; word
-  // timestamps drive the highlight (timeupdate ticks a few times a second).
-  const audioSrc = useMemo(
-    () => (selectedPath && isTauri ? convertFileSrc(selectedPath) : undefined),
-    [selectedPath],
-  );
-
-  useEffect(() => {
-    // New file: stop playback, forget position/errors, re-arm follow.
-    setPlaying(false);
-    setCurTime(0);
-    setAudioLen(0);
-    setAudioBroken(false);
-    setBrokenWhy("codec");
-    setAudioNote(null);
-    setFollow(true);
-    setEditMode(false);
-    setReassignRow(null);
-    if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
-    blobUrlRef.current = null;
-    blobTriedRef.current = false;
-    setBlobSrc(null);
-  }, [selectedPath]);
-  useEffect(
-    () => () => {
-      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
-    },
-    [],
-  );
-
-  /** The <audio> errored on the asset URL — resolve through the fallback
-   *  chain ONCE: buffer the original through Rust; if the original is gone,
-   *  the app's stored audio copy; if neither reads, say the file is gone.
-   *  A second <audio> error with a blob already loaded means the webview
-   *  genuinely can't decode this codec — a different sentence. */
-  const onAudioError = () => {
-    if (blobTriedRef.current || !selectedPath) {
-      setAudioBroken(true);
-      setBrokenWhy("codec");
-      return;
-    }
-    blobTriedRef.current = true;
-    const asBlob = (buf: ArrayBuffer, path: string) => {
-      const url = URL.createObjectURL(new Blob([buf], { type: mediaMime(path) }));
-      blobUrlRef.current = url;
-      setBlobSrc(url);
-    };
-    const mediaPath = selected?.mediaPath;
-    readMediaFile(selectedPath)
-      .then((buf) => asBlob(buf, selectedPath))
-      .catch(() => {
-        // Original unreadable (moved/deleted) — fall back to the app's copy.
-        if (!mediaPath) {
-          setAudioBroken(true);
-          setBrokenWhy("gone");
-          return;
-        }
-        readMediaFile(mediaPath)
-          .then((buf) => {
-            asBlob(buf, mediaPath);
-            setAudioNote("copy");
-          })
-          .catch(() => {
-            setAudioBroken(true);
-            setBrokenWhy("gone");
-          });
-      });
-  };
-
-  const seekTo = (t: number) => {
-    const a = audioRef.current;
-    if (!a || !Number.isFinite(t)) return;
-    a.currentTime = Math.max(0, Math.min(audioLen || t, t));
-    setCurTime(a.currentTime);
-  };
-
-  const togglePlay = () => {
-    const a = audioRef.current;
-    if (!a) return;
-    if (a.paused) void a.play().catch(() => setAudioBroken(true));
-    else a.pause();
-  };
-
-  const cycleRate = () => {
-    const next = rate >= 2 ? 1 : rate === 1 ? 1.5 : 2;
-    setRate(next);
-    if (audioRef.current) audioRef.current.playbackRate = next;
-  };
-
-  // Current segment / word under the playhead (words are time-ordered).
-  const activeSegIdx = useMemo(() => {
-    if (!playing && curTime === 0) return -1;
-    const segs = result?.segments ?? [];
-    for (let i = segs.length - 1; i >= 0; i--) {
-      if (curTime >= segs[i].start) return curTime < segs[i].end + 0.3 ? i : -1;
-    }
-    return -1;
-  }, [result, curTime, playing]);
-  const activeWordIdx = useMemo(() => {
-    const words = result?.words ?? [];
-    let lo = 0;
-    let hi = words.length - 1;
-    let best = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (words[mid].start <= curTime) {
-        best = mid;
-        lo = mid + 1;
-      } else hi = mid - 1;
-    }
-    return best >= 0 && curTime < (words[best].end ?? 0) + 0.4 ? best : -1;
-  }, [result, curTime]);
-
-  // Follow: keep the active row centred while playing — by scrolling the
-  // transcript BOX only (its own scroll container), never the page.
-  // scrollIntoView would walk up to the page scroller and drag the whole
-  // layout along; the rect math below stays inside the box by construction.
-  useEffect(() => {
-    if (!follow || !playing || activeSegIdx < 0) return;
-    const box = transcriptBoxRef.current;
-    const row = document.getElementById(`seg-row-${activeSegIdx}`);
-    if (!box || !row) return;
-    const delta = row.getBoundingClientRect().top - box.getBoundingClientRect().top;
-    box.scrollTo({
-      top: box.scrollTop + delta - (box.clientHeight - row.clientHeight) / 2,
-      behavior: "smooth",
-    });
-  }, [activeSegIdx, follow, playing]);
-  // Manual wheel/touch INSIDE the transcript box disarms follow (the chip
-  // re-arms); scrolling anywhere else on the page leaves it armed — a stray
-  // tick over the sidebar used to kill it. Listener-level, not onScroll:
-  // the follow scroll itself must never self-disarm.
-  useEffect(() => {
-    if (!playing || !follow) return;
-    const box = transcriptBoxRef.current;
-    if (!box) return;
-    const disarm = () => setFollow(false);
-    box.addEventListener("wheel", disarm, { passive: true });
-    box.addEventListener("touchmove", disarm, { passive: true });
-    return () => {
-      box.removeEventListener("wheel", disarm);
-      box.removeEventListener("touchmove", disarm);
-    };
-    // editMode/showFullText remount the box — re-attach to the fresh node.
-  }, [playing, follow, editMode, showFullText]);
-
-  // Space play/pause, arrows ±5 s — never while typing somewhere.
-  useEffect(() => {
-    if (!audioSrc || !result) return;
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-      if (e.key === " ") {
-        e.preventDefault();
-        togglePlay();
-      } else if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        seekTo(curTime - 5);
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        seekTo(curTime + 5);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
-
-  const copy = async () => {
-    if (!result) return;
-    try {
-      await navigator.clipboard.writeText(stripControlChars(copyText()));
-    } catch (e) {
-      console.error("clipboard copy failed:", e); // don't flash "Copied" if the write failed
-      return;
-    }
-    setCopied(true);
-    if (copyTimer.current) window.clearTimeout(copyTimer.current);
-    copyTimer.current = window.setTimeout(() => setCopied(false), 1500);
-  };
-
-  /** One source of truth for Save AND the live preview: the display toggles
-   *  map onto the generator options (colors on → "line" mode; names/timestamps
-   *  gate their prefixes). */
-  const exportOpts = (): ExportOptions => ({
-    format: exportFormat,
-    renames: fileRenames,
-    speakerColors: hasSpeakers && colorize ? "line" : "off",
-    speakerNames: showNames,
-    timestamps: showTs,
-    colors: Object.fromEntries(
-      Object.entries(fileColors).map(([l, i]) => [
-        l,
-        DEFAULT_SPEAKER_COLORS[i % DEFAULT_SPEAKER_COLORS.length],
-      ]),
-    ),
-    wordTimestamps: wordTs,
-  });
-
-  /** The "in this file" rows for the selected format (see ContractRow). */
-  const exportContract = (): ContractRow[] => {
-    const hasWords = !!result?.words?.length;
-    const namesRow: ContractRow | null = hasSpeakers
-      ? {
-          label: "Speaker names",
-          state: showNames ? "on" : "off",
-          why: showNames ? "on — mirrors the view toggle" : "off — click to include",
-          onToggle: () => {
-            setShowNames(!showNames);
-            persistOptions({ showSpeakerNames: !showNames });
-          },
-        }
-      : null;
-    const colorsOn = (why: string): ContractRow | null =>
-      hasSpeakers
-        ? {
-            label: "Speaker colors",
-            state: colorize ? "on" : "off",
-            why: colorize ? why : "off — click to include",
-            onToggle: () => {
-              setColorize(!colorize);
-              persistOptions({ colorizeSpeakers: !colorize });
-            },
-          }
-        : null;
-    const colorsNa = (why: string): ContractRow | null =>
-      hasSpeakers ? { label: "Speaker colors", state: "na", why } : null;
-    const wordsNa = (why: string): ContractRow => ({
-      label: "Word timestamps",
-      state: "na",
-      why,
-    });
-    const rows: (ContractRow | null)[] = (() => {
-      switch (exportFormat) {
-        case "srt":
-          return [
-            { label: "Cue timings", state: "always" as const, why: "always — the timing is the format" },
-            namesRow,
-            colorsOn("on — <font> tags, render in VLC & mpv"),
-            wordsNa("SRT can't carry them — use LRC or JSON"),
-          ];
-        case "vtt":
-          return [
-            { label: "Cue timings", state: "always" as const, why: "always — the timing is the format" },
-            namesRow,
-            colorsOn("on — styled cues; render in browsers, video players show plain text"),
-            wordsNa("not exported for VTT — use LRC or JSON"),
-          ];
-        case "txt":
-          return [
-            {
-              label: "Timestamps",
-              state: (showTs ? "on" : "off") as ContractRow["state"],
-              why: showTs ? "on — [mm:ss] line prefixes, mirrors the view toggle" : "off — click to include",
-              onToggle: () => {
-                setShowTs(!showTs);
-                persistOptions({ showTimestamps: !showTs });
-              },
-            },
-            namesRow,
-            colorsNa("plain text can't carry color"),
-            wordsNa("TXT can't carry them — use LRC or JSON"),
-          ];
-        case "lrc":
-          return [
-            { label: "Line timings", state: "always" as const, why: "always — [mm:ss.xx] tags are the format" },
-            namesRow,
-            colorsNa("LRC can't carry color"),
-            hasWords
-              ? {
-                  label: "Word timestamps",
-                  state: (wordTs ? "on" : "off") as ContractRow["state"],
-                  why: wordTs
-                    ? "on — enhanced-LRC <mm:ss.xx> word tags (karaoke players)"
-                    : "off — click to include",
-                  onToggle: () => {
-                    setWordTs(!wordTs);
-                    persistOptions({ wordTimestamps: !wordTs });
-                  },
-                }
-              : wordsNa("this run captured no word timing"),
-          ];
-        case "json":
-          return [
-            { label: "Segment timestamps", state: "always" as const, why: "always — start/end on every segment" },
-            hasSpeakers
-              ? { label: "Speakers", state: "always" as const, why: "always — labels, your renames and colors, as data" }
-              : null,
-            hasWords
-              ? { label: "Word timestamps", state: "always" as const, why: "always — the words array" }
-              : wordsNa("this run captured no word timing"),
-          ];
-      }
-    })();
-    return rows.filter((r): r is ContractRow => r !== null);
-  };
-
-  /** How many leading cues the preview serializes — enough to show real
-   *  content past a VTT STYLE block, still cheap to re-serialize per toggle. */
-  const PREVIEW_CUES = 12;
-
-  /** First cues of the ACTUAL file, re-serialized on every card/toggle
-   *  change — the panel's answer to "what am I getting?". */
-  const exportPreview = (): string | null => {
-    if (!result?.segments?.length) return null;
-    const full = editedResult();
-    const segs = (full.segments ?? []).slice(0, PREVIEW_CUES);
-    const lastEnd = segs[segs.length - 1]?.end ?? 0;
-    const sample: BatchResult = {
-      ...full,
-      segments: segs,
-      words: full.words?.filter((w) => w.start < lastEnd + 0.05),
-      text: segs.map((s) => s.text.trim()).join(" "),
-    };
-    return generateExport(sample, exportOpts());
-  };
-
-  const exportFileName = () => {
-    const stem = selectedPath ? basename(selectedPath).replace(/\.[^.]+$/, "") : "transcript";
-    return `${stem}.${EXPORT_EXTENSIONS[exportFormat]}`;
-  };
-
-  const doExport = async () => {
-    if (!result || !selectedPath) return;
-    setSaveError(null);
-    const ext = EXPORT_EXTENSIONS[exportFormat];
-    const stem = basename(selectedPath).replace(/\.[^.]+$/, "");
-    let path: string | null;
-    try {
-      path = await pickExportPath(`${stem}.${ext}`, exportFormat.toUpperCase(), ext);
-    } catch (e) {
-      console.error("export save dialog failed:", e);
-      return;
-    }
-    if (!path) return; // cancelled
-    try {
-      const contents = generateExport(editedResult(), exportOpts());
-      await saveTextFile(path, contents);
-    } catch (e) {
-      setSaveError(String(e));
-      return;
-    }
-    setSaved(true);
-    if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => setSaved(false), 1500);
-  };
-
-  // Clear still-pending confirmation timers if the screen unmounts mid-window.
-  useEffect(
-    () => () => {
-      window.clearTimeout(copyTimer.current);
-      window.clearTimeout(saveTimer.current);
-    },
-    [],
-  );
-
   // ── render ───────────────────────────────────────────────────────────────
-  return (
-    <div className="mx-auto max-w-[820px] px-10 py-12">
-      <PageHeader eyebrow="batch" title="Transcribe a file">
-        Send audio or video files to one of your backends via the batch endpoint.
-      </PageHeader>
+  // The page assembles from four blocks so the stacked column and the studio
+  // two-pane arrangement can share every section unchanged.
+  const header = (
+    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+      <div>
+        <PageHeader eyebrow="batch" title="Transcribe a file">
+          Send audio or video files to one of your backends via the batch endpoint.
+        </PageHeader>
+      </div>
+      <Segmented
+        value={studio ? "studio" : "stacked"}
+        ariaLabel="Page layout"
+        onChange={(v) => {
+          persistOptions({ layout: v });
+          // Studio needs room: on a narrower window, grow it to the minimum
+          // width — the resize event then flips the layout over.
+          if (v === "studio" && !wideEnough && isTauri) {
+            void (async () => {
+              try {
+                const win = getCurrentWindow();
+                const size = (await win.innerSize()).toLogical(await win.scaleFactor());
+                if (size.width < STUDIO_MIN_WINDOW) {
+                  await win.setSize(new LogicalSize(STUDIO_MIN_WINDOW, size.height));
+                }
+              } catch (e) {
+                console.error("window resize for studio layout failed:", e);
+              }
+            })();
+          }
+        }}
+        options={[
+          { value: "stacked", label: "Stacked" },
+          { value: "studio", label: "Studio" },
+        ]}
+      />
+    </div>
+  );
 
+  const configSections = (
+    <>
       {files.length ? (
         <div className="mt-8 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-8">
           <div className="flex max-w-full flex-wrap items-center justify-center gap-3">
@@ -991,7 +492,6 @@ export default function Transcribe() {
             onChange={(v) => {
               // A backend change is an input change: abandon any in-flight run + clear stale
               // results, else the prior backend's transcript/error shows under the new selection.
-              clearCopied();
               resetForInputChange();
               setBackendId(v);
               setModel(""); // a per-run model pick belongs to ONE backend
@@ -1016,7 +516,6 @@ export default function Transcribe() {
                 <button
                   type="button"
                   onClick={() => {
-                    clearCopied();
                     resetForInputChange();
                     setModel("");
                     persistOptions({ backendId, model: "" });
@@ -1033,7 +532,6 @@ export default function Transcribe() {
             ariaLabel="Model"
             value={model}
             onChange={(v) => {
-              clearCopied();
               resetForInputChange();
               setModel(v);
               persistOptions({ backendId, model: v });
@@ -1049,7 +547,6 @@ export default function Transcribe() {
             ariaLabel="Language"
             value={language}
             onChange={(v) => {
-              clearCopied();
               resetForInputChange();
               setLanguage(v);
               persistOptions({ backendId, language: v });
@@ -1605,16 +1102,12 @@ export default function Transcribe() {
                   ? doneItems[Math.min(doneItems.length - 1, idx + 1)]
                   : doneItems[Math.max(0, (idx < 0 ? doneItems.length : idx) - 1)];
               selectPath(next.path);
-              setShowFullText(false);
             }}
           >
             {queue.map((it, i) => {
               const viewable = it.status === "done";
               const isSel = viewable && it.path === selectedPath;
-              const view = () => {
-                selectPath(it.path);
-                setShowFullText(false);
-              };
+              const view = () => selectPath(it.path);
               return (
                 <div
                   key={it.path}
@@ -1729,644 +1222,23 @@ export default function Transcribe() {
       {queue.length === 1 && queue[0].status === "failed" && (
         <Notice className="mt-6">{stripControlChars(queue[0].error ?? "Transcription failed.")}</Notice>
       )}
+    </>
+  );
 
-      {result && (
-        <Card className="mt-6 p-5">
-          {/* Sticky toolbar: identity + player + display toggles + legend stay
-              pinned while the transcript scrolls (position: sticky against the
-              app's main scroll container; opaque-ish bg so rows slide under). */}
-          <div className="sticky -top-px z-10 -mx-5 -mt-5 rounded-t-card border-b border-line bg-surface/95 px-5 pb-0.5 pt-5 backdrop-blur-md">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="font-mono text-[11px] uppercase tracking-label text-faint">
-              transcript
-              {queue.length > 1 && selectedPath ? ` · ${basename(selectedPath)}` : ""}
-              {result.language ? ` · ${result.language}` : ""}
-              {result.duration
-                ? ` · ${result.duration < 60 ? `${result.duration.toFixed(1)}s` : fmtDurationExact(result.duration)}`
-                : ""}
-              {hasSpeakers ? ` · ${speakers.length} speakers` : ""}
-            </div>
-            <div className="flex items-center gap-2">
-              {hasSegments && !editMode && (
-                <Button variant="ghost" size="sm" onClick={() => setEditMode(true)}>
-                  <Pencil className="size-4" />
-                  Edit
-                </Button>
-              )}
-              <Button variant="ghost" size="sm" onClick={copy}>
-                {copied ? <Check className="size-4 text-ok" /> : <Copy className="size-4" />}
-                {copied ? "Copied" : "Copy"}
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                onClick={() => setShowExport((v) => !v)}
-                aria-expanded={showExport}
-              >
-                <Download className="size-4" />
-                Export
-              </Button>
-            </div>
-          </div>
+  const viewer =
+    result && selectedPath ? (
+      <TranscriptViewer
+        result={result}
+        path={selectedPath}
+        mediaPath={selected?.mediaPath}
+        fileLabel={queue.length > 1 ? basename(selectedPath) : undefined}
+        fill={studio}
+        className={studio ? undefined : "mt-6"}
+      />
+    ) : null;
 
-          {editMode && (
-            <div className="mb-3 flex items-center gap-3 rounded-xl border border-accent/35 bg-accent-soft px-4 py-2.5">
-              <Pencil className="size-4 shrink-0 text-accent" />
-              <span className="text-[13px] font-medium text-accent">Editing transcript</span>
-              <span className="text-[12px] text-dim">
-                {editCount
-                  ? `${editCount} correction${editCount === 1 ? "" : "s"} — they apply to Copy and every export`
-                  : "click a sentence to correct it · click a speaker chip to reassign"}
-              </span>
-              <span className="flex-1" />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  if (selectedPath) clearEdits(selectedPath);
-                  setEditMode(false);
-                  setReassignRow(null);
-                }}
-              >
-                Discard
-              </Button>
-              <Button
-                variant="accent"
-                size="sm"
-                onClick={() => {
-                  setEditMode(false);
-                  setReassignRow(null);
-                }}
-              >
-                Done
-              </Button>
-            </div>
-          )}
-
-          {audioSrc && !audioBroken && (
-            <div className="mb-3 flex items-center gap-3.5 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2.5">
-              {/* key forces a clean reload per file */}
-              <audio
-                key={blobSrc ?? selectedPath ?? "none"}
-                ref={audioRef}
-                src={blobSrc ?? audioSrc}
-                preload="metadata"
-                onLoadedMetadata={(e) => {
-                  setAudioLen(e.currentTarget.duration || 0);
-                  e.currentTarget.playbackRate = rate;
-                }}
-                onTimeUpdate={(e) => setCurTime(e.currentTarget.currentTime)}
-                onPlay={() => setPlaying(true)}
-                onPause={() => setPlaying(false)}
-                onEnded={() => setPlaying(false)}
-                onError={onAudioError}
-              />
-              <button
-                type="button"
-                aria-label={playing ? "Pause" : "Play"}
-                onClick={togglePlay}
-                className="ring-signal grid size-9 shrink-0 place-items-center rounded-full bg-accent text-accent-ink"
-              >
-                {playing ? <Pause className="size-4" /> : <Play className="ml-0.5 size-4" />}
-              </button>
-              <span className="shrink-0 font-mono text-[12px] tabular-nums text-text">
-                {fmtTimestamp(curTime)}
-                <span className="text-faint"> / {fmtTimestamp(audioLen || result.duration || 0)}</span>
-              </span>
-              <div
-                role="slider"
-                aria-label="Seek"
-                aria-valuemin={0}
-                aria-valuemax={Math.round(audioLen)}
-                aria-valuenow={Math.round(curTime)}
-                tabIndex={0}
-                className="relative h-5 flex-1 cursor-pointer touch-none"
-                // Pointer capture makes this a real drag scrubber: after the
-                // press, moves anywhere on screen keep seeking until release.
-                onPointerDown={(e) => {
-                  e.currentTarget.setPointerCapture(e.pointerId);
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-                  seekTo(frac * (audioLen || 0));
-                }}
-                onPointerMove={(e) => {
-                  if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-                  seekTo(frac * (audioLen || 0));
-                }}
-              >
-                <div className="absolute inset-x-0 top-1/2 h-[5px] -translate-y-1/2 overflow-hidden rounded-pill bg-surface-2">
-                  <div
-                    className="h-full rounded-pill bg-accent"
-                    style={{ width: `${audioLen ? Math.min(100, (curTime / audioLen) * 100) : 0}%` }}
-                  />
-                </div>
-                <span
-                  className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-text shadow"
-                  style={{ left: `${audioLen ? Math.min(100, (curTime / audioLen) * 100) : 0}%` }}
-                />
-              </div>
-              <button
-                type="button"
-                onClick={cycleRate}
-                className="ring-signal shrink-0 rounded-pill border border-line px-2.5 py-0.5 font-mono text-[11.5px] text-dim hover:text-text"
-                title="Playback speed"
-              >
-                {rate}×
-              </button>
-              <button
-                type="button"
-                onClick={() => setFollow((v) => !v)}
-                aria-pressed={follow}
-                title="Auto-scroll to the spoken segment"
-                className={cn(
-                  "ring-signal inline-flex shrink-0 items-center gap-1.5 rounded-pill border px-2.5 py-0.5 text-[11.5px] font-medium",
-                  follow
-                    ? "border-accent/35 bg-accent-soft text-accent"
-                    : "border-line bg-surface-2 text-dim",
-                )}
-              >
-                <ArrowDownToLine className="size-3" />
-                Follow
-              </button>
-            </div>
-          )}
-
-          {audioNote === "copy" && !audioBroken && (
-            <div className="-mt-2 mb-3 px-1 text-[11.5px] text-faint">
-              Playing the app's saved copy — the original file was moved or deleted.
-            </div>
-          )}
-
-          {audioBroken && (
-            <div className="mb-3 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2 text-[12px] text-dim">
-              {brokenWhy === "gone"
-                ? "Playback isn't available — the original file is gone and no copy was kept (it predates audio copies, or “Keep a copy of the audio” was off)."
-                : "Playback isn't available — this format can't be decoded by the system webview. The transcript and exports still work."}
-            </div>
-          )}
-
-          {hasSegments && (
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              {(
-                [
-                  ["Timestamps", showTs, (v: boolean) => { setShowTs(v); persistOptions({ showTimestamps: v }); }, true],
-                  ["Speaker names", showNames, (v: boolean) => { setShowNames(v); persistOptions({ showSpeakerNames: v }); }, hasSpeakers],
-                  ["Colors", colorize, (v: boolean) => { setColorize(v); persistOptions({ colorizeSpeakers: v }); }, hasSpeakers],
-                ] as const
-              ).map(([label, on, setter, available]) =>
-                available ? (
-                  <button
-                    key={label}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() => setter(!on)}
-                    className={cn(
-                      "ring-signal inline-flex h-7 items-center rounded-pill border px-3 text-[12px] font-medium transition-colors",
-                      on
-                        ? "border-accent/35 bg-accent-soft text-accent"
-                        : "border-line bg-surface-2 text-dim hover:text-text",
-                    )}
-                  >
-                    {label}
-                  </button>
-                ) : null,
-              )}
-              <span className="text-[11.5px] text-faint">
-                the view is the export — Copy and files match what you see
-              </span>
-            </div>
-          )}
-
-          {hasSpeakers && showNames && (
-            <div className="mb-2.5 flex flex-wrap items-center gap-2">
-              {speakers.map((label) => {
-                const color = colorOf(label);
-                return editingSpeaker === label ? (
-                  <span key={label} className="inline-flex items-center gap-2">
-                    {/* The speaker color OWNS the field: its solid border is
-                        the focus indicator (no app-wide accent ring competing
-                        with it) and a dot inside doubles the preview. Picking
-                        a swatch repaints both instantly. */}
-                    <span className="relative inline-flex items-center">
-                      <span
-                        aria-hidden
-                        className="pointer-events-none absolute left-3 size-2 rounded-full"
-                        style={{ backgroundColor: color }}
-                      />
-                      <input
-                        autoFocus
-                        value={renameDraft}
-                        onChange={(e) => setRenameDraft(e.target.value)}
-                        onBlur={commitRename}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") commitRename();
-                          else if (e.key === "Escape") setEditingSpeaker(null);
-                        }}
-                        aria-label={`Rename ${prettySpeaker(label)}`}
-                        className="h-7 w-36 rounded-pill border-2 bg-surface-2 pl-7 pr-3 text-[12px] text-text outline-none"
-                        style={{ borderColor: color }}
-                      />
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      {DEFAULT_SPEAKER_COLORS.map((_, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          title="Use this color"
-                          aria-label={`Color ${prettySpeaker(label)} ${idx + 1}`}
-                          aria-pressed={colorIdxOf(label) === idx}
-                          // preventDefault keeps focus in the rename input, so
-                          // picking a color doesn't blur-commit and close it.
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => setSpeakerColor(label, idx)}
-                          className={cn(
-                            "grid size-4 place-items-center rounded-full transition-transform hover:scale-110",
-                            colorIdxOf(label) === idx && "scale-110",
-                          )}
-                          style={{ backgroundColor: `var(--spk-${idx + 1})` }}
-                        >
-                          {/* Check on the selected swatch — selection no longer
-                              reads by hue alone. */}
-                          {colorIdxOf(label) === idx && (
-                            <Check className="size-2.5 text-black/70" strokeWidth={4} />
-                          )}
-                        </button>
-                      ))}
-                    </span>
-                  </span>
-                ) : (
-                  <button
-                    key={label}
-                    type="button"
-                    title="Rename or recolor this speaker"
-                    onClick={() => {
-                      setEditingSpeaker(label);
-                      setRenameDraft(fileRenames[label] ?? "");
-                    }}
-                    className="ring-signal inline-flex items-center gap-1.5 rounded-pill py-0.5 pl-2 pr-2.5 text-[12px] font-medium"
-                    style={chipStyle(color)}
-                  >
-                    <span className="size-[7px] rounded-full" style={{ backgroundColor: color }} />
-                    {displayName(label)}
-                  </button>
-                );
-              })}
-              <span className="text-[11.5px] text-faint">
-                click a name to rename or pick its color — both apply to Copy and exports
-              </span>
-            </div>
-          )}
-          </div>
-
-          {showExport && (
-            <div className="mb-4 rounded-xl border border-line bg-surface-2/60 p-4">
-              {/* Format cards — radio semantics, always visible. */}
-              <div role="radiogroup" aria-label="Export format" className="flex gap-2.5">
-                {FORMAT_CARDS.map((f) => {
-                  const on = exportFormat === f.value;
-                  return (
-                    <button
-                      key={f.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={on}
-                      onClick={() => {
-                        setExportFormat(f.value);
-                        persistOptions({ exportFormat: f.value });
-                      }}
-                      className={cn(
-                        "ring-signal min-w-0 flex-1 rounded-xl border px-3 py-2 text-left transition-colors",
-                        on
-                          ? "border-accent/55 bg-accent-soft"
-                          : "border-line bg-surface-2 hover:border-line-strong",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "block font-mono text-[13px] font-medium",
-                          on ? "text-accent" : "text-text",
-                        )}
-                      >
-                        {f.label}
-                      </span>
-                      <span className="mt-0.5 block text-[10.5px] leading-snug text-faint">
-                        {f.use}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* "In this file": the contract. Rows mirror the view toggles
-                  (clicking flips them, live); impossible rows say why. */}
-              <div className="mt-3 rounded-xl border border-line bg-surface/50 px-4 py-2">
-                <div className="py-1 font-mono text-[10.5px] uppercase tracking-label text-faint">
-                  in this file
-                </div>
-                {exportContract().map((r) => {
-                  const icon =
-                    r.state === "na" ? (
-                      <Minus className="size-3.5 shrink-0 text-faint" />
-                    ) : r.state === "off" ? (
-                      <Circle className="size-3.5 shrink-0 text-faint" />
-                    ) : (
-                      <Check className="size-3.5 shrink-0 text-ok" />
-                    );
-                  const inner = (
-                    <>
-                      {icon}
-                      <span
-                        className={cn(
-                          "shrink-0",
-                          r.state === "na"
-                            ? "text-faint"
-                            : r.state === "off"
-                              ? "text-dim"
-                              : "text-text",
-                        )}
-                      >
-                        {r.label}
-                      </span>
-                      <span className="truncate text-[11.5px] text-faint">{r.why}</span>
-                    </>
-                  );
-                  return r.onToggle ? (
-                    <button
-                      key={r.label}
-                      type="button"
-                      aria-pressed={r.state === "on"}
-                      onClick={r.onToggle}
-                      className="ring-signal flex w-full items-center gap-2.5 rounded-md py-1.5 text-left text-[12.5px]"
-                    >
-                      {inner}
-                    </button>
-                  ) : (
-                    <div
-                      key={r.label}
-                      className="flex w-full items-center gap-2.5 py-1.5 text-[12.5px]"
-                    >
-                      {inner}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Live preview: the first cues serialized in the real format.
-                  Grows with its content up to 40vh; the handle below drags it
-                  as tall as you like. */}
-              <pre
-                ref={previewRef}
-                style={previewH !== null ? { height: previewH, maxHeight: "none" } : undefined}
-                className="mt-3 max-h-[40vh] overflow-auto whitespace-pre rounded-xl border border-line bg-surface px-3.5 py-3 font-mono text-[11.5px] leading-relaxed text-dim"
-              >
-                {exportPreview() ?? "No segments to preview."}
-              </pre>
-              <div className="flex justify-center pt-1.5">
-                <div
-                  role="separator"
-                  aria-orientation="horizontal"
-                  aria-label="Resize preview"
-                  title="Drag to resize the preview"
-                  className="h-1.5 w-11 cursor-row-resize touch-none rounded-pill bg-line hover:bg-faint"
-                  onPointerDown={(e) => {
-                    e.currentTarget.setPointerCapture(e.pointerId);
-                    previewDrag.current = {
-                      startY: e.clientY,
-                      startH: previewRef.current?.getBoundingClientRect().height ?? 176,
-                    };
-                  }}
-                  onPointerMove={(e) => {
-                    const d = previewDrag.current;
-                    if (!d || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
-                    setPreviewH(
-                      Math.max(96, Math.min(1400, d.startH + (e.clientY - d.startY))),
-                    );
-                  }}
-                  onPointerUp={() => {
-                    previewDrag.current = null;
-                  }}
-                />
-              </div>
-
-              <div className="mt-2 flex flex-wrap items-center gap-3">
-                <span className="font-mono text-[11.5px] text-faint">
-                  {exportFileName()}
-                  {(result?.segments?.length ?? 0) > PREVIEW_CUES
-                    ? ` · first ${PREVIEW_CUES} of ${result?.segments?.length} cues`
-                    : ""}
-                </span>
-                <span className="flex-1" />
-                {editCount > 0 && (
-                  <span className="font-mono text-[11px] text-faint">
-                    {editCount} correction{editCount === 1 ? "" : "s"} included
-                  </span>
-                )}
-                {saveError && (
-                  <span className="text-[12px] text-warn">{stripControlChars(saveError)}</span>
-                )}
-                <Button variant="accent" size="sm" onClick={doExport}>
-                  {saved ? <Check className="size-4" /> : <Download className="size-4" />}
-                  {saved ? "Saved" : `Save ${exportFormat.toUpperCase()}`}
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* legend moved into the sticky toolbar above */}
-
-          {/* `transport::batch` deliberately leaves `text` untouched ("that IS the output"), so
-              bidi overrides and other invisible format characters from an untrusted server reach
-              this node by design. The Copy button above already strips them; without the same
-              treatment here what the user READS can be reordered relative to what they paste. */}
-          {!hasSegments ? (
-            <div className="select-text whitespace-pre-wrap text-[14px] leading-relaxed text-text">
-              {stripControlChars(showFullText ? result.text : result.text.slice(0, TRANSCRIPT_PREVIEW_CHARS))}
-            </div>
-          ) : (
-            <div
-              ref={transcriptBoxRef}
-              // -mx/px pair: the rows' -mx-1.5 highlight bleed lands in the
-              // box's own padding instead of overflowing the scroll container.
-              className="-mx-1.5 max-h-[65vh] select-text overflow-y-auto overscroll-contain px-1.5 text-[14px] leading-relaxed text-text"
-            >
-              {effSegments.slice(0, MAX_SEGMENT_ROWS).map((seg, i) => {
-                const isActive = i === activeSegIdx && !editMode;
-                const range = segWordRanges[i];
-                const words = result.words ?? [];
-                // Word spans only on the ACTIVE, untouched segment — keeps
-                // the DOM light and karaoke honest (edited text has no
-                // matching word timings any more).
-                const karaoke =
-                  isActive && !seg.edited && range && range[0] < range[1];
-                const lineColor =
-                  colorize && seg.speaker ? { color: colorOf(seg.speaker) } : undefined;
-                return (
-                  <div
-                    key={i}
-                    id={`seg-row-${i}`}
-                    className={cn(
-                      // scroll-margin keeps seeks/follow clear of the sticky bar
-                      "relative -mx-1.5 flex scroll-mt-44 gap-3 rounded-lg px-1.5 py-0.5",
-                      isActive && "bg-accent-soft/40",
-                      editMode && seg.edited && "border-l-2 border-ok/60 pl-2",
-                    )}
-                  >
-                    {showTs && (
-                      <button
-                        type="button"
-                        title="Jump here"
-                        onClick={() => seekTo(seg.start)}
-                        className={cn(
-                          "ring-signal shrink-0 cursor-pointer self-start pt-0.5 font-mono text-[12px] tabular-nums",
-                          isActive ? "text-accent" : "text-faint hover:text-dim",
-                        )}
-                      >
-                        {fmtTimestamp(seg.start)}
-                      </button>
-                    )}
-                    {showNames && seg.speaker && (
-                      <button
-                        type="button"
-                        title={editMode ? "Reassign this segment's speaker" : undefined}
-                        disabled={!editMode}
-                        onClick={() => setReassignRow(reassignRow === i ? null : i)}
-                        className={cn(
-                          "mt-0.5 inline-flex shrink-0 items-center gap-1.5 self-start rounded-pill py-0.5 pl-2 pr-2.5 text-[12px] font-medium",
-                          editMode && "ring-signal cursor-pointer",
-                        )}
-                        style={chipStyle(colorOf(seg.speaker))}
-                      >
-                        <span
-                          className="size-[7px] rounded-full"
-                          style={{ backgroundColor: colorOf(seg.speaker) }}
-                        />
-                        {displayName(seg.speaker)}
-                      </button>
-                    )}
-                    {editMode && reassignRow === i && (
-                      <>
-                        <div
-                          className="fixed inset-0 z-10"
-                          onClick={() => setReassignRow(null)}
-                        />
-                        <div className="absolute left-16 top-7 z-20 flex w-44 flex-col gap-0.5 rounded-xl border border-line-strong bg-surface p-1.5 shadow-xl">
-                          {speakers.map((label) => (
-                            <button
-                              key={label}
-                              type="button"
-                              onClick={() => {
-                                if (selectedPath) {
-                                  const orig = result.segments?.[i]?.speaker;
-                                  setSegmentSpeaker(
-                                    selectedPath,
-                                    i,
-                                    label === orig ? null : label,
-                                  );
-                                }
-                                setReassignRow(null);
-                              }}
-                              className={cn(
-                                "ring-signal flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px]",
-                                label === seg.speaker && "bg-surface-2",
-                              )}
-                              style={{ color: colorOf(label) }}
-                            >
-                              <span
-                                className="size-[7px] rounded-full"
-                                style={{ backgroundColor: colorOf(label) }}
-                              />
-                              {displayName(label)}
-                              {label === seg.speaker ? " ✓" : ""}
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                    {editMode ? (
-                      <span
-                        contentEditable
-                        suppressContentEditableWarning
-                        role="textbox"
-                        aria-label={`Correct segment ${i + 1}`}
-                        onBlur={(e) => {
-                          if (!selectedPath) return;
-                          const t = stripControlChars(e.currentTarget.textContent ?? "").trim();
-                          const orig = (result.segments?.[i]?.text ?? "").trim();
-                          setSegmentEdit(selectedPath, i, t && t !== orig ? t : null);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            e.currentTarget.blur();
-                          } else if (e.key === "Escape") {
-                            e.currentTarget.textContent = (result.segments?.[i]?.text ?? "").trim();
-                            e.currentTarget.blur();
-                          }
-                        }}
-                        className="-mx-1 min-w-0 flex-1 whitespace-pre-wrap rounded px-1 outline-none focus:bg-surface-2/70"
-                        style={lineColor}
-                      >
-                        {seg.text.trim()}
-                      </span>
-                    ) : karaoke ? (
-                      <span className="min-w-0 flex-1 whitespace-pre-wrap" style={lineColor}>
-                        {words.slice(range[0], range[1]).map((w, k) => {
-                          const wi = range[0] + k;
-                          const current = wi === activeWordIdx;
-                          return (
-                            <span
-                              key={wi}
-                              onClick={() => seekTo(w.start)}
-                              className={cn(
-                                "cursor-pointer",
-                                current && "rounded bg-accent px-0.5 font-medium text-accent-ink",
-                              )}
-                            >
-                              {stripControlChars(w.word)}
-                            </span>
-                          );
-                        })}
-                      </span>
-                    ) : (
-                      <span
-                        className="min-w-0 flex-1 whitespace-pre-wrap"
-                        style={lineColor}
-                        onClick={audioSrc && !audioBroken ? () => seekTo(seg.start) : undefined}
-                      >
-                        {stripControlChars(seg.text.trim())}
-                        {seg.edited && (
-                          <span className="ml-2 align-middle font-mono text-[10.5px] text-ok">· edited</span>
-                        )}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {audioSrc && !audioBroken && hasSegments && !editMode && (
-            <div className="mt-3 border-t border-line pt-2.5 font-mono text-[11px] text-faint">
-              space play/pause · ←/→ skip 5 s · click a word or timestamp to jump there
-            </div>
-          )}
-
-          {!hasSegments && !showFullText && result.text.length > TRANSCRIPT_PREVIEW_CHARS && (
-            <div className="mt-3 flex items-center gap-3">
-              <Button variant="ghost" size="sm" onClick={() => setShowFullText(true)}>
-                Show full transcript
-              </Button>
-              <span className="text-[12px] text-faint">
-                Showing the first {TRANSCRIPT_PREVIEW_CHARS.toLocaleString()} of{" "}
-                {result.text.length.toLocaleString()} characters. Copy always copies all of it.
-              </span>
-            </div>
-          )}
-        </Card>
-      )}
-
+  const resultNotices = (
+    <>
       {/* VAD ate the file: the server's silence filter kept under 30% of the
           audio (the backend's own "likely cause: VAD ate audio" heuristic).
           durationAfterVad is only sent when the filter actually ran. */}
@@ -2419,13 +1291,19 @@ export default function Transcribe() {
           {result.overridesIgnored.length > MAX_IGNORED_SHOWN ? " …" : ""}.
         </Notice>
       )}
+    </>
+  );
 
-      {/* Recent transcripts — reference material, so it lives at the END of
-          the page (out of the pick → configure → run path) and stays visible
-          in every state: a run that just finished appears here too (the
-          history store is reactive). Full list: History screen. */}
-      {recentRecords.length > 0 && (
-        <Card className="mt-6 overflow-hidden py-1">
+  // Recent transcripts — kept in ONE stable slot in every state: end of the
+  // rail in studio, between the config and the transcript in stacked. It used
+  // to sit BELOW the stacked viewer, so picking a record pushed the list a
+  // full transcript-card down — reading as "the history disappeared". Above
+  // the viewer, opening a transcript changes nothing about the elements
+  // before it. A run that just finished appears here too (the history store
+  // is reactive). Full list: History screen.
+  const recentStrip =
+    recentRecords.length > 0 ? (
+      <Card className="mt-6 overflow-hidden py-1">
           <div className="flex items-baseline gap-2 px-5 py-2">
             <span className="font-mono text-[11px] uppercase tracking-label text-faint">
               recent
@@ -2464,8 +1342,49 @@ export default function Transcribe() {
               </span>
             </div>
           ))}
-        </Card>
-      )}
+      </Card>
+    ) : null;
+
+  // ONE tree for both arrangements, switched by className only: stacked is
+  // the centered column, studio puts config + queue in a self-scrolling left
+  // rail with the transcript as a full-height pane beside it. Because the
+  // element positions never change, React keeps every node alive across a
+  // layout switch (or an auto-switch on resize) — playback, scroll position
+  // and edit state in the transcript viewer all survive.
+  return (
+    <div
+      className={
+        studio
+          ? "mx-auto flex h-full min-h-0 max-w-[1760px] gap-7 px-8 py-8"
+          : "mx-auto max-w-[820px] px-10 py-12"
+      }
+    >
+      <div
+        className={
+          studio
+            ? "min-h-0 w-[420px] shrink-0 overflow-y-auto overscroll-contain pb-4 pr-1.5"
+            : undefined
+        }
+      >
+        {header}
+        {configSections}
+        {studio && recentStrip}
+      </div>
+      <div className={studio ? "flex min-h-0 min-w-0 flex-1 flex-col" : undefined}>
+        {!studio && recentStrip}
+        {viewer ??
+          (studio ? (
+            <Card className="grid flex-1 place-items-center border-dashed bg-surface/40">
+              <div className="px-8 text-center">
+                <div className="text-[14px] text-text">The transcript opens here</div>
+                <div className="mt-1 text-[12.5px] text-dim">
+                  Pick files and run them on the left — the result shows side by side.
+                </div>
+              </div>
+            </Card>
+          ) : null)}
+        {resultNotices}
+      </div>
     </div>
   );
 }

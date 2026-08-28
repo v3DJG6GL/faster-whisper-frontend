@@ -259,6 +259,10 @@ export interface TranscribeSettings {
    *  below; still read once as their migration default (old synced blobs). */
   speakerColorMode?: "off" | "name" | "line" | "line-only";
   wordTimestamps?: boolean;
+  /** Transcribe-page arrangement on wide windows: "studio" = config rail left,
+   *  transcript right; "stacked" = the single centered column. Absent = auto
+   *  (studio once the window is wide enough and a transcript exists). */
+  layout?: "stacked" | "studio";
   /** Display toggles (the view IS the export): "[mm:ss]" prefixes, speaker
    *  name chips/prefixes, per-speaker line coloring. */
   showTimestamps?: boolean;
