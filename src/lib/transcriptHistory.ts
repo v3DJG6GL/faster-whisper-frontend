@@ -9,6 +9,7 @@ import {
   deleteTranscriptRecord, listTranscriptRecords, saveTranscriptRecord,
 } from "./api";
 import type { BatchResult, TranscribeOptions } from "./types";
+import { applyTextEdits } from "./wordAlign";
 
 export interface TranscriptRecord {
   schemaVersion: 1;
@@ -185,8 +186,8 @@ export function recordText(rec: TranscriptRecord): string {
 }
 
 /** The record's result with the stored corrections folded in — the same
- *  transform the workbench applies before Copy/export (edited segments drop
- *  their words: the timing no longer matches the text). */
+ *  transform the workbench applies before Copy/export (an edited segment's
+ *  words are re-aligned to the corrected text, keeping their timings). */
 export function recordEditedResult(rec: TranscriptRecord): BatchResult {
   const res = rec.result ?? { text: "" };
   const edits = rec.edits ?? {};
@@ -197,16 +198,7 @@ export function recordEditedResult(rec: TranscriptRecord): BatchResult {
     const speaker = speakerEdits[i] ?? s.speaker;
     return { ...s, text, ...(speaker ? { speaker } : {}) };
   });
-  const editedIdx = new Set(Object.keys(edits).map(Number));
-  const words = editedIdx.size
-    ? res.words?.filter(
-        (w) =>
-          !res.segments!.some(
-            (s, i) =>
-              editedIdx.has(i) && w.start >= s.start - 0.05 && w.start < s.end + 0.05,
-          ),
-      )
-    : res.words;
+  const words = Object.keys(edits).length ? applyTextEdits(res, edits) : res.words;
   return {
     ...res,
     segments,
