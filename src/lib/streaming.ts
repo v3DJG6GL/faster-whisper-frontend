@@ -564,9 +564,11 @@ function settleToIdleAfterInjection(startedAt: number, cfg: InsertCfg | null): v
 // for the stream's terminal `closed`. If the socket died silently (suspend, dropped
 // link) that event may never arrive, leaving the chip stuck. After this long with no
 // resolution we force a clean idle. Streaming only — a batch transcription can take a
-// while legitimately (bounded by the HTTP client's own 120 s timeout), and the Rust
-// drain deadline (10 s) normally resolves a live stream just before this fires.
-const STUCK_FINALIZE_MS = 12_000;
+// while legitimately (bounded by the HTTP client's own 120 s timeout). Must outlast
+// the Rust drain deadline (10 s warm, 30 s when the server sent nothing — a model
+// cold-load), which normally resolves the stream first; the overlay's ✕ stays
+// available throughout for anyone who'd rather bail early.
+const STUCK_FINALIZE_MS = 35_000;
 let stuckTimer: ReturnType<typeof setTimeout> | null = null;
 function clearStuckWatchdog(): void {
   if (stuckTimer !== null) {

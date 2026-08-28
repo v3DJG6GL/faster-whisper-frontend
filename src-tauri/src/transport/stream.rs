@@ -451,10 +451,20 @@ pub async fn run<F>(
         // them indefinitely — we always fall through to the terminal `Closed` below.
         // The deadline must comfortably exceed a slow finalize decode (VPN latency +
         // a busy GPU queue can push it past the old 6 s, which silently DISCARDED the
-        // finished transcript) while staying under the frontend's 12 s stuck-finalize
-        // watchdog, which force-idles the UI if `Closed` never lands.
-        const DRAIN_DEADLINE: Duration = Duration::from_secs(10);
-        let timed_out = tokio::time::timeout(DRAIN_DEADLINE, async {
+        // finished transcript) while staying under the frontend's stuck-finalize
+        // watchdog (STUCK_FINALIZE_MS in streaming.ts), which force-idles the UI if
+        // `Closed` never lands. Zero partials all session means the server most
+        // likely spent the whole time COLD-LOADING the model (large-v3 takes ~15 s+;
+        // it sends nothing until loaded, then decodes everything at once) — a 10 s
+        // drain there discarded a transcript that was seconds from arriving, so the
+        // silent case waits 30 s. A dead socket doesn't ride this: the reader task
+        // surfaces the close/error as `Closed` and the drain exits early.
+        let drain_deadline: Duration = if partials_seen == 0 {
+            Duration::from_secs(30)
+        } else {
+            Duration::from_secs(10)
+        };
+        let timed_out = tokio::time::timeout(drain_deadline, async {
             // Drain the PCM the capture thread queued but the main loop hadn't consumed when the stop
             // signal won the (non-biased) select — push it through the resampler and send it, so the
             // final tens of ms aren't silently dropped from the transcript. `recv().await` (not a
@@ -502,7 +512,7 @@ pub async fn run<F>(
             // is the difference between a diagnosable report and a mystery.
             tracing::warn!(
                 "[stream] drain deadline ({}s) hit — no final/close from the server; pending transcript discarded",
-                DRAIN_DEADLINE.as_secs()
+                drain_deadline.as_secs()
             );
         }
     }
