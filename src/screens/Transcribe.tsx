@@ -102,9 +102,9 @@ function fmtElapsed(ms: number): string {
  *  itself lives in transcribeRun.railStages). */
 const RAIL_NAMES: Record<RailStage, string> = {
   downloading: "Download",
-  separating: "Separate music",
+  separating: "Music source separation",
   transcribing: "Transcribe",
-  diarizing: "Identify speakers",
+  diarizing: "Speaker diarization",
 };
 const RAIL_DESCRIPTIONS: Record<RailStage, string> = {
   downloading: "Fetches the audio from the link on the server before the pipeline runs.",
@@ -765,7 +765,7 @@ export default function Transcribe() {
               <div className="relative">
                 <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
                 <SettingRow
-                  title="Separate background music"
+                  title="Music source separation (MSS)"
                   desc={
                     bgmAvailable
                       ? "Runs first — strips music so everything after sees clean vocals (UVR). Adds processing time per file."
@@ -776,7 +776,7 @@ export default function Transcribe() {
                   <Toggle
                     checked={separateBgm && bgmAvailable}
                     disabled={!bgmAvailable}
-                    ariaLabel="Separate background music"
+                    ariaLabel="Music source separation"
                     onChange={(v) => {
                       setSeparateBgm(v);
                       persistOptions({ separateBgm: v });
@@ -794,8 +794,8 @@ export default function Transcribe() {
                     and an unset boolean must stay distinct from an explicit
                     false. */}
                 <SettingRow
-                  title="Skip silence"
-                  desc="During audio analysis — silence never reaches the decoder: faster, and prevents made-up text in quiet parts. For this run only."
+                  title="Skip silence (VAD)"
+                  desc="Voice activity detection during audio analysis — silence never reaches the decoder: faster, and prevents made-up text in quiet parts. For this run only."
                 >
                   <Segmented
                     value={
@@ -805,7 +805,7 @@ export default function Transcribe() {
                           ? "off"
                           : "inherit"
                     }
-                    ariaLabel="Skip silence"
+                    ariaLabel="Skip silence (VAD)"
                     disabled={caps?.can_request_decode_overrides === false}
                     onChange={(v) => {
                       const next = { ...runOverrides };
