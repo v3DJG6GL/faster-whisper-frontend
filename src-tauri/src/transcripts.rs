@@ -90,13 +90,22 @@ pub(crate) fn rewrite_media_paths(
             let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
                 continue;
             };
-            let Some(old) = v.get("mediaPath").and_then(|m| m.as_str()) else {
+            // Dictation records keep their audio under `sourcePath`; file/url
+            // records under `mediaPath` — a moved file must be re-pointed in
+            // whichever field carries it.
+            let mut changed = false;
+            for key in ["mediaPath", "sourcePath"] {
+                let Some(old) = v.get(key).and_then(|m| m.as_str()) else {
+                    continue;
+                };
+                if let Some(new) = lookup.get(old) {
+                    v[key] = serde_json::Value::String((*new).to_owned());
+                    changed = true;
+                }
+            }
+            if !changed {
                 continue;
-            };
-            let Some(new) = lookup.get(old) else {
-                continue;
-            };
-            v["mediaPath"] = serde_json::Value::String((*new).to_owned());
+            }
             let Ok(out) = serde_json::to_string(&v) else {
                 continue;
             };
@@ -106,7 +115,71 @@ pub(crate) fn rewrite_media_paths(
         }
     }
     if rewritten > 0 {
-        tracing::info!("[transcripts] rewrote mediaPath in {rewritten} record(s) after move");
+        tracing::info!("[transcripts] rewrote media paths in {rewritten} record(s) after move");
+    }
+}
+
+/// Repair records whose stored audio path no longer exists but whose file
+/// lives under one of the audio-base subfolders (same basename). Heals
+/// records a past move rewrote incompletely — earlier builds only rewrote
+/// `mediaPath`, stranding every dictation record's `sourcePath` when the
+/// layout migration moved the files into `<base>/dictations`. Idempotent
+/// and cheap: one stat per stored path, rewrites only on a hit.
+pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
+    let subs = ["dictations", "files", "links"];
+    let dirs = [transcripts_dir(app), dictations_dir(app)];
+    let mut healed = 0;
+    for dir in dirs.into_iter().flatten() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            let mut changed = false;
+            for key in ["mediaPath", "sourcePath"] {
+                let Some(old) = v.get(key).and_then(|m| m.as_str()) else {
+                    continue;
+                };
+                let old_path = std::path::Path::new(old);
+                // Only local absolute paths that are actually gone (a URL in
+                // `sourcePath` or a still-valid path is not ours to touch).
+                if !old_path.is_absolute() || old_path.exists() {
+                    continue;
+                }
+                let Some(name) = old_path.file_name() else {
+                    continue;
+                };
+                if let Some(found) = subs
+                    .iter()
+                    .map(|s| base.join(s).join(name))
+                    .find(|c| c.exists())
+                {
+                    v[key] = serde_json::Value::String(found.to_string_lossy().into_owned());
+                    changed = true;
+                }
+            }
+            if !changed {
+                continue;
+            }
+            let Ok(out) = serde_json::to_string(&v) else {
+                continue;
+            };
+            if crate::config::write_private(&path, &out).is_ok() {
+                healed += 1;
+            }
+        }
+    }
+    if healed > 0 {
+        tracing::info!("[transcripts] healed stale media paths in {healed} record(s)");
     }
 }
 

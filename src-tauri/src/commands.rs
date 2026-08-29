@@ -220,6 +220,10 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
         tracing::info!("[audio] layout migration moved {} file(s) under {}", map.len(), base.display());
         rewrite_media_paths(app, &map);
     }
+    // Repair records a past (incomplete) rewrite left pointing at moved
+    // files — runs every startup, rewrites only records whose path is gone
+    // but whose file sits under one of the subfolders.
+    crate::transcripts::heal_media_paths(app, &base);
 }
 
 /// Relocate the whole audio store: move the three subfolders from the current
@@ -776,15 +780,21 @@ pub async fn read_media_file(path: String) -> Result<tauri::ipc::Response, Strin
     Ok(tauri::ipc::Response::new(bytes))
 }
 
-/// Decode a media file to WAV bytes in-process (symphonia) — the playback
-/// fallback for codecs the system webview can't handle (AAC/MP4 on Linux
-/// WebKitGTK, i.e. every retained YouTube audio).
+/// Decode a media file in-process (symphonia) — the playback fallback for
+/// codecs the system webview can't handle (AAC/MP4 on Linux
+/// WebKitGTK, i.e. every retained YouTube audio). Returns the path of a
+/// cached on-disk WAV the viewer streams through the asset protocol —
+/// returning the bytes over IPC froze the web process on ~240 MB blobs.
 #[tauri::command]
-pub async fn decode_media_file(path: String) -> Result<tauri::ipc::Response, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::media_decode::decode_to_wav(&path))
-        .await
-        .map_err(|e| e.to_string())?
-        .map(tauri::ipc::Response::new)
+pub async fn decode_media_file(
+    app: AppHandle,
+    path: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::media_decode::decode_to_cached_wav(&app, &path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Write a plain text file (transcript exports) to the path the user picked

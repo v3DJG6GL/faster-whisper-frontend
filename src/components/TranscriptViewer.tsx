@@ -428,6 +428,9 @@ export function TranscriptViewer({
   const blobUrlRef = useRef<string | null>(null);
   const blobTriedRef = useRef(false);
   const wavTriedRef = useRef(false);
+  // A symphonia decode is in flight — the stall watchdog must not advance
+  // the chain past it (a long file legitimately takes seconds to decode).
+  const decodePendingRef = useRef(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
@@ -624,6 +627,7 @@ export function TranscriptViewer({
     blobUrlRef.current = null;
     blobTriedRef.current = false;
     wavTriedRef.current = false;
+    decodePendingRef.current = false;
     setBlobSrc(null);
   }, [path]);
   useEffect(
@@ -654,20 +658,29 @@ export function TranscriptViewer({
         return;
       }
       wavTriedRef.current = true;
-      const fail = () => {
+      const fail = (why: "gone" | "codec" = "codec") => {
         setAudioBroken(true);
-        setBrokenWhy("codec");
+        setBrokenWhy(why);
       };
+      // Decode lands in a cached WAV file played through the asset
+      // protocol — streaming from disk like every dictation, instead of a
+      // ~240 MB in-memory blob (which freezes the WebKitGTK web process).
       const tryDecode = (p: string | null | undefined, next?: () => void) => {
         if (!p) return next ? next() : fail();
+        decodePendingRef.current = true;
         decodeMediaFile(p)
-          .then((buf) => {
+          .then((wavPath) => {
             if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
-            const url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
-            blobUrlRef.current = url;
-            setBlobSrc(url);
+            blobUrlRef.current = null;
+            setBlobSrc(convertFileSrc(wavPath));
           })
-          .catch(() => (next ? next() : fail()));
+          .catch((e) => {
+            if (next) return next();
+            fail(String(e).includes("gone") ? "gone" : "codec");
+          })
+          .finally(() => {
+            decodePendingRef.current = false;
+          });
       };
       if (urlSource) tryDecode(mediaPath);
       else tryDecode(path, () => tryDecode(mediaPath));
@@ -714,6 +727,22 @@ export function TranscriptViewer({
           });
       });
   };
+
+  // WebKitGTK doesn't reliably fire `error` for an unsupported container —
+  // observed with yt-dlp's fragmented m4a it just stalls with readyState 0
+  // forever, so an error-event-driven fallback chain never advances. Treat
+  // a source that produces no metadata within 6 s as errored (unless a
+  // decode is already in flight — that legitimately takes seconds).
+  const activeAudioSrc = blobSrc ?? audioSrc;
+  useEffect(() => {
+    if (!activeAudioSrc || audioBroken) return;
+    const t = window.setTimeout(() => {
+      const a = audioRef.current;
+      if (a && a.readyState === 0 && !decodePendingRef.current) onAudioError();
+    }, 6000);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onAudioError is stable-by-refs
+  }, [activeAudioSrc, audioBroken]);
 
   const seekTo = useCallback(
     (t: number) => {

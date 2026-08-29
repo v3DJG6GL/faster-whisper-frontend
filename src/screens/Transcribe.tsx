@@ -949,6 +949,13 @@ export default function Transcribe() {
                   <div className="flex items-center gap-4">
                     {diarize && diarAvailable && (
                       <div className="flex items-center gap-2">
+                        {/* Anything above 0 pins the count for every future
+                            run (it persists) — say so right at the control. */}
+                        {numSpeakers > 0 && (
+                          <span className="font-mono text-[10.5px] text-warn">
+                            fixed — auto-detect off
+                          </span>
+                        )}
                         <span className="text-[12px] text-dim">Speakers</span>
                         <Stepper
                           value={numSpeakers}
@@ -1244,10 +1251,18 @@ export default function Transcribe() {
                     />
                     <div
                       className={cn(
-                        "absolute whitespace-nowrap font-mono text-[10.5px] leading-[1.55] tabular-nums",
+                        // z-[1] + a card-colored halo: a label may extend
+                        // over a neighbour's (tall) tick — the text then
+                        // occludes the line instead of colliding with it.
+                        "absolute z-[1] whitespace-nowrap font-mono text-[10.5px] leading-[1.55] tabular-nums",
                         e.state === "pending" && "opacity-60",
                       )}
-                      style={{ top: drop ? 41 : 9, left: axisPos[i].offset }}
+                      style={{
+                        top: drop ? 41 : 9,
+                        left: axisPos[i].offset,
+                        background: "var(--c-surface)",
+                        boxShadow: "0 0 0 3px var(--c-surface)",
+                      }}
                     >
                       <div
                         className={cn(
@@ -1556,6 +1571,18 @@ export default function Transcribe() {
                                 {speakerCount === 1 ? " speaker" : " speakers"}
                               </span>
                             )}
+                            {/* A manually fixed speaker count silently overrides
+                                detection for every run — one accidental Stepper
+                                click once cost a day of "diarization is broken".
+                                Surface it as a warning receipt, live and done. */}
+                            {st === "diarizing" &&
+                              state !== "pending" &&
+                              state !== "skipped" &&
+                              (lastOptions?.numSpeakers ?? 0) > 0 && (
+                                <span className="rounded-md bg-warn/10 px-2 py-0.5 font-mono text-[10.5px] text-warn">
+                                  count fixed to {lastOptions?.numSpeakers} — Speakers isn't on auto
+                                </span>
+                              )}
                           </span>
                           {state !== "done" && (
                             <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
@@ -1567,19 +1594,23 @@ export default function Transcribe() {
                           )}
                         </div>
                       )}
-                      {/* VAD split bar (live): the whole timeline — solid
-                          kept audio, hatched removed silence — with both
-                          halves spelled out. */}
+                      {/* VAD split bar (live): a composition readout of the
+                          whole timeline — muted kept audio, hatched removed
+                          silence. Deliberately thin, flat and dim so it
+                          can't be mistaken for the stage progress bar above
+                          (thick, saturated, rounded = progress; hairline
+                          split = composition, same grammar as the storage
+                          bar in Settings). */}
                       {state === "active" && vr !== null && audioDur ? (
-                        <div className="mt-2">
-                          <div className="flex h-1.5 gap-0.5">
+                        <div className="mt-2.5">
+                          <div className="flex h-[3px] gap-0.5">
                             <div
-                              className="rounded-pill bg-ok/80"
+                              className="rounded-[1px] bg-ok/40"
                               style={{ width: `${Math.max(2, Math.round(vr * 100))}%` }}
                             />
                             {vr < 0.995 && (
                               <div
-                                className="rounded-pill"
+                                className="rounded-[1px]"
                                 style={{
                                   width: `${Math.max(2, Math.round((1 - vr) * 100))}%`,
                                   background:

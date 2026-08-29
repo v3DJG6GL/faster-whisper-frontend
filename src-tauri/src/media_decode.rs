@@ -18,6 +18,87 @@ use symphonia::core::meta::MetadataOptions;
 /// "can't be decoded" note instead.
 const MAX_PCM_BYTES: usize = 640 * 1024 * 1024;
 
+/// Playback-cache ceiling: decoded WAVs beyond this total are pruned
+/// oldest-first (a 22-minute stereo YouTube audio is ~240 MB, so this
+/// keeps a handful of recent transcripts instantly replayable).
+const MAX_CACHE_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// Decode a media file into a cached WAV on disk and return that path.
+/// The viewer plays the cached file through the asset protocol — streaming
+/// from disk like every dictation WAV, instead of holding a ~240 MB blob in
+/// the web process (which WebKitGTK handles badly enough to freeze).
+/// `Err("gone")` = the source file no longer exists (vs. a codec failure).
+pub fn decode_to_cached_wav(app: &tauri::AppHandle, path: &str) -> Result<String, String> {
+    use std::hash::{Hash, Hasher};
+    use tauri::Manager;
+    let meta = std::fs::metadata(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            "gone".to_string()
+        } else {
+            e.to_string()
+        }
+    })?;
+    let mut h = std::hash::DefaultHasher::new();
+    path.hash(&mut h);
+    meta.len().hash(&mut h);
+    if let Ok(m) = meta.modified() {
+        if let Ok(d) = m.duration_since(std::time::UNIX_EPOCH) {
+            d.as_secs().hash(&mut h);
+        }
+    }
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("playback");
+    crate::audio::create_dir_private(&dir).map_err(|e| e.to_string())?;
+    let out = dir.join(format!("{:016x}.wav", h.finish()));
+    if out.exists() {
+        return Ok(out.to_string_lossy().into_owned());
+    }
+    let wav = decode_to_wav(path)?;
+    let tmp = out.with_extension("wav.tmp");
+    std::fs::write(&tmp, &wav).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    }
+    std::fs::rename(&tmp, &out).map_err(|e| e.to_string())?;
+    prune_cache(&dir, &out);
+    Ok(out.to_string_lossy().into_owned())
+}
+
+/// Keep the playback cache under `MAX_CACHE_BYTES`, deleting oldest-modified
+/// first and never the file just written. Best-effort housekeeping.
+fn prune_cache(dir: &std::path::Path, keep: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<(std::path::PathBuf, std::time::SystemTime, u64)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            if !p.is_file() || p == keep {
+                return None;
+            }
+            let m = e.metadata().ok()?;
+            Some((p, m.modified().ok()?, m.len()))
+        })
+        .collect();
+    let keep_len = std::fs::metadata(keep).map(|m| m.len()).unwrap_or(0);
+    let mut total: u64 = keep_len + files.iter().map(|f| f.2).sum::<u64>();
+    files.sort_by_key(|f| f.1);
+    for (p, _, len) in files {
+        if total <= MAX_CACHE_BYTES {
+            break;
+        }
+        if std::fs::remove_file(&p).is_ok() {
+            total = total.saturating_sub(len);
+        }
+    }
+}
+
 /// Decode any symphonia-supported audio file to 16-bit interleaved WAV
 /// bytes at the source rate and channel count.
 pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
