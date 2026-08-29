@@ -1068,6 +1068,12 @@ export async function decodeMediaFile(path: string): Promise<string> {
   return invoke<string>("decode_media_file", { path });
 }
 
+/** Open a transcribed link in the system browser (scheme-checked in Rust). */
+export async function openSourceUrl(url: string): Promise<void> {
+  if (!isTauri) return;
+  return invoke("open_source_url", { url });
+}
+
 /** Native "open file" dialog for a settings export → absolute path (or null). */
 export async function pickImportFile(): Promise<string | null> {
   if (!isTauri) return null;

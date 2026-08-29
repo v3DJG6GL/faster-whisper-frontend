@@ -1820,6 +1820,7 @@ export default function Transcribe() {
         result={result}
         path={selectedPath}
         mediaPath={selected?.mediaPath}
+        createdAt={selected?.createdAt}
         fileLabel={
           queue.length > 1 || isSourceUrl(selectedPath)
             ? displayLabel(selectedPath, selected?.title ?? urlMeta[selectedPath]?.title)

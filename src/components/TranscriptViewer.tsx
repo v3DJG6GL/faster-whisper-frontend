@@ -10,14 +10,16 @@ import {
   memo, useCallback, useEffect, useMemo, useRef, useState,
 } from "react";
 import {
-  ArrowDownToLine, Check, Circle, Copy, Download, Maximize2, Minimize2,
-  Minus, Pause, Pencil, Play,
+  ArrowDownToLine, Check, Circle, Copy, Download, ExternalLink, Maximize2,
+  Minimize2, Minus, Pause, Pencil, Play,
 } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui";
 import { fmtDurationExact, fmtTimestamp } from "@/lib/format";
-import { decodeMediaFile, pickExportPath, readMediaFile, saveTextFile, isTauri } from "@/lib/api";
+import {
+  decodeMediaFile, openSourceUrl, pickExportPath, readMediaFile, saveTextFile, isTauri,
+} from "@/lib/api";
 import {
   clearEdits, setRename, setSegmentEdit, setSegmentSpeaker,
   setSpeakerColor as setSpeakerColorAction, useTranscribeRun,
@@ -295,6 +297,7 @@ export function TranscriptViewer({
   path,
   mediaPath,
   fileLabel,
+  createdAt,
   fill,
   className,
 }: {
@@ -305,6 +308,9 @@ export function TranscriptViewer({
   mediaPath?: string;
   /** Shown in the meta line when several files are on the workbench. */
   fileLabel?: string;
+  /** When this transcript was made (ISO) — shown in the meta line so
+   *  same-source records (the same URL run six times) are tellable apart. */
+  createdAt?: string;
   /** Studio pane: fill the available height instead of capping at 65vh. */
   fill?: boolean;
   className?: string;
@@ -420,6 +426,9 @@ export function TranscriptViewer({
   // Why playback is unavailable — a missing file and an undecodable codec are
   // different failures and get different sentences.
   const [brokenWhy, setBrokenWhy] = useState<"gone" | "codec">("codec");
+  // The technical reason playback broke — shown small under the notice so a
+  // failure is diagnosable instead of blamed on a guessed cause.
+  const [brokenDetail, setBrokenDetail] = useState<string | null>(null);
   // Set when playback fell back to the app's stored audio copy.
   const [audioNote, setAudioNote] = useState<"copy" | null>(null);
   // Blob-URL fallback when the asset protocol can't feed the media stack
@@ -539,6 +548,19 @@ export function TranscriptViewer({
   // <audio> (never convertFileSrc on a URL: that mints a guaranteed-broken
   // asset URL and a guaranteed error event).
   const urlSource = isSourceUrl(path);
+  // "29 Aug 18:03" — the viewer's identity stamp (same-URL records are
+  // otherwise indistinguishable).
+  const stamp = useMemo(() => {
+    if (!createdAt) return "";
+    const d = new Date(createdAt);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString(undefined, {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }, [createdAt]);
   const audioSrc = useMemo(() => {
     if (!isTauri) return undefined;
     if (urlSource) return mediaPath ? convertFileSrc(mediaPath) : undefined;
@@ -619,6 +641,7 @@ export function TranscriptViewer({
     setAudioLen(0);
     setAudioBroken(false);
     setBrokenWhy("codec");
+    setBrokenDetail(null);
     setAudioNote(null);
     setFollow(true);
     setEditMode(false);
@@ -650,17 +673,19 @@ export function TranscriptViewer({
    *  GStreamer plugins — every retained YouTube audio) — decode to WAV in
    *  Rust and play that; (3) only when the WAV blob errors too is playback
    *  declared broken. */
-  const onAudioError = () => {
+  const onAudioError = (reason?: string) => {
     if (blobTriedRef.current) {
       if (wavTriedRef.current) {
         setAudioBroken(true);
         setBrokenWhy("codec");
+        setBrokenDetail(`decoded WAV failed too — ${reason || "media element error"}`);
         return;
       }
       wavTriedRef.current = true;
-      const fail = (why: "gone" | "codec" = "codec") => {
+      const fail = (why: "gone" | "codec" = "codec", detail?: string) => {
         setAudioBroken(true);
         setBrokenWhy(why);
+        if (detail) setBrokenDetail(detail);
       };
       // Decode lands in a cached WAV file played through the asset
       // protocol — streaming from disk like every dictation, instead of a
@@ -676,7 +701,10 @@ export function TranscriptViewer({
           })
           .catch((e) => {
             if (next) return next();
-            fail(String(e).includes("gone") ? "gone" : "codec");
+            fail(
+              String(e).includes("gone") ? "gone" : "codec",
+              `decode failed: ${String(e)}`,
+            );
           })
           .finally(() => {
             decodePendingRef.current = false;
@@ -701,9 +729,10 @@ export function TranscriptViewer({
       }
       readMediaFile(mediaPath)
         .then((buf) => asBlob(buf, mediaPath))
-        .catch(() => {
+        .catch((e) => {
           setAudioBroken(true);
           setBrokenWhy("gone");
+          setBrokenDetail(`could not read the stored copy: ${String(e)}`);
         });
       return;
     }
@@ -738,7 +767,8 @@ export function TranscriptViewer({
     if (!activeAudioSrc || audioBroken) return;
     const t = window.setTimeout(() => {
       const a = audioRef.current;
-      if (a && a.readyState === 0 && !decodePendingRef.current) onAudioError();
+      if (a && a.readyState === 0 && !decodePendingRef.current)
+        onAudioError("stalled — no media events within 6 s");
     }, 6000);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onAudioError is stable-by-refs
@@ -1303,6 +1333,13 @@ export function TranscriptViewer({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="font-mono text-[11px] uppercase tracking-label text-faint">
           transcript
+          {/* Identity first: same-URL records only differ by when they ran. */}
+          {stamp ? (
+            <>
+              {" · "}
+              <span className="text-dim">{stamp}</span>
+            </>
+          ) : null}
           {fileLabel ? ` · ${fileLabel}` : ""}
           {result.language ? ` · ${result.language}` : ""}
           {result.duration
@@ -1311,6 +1348,17 @@ export function TranscriptViewer({
           {hasSpeakers ? ` · ${speakers.length} speakers` : ""}
         </div>
         <div className="flex items-center gap-2">
+          {urlSource && (
+            <Button
+              variant="ghost"
+              size="sm"
+              title="Open the transcribed link in the browser"
+              onClick={() => void openSourceUrl(path).catch(() => {})}
+            >
+              <ExternalLink className="size-4" />
+              Open link
+            </Button>
+          )}
           {hasSegments && !editMode && (
             <Button variant="ghost" size="sm" onClick={() => setEditMode(true)}>
               <Pencil className="size-4" />
@@ -1397,7 +1445,14 @@ export function TranscriptViewer({
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onEnded={() => setPlaying(false)}
-            onError={onAudioError}
+            onError={(e) => {
+              const me = e.currentTarget.error;
+              onAudioError(
+                me
+                  ? `media error ${me.code}${me.message ? `: ${me.message}` : ""}`
+                  : undefined,
+              );
+            }}
           />
           <button
             type="button"
@@ -1480,10 +1535,18 @@ export function TranscriptViewer({
       {audioBroken && (
         <div className="mb-3 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2 text-[12px] text-dim">
           {brokenWhy !== "gone"
-            ? "Playback isn't available — this format can't be decoded by the system webview. The transcript and exports still work."
+            ? "Playback isn't available — every playback path failed for this audio. The transcript and exports still work."
             : urlSource
               ? "The downloaded audio isn't stored on this device — run the link again to restore playback. The transcript and edits still work."
               : "Playback isn't available — the original file is gone and no copy was kept (it predates audio copies, or “Keep a copy of the audio” was off)."}
+          {/* The technical reason — a codec, a missing file, and a media-stack
+              hiccup are different problems; guessing one in prose sent a
+              debugging session down the wrong road. */}
+          {brokenDetail && (
+            <div className="mt-1 font-mono text-[10.5px] text-faint">
+              {stripControlChars(brokenDetail).slice(0, 200)}
+            </div>
+          )}
         </div>
       )}
 

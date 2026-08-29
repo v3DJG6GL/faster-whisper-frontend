@@ -27,6 +27,10 @@ export interface QueueItem {
   /** Absent = "file" (pre-URL rows). Display and transport dispatch branch
    *  on this; every path-keyed structure works unchanged. */
   kind?: "file" | "url";
+  /** When this transcript was made (ISO) — the viewer's identity stamp.
+   *  Same-URL records share the path key, so the timestamp is the only
+   *  visible way to tell them apart. */
+  createdAt?: string;
   /** URL items: the media title from the preview — the display name. */
   title?: string;
   status: ItemStatus;
@@ -494,6 +498,9 @@ function recordRun(
   };
   historyByPath[path] = rec;
   upsertRecord(rec);
+  // The viewer identifies the open transcript by its timestamp — same-URL
+  // records are otherwise indistinguishable (the URL is the queue key).
+  patchItem(path, { createdAt: rec.createdAt });
   return rec;
 }
 
@@ -563,6 +570,7 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
         path: rec.sourcePath,
         kind: recIsUrl ? ("url" as const) : ("file" as const),
         title: rec.title,
+        createdAt: rec.createdAt,
         status: rec.status,
         result: rec.result,
         error: rec.error,

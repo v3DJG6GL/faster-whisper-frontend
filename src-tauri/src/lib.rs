@@ -206,6 +206,8 @@ pub fn run() {
             transcripts::remove_transcript_media,
             commands::read_media_file,      // playback blob fallback (Transcribe screen)
             commands::decode_media_file,    // playback codec fallback (webview can't do AAC)
+            commands::open_source_url,      // "Open link" on a URL transcript
+
             commands::cancel_file_transcription, // abort in-flight Transcribe runs (client side)
             commands::cancel_backend_transcription, // …and tell the server to stop the work
             commands::get_transcribe_progress,   // live progress poll (Transcribe screen)

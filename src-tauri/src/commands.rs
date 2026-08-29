@@ -780,6 +780,20 @@ pub async fn read_media_file(path: String) -> Result<tauri::ipc::Response, Strin
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// Open a transcribed link in the system browser. Scheme-checked so a
+/// stored record can only ever launch a web URL, never a local program.
+#[tauri::command]
+pub fn open_source_url(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let u = url.trim();
+    if !(u.starts_with("https://") || u.starts_with("http://")) {
+        return Err("not a web link".into());
+    }
+    app.opener()
+        .open_url(u, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 /// Decode a media file in-process (symphonia) — the playback fallback for
 /// codecs the system webview can't handle (AAC/MP4 on Linux
 /// WebKitGTK, i.e. every retained YouTube audio). Returns the path of a
@@ -791,7 +805,10 @@ pub async fn decode_media_file(
     path: String,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::media_decode::decode_to_cached_wav(&app, &path)
+        crate::media_decode::decode_to_cached_wav(&app, &path).map_err(|e| {
+            tracing::warn!("[playback] decode failed for {path}: {e}");
+            e
+        })
     })
     .await
     .map_err(|e| e.to_string())?
