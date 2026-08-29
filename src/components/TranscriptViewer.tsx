@@ -299,6 +299,7 @@ export function TranscriptViewer({
   fileLabel,
   createdAt,
   onClose,
+  overlayKey,
   fill,
   className,
 }: {
@@ -315,6 +316,10 @@ export function TranscriptViewer({
   /** Close the workbench (absent while a batch is running — the viewer is
    *  the run's live output then, not something to dismiss). */
   onClose?: () => void;
+  /** Key for the per-transcript overlays (renames/colors/edits) — the
+   *  record id when one exists. Falls back to `path`, but two same-URL
+   *  records share their path, so id-keying keeps their edits apart. */
+  overlayKey?: string;
   /** Studio pane: fill the available height instead of capping at 65vh. */
   fill?: boolean;
   className?: string;
@@ -460,8 +465,10 @@ export function TranscriptViewer({
   const speakers = useMemo(() => speakersOf(result), [result]);
   const hasSegments = !!result.segments?.length;
   const hasSpeakers = speakers.length > 0;
-  const fileRenames = useMemo(() => renames[path] ?? {}, [renames, path]);
-  const fileColors = useMemo(() => speakerColors[path] ?? {}, [speakerColors, path]);
+  // Overlay slot: the record id when known, else the path (see overlayKey).
+  const okey = overlayKey ?? path;
+  const fileRenames = useMemo(() => renames[okey] ?? {}, [renames, okey]);
+  const fileColors = useMemo(() => speakerColors[okey] ?? {}, [speakerColors, okey]);
   const displayName = useCallback(
     (label: string) => safeDisplayText(fileRenames[label]?.trim() || prettySpeaker(label)),
     [fileRenames],
@@ -480,20 +487,20 @@ export function TranscriptViewer({
   );
 
   const setSpeakerColor = (label: string, idx: number) => {
-    setSpeakerColorAction(path, label, idx);
+    setSpeakerColorAction(okey, label, idx);
   };
 
   const commitRename = () => {
     if (editingSpeaker) {
-      setRename(path, editingSpeaker, stripControlChars(renameDraft).trim());
+      setRename(okey, editingSpeaker, stripControlChars(renameDraft).trim());
     }
     setEditingSpeaker(null);
   };
 
   // Corrections layered over the server transcript — the segments every
   // surface renders, copies and exports.
-  const fileEdits = useMemo(() => edits[path] ?? {}, [edits, path]);
-  const fileSpkEdits = useMemo(() => speakerEdits[path] ?? {}, [speakerEdits, path]);
+  const fileEdits = useMemo(() => edits[okey] ?? {}, [edits, okey]);
+  const fileSpkEdits = useMemo(() => speakerEdits[okey] ?? {}, [speakerEdits, okey]);
   const editCount = Object.keys(fileEdits).length + Object.keys(fileSpkEdits).length;
   const effSegments = useMemo(
     (): EffSegment[] =>
@@ -1287,18 +1294,18 @@ export function TranscriptViewer({
   const onReassign = useCallback(
     (i: number, label: string) => {
       const orig = result.segments?.[i]?.speaker;
-      setSegmentSpeaker(path, i, label === orig ? null : label);
+      setSegmentSpeaker(okey, i, label === orig ? null : label);
       setReassignRow(null);
     },
-    [path, result],
+    [okey, result],
   );
   const onCommitEdit = useCallback(
     (i: number, text: string) => {
       const t = stripControlChars(text).trim();
       const orig = (result.segments?.[i]?.text ?? "").trim();
-      setSegmentEdit(path, i, t && t !== orig ? t : null);
+      setSegmentEdit(okey, i, t && t !== orig ? t : null);
     },
-    [path, result],
+    [okey, result],
   );
 
   const canSeek = !!audioSrc && !audioBroken;
@@ -1420,7 +1427,7 @@ export function TranscriptViewer({
             variant="ghost"
             size="sm"
             onClick={() => {
-              clearEdits(path);
+              clearEdits(okey);
               setEditMode(false);
               setReassignRow(null);
             }}

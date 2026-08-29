@@ -466,26 +466,35 @@ export function selectPath(path: string | null) {
 // reopened record re-registers, so later corrections re-save under the SAME
 // id instead of forking a new entry.
 const historyByPath: Record<string, TranscriptRecord> = {};
+// Overlay slots and edit persistence are keyed by RECORD ID — the path
+// can't do it, two records of the same URL share theirs.
+const recordById: Record<string, TranscriptRecord> = {};
 let persistTimer: number | undefined;
 
-/** Re-save `path`'s record with the CURRENT overlays, debounced — every
+function registerRecord(rec: TranscriptRecord) {
+  historyByPath[rec.sourcePath] = rec;
+  recordById[rec.id] = rec;
+}
+
+/** Re-save a record with the CURRENT overlays, debounced — every
  *  rename/recolor/correction lands in the history within a second, without a
- *  disk write per keystroke. */
-function schedulePersistEdits(path: string) {
-  if (!historyByPath[path]) return;
+ *  disk write per keystroke. `key` is the overlay key: the record id
+ *  (legacy path keys still resolve through historyByPath). */
+function schedulePersistEdits(key: string) {
+  if (!recordById[key] && !historyByPath[key]) return;
   window.clearTimeout(persistTimer);
   persistTimer = window.setTimeout(() => {
-    const rec = historyByPath[path];
+    const rec = recordById[key] ?? historyByPath[key];
     if (!rec) return;
     const s = get();
     const updated: TranscriptRecord = {
       ...rec,
-      renames: s.renames[path],
-      speakerColors: s.speakerColors[path],
-      edits: s.edits[path],
-      speakerEdits: s.speakerEdits[path],
+      renames: s.renames[key],
+      speakerColors: s.speakerColors[key],
+      edits: s.edits[key],
+      speakerEdits: s.speakerEdits[key],
     };
-    historyByPath[path] = updated;
+    registerRecord(updated);
     upsertRecord(updated);
   }, 800);
 }
@@ -519,12 +528,10 @@ function recordRun(
     language: outcome.result?.language ?? undefined,
     options,
     result: outcome.result,
-    renames: s.renames[path],
-    speakerColors: s.speakerColors[path],
-    edits: s.edits[path],
-    speakerEdits: s.speakerEdits[path],
+    // No overlays: a fresh run starts clean. Overlay slots are keyed by
+    // record id, and this record's id is minted right here.
   };
-  historyByPath[path] = rec;
+  registerRecord(rec);
   upsertRecord(rec);
   // The viewer identifies the open transcript by its timestamp — same-URL
   // records are otherwise indistinguishable (the URL is the queue key).
@@ -589,7 +596,7 @@ function fetchRunUrlMedia(path: string, rec: TranscriptRecord, ctx: RunContext, 
  *  queue then). */
 export function openHistoryRecord(rec: TranscriptRecord): boolean {
   if (get().running) return false;
-  historyByPath[rec.sourcePath] = rec;
+  registerRecord(rec);
   const recIsUrl = isSourceUrl(rec.sourcePath);
   set((s) => ({
     epoch: s.epoch + 1,
@@ -615,63 +622,65 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
     stageTimes: {},
     stageMeta: {},
     lastOptions: rec.options ?? s.lastOptions,
-    renames: { ...s.renames, [rec.sourcePath]: rec.renames ?? {} },
-    speakerColors: { ...s.speakerColors, [rec.sourcePath]: rec.speakerColors ?? {} },
-    edits: { ...s.edits, [rec.sourcePath]: rec.edits ?? {} },
-    speakerEdits: { ...s.speakerEdits, [rec.sourcePath]: rec.speakerEdits ?? {} },
+    // Overlay slots keyed by record ID — the path can't do it, two records
+    // of the same URL share theirs (edits used to bleed between them).
+    renames: { ...s.renames, [rec.id]: rec.renames ?? {} },
+    speakerColors: { ...s.speakerColors, [rec.id]: rec.speakerColors ?? {} },
+    edits: { ...s.edits, [rec.id]: rec.edits ?? {} },
+    speakerEdits: { ...s.speakerEdits, [rec.id]: rec.speakerEdits ?? {} },
   }));
   return true;
 }
 
-export function setRename(path: string, label: string, name: string) {
+export function setRename(key: string, label: string, name: string) {
   set((s) => ({
-    renames: { ...s.renames, [path]: { ...s.renames[path], [label]: name } },
+    renames: { ...s.renames, [key]: { ...s.renames[key], [label]: name } },
   }));
-  schedulePersistEdits(path);
+  schedulePersistEdits(key);
 }
 
-export function setSpeakerColor(path: string, label: string, idx: number) {
+export function setSpeakerColor(key: string, label: string, idx: number) {
   set((s) => ({
     speakerColors: {
       ...s.speakerColors,
-      [path]: { ...s.speakerColors[path], [label]: idx },
+      [key]: { ...s.speakerColors[key], [label]: idx },
     },
   }));
-  schedulePersistEdits(path);
+  schedulePersistEdits(key);
 }
 
 /** Record (or with null, drop) a text correction for one segment. */
-export function setSegmentEdit(path: string, index: number, text: string | null) {
+export function setSegmentEdit(key: string, index: number, text: string | null) {
   set((s) => {
-    const file = { ...s.edits[path] };
+    const file = { ...s.edits[key] };
     if (text === null) delete file[index];
     else file[index] = text;
-    return { edits: { ...s.edits, [path]: file } };
+    return { edits: { ...s.edits, [key]: file } };
   });
-  schedulePersistEdits(path);
+  schedulePersistEdits(key);
 }
 
 /** Reassign (or with null, restore) one segment's speaker label. */
-export function setSegmentSpeaker(path: string, index: number, label: string | null) {
+export function setSegmentSpeaker(key: string, index: number, label: string | null) {
   set((s) => {
-    const file = { ...s.speakerEdits[path] };
+    const file = { ...s.speakerEdits[key] };
     if (label === null) delete file[index];
     else file[index] = label;
-    return { speakerEdits: { ...s.speakerEdits, [path]: file } };
+    return { speakerEdits: { ...s.speakerEdits, [key]: file } };
   });
-  schedulePersistEdits(path);
+  schedulePersistEdits(key);
 }
 
 /** Discard every correction for one file (the edit banner's Discard). */
-export function clearEdits(path: string) {
+export function clearEdits(key: string) {
   set((s) => {
     const edits = { ...s.edits };
     const speakerEdits = { ...s.speakerEdits };
-    delete edits[path];
-    delete speakerEdits[path];
+    delete edits[key];
+    delete speakerEdits[key];
     return { edits, speakerEdits };
   });
-  schedulePersistEdits(path);
+  schedulePersistEdits(key);
 }
 
 /** Fold a progress poll into the store. "unknown" is the server saying "no

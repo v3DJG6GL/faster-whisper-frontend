@@ -1823,6 +1823,7 @@ export default function Transcribe() {
         mediaPath={selected?.mediaPath}
         createdAt={selected?.createdAt}
         onClose={busy ? undefined : closeRecord}
+        overlayKey={openRecordId ?? undefined}
         fileLabel={
           queue.length > 1 || isSourceUrl(selectedPath)
             ? displayLabel(selectedPath, selected?.title ?? urlMeta[selectedPath]?.title)
