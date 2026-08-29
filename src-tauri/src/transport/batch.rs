@@ -563,6 +563,12 @@ pub struct UrlPreview {
     /// it anyway).
     #[serde(default)]
     pub thumbnail: Option<String>,
+    /// Container ext of the audio format the download would fetch ("m4a").
+    #[serde(default)]
+    pub ext: Option<String>,
+    /// Audio bitrate of that format, kbps.
+    #[serde(default)]
+    pub abr: Option<f64>,
 }
 
 /// The preview probe is interactive (debounced keystrokes) — cap it well
@@ -599,6 +605,7 @@ pub async fn url_preview(
         title: parsed.title.map(|s| super::bounded_server_text(&s, 200)),
         uploader: parsed.uploader.map(|s| super::bounded_server_text(&s, 128)),
         extractor: parsed.extractor.map(|s| super::bounded_server_text(&s, 64)),
+        ext: parsed.ext.map(|s| super::bounded_server_text(&s, 16)),
         thumbnail: parsed.thumbnail.filter(|t| {
             t.len() <= MAX_THUMBNAIL_DATA_URI && t.starts_with("data:image/")
         }),

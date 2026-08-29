@@ -24,7 +24,7 @@ import {
   type RailStage, type RunContext, type StepState,
 } from "@/lib/transcribeRun";
 import {
-  displayLabel, isSourceUrl, normalizeMediaUrl, urlHost, type UrlPreview,
+  displayLabel, formatLabel, isSourceUrl, normalizeMediaUrl, urlHost, type UrlPreview,
 } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
@@ -306,6 +306,7 @@ export default function Transcribe() {
         uploader: urlPreviewData.uploader ?? undefined,
         extractor: urlPreviewData.extractor ?? undefined,
         estimatedBytes: urlPreviewData.estimated_bytes ?? undefined,
+        format: formatLabel(urlPreviewData.ext, urlPreviewData.abr) ?? undefined,
       });
     }
     addFiles([url]);
@@ -643,6 +644,11 @@ export default function Transcribe() {
                         ≈ {fmtBytes(urlPreviewData.estimated_bytes)}
                       </span>
                     )}
+                  {formatLabel(urlPreviewData.ext, urlPreviewData.abr) && (
+                    <span className="font-mono tabular-nums">
+                      {safeDisplayText(formatLabel(urlPreviewData.ext, urlPreviewData.abr)!, 32)}
+                    </span>
+                  )}
                   {urlPreviewData.extractor && (
                     <span className="rounded-pill bg-accent-soft px-2 py-px font-mono text-[10.5px] uppercase tracking-label text-accent">
                       {safeDisplayText(urlPreviewData.extractor, 24)}
@@ -1164,12 +1170,18 @@ export default function Transcribe() {
                     : st !== "downloading" && state === "done" && audioDur && stageElapsedMs
                       ? audioDur / (stageElapsedMs / 1000)
                       : null;
-                // Download throughput (bytes/s) once the rate is stable.
+                // Download throughput over the ACTUAL transfer window (the
+                // row clock folds resolving + model load in — right for
+                // elapsed, poison for byte rates), once the rate is stable.
+                const dlElapsedMs =
+                  st === "downloading" && meta?.dlStart
+                    ? (state === "done" && time?.end ? time.end : now) - meta.dlStart
+                    : stageElapsedMs;
                 const dlSpeed =
                   st === "downloading" && state === "active" &&
                   typeof frac === "number" && progress?.totalBytes &&
-                  stageElapsedMs && stageElapsedMs > 2000
-                    ? (frac * progress.totalBytes) / (stageElapsedMs / 1000)
+                  dlElapsedMs && dlElapsedMs > 2000
+                    ? (frac * progress.totalBytes) / (dlElapsedMs / 1000)
                     : null;
                 // Live total, else the preview's estimate (marked "~").
                 const dlTotal = st === "downloading" ? progress?.totalBytes ?? null : null;
@@ -1180,7 +1192,9 @@ export default function Transcribe() {
                 const dlBytes =
                   st === "downloading" && state === "done" ? meta?.bytes ?? null : null;
                 const dlAvg =
-                  dlBytes && stageElapsedMs ? dlBytes / (stageElapsedMs / 1000) : null;
+                  dlBytes && dlElapsedMs && dlElapsedMs > 0
+                    ? dlBytes / (dlElapsedMs / 1000)
+                    : null;
                 // VAD both halves: kept fraction from the live poll.
                 const vr =
                   st === "transcribing" && typeof progress?.vadRetained === "number"
@@ -1299,6 +1313,11 @@ export default function Transcribe() {
                             {st === "downloading" && extractorLabel && (
                               <span className="rounded-pill bg-accent-soft px-2 py-px font-mono text-[10px] uppercase tracking-label text-accent">
                                 {extractorLabel}
+                              </span>
+                            )}
+                            {st === "downloading" && panelUrlMeta?.format && (
+                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
+                                {safeDisplayText(panelUrlMeta.format, 32)}
                               </span>
                             )}
                             {meta?.model && (

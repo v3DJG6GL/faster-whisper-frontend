@@ -60,6 +60,11 @@ export interface StageMeta {
    *  download reported them — later stages' polls don't carry the field, so
    *  the done row's receipt ("21.8 MB · 3.6 MB/s avg") needs its own copy. */
   bytes?: number;
+  /** Download stage only: when the server FIRST reported stage=downloading.
+   *  The row's clock starts at request entry and folds resolving (and the
+   *  model load) in, which is right for elapsed but poisons byte rates —
+   *  21.8 MB over an 18s row is "1.1 MB/s" when the transfer took 4s. */
+  dlStart?: number;
 }
 
 /** Rough share of a run's wall time per stage — sizes the segments of the
@@ -215,6 +220,8 @@ interface TranscribeRunState {
     /** Preview's size estimate; the download row's total until the real
      *  total_bytes arrives. */
     estimatedBytes?: number;
+    /** "m4a · 128 kbps" — the audio format the download fetches. */
+    format?: string;
   }>;
   /** Options/overrides of the current or last run (rail layout + Retry). */
   lastOptions?: TranscribeOptions;
@@ -511,7 +518,7 @@ export function clearEdits(path: string) {
  *  response pops it — so it never overwrites a real stage (that flashed the
  *  rail to "Transcribe" at t=0 and back). Stage transitions stamp the
  *  wall-clock spans the rail shows as elapsed time. */
-function foldProgress(p: BatchProgress) {
+export function foldProgress(p: BatchProgress) {
   if (!p.stage || p.stage === "unknown") return;
   set((s) => {
     const now = Date.now();
@@ -525,7 +532,17 @@ function foldProgress(p: BatchProgress) {
       if (prev && stageTimes[prev] && !stageTimes[prev].end) {
         stageTimes[prev] = { ...stageTimes[prev], end: now };
       }
-      stageTimes[cur] = { start: now, ...stageTimes[cur], observed: true };
+      // Entering a stage whose clock is already CLOSED restarts it fresh.
+      // That closed clock is a phantom: the server's request-entry "waiting"
+      // maps onto the transcribe row, seeding a transcribing clock at t=0
+      // that the first real stage then stamps shut — resurrecting it here
+      // once transcription actually starts would freeze its stale span
+      // ("done · 11s" for a 3-minute transcribe, and a nonsense ×realtime).
+      const existing = stageTimes[cur];
+      stageTimes[cur] =
+        existing && !existing.end
+          ? { ...existing, observed: true }
+          : { start: now, observed: true };
     } else if (!stageTimes[cur]?.observed) {
       stageTimes = {
         ...stageTimes,
@@ -553,6 +570,14 @@ function foldProgress(p: BatchProgress) {
       stageMeta = {
         ...stageMeta,
         downloading: { ...stageMeta.downloading, bytes: p.totalBytes },
+      };
+    }
+    // Actual-transfer clock: the exact stage (not the folded rail row) —
+    // resolving polls must not start it.
+    if (p.stage === "downloading" && !stageMeta.downloading?.dlStart) {
+      stageMeta = {
+        ...stageMeta,
+        downloading: { ...stageMeta.downloading, dlStart: now },
       };
     }
     return { progress: p, stageTimes, stageMeta };

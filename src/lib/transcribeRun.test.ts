@@ -1,9 +1,10 @@
 // Pure-function coverage of the stage rail with the URL flow's new
 // "downloading" stage (railOf folding, ordering, weighting). The store/pump
 // side is exercised through the app; these guard the math.
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  activeRailIndex, overallFraction, railIndex, railOf, railStages, skippedStages,
+  activeRailIndex, foldProgress, overallFraction, railIndex, railOf, railStages,
+  skippedStages, useTranscribeRun,
 } from "./transcribeRun";
 import type { QueueItem } from "./transcribeRun";
 
@@ -88,6 +89,60 @@ describe("activeRailIndex", () => {
   });
   it("no progress at all → first stage", () => {
     expect(activeRailIndex(null, {}, stages)).toBe(0);
+  });
+});
+
+describe("foldProgress stage clocks (the phantom-transcribe regression)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
+  });
+  const at = (ms: number, stage: string, extra: object = {}) => {
+    vi.setSystemTime(100_000 + ms);
+    foldProgress({ stage, ...extra });
+  };
+
+  it("re-entering a closed stage restarts its clock (the request-entry" +
+     " 'waiting' seeds a transcribing clock the first real stage closes)", () => {
+    // The live-run sequence from the server log, in seconds:
+    at(0, "waiting");            // registry seed → phantom transcribing clock
+    at(11_000, "resolving");     // model loaded → phantom stamped SHUT (11s)
+    at(14_000, "downloading");
+    at(18_000, "separating");
+    at(147_000, "waiting");      // pre-transcribe semaphore → transcribe row
+    at(150_000, "transcribing");
+    at(353_000, "diarizing");
+    const t = useTranscribeRun.getState().stageTimes.transcribing!;
+    // NOT the phantom's 11s — the real ~3m 26s span (from the semaphore wait).
+    expect(t.start).toBe(100_000 + 147_000);
+    expect(t.end).toBe(100_000 + 353_000);
+  });
+
+  it("a normal linear run keeps first-start semantics (waiting time counts" +
+     " toward the transcribe row)", () => {
+    at(0, "separating");
+    at(60_000, "waiting");
+    at(63_000, "transcribing");
+    at(120_000, "diarizing");
+    const t = useTranscribeRun.getState().stageTimes.transcribing!;
+    expect(t.start).toBe(100_000 + 60_000);
+    expect(t.end).toBe(100_000 + 120_000);
+    expect(useTranscribeRun.getState().stageTimes.separating!.end).toBe(100_000 + 60_000);
+  });
+
+  it("stamps dlStart only on the exact downloading stage, never resolving", () => {
+    at(0, "resolving");
+    expect(useTranscribeRun.getState().stageMeta.downloading?.dlStart).toBeUndefined();
+    at(14_000, "downloading", { totalBytes: 21_800_000 });
+    at(15_000, "downloading", { totalBytes: 21_800_000 });
+    const dl = useTranscribeRun.getState().stageMeta.downloading!;
+    expect(dl.dlStart).toBe(100_000 + 14_000); // first downloading poll wins
+    expect(dl.bytes).toBe(21_800_000);
   });
 });
 

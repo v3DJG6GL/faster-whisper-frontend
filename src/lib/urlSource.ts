@@ -84,4 +84,14 @@ export interface UrlPreview {
   estimated_bytes?: number | null;
   /** data:image/… URI proxied through the backend, or null. */
   thumbnail?: string | null;
+  /** Container ext of the audio format the download would fetch ("m4a"). */
+  ext?: string | null;
+  /** Audio bitrate of that format, kbps. */
+  abr?: number | null;
+}
+
+/** "m4a · 128 kbps" — the download row's format chip, from preview fields. */
+export function formatLabel(ext?: string | null, abr?: number | null): string | null {
+  if (!ext) return null;
+  return abr ? `${ext} · ${Math.round(abr)} kbps` : ext;
 }
