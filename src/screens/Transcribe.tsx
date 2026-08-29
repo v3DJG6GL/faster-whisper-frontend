@@ -129,30 +129,61 @@ const AXIS_NAMES: Record<RailStage, string> = {
   diarizing: "speaker diarization",
 };
 
-/** Greedy left-to-right row assignment for the axis labels under the strip:
- *  a label keeps the top row when it fits inside its own segment and nothing
- *  before it overflows into its spot; otherwise it drops to the stagger row
- *  on a longer leader tick. `px` are segment widths, `labelPx` label widths. */
-function axisRows(px: number[], labelPx: number[]): number[] {
-  const rows: number[] = [];
+/** Measure an axis label's real pixel width in the app's mono face —
+ *  estimating from a per-character constant undershot the variable-metrics
+ *  fallback fonts and let labels overflow the card / collide with ticks. */
+let axisMeasureCtx: CanvasRenderingContext2D | null | undefined;
+function axisTextWidth(text: string): number {
+  if (axisMeasureCtx === undefined) {
+    axisMeasureCtx = document.createElement("canvas").getContext("2d");
+    if (axisMeasureCtx) {
+      const family =
+        getComputedStyle(document.documentElement)
+          .getPropertyValue("--font-mono")
+          .trim() || "monospace";
+      axisMeasureCtx.font = `10.5px ${family}`;
+    }
+  }
+  if (!axisMeasureCtx) return text.length * 7;
+  // tracking-[.03em] on the name line ≈ 0.32px per character.
+  return axisMeasureCtx.measureText(text).width + text.length * 0.32;
+}
+
+/** Greedy left-to-right layout for the axis labels under the strip. A label
+ *  keeps the top row when it fits inside its own segment and nothing before
+ *  it overflows into its spot; otherwise it drops to the stagger row on a
+ *  longer leader tick. A label that would run past the strip's right edge is
+ *  pulled left to end exactly at it (`offset` ≤ 0, applied relative to its
+ *  column). `px` are segment widths, `labelPx` measured label widths. */
+function axisLayout(
+  px: number[],
+  labelPx: number[],
+  totalW: number,
+): { row: 0 | 1; offset: number }[] {
+  const out: { row: 0 | 1; offset: number }[] = [];
   let x = 0;
   let topEnd = -Infinity;
   let dropEnd = -Infinity;
   px.forEach((w, i) => {
-    const fitsOwn = labelPx[i] <= w - 2 || i === px.length - 1;
-    if (fitsOwn && x >= topEnd) {
-      rows.push(0);
-      topEnd = x + labelPx[i] + 12;
-    } else if (x >= dropEnd) {
-      rows.push(1);
-      dropEnd = x + labelPx[i] + 12;
+    // Clamp so the label never crosses the strip's right edge.
+    const xl = Math.min(x, Math.max(totalW - labelPx[i], 0));
+    const clamped = xl < x - 0.5;
+    const fitsOwn = (labelPx[i] <= w - 2 || i === px.length - 1) && !clamped;
+    let row: 0 | 1;
+    if (fitsOwn && xl >= topEnd) {
+      row = 0;
+      topEnd = xl + labelPx[i] + 16;
+    } else if (xl >= dropEnd) {
+      row = 1;
+      dropEnd = xl + labelPx[i] + 16;
     } else {
-      rows.push(0);
-      topEnd = x + labelPx[i] + 12;
+      row = 0;
+      topEnd = xl + labelPx[i] + 16;
     }
+    out.push({ row, offset: xl - x });
     x += w + 2;
   });
-  return rows;
+  return out;
 }
 
 /** Remaining-time estimate in ms: linear projection from the current rate,
@@ -1110,11 +1141,15 @@ export default function Transcribe() {
           }
           return { name, dur, extra };
         });
-        const axisRowOf = axisRows(
+        const axisPos = axisLayout(
           segPx,
           axisLabels.map((l) =>
-            Math.max(l.name.length, l.dur.length + l.extra.length + 1) * 6.4 + 4));
-        const hasDrop = axisRowOf.includes(1);
+            Math.max(
+              axisTextWidth(l.name),
+              axisTextWidth(l.extra ? `${l.dur} ${l.extra}` : l.dur),
+            ) + 3),
+          stripW);
+        const hasDrop = axisPos.some((p) => p.row === 1);
         return (
           <Card className="mt-4 px-5 py-4">
             <div className="flex items-center gap-3">
@@ -1159,18 +1194,17 @@ export default function Transcribe() {
               {timeline.map((e) => (
                 <div
                   key={e.stage}
-                  className={cn(
-                    "relative min-w-[5px] overflow-hidden rounded-pill transition-[flex-grow] duration-500 motion-reduce:transition-none",
-                    e.state !== "pending" && "bg-surface-2",
-                    e.state === "pending" && "border border-dashed border-line-strong",
-                  )}
+                  className="relative min-w-[5px] overflow-hidden rounded-pill bg-surface-2 transition-[flex-grow] duration-500 motion-reduce:transition-none"
                   style={{
                     flexGrow: e.ms,
                     flexBasis: 0,
+                    // Ghost = estimate: a clean hard-stop hatch on the track
+                    // color. (A dashed border inside a 7px pill turned the
+                    // pattern to mush — crisp beats ornate here.)
                     ...(e.state === "pending"
                       ? {
-                          background:
-                            "repeating-linear-gradient(-45deg, var(--c-line) 0 3px, transparent 3px 6px)",
+                          backgroundImage:
+                            "repeating-linear-gradient(-45deg, var(--c-line-strong) 0 2px, transparent 2px 6px)",
                         }
                       : {}),
                   }}
@@ -1192,7 +1226,7 @@ export default function Transcribe() {
             </div>
             <div className={cn("mt-[5px] flex gap-0.5", hasDrop ? "h-[76px]" : "h-11")}>
               {timeline.map((e, i) => {
-                const drop = axisRowOf[i] === 1;
+                const drop = axisPos[i].row === 1;
                 const l = axisLabels[i];
                 return (
                   <div
@@ -1210,10 +1244,10 @@ export default function Transcribe() {
                     />
                     <div
                       className={cn(
-                        "absolute left-0 whitespace-nowrap font-mono text-[10.5px] leading-[1.55] tabular-nums",
+                        "absolute whitespace-nowrap font-mono text-[10.5px] leading-[1.55] tabular-nums",
                         e.state === "pending" && "opacity-60",
                       )}
-                      style={{ top: drop ? 41 : 9 }}
+                      style={{ top: drop ? 41 : 9, left: axisPos[i].offset }}
                     >
                       <div
                         className={cn(
