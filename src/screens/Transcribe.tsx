@@ -304,6 +304,8 @@ export default function Transcribe() {
         title: urlPreviewData.title ?? undefined,
         durationSec: urlPreviewData.duration ?? undefined,
         uploader: urlPreviewData.uploader ?? undefined,
+        extractor: urlPreviewData.extractor ?? undefined,
+        estimatedBytes: urlPreviewData.estimated_bytes ?? undefined,
       });
     }
     addFiles([url]);
@@ -945,31 +947,61 @@ export default function Transcribe() {
         {!isTauri && <span className="text-[12px] text-faint">Available in the desktop app.</span>}
       </div>
 
-      {busy && (() => {
+      {(() => {
         // Run-detail panel (per the approved design canvas): identity plus an
         // overall pipeline bar segmented at the stage boundaries, then one
         // instrumented row per stage — %, elapsed, ~left, throughput, model +
         // device chips, the decoder's live tail, and the diarizer's current
         // step. "unknown" polls never overwrite a known stage, so the panel
         // only ever moves forward; until the first poll answers, the first
-        // stage counts as active.
+        // stage counts as active. After the run it settles into a completed
+        // state: every row a receipt, until the input changes.
+        const lastSettled =
+          [...queue].reverse().find((it) => it.status === "done" || it.status === "failed") ?? null;
+        const complete =
+          !busy && lastSettled?.status === "done" && Object.keys(stageTimes).length > 0;
+        if (!busy && !complete) return null;
         const runningItem = queue.find((it) => it.status === "running") ?? null;
+        const panelItem = runningItem ?? (complete ? lastSettled : null);
         // URL items prepend a Download stage to the rail (per-item, so file
         // items in the same run never show it).
         const forUrl =
-          runningItem?.kind === "url" ||
-          (runningItem ? isSourceUrl(runningItem.path) : false);
+          panelItem?.kind === "url" ||
+          (panelItem ? isSourceUrl(panelItem.path) : false);
         const stages = railStages(lastOptions, forUrl);
-        const active = progress?.stage ? railIndex(progress.stage, stages) : 0;
+        const active = complete
+          ? stages.length
+          : progress?.stage ? railIndex(progress.stage, stages) : 0;
         // Requested stages the server jumped over (feature disabled there) —
         // shown as "skipped", never as done, and worth no progress credit.
         const skipped = skippedStages({ progress, stageTimes, lastOptions, forUrl });
         const now = Date.now();
         const fileIdx = queue.findIndex((it) => it.status === "running");
-        const overall = overallFraction({ queue, progress, stageTimes, lastOptions, forUrl }) ?? 0;
+        const overall = complete
+          ? 1
+          : overallFraction({ queue, progress, stageTimes, lastOptions, forUrl }) ?? 0;
         const starts = Object.values(stageTimes).map((t) => t.start);
-        const runElapsed = starts.length ? now - Math.min(...starts) : 0;
-        const audioDur = progress?.duration ?? null;
+        const ends = Object.values(stageTimes).map((t) => t.end ?? t.start);
+        const runElapsed = starts.length
+          ? (complete ? Math.max(...ends) : now) - Math.min(...starts)
+          : 0;
+        const audioDur =
+          progress?.duration ??
+          panelItem?.result?.duration ??
+          (panelItem ? urlMeta[panelItem.path]?.durationSec : undefined) ??
+          null;
+        // Whole-run realtime factor for the completed header's story line.
+        const overallRt =
+          complete && audioDur && runElapsed > 0
+            ? audioDur / (runElapsed / 1000)
+            : null;
+        const panelUrlMeta = panelItem ? urlMeta[panelItem.path] : undefined;
+        const extractorLabel = panelUrlMeta?.extractor
+          ? panelUrlMeta.extractor === "Generic"
+            ? "direct link"
+            : safeDisplayText(panelUrlMeta.extractor, 24)
+          : null;
+        const speakerCount = panelItem?.result?.speakers?.length ?? 0;
         const doneItems = queue.filter((it) => it.status === "done");
         const queuedCount = queue.filter((it) => it.status === "queued").length;
         // Whole-run estimate: the current file's projection plus the average
@@ -988,33 +1020,41 @@ export default function Transcribe() {
         return (
           <Card className="mt-4 px-5 py-4">
             <div className="flex items-center gap-3">
-              {forUrl ? (
+              {complete ? (
+                <Check className="size-[18px] shrink-0 text-ok" />
+              ) : forUrl ? (
                 <Link2 className="size-[18px] shrink-0 text-accent" />
               ) : (
                 <FileAudio className="size-[18px] shrink-0 text-accent" />
               )}
               <span className="min-w-0 truncate text-[13.5px] font-medium text-text">
-                {runningItem
-                  ? displayLabel(runningItem.path, runningItem.title ?? urlMeta[runningItem.path]?.title)
+                {panelItem
+                  ? displayLabel(panelItem.path, panelItem.title ?? panelUrlMeta?.title)
                   : "Preparing…"}
               </span>
-              {forUrl && runningItem && (
+              {forUrl && panelItem && (
                 <span className="shrink-0 font-mono text-[11px] text-faint">
-                  {urlHost(runningItem.path)}
+                  {urlHost(panelItem.path)}
                 </span>
               )}
-              {audioDur ? (
+              {!complete && audioDur ? (
                 <span className="shrink-0 font-mono text-[11px] text-faint">
                   {fmtDurationExact(audioDur)} audio
                 </span>
               ) : null}
               <span className="flex-1" />
-              <span className="font-mono text-[18px] font-medium tabular-nums text-accent">
-                {Math.round(overall * 100)}%
-              </span>
-              <Button variant="default" size="sm" onClick={cancelRun}>
-                Cancel
-              </Button>
+              {complete ? (
+                <span className="font-mono text-[18px] font-medium text-ok">done</span>
+              ) : (
+                <>
+                  <span className="font-mono text-[18px] font-medium tabular-nums text-accent">
+                    {Math.round(overall * 100)}%
+                  </span>
+                  <Button variant="default" size="sm" onClick={cancelRun}>
+                    Cancel
+                  </Button>
+                </>
+              )}
             </div>
 
             <div className="mt-3.5 flex gap-1">
@@ -1061,8 +1101,25 @@ export default function Transcribe() {
                 {queue.length > 1 && fileIdx >= 0 ? `file ${fileIdx + 1} of ${queue.length}` : "\u00a0"}
               </span>
               <span>
-                elapsed <span className="text-dim">{fmtElapsed(runElapsed)}</span>
-                {curLeft !== null ? <> · <span className="text-text">{aboutLeft(curLeft)}</span></> : null}
+                {complete ? (
+                  <span className="text-dim">
+                    {audioDur
+                      ? `${fmtDurationExact(audioDur)} audio → transcript in ${fmtElapsed(runElapsed)}`
+                      : `finished in ${fmtElapsed(runElapsed)}`}
+                    {overallRt ? (
+                      <> · <span className="text-text">{overallRt.toFixed(1)}× realtime overall</span></>
+                    ) : null}
+                  </span>
+                ) : (
+                  <>
+                    elapsed <span className="text-dim">{fmtElapsed(runElapsed)}</span>
+                    {curLeft !== null ? (
+                      <> · <span className="text-text">{aboutLeft(curLeft)}</span></>
+                    ) : (
+                      <> · <span className="text-dim">estimating…</span></>
+                    )}
+                  </>
+                )}
               </span>
             </div>
 
@@ -1086,6 +1143,10 @@ export default function Transcribe() {
                 // Metadata probe before the download starts — folds onto the
                 // Download row as a suffix (railOf maps it there).
                 const resolving = state === "active" && progress?.stage === "resolving";
+                // Backend transcodes non-wav/flac input for the separator
+                // (step=preparing) — show that minute as work, not silence.
+                const preparing =
+                  st === "separating" && state === "active" && progress?.step === "preparing";
                 const time = stageTimes[st];
                 const meta = stageMeta[st];
                 const stageElapsedMs =
@@ -1110,6 +1171,22 @@ export default function Transcribe() {
                   stageElapsedMs && stageElapsedMs > 2000
                     ? (frac * progress.totalBytes) / (stageElapsedMs / 1000)
                     : null;
+                // Live total, else the preview's estimate (marked "~").
+                const dlTotal = st === "downloading" ? progress?.totalBytes ?? null : null;
+                const dlEst =
+                  st === "downloading" && !dlTotal ? panelUrlMeta?.estimatedBytes ?? null : null;
+                // Done-row receipt: final bytes captured while the download
+                // reported them, and the average rate over the stage.
+                const dlBytes =
+                  st === "downloading" && state === "done" ? meta?.bytes ?? null : null;
+                const dlAvg =
+                  dlBytes && stageElapsedMs ? dlBytes / (stageElapsedMs / 1000) : null;
+                // VAD both halves: kept fraction from the live poll.
+                const vr =
+                  st === "transcribing" && typeof progress?.vadRetained === "number"
+                    ? progress.vadRetained
+                    : null;
+                const vadWarn = vr !== null && vr < 0.3;
                 return (
                   <div
                     key={st}
@@ -1161,9 +1238,19 @@ export default function Transcribe() {
                           {resolving && (
                             <span className="font-normal text-faint"> — resolving link…</span>
                           )}
+                          {preparing && (
+                            <span className="font-normal text-faint"> — preparing audio…</span>
+                          )}
                         </span>
                         <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
-                          {state === "done" && "done"}
+                          {state === "done" && (
+                            <>
+                              <span className="text-ok">done</span>
+                              {stageElapsedMs !== null
+                                ? ` · ${fmtElapsed(stageElapsedMs)}`
+                                : ""}
+                            </>
+                          )}
                           {state === "skipped" && <span className="text-warn">skipped</span>}
                           {frac !== null && (
                             <span className="text-text">{Math.round(frac * 100)}%</span>
@@ -1174,9 +1261,12 @@ export default function Transcribe() {
                           {st === "transcribing" && state === "active" && progress?.position && audioDur
                             ? ` · ${fmtDurationExact(progress.position)} of ${fmtDurationExact(audioDur)} audio`
                             : ""}
-                          {st === "downloading" && state === "active" &&
-                          typeof frac === "number" && progress?.totalBytes
-                            ? ` · ${fmtBytes(frac * progress.totalBytes)} of ${fmtBytes(progress.totalBytes)}`
+                          {st === "downloading" && state === "active" && typeof frac === "number"
+                            ? dlTotal
+                              ? ` · ${fmtBytes(frac * dlTotal)} of ${fmtBytes(dlTotal)}`
+                              : dlEst
+                                ? ` · of ~${fmtBytes(dlEst)}`
+                                : ""
                             : ""}
                         </span>
                       </div>
@@ -1199,9 +1289,18 @@ export default function Transcribe() {
                           />
                         </div>
                       )}
-                      {(meta || stageElapsedMs !== null) && (
+                      {(meta || stageElapsedMs !== null ||
+                        (st === "downloading" && extractorLabel)) && (
                         <div className="mt-2 flex items-center justify-between gap-3">
                           <span className="flex flex-wrap gap-1.5">
+                            {/* Source pill: the extractor that resolved the
+                                link travels with the run (Generic reads as
+                                "direct link"). */}
+                            {st === "downloading" && extractorLabel && (
+                              <span className="rounded-pill bg-accent-soft px-2 py-px font-mono text-[10px] uppercase tracking-label text-accent">
+                                {extractorLabel}
+                              </span>
+                            )}
                             {meta?.model && (
                               <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
                                 {safeDisplayText(meta.model)}
@@ -1218,38 +1317,92 @@ export default function Transcribe() {
                                 {meta.compute ? ` · ${safeDisplayText(meta.compute)}` : ""}
                               </span>
                             )}
-                            {/* VAD receipt: how much audio survived silence
-                                skipping. Quiet when healthy; loud when the
-                                filter ate the file (the finished-run notice
-                                then offers the one-click fix). */}
-                            {st === "transcribing" &&
-                              typeof progress?.vadRetained === "number" && (
-                                <span
-                                  className={cn(
-                                    "rounded-md px-2 py-0.5 font-mono text-[10.5px]",
-                                    progress.vadRetained < 0.3
-                                      ? "bg-warn/10 text-warn"
-                                      : "bg-surface-2 text-dim",
-                                  )}
-                                >
-                                  silence skipped · kept{" "}
-                                  {audioDur ? `${fmtDurationExact(audioDur * progress.vadRetained)} ` : ""}
-                                  ({Math.round(progress.vadRetained * 100)}%)
+                            {/* Receipts: a finished stage keeps its evidence
+                                as metric chips — number emphasized, no live
+                                leftovers. */}
+                            {state === "done" && dlBytes ? (
+                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
+                                <span className="font-medium text-text">{fmtBytes(dlBytes)}</span>
+                              </span>
+                            ) : null}
+                            {state === "done" && dlAvg ? (
+                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
+                                <span className="font-medium text-text">{fmtBytes(dlAvg)}/s</span> avg
+                              </span>
+                            ) : null}
+                            {state === "done" && st === "separating" && (
+                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
+                                vocals isolated
+                              </span>
+                            )}
+                            {state === "done" && speed ? (
+                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
+                                <span className="font-medium text-text">{speed.toFixed(1)}×</span> realtime avg
+                              </span>
+                            ) : null}
+                            {/* VAD receipt on the finished row: the win (or
+                                the warning) in one chip; the live run shows
+                                the split bar below instead. */}
+                            {state === "done" && vr !== null && audioDur && vr < 0.999 && (
+                              vadWarn ? (
+                                <span className="rounded-md bg-warn/10 px-2 py-0.5 font-mono text-[10.5px] text-warn">
+                                  kept {Math.round(vr * 100)}% — mostly silence
                                 </span>
-                              )}
+                              ) : (
+                                <span className="rounded-md bg-ok/10 px-2 py-0.5 font-mono text-[10.5px] text-ok">
+                                  {fmtDurationExact(audioDur * (1 - vr))} silence skipped
+                                </span>
+                              )
+                            )}
+                            {state === "done" && st === "diarizing" && speakerCount > 0 && (
+                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
+                                <span className="font-medium text-text">{speakerCount}</span>
+                                {speakerCount === 1 ? " speaker" : " speakers"}
+                              </span>
+                            )}
                           </span>
-                          <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
-                            {stageElapsedMs !== null
-                              ? state === "done"
-                                ? fmtElapsed(stageElapsedMs)
-                                : `running ${fmtElapsed(stageElapsedMs)}`
-                              : ""}
-                            {speed ? ` · ${speed.toFixed(1)}× realtime` : ""}
-                            {dlSpeed ? ` · ${fmtBytes(dlSpeed)}/s` : ""}
-                            {stageLeft !== null ? ` · ${aboutLeft(stageLeft)}` : ""}
-                          </span>
+                          {state !== "done" && (
+                            <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
+                              {stageElapsedMs !== null ? `running ${fmtElapsed(stageElapsedMs)}` : ""}
+                              {speed ? ` · ${speed.toFixed(1)}× realtime` : ""}
+                              {dlSpeed ? ` · ${fmtBytes(dlSpeed)}/s` : ""}
+                              {stageLeft !== null ? ` · ${aboutLeft(stageLeft)}` : ""}
+                            </span>
+                          )}
                         </div>
                       )}
+                      {/* VAD split bar (live): the whole timeline — solid
+                          kept audio, hatched removed silence — with both
+                          halves spelled out. */}
+                      {state === "active" && vr !== null && audioDur ? (
+                        <div className="mt-2">
+                          <div className="flex h-1.5 gap-0.5">
+                            <div
+                              className="rounded-pill bg-ok/80"
+                              style={{ width: `${Math.max(2, Math.round(vr * 100))}%` }}
+                            />
+                            {vr < 0.995 && (
+                              <div
+                                className="rounded-pill"
+                                style={{
+                                  width: `${Math.max(2, Math.round((1 - vr) * 100))}%`,
+                                  background:
+                                    "repeating-linear-gradient(-45deg, var(--c-line-strong) 0 3px, transparent 3px 6px)",
+                                }}
+                              />
+                            )}
+                          </div>
+                          <div className="mt-1 flex items-baseline justify-between font-mono text-[10.5px] tabular-nums">
+                            <span className={vadWarn ? "text-warn" : "text-faint"}>
+                              <span className={vadWarn ? undefined : "text-ok"}>
+                                kept {fmtDurationExact(audioDur * vr)} ({Math.round(vr * 100)}%)
+                              </span>
+                              {" · "}skipped {fmtDurationExact(audioDur * (1 - vr))} silence
+                            </span>
+                            <span className="text-faint">VAD</span>
+                          </div>
+                        </div>
+                      ) : null}
                       {st === "transcribing" && state === "active" && progress?.lastText && (
                         <div className="mt-2 flex items-center gap-2.5 rounded-lg bg-surface-2/60 px-3 py-1.5">
                           <span className="size-[7px] shrink-0 rounded-full bg-live" />

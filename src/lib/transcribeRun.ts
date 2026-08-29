@@ -56,6 +56,10 @@ export interface StageMeta {
   model?: string;
   device?: string;
   compute?: string;
+  /** Download stage only: the media's total bytes, captured while the
+   *  download reported them — later stages' polls don't carry the field, so
+   *  the done row's receipt ("21.8 MB · 3.6 MB/s avg") needs its own copy. */
+  bytes?: number;
 }
 
 /** Rough share of a run's wall time per stage — sizes the segments of the
@@ -182,7 +186,17 @@ interface TranscribeRunState {
   /** Link metadata by URL key (title/duration/uploader from the preview) —
    *  labels queue rows and survives resetForInputChange (re-adding the same
    *  link keeps its name). */
-  urlMeta: Record<string, { title?: string; durationSec?: number; uploader?: string }>;
+  urlMeta: Record<string, {
+    title?: string;
+    durationSec?: number;
+    uploader?: string;
+    /** yt-dlp extractor key from the preview ("Youtube", "Generic", …) —
+     *  shown as the run panel's source pill. */
+    extractor?: string;
+    /** Preview's size estimate; the download row's total until the real
+     *  total_bytes arrives. */
+    estimatedBytes?: number;
+  }>;
   /** Options/overrides of the current or last run (rail layout + Retry). */
   lastOptions?: TranscribeOptions;
   lastOverrides: DecodeOverrides;
@@ -249,7 +263,7 @@ export function resetForInputChange() {
   });
 }
 
-export function setUrlMeta(url: string, meta: { title?: string; durationSec?: number; uploader?: string }) {
+export function setUrlMeta(url: string, meta: TranscribeRunState["urlMeta"][string]) {
   set((s) => ({ urlMeta: { ...s.urlMeta, [url]: { ...s.urlMeta[url], ...meta } } }));
 }
 
@@ -507,10 +521,19 @@ function foldProgress(p: BatchProgress) {
       stageMeta = {
         ...stageMeta,
         [cur]: {
+          ...stageMeta[cur],
           model: p.model,
           device: p.device ?? undefined,
           compute: p.compute ?? undefined,
         },
+      };
+    }
+    // The download's total bytes live only in downloading-stage polls; copy
+    // them into the stage's meta so the done row can show its receipt.
+    if (cur === "downloading" && typeof p.totalBytes === "number" && p.totalBytes > 0) {
+      stageMeta = {
+        ...stageMeta,
+        downloading: { ...stageMeta.downloading, bytes: p.totalBytes },
       };
     }
     return { progress: p, stageTimes, stageMeta };
@@ -618,7 +641,24 @@ async function pump(
       } finally {
         activeCancel = null;
         if (poller !== undefined) window.clearInterval(poller);
-        if (epoch === get().epoch) set({ progress: null, stageTimes: {}, stageMeta: {} });
+        if (epoch === get().epoch) {
+          if (get().queue.some((it) => it.status === "queued")) {
+            set({ progress: null, stageTimes: {}, stageMeta: {} });
+          } else {
+            // Last file of the run: KEEP the rail data — the panel settles
+            // into its completed-receipts state (per the approved design)
+            // until the input changes. Just close any still-open clocks.
+            const doneAt = Date.now();
+            set((s) => ({
+              stageTimes: Object.fromEntries(
+                Object.entries(s.stageTimes).map(([k, t]) => [
+                  k,
+                  t.end ? t : { ...t, end: doneAt },
+                ]),
+              ) as TranscribeRunState["stageTimes"],
+            }));
+          }
+        }
       }
     }
   } finally {
