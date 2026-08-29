@@ -255,7 +255,24 @@ export default function Transcribe() {
   const [vadNoticeDismissed, setVadNoticeDismissed] = useState<string | null>(null);
   // Per-run stage options, seeded from the persisted screen defaults.
   const [diarize, setDiarize] = useState(() => settings.transcribe?.diarize ?? false);
-  const [numSpeakers, setNumSpeakers] = useState(() => settings.transcribe?.numSpeakers ?? 0);
+  // Speaker count as an explicit MODE (auto / count / range) instead of a
+  // stepper whose 0 doubles as "auto" — one accidental "−" click used to flip
+  // the mode silently and persist. Legacy blobs have no speakerMode: a pinned
+  // numSpeakers means "count" there.
+  const [speakerMode, setSpeakerMode] = useState<"auto" | "count" | "range">(() => {
+    const t = settings.transcribe;
+    if (t?.speakerMode) return t.speakerMode;
+    return (t?.numSpeakers ?? 0) > 0 ? "count" : "auto";
+  });
+  const [numSpeakers, setNumSpeakers] = useState(() =>
+    Math.min(32, Math.max(1, settings.transcribe?.numSpeakers || 2)),
+  );
+  const [minSpeakers, setMinSpeakers] = useState(() =>
+    Math.min(32, Math.max(1, settings.transcribe?.minSpeakers || 2)),
+  );
+  const [maxSpeakers, setMaxSpeakers] = useState(() =>
+    Math.min(32, Math.max(1, settings.transcribe?.maxSpeakers || 4)),
+  );
   const [translate, setTranslate] = useState(() => settings.transcribe?.translate ?? false);
   const [separateBgm, setSeparateBgm] = useState(() => settings.transcribe?.separateBgm ?? false);
   // Per-RUN decode overrides layered over the Backend's stored defaults —
@@ -484,7 +501,11 @@ export default function Transcribe() {
               ? { task: "translate" as const, useTranslationsEndpoint: isStandard }
               : {}),
             ...(diarize && diarAvailable && !isStandard
-              ? { diarize: true, ...(numSpeakers > 0 ? { numSpeakers } : {}) }
+              ? {
+                  diarize: true,
+                  ...(speakerMode === "count" ? { numSpeakers } : {}),
+                  ...(speakerMode === "range" ? { minSpeakers, maxSpeakers } : {}),
+                }
               : {}),
             ...(separateBgm && bgmAvailable && !isStandard ? { separateBgm: true } : {}),
           }
@@ -950,24 +971,67 @@ export default function Transcribe() {
                   <div className="flex items-center gap-4">
                     {diarize && diarAvailable && (
                       <div className="flex items-center gap-2">
-                        {/* Anything above 0 pins the count for every future
-                            run (it persists) — say so right at the control. */}
-                        {numSpeakers > 0 && (
-                          <span className="font-mono text-[10.5px] text-warn">
-                            fixed — auto-detect off
-                          </span>
+                        {/* Steppers grow INWARD (left of the segment) so the
+                            control just clicked never moves — the segment and
+                            the toggle keep their x-position in every mode. */}
+                        {speakerMode === "count" && (
+                          <Stepper
+                            value={numSpeakers}
+                            onChange={(v) => {
+                              setNumSpeakers(v);
+                              persistOptions({ numSpeakers: v });
+                            }}
+                            min={1}
+                            max={32}
+                            ariaLabel="Speaker count"
+                          />
                         )}
-                        <span className="text-[12px] text-dim">Speakers</span>
-                        <Stepper
-                          value={numSpeakers}
-                          onChange={(v) => {
-                            setNumSpeakers(v);
-                            persistOptions({ numSpeakers: v });
+                        {speakerMode === "range" && (
+                          <>
+                            <Stepper
+                              value={minSpeakers}
+                              onChange={(v) => {
+                                const mx = Math.max(v, maxSpeakers);
+                                setMinSpeakers(v);
+                                setMaxSpeakers(mx);
+                                persistOptions({ minSpeakers: v, maxSpeakers: mx });
+                              }}
+                              min={1}
+                              max={32}
+                              ariaLabel="Minimum speakers"
+                            />
+                            <span className="text-[12px] text-dim">to</span>
+                            <Stepper
+                              value={maxSpeakers}
+                              onChange={(v) => {
+                                const mn = Math.min(v, minSpeakers);
+                                setMaxSpeakers(v);
+                                setMinSpeakers(mn);
+                                persistOptions({ maxSpeakers: v, minSpeakers: mn });
+                              }}
+                              min={1}
+                              max={32}
+                              ariaLabel="Maximum speakers"
+                            />
+                          </>
+                        )}
+                        <Segmented
+                          value={speakerMode}
+                          onChange={(m) => {
+                            setSpeakerMode(m);
+                            // numSpeakers keeps its pre-mode meaning on disk
+                            // (0 = auto) so old sync peers read it right.
+                            persistOptions({
+                              speakerMode: m,
+                              numSpeakers: m === "count" ? numSpeakers : 0,
+                            });
                           }}
-                          min={0}
-                          max={32}
-                          zeroLabel="auto"
-                          ariaLabel="Expected speakers"
+                          options={[
+                            { value: "auto", label: "Auto" },
+                            { value: "count", label: "Count" },
+                            { value: "range", label: "Range" },
+                          ]}
+                          ariaLabel="Speaker count mode"
                         />
                       </div>
                     )}
@@ -1572,16 +1636,19 @@ export default function Transcribe() {
                                 {speakerCount === 1 ? " speaker" : " speakers"}
                               </span>
                             )}
-                            {/* A manually fixed speaker count silently overrides
-                                detection for every run — one accidental Stepper
-                                click once cost a day of "diarization is broken".
-                                Surface it as a warning receipt, live and done. */}
+                            {/* Neutral receipt of a user-chosen speaker mode —
+                                documents what the run did, same tone as every
+                                other rail meta (the choice is explicit in the
+                                Auto/Count/Range segment now, so no warning). */}
                             {st === "diarizing" &&
                               state !== "pending" &&
                               state !== "skipped" &&
-                              (lastOptions?.numSpeakers ?? 0) > 0 && (
-                                <span className="rounded-md bg-warn/10 px-2 py-0.5 font-mono text-[10.5px] text-warn">
-                                  count fixed to {lastOptions?.numSpeakers} — Speakers isn't on auto
+                              ((lastOptions?.numSpeakers ?? 0) > 0 ||
+                                (lastOptions?.minSpeakers ?? 0) > 0) && (
+                                <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
+                                  {(lastOptions?.numSpeakers ?? 0) > 0
+                                    ? `count set to ${lastOptions?.numSpeakers}`
+                                    : `range ${lastOptions?.minSpeakers}–${lastOptions?.maxSpeakers}`}
                                 </span>
                               )}
                           </span>

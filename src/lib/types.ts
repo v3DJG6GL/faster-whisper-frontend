@@ -252,8 +252,18 @@ export interface TranscribeSettings {
   model?: string;
   language?: string;
   diarize?: boolean;
-  /** Speaker-count hint; 0 = auto (let the pipeline decide). */
+  /** How the speaker count reaches diarization: detect it, pin an exact
+   *  count, or bound it to a min–max range. Absent = legacy blobs — then
+   *  numSpeakers > 0 means "count", else "auto". */
+  speakerMode?: "auto" | "count" | "range";
+  /** Speaker-count hint; 0 = auto (let the pipeline decide). Kept 0 unless
+   *  speakerMode is "count" so pre-mode versions of the app (and old sync
+   *  peers) read the same meaning they always did. */
   numSpeakers?: number;
+  /** Range-mode bounds (server min_speakers/max_speakers). Remembered even
+   *  while another mode is active; only sent when speakerMode is "range". */
+  minSpeakers?: number;
+  maxSpeakers?: number;
   translate?: boolean;
   separateBgm?: boolean;
   exportFormat?: "txt" | "srt" | "vtt" | "lrc" | "json";

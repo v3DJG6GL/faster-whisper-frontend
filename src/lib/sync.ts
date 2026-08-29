@@ -777,6 +777,14 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
   if (typeof spk === "number" && Number.isFinite(spk)) {
     out.numSpeakers = Math.max(0, Math.min(32, Math.round(spk)));
   }
+  const mode = ownProp(v, "speakerMode");
+  if (mode === "auto" || mode === "count" || mode === "range") out.speakerMode = mode;
+  for (const k of ["minSpeakers", "maxSpeakers"] as const) {
+    const n = ownProp(v, k);
+    if (typeof n === "number" && Number.isFinite(n)) {
+      out[k] = Math.max(1, Math.min(32, Math.round(n)));
+    }
+  }
   const fmt = ownProp(v, "exportFormat");
   if (fmt === "srt" || fmt === "vtt" || fmt === "txt" || fmt === "lrc" || fmt === "json") {
     out.exportFormat = fmt;

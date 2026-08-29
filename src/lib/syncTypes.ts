@@ -120,7 +120,10 @@ export interface SyncAppRules {
  *  speakerColorMode is legacy (superseded by the display toggles), local. */
 export const TRANSCRIPTION_FIELDS = [
   "diarize",
+  "speakerMode",
   "numSpeakers",
+  "minSpeakers",
+  "maxSpeakers",
   "translate",
   "separateBgm",
   "exportFormat",
