@@ -6,8 +6,9 @@
 
 import { create } from "zustand";
 import {
-  deleteTranscriptRecord, listTranscriptRecords, saveTranscriptRecord,
+  audioBasePref, deleteTranscriptRecord, listTranscriptRecords, saveTranscriptRecord,
 } from "./api";
+import { useApp } from "./store";
 import type { BatchResult, TranscribeOptions } from "./types";
 import { applyTextEdits } from "./wordAlign";
 
@@ -176,8 +177,8 @@ export function deleteRecord(id: string): void {
   useTranscriptHistory.setState((s) => ({
     records: s.records.filter((r) => r.id !== id),
   }));
-  void deleteTranscriptRecord(id).catch((e) =>
-    console.error("history delete failed:", e),
+  void deleteTranscriptRecord(id, audioBasePref(useApp.getState().settings.recording)).catch(
+    (e) => console.error("history delete failed:", e),
   );
 }
 

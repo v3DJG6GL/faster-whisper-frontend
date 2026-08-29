@@ -266,7 +266,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
 
       <div className="mt-3 flex flex-col gap-2">
         <Notice>
-          Machine-specific settings (microphone, recordings folder, evdev) are never imported.
+          Machine-specific settings (microphone, audio folder, evdev) are never imported.
         </Notice>
         {/* The hazard notice `RestoreFromServer` has and this dialog did not, though both default
             every present category to ON and both apply through `applyBlob` — which REPLACES rather
@@ -876,7 +876,7 @@ export function SyncTab() {
         })}
         <div className="mt-3 rounded-[10px] border border-dashed border-line-strong px-4 py-2.5 text-[12px] leading-snug text-faint">
           <span className="font-semibold text-dim">Never synced:</span> microphone, this device's
-          recordings folder (unless enabled above), the Linux input backend, and these sync settings
+          audio folder (unless enabled above), the Linux input backend, and these sync settings
           themselves.
         </div>
 

@@ -172,6 +172,7 @@ export async function fetchUrlMedia(args: {
   apiKey?: string | null;
   mediaId: string;
   recordId: string;
+  audioBase?: string | null;
 }): Promise<string | null> {
   if (!isTauri) return null;
   return invoke<string | null>("fetch_url_media", {
@@ -180,6 +181,7 @@ export async function fetchUrlMedia(args: {
     apiKey: args.apiKey ?? null,
     mediaId: args.mediaId,
     recordId: args.recordId,
+    audioBase: args.audioBase ?? null,
   });
 }
 
@@ -955,62 +957,83 @@ export async function saveTranscriptRecord(
   await invoke("save_transcript_record", { id, record, dictation });
 }
 
-/** Copy a run's input audio next to its history record (media/<id>.<ext>) so
+/** The effective audio-base-folder preference: the new key, with the legacy
+ *  custom recordings folder as fallback. Pass this wherever a command takes
+ *  `audioBase`. */
+export function audioBasePref(rec: {
+  audioBaseDir?: string | null;
+  recordingsDir?: string | null;
+}): string | null {
+  return rec.audioBaseDir?.trim() || rec.recordingsDir?.trim() || null;
+}
+
+/** Copy a run's input audio into the store (`<base>/files/<id>.<ext>`) so
  *  playback survives the original moving. Null = no copy (outside Tauri, or
  *  the source is over the 2 GB cap). */
 export async function saveTranscriptMedia(
   id: string,
   sourcePath: string,
+  audioBase: string | null,
 ): Promise<string | null> {
   if (!isTauri) return null;
-  return await invoke<string | null>("save_transcript_media", { id, sourcePath });
+  return await invoke<string | null>("save_transcript_media", { id, sourcePath, audioBase });
 }
 
-/** Per-store storage readout for the Recording & history tab's strip. */
+/** Per-type storage readout for the Recording & history tab. */
 export interface TranscriptStoreStats {
   dictationCount: number;
   fileCount: number;
-  mediaBytes: number;
-  mediaFiles: number;
+  fileMediaBytes: number;
+  fileMediaFiles: number;
+  linkMediaBytes: number;
+  linkMediaFiles: number;
   recordingsBytes: number;
   recordingsFiles: number;
 }
 
 const EMPTY_STORE_STATS: TranscriptStoreStats = {
-  dictationCount: 0, fileCount: 0, mediaBytes: 0, mediaFiles: 0,
-  recordingsBytes: 0, recordingsFiles: 0,
+  dictationCount: 0, fileCount: 0, fileMediaBytes: 0, fileMediaFiles: 0,
+  linkMediaBytes: 0, linkMediaFiles: 0, recordingsBytes: 0, recordingsFiles: 0,
 };
 
 export async function transcriptStoreStats(
-  recordingsDir: string | null,
+  audioBase: string | null,
 ): Promise<TranscriptStoreStats> {
   if (!isTauri) return EMPTY_STORE_STATS;
-  return await invoke<TranscriptStoreStats>("transcript_store_stats", { recordingsDir });
+  return await invoke<TranscriptStoreStats>("transcript_store_stats", { audioBase });
 }
 
-/** "Delete all dictations now" — session records AND the recordings folder's
+/** "Delete all dictations" — session records AND the dictations folder's
  *  .wav/.txt files. Returns how many files were removed. */
-export async function deleteAllDictations(recordingsDir: string | null): Promise<number> {
+export async function deleteAllDictations(audioBase: string | null): Promise<number> {
   if (!isTauri) return 0;
-  return await invoke<number>("delete_all_dictations", { recordingsDir });
+  return await invoke<number>("delete_all_dictations", { audioBase });
 }
 
-/** "Clear file-transcription history" — every record + its audio copy. */
-export async function clearFileTranscriptions(): Promise<number> {
+/** "Delete all transcriptions" — every file/link record + its audio. */
+export async function clearFileTranscriptions(audioBase: string | null): Promise<number> {
   if (!isTauri) return 0;
-  return await invoke<number>("clear_file_transcriptions");
+  return await invoke<number>("clear_file_transcriptions", { audioBase });
 }
 
-/** "Remove stored audio copies" — the media store only; transcripts stay. */
-export async function removeTranscriptMedia(): Promise<number> {
+/** "Delete audio from … transcriptions" — empties one media subfolder
+ *  ("file" → files/, "url" → links/); transcripts stay. */
+export async function removeTranscriptMedia(
+  kind: "file" | "url",
+  audioBase: string | null,
+): Promise<number> {
   if (!isTauri) return 0;
-  return await invoke<number>("remove_transcript_media");
+  return await invoke<number>("remove_transcript_media", { kind, audioBase });
 }
 
-/** Size of the audio-copy store — the Settings toggle's usage readout. */
-export async function transcriptMediaStats(): Promise<{ bytes: number; files: number }> {
-  if (!isTauri) return { bytes: 0, files: 0 };
-  return await invoke<{ bytes: number; files: number }>("transcript_media_stats");
+/** Relocate the whole audio store (all three subfolders) to a new base.
+ *  Call BEFORE saving the setting; only persist on success. */
+export async function moveAudioBase(
+  current: string | null,
+  next: string | null,
+): Promise<void> {
+  if (!isTauri) return;
+  await invoke("move_audio_base", { current, next });
 }
 
 /** All locally stored transcription-history records (unordered; each carries
@@ -1020,10 +1043,11 @@ export async function listTranscriptRecords(): Promise<unknown[]> {
   return invoke<unknown[]>("list_transcript_records");
 }
 
-/** Delete one history record's file from disk. */
-export async function deleteTranscriptRecord(id: string): Promise<void> {
+/** Delete one history record's file from disk (plus its audio, wherever the
+ *  base folder currently is). */
+export async function deleteTranscriptRecord(id: string, audioBase: string | null): Promise<void> {
   if (!isTauri) return;
-  await invoke("delete_transcript_record", { id });
+  await invoke("delete_transcript_record", { id, audioBase });
 }
 
 /** Read a media file's raw bytes for the playback blob fallback (Linux
@@ -1053,16 +1077,17 @@ export async function pickImportFile(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
-/** The active recordings folder for display (the user's custom folder, or the default
- *  under the app data dir; a leading $HOME is shown as ~). Pass the current custom value. */
-export async function recordingsDirPath(custom: string | null): Promise<string | null> {
+/** The active audio base folder for display (the user's custom base, or the default
+ *  under the app data dir; a leading $HOME is shown as ~). Pass `audioBasePref(...)`. */
+export async function audioDirPath(custom: string | null): Promise<string | null> {
   if (!isTauri) return null;
-  return await invoke<string | null>("recordings_dir_path", { custom });
+  return await invoke<string | null>("audio_dir_path", { custom });
 }
 
-/** Open the active recordings folder in the system file manager (created if absent). */
-export async function openRecordingsDir(custom: string | null): Promise<void> {
+/** Open the audio base folder in the system file manager (created, with its
+ *  subfolders, if absent). */
+export async function openAudioDir(custom: string | null): Promise<void> {
   if (!isTauri) return;
-  await invoke("open_recordings_dir", { custom });
+  await invoke("open_audio_dir", { custom });
 }
 

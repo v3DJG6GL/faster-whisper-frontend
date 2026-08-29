@@ -87,6 +87,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     indicatorPosition: "top",
     saveRecordings: true,
     recordingsDir: null,
+    audioBaseDir: null,
     trimSilence: true,
     recordingsRetentionDays: 0,
     muteSystemAudio: true,

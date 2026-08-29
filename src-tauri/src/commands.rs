@@ -13,24 +13,47 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
 }
 
-/// Folder where saved dictation `.wav` files go (when "Keep recordings" is on). A
-/// non-empty `custom` (the user's chosen folder, from Settings) wins; otherwise the
-/// default lives under the app data dir. None only if neither can be resolved.
-pub(crate) fn resolve_recordings_dir(app: &AppHandle, custom: Option<String>) -> Option<PathBuf> {
+/// Names of the per-type subfolders inside the audio base folder.
+pub(crate) const AUDIO_SUBDIRS: [&str; 3] = ["dictations", "files", "links"];
+
+/// The one base folder for ALL stored audio (dictations/, files/, links/
+/// inside it). A non-empty `custom` (audioBaseDir, with the legacy
+/// recordingsDir as fallback — the caller passes the effective preference)
+/// wins; otherwise the default lives under the app data dir. None only if
+/// neither can be resolved.
+pub(crate) fn resolve_audio_base(app: &AppHandle, custom: Option<String>) -> Option<PathBuf> {
     if let Some(c) = custom {
         let c = c.trim();
         if !c.is_empty() {
             return Some(PathBuf::from(c));
         }
     }
-    app.path().app_data_dir().ok().map(|d| d.join("recordings"))
+    app.path().app_data_dir().ok().map(|d| d.join("audio"))
 }
 
-/// Absolute path of the active recordings folder (custom or default), for display in
-/// Settings — a leading `$HOME` is collapsed to `~`. None if it can't be resolved.
+/// The effective base-folder preference from settings: the new key, else the
+/// legacy custom recordings folder (so an existing setup keeps its location).
+pub(crate) fn audio_base_pref(settings: &config::AppSettings) -> Option<String> {
+    let pick = |v: &Option<String>| {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    pick(&settings.recording.audio_base_dir).or_else(|| pick(&settings.recording.recordings_dir))
+}
+
+/// Folder where saved dictation `.wav` files go: `<base>/dictations`.
+/// `custom` is the BASE-folder preference (see `resolve_audio_base`).
+pub(crate) fn resolve_recordings_dir(app: &AppHandle, custom: Option<String>) -> Option<PathBuf> {
+    resolve_audio_base(app, custom).map(|b| b.join("dictations"))
+}
+
+/// Absolute path of the active audio base folder (custom or default), for
+/// display in Settings — a leading `$HOME` is collapsed to `~`.
 #[tauri::command]
-pub fn recordings_dir_path(app: AppHandle, custom: Option<String>) -> Option<String> {
-    let dir = resolve_recordings_dir(&app, custom)?;
+pub fn audio_dir_path(app: AppHandle, custom: Option<String>) -> Option<String> {
+    let dir = resolve_audio_base(&app, custom)?;
     if let Ok(home) = app.path().home_dir() {
         if let Ok(rest) = dir.strip_prefix(&home) {
             return Some(format!("~/{}", rest.display()));
@@ -39,18 +62,198 @@ pub fn recordings_dir_path(app: AppHandle, custom: Option<String>) -> Option<Str
     Some(dir.to_string_lossy().into_owned())
 }
 
-/// Open the active recordings folder (custom or default) in the system file manager.
-/// Creates it first so the button works before the first recording — or right after the
-/// user picks a new, not-yet-used folder.
+/// Open the active audio base folder in the system file manager. Creates it
+/// (with its subfolders) first so the button works before the first run.
 #[tauri::command]
-pub fn open_recordings_dir(app: AppHandle, custom: Option<String>) -> Result<(), String> {
+pub fn open_audio_dir(app: AppHandle, custom: Option<String>) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let dir =
-        resolve_recordings_dir(&app, custom).ok_or("could not resolve a recordings folder")?;
+    let dir = resolve_audio_base(&app, custom).ok_or("could not resolve the audio folder")?;
     crate::audio::create_dir_private(&dir).map_err(|e| format!("could not create the folder: {e}"))?;
+    for sub in AUDIO_SUBDIRS {
+        let _ = crate::audio::create_dir_private(&dir.join(sub));
+    }
     app.opener()
         .open_path(dir.to_string_lossy().into_owned(), None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+/// Move one file across a possible filesystem boundary: rename, else
+/// copy + remove (verified by the copy's success).
+fn move_file(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    if std::fs::rename(src, dest).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(src, dest)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o600));
+    }
+    std::fs::remove_file(src)
+}
+
+/// Move every regular file from `from` into `to`, recording old→new paths.
+/// Stops on the first error (already-moved files stay moved — the layout
+/// remains readable because path resolution follows the settings, which only
+/// change after the whole move succeeds).
+fn move_dir_contents(
+    from: &std::path::Path,
+    to: &std::path::Path,
+    map: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    let Ok(entries) = std::fs::read_dir(from) else {
+        return Ok(()); // nothing there yet
+    };
+    crate::audio::create_dir_private(to).map_err(|e| e.to_string())?;
+    for entry in entries.flatten() {
+        let src = entry.path();
+        if !src.is_file() {
+            continue;
+        }
+        let Some(name) = src.file_name() else { continue };
+        let dest = to.join(name);
+        move_file(&src, &dest).map_err(|e| format!("could not move {}: {e}", src.display()))?;
+        map.push((
+            src.to_string_lossy().into_owned(),
+            dest.to_string_lossy().into_owned(),
+        ));
+    }
+    let _ = std::fs::remove_dir(from); // only removes if now empty
+    Ok(())
+}
+
+/// Fix `mediaPath` inside every history record that pointed at a moved file.
+fn rewrite_media_paths(app: &AppHandle, map: &[(String, String)]) {
+    if map.is_empty() {
+        return;
+    }
+    let lookup: std::collections::HashMap<&str, &str> =
+        map.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    crate::transcripts::rewrite_media_paths(app, &lookup);
+}
+
+/// One-time (idempotent) migration into the single-base layout: legacy saved
+/// recordings move into `<base>/dictations`, the old app-data media store
+/// splits into `<base>/files` + `<base>/links` by record kind. Called once
+/// per launch, before the retention sweeps.
+pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
+    let pref = audio_base_pref(&config.settings);
+    let Some(base) = resolve_audio_base(app, pref.clone()) else {
+        return;
+    };
+    let _ = crate::audio::create_dir_private(&base);
+    for sub in AUDIO_SUBDIRS {
+        let _ = crate::audio::create_dir_private(&base.join(sub));
+    }
+    let mut map: Vec<(String, String)> = Vec::new();
+    // Legacy recordings: the custom folder (which may BE the new base — then
+    // its loose .wav/.txt files just move down into dictations/) or the old
+    // app-data default.
+    let legacy_rec = match &pref {
+        Some(p) => PathBuf::from(p),
+        None => match app.path().app_data_dir() {
+            Ok(d) => d.join("recordings"),
+            Err(_) => return,
+        },
+    };
+    let dict = base.join("dictations");
+    if legacy_rec != dict {
+        if let Ok(entries) = std::fs::read_dir(&legacy_rec) {
+            for entry in entries.flatten() {
+                let src = entry.path();
+                let ext = src.extension().and_then(|e| e.to_str());
+                if !src.is_file() || !matches!(ext, Some("wav") | Some("txt")) {
+                    continue;
+                }
+                let Some(name) = src.file_name() else { continue };
+                let dest = dict.join(name);
+                if dest.exists() {
+                    continue; // never clobber
+                }
+                if move_file(&src, &dest).is_ok() {
+                    map.push((
+                        src.to_string_lossy().into_owned(),
+                        dest.to_string_lossy().into_owned(),
+                    ));
+                }
+            }
+            if legacy_rec.file_name().and_then(|n| n.to_str()) == Some("recordings") {
+                let _ = std::fs::remove_dir(&legacy_rec);
+            }
+        }
+    }
+    // Legacy media store: split by record kind (url → links, else files).
+    if let Ok(legacy_media) = crate::transcripts::legacy_media_dir(app) {
+        if let Ok(entries) = std::fs::read_dir(&legacy_media) {
+            for entry in entries.flatten() {
+                let src = entry.path();
+                if !src.is_file() {
+                    continue;
+                }
+                let Some(name) = src.file_name() else { continue };
+                let stem = src
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                let sub = if crate::transcripts::record_kind(app, &stem).as_deref() == Some("url")
+                {
+                    "links"
+                } else {
+                    "files"
+                };
+                let dest = base.join(sub).join(name);
+                if dest.exists() {
+                    continue;
+                }
+                if move_file(&src, &dest).is_ok() {
+                    map.push((
+                        src.to_string_lossy().into_owned(),
+                        dest.to_string_lossy().into_owned(),
+                    ));
+                }
+            }
+            let _ = std::fs::remove_dir(&legacy_media);
+        }
+    }
+    if !map.is_empty() {
+        tracing::info!("[audio] layout migration moved {} file(s) under {}", map.len(), base.display());
+        rewrite_media_paths(app, &map);
+    }
+}
+
+/// Relocate the whole audio store: move the three subfolders from the current
+/// base to the next one and fix the records' stored paths. The caller (the
+/// Settings screen) persists the new setting only after this returns Ok —
+/// never save-then-hope.
+#[tauri::command]
+pub async fn move_audio_base(
+    app: AppHandle,
+    current: Option<String>,
+    next: Option<String>,
+) -> Result<(), String> {
+    let from = resolve_audio_base(&app, current).ok_or("could not resolve the audio folder")?;
+    let to = resolve_audio_base(&app, next).ok_or("could not resolve the new folder")?;
+    if from == to {
+        return Ok(());
+    }
+    if to.starts_with(&from) {
+        return Err("the new folder can't be inside the current one".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::create_dir_private(&to)
+            .map_err(|e| format!("could not create the folder: {e}"))?;
+        let mut map: Vec<(String, String)> = Vec::new();
+        for sub in AUDIO_SUBDIRS {
+            move_dir_contents(&from.join(sub), &to.join(sub), &mut map)?;
+        }
+        let _ = std::fs::remove_dir(&from); // only if empty
+        rewrite_media_paths(&app, &map);
+        tracing::info!("[audio] base moved: {} file(s) → {}", map.len(), to.display());
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Resolve an API key: an explicit (just-typed) key wins; otherwise look it up in
@@ -120,8 +323,7 @@ pub fn apply_recordings_retention(app: &AppHandle, config: &Config) {
     if days == 0 || !config.settings.recording.save_recordings {
         return;
     }
-    if let Some(dir) = resolve_recordings_dir(app, config.settings.recording.recordings_dir.clone())
-    {
+    if let Some(dir) = resolve_recordings_dir(app, audio_base_pref(&config.settings)) {
         crate::audio::prune_recordings(&dir, days);
     }
 }
@@ -277,12 +479,13 @@ pub async fn fetch_url_media(
     api_key: Option<String>,
     media_id: String,
     record_id: String,
+    audio_base: Option<String>,
 ) -> Result<Option<String>, String> {
     if !crate::transcripts::valid_id(&record_id) {
         return Err("malformed record id".into());
     }
     let key = resolve_key(api_key, backend_id);
-    let dir = crate::transcripts::media_dir(&app)?;
+    let dir = crate::transcripts::links_media_dir(&app, audio_base)?;
     transport::batch::download_result_media(
         &server_url,
         key.as_deref(),

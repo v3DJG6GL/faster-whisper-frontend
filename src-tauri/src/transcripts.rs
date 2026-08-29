@@ -31,11 +31,83 @@ fn dictations_dir(app: &AppHandle) -> Result<PathBuf, String> {
     transcripts_dir(app).map(|d| d.join("dictation"))
 }
 
-/// Audio copies of file-transcription inputs live beside the records, named
-/// by record id (`media/<id>.<ext>`), so playback keeps working when the
-/// original file moves. Same opaque contract: Rust never reads the audio.
-pub(crate) fn media_dir(app: &AppHandle) -> Result<PathBuf, String> {
+/// The pre-single-base media store (`transcripts/media`) — referenced only by
+/// the startup migration in `commands::ensure_audio_layout`.
+pub(crate) fn legacy_media_dir(app: &AppHandle) -> Result<PathBuf, String> {
     transcripts_dir(app).map(|d| d.join("media"))
+}
+
+/// Audio copies of file-transcription inputs: `<base>/files/<id>.<ext>`.
+/// `custom` is the audio-base preference from settings (None = default).
+/// Same opaque contract as the records: Rust never reads the audio.
+pub(crate) fn files_media_dir(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
+    crate::commands::resolve_audio_base(app, custom)
+        .map(|b| b.join("files"))
+        .ok_or_else(|| "could not resolve the audio folder".into())
+}
+
+/// Downloaded audio of link transcriptions: `<base>/links/<id>.<ext>` — the
+/// only playable source for those records.
+pub(crate) fn links_media_dir(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
+    crate::commands::resolve_audio_base(app, custom)
+        .map(|b| b.join("links"))
+        .ok_or_else(|| "could not resolve the audio folder".into())
+}
+
+/// The `kind` field of one record ("file" | "url" | "dictation"), if the
+/// record exists and parses. Used by the layout migration to route media.
+pub(crate) fn record_kind(app: &AppHandle, id: &str) -> Option<String> {
+    if !valid_id(id) {
+        return None;
+    }
+    let path = transcripts_dir(app).ok()?.join(format!("{id}.json"));
+    let text = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    v.get("kind")?.as_str().map(str::to_owned)
+}
+
+/// Rewrite `mediaPath` in every record whose stored path appears in `lookup`
+/// (old absolute path → new absolute path), after a migration or base move.
+/// Best-effort per record; a record that fails to parse is left untouched.
+pub(crate) fn rewrite_media_paths(
+    app: &AppHandle,
+    lookup: &std::collections::HashMap<&str, &str>,
+) {
+    let dirs = [transcripts_dir(app), dictations_dir(app)];
+    let mut rewritten = 0;
+    for dir in dirs.into_iter().flatten() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            let Some(old) = v.get("mediaPath").and_then(|m| m.as_str()) else {
+                continue;
+            };
+            let Some(new) = lookup.get(old) else {
+                continue;
+            };
+            v["mediaPath"] = serde_json::Value::String((*new).to_owned());
+            let Ok(out) = serde_json::to_string(&v) else {
+                continue;
+            };
+            if crate::config::write_private(&path, &out).is_ok() {
+                rewritten += 1;
+            }
+        }
+    }
+    if rewritten > 0 {
+        tracing::info!("[transcripts] rewrote mediaPath in {rewritten} record(s) after move");
+    }
 }
 
 /// Copy cap — beyond this the copy is silently skipped (the record keeps
@@ -120,11 +192,21 @@ fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) {
 /// Tries both stores: ids are UUIDs, so the same id can only exist in one.
 /// The record's audio copy (if any) goes with it.
 #[tauri::command]
-pub fn delete_transcript_record(app: AppHandle, id: String) -> Result<(), String> {
+pub fn delete_transcript_record(
+    app: AppHandle,
+    id: String,
+    audio_base: Option<String>,
+) -> Result<(), String> {
     if !valid_id(&id) {
         return Err("malformed record id".into());
     }
-    if let Ok(dir) = media_dir(&app) {
+    for dir in [
+        files_media_dir(&app, audio_base.clone()),
+        links_media_dir(&app, audio_base),
+    ]
+    .into_iter()
+    .flatten()
+    {
         remove_media_for(&dir, &id);
     }
     let name = format!("{id}.json");
@@ -144,11 +226,12 @@ pub async fn save_transcript_media(
     app: AppHandle,
     id: String,
     source_path: String,
+    audio_base: Option<String>,
 ) -> Result<Option<String>, String> {
     if !valid_id(&id) {
         return Err("malformed record id".into());
     }
-    let dir = media_dir(&app)?;
+    let dir = files_media_dir(&app, audio_base)?;
     tauri::async_runtime::spawn_blocking(move || {
         let src = PathBuf::from(&source_path);
         let meta = std::fs::metadata(&src).map_err(|e| e.to_string())?;
@@ -189,31 +272,13 @@ pub async fn save_transcript_media(
     .map_err(|e| e.to_string())?
 }
 
-/// Total size of the audio-copy store — the Settings toggle's usage readout.
-#[tauri::command]
-pub fn transcript_media_stats(app: AppHandle) -> Result<serde_json::Value, String> {
-    let mut bytes: u64 = 0;
-    let mut files: u32 = 0;
-    if let Ok(entries) = std::fs::read_dir(media_dir(&app)?) {
-        for entry in entries.flatten() {
-            if let Ok(m) = entry.metadata() {
-                if m.is_file() {
-                    bytes += m.len();
-                    files += 1;
-                }
-            }
-        }
-    }
-    Ok(serde_json::json!({ "bytes": bytes, "files": files }))
-}
-
-/// Storage readout for the Recording & history tab's strip: per-store counts
-/// and sizes. `recordings_dir` is the settings' custom folder (None = default),
-/// same contract as `recordings_dir_path`.
+/// Storage readout for the Recording & history tab: per-type counts and
+/// sizes. `audio_base` is the settings' base-folder preference (None =
+/// default), same contract as `audio_dir_path`.
 #[tauri::command]
 pub fn transcript_store_stats(
     app: AppHandle,
-    recordings_dir: Option<String>,
+    audio_base: Option<String>,
 ) -> Result<serde_json::Value, String> {
     fn count_json(dir: &Path) -> u32 {
         std::fs::read_dir(dir)
@@ -238,15 +303,18 @@ pub fn transcript_store_stats(
         }
         (bytes, files)
     }
-    let (media_bytes, media_files) = dir_bytes(&media_dir(&app)?);
-    let (rec_bytes, rec_files) = crate::commands::resolve_recordings_dir(&app, recordings_dir)
+    let (file_bytes, file_files) = dir_bytes(&files_media_dir(&app, audio_base.clone())?);
+    let (link_bytes, link_files) = dir_bytes(&links_media_dir(&app, audio_base.clone())?);
+    let (rec_bytes, rec_files) = crate::commands::resolve_recordings_dir(&app, audio_base)
         .map(|d| dir_bytes(&d))
         .unwrap_or((0, 0));
     Ok(serde_json::json!({
         "dictationCount": count_json(&dictations_dir(&app)?),
         "fileCount": count_json(&transcripts_dir(&app)?),
-        "mediaBytes": media_bytes,
-        "mediaFiles": media_files,
+        "fileMediaBytes": file_bytes,
+        "fileMediaFiles": file_files,
+        "linkMediaBytes": link_bytes,
+        "linkMediaFiles": link_files,
         "recordingsBytes": rec_bytes,
         "recordingsFiles": rec_files,
     }))
@@ -256,12 +324,9 @@ pub fn transcript_store_stats(
 /// the recordings folder (.wav + .txt sidecars — the folder is app-managed).
 /// The retention clocks stay as set.
 #[tauri::command]
-pub fn delete_all_dictations(
-    app: AppHandle,
-    recordings_dir: Option<String>,
-) -> Result<u32, String> {
+pub fn delete_all_dictations(app: AppHandle, audio_base: Option<String>) -> Result<u32, String> {
     let mut removed = wipe_records(&dictations_dir(&app)?) as u32;
-    if let Some(dir) = crate::commands::resolve_recordings_dir(&app, recordings_dir) {
+    if let Some(dir) = crate::commands::resolve_recordings_dir(&app, audio_base) {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -278,23 +343,39 @@ pub fn delete_all_dictations(
     Ok(removed)
 }
 
-/// "Clear file-transcription history": every file record with its corrections;
-/// the orphan sweep then drops their audio copies.
+/// "Delete all transcriptions": every file/link record with its corrections;
+/// the orphan sweep then drops their audio.
 #[tauri::command]
-pub fn clear_file_transcriptions(app: AppHandle) -> Result<u32, String> {
+pub fn clear_file_transcriptions(app: AppHandle, audio_base: Option<String>) -> Result<u32, String> {
     let removed = wipe_records(&transcripts_dir(&app)?) as u32;
-    sweep_orphan_media(&app);
+    sweep_orphan_media(&app, audio_base);
     Ok(removed)
 }
 
-/// "Remove stored audio copies": frees the media store; the transcripts stay.
+/// "Delete audio from file/link transcriptions": empties one media subfolder
+/// (`kind` "file" → files/, "url" → links/; None → both). Transcripts stay.
 #[tauri::command]
-pub fn remove_transcript_media(app: AppHandle) -> Result<u32, String> {
+pub fn remove_transcript_media(
+    app: AppHandle,
+    kind: Option<String>,
+    audio_base: Option<String>,
+) -> Result<u32, String> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    match kind.as_deref() {
+        Some("file") => dirs.push(files_media_dir(&app, audio_base)?),
+        Some("url") => dirs.push(links_media_dir(&app, audio_base)?),
+        _ => {
+            dirs.push(files_media_dir(&app, audio_base.clone())?);
+            dirs.push(links_media_dir(&app, audio_base)?);
+        }
+    }
     let mut removed = 0u32;
-    if let Ok(entries) = std::fs::read_dir(media_dir(&app)?) {
-        for entry in entries.flatten() {
-            if std::fs::remove_file(entry.path()).is_ok() {
-                removed += 1;
+    for dir in dirs {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if std::fs::remove_file(entry.path()).is_ok() {
+                    removed += 1;
+                }
             }
         }
     }
@@ -318,21 +399,31 @@ fn remove_media_for(dir: &Path, id: &str) {
 /// Drop media files whose record is gone — covers retention pruning, wipes,
 /// and half-finished copies (`.tmp` stems never match a record id). One clock:
 /// a copy lives exactly as long as its transcript.
-fn sweep_orphan_media(app: &AppHandle) {
-    let (Ok(dir), Ok(records)) = (media_dir(app), transcripts_dir(app)) else {
-        return;
-    };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
+    let Ok(records) = transcripts_dir(app) else {
         return;
     };
     let mut removed = 0;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+    for dir in [
+        files_media_dir(app, audio_base.clone()),
+        links_media_dir(app, audio_base),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
-        if !records.join(format!("{stem}.json")).exists() && std::fs::remove_file(&path).is_ok() {
-            removed += 1;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if !records.join(format!("{stem}.json")).exists()
+                && std::fs::remove_file(&path).is_ok()
+            {
+                removed += 1;
+            }
         }
     }
     if removed > 0 {
@@ -396,7 +487,7 @@ pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Conf
             }
         }
     }
-    sweep_orphan_media(app);
+    sweep_orphan_media(app, crate::commands::audio_base_pref(&config.settings));
 }
 
 /// Remove every record in `dir` regardless of age ("Keep dictation history"

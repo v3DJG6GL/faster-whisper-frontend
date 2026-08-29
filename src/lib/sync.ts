@@ -272,7 +272,7 @@ function extractRecording(
   syncDir: boolean,
   snapshot: SyncBlob | undefined,
 ): SyncBlob["recording"] {
-  const { recordingsDir, ...rest } = settings.recording;
+  const { recordingsDir, audioBaseDir, ...rest } = settings.recording;
   const out = omitFields(rest, CHIP_FIELD_SET) as SyncRecording;
   // The dictation-history flags live in settings.transcribe but belong to
   // this category (the tab's "Dictation" group governs the same sessions).
@@ -282,6 +282,9 @@ function extractRecording(
   );
   const dir = syncDir ? recordingsDir : snapshot?.recording?.recordingsDir;
   if (dir !== undefined) out.recordingsDir = dir;
+  // audioBaseDir rides the same machine-path sub-toggle as recordingsDir.
+  const base = syncDir ? audioBaseDir : snapshot?.recording?.audioBaseDir;
+  if (base !== undefined) out.audioBaseDir = base;
   return out;
 }
 
@@ -756,6 +759,7 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
   const BOOLS = [
     "diarize", "translate", "separateBgm", "wordTimestamps", "showTimestamps",
     "showSpeakerNames", "colorizeSpeakers", "keepDictationHistory", "keepAudioCopies",
+    "keepUrlAudioCopies",
   ];
   for (const k of BOOLS) {
     const b = ownProp(v, k);
@@ -1135,6 +1139,12 @@ export async function applyBlob(
             sub.recordingsDir && (typeof rec.recordingsDir === "string" || rec.recordingsDir === null)
               ? rec.recordingsDir
               : settings.recording.recordingsDir,
+          // Same machine-path rule for the audio base folder (one sub-toggle
+          // governs both paths).
+          audioBaseDir:
+            sub.recordingsDir && (typeof rec.audioBaseDir === "string" || rec.audioBaseDir === null)
+              ? rec.audioBaseDir
+              : settings.recording.audioBaseDir,
         },
       };
     }

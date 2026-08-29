@@ -42,6 +42,7 @@ import {
   getFocusedApp,
   reregisterShortcutsUnlessCapturing,
   shortcutModsHeld,
+  audioBasePref,
 } from "./api";
 import type { ActivationKind, AppRule, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertMethod, Profile } from "./types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
@@ -1779,7 +1780,7 @@ async function startLiveInner(
         overrideProfile,
         deviceId,
         save: rec.saveRecordings,
-        recordingsDir: rec.recordingsDir,
+        recordingsDir: audioBasePref(rec),
         trimSilence: rec.trimSilence,
         muteSystem: rec.muteSystemAudio,
       });
@@ -1795,7 +1796,7 @@ async function startLiveInner(
         responseFormat: backend.responseFormat,
         deviceId,
         save: rec.saveRecordings,
-        recordingsDir: rec.recordingsDir,
+        recordingsDir: audioBasePref(rec),
         trimSilence: rec.trimSilence,
         muteSystem: rec.muteSystemAudio,
       });

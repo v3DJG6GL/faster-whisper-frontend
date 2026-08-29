@@ -69,8 +69,8 @@ export type SyncChip = Pick<RecordingSettings, ChipField>;
  *  `recordingsDir` is a machine-specific path: present only when the writing
  *  device's "Recordings folder" sub-toggle is on (default off), else passed
  *  through from the snapshot so an opted-out device never erases it. */
-export type SyncRecording = Partial<Pick<RecordingSettings, "recordingsDir">> &
-  Omit<RecordingSettings, ChipField | "recordingsDir"> &
+export type SyncRecording = Partial<Pick<RecordingSettings, "recordingsDir" | "audioBaseDir">> &
+  Omit<RecordingSettings, ChipField | "recordingsDir" | "audioBaseDir"> &
   Partial<Pick<TranscribeSettings, (typeof DICTATION_HISTORY_FIELDS)[number]>>;
 
 /** The `backends` category. `secrets` ({backendId: apiKey}) is present in the
@@ -143,6 +143,7 @@ export const DICTATION_HISTORY_FIELDS = [
 export const FILE_TRANSCRIPTION_FIELDS = [
   "historyRetentionDays",
   "keepAudioCopies",
+  "keepUrlAudioCopies",
 ] as const satisfies readonly (keyof TranscribeSettings)[];
 
 export type SyncFileTranscriptions = Partial<

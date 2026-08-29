@@ -443,6 +443,12 @@ pub struct RecordingSettings {
     /// that never set it round-trip byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recordings_dir: Option<String>,
+    /// One base folder for ALL stored audio — `dictations/`, `files/` and
+    /// `links/` live inside it. None/empty = the default under the app data
+    /// dir; the legacy `recordings_dir` acts as a fallback base so a custom
+    /// recordings folder keeps working after the upgrade.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_base_dir: Option<String>,
     /// When saving: keep only the spoken spans (drop silence) in the .wav, so a long latch
     /// session doesn't store hours of quiet. `#[serde(default)]` (true) so older configs load.
     #[serde(default = "default_true")]
@@ -647,6 +653,7 @@ impl Default for Config {
                     indicator_position: IndicatorPosition::Top,
                     save_recordings: true,
                     recordings_dir: None,
+                    audio_base_dir: None,
                     trim_silence: true,
                     recordings_retention_days: 0,
                     mute_system_audio: true,

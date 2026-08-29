@@ -8,7 +8,7 @@
 
 import { create } from "zustand";
 import {
-  cancelBackendTranscription, cancelFileTranscription, fetchUrlMedia,
+  audioBasePref, cancelBackendTranscription, cancelFileTranscription, fetchUrlMedia,
   getTranscribeProgress, saveTranscriptMedia, transcribeFile, transcribeUrl,
 } from "./api";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
@@ -502,8 +502,9 @@ function recordRun(
  *  exactly the dictation recording-path pattern. Best-effort: a failed copy
  *  never touches the run outcome. */
 function copyRunMedia(path: string, rec: TranscriptRecord) {
-  if (useApp.getState().settings.transcribe?.keepAudioCopies === false) return;
-  void saveTranscriptMedia(rec.id, path)
+  const s = useApp.getState().settings;
+  if (s.transcribe?.keepAudioCopies === false) return;
+  void saveTranscriptMedia(rec.id, path, audioBasePref(s.recording))
     .then((mediaPath) => {
       if (!mediaPath) return;
       patchItem(path, { mediaPath });
@@ -518,16 +519,19 @@ function copyRunMedia(path: string, rec: TranscriptRecord) {
 }
 
 /** URL-run counterpart of copyRunMedia: pull the server-retained download
- *  into the local media store. NOT gated on keepAudioCopies — a link run has
- *  no other playable source, so without this copy playback simply doesn't
- *  exist. Best-effort: null (retention expired) or an error leaves the
- *  transcript fully usable, minus playback. */
+ *  into the local store (`<base>/links/`). Gated on its OWN setting
+ *  (keepUrlAudioCopies, default on) — never on keepAudioCopies, because a
+ *  link run has no other playable source. Best-effort: null (retention
+ *  expired) or an error leaves the transcript fully usable, minus playback. */
 function fetchRunUrlMedia(path: string, rec: TranscriptRecord, ctx: RunContext, mediaId: string) {
+  const s = useApp.getState().settings;
+  if (s.transcribe?.keepUrlAudioCopies === false) return;
   void fetchUrlMedia({
     serverUrl: ctx.serverUrl,
     backendId: ctx.backendId,
     mediaId,
     recordId: rec.id,
+    audioBase: audioBasePref(s.recording),
   })
     .then((mediaPath) => {
       if (!mediaPath) return;

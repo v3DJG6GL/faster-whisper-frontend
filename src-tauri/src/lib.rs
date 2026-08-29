@@ -152,6 +152,10 @@ pub fn run() {
             // jumps to its edge only once the rule lands.
             #[cfg(target_os = "linux")]
             overlay::prewarm_chip_rule(&cfg);
+            // Consolidate all stored audio under the single base folder
+            // (dictations/, files/, links/) — idempotent, runs before the
+            // sweeps so they look in the right place.
+            commands::ensure_audio_layout(app.handle(), &cfg);
             // Enforce the saved-recording retention window once per launch, so it also applies
             // to a machine that dictated for months and only just enabled it.
             commands::apply_recordings_retention(app.handle(), &cfg);
@@ -196,7 +200,6 @@ pub fn run() {
             transcripts::list_transcript_records,
             transcripts::delete_transcript_record,
             transcripts::save_transcript_media,
-            transcripts::transcript_media_stats,
             transcripts::transcript_store_stats,
             transcripts::delete_all_dictations,
             transcripts::clear_file_transcriptions,
@@ -222,8 +225,9 @@ pub fn run() {
             commands::stop_record,
             commands::cancel_record,
             commands::retire_session_epoch,
-            commands::recordings_dir_path, // saved-recordings folder (display path)
-            commands::open_recordings_dir, // open the saved-recordings folder
+            commands::audio_dir_path,      // audio base folder (display path)
+            commands::open_audio_dir,      // open the audio base folder
+            commands::move_audio_base,     // relocate the whole audio store
             commands::reregister_shortcuts,
             commands::reregister_shortcuts_unless_capturing,
             commands::suspend_shortcuts,

@@ -148,7 +148,8 @@ export interface GeneralSettings {
 export interface RecordingSettings {
   indicatorPosition: IndicatorPosition;
   saveRecordings: boolean;
-  recordingsDir: string | null; // user-chosen folder for saved .wav files; null = default app-data location
+  recordingsDir: string | null; // LEGACY custom folder for saved .wav files; acts as audioBaseDir fallback
+  audioBaseDir: string | null; // one base folder for ALL stored audio (dictations/, files/, links/); null = default app-data location
   trimSilence: boolean; // when saving: keep only spoken spans (drop silence) in the .wav
   recordingsRetentionDays: number; // delete saved recordings older than N days (0 = keep forever)
   muteSystemAudio: boolean;
@@ -203,7 +204,8 @@ export type SyncCategory =
  *  untouched (the compose passes the snapshot's value through), so flipping
  *  one off can never erase the field for other devices. */
 export interface SyncSubSettings {
-  /** Sync `recording.recordingsDir` — a machine-specific filesystem path.
+  /** Sync `recording.recordingsDir` AND `recording.audioBaseDir` — both are
+   *  machine-specific filesystem paths, governed by this one toggle.
    *  Default OFF (the pre-sub-toggle behavior: never synced). */
   recordingsDir: boolean;
   /** Sync each profile's hotkey chord. OFF = chords stay per-machine
@@ -280,6 +282,9 @@ export interface TranscribeSettings {
   /** Copy each file-transcription input into the app's media store so History
    *  playback survives the original moving. Default (absent) = true. */
   keepAudioCopies?: boolean;
+  /** Keep the downloaded audio of link transcriptions (the ONLY playable
+   *  source for those records). Absent = true. */
+  keepUrlAudioCopies?: boolean;
 }
 
 export interface AppSettings {

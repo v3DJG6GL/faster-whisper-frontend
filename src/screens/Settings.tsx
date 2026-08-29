@@ -26,8 +26,10 @@ import {
   evdevStatus,
   evdevSetup,
   setDeepFieldDetection,
-  openRecordingsDir,
-  recordingsDirPath,
+  audioBasePref,
+  audioDirPath,
+  openAudioDir,
+  moveAudioBase,
   pickRecordingsDir,
   type EvdevStatus,
 } from "@/lib/api";
@@ -43,6 +45,20 @@ function fmtBytes(n: number): string {
 }
 
 const TABS = ["General", "Audio", "Recording & history", "Chip", "Sync", "Permissions"] as const;
+
+/** The audio store's per-type identity: subfolder, legend label, and the hue
+ *  shared by the split bar, its legend and the subfolder chips. */
+const AUDIO_STORE_TYPES = [
+  { key: "dict", sub: "dictations/", label: "dictations",
+    color: "#d9a45b", bytesKey: "recordingsBytes", filesKey: "recordingsFiles" },
+  { key: "files", sub: "files/", label: "file transcriptions",
+    color: "var(--c-ok)", bytesKey: "fileMediaBytes", filesKey: "fileMediaFiles" },
+  { key: "links", sub: "links/", label: "link transcriptions",
+    color: "#6faed9", bytesKey: "linkMediaBytes", filesKey: "linkMediaFiles" },
+] as const satisfies readonly {
+  key: string; sub: string; label: string; color: string;
+  bytesKey: keyof TranscriptStoreStats; filesKey: keyof TranscriptStoreStats;
+}[];
 type Tab = (typeof TABS)[number];
 
 // The keys of RecordingSettings whose value is a boolean (the chip-visibility flags).
@@ -458,21 +474,23 @@ export default function Settings() {
   /** History settings ride the opaque settings.transcribe blob (merge-patch). */
   const updateTranscribe = (patch: Partial<NonNullable<typeof s.transcribe>>) =>
     updateSettings({ transcribe: { ...s.transcribe, ...patch } });
-  // Per-store storage readout (the tab's strip + the action rows' counts).
+  // The one audio base folder (audioBaseDir, legacy recordingsDir fallback).
+  const basePref = audioBasePref(s.recording);
+  // Per-type storage readout (the folder row's bar + the action rows' counts).
   const [storeStats, setStoreStats] = useState<TranscriptStoreStats | null>(null);
   const refreshStoreStats = useCallback(() => {
-    void transcriptStoreStats(s.recording.recordingsDir ?? null)
+    void transcriptStoreStats(basePref)
       .then(setStoreStats)
       .catch(() => {});
-  }, [s.recording.recordingsDir]);
+  }, [basePref]);
   useEffect(() => {
     if (tab === "Recording & history") refreshStoreStats();
   }, [tab, refreshStoreStats]);
   // Inline two-step confirmation for the destructive store actions — the
   // confirm names the exact count/size (never a bare "are you sure").
-  const [confirming, setConfirming] = useState<null | "dict" | "media" | "clear">(null);
+  const [confirming, setConfirming] = useState<null | "dict" | "files" | "links" | "clear">(null);
   const [storeMsg, setStoreMsg] = useState<string | null>(null);
-  const runStoreAction = (kind: "dict" | "media" | "clear") => {
+  const runStoreAction = (kind: "dict" | "files" | "links" | "clear") => {
     const done = (n: number, what: string) => {
       setStoreMsg(`Removed ${n} ${what}.`);
       setConfirming(null);
@@ -480,15 +498,19 @@ export default function Settings() {
       void loadHistory(true).catch(() => {});
     };
     if (kind === "dict") {
-      void deleteAllDictations(s.recording.recordingsDir ?? null)
+      void deleteAllDictations(basePref)
         .then((n) => done(n, "dictation file(s)"))
         .catch((e) => setStoreMsg(String(e)));
-    } else if (kind === "media") {
-      void removeTranscriptMedia()
+    } else if (kind === "files") {
+      void removeTranscriptMedia("file", basePref)
         .then((n) => done(n, "audio cop(y/ies)"))
         .catch((e) => setStoreMsg(String(e)));
+    } else if (kind === "links") {
+      void removeTranscriptMedia("url", basePref)
+        .then((n) => done(n, "downloaded file(s)"))
+        .catch((e) => setStoreMsg(String(e)));
     } else {
-      void clearFileTranscriptions()
+      void clearFileTranscriptions(basePref)
         .then((n) => done(n, "transcript(s)"))
         .catch((e) => setStoreMsg(String(e)));
     }
@@ -521,28 +543,37 @@ export default function Settings() {
   }, [tab]);
 
 
-  // Recordings folder: resolve the active path for display (custom or default), and
-  // re-resolve whenever the custom selection changes.
-  const customRecDir = s.recording.recordingsDir;
+  // Audio base folder: resolve the active path for display (custom or
+  // default), re-resolving when the preference changes. Change/Reset MOVE the
+  // whole store first and persist the setting only on success.
   const [recDirDisplay, setRecDirDisplay] = useState<string | null>(null);
   useEffect(() => {
-    void recordingsDirPath(customRecDir)
+    void audioDirPath(basePref)
       .then(setRecDirDisplay)
       .catch((e) => {
         // Don't hang forever on "resolving…" if the path lookup fails.
-        console.error("resolve recordings dir:", e);
-        setRecDirDisplay(customRecDir ?? "—");
+        console.error("resolve audio dir:", e);
+        setRecDirDisplay(basePref ?? "—");
       });
-  }, [customRecDir]);
+  }, [basePref]);
   const openRecDir = () =>
-    void openRecordingsDir(customRecDir).catch((e) => console.error("open recordings dir:", e));
+    void openAudioDir(basePref).catch((e) => console.error("open audio dir:", e));
   const changeRecDir = () =>
     void pickRecordingsDir()
-      .then((picked) => {
-        if (picked) updateRecording({ recordingsDir: picked });
+      .then(async (picked) => {
+        if (!picked) return;
+        await moveAudioBase(basePref, picked);
+        updateRecording({ audioBaseDir: picked });
+        refreshStoreStats();
       })
-      .catch((e) => console.error("pick recordings dir:", e));
-  const resetRecDir = () => updateRecording({ recordingsDir: null });
+      .catch((e) => setStoreMsg(`Could not move the audio folder: ${e}`));
+  const resetRecDir = () =>
+    void moveAudioBase(basePref, null)
+      .then(() => {
+        updateRecording({ audioBaseDir: null, recordingsDir: null });
+        refreshStoreStats();
+      })
+      .catch((e) => setStoreMsg(`Could not move the audio folder: ${e}`));
 
   const runEvdevSetup = () => {
     setEvdevBusy(true);
@@ -687,36 +718,103 @@ export default function Settings() {
 
         {tab === "Recording & history" && (
           <>
-          {/* Storage strip: what the app holds, before any toggle. */}
-          <Card className="mb-4 px-5 py-4">
-            <div className="flex gap-3">
-              {(
-                [
-                  [String(storeStats?.dictationCount ?? "–"), "dictation history · sessions"],
-                  [
-                    storeStats ? fmtBytes(storeStats.recordingsBytes) : "–",
-                    `dictation audio · ${storeStats?.recordingsFiles ?? 0} files`,
-                  ],
-                  [
-                    storeStats ? fmtBytes(storeStats.mediaBytes) : "–",
-                    `transcript audio copies · ${storeStats?.mediaFiles ?? 0} files`,
-                  ],
-                ] as const
-              ).map(([num, cap]) => (
-                <div key={cap} className="flex-1 rounded-xl border border-line bg-surface-2/50 px-3.5 py-3">
-                  <div className="font-mono text-[16px] font-medium text-text">{num}</div>
-                  <div className="mt-0.5 text-[11.5px] text-faint">{cap}</div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-2 text-[11.5px] text-faint">
-              counts refresh when you open this tab · the groups below decide how long each store lives
-            </div>
-          </Card>
           <Card className="px-6 pb-2">
             {/* Grouped by SUBJECT, one retention clock per subject — see the
-                design canvas ("Settings · Recording & history v2"). */}
-            <SectionLabel className="mb-1 mt-4">Dictation</SectionLabel>
+                design canvas ("Recording & history, whole page", rev C). */}
+            <SectionLabel className="mb-1 mt-4">Audio storage</SectionLabel>
+            {/* The ONE home for all stored audio, with a fixed subfolder per
+                type. Its own block: header line (title + actions), then the
+                full-width split bar, legend, path and subfolder chips. */}
+            <div className="border-b border-line py-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-[14px] font-medium text-text">Audio folder</div>
+                  <div className="mt-0.5 text-[12.5px] leading-snug text-dim">
+                    Everything the app records or copies lives here, one subfolder per type.
+                    Changing it moves the existing audio along.
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button size="sm" onClick={openRecDir} title="Open in your file manager">
+                    <FolderOpen size={14} strokeWidth={2} />
+                    Open
+                  </Button>
+                  <Button size="sm" onClick={changeRecDir}>
+                    Change…
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={resetRecDir}
+                    disabled={!basePref}
+                    title="Move everything back to the default location"
+                  >
+                    Reset
+                  </Button>
+                </div>
+              </div>
+              {storeStats && (
+                <>
+                  <div className="mt-3.5 flex h-[6px] gap-0.5">
+                    {AUDIO_STORE_TYPES.map((t) => {
+                      const bytes = storeStats[t.bytesKey];
+                      if (bytes <= 0) return null;
+                      return (
+                        <div
+                          key={t.key}
+                          className="min-w-[4px] rounded-pill"
+                          style={{ flexGrow: bytes, flexBasis: 0, background: t.color }}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] tabular-nums text-faint">
+                    {AUDIO_STORE_TYPES.map((t) => (
+                      <span key={t.key} className="inline-flex items-baseline gap-1.5">
+                        <span
+                          className="size-2 self-center rounded-[2px]"
+                          style={{ background: t.color }}
+                        />
+                        {t.label}{" "}
+                        <span className="text-text">
+                          {storeStats[t.filesKey] > 0
+                            ? `${fmtBytes(storeStats[t.bytesKey])} · ${storeStats[t.filesKey]}`
+                            : "—"}
+                        </span>
+                      </span>
+                    ))}
+                    <span>
+                      total{" "}
+                      <span className="text-text">
+                        {fmtBytes(
+                          storeStats.recordingsBytes + storeStats.fileMediaBytes + storeStats.linkMediaBytes,
+                        )}{" "}
+                        · {storeStats.recordingsFiles + storeStats.fileMediaFiles + storeStats.linkMediaFiles}
+                      </span>
+                    </span>
+                  </div>
+                </>
+              )}
+              <div
+                title={recDirDisplay ?? undefined}
+                className="mt-3 truncate rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-[11.5px] text-dim"
+              >
+                {recDirDisplay ?? "resolving…"}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {AUDIO_STORE_TYPES.map((t) => (
+                  <span
+                    key={t.key}
+                    className="inline-flex items-center gap-1.5 rounded-pill border border-line bg-surface-2 px-2.5 py-0.5 font-mono text-[11px] text-dim"
+                  >
+                    <span className="size-2 rounded-[2px]" style={{ background: t.color }} />
+                    {t.sub}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <SectionLabel className="mb-1 mt-4">Dictations</SectionLabel>
             <SettingRow
               title="Keep dictations in History"
               desc="Each session appears on the History screen — its text, target app, and its audio (below), on this machine only. Turning this off also deletes the stored entries."
@@ -727,7 +825,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Save dictation audio"
+              title="Keep dictation audio"
               desc="Keep each session's sound as a .wav next to its text, for replay from History."
             >
               <Toggle checked={s.recording.saveRecordings} onChange={(v) => updateRecording({ saveRecordings: v })} />
@@ -735,7 +833,7 @@ export default function Settings() {
             <div className="pl-6">
               <SettingRow
                 title="Trim silence"
-                desc="Save only the parts you actually spoke (the same speech detection that drives the chip), so a long hands-free session doesn't store hours of silence."
+                desc="Keep only the parts you actually spoke (the same speech detection that drives the chip), so a long hands-free session doesn't store hours of silence."
                 disabled={!s.recording.saveRecordings}
               >
                 <Toggle
@@ -744,43 +842,6 @@ export default function Settings() {
                   onChange={(v) => updateRecording({ trimSilence: v })}
                 />
               </SettingRow>
-              {/* Audio folder: where saved .wav files live, plus open / relocate / reset. Its own
-                  block (a mono path readout + an action row) rather than a SettingRow — the path is
-                  the point, and three actions don't fit a row's trailing slot. */}
-              <div className="border-b border-line py-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="text-[14px] font-medium text-text">Audio folder</div>
-                    <div className="mt-0.5 text-[12.5px] leading-snug text-dim">
-                      {customRecDir ? "A custom folder." : "The default app folder."}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Button size="sm" onClick={openRecDir} title="Open in your file manager">
-                      <FolderOpen size={14} strokeWidth={2} />
-                      Open
-                    </Button>
-                    <Button size="sm" onClick={changeRecDir}>
-                      Change…
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={resetRecDir}
-                      disabled={!customRecDir}
-                      title="Revert to the default location"
-                    >
-                      Reset
-                    </Button>
-                  </div>
-                </div>
-                <div
-                  title={recDirDisplay ?? undefined}
-                  className="mt-3 truncate rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-[11.5px] text-dim"
-                >
-                  {recDirDisplay ?? "resolving…"}
-                </div>
-              </div>
             </div>
             <SettingRow
               title="Delete dictations after"
@@ -808,7 +869,7 @@ export default function Settings() {
             </SettingRow>
 
             <SettingRow
-              title="Delete all dictations now"
+              title="Delete all dictations"
               desc={`Removes all ${storeStats?.dictationCount ?? 0} stored sessions and their audio. The retention clock stays as set.`}
               last
             >
@@ -830,20 +891,15 @@ export default function Settings() {
                     setConfirming("dict");
                   }}
                 >
-                  Delete all…
+                  Delete…
                 </Button>
               )}
             </SettingRow>
 
-            <SectionLabel className="mb-1 mt-4">File transcriptions</SectionLabel>
+            <SectionLabel className="mb-1 mt-4">Transcriptions</SectionLabel>
             <SettingRow
-              title="Keep a copy of the audio"
-              desc={
-                "Store the input file with its transcript so playback in History keeps working when the original moves. Deleted together with the transcript." +
-                (storeStats && storeStats.mediaFiles > 0
-                  ? ` Currently ${fmtBytes(storeStats.mediaBytes)} · ${storeStats.mediaFiles} file${storeStats.mediaFiles === 1 ? "" : "s"}.`
-                  : "")
-              }
+              title="Keep audio from files"
+              desc="Keep a copy of audio you transcribe from disk, so History playback keeps working when the original moves. Turning this off keeps existing copies."
             >
               <Toggle
                 checked={s.transcribe?.keepAudioCopies ?? true}
@@ -851,13 +907,22 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Delete file transcriptions after"
-              desc="Transcript, corrections, speaker names and the audio copy leave together."
+              title="Keep audio from links"
+              desc="Keep the audio downloaded for a link transcription. It's the only copy — without it, the transcription can't be replayed. Turning this off keeps existing audio."
+            >
+              <Toggle
+                checked={s.transcribe?.keepUrlAudioCopies ?? true}
+                onChange={(v) => updateTranscribe({ keepUrlAudioCopies: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              title="Delete transcriptions after"
+              desc="Files and links alike — transcript, corrections, speaker names and the audio copy leave together. Link audio removed this way can't be re-downloaded."
             >
               <Select
                 value={String(s.transcribe?.historyRetentionDays ?? 0)}
                 onChange={(v) => updateTranscribe({ historyRetentionDays: Number(v) })}
-                ariaLabel="Delete file transcriptions after"
+                ariaLabel="Delete transcriptions after"
                 options={[
                   { value: "0", label: "Keep forever" },
                   { value: "7", label: "7 days" },
@@ -869,13 +934,13 @@ export default function Settings() {
             </SettingRow>
 
             <SettingRow
-              title="Remove stored audio copies"
-              desc={`Frees ${storeStats ? fmtBytes(storeStats.mediaBytes) : "0 KB"}. Transcripts, corrections and speaker names stay — only playback for moved originals is lost.`}
+              title="Delete audio from file transcriptions"
+              desc={`Frees ${storeStats ? fmtBytes(storeStats.fileMediaBytes) : "0 KB"}. Transcripts stay, and the originals on disk aren't touched — only in-app playback for moved originals is lost.`}
             >
-              {confirming === "media" ? (
+              {confirming === "files" ? (
                 <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("media")}>
-                    Remove {storeStats?.mediaFiles ?? 0} copies
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("files")}>
+                    Delete {storeStats?.fileMediaFiles ?? 0} files
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -887,22 +952,48 @@ export default function Settings() {
                   variant="danger"
                   onClick={() => {
                     setStoreMsg(null);
-                    setConfirming("media");
+                    setConfirming("files");
                   }}
                 >
-                  Remove copies…
+                  Delete…
                 </Button>
               )}
             </SettingRow>
             <SettingRow
-              title="Clear file-transcription history"
-              desc={`Removes all ${storeStats?.fileCount ?? 0} transcripts with their corrections and audio copies.`}
+              title="Delete audio from link transcriptions"
+              desc={`Frees ${storeStats ? fmtBytes(storeStats.linkMediaBytes) : "0 KB"}. Transcripts stay, but this audio can't be re-downloaded — playback for these link transcriptions is gone for good.`}
+            >
+              {confirming === "links" ? (
+                <span className="flex items-center gap-2">
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("links")}>
+                    Delete {storeStats?.linkMediaFiles ?? 0} files
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                    Cancel
+                  </Button>
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => {
+                    setStoreMsg(null);
+                    setConfirming("links");
+                  }}
+                >
+                  Delete…
+                </Button>
+              )}
+            </SettingRow>
+            <SettingRow
+              title="Delete all transcriptions"
+              desc={`Removes all ${storeStats?.fileCount ?? 0} file and link transcriptions, with their corrections, speaker names and stored audio.`}
               last
             >
               {confirming === "clear" ? (
                 <span className="flex items-center gap-2">
                   <Button size="sm" variant="danger" onClick={() => runStoreAction("clear")}>
-                    Clear {storeStats?.fileCount ?? 0} transcripts
+                    Delete {storeStats?.fileCount ?? 0} transcripts
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -917,7 +1008,7 @@ export default function Settings() {
                     setConfirming("clear");
                   }}
                 >
-                  Clear…
+                  Delete…
                 </Button>
               )}
             </SettingRow>
