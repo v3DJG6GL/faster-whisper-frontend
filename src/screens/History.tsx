@@ -61,6 +61,16 @@ function appLabel(r: TranscriptRecord): string {
 
 type Segment = "all" | "file" | "url" | "dictation";
 
+/** The History view's memory across navigation — filters, search, and the
+ *  list's scroll position all survive leaving the page (component state
+ *  dies with the route; this module object doesn't). */
+const viewMemory: {
+  query: string;
+  segment: Segment;
+  appFilter: string | null;
+  scrollTop: number;
+} = { query: "", segment: "all", appFilter: null, scrollTop: 0 };
+
 /** Inline player for a dictation's saved .wav. Loads via readMediaFile → blob
  *  URL (the asset protocol can't feed WebKitGTK's media stack; blob: is in the
  *  CSP). A missing/expired file degrades to a one-line note, not an error. */
@@ -193,19 +203,37 @@ export default function History() {
   const settings = useApp((s) => s.settings);
   const backends = useApp((s) => s.backends);
   const updateSettings = useApp((s) => s.updateSettings);
-  const [query, setQuery] = useState("");
-  const [segment, setSegment] = useState<Segment>("all");
-  const [appFilter, setAppFilter] = useState<string | null>(null);
+  const [query, setQuery] = useState(viewMemory.query);
+  const [segment, setSegment] = useState<Segment>(viewMemory.segment);
+  const [appFilter, setAppFilter] = useState<string | null>(viewMemory.appFilter);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   // Two-step delete: first click arms the row, second click deletes.
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const copyTimer = useRef<number | undefined>(undefined);
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     void loadHistory();
   }, []);
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);
+  // The view survives navigation: filters mirror into the module store as
+  // they change…
+  useEffect(() => {
+    viewMemory.query = query;
+    viewMemory.segment = segment;
+    viewMemory.appFilter = appFilter;
+  }, [query, segment, appFilter]);
+  // …and the scroll position of the app's <main> is restored on mount and
+  // captured on unmount (the container itself persists across routes, so
+  // without this the list opened wherever the previous page left it).
+  useEffect(() => {
+    const main = rootRef.current?.closest("main");
+    if (main) main.scrollTop = viewMemory.scrollTop;
+    return () => {
+      if (main) viewMemory.scrollTop = main.scrollTop;
+    };
+  }, []);
 
   // Search first (global — both kinds, names AND text), THEN the segment/app
   // facets, so hidden matches can be counted and surfaced.
@@ -598,7 +626,7 @@ export default function History() {
     segment === "file" ? "files" : segment === "url" ? "links" : "dictations";
 
   return (
-    <div className="mx-auto max-w-[820px] px-10 py-12">
+    <div ref={rootRef} className="mx-auto max-w-[820px] px-10 py-12">
       <PageHeader eyebrow="transcribe" title="History">
         Everything you transcribed or dictated — stored only on this machine.
       </PageHeader>

@@ -11,7 +11,7 @@ import {
 } from "react";
 import {
   ArrowDownToLine, Check, Circle, Copy, Download, ExternalLink, Maximize2,
-  Minimize2, Minus, Pause, Pencil, Play,
+  Minimize2, Minus, Pause, Pencil, Play, X as XIcon,
 } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
@@ -298,6 +298,7 @@ export function TranscriptViewer({
   mediaPath,
   fileLabel,
   createdAt,
+  onClose,
   fill,
   className,
 }: {
@@ -311,6 +312,9 @@ export function TranscriptViewer({
   /** When this transcript was made (ISO) — shown in the meta line so
    *  same-source records (the same URL run six times) are tellable apart. */
   createdAt?: string;
+  /** Close the workbench (absent while a batch is running — the viewer is
+   *  the run's live output then, not something to dismiss). */
+  onClose?: () => void;
   /** Studio pane: fill the available height instead of capping at 65vh. */
   fill?: boolean;
   className?: string;
@@ -1388,6 +1392,17 @@ export function TranscriptViewer({
             <Download className="size-4" />
             Export
           </Button>
+          {onClose && (
+            <Button
+              variant="ghost"
+              size="sm"
+              title="Close this transcript (it stays in History)"
+              onClick={onClose}
+            >
+              <XIcon className="size-4" />
+              Close
+            </Button>
+          )}
         </div>
       </div>
 

@@ -29,7 +29,7 @@ import {
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcriptHistory";
-import { openHistoryRecord } from "@/lib/transcribeRun";
+import { closeRecord, openHistoryRecord } from "@/lib/transcribeRun";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
@@ -250,6 +250,7 @@ export default function Transcribe() {
   const stageMeta = useTranscribeRun((s) => s.stageMeta);
   const lastOptions = useTranscribeRun((s) => s.lastOptions);
   const lastOverrides = useTranscribeRun((s) => s.lastOverrides);
+  const openRecordId = useTranscribeRun((s) => s.openRecordId);
   // "Silence skipping ate the file" notice — dismissed per file path.
   const [vadNoticeDismissed, setVadNoticeDismissed] = useState<string | null>(null);
   // Per-run stage options, seeded from the persisted screen defaults.
@@ -1821,6 +1822,7 @@ export default function Transcribe() {
         path={selectedPath}
         mediaPath={selected?.mediaPath}
         createdAt={selected?.createdAt}
+        onClose={busy ? undefined : closeRecord}
         fileLabel={
           queue.length > 1 || isSourceUrl(selectedPath)
             ? displayLabel(selectedPath, selected?.title ?? urlMeta[selectedPath]?.title)
@@ -1907,35 +1909,47 @@ export default function Transcribe() {
               All history →
             </Link>
           </div>
-          {recentRecords.map((rec, i) => (
-            <div
-              key={rec.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => openHistoryRecord(rec)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  openHistoryRecord(rec);
-                }
-              }}
-              className={cn(
-                "flex cursor-pointer items-center gap-3 px-5 py-2.5 hover:bg-text/[0.03]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60",
-                i < recentRecords.length - 1 && "border-b border-line",
-              )}
-            >
-              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ok/15 text-ok">
-                <Check className="size-3.5" />
-              </span>
-              <span className="min-w-0 flex-1 truncate text-[13px] text-text">
-                {safeDisplayText(rec.sourceName, 120)}
-              </span>
-              <span className="shrink-0 font-mono text-[11px] text-faint">
-                {recentMeta(rec)}
-              </span>
-            </div>
-          ))}
+          {recentRecords.map((rec, i) => {
+            // Same-URL records share their path — the id is the only honest
+            // "this is the one on the workbench" marker.
+            const isOpen = rec.id === openRecordId;
+            return (
+              <div
+                key={rec.id}
+                role="button"
+                tabIndex={0}
+                aria-current={isOpen || undefined}
+                onClick={() => openHistoryRecord(rec)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    openHistoryRecord(rec);
+                  }
+                }}
+                className={cn(
+                  "flex cursor-pointer items-center gap-3 px-5 py-2.5 hover:bg-text/[0.03]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60",
+                  i < recentRecords.length - 1 && "border-b border-line",
+                  isOpen && "bg-accent-soft/40",
+                )}
+              >
+                <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ok/15 text-ok">
+                  <Check className="size-3.5" />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[13px] text-text">
+                  {safeDisplayText(rec.sourceName, 120)}
+                </span>
+                {isOpen && (
+                  <span className="shrink-0 rounded-pill bg-accent-soft px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-label text-accent">
+                    Viewing
+                  </span>
+                )}
+                <span className="shrink-0 font-mono text-[11px] text-faint">
+                  {recentMeta(rec)}
+                </span>
+              </div>
+            );
+          })}
       </Card>
     ) : null;
 

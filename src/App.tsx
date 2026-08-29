@@ -1,6 +1,6 @@
 import { useEffect, useState, type DependencyList } from "react";
 import { AlertTriangle, X } from "lucide-react";
-import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
 import { useApp } from "@/lib/store";
 import { initConfig } from "@/lib/persistence";
@@ -45,6 +45,19 @@ function useTauriListener(subscribe: () => Promise<() => void>, deps: Dependency
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
+}
+
+// Each page opens at its top: <main> is one persistent scroll container, so
+// without this a route change kept whatever scroll offset the previous page
+// left ("History opened mid-list"). History is exempt — it restores its own
+// remembered position instead.
+function ScrollReset() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    if (pathname === "/history") return;
+    document.querySelector("main")?.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
 }
 
 // Bridges overlay → main-window navigation: the chip calls show_main_at_screen, which
@@ -171,6 +184,7 @@ export default function App() {
   return (
     <HashRouter>
       <NavigationBridge />
+      <ScrollReset />
       <div className="relative z-10 flex h-screen overflow-hidden">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

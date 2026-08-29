@@ -347,6 +347,10 @@ interface TranscribeRunState {
   /** Options/overrides of the current or last run (rail layout + Retry). */
   lastOptions?: TranscribeOptions;
   lastOverrides: DecodeOverrides;
+  /** History-record id of the transcript on the workbench, or null. The
+   *  Recent strip marks its row with this — path can't do it, same-URL
+   *  records share their path. */
+  openRecordId: string | null;
   epoch: number;
   running: boolean;
 }
@@ -365,6 +369,7 @@ export const useTranscribeRun = create<TranscribeRunState>(() => ({
   urlMeta: {},
   lastOptions: undefined,
   lastOverrides: {},
+  openRecordId: null,
   epoch: 0,
   running: false,
 }));
@@ -403,11 +408,29 @@ export function resetForInputChange() {
       selectedPath: settled.some((it) => it.path === s.selectedPath)
         ? s.selectedPath
         : null,
+      openRecordId: settled.some((it) => it.path === s.selectedPath)
+        ? s.openRecordId
+        : null,
       progress: null,
       stageTimes: {},
       stageMeta: {},
     };
   });
+}
+
+/** Close the transcript on the workbench — back to the idle config screen.
+ *  Only meaningful between runs; the record itself stays in history. */
+export function closeRecord() {
+  if (get().running) return;
+  set((s) => ({
+    epoch: s.epoch + 1,
+    queue: [],
+    selectedPath: null,
+    openRecordId: null,
+    progress: null,
+    stageTimes: {},
+    stageMeta: {},
+  }));
 }
 
 export function setUrlMeta(url: string, meta: TranscribeRunState["urlMeta"][string]) {
@@ -430,7 +453,12 @@ export function removeFile(path: string) {
 }
 
 export function selectPath(path: string | null) {
-  set({ selectedPath: path });
+  // Selection defines what's "open": keep the Recent-strip marker on the
+  // record registered for the newly selected row.
+  set({
+    selectedPath: path,
+    openRecordId: (path && historyByPath[path]?.id) || null,
+  });
 }
 
 // ── history bridge ───────────────────────────────────────────────────────────
@@ -501,6 +529,9 @@ function recordRun(
   // The viewer identifies the open transcript by its timestamp — same-URL
   // records are otherwise indistinguishable (the URL is the queue key).
   patchItem(path, { createdAt: rec.createdAt });
+  // A just-finished run that's on screen is what the Recent strip should
+  // mark as open.
+  if (get().selectedPath === path) set({ openRecordId: rec.id });
   return rec;
 }
 
@@ -579,6 +610,7 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
       },
     ],
     selectedPath: rec.sourcePath,
+    openRecordId: rec.id,
     progress: null,
     stageTimes: {},
     stageMeta: {},
