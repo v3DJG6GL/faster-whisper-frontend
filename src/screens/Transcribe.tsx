@@ -1378,8 +1378,6 @@ export default function Transcribe() {
                     <span
                       className={cn(
                         "grid size-6 shrink-0 place-items-center rounded-full font-mono text-[11px]",
-                        state === "done" && "bg-ok/15 text-ok",
-                        state === "active" && "bg-accent-soft text-accent",
                         state === "pending" && "bg-surface-2 text-faint",
                         // Dashed ring, no fill: the slot exists, nothing ran
                         // in it — deliberately borrows neither success nor
@@ -1387,6 +1385,16 @@ export default function Transcribe() {
                         state === "skipped" &&
                           "border-[1.5px] border-dashed border-faint/70 text-faint",
                       )}
+                      // Done / active rows wear their stage's timeline-strip
+                      // hue so the rail and the overall bar read as one system.
+                      style={
+                        state === "done" || state === "active"
+                          ? {
+                              color: STAGE_COLORS[st],
+                              background: `color-mix(in srgb, ${STAGE_COLORS[st]} 16%, transparent)`,
+                            }
+                          : undefined
+                      }
                     >
                       {state === "done" ? (
                         <Check className="size-3.5" />
@@ -1425,7 +1433,7 @@ export default function Transcribe() {
                         <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
                           {state === "done" && (
                             <>
-                              <span className="text-ok">done</span>
+                              <span style={{ color: STAGE_COLORS[st] }}>done</span>
                               {stageElapsedMs !== null
                                 ? ` · ${fmtElapsed(stageElapsedMs)}`
                                 : ""}
@@ -1464,8 +1472,11 @@ export default function Transcribe() {
                       {frac !== null && (
                         <div className="mt-2 h-1.5 overflow-hidden rounded-pill bg-surface-2">
                           <div
-                            className="h-full rounded-pill bg-accent transition-[width] duration-500"
-                            style={{ width: `${Math.max(2, Math.round(frac * 100))}%` }}
+                            className="h-full rounded-pill transition-[width] duration-500"
+                            style={{
+                              width: `${Math.max(2, Math.round(frac * 100))}%`,
+                              background: STAGE_COLORS[st],
+                            }}
                           />
                         </div>
                       )}
