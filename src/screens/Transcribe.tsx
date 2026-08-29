@@ -587,6 +587,7 @@ export default function Transcribe() {
             />
             <Button
               variant="accent"
+              className="shrink-0 whitespace-nowrap"
               disabled={!normalizeMediaUrl(urlDraft) || busy}
               onClick={addLink}
             >
