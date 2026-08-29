@@ -1380,7 +1380,7 @@ export function TranscriptViewer({
             {focus ? "Exit focus" : "Focus"}
           </Button>
           <Button
-            variant="default"
+            variant="ghost"
             size="sm"
             onClick={() => setShowExport((v) => !v)}
             aria-expanded={showExport}
