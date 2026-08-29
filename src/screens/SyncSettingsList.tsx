@@ -1,9 +1,10 @@
 // "What this device syncs" — the granular per-setting sync switches, rendered
 // entirely from the settings manifest (one switch per Settings row, identical
-// label, nesting mirrored). Boxed group cards with tri-state masters and
-// exception-first collapse: a collapsed card hides only rows that are
-// ON-and-at-default; anything off or changed stays visible, so "what is NOT
-// following my account?" needs no expanding.
+// label, nesting mirrored). Boxed group cards with tri-state masters: a
+// collapsed card shows only its header + summary counts; the "Show changed
+// & off only" filter answers "what is NOT following my account?" (rows whose
+// value changed from default OR whose sync switch is off) without expanding —
+// group headers always stay visible so the per-group masters remain reachable.
 //
 // Reset tiers: hover ↺ / row menu (single setting, instant), group menu
 // ("Reset group"), and a subdued "Restore all defaults…" with an inline
@@ -117,6 +118,11 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
 
   const allOn = DEFS.every((d) => gates[d.id as SettingId]);
   const totalChanged = changed.size;
+  // The filter's unit: a row NOT fully following the account — value changed
+  // from default, or sync switch off (incl. the off-by-default ones).
+  const totalExceptions = DEFS.filter(
+    (d) => !gates[d.id as SettingId] || changed.has(d.id as SettingId),
+  ).length;
 
   return (
     <div className={cn(!enabled && "pointer-events-none opacity-40")} aria-disabled={!enabled}>
@@ -172,7 +178,7 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
               )}
               onClick={() => patchUi({ changedOnly: !ui.changedOnly })}
             >
-              Show changed only{totalChanged > 0 ? ` (${totalChanged})` : ""}
+              Show changed &amp; off only{totalExceptions > 0 ? ` (${totalExceptions})` : ""}
             </button>
           </div>
 
@@ -287,21 +293,18 @@ function GroupCard({
   const master: boolean | "mixed" =
     off.length === 0 ? true : on.length === 0 ? false : "mixed";
 
-  // Exceptions stay visible while collapsed: off OR changed rows.
+  // Filter on → the group's exceptions (changed OR switch off), expansion
+  // ignored; filter off → all rows when expanded, none when collapsed (the
+  // header + summary IS the collapsed view). The header always renders so the
+  // group master stays reachable in every mode.
   const isException = (d: SettingDef) =>
     !gates[d.id as SettingId] || changed.has(d.id as SettingId);
-  const visible = changedOnly
-    ? defs.filter((d) => changed.has(d.id as SettingId))
-    : expanded
-      ? defs
-      : defs.filter(isException);
+  const visible = changedOnly ? defs.filter(isException) : expanded ? defs : [];
 
   const summary =
     off.length === 0
       ? `all ${defs.length} synced`
       : `${on.length} synced · ${off.length} off${changedDefs.length ? ` · ${changedDefs.length} changed` : ""}`;
-
-  if (changedOnly && visible.length === 0) return null;
 
   const panelId = `sync-group-${group}`;
   return (

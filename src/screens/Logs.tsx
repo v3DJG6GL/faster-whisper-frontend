@@ -133,22 +133,24 @@ export default function Logs() {
     virtualizer.scrollToIndex(Math.max(0, lines.length - 1), { align: "end" });
   }
 
-  // "Copy for bug report" context: version + platform + what's configured.
-  const bugContext = useApp((s) => {
-    const t = s.settings.transcribe;
-    const backend = s.backends.find((b) => b.id === t?.backendId)?.name ?? null;
-    const profile =
-      s.profiles.find((p) => p.id === s.settings.homeProfileId)?.name ??
-      s.profiles.find((p) => p.enabled)?.name ??
-      null;
-    return { backend, model: t?.model ?? null, profile };
-  });
-
   async function copyBugReport() {
     const ver = (await appVersion().catch(() => "")) || "?";
     const platform = IS_LINUX ? "linux" : IS_WINDOWS ? "windows" : "unknown";
+    // Read once at click time — a subscribing selector returning a fresh
+    // object each render trips useSyncExternalStore's infinite-loop guard.
+    const s = useApp.getState();
+    const t = s.settings.transcribe;
     const report = buildBugReport(
-      { appVersion: ver, platform, ...bugContext },
+      {
+        appVersion: ver,
+        platform,
+        backend: s.backends.find((b) => b.id === t?.backendId)?.name ?? null,
+        model: t?.model ?? null,
+        profile:
+          s.profiles.find((p) => p.id === s.settings.homeProfileId)?.name ??
+          s.profiles.find((p) => p.enabled)?.name ??
+          null,
+      },
       visibleLines(),
     );
     await navigator.clipboard.writeText(report);
