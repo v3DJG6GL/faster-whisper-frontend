@@ -1,5 +1,5 @@
 // History: one day-bucketed timeline for BOTH record kinds — file
-// transcriptions and dictation sessions — filtered by an All/Files/Dictations
+// transcriptions and dictation sessions — filtered by an All/Files/Links/Dictations
 // segment (the call-log pattern) plus "dictated into" app chips. File rows
 // open the full workbench; dictation rows expand INLINE: full text, the saved
 // recording playable in place, Copy as the main action, and "Open in
@@ -59,7 +59,7 @@ function appLabel(r: TranscriptRecord): string {
   return seg ? seg.charAt(0).toUpperCase() + seg.slice(1) : "Dictation";
 }
 
-type Segment = "all" | "file" | "dictation";
+type Segment = "all" | "file" | "url" | "dictation";
 
 /** Inline player for a dictation's saved .wav. Loads via readMediaFile → blob
  *  URL (the asset protocol can't feed WebKitGTK's media stack; blob: is in the
@@ -220,7 +220,11 @@ export default function History() {
     );
   }, [records, query]);
 
-  const fileMatches = useMemo(() => searched.filter((r) => !isDictation(r)), [searched]);
+  const fileMatches = useMemo(
+    () => searched.filter((r) => !isDictation(r) && r.kind !== "url"),
+    [searched],
+  );
+  const linkMatches = useMemo(() => searched.filter((r) => r.kind === "url"), [searched]);
   const dictMatches = useMemo(() => searched.filter(isDictation), [searched]);
 
   // "dictated into" chips: top apps across the (searched) dictations.
@@ -239,17 +243,24 @@ export default function History() {
   }, [dictMatches]);
 
   const visible = useMemo(() => {
-    let out = segment === "file" ? fileMatches : segment === "dictation" ? dictMatches : searched;
+    let out =
+      segment === "file" ? fileMatches
+        : segment === "url" ? linkMatches
+          : segment === "dictation" ? dictMatches
+            : searched;
     if (appFilter && segment === "dictation") {
       out = out.filter((r) => (r.appId ?? appLabel(r)) === appFilter);
     }
     return out;
-  }, [searched, fileMatches, dictMatches, segment, appFilter]);
+  }, [searched, fileMatches, linkMatches, dictMatches, segment, appFilter]);
 
   // Matches the active segment hides (never silently — NN/g scoped search).
   const hiddenMatches =
     query.trim() && segment !== "all"
-      ? searched.length - (segment === "file" ? fileMatches.length : dictMatches.length)
+      ? searched.length -
+        (segment === "file" ? fileMatches.length
+          : segment === "url" ? linkMatches.length
+            : dictMatches.length)
       : 0;
 
   const buckets = useMemo(() => {
@@ -583,7 +594,8 @@ export default function History() {
     );
   };
 
-  const segLabel = segment === "file" ? "files" : "dictations";
+  const segLabel =
+    segment === "file" ? "files" : segment === "url" ? "links" : "dictations";
 
   return (
     <div className="mx-auto max-w-[820px] px-10 py-12">
@@ -601,6 +613,7 @@ export default function History() {
           options={[
             { value: "all", label: `All · ${searched.length}` },
             { value: "file", label: `Files · ${fileMatches.length}` },
+            { value: "url", label: `Links · ${linkMatches.length}` },
             { value: "dictation", label: `Dictations · ${dictMatches.length}` },
           ]}
         />
@@ -680,7 +693,7 @@ export default function History() {
           <Search className="size-3.5 shrink-0 text-accent" />
           <span className="flex-1">
             {visible.length} match{visible.length === 1 ? "" : "es"} in {segLabel} —{" "}
-            {hiddenMatches} more in {segment === "file" ? "dictations" : "files"}
+            {hiddenMatches} more outside {segLabel}
           </span>
           <Button variant="ghost" size="sm" onClick={() => setSegment("all")}>
             Show all
