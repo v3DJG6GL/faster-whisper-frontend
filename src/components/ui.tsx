@@ -570,7 +570,10 @@ export function Button({
         size === "sm" ? "h-8 px-3 text-[12px]" : "h-10 px-4 text-[13px]",
         variant === "accent" && "bg-accent text-accent-ink hover:brightness-110",
         variant === "default" && "border border-line-strong bg-surface-2 text-text hover:border-faint",
-        variant === "ghost" && "text-dim hover:bg-surface-2 hover:text-text",
+        // Transparent border at rest reserves the box, so hover/press only
+        // recolor it — no layout shift when the outline appears.
+        variant === "ghost" &&
+          "border border-transparent text-dim hover:border-line-strong hover:bg-surface-2 hover:text-text active:border-faint",
         variant === "danger" && "border border-rec/40 text-rec hover:bg-rec/10",
         className,
       )}
