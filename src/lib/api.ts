@@ -409,6 +409,73 @@ export async function onMicTestPlayEnded(cb: () => void): Promise<() => void> {
   return subscribe<unknown>("audio://test-play-ended", () => cb());
 }
 
+// ── In-app log viewer (Logs screen) ─────────────────────────────────────────
+
+/** One captured log line from the Rust ring buffer. `ts` is ms since epoch. */
+export interface LogLine {
+  seq: number;
+  ts: number;
+  level: "error" | "warn" | "info" | "debug" | "trace";
+  target: string;
+  /** Parsed leading `[subsystem]` tag, when present. */
+  tag: string | null;
+  msg: string;
+}
+
+export interface LogTail {
+  lines: LogLine[];
+  /** Cumulative error/warn counts since app launch (badge source). */
+  errors: number;
+  warns: number;
+  /** Next sequence number — pass back as `sinceSeq` to continue from here. */
+  seq: number;
+}
+
+const EMPTY_TAIL: LogTail = { lines: [], errors: 0, warns: 0, seq: 0 };
+
+/** The ring's contents from `sinceSeq` on (0 = everything captured so far). */
+export async function getLogTail(sinceSeq: number): Promise<LogTail> {
+  if (!isTauri) return EMPTY_TAIL;
+  return invoke<LogTail>("get_log_tail", { sinceSeq });
+}
+
+/** Gate the batched `log://lines` stream — on while the Logs screen is open. */
+export async function setLogStream(active: boolean): Promise<void> {
+  if (!isTauri) return;
+  return invoke("set_log_stream", { active });
+}
+
+/** Badge hydration at startup: counters only, no lines. */
+export async function getLogStatus(): Promise<LogTail> {
+  if (!isTauri) return EMPTY_TAIL;
+  return invoke<LogTail>("get_log_status");
+}
+
+/** Display path of the log folder (home-relative where possible). */
+export async function logFolderPath(): Promise<string | null> {
+  if (!isTauri) return null;
+  return invoke<string>("log_folder_path").catch(() => null);
+}
+
+export async function openLogFolder(): Promise<void> {
+  if (!isTauri) return;
+  return invoke("open_log_folder");
+}
+
+/** Batched new log lines — emitted only while the stream is active. */
+export async function onLogLines(
+  cb: (payload: { lines: LogLine[] }) => void,
+): Promise<() => void> {
+  return subscribe<{ lines: LogLine[] }>("log://lines", cb);
+}
+
+/** Badge counters — always on, emitted only when the totals change. */
+export async function onLogStatus(
+  cb: (payload: { seq: number; errors: number; warns: number }) => void,
+): Promise<() => void> {
+  return subscribe<{ seq: number; errors: number; warns: number }>("log://status", cb);
+}
+
 /** Subscribe to live RMS levels (0..1) emitted during capture. Returns an unlisten fn. */
 export async function onAudioLevel(cb: (level: number) => void): Promise<() => void> {
   return subscribe<number>("audio://level", cb);

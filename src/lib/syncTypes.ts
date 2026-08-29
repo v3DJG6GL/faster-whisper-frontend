@@ -153,6 +153,13 @@ export type SyncFileTranscriptions = Partial<
   Pick<TranscribeSettings, (typeof FILE_TRANSCRIPTION_FIELDS)[number]>
 >;
 
+/** The `logging` category: the in-app log viewer's preferences. `logDir` is a
+ *  machine-specific path behind its gate (default off) and never travels in
+ *  an export (the export contract composes without gates → extractor omits). */
+export type SyncLogging = Partial<
+  Pick<import("./types").LoggingSettings, "logLevel" | "keepDays" | "showInSidebar" | "logDir">
+>;
+
 /** The per-machine-by-default Transcribe picks behind the sub-toggle. */
 export const TRANSCRIPTION_PICK_FIELDS = [
   "backendId",
@@ -181,6 +188,7 @@ export interface SyncBlob {
   appRules?: SyncAppRules;
   transcription?: SyncTranscription;
   fileTranscriptions?: SyncFileTranscriptions;
+  logging?: SyncLogging;
 }
 
 /** The export-file envelope (single pretty-printed JSON file). */

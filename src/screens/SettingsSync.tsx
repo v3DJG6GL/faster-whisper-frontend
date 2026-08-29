@@ -3,10 +3,9 @@
 // per-device category toggles + status/manual controls + conflict dialog).
 // The engine lives in lib/sync.ts; this screen only drives it.
 
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { DownloadCloud, UploadCloud, RefreshCw, Loader2 } from "lucide-react";
-import { cn } from "@/lib/cn";
 import { useApp, DEFAULT_SYNC } from "@/lib/store";
 import {
   Button,
@@ -21,6 +20,7 @@ import {
 } from "@/components/ui";
 import { importSettingsFile, pickImportFile, pickSavePath, syncDelete } from "@/lib/api";
 import { applyImport, exportToFile } from "@/lib/exportImport";
+import { SyncSettingsList } from "@/screens/SyncSettingsList";
 import {
   ALL_CATEGORIES,
   applyBlob,
@@ -43,7 +43,7 @@ import { ownProp } from "@/lib/own";
 import { conflicts as chordConflicts, quickAddPeer } from "@/lib/conflicts";
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
-import type { Backend, SyncCategory, SyncSubSettings } from "@/lib/types";
+import type { Backend, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/syncTypes";
 
 const MY_BUCKET = IS_WINDOWS ? ("windows" as const) : ("linux" as const);
@@ -83,41 +83,9 @@ const CATEGORY_META: { key: SyncCategory; title: string; desc: string; group?: s
   { key: "profiles", title: "Profiles", desc: "Dictation profiles: name, backend, activation, chip tag." },
   { key: "dictionary", title: "Dictionary", desc: "Quick-add shortcut and pinned list. The word list itself lives on your server and always follows your account." },
   { key: "appRules", title: "App rules", desc: `Per-app rules for this OS (${MY_BUCKET}); other-OS rules pass through untouched.` },
+  { key: "logging", title: "Logging", desc: "Log level, file retention, sidebar visibility. Log files themselves never sync." },
 ];
 
-/** The indented field-level opt-outs rendered under their parent category row
- *  in "What this device syncs". Keys index SyncSettings.sub. */
-const SUB_META: {
-  key: keyof SyncSubSettings;
-  parent: SyncCategory;
-  title: string;
-  desc: string;
-}[] = [
-  {
-    key: "recordingsDir",
-    parent: "recording",
-    title: "Audio folder",
-    desc: "A machine-specific path — sync only between identical setups.",
-  },
-  {
-    key: "transcribePicks",
-    parent: "transcription",
-    title: "Last-used backend & model",
-    desc: "Which server, Whisper model and language the Transcribe screen last used.",
-  },
-  {
-    key: "profileHotkeys",
-    parent: "profiles",
-    title: "Profile shortcuts",
-    desc: "Off = each machine keeps its own chords.",
-  },
-  {
-    key: "quickAddHotkey",
-    parent: "dictionary",
-    title: "Quick-add shortcut",
-    desc: "Off = each machine keeps its own chord.",
-  },
-];
 
 /** Initial per-category selection for the two preview dialogs: every category
  *  present in the blob starts checked. */
@@ -824,60 +792,11 @@ export function SyncTab() {
         )}
 
         <SectionLabel>What this device syncs</SectionLabel>
-        {CATEGORY_META.map(({ key, title, desc, group }, i) => {
-          const subs = SUB_META.filter((s) => s.parent === key);
-          const subVals = sync.sub ?? DEFAULT_SYNC.sub!;
-          const groupStarts = group && CATEGORY_META[i - 1]?.group !== group;
-          return (
-            <Fragment key={key}>
-              {groupStarts && (
-                <div className="mt-3 font-mono text-[10.5px] uppercase tracking-label text-accent">
-                  {group}
-                </div>
-              )}
-              <SettingRow title={title} desc={desc} disabled={!sync.enabled}>
-                <Toggle
-                  checked={sync.categories[key]}
-                  disabled={!sync.enabled}
-                  onChange={(v) => updateSync({ categories: { ...sync.categories, [key]: v } })}
-                  ariaLabel={`Sync ${title}`}
-                />
-              </SettingRow>
-              {subs.map((s) => {
-                const active = sync.enabled && sync.categories[key];
-                return (
-                  <div
-                    key={s.key}
-                    className={cn(
-                      "relative flex items-center gap-4 border-b border-line py-2.5 pl-9",
-                      !active && "opacity-40",
-                    )}
-                  >
-                    {/* connector elbow: this option belongs to the row above */}
-                    <span
-                      aria-hidden
-                      className="absolute left-3.5 top-[-4px] h-[24px] w-[12px] rounded-bl-lg border-b border-l border-line-strong"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[13.5px] font-medium text-text">{s.title}</div>
-                      <div className="text-[12px] text-faint">{s.desc}</div>
-                    </div>
-                    <Toggle
-                      checked={subVals[s.key] ?? false}
-                      disabled={!active}
-                      onChange={(v) => updateSync({ sub: { ...subVals, [s.key]: v } })}
-                      ariaLabel={`Sync ${s.title}`}
-                    />
-                  </div>
-                );
-              })}
-            </Fragment>
-          );
-        })}
+        <SyncSettingsList enabled={sync.enabled} />
         <div className="mt-3 rounded-[10px] border border-dashed border-line-strong px-4 py-2.5 text-[12px] leading-snug text-faint">
           <span className="font-semibold text-dim">Never synced:</span> microphone, this device's
-          audio folder (unless enabled above), the Linux input backend, and these sync settings
-          themselves.
+          audio and log folders (unless enabled above), the Linux input backend, and these sync
+          settings themselves.
         </div>
 
         <div className="flex items-center gap-3 py-4">

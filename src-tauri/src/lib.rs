@@ -9,6 +9,7 @@ mod inject;
 mod key_debounce;
 #[cfg(target_os = "linux")]
 mod kwin;
+mod logging;
 mod media_decode;
 mod overlay;
 mod quickadd;
@@ -22,44 +23,15 @@ mod virtual_keyboard;
 mod wayland_inject;
 mod win_hotkeys;
 
-fn env_filter() -> tracing_subscriber::EnvFilter {
-    tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "faster_whisper_frontend_lib=info,info".into())
-}
-
-/// Console logging everywhere except Windows release use: the bundled app runs
-/// under the `windows` subsystem (stdout goes nowhere, and users can't attach a
-/// terminal), so there the log goes to
-/// `%LOCALAPPDATA%\faster-whisper-frontend\logs\fwf.log` — current run plus one
-/// previous (`fwf.prev.log`) — making "send me the log" possible at all.
-fn init_tracing() {
-    #[cfg(windows)]
-    if let Some(file) = windows_log_file() {
-        tracing_subscriber::fmt()
-            .with_env_filter(env_filter())
-            .with_writer(std::sync::Mutex::new(file))
-            .with_ansi(false)
-            .init();
-        tracing::info!("faster-whisper-frontend v{}", env!("CARGO_PKG_VERSION"));
-        return;
-    }
-    tracing_subscriber::fmt().with_env_filter(env_filter()).init();
-}
-
-#[cfg(windows)]
-fn windows_log_file() -> Option<std::fs::File> {
-    let dir = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?)
-        .join("faster-whisper-frontend")
-        .join("logs");
-    std::fs::create_dir_all(&dir).ok()?;
-    let cur = dir.join("fwf.log");
-    let _ = std::fs::rename(&cur, dir.join("fwf.prev.log"));
-    std::fs::File::create(cur).ok()
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    init_tracing();
+    // Ring + file writer exist BEFORE the subscriber so no startup line is
+    // lost; the session file itself opens in .setup() (once paths/config are
+    // known) with the ring replayed into it. See logging.rs.
+    let log_ring = logging::LogRing::default();
+    let log_writer = logging::SwapWriter::default();
+    logging::init(log_ring.clone(), log_writer.clone());
+    tracing::info!("faster-whisper-frontend v{}", env!("CARGO_PKG_VERSION"));
 
     // reqwest 0.13's `rustls-no-provider` ships no TLS crypto provider; install
     // ring as the process-wide default (the same provider tokio-tungstenite's
@@ -100,6 +72,8 @@ pub fn run() {
         .manage(virtual_keyboard::VirtualKeyboard::default())
         .manage(atspi_guard::AtspiGuard::default())
         .manage(quickadd::SeedRendezvous::default())
+        .manage(log_ring)
+        .manage(log_writer)
         // Close-to-tray for the MAIN window. Its webview hosts the dictation state machine and the
         // trigger/chip action listeners; destroying it mid-session would leave the Rust audio
         // stream running with NOTHING able to stop it (both the global shortcut and the chip route
@@ -133,6 +107,11 @@ pub fn run() {
                 .app_config_dir()
                 .map(|dir| config::load(&dir))
                 .unwrap_or_default();
+            // Apply the saved log level, open this session's log file (ring
+            // replayed in, so it's complete from launch), prune old ones, and
+            // start the batched log stream for the Logs screen.
+            logging::apply_log_settings(app.handle(), &cfg);
+            logging::spawn_emit_pump(app.handle().clone());
             commands::apply_bindings(app.handle());
             // Warm the AT-SPI focus listener now so the focused-app cache is populated by
             // the time the user dictates (per-app rules + the chip target readout), and
@@ -256,6 +235,12 @@ pub fn run() {
             sound::play_cue,
             tray::set_tray_state,
             tray::show_main_at_screen,
+            logging::get_log_tail,
+            logging::set_log_stream,
+            logging::get_log_status,
+            logging::log_folder_path,
+            logging::open_log_folder,
+            logging::frontend_log,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

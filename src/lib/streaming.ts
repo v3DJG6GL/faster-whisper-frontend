@@ -1532,6 +1532,9 @@ function flashError(message: string): void {
   // error the user is being shown.
   resetPartialPreview();
   useApp.getState().setDictation({ status: "error", dictationError: message, level: 0, partial: "", warming: false });
+  // Failure doorway: the dictation error itself lingers only briefly (chip/Home);
+  // the banner persists with a "View logs" path to the full story.
+  useApp.getState().setLogsDoorway("Dictation failed — the log has the details.");
   if (errorClearTimer) clearTimeout(errorClearTimer);
   errorClearTimer = setTimeout(() => {
     errorClearTimer = null;

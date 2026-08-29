@@ -10,6 +10,7 @@ import type {
   Profile,
   SyncCategory,
   SyncSettings,
+  SyncSubSettings,
   ThemeName,
   UsageStats,
 } from "./types";
@@ -39,80 +40,11 @@ const MAX_QUICK_LAUNCH = 100;
  * a dictation setup (activation + chord + a target Backend + optional overrides).
  */
 
-/** Sync starts off with every category opted in — flipping "Enable sync" is
- *  the single gate; the toggles then subtract. Machine-local by contract
- *  (never travels in a blob/export), so defaults only matter per-device. */
-export const DEFAULT_SYNC: SyncSettings = {
-  enabled: false,
-  backendId: null,
-  categories: {
-    general: true,
-    recording: true,
-    chip: true,
-    backends: true,
-    profiles: true,
-    dictionary: true,
-    appRules: true,
-    transcription: true,
-    fileTranscriptions: true,
-  },
-  // Every default preserves the pre-sub-toggle behavior exactly: the folder
-  // was never synced, chords always were; the Transcribe picks never were.
-  sub: { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: false },
-  urlOverrides: {},
-};
-
-const DEFAULT_SETTINGS: AppSettings = {
-  theme: "auto", // follow the OS scheme until the user picks a side (Sidebar toggle)
-  microphoneId: null,
-  homeProfileId: null,
-  quickAddList: null,
-  general: {
-    openAtLogin: false,
-    startMinimized: false,
-    insertTiming: "live",
-    insertMethod: "paste",
-    pasteShortcut: ["ControlLeft", "KeyV"],
-    autoEnter: false,
-    restoreClipboard: true,
-    soundEffects: true,
-    evdevEnabled: false,
-    deepFieldDetection: false,
-    // Super+Alt (user-set 2026-07-13; mirrors Rust default_quick_add_hotkey) —
-    // inert until a quick-add list is designated (apply_bindings skips it), so
-    // the default is harmless out of the box.
-    quickAddHotkey: ["AltLeft", "MetaLeft"],
-  },
-  recording: {
-    indicatorPosition: "top",
-    saveRecordings: true,
-    recordingsDir: null,
-    audioBaseDir: null,
-    trimSilence: true,
-    recordingsRetentionDays: 0,
-    muteSystemAudio: true,
-    latchAutoStopMin: 30,
-    realtimePreview: true,
-    realtimePreviewOnHover: false,
-    showProfileOnOverlay: true,
-    showProfileOnHover: false,
-    showStatsOnOverlay: true,
-    overlayStatsOnHover: false,
-    overlayStatsMetric: "both",
-    showTargetOnOverlay: true,
-    showTargetOnHover: false,
-    showTargetOnlySpeaking: false,
-    persistentDock: true,
-    overlayPeek: true,
-    peekTimeoutSec: 5,
-    peekWhileActive: false,
-    dimAfterSec: 2.5,
-    hoverRevealMs: 500,
-    quickLaunch: [],
-  },
-  sync: DEFAULT_SYNC,
-  setupDismissed: false,
-};
+// DEFAULT_SYNC / DEFAULT_SETTINGS moved to defaults.ts (pure data, no import
+// cycle with the settings manifest); re-exported here so importers don't churn.
+import { DEFAULT_SETTINGS, DEFAULT_SYNC } from "./defaults";
+import { completeGates } from "./settingsManifest";
+export { DEFAULT_SYNC };
 
 /** Deep-merge loaded settings over the defaults so a config written by an older version
  *  — or with fields omitted by the backend's skip-empty serialization (e.g. an empty
@@ -157,10 +89,24 @@ function withSettingsDefaults(raw: unknown): AppSettings {
       ...DEFAULT_SYNC,
       ...(s.sync ?? {}),
       categories: completeCategories(s.sync?.categories),
-      sub: { ...DEFAULT_SYNC.sub!, ...(s.sync?.sub ?? {}) },
+      sub: completeSub(s.sync?.sub, s.sync?.categories),
       urlOverrides: { ...(s.sync?.urlOverrides ?? {}) },
     },
+    logging: { ...DEFAULT_SETTINGS.logging!, ...(s.logging ?? {}) },
   };
+}
+
+/** Complete the per-setting sync gates from a persisted (possibly
+ *  older-version) config: manifest defaults ← old category toggles (an OFF
+ *  category seeds its members OFF) ← legacy sub keys ← saved gate values.
+ *  The legacy four keys are also written BACK (derived from the gates) so a
+ *  downgraded app still reads the same intent. */
+function completeSub(
+  saved: Partial<SyncSubSettings> | undefined,
+  savedCategories: Partial<Record<SyncCategory, boolean>> | undefined,
+): SyncSubSettings {
+  const gates = completeGates(saved, savedCategories);
+  return { ...gates, recordingsDir: gates.audioFolder };
 }
 
 /** Fill missing category toggles — with a one-time split migration: a config
@@ -343,6 +289,9 @@ interface AppState {
   // write/conflict failure ("Couldn't save…"), "load" = a startup load-recovery / load-failure notice
   // (which is self-contained and must NOT show the save-failure framing). null when saveError is null.
   saveErrorKind: "save" | "load" | null;
+  /** Failure-doorway banner text ("Transcription failed — View logs"); null = hidden. */
+  logsDoorway: string | null;
+  setLogsDoorway: (msg: string | null) => void;
 
   /** P30 runtime sync status (never persisted): what the Sync tab's status
    *  line shows. `syncUnsupported` = the sync backend 404'd the endpoint
@@ -357,6 +306,7 @@ interface AppState {
   updateSettings: (patch: Partial<AppSettings>) => void;
   updateGeneral: (patch: Partial<AppSettings["general"]>) => void;
   updateRecording: (patch: Partial<AppSettings["recording"]>) => void;
+  updateLogging: (patch: Partial<NonNullable<AppSettings["logging"]>>) => void;
   /** Patch settings.sync (deep-merges categories/urlOverrides at the caller). */
   updateSync: (patch: Partial<SyncSettings>) => void;
   /** Set (or clear, with null/empty) this device's address override for a
@@ -490,6 +440,8 @@ export const useApp = create<AppState>((set) => ({
   usageViewBackendId: null,
   saveError: null,
   saveErrorKind: null,
+  logsDoorway: null,
+  setLogsDoorway: (msg) => set({ logsDoorway: msg }),
 
   syncStatus: "idle",
   syncError: null,
@@ -533,6 +485,13 @@ export const useApp = create<AppState>((set) => ({
     set((s) => ({ settings: { ...s.settings, general: { ...s.settings.general, ...patch } } })),
   updateRecording: (patch) =>
     set((s) => ({ settings: { ...s.settings, recording: { ...s.settings.recording, ...patch } } })),
+  updateLogging: (patch) =>
+    set((s) => ({
+      settings: {
+        ...s.settings,
+        logging: { ...DEFAULT_SETTINGS.logging!, ...(s.settings.logging ?? {}), ...patch },
+      },
+    })),
 
   upsertBackend: (b) =>
     set((s) => {

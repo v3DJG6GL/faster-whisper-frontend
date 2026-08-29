@@ -537,6 +537,67 @@ pub struct QuickAddTarget {
     pub slug: String,
 }
 
+/// Capture threshold for the in-app log ring and the session log file.
+/// Lower levels than the threshold are not recorded at all (not merely hidden).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Error,
+    Warn,
+    #[default]
+    Info,
+    Debug,
+}
+
+impl LogLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LogLevel::Error => "error",
+            LogLevel::Warn => "warn",
+            LogLevel::Info => "info",
+            LogLevel::Debug => "debug",
+        }
+    }
+}
+
+/// In-app logging preferences (Settings → General → Logging). Unlike
+/// `sync`/`transcribe`, Rust interprets every field, so it's typed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoggingSettings {
+    #[serde(default)]
+    pub log_level: LogLevel,
+    /// Delete session log files older than this many days on startup/save;
+    /// 0 = keep forever.
+    #[serde(default = "default_log_keep_days")]
+    pub keep_days: u32,
+    #[serde(default = "default_log_sidebar")]
+    pub show_in_sidebar: bool,
+    /// Custom log folder; None = `<app_data>/logs`. MACHINE-LOCAL by contract:
+    /// the TS sync layer never ships it in a synced blob or export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_dir: Option<String>,
+}
+
+fn default_log_keep_days() -> u32 {
+    30
+}
+
+fn default_log_sidebar() -> bool {
+    true
+}
+
+impl Default for LoggingSettings {
+    fn default() -> Self {
+        LoggingSettings {
+            log_level: LogLevel::default(),
+            keep_days: default_log_keep_days(),
+            show_in_sidebar: default_log_sidebar(),
+            log_dir: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -571,6 +632,9 @@ pub struct AppSettings {
     /// so older configs load and an unset value round-trips byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcribe: Option<serde_json::Value>,
+    /// In-app logging preferences. `#[serde(default)]` so older configs load.
+    #[serde(default)]
+    pub logging: LoggingSettings,
     /// "Skip for now" on the first-run gate: fall back to the Home checklist
     /// instead of re-gating every launch. `#[serde(default)]` so older configs load.
     #[serde(default)]
@@ -678,6 +742,7 @@ impl Default for Config {
                 },
                 sync: None,
                 transcribe: None,
+                logging: LoggingSettings::default(),
                 setup_dismissed: false,
             },
             // Fresh installs start EMPTY — no seeded backend or profiles. The

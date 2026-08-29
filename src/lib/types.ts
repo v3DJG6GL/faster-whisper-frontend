@@ -116,7 +116,7 @@ export type ThemeName = "dark" | "light" | "auto";
 export type OverlayStatsMetric = "words" | "audio" | "both";
 /** A navigable app screen, referenced by the sidebar, the overlay quick-launch,
  *  and cross-window navigation (kept in sync with the router in App.tsx). */
-export type OverlayScreen = "home" | "transcribe" | "history" | "profiles" | "backends" | "dictionary" | "app-rules" | "statistics" | "settings";
+export type OverlayScreen = "home" | "transcribe" | "history" | "profiles" | "backends" | "dictionary" | "app-rules" | "statistics" | "logs" | "settings";
 /** A dictation action the overlay quick-launch can trigger (beyond screen nav). */
 export type OverlayActionKind = "toggle-dictation" | "cycle-active-profile" | "open-quick-add";
 /** One quick-launch chip button: a screen nav target or a dictation action. A flat
@@ -196,28 +196,28 @@ export type SyncCategory =
   | "dictionary"
   | "appRules"
   | "transcription"
-  | "fileTranscriptions";
+  | "fileTranscriptions"
+  | "logging";
 
-/** Field-level opt-outs INSIDE a synced category — the sub-toggles indented
- *  under a group row in Settings → Sync. Machine-local like the rest of
- *  SyncSettings. An opted-out field still round-trips through pushes
- *  untouched (the compose passes the snapshot's value through), so flipping
- *  one off can never erase the field for other devices. */
-export interface SyncSubSettings {
-  /** Sync `recording.recordingsDir` AND `recording.audioBaseDir` — both are
-   *  machine-specific filesystem paths, governed by this one toggle.
-   *  Default OFF (the pre-sub-toggle behavior: never synced). */
+/** Per-setting sync gates — one boolean per settings-manifest entry (the
+ *  granular switches on Settings → Sync), plus the four LEGACY sub-toggle
+ *  keys kept for configs written by older versions (and written back for
+ *  downgrade safety; `recordingsDir` maps onto the manifest's `audioFolder`).
+ *  Machine-local like the rest of SyncSettings. A gated-off field still
+ *  round-trips through pushes untouched (compose passes the snapshot's value
+ *  through), so flipping one off can never erase the field for other
+ *  devices. New manifest ids are all optional — `withSettingsDefaults`
+ *  completes them via the manifest's `completeGates`. */
+export type SyncSubSettings = {
+  /** LEGACY: pre-manifest name for the audio-folder gate (both path fields). */
   recordingsDir: boolean;
-  /** Sync each profile's hotkey chord. OFF = chords stay per-machine
-   *  (inbound profiles keep this device's chord for ids it already has). */
+  /** Sync each profile's hotkey chord. OFF = chords stay per-machine. */
   profileHotkeys: boolean;
   /** Sync the quick-add shortcut chord. OFF = per-machine. */
   quickAddHotkey: boolean;
-  /** Sync the Transcribe screen's last-used backend/model/language picks.
-   *  Default OFF — "which server did I use last" is context, not preference.
-   *  Optional: configs persisted before this sub-toggle existed lack it. */
+  /** Sync the Transcribe screen's last-used backend/model/language picks. */
   transcribePicks?: boolean;
-}
+} & Partial<Record<import("./settingsManifest").SettingId, boolean>>;
 
 /** Settings-sync metadata. MACHINE-LOCAL by contract: lives in the config for
  *  persistence, but the sync engine strips it from every blob/export — each
@@ -232,9 +232,9 @@ export interface SyncSettings {
    *  pushes AND applies from pulls. OFF categories still round-trip through
    *  pushes untouched (compose/preserve) so this device never erases them. */
   categories: Record<SyncCategory, boolean>;
-  /** Per-device field-level opt-outs inside a category (see SyncSubSettings).
-   *  Optional: configs persisted before the sub-toggles existed lack it —
-   *  the store's completeSettings fills the defaults. */
+  /** Per-device per-setting sync gates (see SyncSubSettings). Optional:
+   *  configs persisted before the gates existed lack it — the store's
+   *  withSettingsDefaults completes it via the manifest. */
   sub?: SyncSubSettings;
   /** Per-device server-address overrides, keyed by Backend id: "use this URL
    *  on this machine" while the canonical serverUrl stays synced. Solves the
@@ -297,6 +297,21 @@ export interface TranscribeSettings {
   keepUrlAudioCopies?: boolean;
 }
 
+/** Capture threshold for the in-app log ring + session file — lower levels
+ *  aren't recorded at all, not merely hidden. Mirrors Rust `LogLevel`. */
+export type LogLevelSetting = "error" | "warn" | "info" | "debug";
+
+/** In-app logging preferences (Settings → General → Logging). Mirrors Rust
+ *  `LoggingSettings`. `logDir` is MACHINE-LOCAL: never shipped in a synced
+ *  blob or export (a local filesystem path). */
+export interface LoggingSettings {
+  logLevel: LogLevelSetting;
+  /** Delete session log files older than this many days; 0 = keep forever. */
+  keepDays: number;
+  showInSidebar: boolean;
+  logDir?: string | null;
+}
+
 export interface AppSettings {
   theme: ThemeName;
   microphoneId: string | null;
@@ -306,6 +321,7 @@ export interface AppSettings {
   general: GeneralSettings;
   recording: RecordingSettings;
   sync?: SyncSettings; // machine-local sync meta; excluded from blobs/exports
+  logging?: LoggingSettings; // in-app logging preferences (logDir machine-local)
   setupDismissed?: boolean; // "Skip for now" on the first-run gate — fall back to the Home checklist
 }
 

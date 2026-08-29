@@ -77,6 +77,17 @@ import type {
   SyncTranscription,
 } from "./syncTypes";
 import type { SyncSubSettings } from "./types";
+import { completeGates } from "./settingsManifest";
+import {
+  APP_RULE_OVERRIDE_FIELDS,
+  APP_RULE_PASTE_FIELDS,
+  BACKEND_DEFAULTS_FIELDS,
+  gateApplyScalar,
+  gateComposeScalar,
+  repinElementFields,
+  substituteElementFields,
+  type Gates,
+} from "./syncGates";
 
 export const ALL_CATEGORIES: SyncCategory[] = [
   "general",
@@ -88,6 +99,7 @@ export const ALL_CATEGORIES: SyncCategory[] = [
   "appRules",
   "transcription",
   "fileTranscriptions",
+  "logging",
 ];
 
 /** This device's field-level opt-outs (Settings → Sync sub-toggles), with the
@@ -103,6 +115,13 @@ export function subSettings(): SyncSubSettings {
   );
 }
 
+/** This device's complete per-setting sync gates (the granular switches on
+ *  Settings → Sync), with manifest defaults + legacy/category migration. */
+export function settingGates(): Gates {
+  const sync = useApp.getState().settings.sync;
+  return completeGates(sync?.sub, sync?.categories);
+}
+
 /** This machine's appRules bucket. macOS has no app-rules backend; it falls
  *  into the linux bucket harmlessly (rules never match anything there). */
 const MY_BUCKET: "linux" | "windows" = IS_WINDOWS ? "windows" : "linux";
@@ -110,17 +129,10 @@ const OTHER_BUCKET: "linux" | "windows" = IS_WINDOWS ? "linux" : "windows";
 
 // ── canonical hash ──────────────────────────────────────────────────────────
 
-/** JSON.stringify with recursively sorted object keys, so semantically-equal
- *  blobs hash equal regardless of construction order. */
-export function stableStringify(v: unknown): string {
-  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
-  if (Array.isArray(v)) return `[${v.map(stableStringify).join(",")}]`;
-  const obj = v as Record<string, unknown>;
-  const keys = Object.keys(obj)
-    .filter((k) => obj[k] !== undefined)
-    .sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
-}
+// stableStringify moved to stable.ts (pure module, shared with the settings
+// manifest); re-exported here so existing importers don't churn.
+export { stableStringify } from "./stable";
+import { stableStringify } from "./stable";
 
 /** FNV-1a over the canonical string — a compact change-detection token (NOT
  *  crypto; it only gates "did anything sync-relevant change?"). */
@@ -322,6 +334,26 @@ function extractTranscription(
   return { ...out, ...(picks as SyncTranscription) };
 }
 
+/** The `logging` category: the log viewer's preferences. `logDir` is a
+ *  machine path behind its gate (the recordingsDir precedent): live when
+ *  opted in, snapshot passthrough otherwise — and never present in exports
+ *  (the export contract composes without gates → syncDir false, no snapshot). */
+function extractLogging(
+  settings: AppSettings,
+  syncDir: boolean,
+  snapshot: SyncBlob | undefined,
+): SyncBlob["logging"] {
+  const lg = settings.logging;
+  const out: NonNullable<SyncBlob["logging"]> = {
+    logLevel: lg?.logLevel ?? "info",
+    keepDays: lg?.keepDays ?? 30,
+    showInSidebar: lg?.showInSidebar ?? true,
+  };
+  const dir = syncDir ? (lg?.logDir ?? null) : snapshot?.logging?.logDir;
+  if (dir !== undefined) out.logDir = dir;
+  return out;
+}
+
 function extractFileTranscriptions(settings: AppSettings): SyncFileTranscriptions {
   return pickFields(
     (settings.transcribe ?? {}) as Record<string, unknown>,
@@ -385,7 +417,7 @@ export async function composeBlob(
   cfg: StoreSlice,
   cats: Record<SyncCategory, boolean>,
   snapshot: SyncBlob | undefined,
-  opts: { includeSecrets: boolean; sub: SyncSubSettings },
+  opts: { includeSecrets: boolean; sub: SyncSubSettings; gates?: Gates },
 ): Promise<SyncBlob> {
   const blob: SyncBlob = {};
   blob.general = cats.general ? extractGeneral(cfg.settings) : snapshot?.general;
@@ -402,6 +434,9 @@ export async function composeBlob(
   blob.fileTranscriptions = cats.fileTranscriptions
     ? extractFileTranscriptions(cfg.settings)
     : snapshot?.fileTranscriptions;
+  blob.logging = cats.logging
+    ? extractLogging(cfg.settings, opts.gates?.logFolder ?? false, snapshot)
+    : snapshot?.logging;
   if (cats.backends) {
     blob.backends = {
       list: cfg.backends,
@@ -450,8 +485,69 @@ export async function composeBlob(
   } else {
     blob.appRules = snapshot?.appRules;
   }
+  // Per-setting gates (the granular "What this device syncs" switches). The
+  // legacy four already act inside the extractors via `opts.sub`; this pass
+  // extends the same snapshot-passthrough rule to every other setting:
+  // gated-off fields carry the snapshot's value (peers never see this
+  // device's opted-out edits, and nothing is erased for devices that sync).
+  if (opts.gates) {
+    const gates = opts.gates;
+    for (const c of ["general", "recording", "chip", "transcription", "fileTranscriptions", "dictionary", "logging"] as const) {
+      if (cats[c] && blob[c] !== undefined) {
+        (blob as Record<string, unknown>)[c] = gateComposeScalar(c, blob[c], snapshot?.[c], gates);
+      }
+    }
+    if (cats.backends && blob.backends) {
+      let list = blob.backends.list;
+      const snapList = snapshot?.backends?.list;
+      if (!gates.serverAddresses) list = substituteElementFields(list, snapList, ["serverUrl"]);
+      if (!gates.modelDecodeDefaults)
+        list = substituteElementFields(list, snapList, BACKEND_DEFAULTS_FIELDS, true);
+      const next = { ...blob.backends, list };
+      if (!gates.apiKeys) {
+        // Same never-erase rule for the keys bundle: the snapshot's copy
+        // travels (or the field stays absent) — never a keyless overwrite.
+        const snapSecrets = snapshot?.backends?.secrets;
+        if (snapSecrets !== undefined) next.secrets = snapSecrets;
+        else delete next.secrets;
+      }
+      blob.backends = next;
+    }
+    if (cats.profiles && blob.profiles) {
+      let list = blob.profiles.list;
+      if (!gates.enabledPerProfile)
+        list = substituteElementFields(list, snapshot?.profiles?.list, ["enabled"]);
+      const homeProfileId =
+        gates.homeProfile || !snapshot?.profiles
+          ? blob.profiles.homeProfileId
+          : (snapshot.profiles.homeProfileId ?? null);
+      blob.profiles = { list, homeProfileId };
+    }
+    if (cats.appRules && blob.appRules) {
+      let mine = blob.appRules[MY_BUCKET];
+      const snapMine = snapshot?.appRules?.[MY_BUCKET];
+      if (!gates.perAppOverrides)
+        mine = substituteElementFields(mine, snapMine, APP_RULE_OVERRIDE_FIELDS, true);
+      if (!gates.perAppPasteShortcuts)
+        mine = substituteElementFields(mine, snapMine, APP_RULE_PASTE_FIELDS, true);
+      blob.appRules = { ...blob.appRules, [MY_BUCKET]: mine };
+    }
+  }
   // Drop absent categories entirely (undefined = "nothing stored", never null).
   for (const c of ALL_CATEGORIES) if (blob[c] === undefined) delete blob[c];
+  // FORWARD-COMPAT: carry top-level categories this app version doesn't know
+  // through from the snapshot verbatim. Without this, a device one release
+  // behind rebuilds the blob from ALL_CATEGORIES and silently DROPS a newer
+  // device's category on every push (server-side ping-pong). Shipped ahead of
+  // the first new category (`logging`) on purpose.
+  if (snapshot) {
+    const known = new Set<string>(ALL_CATEGORIES);
+    for (const [k, v] of Object.entries(snapshot)) {
+      if (!known.has(k) && v !== undefined && !(k in blob)) {
+        (blob as Record<string, unknown>)[k] = v;
+      }
+    }
+  }
   return blob;
 }
 
@@ -505,6 +601,14 @@ export function mergeBlobs(
       pick = l; // placeholder (see above)
     }
     if (pick !== undefined) (merged as Record<string, unknown>)[c] = pick;
+  }
+  // FORWARD-COMPAT (mirror of composeBlob's carry-through): categories this
+  // app version doesn't know merge remote-wins-else-local, never dropped.
+  const known = new Set<string>(ALL_CATEGORIES);
+  for (const side of [local, remote]) {
+    for (const [k, v] of Object.entries(side)) {
+      if (!known.has(k) && v !== undefined) (merged as Record<string, unknown>)[k] = v;
+    }
   }
   return { merged, conflicts };
 }
@@ -848,6 +952,7 @@ function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
 const INSERT_METHODS = ["paste", "direct", "clipboard"] as const;
 const INSERT_TIMINGS = ["off", "stop", "live"] as const;
 const THEMES = ["dark", "light", "auto"] as const;
+const LOG_LEVELS = ["error", "warn", "info", "debug"] as const;
 const INDICATOR_POSITIONS = ["top", "bottom", "off"] as const;
 const OVERLAY_STATS_METRICS = ["words", "audio", "both"] as const;
 const ACTIVATIONS = ["hold", "latch"] as const;
@@ -1050,6 +1155,17 @@ export async function applyBlob(
   try {
     const settings = st.settings;
     const sub = settings.sync?.sub ?? { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: false };
+    // Per-setting gates: strip a gated-off setting's fields from the inbound
+    // scalar categories up front, so every merge-over-current below keeps
+    // this device's values for them (the recordingsDir idiom, generalized).
+    // List-category gates re-pin per element inside their arms below.
+    const gates = completeGates(settings.sync?.sub, settings.sync?.categories);
+    blob = { ...blob };
+    for (const c of ["general", "recording", "chip", "transcription", "fileTranscriptions", "dictionary", "logging"] as const) {
+      if (blob[c] !== undefined) {
+        (blob as Record<string, unknown>)[c] = gateApplyScalar(c, blob[c], gates);
+      }
+    }
     let nextSettings: AppSettings = settings;
     let nextBackends = st.backends;
     let nextProfiles = st.profiles;
@@ -1186,6 +1302,30 @@ export async function applyBlob(
         };
       }
     }
+    // The `logging` category — merge-over-current with per-field validation
+    // (closed level vocabulary; retention clamped to a sane day count; the
+    // machine-path logDir applies only when this device's gate opts in AND a
+    // well-typed value arrived, null meaning "use the default location").
+    if (cats.logging && isPlainObject(blob.logging)) {
+      const lg = blob.logging as Record<string, unknown>;
+      const cur = settings.logging ?? { logLevel: "info" as const, keepDays: 30, showInSidebar: true, logDir: null };
+      nextSettings = {
+        ...nextSettings,
+        logging: {
+          ...cur,
+          ...typedLike(lg as Partial<typeof cur>, cur),
+          logLevel: oneOf(lg.logLevel, LOG_LEVELS, cur.logLevel),
+          keepDays:
+            typeof lg.keepDays === "number" && Number.isFinite(lg.keepDays)
+              ? Math.min(3650, Math.max(0, Math.floor(lg.keepDays)))
+              : cur.keepDays,
+          logDir:
+            gates.logFolder && (typeof lg.logDir === "string" || lg.logDir === null)
+              ? lg.logDir
+              : cur.logDir,
+        },
+      };
+    }
     // The chip half of the old "Recording & Chip" group — same merge-over-current rule, and
     // the mirror-image field filter (only chip-classified keys may apply here).
     if (cats.chip && isPlainObject(blob.chip)) {
@@ -1209,9 +1349,19 @@ export async function applyBlob(
       };
     }
     if (cats.backends && blob.backends) {
+      let inboundBackends = sanitizeBackends(blob.backends.list);
+      // Element-wise keep-local for the gated backend aspects (the profile
+      // chord idiom): addresses and model/decode defaults re-pin to this
+      // device's values for backends it already knows; new backends keep the
+      // inbound values (there is nothing local to keep).
+      if (!gates.serverAddresses)
+        inboundBackends = repinElementFields(inboundBackends, st.backends, ["serverUrl"]);
+      if (!gates.modelDecodeDefaults)
+        inboundBackends = repinElementFields(inboundBackends, st.backends, BACKEND_DEFAULTS_FIELDS, true);
       nextBackends = await reconcileBackendSecrets(
-        sanitizeBackends(blob.backends.list),
-        blob.backends.secrets,
+        inboundBackends,
+        // API-keys gate off: inbound secrets never touch this device's keyring.
+        gates.apiKeys ? blob.backends.secrets : undefined,
       );
       // The ONLY await in this function, and the blob sizes it: `reconcileBackendSecrets`
       // writes each incoming secret sequentially with a 10s timeout apiece, so up to 500
@@ -1253,12 +1403,26 @@ export async function applyBlob(
           return local && !catEqual(local, p.hotkey) ? { ...p, hotkey: local } : p;
         });
       }
+      // "Enabled per profile" gate off: which profiles are active is
+      // per-machine — re-pin each known profile to ITS local enabled state.
+      if (!gates.enabledPerProfile) {
+        const localEnabled = new Map(st.profiles.map((p) => [p.id, p.enabled]));
+        nextProfiles = nextProfiles.map((p) => {
+          const mine = localEnabled.get(p.id);
+          return mine !== undefined && mine !== p.enabled ? { ...p, enabled: mine } : p;
+        });
+      }
       // `??` only replaces null/undefined, so a JSON `0` or `false` survived it — and the scrub
       // below is gated on truthiness, so a falsy non-string skipped that too and reached Rust's
-      // `Option<String>`. Same wedge as `quickAddList`.
+      // `Option<String>`. Same wedge as `quickAddList`. "Home profile" gate
+      // off: keep this device's pick regardless of the blob.
       nextSettings = {
         ...nextSettings,
-        homeProfileId: typeof blob.profiles.homeProfileId === "string" ? blob.profiles.homeProfileId : null,
+        homeProfileId: !gates.homeProfile
+          ? settings.homeProfileId ?? null
+          : typeof blob.profiles.homeProfileId === "string"
+            ? blob.profiles.homeProfileId
+            : null,
       };
     }
     if (cats.dictionary && isPlainObject(blob.dictionary)) {
@@ -1287,7 +1451,15 @@ export async function applyBlob(
       }
     }
     if (cats.appRules && blob.appRules) {
-      nextAppRules = sanitizeAppRules(blob.appRules[MY_BUCKET]);
+      let rules = sanitizeAppRules(blob.appRules[MY_BUCKET]);
+      // Per-rule field gates: overrides/chords re-pin to this device's values
+      // (including their ABSENCE — an override that isn't set locally stays
+      // unset) for rules it already knows.
+      if (!gates.perAppOverrides)
+        rules = repinElementFields(rules, st.appRules, APP_RULE_OVERRIDE_FIELDS, true);
+      if (!gates.perAppPasteShortcuts)
+        rules = repinElementFields(rules, st.appRules, APP_RULE_PASTE_FIELDS, true);
+      nextAppRules = rules;
     }
 
     // Scrub dangling cross-references (a partially-synced pull can pair e.g.
@@ -1697,7 +1869,7 @@ export async function pushNow(manual = false): Promise<void> {
       { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
       cats,
       state.snapshot,
-      { includeSecrets: true, sub: subSettings() },
+      { includeSecrets: true, sub: subSettings(), gates: settingGates() },
     );
     let base = state.version ?? 0;
     if (!manual && hashBlob(blob) === state.hash && base > 0) {
@@ -1788,7 +1960,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
     s.settings.sync?.categories ?? cats,
     state.snapshot,
-    { includeSecrets: true, sub: subSettings() },
+    { includeSecrets: true, sub: subSettings(), gates: settingGates() },
   );
   if (myGen !== gen) return; // superseded — don't apply the old server's blob
   // Normalize a pre-split peer's blob before merging (the base and local are current-shape).
@@ -1842,6 +2014,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
 function fullCats(): Record<SyncCategory, boolean> {
   return {
     general: true,
+    logging: true,
     recording: true,
     chip: true,
     backends: true,

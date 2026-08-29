@@ -12,7 +12,9 @@ import { dictate, runOverlayAction } from "@/lib/dictation";
 import { cancelLive, requestStopIfStarting } from "@/lib/streaming";
 import { SCREEN_PATH } from "@/lib/screens";
 import { applyTheme, watchSystemTheme } from "@/lib/theme";
+import { initLogStatus, openLogsPrefiltered } from "@/lib/logs";
 import { Onboarding } from "@/screens/Onboarding";
+import Logs from "@/screens/Logs";
 import Home from "@/screens/Home";
 import Transcribe from "@/screens/Transcribe";
 import HistoryScreen from "@/screens/History";
@@ -119,6 +121,49 @@ function SaveErrorBanner() {
   );
 }
 
+// The failure doorway: "Transcription failed — View logs". Set by the dictation
+// and batch-transcription error paths; "View logs" lands on /logs pre-filtered
+// to warnings+errors. Same bottom-center slot as SaveErrorBanner (renders above
+// it when both are up, since it sits earlier in the flex column). Must live
+// inside <HashRouter> for useNavigate.
+function LogsDoorwayBanner() {
+  const msg = useApp((s) => s.logsDoorway);
+  const setLogsDoorway = useApp((s) => s.setLogsDoorway);
+  const navigate = useNavigate();
+  if (!msg) return null;
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-14 z-50 flex justify-center px-4 pb-4">
+      <div
+        role="alert"
+        className="pointer-events-auto flex max-w-xl items-center gap-2.5 rounded-xl border border-warn/40 bg-warn/10 px-3.5 py-2.5 text-[12.5px] text-warn shadow-lg backdrop-blur-sm"
+      >
+        <AlertTriangle className="h-4 w-4 shrink-0" />
+        <span className="flex-1">{msg}</span>
+        <button
+          type="button"
+          onClick={() => {
+            setLogsDoorway(null);
+            openLogsPrefiltered("warn");
+            navigate("/logs");
+          }}
+          className="shrink-0 whitespace-nowrap font-semibold text-accent hover:underline"
+        >
+          View logs
+        </button>
+        <button
+          type="button"
+          onClick={() => setLogsDoorway(null)}
+          title="Dismiss"
+          aria-label="Dismiss"
+          className="shrink-0 rounded-md p-0.5 text-warn/70 hover:text-warn"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const theme = useApp((s) => s.settings.theme);
   // First-run gate: a LOADED config with no backends AND no profiles (fresh
@@ -142,6 +187,8 @@ export default function App() {
     void initSync();
     void initOverlayController();
     initUsageController();
+    // Sidebar Logs badge: always-on counter feed (tiny, change-gated events).
+    initLogStatus();
   }, []);
 
   // Global dictation triggers (CLI / hotkeys) → start/stop the right mode.
@@ -197,6 +244,7 @@ export default function App() {
             <Route path="/dictionary" element={<Dictionary />} />
             <Route path="/app-rules" element={<AppRules />} />
             <Route path="/statistics" element={<Statistics />} />
+            <Route path="/logs" element={<Logs />} />
             {/* legacy path → Backends (renamed from "Servers"/models) */}
             <Route path="/models" element={<Navigate to="/backends" replace />} />
             <Route path="/settings" element={<Settings />} />
@@ -204,6 +252,7 @@ export default function App() {
           </Routes>
         </main>
       </div>
+      <LogsDoorwayBanner />
       <SaveErrorBanner />
     </HashRouter>
   );

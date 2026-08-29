@@ -10,7 +10,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { AlertTriangle, Check, Minus, Plus } from "lucide-react";
+import { createPortal } from "react-dom";
+import { AlertTriangle, Check, Minus, MoreHorizontal, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 /* ── Card ─────────────────────────────────────────────────────────────── */
@@ -151,17 +152,21 @@ export function DisclosureToggle({
   onToggle,
   className,
   children,
+  ariaControls,
 }: {
   open: boolean;
   onToggle: () => void;
   className?: string;
   children: ReactNode;
+  /** id of the panel this toggle expands (aria-controls). */
+  ariaControls?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onToggle}
       aria-expanded={open}
+      aria-controls={ariaControls}
       className={cn(
         "ring-signal inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium text-dim hover:text-text",
         className,
@@ -170,6 +175,125 @@ export function DisclosureToggle({
       <span className={cn("transition-transform", open && "rotate-90")}>›</span>
       {children}
     </button>
+  );
+}
+
+/* ── Row overflow menu (⋯) ────────────────────────────────────────────── */
+
+export interface RowMenuItem {
+  label: string;
+  onSelect: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}
+
+/** A small "⋯" popover menu for row/group-level secondary actions (reset
+ *  tiers on the Sync list). Absolute dropdown inside its own relative
+ *  wrapper; Escape and click-away close it. */
+export function RowMenu({ items, ariaLabel }: { items: RowMenuItem[]; ariaLabel: string }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="ring-signal grid size-7 place-items-center rounded-lg text-faint hover:bg-surface-2 hover:text-text"
+      >
+        <MoreHorizontal className="size-4" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-8 z-30 min-w-[200px] rounded-xl border border-line-strong bg-panel p-1 shadow-lg"
+        >
+          {items.map((it) => (
+            <button
+              key={it.label}
+              type="button"
+              role="menuitem"
+              disabled={it.disabled}
+              onClick={() => {
+                setOpen(false);
+                it.onSelect();
+              }}
+              className={cn(
+                "ring-signal block w-full rounded-lg px-3 py-1.5 text-left text-[12.5px] font-medium",
+                it.danger ? "text-rec hover:bg-rec/10" : "text-dim hover:bg-surface-2 hover:text-text",
+                it.disabled && "cursor-not-allowed opacity-40 hover:bg-transparent",
+              )}
+            >
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Toast (transient, with optional action) ──────────────────────────── */
+
+/** A bottom-center transient notice with an optional action ("Undo"). Portaled
+ *  to <body>: Card's backdrop-blur makes it a containing block for fixed
+ *  descendants (same reason the Sync modal portals). The caller owns the
+ *  timeout — render while its state says so. */
+export function Toast({
+  children,
+  actionLabel,
+  onAction,
+  onDismiss,
+}: {
+  children: ReactNode;
+  actionLabel?: string;
+  onAction?: () => void;
+  onDismiss: () => void;
+}) {
+  return createPortal(
+    <div className="pointer-events-none fixed inset-x-0 bottom-16 z-50 flex justify-center px-4">
+      <div
+        role="status"
+        className="pointer-events-auto flex items-center gap-3 rounded-xl border border-line-strong bg-panel px-4 py-2.5 text-[12.5px] text-text shadow-lg"
+      >
+        <span>{children}</span>
+        {actionLabel && onAction && (
+          <button
+            type="button"
+            onClick={onAction}
+            className="ring-signal font-semibold text-accent hover:underline"
+          >
+            {actionLabel}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          className="ring-signal rounded-md p-0.5 text-faint hover:text-text"
+        >
+          ✕
+        </button>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -207,29 +331,41 @@ export function Toggle({
   disabled,
   ariaLabel,
 }: {
-  checked: boolean;
+  /** `"mixed"` renders the tri-state look (centered accent knob) used by
+   *  group master switches; the parent computes the click semantics
+   *  (mixed → all-on → all-off) — `onChange` still receives a boolean. */
+  checked: boolean | "mixed";
   onChange: (v: boolean) => void;
   disabled?: boolean;
   ariaLabel?: string;
 }) {
+  const mixed = checked === "mixed";
   return (
     <button
       type="button"
       role="switch"
-      aria-checked={checked}
+      aria-checked={mixed ? "mixed" : checked}
       aria-label={ariaLabel}
       disabled={disabled}
-      onClick={() => onChange(!checked)}
+      onClick={() => onChange(mixed ? true : !checked)}
       className={cn(
         "ring-signal relative h-[26px] w-[46px] shrink-0 rounded-pill border transition-colors duration-200",
-        checked ? "border-accent bg-accent" : "border-line-strong bg-surface-2",
+        checked === true
+          ? "border-accent bg-accent"
+          : mixed
+            ? "border-accent bg-accent-soft"
+            : "border-line-strong bg-surface-2",
         disabled && "opacity-40",
       )}
     >
       <span
         className={cn(
           "absolute top-1/2 h-[18px] w-[18px] -translate-y-1/2 rounded-full transition-all duration-200",
-          checked ? "left-[23px] bg-accent-ink" : "left-[3px] bg-faint",
+          checked === true
+            ? "left-[23px] bg-accent-ink"
+            : mixed
+              ? "left-[13px] bg-accent"
+              : "left-[3px] bg-faint",
         )}
       />
     </button>

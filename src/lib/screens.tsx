@@ -3,7 +3,7 @@
 // quick-launch row, the Settings quick-launch editor, and the cross-window
 // navigation bridge (App.tsx). Keep `id`s in sync with the router paths in App.tsx.
 
-import { Home, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindow, BookA, BarChart3, Plus, History } from "lucide-react";
+import { Home, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindow, BookA, BarChart3, Plus, History, ScrollText } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { OverlayScreen, OverlayActionKind, OverlayQuickAction } from "./types";
 import { IS_LINUX, IS_WINDOWS } from "./platform";
@@ -28,6 +28,10 @@ export const SCREENS: ScreenDef[] = [
   { id: "backends", label: "Backends", path: "/backends", icon: Server },
   { id: "dictionary", label: "Dictionary", path: "/dictionary", icon: BookA },
   { id: "app-rules", label: "App rules", path: "/app-rules", icon: AppWindow, needsFocusDetection: true },
+  // Sidebar visibility is additionally gated by the live "Show Logs in the
+  // sidebar" setting (Sidebar.tsx) — a live toggle can't use the static
+  // VISIBLE_SCREENS filter. The route stays registered regardless.
+  { id: "logs", label: "Logs", path: "/logs", icon: ScrollText },
   { id: "settings", label: "Settings", path: "/settings", icon: Settings },
 ];
 

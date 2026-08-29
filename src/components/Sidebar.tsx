@@ -8,6 +8,7 @@ import { VISIBLE_SCREENS } from "@/lib/screens";
 import { PRIDE_FLAG_URI } from "@/lib/prideFlag";
 import { dictationVisual } from "@/lib/dictationVisual";
 import { overallFraction, useTranscribeRun } from "@/lib/transcribeRun";
+import { unseenCount, useLogs } from "@/lib/logs";
 import { StatusDot } from "./ui";
 
 /** Live percentage of an in-flight Transcribe run — visible from every tab,
@@ -18,6 +19,18 @@ function TranscribeRunBadge() {
   return (
     <span className="ml-auto font-mono text-[10.5px] tabular-nums text-accent">
       {Math.round(frac * 100)}%
+    </span>
+  );
+}
+
+/** Errors + warnings logged since the Logs screen was last viewed — quiet when
+ *  everything is healthy, self-evident when a run fails. Cleared on view. */
+function LogsBadge() {
+  const count = useLogs(unseenCount);
+  if (count === 0) return null;
+  return (
+    <span className="ml-auto rounded-pill bg-warn/15 px-1.5 py-0.5 font-mono text-[10.5px] font-bold tabular-nums text-warn">
+      {count > 99 ? "99+" : count}
     </span>
   );
 }
@@ -83,6 +96,7 @@ export function Sidebar() {
   const speaking = useApp((s) => s.speaking);
   const backendCount = useApp((s) => s.backends.length);
   const profileCount = useApp((s) => s.profiles.length);
+  const showLogsInSidebar = useApp((s) => s.settings.logging?.showInSidebar ?? true);
   const vis = dictationVisual(status, speaking, warming);
   // Build-time app version (from tauri.conf.json), shown next to the brand label.
   const [version, setVersion] = useState("");
@@ -110,7 +124,9 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-0.5 px-3">
-        {VISIBLE_SCREENS.filter((s) => s.id !== "settings").map(({ id, path, label, icon: Icon, end }) => (
+        {VISIBLE_SCREENS.filter(
+          (s) => s.id !== "settings" && (s.id !== "logs" || showLogsInSidebar),
+        ).map(({ id, path, label, icon: Icon, end }) => (
           <NavLink
             key={path}
             to={path}
@@ -131,6 +147,7 @@ export function Sidebar() {
                 {label}
                 {setupDot(id, backendCount, profileCount)}
                 {id === "transcribe" && <TranscribeRunBadge />}
+                {id === "logs" && <LogsBadge />}
               </>
             )}
           </NavLink>

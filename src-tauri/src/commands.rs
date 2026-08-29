@@ -312,6 +312,9 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     sync_autostart(&app, config.settings.general.open_at_login);
     apply_recordings_retention(&app, &config);
     crate::transcripts::apply_transcripts_retention(&app, &config);
+    // Log level reload / session-file move / prune — so Settings changes
+    // apply live, not at the next restart.
+    crate::logging::apply_log_settings(&app, &config);
     Ok(())
 }
 
@@ -1001,7 +1004,7 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
             }
         }
     }
-    for key in ["general", "recording", "chip", "dictionary"] {
+    for key in ["general", "recording", "chip", "dictionary", "logging"] {
         if let Some(v) = categories.get(key) {
             if !v.is_null() && !v.is_object() {
                 return Err(format!("The file's {key} settings are invalid."));

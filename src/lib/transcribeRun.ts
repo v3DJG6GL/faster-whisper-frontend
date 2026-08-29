@@ -859,6 +859,8 @@ async function pump(
         if (epoch !== get().epoch) return;
         patchItem(next.path, { status: "failed", error: String(e) });
         recordRun(next.path, ctx, options, { status: "failed", error: String(e) });
+        // Failure doorway banner → Logs screen (pre-filtered to Warn+).
+        useApp.getState().setLogsDoorway("Transcription failed — the log has the details.");
       } finally {
         activeCancel = null;
         if (poller !== undefined) window.clearInterval(poller);

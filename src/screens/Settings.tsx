@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Mic, Check, Play, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus, FolderOpen } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { swap } from "@/lib/arr";
@@ -31,10 +31,15 @@ import {
   openAudioDir,
   moveAudioBase,
   pickRecordingsDir,
+  logFolderPath,
+  openLogFolder,
   type EvdevStatus,
 } from "@/lib/api";
 import type { AudioDevice, OverlayQuickAction, RecordingSettings } from "@/lib/types";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
+// Row titles come from the settings manifest — the single source both this
+// screen and the Sync list render from, so their labels can never drift.
+import { SETTING } from "@/lib/settingsManifest";
 import { SyncTab } from "@/screens/SettingsSync";
 
 /** "1.2 GB" / "84 MB" for the audio-copy usage readout. */
@@ -462,6 +467,101 @@ function QuickLaunchEditor({
   );
 }
 
+/** Settings → General → Logging: the in-app log viewer's knobs. Level changes
+ *  apply live (the Rust filter reloads on config save); `RUST_LOG` overrides
+ *  the level control when set at launch. */
+function LoggingSection() {
+  const logging = useApp((s) => s.settings.logging);
+  const updateLogging = useApp((s) => s.updateLogging);
+  const navigate = useNavigate();
+  const [folder, setFolder] = useState<string | null>(null);
+  const logDir = logging?.logDir ?? null;
+  useEffect(() => {
+    void logFolderPath().then(setFolder);
+  }, [logDir]);
+
+  return (
+    <>
+      <SectionLabel className="mb-1 mt-4">Logging</SectionLabel>
+      <SettingRow
+        title={SETTING.logLevel.label}
+        desc="How much detail is captured — lower levels aren’t recorded at all. Debug helps when reporting a problem; Info is right for every day. A RUST_LOG environment variable overrides this."
+      >
+        <Segmented
+          value={logging?.logLevel ?? "info"}
+          onChange={(v) => updateLogging({ logLevel: v })}
+          ariaLabel="Log level"
+          options={[
+            { value: "error", label: "Errors" },
+            { value: "warn", label: "Warnings" },
+            { value: "info", label: "Info" },
+            { value: "debug", label: "Debug" },
+          ]}
+        />
+      </SettingRow>
+      <SettingRow
+        title={SETTING.logRetention.label}
+        desc="Log files older than this are deleted on startup. The current session is always kept."
+      >
+        <Select
+          value={String(logging?.keepDays ?? 30)}
+          onChange={(v) => updateLogging({ keepDays: Number(v) })}
+          ariaLabel="Keep log files"
+          options={[
+            { value: "7", label: "7 days" },
+            { value: "14", label: "14 days" },
+            { value: "30", label: "30 days" },
+            { value: "90", label: "90 days" },
+            { value: "180", label: "180 days" },
+            { value: "0", label: "Keep forever" },
+          ]}
+        />
+      </SettingRow>
+      <SettingRow
+        title={SETTING.logsInSidebar.label}
+        desc="Hidden, the page stays reachable from the button below — and from failure notices, which still appear."
+      >
+        <Toggle
+          checked={logging?.showInSidebar ?? true}
+          onChange={(v) => updateLogging({ showInSidebar: v })}
+        />
+      </SettingRow>
+      <SettingRow title="Logs page" desc="Opens the console — works whether or not the sidebar entry is shown.">
+        <Button size="sm" variant="accent" onClick={() => navigate("/logs")}>
+          Open logs
+        </Button>
+      </SettingRow>
+      <SettingRow
+        title={SETTING.logFolder.label}
+        desc={folder ? safeDisplayText(folder, 120) : "One file per app session."}
+        last
+      >
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={() => void openLogFolder().catch(() => {})}>
+            Open folder
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() =>
+              void pickRecordingsDir().then((picked) => {
+                if (picked) updateLogging({ logDir: picked });
+              })
+            }
+          >
+            Change…
+          </Button>
+          {logDir && (
+            <Button size="sm" variant="ghost" onClick={() => updateLogging({ logDir: null })}>
+              Reset
+            </Button>
+          )}
+        </div>
+      </SettingRow>
+    </>
+  );
+}
+
 export default function Settings() {
   const [tab, setTab] = useState<Tab>("General");
   const s = useApp((st) => st.settings);
@@ -611,11 +711,11 @@ export default function Settings() {
       <div className="min-w-0 flex-1">
         {tab === "General" && (
           <Card className="px-6">
-            <SettingRow title="Launch at login" desc="Launch automatically when you sign in.">
+            <SettingRow title={SETTING.openAtLogin.label} desc="Launch automatically when you sign in.">
               <Toggle checked={s.general.openAtLogin} onChange={(v) => updateGeneral({ openAtLogin: v })} />
             </SettingRow>
             <SettingRow
-              title="Start minimized to tray"
+              title={SETTING.startMinimized.label}
               desc="When launched at login, start hidden; reach it from the system tray. Manual starts always show the window."
             >
               <Toggle
@@ -625,7 +725,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Auto-insert"
+              title={SETTING.autoInsert.label}
               desc="When to place the transcription into the focused field. “Live” inserts each finished phrase as you speak (streaming backends; batch inserts on stop)."
             >
               <Segmented
@@ -639,7 +739,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Insertion method"
+              title={SETTING.insertMethod.label}
               desc={
                 s.general.insertTiming === "live"
                   ? "Clipboard paste is the most reliable. Direct typing never touches the clipboard but can struggle with some layouts. Clipboard only copies each phrase for you to paste. Live only ever appends as you speak — it never goes back to revise earlier words."
@@ -659,7 +759,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Paste shortcut"
+              title={SETTING.pasteShortcut.label}
               desc="The keys sent for “Clipboard paste”. Terminals (Konsole, kitty…) need Ctrl + Shift + V."
               disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
             >
@@ -673,7 +773,7 @@ export default function Settings() {
             {IS_LINUX && (
               // AT-SPI-backed — the guard is inert off Linux, so don't show a dead switch there.
               <SettingRow
-                title="Deep field detection"
+                title={SETTING.deepFieldDetection.label}
                 desc="Skip typing when the focused element isn’t a text field — the transcript goes to the clipboard instead. Uses accessibility to cover most apps including browsers and Electron (may raise their memory use); games and the desktop are never blocked."
               >
                 <Toggle
@@ -686,7 +786,7 @@ export default function Settings() {
               </SettingRow>
             )}
             <SettingRow
-              title="Press Enter after"
+              title={SETTING.pressEnterAfter.label}
               desc="Send a Return key once the text is inserted."
               disabled={s.general.insertTiming === "off" || s.general.insertMethod === "clipboard"}
             >
@@ -697,7 +797,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Restore clipboard afterward"
+              title={SETTING.restoreClipboard.label}
               desc="Put your previous clipboard contents back once the paste is done."
               disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
             >
@@ -707,10 +807,11 @@ export default function Settings() {
                 disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
               />
             </SettingRow>
-            <SettingRow title="Sound cues" desc="A short tone when dictation starts and stops." last>
+            <SettingRow title={SETTING.soundCues.label} desc="A short tone when dictation starts and stops.">
               <Toggle checked={s.general.soundEffects} onChange={(v) => updateGeneral({ soundEffects: v })} />
             </SettingRow>
             {/* The quick-add shortcut moved to the Dictionary screen, next to the pinned list. */}
+            <LoggingSection />
           </Card>
         )}
 
@@ -816,7 +917,7 @@ export default function Settings() {
 
             <SectionLabel className="mb-1 mt-4">Dictations</SectionLabel>
             <SettingRow
-              title="Keep dictations in History"
+              title={SETTING.keepDictationHistory.label}
               desc="Each session appears on the History screen — its text, target app, and its audio (below), on this machine only. Turning this off also deletes the stored entries."
             >
               <Toggle
@@ -825,14 +926,14 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Keep dictation audio"
+              title={SETTING.keepDictationAudio.label}
               desc="Keep each session's sound as a .wav next to its text, for replay from History."
             >
               <Toggle checked={s.recording.saveRecordings} onChange={(v) => updateRecording({ saveRecordings: v })} />
             </SettingRow>
             <div className="pl-6">
               <SettingRow
-                title="Trim silence"
+                title={SETTING.trimSilence.label}
                 desc="Keep only the parts you actually spoke (the same speech detection that drives the chip), so a long hands-free session doesn't store hours of silence."
                 disabled={!s.recording.saveRecordings}
               >
@@ -844,7 +945,7 @@ export default function Settings() {
               </SettingRow>
             </div>
             <SettingRow
-              title="Delete dictations after"
+              title={SETTING.dictationRetention.label}
               desc="One clock for the whole session — text and audio leave together. Dictations are usually typed into their target and done; a short window is plenty. Old ones are removed on launch and whenever you change this."
               disabled={dictOff}
             >
@@ -898,7 +999,7 @@ export default function Settings() {
 
             <SectionLabel className="mb-1 mt-4">Transcriptions</SectionLabel>
             <SettingRow
-              title="Keep audio from files"
+              title={SETTING.keepAudioCopies.label}
               desc="Keep a copy of audio you transcribe from disk, so History playback keeps working when the original moves. Turning this off keeps existing copies."
             >
               <Toggle
@@ -907,7 +1008,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Keep audio from links"
+              title={SETTING.keepUrlAudioCopies.label}
               desc="Keep the audio downloaded for a link transcription. It's the only copy — without it, the transcription can't be replayed. Turning this off keeps existing audio."
             >
               <Toggle
@@ -916,7 +1017,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Delete transcriptions after"
+              title={SETTING.transcriptionRetention.label}
               desc="Files and links alike — transcript, corrections, speaker names and the audio copy leave together. Link audio removed this way can't be re-downloaded."
             >
               <Select
@@ -1018,13 +1119,13 @@ export default function Settings() {
 
             <SectionLabel className="mb-1 mt-4">While recording</SectionLabel>
             <SettingRow
-              title="Silence other apps"
+              title={SETTING.muteSystemAudio.label}
               desc="Mute system audio for the duration of a dictation."
             >
               <Toggle checked={s.recording.muteSystemAudio} onChange={(v) => updateRecording({ muteSystemAudio: v })} />
             </SettingRow>
             <SettingRow
-              title="Auto-stop hands-free after silence"
+              title={SETTING.latchAutoStop.label}
               desc="End a hands-free (latch) session after this long with no speech, so it can't run for hours. Set to Never to keep it open until you stop it yourself."
               last
             >
@@ -1047,7 +1148,7 @@ export default function Settings() {
         {tab === "Chip" && (
           <Card className="px-6">
             <SectionLabel className="mb-1 mt-4">Placement</SectionLabel>
-            <SettingRow title="Position" desc="Where the dictation chip sits on screen while you talk.">
+            <SettingRow title={SETTING.chipPosition.label} desc="Where the dictation chip sits on screen while you talk.">
               <Segmented
                 value={s.recording.indicatorPosition}
                 onChange={(v) => updateRecording({ indicatorPosition: v })}
@@ -1059,7 +1160,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Keep chip docked"
+              title={SETTING.keepChipDocked.label}
               desc="Keep the chip on screen as a small standby dot when you're not dictating, instead of hiding it."
               disabled={chipOff}
             >
@@ -1072,7 +1173,7 @@ export default function Settings() {
 
             <SectionLabel className="mb-1 mt-7">Auto-hide</SectionLabel>
             <SettingRow
-              title="Auto-hide to edge"
+              title={SETTING.autoHideToEdge.label}
               desc="After sitting idle, hide the chip against the screen edge so it stops covering things — hover the edge dot to bring it back."
               disabled={chipOff}
             >
@@ -1083,7 +1184,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Hide after"
+              title={SETTING.hideAfter.label}
               desc="How long the chip sits idle before it hides against the edge."
               disabled={!s.recording.overlayPeek || chipOff}
             >
@@ -1100,7 +1201,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Stay hidden while dictating"
+              title={SETTING.stayHiddenWhileDictating.label}
               desc="Keep the chip hidden against the edge as a small dot even while you dictate, instead of popping out — it just changes colour and gently pulses while you speak. Hover the edge dot to reveal the transcript."
               disabled={!s.recording.overlayPeek || chipOff}
             >
@@ -1113,7 +1214,7 @@ export default function Settings() {
 
             <SectionLabel className="mb-1 mt-7">Appearance</SectionLabel>
             <SettingRow
-              title="Dim after"
+              title={SETTING.dimAfter.label}
               desc="How long the chip sits idle before it fades to a dim, unobtrusive opacity (a docked standby dot dims too). Set to Never to keep it full opacity."
               disabled={chipOff}
             >
@@ -1131,7 +1232,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Live transcript"
+              title={SETTING.liveTranscript.label}
               desc="Show words in the chip as you speak — always, or only while you hover it (streaming backends only)."
               disabled={chipOff}
             >
@@ -1143,7 +1244,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Show active profile"
+              title={SETTING.showActiveProfile.label}
               desc="Label the chip with the running profile's tag — always, or only while you hover it; hover always reveals language and mode."
               disabled={chipOff}
             >
@@ -1155,7 +1256,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Show usage on chip"
+              title={SETTING.showUsageOnChip.label}
               desc="Add a tiny usage readout (today's totals) to the chip — always, or only while you hover it. Needs the faster-whisper-backend; hidden on a standard server."
               disabled={chipOff}
             >
@@ -1167,7 +1268,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Chip metric"
+              title={SETTING.chipMetric.label}
               desc="Which usage figure the chip shows."
               disabled={chipOff || !s.recording.showStatsOnOverlay}
             >
@@ -1183,7 +1284,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Show injection target"
+              title={SETTING.showInjectionTarget.label}
               desc="Show which app dictation is typing into (→ app) on the chip — always, or only while you hover it — and warn when it isn't a text field."
               disabled={chipOff}
             >
@@ -1195,7 +1296,7 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
-              title="Only while speaking"
+              title={SETTING.onlyWhileSpeaking.label}
               desc="Show the injection target only while you're actively dictating — hide it when armed but silent, so it doesn't flicker as you move between windows."
               disabled={
                 chipOff ||
@@ -1216,7 +1317,7 @@ export default function Settings() {
 
             <SectionLabel className="mb-1 mt-7">Interaction</SectionLabel>
             <SettingRow
-              title="Hover reveal delay"
+              title={SETTING.hoverRevealDelay.label}
               desc="How long you hover the chip before it expands to show language / mode and the quick-launch buttons."
               disabled={chipOff}
             >
@@ -1239,7 +1340,7 @@ export default function Settings() {
                   chipOff && "opacity-50",
                 )}
               >
-                Quick-launch buttons
+                {SETTING.quickLaunchButtons.label}
               </div>
               <div
                 className={cn(
