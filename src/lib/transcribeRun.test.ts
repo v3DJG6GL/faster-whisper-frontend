@@ -4,7 +4,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activeRailIndex, foldProgress, overallFraction, railIndex, railOf, railStages,
-  skippedStages, useTranscribeRun,
+  skippedStages, stageEstimateMs, stageTimeline, useTranscribeRun,
+  _resetStageRtfForTests,
 } from "./transcribeRun";
 import type { QueueItem } from "./transcribeRun";
 
@@ -192,5 +193,119 @@ describe("overallFraction with a download rail", () => {
       lastOptions: undefined,
     });
     expect(frac).toBeCloseTo(0.25, 5);
+  });
+});
+
+describe("stageTimeline (the proportional strip)", () => {
+  beforeEach(() => _resetStageRtfForTests());
+  const stages = railStages(
+    { separateBgm: true, diarize: true } as never, true);
+
+  it("sizes finished segments by measured wall time on a completed run", () => {
+    const tl = stageTimeline({
+      stages,
+      skipped: new Set(),
+      stageTimes: {
+        downloading: { start: 0, end: 18_000, observed: true },
+        separating: { start: 18_000, end: 184_000, observed: true },
+        transcribing: { start: 184_000, end: 405_000, observed: true },
+        diarizing: { start: 405_000, end: 523_000, observed: true },
+      },
+      progress: { stage: "diarizing", progress: 1 },
+      audioDurSec: 1348,
+      complete: true,
+      now: 523_000,
+    });
+    expect(tl.map((e) => e.state)).toEqual(["done", "done", "done", "done"]);
+    expect(tl.map((e) => e.ms)).toEqual([18_000, 166_000, 221_000, 118_000]);
+    const total = tl.reduce((a, e) => a + e.ms, 0);
+    expect(Math.round((tl[2].ms / total) * 100)).toBe(42);
+  });
+
+  it("estimates active and pending stages from the audio duration", () => {
+    const tl = stageTimeline({
+      stages,
+      skipped: new Set(),
+      stageTimes: {
+        downloading: { start: 0, end: 18_000, observed: true },
+        separating: { start: 18_000, observed: true },
+      },
+      progress: { stage: "separating", progress: 0.4 },
+      audioDurSec: 1348,
+      complete: false,
+      now: 78_000,
+    });
+    expect(tl[0]).toMatchObject({ state: "done", ms: 18_000 });
+    // active: default separating RTF 8 → est 168.5 s, elapsed 60 s < est
+    expect(tl[1].state).toBe("active");
+    expect(tl[1].ms).toBeCloseTo((1348 / 8) * 1000, 3);
+    expect(tl[1].fill).toBeCloseTo(0.4, 5);
+    expect(tl[1].overrun).toBe(false);
+    // pending stages carry tilde-able estimates
+    expect(tl[2]).toMatchObject({ state: "pending", fill: 0 });
+    expect(tl[2].estMs).toBeCloseTo((1348 / 6) * 1000, 3);
+    expect(tl[3].estMs).toBeCloseTo((1348 / 11) * 1000, 3);
+  });
+
+  it("widens an overrunning stage in 15 s steps and clamps its fill", () => {
+    const est = stageEstimateMs("separating", 100)!; // 12.5 s
+    const tl = stageTimeline({
+      stages: ["separating", "transcribing"],
+      skipped: new Set(),
+      stageTimes: { separating: { start: 0, observed: true } },
+      progress: { stage: "separating", progress: 0.9 },
+      audioDurSec: 100,
+      complete: false,
+      now: Math.round(est) + 20_000,
+    });
+    expect(tl[0].overrun).toBe(true);
+    expect(tl[0].fill).toBe(0.96);
+    // one whole 15 s step past the estimate, not per-tick creep
+    expect(tl[0].ms).toBeCloseTo(est + 30_000, 0);
+  });
+
+  it("drops skipped stages from the strip entirely", () => {
+    const tl = stageTimeline({
+      stages,
+      skipped: new Set(["separating"] as const),
+      stageTimes: { downloading: { start: 0, end: 5_000, observed: true } },
+      progress: { stage: "transcribing", progress: 0.1 },
+      audioDurSec: 600,
+      complete: false,
+      now: 20_000,
+    });
+    expect(tl.map((e) => e.stage)).toEqual(
+      ["downloading", "transcribing", "diarizing"]);
+  });
+
+  it("falls back to weight-scaled widths with no estMs when the audio duration is unknown", () => {
+    const tl = stageTimeline({
+      stages: ["transcribing", "diarizing"],
+      skipped: new Set(),
+      stageTimes: { transcribing: { start: 0, observed: true } },
+      progress: { stage: "transcribing", progress: 0.2 },
+      audioDurSec: null,
+      complete: false,
+      now: 10_000,
+    });
+    expect(tl[0].ms).toBe(120_000); // 60 * 2000
+    expect(tl[0].estMs).toBeNull();
+    expect(tl[1].ms).toBe(30_000); // 15 * 2000
+    expect(tl[1].estMs).toBeNull();
+  });
+
+  it("learns a stage's realtime factor from a finished, observed clock", () => {
+    useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      foldProgress({ stage: "separating", progress: 0.1, duration: 1000 });
+      vi.setSystemTime(100_000);
+      // transition closes the separating clock: 100 s wall for 1000 s audio
+      foldProgress({ stage: "transcribing", progress: 0, duration: 1000 });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(stageEstimateMs("separating", 1000)).toBeCloseTo(100_000, 0);
   });
 });

@@ -175,6 +175,123 @@ export function overallFraction(s: {
   return total > 0 ? done / total : 0;
 }
 
+/** Per-stage realtime factors (audio seconds ÷ stage wall seconds) learned
+ *  from finished stages, EWMA'd across runs in this session. They only size
+ *  the estimated segments of the timeline strip; the seeds are a measured
+ *  GPU run and get replaced by real numbers as stages complete. */
+const DEFAULT_STAGE_RTF: Record<RailStage, number> = {
+  downloading: 75,
+  separating: 8,
+  transcribing: 6,
+  diarizing: 11,
+};
+const stageRtf: Partial<Record<RailStage, number>> = {};
+
+function learnStageRtf(stage: RailStage, wallMs: number, audioSec: number | null | undefined) {
+  if (!audioSec || wallMs < 500) return;
+  const rtf = audioSec / (wallMs / 1000);
+  if (!Number.isFinite(rtf) || rtf <= 0) return;
+  const prev = stageRtf[stage];
+  stageRtf[stage] = prev ? prev * 0.5 + rtf * 0.5 : rtf;
+}
+
+/** Estimated wall ms for a stage, or null without an audio duration to
+ *  scale from. */
+export function stageEstimateMs(
+  stage: RailStage,
+  audioDurSec: number | null | undefined,
+): number | null {
+  if (!audioDurSec) return null;
+  return (audioDurSec / (stageRtf[stage] ?? DEFAULT_STAGE_RTF[stage])) * 1000;
+}
+
+export function _resetStageRtfForTests() {
+  for (const k of Object.keys(stageRtf) as RailStage[]) delete stageRtf[k];
+}
+
+/** One segment of the overall timeline strip. `ms` is the segment's relative
+ *  size: measured wall time once a stage finished, an estimate before that
+ *  (weight-scaled pseudo-time when no audio duration exists to estimate
+ *  from). Skipped stages are absent — the strip shows only time actually
+ *  spent or still expected. */
+export interface TimelineEntry {
+  stage: RailStage;
+  ms: number;
+  /** Wall ms spent so far — full span when done, ticking while active. */
+  elapsedMs: number;
+  state: "done" | "active" | "pending";
+  /** Inner fill of the active segment (stage-local server fraction). */
+  fill: number;
+  /** Active stage running past its estimate — the view pulses the fill and
+   *  the segment widens in deliberate 15 s steps, never per tick. */
+  overrun: boolean;
+  /** Audio-scaled estimate for the label ("~2m 40s"); null when unknowable. */
+  estMs: number | null;
+}
+
+export function stageTimeline(s: {
+  stages: RailStage[];
+  skipped: Set<RailStage>;
+  stageTimes: Partial<Record<RailStage, StageTime>>;
+  progress: BatchProgress | null;
+  audioDurSec: number | null;
+  complete: boolean;
+  now: number;
+}): TimelineEntry[] {
+  const active = s.complete
+    ? s.stages.length
+    : activeRailIndex(s.progress, s.stageTimes, s.stages);
+  const out: TimelineEntry[] = [];
+  s.stages.forEach((st, i) => {
+    if (s.skipped.has(st)) return;
+    const t = s.stageTimes[st];
+    const est = stageEstimateMs(st, s.audioDurSec);
+    // Weight-scaled pseudo-time keeps proportions sane before the audio
+    // duration is known (never shown as a number, only as width).
+    const fallback = STAGE_WEIGHTS[st] * 2000;
+    if (i < active) {
+      const span = t?.end != null ? Math.max(t.end - t.start, 1000) : null;
+      out.push({
+        stage: st,
+        ms: span ?? est ?? fallback,
+        elapsedMs: span ?? 0,
+        state: "done",
+        fill: 1,
+        overrun: false,
+        estMs: est,
+      });
+    } else if (i === active) {
+      const elapsed = t ? Math.max(s.now - t.start, 0) : 0;
+      const over = est != null && elapsed > est;
+      const ms = over
+        ? est + Math.ceil((elapsed - est) / 15000) * 15000
+        : (est ?? fallback);
+      const frac =
+        typeof s.progress?.progress === "number" ? s.progress.progress : 0;
+      out.push({
+        stage: st,
+        ms: Math.max(ms, 1),
+        elapsedMs: elapsed,
+        state: "active",
+        fill: over ? 0.96 : Math.min(frac, 1),
+        overrun: over,
+        estMs: est,
+      });
+    } else {
+      out.push({
+        stage: st,
+        ms: est ?? fallback,
+        elapsedMs: 0,
+        state: "pending",
+        fill: 0,
+        overrun: false,
+        estMs: est,
+      });
+    }
+  });
+  return out;
+}
+
 /** Everything the pump needs from the screen, captured once per run — the
  *  same freeze-at-start the old component closure gave. */
 export interface RunContext {
@@ -529,8 +646,15 @@ export function foldProgress(p: BatchProgress) {
     // seeded (never polled) is one the server jumped over.
     if (prev !== cur) {
       stageTimes = { ...stageTimes };
-      if (prev && stageTimes[prev] && !stageTimes[prev].end) {
-        stageTimes[prev] = { ...stageTimes[prev], end: now };
+      const pc = prev ? stageTimes[prev] : undefined;
+      if (prev && pc && !pc.end) {
+        stageTimes[prev] = { ...pc, end: now };
+        // A finished stage with a known audio duration teaches the timeline
+        // strip its realtime factor (only observed clocks — a seeded phantom
+        // span would poison the average).
+        if (pc.observed) {
+          learnStageRtf(prev, now - pc.start, p.duration ?? s.progress?.duration);
+        }
       }
       // Entering a stage whose clock is already CLOSED restarts it fresh.
       // That closed clock is a phantom: the server's request-entry "waiting"

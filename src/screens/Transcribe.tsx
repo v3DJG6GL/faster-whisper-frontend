@@ -18,9 +18,9 @@ import { useBackendModels } from "@/lib/useBackendModels";
 import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
-  activeRailIndex, addFiles, cancelRun, overallFraction, railStages,
+  activeRailIndex, addFiles, cancelRun, overallFraction, railStages, stageTimeline,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
-  setUrlMeta, skippedStages, startRun, useTranscribeRun, STAGE_WEIGHTS,
+  setUrlMeta, skippedStages, startRun, useTranscribeRun,
   type RailStage, type RunContext, type StepState,
 } from "@/lib/transcribeRun";
 import {
@@ -112,6 +112,48 @@ const RAIL_DESCRIPTIONS: Record<RailStage, string> = {
   transcribing: "",
   diarizing: "Labels each segment with who is speaking.",
 };
+
+/** Timeline-strip identity: a muted hue and a compact lowercase axis name
+ *  per stage. Identity is carried by position + name — hue is redundant
+ *  reinforcement, never the only channel. */
+const STAGE_COLORS: Record<RailStage, string> = {
+  downloading: "#d9a45b",
+  separating: "#6faed9",
+  transcribing: "var(--c-ok)",
+  diarizing: "#c68fb4",
+};
+const AXIS_NAMES: Record<RailStage, string> = {
+  downloading: "download",
+  separating: "music source separation (MSS)",
+  transcribing: "transcribe",
+  diarizing: "speaker diarization",
+};
+
+/** Greedy left-to-right row assignment for the axis labels under the strip:
+ *  a label keeps the top row when it fits inside its own segment and nothing
+ *  before it overflows into its spot; otherwise it drops to the stagger row
+ *  on a longer leader tick. `px` are segment widths, `labelPx` label widths. */
+function axisRows(px: number[], labelPx: number[]): number[] {
+  const rows: number[] = [];
+  let x = 0;
+  let topEnd = -Infinity;
+  let dropEnd = -Infinity;
+  px.forEach((w, i) => {
+    const fitsOwn = labelPx[i] <= w - 2 || i === px.length - 1;
+    if (fitsOwn && x >= topEnd) {
+      rows.push(0);
+      topEnd = x + labelPx[i] + 12;
+    } else if (x >= dropEnd) {
+      rows.push(1);
+      dropEnd = x + labelPx[i] + 12;
+    } else {
+      rows.push(0);
+      topEnd = x + labelPx[i] + 12;
+    }
+    x += w + 2;
+  });
+  return rows;
+}
 
 /** Remaining-time estimate in ms: linear projection from the current rate,
  *  only once it is stable (≥5% done, ≥10 s elapsed) so it never appears as
@@ -323,6 +365,24 @@ export default function Transcribe() {
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
   }, [busy]);
+
+  // Pixel width of the timeline strip — the axis-label row assignment (top
+  // row vs stagger row) needs real segment widths. Measured after every
+  // commit (cheap; setState only on change) plus on window resize.
+  const stripBoxRef = useRef<HTMLDivElement | null>(null);
+  const [stripW, setStripW] = useState(640);
+  useEffect(() => {
+    const w = stripBoxRef.current?.offsetWidth ?? 0;
+    if (w > 0 && w !== stripW) setStripW(w);
+  });
+  useEffect(() => {
+    const measure = () => {
+      const w = stripBoxRef.current?.offsetWidth ?? 0;
+      if (w > 0) setStripW(w);
+    };
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
 
   const doneCount = queue.filter((it) => it.status === "done").length;
   const selected = queue.find((it) => it.path === selectedPath && it.status === "done");
@@ -1023,6 +1083,38 @@ export default function Transcribe() {
         // (per-run override, else the inherited default, else the server's
         // shipped default of on).
         const vadOn = lastOverrides.vad_filter ?? vadInherited ?? true;
+        // Timeline strip: segment widths proportional to each stage's share
+        // of wall time (measured when finished, estimated ahead), with one
+        // axis label anchored below each segment. Skipped stages are absent.
+        const timeline = stageTimeline({
+          stages, skipped, stageTimes, progress,
+          audioDurSec: audioDur ?? null, complete, now,
+        });
+        const totalMs = timeline.reduce((a, e) => a + e.ms, 0) || 1;
+        const stripAvail = Math.max(
+          stripW - 2 * Math.max(timeline.length - 1, 0), 0);
+        const segPx = timeline.map((e) =>
+          Math.max((e.ms / totalMs) * stripAvail, 5));
+        const axisLabels = timeline.map((e) => {
+          const name = AXIS_NAMES[e.stage];
+          let dur = "";
+          let extra = "";
+          if (e.state === "done") {
+            dur = fmtElapsed(e.elapsedMs || e.ms);
+            if (complete) extra = `${Math.round((e.ms / totalMs) * 100)}%`;
+          } else if (e.state === "active") {
+            dur = fmtElapsed(e.elapsedMs);
+            if (e.estMs != null) extra = `/ ~${fmtElapsed(e.estMs)}`;
+          } else if (e.estMs != null) {
+            dur = `~${fmtElapsed(e.estMs)}`;
+          }
+          return { name, dur, extra };
+        });
+        const axisRowOf = axisRows(
+          segPx,
+          axisLabels.map((l) =>
+            Math.max(l.name.length, l.dur.length + l.extra.length + 1) * 6.4 + 4));
+        const hasDrop = axisRowOf.includes(1);
         return (
           <Card className="mt-4 px-5 py-4">
             <div className="flex items-center gap-3">
@@ -1063,46 +1155,86 @@ export default function Transcribe() {
               )}
             </div>
 
-            <div className="mt-3.5 flex gap-1">
-              {stages.map((st, i) => {
-                // A skipped stage's lane collapses to a slim hatched stub —
-                // planned, not travelled — and drops out of the bar's math.
-                if (skipped.has(st)) {
-                  return (
+            <div ref={stripBoxRef} className="mt-3.5 flex h-[7px] gap-0.5">
+              {timeline.map((e) => (
+                <div
+                  key={e.stage}
+                  className={cn(
+                    "relative min-w-[5px] overflow-hidden rounded-pill transition-[flex-grow] duration-500 motion-reduce:transition-none",
+                    e.state !== "pending" && "bg-surface-2",
+                    e.state === "pending" && "border border-dashed border-line-strong",
+                  )}
+                  style={{
+                    flexGrow: e.ms,
+                    flexBasis: 0,
+                    ...(e.state === "pending"
+                      ? {
+                          background:
+                            "repeating-linear-gradient(-45deg, var(--c-line) 0 3px, transparent 3px 6px)",
+                        }
+                      : {}),
+                  }}
+                >
+                  {e.state !== "pending" && (
                     <div
-                      key={st}
-                      className="h-1.5 w-8 flex-none rounded-pill border border-dashed border-line-strong"
+                      className={cn(
+                        "h-full rounded-pill transition-[width] duration-500 motion-reduce:transition-none",
+                        e.overrun && "animate-pulse",
+                      )}
                       style={{
-                        background:
-                          "repeating-linear-gradient(-45deg, var(--c-line) 0 3px, transparent 3px 7px)",
+                        width: `${Math.round((e.state === "done" ? 1 : Math.max(e.fill, 0.02)) * 100)}%`,
+                        background: STAGE_COLORS[e.stage],
                       }}
                     />
-                  );
-                }
-                const frac =
-                  i < active ? 1
-                    : i === active && typeof progress?.progress === "number" ? progress.progress
-                      : 0;
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className={cn("mt-[5px] flex gap-0.5", hasDrop ? "h-[76px]" : "h-11")}>
+              {timeline.map((e, i) => {
+                const drop = axisRowOf[i] === 1;
+                const l = axisLabels[i];
                 return (
                   <div
-                    key={st}
-                    className="h-1.5 overflow-hidden rounded-pill bg-surface-2"
-                    style={{ flexGrow: STAGE_WEIGHTS[st], flexBasis: 0 }}
+                    key={e.stage}
+                    className="relative min-w-[5px]"
+                    style={{ flexGrow: e.ms, flexBasis: 0 }}
                   >
-                    {frac > 0 && (
+                    <span
+                      aria-hidden
+                      className="absolute left-px top-0 w-px"
+                      style={{
+                        height: drop ? 39 : 7,
+                        background: STAGE_COLORS[e.stage],
+                      }}
+                    />
+                    <div
+                      className={cn(
+                        "absolute left-0 whitespace-nowrap font-mono text-[10.5px] leading-[1.55] tabular-nums",
+                        e.state === "pending" && "opacity-60",
+                      )}
+                      style={{ top: drop ? 41 : 9 }}
+                    >
                       <div
                         className={cn(
-                          "h-full rounded-pill transition-[width] duration-500",
-                          i < active ? "bg-ok" : "bg-accent",
+                          "tracking-[.03em]",
+                          e.state === "active" ? "text-text" : "text-dim",
                         )}
-                        style={{ width: `${Math.max(2, Math.round(frac * 100))}%` }}
-                      />
-                    )}
+                      >
+                        {l.name}
+                      </div>
+                      <div>
+                        <span className={e.state === "active" ? "text-accent" : "text-text"}>
+                          {l.dur}
+                        </span>
+                        {l.extra ? <span className="text-faint"> {l.extra}</span> : null}
+                      </div>
+                    </div>
                   </div>
                 );
               })}
             </div>
-            <div className="mt-2 flex items-baseline justify-between font-mono text-[11px] tabular-nums text-faint">
+            <div className="mt-1 flex items-baseline justify-between font-mono text-[11px] tabular-nums text-faint">
               <span>
                 {queue.length > 1 && fileIdx >= 0 ? `file ${fileIdx + 1} of ${queue.length}` : "\u00a0"}
               </span>
