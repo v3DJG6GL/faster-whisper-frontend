@@ -1,18 +1,17 @@
 //! Last-resort playback decode. Linux WebKitGTK without the proprietary
-//! GStreamer plugin set cannot play AAC/MP4 — exactly the format yt-dlp's
-//! `bestaudio` retains for URL transcripts — and feeding the same bytes back
-//! as a blob doesn't change that. Symphonia decodes the file in-process
-//! (pure Rust, no system codecs) and the viewer plays a plain PCM WAV blob
-//! instead. Fallback-path only: the `<audio>` element gets two chances at
-//! the original bytes first.
+//! GStreamer plugin set cannot play AAC/MP4 — the format yt-dlp's `bestaudio`
+//! picks — and feeding the same bytes back as a blob doesn't change that.
+//! Symphonia decodes the file in-process (pure Rust, no system codecs) and
+//! the viewer plays a plain PCM WAV blob instead. Fallback-path only: the
+//! `<audio>` element gets two chances at the original bytes first.
 
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::codecs::CodecParameters;
 use symphonia::core::errors::Error as SymErr;
+use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 
 /// Decoded-PCM ceiling: ~1 h of 44.1 kHz stereo. Blobs beyond that would
 /// strain the webview more than help it; the viewer then shows its honest
@@ -31,41 +30,43 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
     {
         hint.with_extension(ext);
     }
-    let probed = symphonia::default::get_probe()
-        .format(
+    let mut format = symphonia::default::get_probe()
+        .probe(
             &hint,
             mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
         .map_err(|e| format!("unrecognized container: {e}"))?;
-    let mut format = probed.format;
-    let track = format
+    let (track_id, params) = format
         .tracks()
         .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .find_map(|t| match &t.codec_params {
+            Some(CodecParameters::Audio(p)) => Some((t.id, p.clone())),
+            _ => None,
+        })
         .ok_or("no audio track")?;
-    let track_id = track.id;
     let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
+        .make_audio_decoder(&params, &AudioDecoderOptions::default())
         .map_err(|e| format!("unsupported codec: {e}"))?;
 
-    let mut sample_rate: u32 = track.codec_params.sample_rate.unwrap_or(44_100);
-    let mut channels: u16 = track
-        .codec_params
+    let mut sample_rate: u32 = params.sample_rate.unwrap_or(44_100);
+    let mut channels: u16 = params
         .channels
+        .as_ref()
         .map(|c| c.count() as u16)
         .unwrap_or(2);
     let mut pcm: Vec<u8> = Vec::new();
+    let mut interleaved: Vec<i16> = Vec::new();
     loop {
         let packet = match format.next_packet() {
-            Ok(p) => p,
-            // Both are symphonia's "stream over" shapes for finite files.
-            Err(SymErr::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(SymErr::ResetRequired) => break,
+            Ok(Some(p)) => p,
+            // End of stream; ResetRequired only occurs mid-chained-stream —
+            // treat both as "done" for a finite local file.
+            Ok(None) | Err(SymErr::ResetRequired) => break,
             Err(e) => return Err(format!("read failed: {e}")),
         };
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
         let decoded = match decoder.decode(&packet) {
@@ -74,12 +75,11 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
             Err(SymErr::DecodeError(_)) => continue,
             Err(e) => return Err(format!("decode failed: {e}")),
         };
-        let spec = *decoded.spec();
-        sample_rate = spec.rate;
-        channels = spec.channels.count() as u16;
-        let mut buf = SampleBuffer::<i16>::new(decoded.capacity() as u64, spec);
-        buf.copy_interleaved_ref(decoded);
-        for s in buf.samples() {
+        let spec = decoded.spec();
+        sample_rate = spec.rate();
+        channels = spec.channels().count() as u16;
+        decoded.copy_to_vec_interleaved::<i16>(&mut interleaved);
+        for s in &interleaved {
             pcm.extend_from_slice(&s.to_le_bytes());
         }
         if pcm.len() > MAX_PCM_BYTES {
