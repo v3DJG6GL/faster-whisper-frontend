@@ -1033,6 +1033,14 @@ export async function readMediaFile(path: string): Promise<ArrayBuffer> {
   return invoke<ArrayBuffer>("read_media_file", { path });
 }
 
+/** Decode a media file to WAV bytes in Rust (symphonia) — the last-resort
+ *  playback fallback for codecs the webview can't handle (AAC/MP4 on Linux
+ *  WebKitGTK, i.e. every retained YouTube audio). */
+export async function decodeMediaFile(path: string): Promise<ArrayBuffer> {
+  if (!isTauri) throw new Error("Not running in the desktop app.");
+  return invoke<ArrayBuffer>("decode_media_file", { path });
+}
+
 /** Native "open file" dialog for a settings export → absolute path (or null). */
 export async function pickImportFile(): Promise<string | null> {
   if (!isTauri) return null;

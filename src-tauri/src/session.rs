@@ -786,7 +786,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
         emit_if_active(&app, epoch, "stream://status", "closed");
         return;
     }
-    let wav = crate::audio::wav_from_pcm16(&pcm, 16_000);
+    let wav = crate::audio::wav_from_pcm16(&pcm, 16_000, 1);
     match batch::transcribe_wav_bytes(
         &params.server_url,
         params.api_key.as_deref(),

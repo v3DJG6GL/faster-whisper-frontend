@@ -573,6 +573,17 @@ pub async fn read_media_file(path: String) -> Result<tauri::ipc::Response, Strin
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// Decode a media file to WAV bytes in-process (symphonia) — the playback
+/// fallback for codecs the system webview can't handle (AAC/MP4 on Linux
+/// WebKitGTK, i.e. every retained YouTube audio).
+#[tauri::command]
+pub async fn decode_media_file(path: String) -> Result<tauri::ipc::Response, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::media_decode::decode_to_wav(&path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(tauri::ipc::Response::new)
+}
+
 /// Write a plain text file (transcript exports) to the path the user picked
 /// in the save dialog. Same atomic tmp+rename + cleanup-on-both-failures shape
 /// as `export_settings_file`, minus the 0600 secrecy (a transcript is what the

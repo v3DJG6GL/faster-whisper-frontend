@@ -17,7 +17,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
 import { Button } from "@/components/ui";
 import { fmtDurationExact, fmtTimestamp } from "@/lib/format";
-import { pickExportPath, readMediaFile, saveTextFile, isTauri } from "@/lib/api";
+import { decodeMediaFile, pickExportPath, readMediaFile, saveTextFile, isTauri } from "@/lib/api";
 import {
   clearEdits, setRename, setSegmentEdit, setSegmentSpeaker,
   setSpeakerColor as setSpeakerColorAction, useTranscribeRun,
@@ -427,6 +427,7 @@ export function TranscriptViewer({
   const [blobSrc, setBlobSrc] = useState<string | null>(null);
   const blobUrlRef = useRef<string | null>(null);
   const blobTriedRef = useRef(false);
+  const wavTriedRef = useRef(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
@@ -622,6 +623,7 @@ export function TranscriptViewer({
     if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
     blobUrlRef.current = null;
     blobTriedRef.current = false;
+    wavTriedRef.current = false;
     setBlobSrc(null);
   }, [path]);
   useEffect(
@@ -637,14 +639,38 @@ export function TranscriptViewer({
   }, [path, result]);
 
   /** The <audio> errored on the asset URL — resolve through the fallback
-   *  chain ONCE: buffer the original through Rust; if the original is gone,
-   *  the app's stored audio copy; if neither reads, say the file is gone.
-   *  A second <audio> error with a blob already loaded means the webview
-   *  genuinely can't decode this codec — a different sentence. */
+   *  chain ONCE per step: (1) buffer the original bytes through Rust (asset
+   *  protocol quirks); if the original is gone, the app's stored copy; (2) a
+   *  second error with the blob already loaded means the webview can't
+   *  decode this CODEC (Linux WebKitGTK has no AAC/MP4 without proprietary
+   *  GStreamer plugins — every retained YouTube audio) — decode to WAV in
+   *  Rust and play that; (3) only when the WAV blob errors too is playback
+   *  declared broken. */
   const onAudioError = () => {
     if (blobTriedRef.current) {
-      setAudioBroken(true);
-      setBrokenWhy("codec");
+      if (wavTriedRef.current) {
+        setAudioBroken(true);
+        setBrokenWhy("codec");
+        return;
+      }
+      wavTriedRef.current = true;
+      const fail = () => {
+        setAudioBroken(true);
+        setBrokenWhy("codec");
+      };
+      const tryDecode = (p: string | null | undefined, next?: () => void) => {
+        if (!p) return next ? next() : fail();
+        decodeMediaFile(p)
+          .then((buf) => {
+            if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+            const url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+            blobUrlRef.current = url;
+            setBlobSrc(url);
+          })
+          .catch(() => (next ? next() : fail()));
+      };
+      if (urlSource) tryDecode(mediaPath);
+      else tryDecode(path, () => tryDecode(mediaPath));
       return;
     }
     blobTriedRef.current = true;

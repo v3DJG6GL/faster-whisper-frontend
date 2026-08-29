@@ -95,9 +95,8 @@ pub struct MicTestClip(pub Arc<Mutex<MicClip>>);
 #[derive(Default)]
 pub struct MicPlayback(pub Arc<AtomicU64>);
 
-/// Wrap mono 16-bit little-endian PCM in a minimal WAV container.
-pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32) -> Vec<u8> {
-    let channels: u16 = 1;
+/// Wrap interleaved 16-bit little-endian PCM in a minimal WAV container.
+pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32, channels: u16) -> Vec<u8> {
     let bits: u16 = 16;
     let byte_rate = sample_rate * channels as u32 * (bits as u32 / 8);
     let block_align = channels * (bits / 8);
@@ -334,7 +333,7 @@ pub fn save_recording(dir: &Path, pcm: &[u8], sample_rate: u32) -> Option<PathBu
         path = dir.join(format!("dictation-{stamp}-{n}.wav"));
         n += 1;
     }
-    match write_new_private(&path, &wav_from_pcm16(pcm, sample_rate)) {
+    match write_new_private(&path, &wav_from_pcm16(pcm, sample_rate, 1)) {
         Ok(()) => {
             tracing::info!("[record] saved {}", path.display());
             Some(path)
