@@ -3,7 +3,7 @@
 // side is exercised through the app; these guard the math.
 import { describe, expect, it } from "vitest";
 import {
-  overallFraction, railIndex, railOf, railStages, skippedStages,
+  activeRailIndex, overallFraction, railIndex, railOf, railStages, skippedStages,
 } from "./transcribeRun";
 import type { QueueItem } from "./transcribeRun";
 
@@ -37,6 +37,57 @@ describe("railStages", () => {
     expect(railIndex("resolving", stages)).toBe(0);
     expect(railIndex("downloading", stages)).toBe(0);
     expect(railIndex("transcribing", stages)).toBe(1);
+  });
+});
+
+describe("activeRailIndex", () => {
+  const stages = railStages(
+    { separateBgm: true, diarize: true } as Parameters<typeof railStages>[0],
+    true,
+  ); // downloading, separating, transcribing, diarizing
+  const p = (stage: string) => ({ stage }) as Parameters<typeof activeRailIndex>[0];
+
+  it("maps a real stage through railIndex", () => {
+    expect(activeRailIndex(p("downloading"), {}, stages)).toBe(0);
+    expect(activeRailIndex(p("separating"), {}, stages)).toBe(1);
+    expect(activeRailIndex(p("analyzing"), {}, stages)).toBe(2);
+  });
+  it("initial 'waiting' lights the FIRST stage, not transcribe (the seeded" +
+     " registry entry must not paint the download as already done)", () => {
+    expect(
+      activeRailIndex(p("waiting"), { downloading: { start: 1 } }, stages),
+    ).toBe(0);
+    expect(activeRailIndex(p("waiting"), {}, stages)).toBe(0);
+  });
+  it("'waiting' after earlier stages closed lands on the first open clock", () => {
+    expect(
+      activeRailIndex(
+        p("waiting"),
+        {
+          downloading: { start: 1, end: 2 },
+          separating: { start: 2, end: 3 },
+          transcribing: { start: 3 },
+        },
+        stages,
+      ),
+    ).toBe(2);
+  });
+  it("'waiting' with every clock closed falls back to the transcribe row", () => {
+    expect(
+      activeRailIndex(
+        p("waiting"),
+        {
+          downloading: { start: 1, end: 2 },
+          separating: { start: 2, end: 3 },
+          transcribing: { start: 3, end: 4 },
+          diarizing: { start: 4, end: 5 },
+        },
+        stages,
+      ),
+    ).toBe(railIndex("waiting", stages));
+  });
+  it("no progress at all → first stage", () => {
+    expect(activeRailIndex(null, {}, stages)).toBe(0);
   });
 });
 

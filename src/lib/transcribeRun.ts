@@ -90,6 +90,25 @@ export function railIndex(stage: string | undefined, stages: RailStage[]): numbe
   return i < 0 ? stages.indexOf("transcribing") : i;
 }
 
+/** The rail row that is actually active. "waiting" is the server queued on a
+ *  semaphore — it says nothing about WHICH stage runs next (the registry is
+ *  seeded "waiting" at request entry, seconds before a URL run even starts
+ *  resolving). Mapping it straight onto the transcribe row painted every
+ *  earlier stage as done before the download began; instead, trust the stage
+ *  clocks — the active row is the first stage whose clock hasn't closed. */
+export function activeRailIndex(
+  progress: BatchProgress | null,
+  stageTimes: Partial<Record<RailStage, StageTime>>,
+  stages: RailStage[],
+): number {
+  if (!progress?.stage) return 0;
+  if (progress.stage === "waiting") {
+    const i = stages.findIndex((st) => !stageTimes[st]?.end);
+    return i === -1 ? railIndex(progress.stage, stages) : i;
+  }
+  return railIndex(progress.stage, stages);
+}
+
 /** A rail row's visual state. "skipped" is first-class: a requested stage the
  *  server declined to run is neither done nor pending, and must not read as
  *  either. */
@@ -135,7 +154,7 @@ export function overallFraction(s: {
 }): number | null {
   if (!s.queue.some((it) => it.status === "running" || it.status === "queued")) return null;
   const stages = railStages(s.lastOptions, s.forUrl);
-  const active = s.progress?.stage ? railIndex(s.progress.stage, stages) : 0;
+  const active = activeRailIndex(s.progress, s.stageTimes, stages);
   const skipped = skippedStages(s);
   let total = 0;
   let done = 0;

@@ -18,7 +18,7 @@ import { useBackendModels } from "@/lib/useBackendModels";
 import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
-  addFiles, cancelRun, overallFraction, railIndex, railStages,
+  activeRailIndex, addFiles, cancelRun, overallFraction, railStages,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, skippedStages, startRun, useTranscribeRun, STAGE_WEIGHTS,
   type RailStage, type RunContext, type StepState,
@@ -971,7 +971,7 @@ export default function Transcribe() {
         const stages = railStages(lastOptions, forUrl);
         const active = complete
           ? stages.length
-          : progress?.stage ? railIndex(progress.stage, stages) : 0;
+          : activeRailIndex(progress, stageTimes, stages);
         // Requested stages the server jumped over (feature disabled there) —
         // shown as "skipped", never as done, and worth no progress credit.
         const skipped = skippedStages({ progress, stageTimes, lastOptions, forUrl });
