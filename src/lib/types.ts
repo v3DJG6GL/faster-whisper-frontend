@@ -286,6 +286,8 @@ export interface TranscribeSettings {
   translateTo?: string[];
   /** Sticky T2T model pick; "" = the server's default translation model. */
   translationModel?: string;
+  /** Sticky T2T mode pick; absent = "fluent" (the server's default). */
+  translationMode?: "fluent" | "faithful";
   /** Viewer track visibility ("orig" + language codes). LOCAL view state —
    *  never synced, like layout. Absent = all tracks visible. */
   viewTracks?: string[];

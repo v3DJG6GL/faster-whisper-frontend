@@ -7,7 +7,7 @@ import { LANGUAGES, languageLabel } from "../lib/languages";
 import { cn } from "../lib/cn";
 import type { Capabilities, TranslationOverrides } from "../lib/types";
 import { ModelPicker } from "./ModelPicker";
-import { Segmented, Stepper, TextArea } from "./ui";
+import { MicroLabel, Segmented, Stepper, TextArea } from "./ui";
 
 export const TRANSLATION_MAX_TARGETS = 8;
 
@@ -105,6 +105,7 @@ export function TranslationOptionsFields({
   exclude,
   disabled,
   className,
+  sectionLabels,
   children,
 }: {
   targets: string[];
@@ -119,40 +120,49 @@ export function TranslationOptionsFields({
   exclude?: string;
   disabled?: boolean;
   className?: string;
+  /** Micro-labels above each section ("targets" / "mode & model") — the
+   *  SettingRow expand-panel idiom; off for inline/compact placements. */
+  sectionLabels?: boolean;
   children?: ReactNode;
 }) {
   return (
     <div className={cn("space-y-2.5", className)}>
-      <TranslationTargetChips
-        value={targets}
-        onChange={onTargetsChange}
-        allowed={caps?.translation_languages}
-        exclude={exclude}
-        disabled={disabled}
-      />
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <Segmented
-          value={mode}
-          onChange={onModeChange}
-          ariaLabel="Translation mode"
+      <div>
+        {sectionLabels && <MicroLabel>targets</MicroLabel>}
+        <TranslationTargetChips
+          value={targets}
+          onChange={onTargetsChange}
+          allowed={caps?.translation_languages}
+          exclude={exclude}
           disabled={disabled}
-          options={[
-            { value: "fluent", label: "Fluent" },
-            { value: "faithful", label: "Faithful" },
-          ]}
         />
-        {(caps?.translation_models?.length ?? 0) > 1 && (
-          <div className="w-64">
-            <ModelPicker
-              value={model}
-              onChange={onModelChange}
-              models={caps?.translation_models ?? []}
-              defaultLabel={`Default · ${caps?.translation_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
-              ariaLabel="Translation model"
-              hideReset
-            />
-          </div>
-        )}
+      </div>
+      <div>
+        {sectionLabels && <MicroLabel>mode &amp; model</MicroLabel>}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <Segmented
+            value={mode}
+            onChange={onModeChange}
+            ariaLabel="Translation mode"
+            disabled={disabled}
+            options={[
+              { value: "fluent", label: "Fluent" },
+              { value: "faithful", label: "Faithful" },
+            ]}
+          />
+          {(caps?.translation_models?.length ?? 0) > 1 && (
+            <div className="w-64">
+              <ModelPicker
+                value={model}
+                onChange={onModelChange}
+                models={caps?.translation_models ?? []}
+                defaultLabel={`Default · ${caps?.translation_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
+                ariaLabel="Translation model"
+                hideReset
+              />
+            </div>
+          )}
+        </div>
       </div>
       {children}
     </div>

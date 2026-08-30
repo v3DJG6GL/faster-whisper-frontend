@@ -5,8 +5,8 @@ import {
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import {
-  Button, Card, DisclosureToggle, Notice, PageHeader, Segmented, Select,
-  SettingRow, Stepper, TextInput, Toggle,
+  Button, Card, DisclosureToggle, MicroLabel, Notice, PageHeader, Segmented, Select,
+  SettingExpand, SettingRow, Stepper, TextInput, Toggle,
 } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
@@ -284,15 +284,17 @@ export default function Transcribe() {
     Math.min(32, Math.max(1, settings.transcribe?.maxSpeakers || 4)),
   );
   const [translate, setTranslate] = useState(() => settings.transcribe?.translate ?? false);
-  // T2T targets ([] = off) + sticky model pick; mode is per-run only (the
-  // server default is "fluent", Backend/Profile can override).
+  // T2T targets ([] = off) + sticky model and mode picks (all persisted via
+  // persistOptions; the server default for mode is "fluent").
   const [translateTo, setTranslateTo] = useState<string[]>(
     () => settings.transcribe?.translateTo ?? [],
   );
   const [translationModel, setTranslationModel] = useState(
     () => settings.transcribe?.translationModel ?? "",
   );
-  const [translationMode, setTranslationMode] = useState<"fluent" | "faithful">("fluent");
+  const [translationMode, setTranslationMode] = useState<"fluent" | "faithful">(
+    () => settings.transcribe?.translationMode ?? "fluent",
+  );
   // Per-run stage-model overrides ("" = server default) — runOverrides-style,
   // deliberately not persisted.
   const [diarizationModel, setDiarizationModel] = useState("");
@@ -973,6 +975,9 @@ export default function Transcribe() {
               />
               <div className="relative">
                 <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
+                {/* Header = the toggle alone; the model pick lives in the
+                    expand sub-panel so the header column stays aligned with
+                    every other row (the old inline picker crushed it). */}
                 <SettingRow
                   title="Music source separation (MSS)"
                   desc={
@@ -981,30 +986,35 @@ export default function Transcribe() {
                       : "Not available on this server (BGM_SEPARATION_ENABLED is off)."
                   }
                   disabled={!bgmAvailable}
+                  expand={
+                    separateBgm && bgmAvailable && (caps?.separation_models?.length ?? 0) > 1 ? (
+                      <SettingExpand>
+                        <div>
+                          <MicroLabel>model</MicroLabel>
+                          <div className="w-56">
+                            <ModelPicker
+                              value={separationModel}
+                              onChange={setSeparationModel}
+                              models={caps?.separation_models ?? []}
+                              defaultLabel={`Default · ${caps?.separation_models?.[0]?.id ?? "server model"}`}
+                              ariaLabel="Separation model"
+                              hideReset
+                            />
+                          </div>
+                        </div>
+                      </SettingExpand>
+                    ) : undefined
+                  }
                 >
-                  <div className="flex items-center gap-4">
-                    {separateBgm && bgmAvailable && (caps?.separation_models?.length ?? 0) > 1 && (
-                      <div className="w-56">
-                        <ModelPicker
-                          value={separationModel}
-                          onChange={setSeparationModel}
-                          models={caps?.separation_models ?? []}
-                          defaultLabel={`Default · ${caps?.separation_models?.[0]?.id ?? "server model"}`}
-                          ariaLabel="Separation model"
-                          hideReset
-                        />
-                      </div>
-                    )}
-                    <Toggle
-                      checked={separateBgm && bgmAvailable}
-                      disabled={!bgmAvailable}
-                      ariaLabel="Music source separation"
-                      onChange={(v) => {
-                        setSeparateBgm(v);
-                        persistOptions({ separateBgm: v });
-                      }}
-                    />
-                  </div>
+                  <Toggle
+                    checked={separateBgm && bgmAvailable}
+                    disabled={!bgmAvailable}
+                    ariaLabel="Music source separation"
+                    onChange={(v) => {
+                      setSeparateBgm(v);
+                      persistOptions({ separateBgm: v });
+                    }}
+                  />
                 </SettingRow>
               </div>
               <div className="relative">
@@ -1086,6 +1096,9 @@ export default function Transcribe() {
               </div>
               <div className="relative">
                 <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
+                {/* Toggle-only header (the old header carried a model picker,
+                    two steppers AND a segmented control — the crush bug); the
+                    speaker mode + model live in the expand sub-panel. */}
                 <SettingRow
                   title="Speaker diarization"
                   desc={
@@ -1095,96 +1108,101 @@ export default function Transcribe() {
                   }
                   disabled={!diarAvailable}
                   last={!translationAvailable}
+                  expand={
+                    diarize && diarAvailable ? (
+                      <SettingExpand>
+                        <div>
+                          <MicroLabel>speakers</MicroLabel>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Segmented
+                              value={speakerMode}
+                              onChange={(m) => {
+                                setSpeakerMode(m);
+                                // numSpeakers keeps its pre-mode meaning on disk
+                                // (0 = auto) so old sync peers read it right.
+                                persistOptions({
+                                  speakerMode: m,
+                                  numSpeakers: m === "count" ? numSpeakers : 0,
+                                });
+                              }}
+                              options={[
+                                { value: "auto", label: "Auto" },
+                                { value: "count", label: "Count" },
+                                { value: "range", label: "Range" },
+                              ]}
+                              ariaLabel="Speaker count mode"
+                            />
+                            {speakerMode === "count" && (
+                              <Stepper
+                                value={numSpeakers}
+                                onChange={(v) => {
+                                  setNumSpeakers(v);
+                                  persistOptions({ numSpeakers: v });
+                                }}
+                                min={1}
+                                max={32}
+                                ariaLabel="Speaker count"
+                              />
+                            )}
+                            {speakerMode === "range" && (
+                              <>
+                                <Stepper
+                                  value={minSpeakers}
+                                  onChange={(v) => {
+                                    const mx = Math.max(v, maxSpeakers);
+                                    setMinSpeakers(v);
+                                    setMaxSpeakers(mx);
+                                    persistOptions({ minSpeakers: v, maxSpeakers: mx });
+                                  }}
+                                  min={1}
+                                  max={32}
+                                  ariaLabel="Minimum speakers"
+                                />
+                                <span className="text-[12px] text-dim">to</span>
+                                <Stepper
+                                  value={maxSpeakers}
+                                  onChange={(v) => {
+                                    const mn = Math.min(v, minSpeakers);
+                                    setMaxSpeakers(v);
+                                    setMinSpeakers(mn);
+                                    persistOptions({ maxSpeakers: v, minSpeakers: mn });
+                                  }}
+                                  min={1}
+                                  max={32}
+                                  ariaLabel="Maximum speakers"
+                                />
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        {(caps?.diarization_models?.length ?? 0) > 1 && (
+                          <div>
+                            <MicroLabel>model</MicroLabel>
+                            <div className="w-56">
+                              <ModelPicker
+                                value={diarizationModel}
+                                onChange={setDiarizationModel}
+                                models={caps?.diarization_models ?? []}
+                                defaultLabel={`Default · ${caps?.diarization_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
+                                ariaLabel="Diarization model"
+                                hideReset
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </SettingExpand>
+                    ) : undefined
+                  }
                 >
-                  <div className="flex items-center gap-4">
-                    {diarize && diarAvailable && (caps?.diarization_models?.length ?? 0) > 1 && (
-                      <div className="w-56">
-                        <ModelPicker
-                          value={diarizationModel}
-                          onChange={setDiarizationModel}
-                          models={caps?.diarization_models ?? []}
-                          defaultLabel={`Default · ${caps?.diarization_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
-                          ariaLabel="Diarization model"
-                          hideReset
-                        />
-                      </div>
-                    )}
-                    {diarize && diarAvailable && (
-                      <div className="flex items-center gap-2">
-                        {/* Steppers grow INWARD (left of the segment) so the
-                            control just clicked never moves — the segment and
-                            the toggle keep their x-position in every mode. */}
-                        {speakerMode === "count" && (
-                          <Stepper
-                            value={numSpeakers}
-                            onChange={(v) => {
-                              setNumSpeakers(v);
-                              persistOptions({ numSpeakers: v });
-                            }}
-                            min={1}
-                            max={32}
-                            ariaLabel="Speaker count"
-                          />
-                        )}
-                        {speakerMode === "range" && (
-                          <>
-                            <Stepper
-                              value={minSpeakers}
-                              onChange={(v) => {
-                                const mx = Math.max(v, maxSpeakers);
-                                setMinSpeakers(v);
-                                setMaxSpeakers(mx);
-                                persistOptions({ minSpeakers: v, maxSpeakers: mx });
-                              }}
-                              min={1}
-                              max={32}
-                              ariaLabel="Minimum speakers"
-                            />
-                            <span className="text-[12px] text-dim">to</span>
-                            <Stepper
-                              value={maxSpeakers}
-                              onChange={(v) => {
-                                const mn = Math.min(v, minSpeakers);
-                                setMaxSpeakers(v);
-                                setMinSpeakers(mn);
-                                persistOptions({ maxSpeakers: v, minSpeakers: mn });
-                              }}
-                              min={1}
-                              max={32}
-                              ariaLabel="Maximum speakers"
-                            />
-                          </>
-                        )}
-                        <Segmented
-                          value={speakerMode}
-                          onChange={(m) => {
-                            setSpeakerMode(m);
-                            // numSpeakers keeps its pre-mode meaning on disk
-                            // (0 = auto) so old sync peers read it right.
-                            persistOptions({
-                              speakerMode: m,
-                              numSpeakers: m === "count" ? numSpeakers : 0,
-                            });
-                          }}
-                          options={[
-                            { value: "auto", label: "Auto" },
-                            { value: "count", label: "Count" },
-                            { value: "range", label: "Range" },
-                          ]}
-                          ariaLabel="Speaker count mode"
-                        />
-                      </div>
-                    )}
-                    <Toggle
-                      checked={diarize && diarAvailable}
-                      disabled={!diarAvailable}
-                      ariaLabel="Speaker diarization"
-                      onChange={(v) => {
-                        setDiarize(v);
-                        persistOptions({ diarize: v });
-                      }}
-                    />
-                  </div>
+                  <Toggle
+                    checked={diarize && diarAvailable}
+                    disabled={!diarAvailable}
+                    ariaLabel="Speaker diarization"
+                    onChange={(v) => {
+                      setDiarize(v);
+                      persistOptions({ diarize: v });
+                    }}
+                  />
                 </SettingRow>
               </div>
               {translationAvailable && (
@@ -1196,7 +1214,38 @@ export default function Transcribe() {
                   <SettingRow
                     title="Translation"
                     desc="Runs last — translates the finished segments into your target languages, keeping the original (server-side MT)."
-                    last={translateTo.length === 0}
+                    last
+                    expand={
+                      translateTo.length > 0 ? (
+                        <SettingExpand>
+                          <TranslationOptionsFields
+                            sectionLabels
+                            targets={translateTo}
+                            onTargetsChange={(next) => {
+                              setTranslateTo(next);
+                              persistOptions({ translateTo: next });
+                            }}
+                            mode={translationMode}
+                            onModeChange={(m) => {
+                              setTranslationMode(m);
+                              persistOptions({ translationMode: m });
+                            }}
+                            model={translationModel}
+                            onModelChange={(v) => {
+                              setTranslationModel(v);
+                              persistOptions({ translationModel: v });
+                            }}
+                            caps={caps}
+                            exclude={language !== "auto" ? language : undefined}
+                          >
+                            <p className="text-[12px] text-faint">
+                              Fluent joins split sentences before translating (timing untouched) ·
+                              source auto-detected · karaoke stays on the original
+                            </p>
+                          </TranslationOptionsFields>
+                        </SettingExpand>
+                      ) : undefined
+                    }
                   >
                     <Toggle
                       checked={translateTo.length > 0}
@@ -1236,30 +1285,6 @@ export default function Transcribe() {
                     <p className="-mt-2 pb-3 text-[12px] text-warn">
                       Turned off — Translate to English (above) replaces it; the two can't combine.
                     </p>
-                  )}
-                  {translateTo.length > 0 && (
-                    <TranslationOptionsFields
-                      className="pb-4"
-                      targets={translateTo}
-                      onTargetsChange={(next) => {
-                        setTranslateTo(next);
-                        persistOptions({ translateTo: next });
-                      }}
-                      mode={translationMode}
-                      onModeChange={setTranslationMode}
-                      model={translationModel}
-                      onModelChange={(v) => {
-                        setTranslationModel(v);
-                        persistOptions({ translationModel: v });
-                      }}
-                      caps={caps}
-                      exclude={language !== "auto" ? language : undefined}
-                    >
-                      <p className="text-[12px] text-faint">
-                        Fluent joins split sentences before translating (timing untouched) ·
-                        source auto-detected · karaoke stays on the original
-                      </p>
-                    </TranslationOptionsFields>
                   )}
                 </div>
               )}

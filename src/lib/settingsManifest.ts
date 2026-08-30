@@ -183,8 +183,8 @@ export const MANIFEST = [
   { id: "translate", label: "Translate to English", group: "transcribeDefaults", category: "transcription",
     fields: [t("translate")] },
   { id: "translateTo", label: "Translation", group: "transcribeDefaults", category: "transcription",
-    desc: "T2T target languages and the model pick.",
-    fields: [t("translateTo"), t("translationModel")] },
+    desc: "T2T target languages, the model pick and the mode.",
+    fields: [t("translateTo"), t("translationModel"), t("translationMode")] },
   { id: "separateBgm", label: "Music source separation (MSS)", group: "transcribeDefaults", category: "transcription",
     fields: [t("separateBgm")] },
   { id: "showTimestamps", label: "Timestamps", group: "transcribeDefaults", category: "transcription",
@@ -369,6 +369,7 @@ export const TRANSCRIBE_COVERAGE = {
   translate: "translate",
   translateTo: "translateTo",
   translationModel: "translateTo",
+  translationMode: "translateTo",
   viewTracks: LOCAL, // viewer track visibility — view state, like layout
   separateBgm: "separateBgm",
   exportFormat: "exportFormat",

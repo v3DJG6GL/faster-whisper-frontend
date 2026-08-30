@@ -814,12 +814,17 @@ export function SettingRow({
   children,
   last,
   disabled,
+  expand,
 }: {
   title: string;
   desc?: string;
   children: ReactNode;
   last?: boolean;
   disabled?: boolean;
+  /** Sub-panel rendered INSIDE the row, below the header flex line — the
+   *  row's border-b stays underneath it, so an expanded row reads as one
+   *  unit instead of the panel floating between two rows. */
+  expand?: ReactNode;
 }) {
   // A bare role="switch" Toggle or an unlabeled <select> has no accessible name (the title is a
   // sibling <div>, not a <label htmlFor>). Auto-label a direct Toggle OR Select child with the row
@@ -833,12 +838,33 @@ export function SettingRow({
         })
       : children;
   return (
-    <div className={cn("flex items-center gap-6 py-4", !last && "border-b border-line")}>
-      <div className={cn("min-w-0 flex-1 transition-opacity", disabled && "opacity-50")}>
-        <div className="text-[14px] font-medium text-text">{title}</div>
-        {desc && <div className="mt-0.5 text-[12.5px] leading-snug text-dim">{desc}</div>}
+    <div className={cn("py-4", !last && "border-b border-line")}>
+      <div className="flex items-center gap-6">
+        <div className={cn("min-w-0 flex-1 transition-opacity", disabled && "opacity-50")}>
+          <div className="text-[14px] font-medium text-text">{title}</div>
+          {desc && <div className="mt-0.5 text-[12.5px] leading-snug text-dim">{desc}</div>}
+        </div>
+        <div className="shrink-0">{control}</div>
       </div>
-      <div className="shrink-0">{control}</div>
+      {expand}
+    </div>
+  );
+}
+
+/** The SettingRow sub-panel (`expand` slot) and its micro-labels — the
+ *  Processing card's "options live INSIDE the row" idiom. */
+export function SettingExpand({ children }: { children: ReactNode }) {
+  return (
+    <div className="mt-2.5 space-y-3 rounded-xl border border-line bg-surface-2/40 p-3.5">
+      {children}
+    </div>
+  );
+}
+
+export function MicroLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-label text-faint">
+      {children}
     </div>
   );
 }
