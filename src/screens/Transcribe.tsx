@@ -316,6 +316,8 @@ export default function Transcribe() {
   const urlPreviewSeq = useRef(0);
   // Prevents a double-click from opening two native file dialogs.
   const picking = useRef(false);
+  // OS drag-and-drop is over the window (Tauri intercepts HTML5 drops).
+  const [dragOver, setDragOver] = useState(false);
   // Window width drives the stacked/studio arrangement (Tauri desktop window;
   // there is no breakpoint system, and the sidebar is a fixed 228px).
   const [winW, setWinW] = useState(() => window.innerWidth);
@@ -323,6 +325,41 @@ export default function Transcribe() {
     const onResize = () => setWinW(window.innerWidth);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // OS drag-and-drop: Tauri's native interception owns the events (HTML5
+  // drop never fires), so listen on the webview. Accepted files join the
+  // queue exactly like picked ones; anything else is ignored quietly.
+  useEffect(() => {
+    if (!isTauri) return;
+    const ACCEPT = /\.(wav|mp3|m4a|mp4|aac|ogg|opus|webm|flac|srt|vtt|lrc|txt|json)$/i;
+    let stale = false;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
+      getCurrentWebview()
+        .onDragDropEvent((event) => {
+          if (event.payload.type === "over" || event.payload.type === "enter") {
+            setDragOver(true);
+          } else if (event.payload.type === "drop") {
+            setDragOver(false);
+            const paths = event.payload.paths.filter((f) => ACCEPT.test(f));
+            const running = useTranscribeRun
+              .getState()
+              .queue.some((it) => it.status === "running" || it.status === "queued");
+            if (paths.length && !running) addFiles(paths);
+          } else {
+            setDragOver(false);
+          }
+        })
+        .then((u) => {
+          if (stale) u();
+          else unlisten = u;
+        }),
+    );
+    return () => {
+      stale = true;
+      unlisten?.();
+    };
   }, []);
 
   // The store boots with a seeded backend, then config hydration (and later edits/removals)
@@ -719,12 +756,17 @@ export default function Transcribe() {
         <button
           type="button"
           onClick={choose}
-          className="ring-signal mt-8 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-12 text-center transition-colors hover:border-faint"
+          className={cn(
+            "ring-signal mt-8 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-12 text-center transition-colors hover:border-faint",
+            dragOver && "border-accent bg-accent-soft/30",
+          )}
         >
           <div className="grid size-12 place-items-center rounded-2xl bg-surface-2 text-faint">
             <UploadCloud className="size-6" />
           </div>
-          <div className="mt-4 text-[14px] text-text">Choose files to transcribe</div>
+          <div className="mt-4 text-[14px] text-text">
+            {dragOver ? "Drop to add" : "Choose or drop files to transcribe"}
+          </div>
           <div className="mt-1 text-[12.5px] text-dim">Audio, video — or subtitles/text to translate (srt, vtt, lrc, txt, json)</div>
         </button>
       )}
