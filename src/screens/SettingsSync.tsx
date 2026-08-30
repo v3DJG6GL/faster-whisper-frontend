@@ -76,7 +76,7 @@ const CATEGORY_META: { key: SyncCategory; title: string; desc: string; group?: s
   {
     key: "transcription",
     title: "Transcribe defaults",
-    desc: "The Transcribe screen's option, display and export defaults — diarization, translate, music separation, timestamps, colors, format.",
+    desc: "The Transcribe screen's option, display and export defaults — diarization, translation targets and model, music separation, timestamps, colors, format.",
   },
   { key: "chip", title: "Chip", desc: "Styling, visibility, timing, quick-launch buttons." },
   { key: "backends", title: "Backends", desc: "Server connections incl. API keys (stored on your own server)." },

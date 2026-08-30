@@ -66,6 +66,8 @@ function recentMeta(rec: TranscriptRecord): string {
   if (rec.language) parts.push(safeDisplayText(rec.language, 12));
   const spk = rec.result?.speakers?.length ?? 0;
   if (spk > 1) parts.push(`${spk} speakers`);
+  const trLangs = rec.result?.translation?.targets?.length ?? 0;
+  if (trLangs > 0) parts.push(`${trLangs} translation${trLangs === 1 ? "" : "s"}`);
   return parts.join(" · ");
 }
 

@@ -616,6 +616,9 @@ export default function History() {
               {rec.result?.duration ? ` · ${fmtDuration(rec.result.duration)}` : ""}
               {rec.language ? ` · ${safeDisplayText(rec.language, 12)}` : ""}
               {speakers > 1 ? ` · ${speakers} speakers` : ""}
+              {rec.result?.translation?.targets?.length
+                ? ` · ${rec.result.translation.targets.map((t) => safeDisplayText(t, 8)).join("+")}`
+                : ""}
               {rec.model ? ` · ${safeDisplayText(rec.model.split("/").pop() ?? rec.model, 40)}` : ""}
             </span>
             {edited && <span className="shrink-0 font-mono text-[11px] text-accent">· edited</span>}
