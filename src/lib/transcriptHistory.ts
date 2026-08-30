@@ -19,7 +19,7 @@ export interface TranscriptRecord {
    *  recording's path ("" when recordings are off/expired), result.text the
    *  session text and result.duration its length in seconds — so search,
    *  snippets, buckets and the meta line work unchanged. */
-  kind?: "file" | "dictation" | "url";
+  kind?: "file" | "dictation" | "url" | "text";
   id: string; // crypto.randomUUID()
   createdAt: string; // ISO
   sourcePath: string;

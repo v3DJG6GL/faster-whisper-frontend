@@ -115,6 +115,12 @@ export async function transcribeFile(args: {
   });
 }
 
+/** Read a subtitle/text source file (translate-only runs; 10 MB cap). */
+export async function readTextFile(path: string): Promise<string> {
+  if (!isTauri) throw new Error("Reading files requires the desktop app.");
+  return invoke<string>("read_text_file", { path });
+}
+
 /** Per-input-index translation maps + bounded provenance from
  *  POST /v1/text/translations (full backend, translation_enabled). */
 export interface TextTranslationResult {
@@ -914,6 +920,8 @@ export async function pickAudioFiles(): Promise<string[]> {
         name: "Audio / Video",
         extensions: ["wav", "mp3", "m4a", "mp4", "aac", "ogg", "opus", "webm", "flac"],
       },
+      // Text sources: translate-only runs (no audio ever exists for these).
+      { name: "Subtitles / Text", extensions: ["srt", "vtt", "lrc", "txt", "json"] },
     ],
   });
   if (Array.isArray(selected)) return selected.filter((p): p is string => typeof p === "string");

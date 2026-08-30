@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, Link2, Mic, MicOff,
+  Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, FileText, Link2, Mic, MicOff,
   Pause, Play, RotateCcw, Search, Trash2, X,
 } from "lucide-react";
 import { Badge, Button, Card, PageHeader, Segmented, TextInput } from "@/components/ui";
@@ -59,7 +59,7 @@ function appLabel(r: TranscriptRecord): string {
   return seg ? seg.charAt(0).toUpperCase() + seg.slice(1) : "Dictation";
 }
 
-type Segment = "all" | "file" | "url" | "dictation";
+type Segment = "all" | "file" | "url" | "text" | "dictation";
 
 /** The History view's memory across navigation — filters, search, and the
  *  list's scroll position all survive leaving the page (component state
@@ -249,10 +249,11 @@ export default function History() {
   }, [records, query]);
 
   const fileMatches = useMemo(
-    () => searched.filter((r) => !isDictation(r) && r.kind !== "url"),
+    () => searched.filter((r) => !isDictation(r) && r.kind !== "url" && r.kind !== "text"),
     [searched],
   );
   const linkMatches = useMemo(() => searched.filter((r) => r.kind === "url"), [searched]);
+  const textMatches = useMemo(() => searched.filter((r) => r.kind === "text"), [searched]);
   const dictMatches = useMemo(() => searched.filter(isDictation), [searched]);
 
   // "dictated into" chips: top apps across the (searched) dictations.
@@ -274,13 +275,14 @@ export default function History() {
     let out =
       segment === "file" ? fileMatches
         : segment === "url" ? linkMatches
-          : segment === "dictation" ? dictMatches
-            : searched;
+          : segment === "text" ? textMatches
+            : segment === "dictation" ? dictMatches
+              : searched;
     if (appFilter && segment === "dictation") {
       out = out.filter((r) => (r.appId ?? appLabel(r)) === appFilter);
     }
     return out;
-  }, [searched, fileMatches, linkMatches, dictMatches, segment, appFilter]);
+  }, [searched, fileMatches, linkMatches, textMatches, dictMatches, segment, appFilter]);
 
   // Matches the active segment hides (never silently — NN/g scoped search).
   const hiddenMatches =
@@ -288,6 +290,7 @@ export default function History() {
       ? searched.length -
         (segment === "file" ? fileMatches.length
           : segment === "url" ? linkMatches.length
+          : segment === "text" ? textMatches.length
             : dictMatches.length)
       : 0;
 
@@ -443,7 +446,8 @@ export default function History() {
     }
     const ok = rec.status === "done";
     const isUrl = rec.kind === "url";
-    const kindLabel = isUrl ? "Link transcription" : "File transcription";
+    const isText = rec.kind === "text";
+    const kindLabel = isUrl ? "Link transcription" : isText ? "Text translation" : "File transcription";
     return (
       <span
         className={cn(
@@ -452,7 +456,7 @@ export default function History() {
         )}
         title={ok ? kindLabel : `${kindLabel} · failed`}
       >
-        {!ok ? <X className="size-3.5" /> : isUrl ? <Link2 className="size-3.5" /> : <FileAudio className="size-3.5" />}
+        {!ok ? <X className="size-3.5" /> : isUrl ? <Link2 className="size-3.5" /> : isText ? <FileText className="size-3.5" /> : <FileAudio className="size-3.5" />}
       </span>
     );
   };
@@ -658,7 +662,10 @@ export default function History() {
   };
 
   const segLabel =
-    segment === "file" ? "files" : segment === "url" ? "links" : "dictations";
+    segment === "file" ? "files"
+      : segment === "url" ? "links"
+        : segment === "text" ? "text translations"
+          : "dictations";
 
   return (
     <div ref={rootRef} className="mx-auto max-w-[820px] px-10 py-12">
@@ -677,6 +684,7 @@ export default function History() {
             { value: "all", label: `All · ${searched.length}` },
             { value: "file", label: `Files · ${fileMatches.length}` },
             { value: "url", label: `Links · ${linkMatches.length}` },
+            { value: "text", label: `Text · ${textMatches.length}` },
             { value: "dictation", label: `Dictations · ${dictMatches.length}` },
           ]}
         />

@@ -34,6 +34,7 @@ import {
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
+import { isTextSourcePath } from "@/lib/subtitleImport";
 import { useTranscriptHistory } from "@/lib/transcriptHistory";
 import type { BatchResult, TranscriptWord } from "@/lib/types";
 
@@ -711,6 +712,9 @@ export function TranscriptViewer({
   // <audio> (never convertFileSrc on a URL: that mints a guaranteed-broken
   // asset URL and a guaranteed error event).
   const urlSource = isSourceUrl(path);
+  // Subtitle/text sources have no audio, ever — no player, no karaoke, and
+  // none of the "audio missing" notices (nothing is missing).
+  const textSource = isTextSourcePath(path);
   // "29 Aug 18:03" — the viewer's identity stamp (same-URL records are
   // otherwise indistinguishable).
   const stamp = useMemo(() => {
@@ -725,10 +729,10 @@ export function TranscriptViewer({
     });
   }, [createdAt]);
   const audioSrc = useMemo(() => {
-    if (!isTauri) return undefined;
+    if (!isTauri || textSource) return undefined;
     if (urlSource) return mediaPath ? convertFileSrc(mediaPath) : undefined;
     return convertFileSrc(path);
-  }, [path, mediaPath, urlSource]);
+  }, [path, mediaPath, urlSource, textSource]);
 
   // What the playhead loop reads each frame — a ref, so the loop never
   // re-subscribes and never closes over stale data.

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  UploadCloud, FileAudio, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, Link2,
+  UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, Link2,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import {
@@ -33,6 +33,7 @@ import {
 import { closeRecord, openHistoryRecord } from "@/lib/transcribeRun";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
+import { isTextSourcePath } from "@/lib/subtitleImport";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
 import {
@@ -682,6 +683,8 @@ export default function Transcribe() {
               >
                 {isSourceUrl(path) ? (
                   <Link2 className="size-5 shrink-0 text-accent" />
+                ) : isTextSourcePath(path) ? (
+                  <FileText className="size-5 shrink-0 text-[color:var(--c-translate)]" />
                 ) : (
                   <FileAudio className="size-5 shrink-0 text-accent" />
                 )}
@@ -722,7 +725,7 @@ export default function Transcribe() {
             <UploadCloud className="size-6" />
           </div>
           <div className="mt-4 text-[14px] text-text">Choose files to transcribe</div>
-          <div className="mt-1 text-[12.5px] text-dim">Audio or video — wav, mp3, m4a, ogg, webm, flac…</div>
+          <div className="mt-1 text-[12.5px] text-dim">Audio, video — or subtitles/text to translate (srt, vtt, lrc, txt, json)</div>
         </button>
       )}
 

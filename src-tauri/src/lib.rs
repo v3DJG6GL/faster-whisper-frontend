@@ -175,6 +175,7 @@ pub fn run() {
             commands::read_backend_keys,  // P30: bulk keyring read (export/sync)
             commands::export_settings_file, // P30: settings export to file
             commands::save_text_file,       // transcript exports (Transcribe screen)
+            commands::read_text_file,       // subtitle/text sources for translate-only runs
             transcripts::save_transcript_record, // transcription history (local store)
             transcripts::list_transcript_records,
             transcripts::delete_transcript_record,

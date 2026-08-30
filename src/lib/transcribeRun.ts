@@ -9,9 +9,11 @@
 import { create } from "zustand";
 import {
   audioBasePref, cancelBackendTranscription, cancelFileTranscription, fetchUrlMedia,
-  getTranscribeProgress, saveTranscriptMedia, transcribeFile, transcribeUrl,
+  getTranscribeProgress, readTextFile, saveTranscriptMedia, transcribeFile, transcribeUrl,
+  translateText,
 } from "./api";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
+import { isTextSourcePath, parseImportedText } from "./subtitleImport";
 import { useApp } from "./store";
 import { upsertRecord, type TranscriptRecord } from "./transcriptHistory";
 import type {
@@ -26,7 +28,7 @@ export interface QueueItem {
   path: string;
   /** Absent = "file" (pre-URL rows). Display and transport dispatch branch
    *  on this; every path-keyed structure works unchanged. */
-  kind?: "file" | "url";
+  kind?: "file" | "url" | "text";
   /** When this transcript was made (ISO) — the viewer's identity stamp.
    *  Same-URL records share the path key, so the timestamp is the only
    *  visible way to tell them apart. */
@@ -530,7 +532,7 @@ function recordRun(
   const title = s.urlMeta[path]?.title;
   const rec: TranscriptRecord = {
     schemaVersion: 1,
-    kind: isUrl ? "url" : "file",
+    kind: isUrl ? "url" : isTextSourcePath(path) ? "text" : "file",
     title: isUrl ? title : undefined,
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
@@ -622,7 +624,11 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
     queue: [
       {
         path: rec.sourcePath,
-        kind: recIsUrl ? ("url" as const) : ("file" as const),
+        kind: recIsUrl
+          ? ("url" as const)
+          : isTextSourcePath(rec.sourcePath)
+            ? ("text" as const)
+            : ("file" as const),
         title: rec.title,
         createdAt: rec.createdAt,
         status: rec.status,
@@ -846,6 +852,50 @@ let activeCancel: {
 
 /** Sequential queue pump. Runs detached from the component; every commit
  *  compares against the CURRENT epoch so a cancel/input-change abandons it. */
+/** Translate-only run for a subtitle/text source: read + parse locally, one
+ *  batched /v1/text/translations call, assemble a BatchResult the viewer,
+ *  history and exports consume like any other. */
+async function translateTextSource(
+  path: string,
+  options: TranscribeOptions,
+  ctx: RunContext,
+): Promise<BatchResult> {
+  const ext = /\.([A-Za-z0-9]+)$/.exec(path)?.[1] ?? "txt";
+  const content = await readTextFile(path);
+  const parsed = parseImportedText(ext, content);
+  const targets = options.translateTo ?? [];
+  const r = await translateText({
+    serverUrl: ctx.serverUrl,
+    backendId: ctx.backendId,
+    texts: parsed.segments.map((seg) => seg.text),
+    targets,
+    source: parsed.language ?? null,
+    model: options.translationModel ?? null,
+    mode: options.translationMode ?? null,
+    glossary: options.translationGlossary ?? null,
+  });
+  const segments = parsed.segments.map((seg, i) => ({
+    start: seg.start ?? i,
+    end: seg.end ?? (seg.start !== undefined ? seg.start : i + 1),
+    text: seg.text,
+    ...(seg.speaker ? { speaker: seg.speaker } : {}),
+    ...(r.results[i] && Object.keys(r.results[i]).length ? { translations: r.results[i] } : {}),
+  }));
+  return {
+    text: parsed.segments.map((seg) => seg.text).join(" "),
+    language: parsed.language ?? r.source ?? undefined,
+    segments,
+    warnings: r.warnings?.length ? r.warnings : undefined,
+    translations: Object.fromEntries(
+      targets.map((lang) => [
+        lang,
+        segments.map((seg) => seg.translations?.[lang] ?? "").filter(Boolean).join(" "),
+      ]),
+    ),
+    translation: { model: r.model, targets, source: r.source ?? parsed.language },
+  } as BatchResult;
+}
+
 async function pump(
   epoch: number,
   options: TranscribeOptions | undefined,
@@ -858,6 +908,7 @@ async function pump(
       const next = get().queue.find((it) => it.status === "queued");
       if (!next) break;
       const isUrl = next.kind === "url" || isSourceUrl(next.path);
+      const isText = !isUrl && (next.kind === "text" || isTextSourcePath(next.path));
       // A URL item can only run against a full backend (the download happens
       // server-side). A stale queue on a standard server fails locally with
       // a clear message instead of a confusing server 4xx.
@@ -872,20 +923,33 @@ async function pump(
         });
         continue;
       }
+      // A text source runs the translation stage ONLY — it needs targets and
+      // a full backend with the T2T endpoint.
+      if (isText && (ctx.standard || !options?.translateTo?.length)) {
+        const error = ctx.standard
+          ? "Text files need a full backend with translation enabled."
+          : "Text files need at least one translation target — turn on Translation.";
+        patchItem(next.path, { status: "failed", error });
+        recordRun(next.path, ctx, options, { status: "failed", error });
+        continue;
+      }
       patchItem(next.path, { status: "running" });
       // Live progress (full backend only): a fresh hex id per file keys the
       // server-side entry; a 1 s poll paints the rail. Best-effort — a poll
       // error (older backend, standard server) just leaves it indeterminate.
-      const pid = ctx.standard ? null : crypto.randomUUID().replace(/-/g, "");
+      // Text runs are one short client-driven request — no server progress entry.
+      const pid = ctx.standard || isText ? null : crypto.randomUUID().replace(/-/g, "");
       activeCancel = pid
         ? { serverUrl: ctx.serverUrl, backendId: ctx.backendId, progressId: pid }
         : null;
       // Seed the first stage's clock from the request start, so the rail
       // shows elapsed time before the first poll lands (and at all on
       // standard servers, which are never polled).
-      const first: RailStage = isUrl
-        ? "downloading"
-        : options?.separateBgm ? "separating" : "transcribing";
+      const first: RailStage = isText
+        ? "translating"
+        : isUrl
+          ? "downloading"
+          : options?.separateBgm ? "separating" : "transcribing";
       const fileT0 = Date.now();
       set({
         progress: null,
@@ -916,9 +980,11 @@ async function pump(
           overrideProfile: ctx.overrideProfile,
           options: pid ? { ...options, progressId: pid } : options,
         };
-        const res = isUrl
-          ? await transcribeUrl({ ...common, sourceUrl: next.path })
-          : await transcribeFile({ ...common, filePath: next.path });
+        const res = isText
+          ? await translateTextSource(next.path, options!, ctx)
+          : isUrl
+            ? await transcribeUrl({ ...common, sourceUrl: next.path })
+            : await transcribeFile({ ...common, filePath: next.path });
         if (epoch !== get().epoch) return;
         const tookMs = Date.now() - fileT0;
         patchItem(next.path, { status: "done", result: res, tookMs });
@@ -926,7 +992,7 @@ async function pump(
         const rec = recordRun(next.path, ctx, options, { status: "done", result: res, tookMs });
         if (isUrl) {
           if (res.sourceMediaId) fetchRunUrlMedia(next.path, rec, ctx, res.sourceMediaId);
-        } else {
+        } else if (!isText) {
           copyRunMedia(next.path, rec);
         }
       } catch (e) {

@@ -878,6 +878,23 @@ pub fn save_text_file(path: String, contents: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Read a text/subtitle source file for a translate-only run. Size-capped —
+/// subtitle files are KBs; anything past the cap is the wrong file.
+#[tauri::command]
+pub fn read_text_file(path: String) -> Result<String, String> {
+    const MAX_TEXT_SOURCE_BYTES: u64 = 10 * 1024 * 1024;
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("not a file".into());
+    }
+    if meta.len() > MAX_TEXT_SOURCE_BYTES {
+        return Err("file is larger than 10 MB — not a subtitle/text source".into());
+    }
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    // Lossy: a stray invalid byte must not block a whole subtitle file.
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 /// A parsed + validated settings export, ready for the import-preview UI.
 /// `categories` is the normalized SyncBlob (secrets stripped out into
 /// `secrets`), `warnings` are human-readable notes for the preview.
