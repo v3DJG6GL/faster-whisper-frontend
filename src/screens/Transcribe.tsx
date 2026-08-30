@@ -84,6 +84,8 @@ function stageLabel(p: BatchProgress | null): string {
       return "Transcribing…";
     case "diarizing":
       return "Identifying speakers…";
+    case "translating":
+      return "Translating…";
     default:
       return "Transcribing…";
   }
@@ -105,12 +107,14 @@ const RAIL_NAMES: Record<RailStage, string> = {
   separating: "Music source separation",
   transcribing: "Transcribe",
   diarizing: "Speaker diarization",
+  translating: "Translation",
 };
 const RAIL_DESCRIPTIONS: Record<RailStage, string> = {
   downloading: "Fetches the audio from the link on the server before the pipeline runs.",
   separating: "Vocals kept, music removed — the transcript decodes from the clean stem.",
   transcribing: "",
   diarizing: "Labels each segment with who is speaking.",
+  translating: "Translates the finished segments into your target languages.",
 };
 
 /** Timeline-strip identity: a muted hue and a compact lowercase axis name
@@ -121,12 +125,14 @@ const STAGE_COLORS: Record<RailStage, string> = {
   separating: "#6faed9",
   transcribing: "var(--c-ok)",
   diarizing: "#c68fb4",
+  translating: "var(--c-translate)",
 };
 const AXIS_NAMES: Record<RailStage, string> = {
   downloading: "download",
   separating: "music source separation (MSS)",
   transcribing: "transcribe",
   diarizing: "speaker diarization",
+  translating: "translate",
 };
 
 /** Measure an axis label's real pixel width in the app's mono face —

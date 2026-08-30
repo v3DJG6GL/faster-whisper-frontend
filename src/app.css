@@ -54,6 +54,7 @@
   --c-ok: #93b76f;
   --c-warn: #e0a33a;
   --c-think: #6faed9; /* cool steel blue: machine working (finalizing/inserting/warm-up) — the only cool hue, so it can't be read as off-grey, armed-amber, live-green, or error-red */
+  --c-translate: #4dd0c4; /* teal: the T2T translating stage — unclaimed by any other stage hue */
   /* Speaker-chip palette (Transcribe screen): eight hue-separated tones at
      matched brightness, indexed — exports resolve the same indexes to the
      DEFAULT_SPEAKER_COLORS hexes in transcriptExport.ts. Coral stays
@@ -94,6 +95,7 @@
   --c-ok: #5e8a3c;
   --c-warn: #b9791f;
   --c-think: #33719f; /* cool steel blue: machine working (darker for light bg) */
+  --c-translate: #0f8a7e; /* teal, darkened for cream backgrounds */
   /* Speaker-chip palette, darkened for cream backgrounds (same hue order). */
   --spk-1: #bf6f12;
   --spk-2: #33719f;

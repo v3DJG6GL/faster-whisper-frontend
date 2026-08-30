@@ -21,6 +21,9 @@ describe("railOf", () => {
     expect(railOf("diarizing")).toBe("diarizing");
     expect(railOf(undefined)).toBe("transcribing");
   });
+  it("maps the translating stage to its own row", () => {
+    expect(railOf("translating")).toBe("translating");
+  });
 });
 
 describe("railStages", () => {
@@ -39,6 +42,17 @@ describe("railStages", () => {
     expect(railIndex("resolving", stages)).toBe(0);
     expect(railIndex("downloading", stages)).toBe(0);
     expect(railIndex("transcribing", stages)).toBe(1);
+  });
+  it("appends translating last when targets are requested", () => {
+    expect(railStages({ translateTo: ["de"] })).toEqual(["transcribing", "translating"]);
+    expect(railStages({ separateBgm: true, diarize: true, translateTo: ["de", "fr"] }, true)).toEqual([
+      "downloading", "separating", "transcribing", "diarizing", "translating",
+    ]);
+    expect(railStages({ translateTo: [] })).toEqual(["transcribing"]);
+  });
+  it("text sources run the translating stage alone", () => {
+    expect(railStages(undefined, false, true)).toEqual(["translating"]);
+    expect(railStages({ separateBgm: true, translateTo: ["de"] }, true, true)).toEqual(["translating"]);
   });
 });
 
@@ -193,6 +207,17 @@ describe("overallFraction with a download rail", () => {
       lastOptions: undefined,
     });
     expect(frac).toBeCloseTo(0.25, 5);
+  });
+  it("credits a running translating stage by its own fraction", () => {
+    const fileQueue: QueueItem[] = [{ path: "/a.mp3", status: "running" }];
+    const frac = overallFraction({
+      queue: fileQueue,
+      progress: { stage: "translating", progress: 0.5 },
+      stageTimes: { transcribing: { start: 1, end: 2, observed: true } },
+      lastOptions: { translateTo: ["de"] },
+    });
+    // weights: transcribing 60, translating 12 → (60 + 0.5*12) / 72
+    expect(frac).toBeCloseTo(66 / 72, 5);
   });
 });
 

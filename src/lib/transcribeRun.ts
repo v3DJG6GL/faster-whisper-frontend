@@ -43,7 +43,7 @@ export interface QueueItem {
 }
 
 /** The pipeline stages of a run, in server order (the progress rail). */
-export type RailStage = "downloading" | "separating" | "transcribing" | "diarizing";
+export type RailStage = "downloading" | "separating" | "transcribing" | "diarizing" | "translating";
 
 export interface StageTime {
   start: number;
@@ -78,17 +78,25 @@ export const STAGE_WEIGHTS: Record<RailStage, number> = {
   separating: 25,
   transcribing: 60,
   diarizing: 15,
+  translating: 12,
 };
 
 /** The stages of a run in server order — transcribe always, the optional
  *  stages only when the run switched them on, and (URL items) the leading
- *  server-side download. */
-export function railStages(opts: TranscribeOptions | undefined, forUrl?: boolean): RailStage[] {
+ *  server-side download. Text sources (subtitle/txt files) run the
+ *  translating stage alone — no audio ever exists for them. */
+export function railStages(
+  opts: TranscribeOptions | undefined,
+  forUrl?: boolean,
+  forText?: boolean,
+): RailStage[] {
+  if (forText) return ["translating"];
   return [
     ...(forUrl ? (["downloading"] as const) : []),
     ...(opts?.separateBgm ? (["separating"] as const) : []),
     "transcribing" as const,
     ...(opts?.diarize ? (["diarizing"] as const) : []),
+    ...(opts?.translateTo?.length ? (["translating"] as const) : []),
   ];
 }
 
@@ -188,6 +196,7 @@ const DEFAULT_STAGE_RTF: Record<RailStage, number> = {
   separating: 8,
   transcribing: 6,
   diarizing: 11,
+  translating: 25,
 };
 const stageRtf: Partial<Record<RailStage, number>> = {};
 
@@ -384,7 +393,9 @@ export function railOf(stage: string | undefined | null): RailStage {
   // way "waiting"/"analyzing" fold onto transcribe — seconds-long phases
   // don't get their own rail rows.
   if (stage === "downloading" || stage === "resolving") return "downloading";
-  return stage === "separating" || stage === "diarizing" ? stage : "transcribing";
+  return stage === "separating" || stage === "diarizing" || stage === "translating"
+    ? stage
+    : "transcribing";
 }
 
 export function patchItem(path: string, patch: Partial<QueueItem>) {
