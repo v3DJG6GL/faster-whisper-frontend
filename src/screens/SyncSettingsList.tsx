@@ -6,8 +6,9 @@
 // value changed from default OR whose sync switch is off) without expanding —
 // group headers always stay visible so the per-group masters remain reachable.
 //
-// Reset tiers: hover ↺ / row menu (single switch, instant), group menu
-// ("Reset group"), and a subdued "Restore all defaults…" with an inline
+// Reset tiers, one direct control each (no menus): a permanent ↺ on a row
+// whose switch differs from its default, a "↺ N" pill on a group header with
+// N changed switches, and a subdued "Restore all defaults…" with an inline
 // confirm + Undo toast. Resets restore the SYNC SWITCHES to their default
 // map (on for everything except machine-specific settings) — they never
 // touch the settings' values, and like all sync switches they are
@@ -29,7 +30,7 @@ import {
   type SyncGroup,
 } from "@/lib/settingsManifest";
 import type { Gates } from "@/lib/syncGates";
-import { DisclosureToggle, RowMenu, Toast, Toggle } from "@/components/ui";
+import { DisclosureToggle, Toast, Toggle } from "@/components/ui";
 
 const UI_STATE_KEY = "fwf.syncUi.v1";
 
@@ -116,11 +117,6 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
 
   const allOn = DEFS.every((d) => gates[d.id as SettingId]);
   const totalChanged = changed.size;
-  // The filter's unit: a row NOT fully following the account — value changed
-  // from default, or sync switch off (incl. the off-by-default ones).
-  const totalExceptions = DEFS.filter(
-    (d) => !gates[d.id as SettingId] || changed.has(d.id as SettingId),
-  ).length;
 
   return (
     <div className={cn(!enabled && "pointer-events-none opacity-40")} aria-disabled={!enabled}>
@@ -147,38 +143,33 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
           hides them; only Expand/Collapse and the filter control visibility. */}
       <>
         <div className="flex items-center gap-4 pb-2 text-[12px]">
-            <button
-              type="button"
-              className="ring-signal font-semibold text-accent hover:underline disabled:text-faint disabled:no-underline"
-              disabled={SYNC_GROUPS.every((g) => ui.expanded[g])}
-              onClick={() =>
-                patchUi({ expanded: Object.fromEntries(SYNC_GROUPS.map((g) => [g, true])) })
-              }
-            >
+            {/* Tri-state like the group masters: on = all expanded, off = all
+                collapsed, mixed cycles mixed → expanded → collapsed. */}
+            <label className="flex items-center gap-2 font-medium text-dim">
+              <Toggle
+                checked={
+                  SYNC_GROUPS.every((g) => ui.expanded[g])
+                    ? true
+                    : SYNC_GROUPS.every((g) => !ui.expanded[g])
+                      ? false
+                      : "mixed"
+                }
+                ariaLabel="Expand all groups"
+                onChange={(v) =>
+                  patchUi({ expanded: Object.fromEntries(SYNC_GROUPS.map((g) => [g, v])) })
+                }
+              />
               Expand all
-            </button>
-            <button
-              type="button"
-              className="ring-signal font-semibold text-accent hover:underline disabled:text-faint disabled:no-underline"
-              disabled={SYNC_GROUPS.every((g) => !ui.expanded[g])}
-              onClick={() =>
-                patchUi({ expanded: Object.fromEntries(SYNC_GROUPS.map((g) => [g, false])) })
-              }
-            >
-              Collapse all
-            </button>
+            </label>
             <span className="flex-1" />
-            <button
-              type="button"
-              aria-pressed={ui.changedOnly}
-              className={cn(
-                "ring-signal font-semibold hover:underline",
-                ui.changedOnly ? "text-accent" : "text-dim",
-              )}
-              onClick={() => patchUi({ changedOnly: !ui.changedOnly })}
-            >
-              Show changed &amp; off only{totalExceptions > 0 ? ` (${totalExceptions})` : ""}
-            </button>
+            <label className="flex items-center gap-2 font-medium text-dim">
+              Show changed &amp; off
+              <Toggle
+                checked={ui.changedOnly}
+                ariaLabel="Show only changed and off switches"
+                onChange={(v) => patchUi({ changedOnly: v })}
+              />
+            </label>
           </div>
 
           {SYNC_GROUPS.map((group) => (
@@ -317,6 +308,18 @@ function GroupCard({
           {SYNC_GROUP_LABEL[group]}
         </DisclosureToggle>
         <span className="ml-auto font-mono text-[11px] tabular-nums text-faint">{summary}</span>
+        {changedDefs.length > 0 && (
+          <button
+            type="button"
+            title={`Reset ${changedDefs.length} ${changedDefs.length === 1 ? "switch" : "switches"} to default`}
+            aria-label={`Reset ${changedDefs.length} changed ${changedDefs.length === 1 ? "switch" : "switches"} in ${SYNC_GROUP_LABEL[group]} to default`}
+            onClick={() => onResetGroup(changedDefs)}
+            className="ring-signal flex h-6 shrink-0 items-center gap-1 rounded-pill border border-line-strong px-2 font-mono text-[11px] tabular-nums text-dim hover:text-text"
+          >
+            <RotateCcw className="size-3" />
+            {changedDefs.length}
+          </button>
+        )}
         <Toggle
           checked={master}
           ariaLabel={`Sync ${SYNC_GROUP_LABEL[group]}`}
@@ -325,18 +328,6 @@ function GroupCard({
               Object.fromEntries(defs.map((d) => [d.id, v])) as Partial<Record<SettingId, boolean>>,
             )
           }
-        />
-        <RowMenu
-          ariaLabel={`${SYNC_GROUP_LABEL[group]} options`}
-          items={[
-            {
-              label: changedDefs.length
-                ? `Reset group (${changedDefs.length} changed)`
-                : "Reset group — nothing changed",
-              disabled: changedDefs.length === 0,
-              onSelect: () => onResetGroup(changedDefs),
-            },
-          ]}
         />
       </div>
       {visible.length > 0 && (
@@ -404,29 +395,19 @@ function SettingSwitchRow({
         {def.desc && <div className="text-[11.5px] text-faint">{def.desc}</div>}
       </div>
       {isChanged && (
+        // The one reset control: permanently visible while the switch differs
+        // from its default (appears/disappears with the accent bar).
         <button
           type="button"
           title="Reset to default"
           aria-label={`Reset ${def.label} to default`}
           onClick={onReset}
-          className="ring-signal grid size-7 shrink-0 place-items-center rounded-full border border-line-strong text-dim opacity-0 transition-opacity hover:text-text focus-visible:opacity-100 group-hover:opacity-100 motion-reduce:opacity-100"
+          className="ring-signal grid size-7 shrink-0 place-items-center rounded-full border border-line-strong text-dim hover:text-text"
         >
           <RotateCcw className="size-3.5" />
         </button>
       )}
       <Toggle checked={gate} onChange={onGate} ariaLabel={`Sync ${def.label}`} />
-      {def.fields.length > 0 && (
-        <RowMenu
-          ariaLabel={`${def.label} options`}
-          items={[
-            {
-              label: isChanged ? "Reset to default" : "Reset to default — already default",
-              disabled: !isChanged,
-              onSelect: onReset,
-            },
-          ]}
-        />
-      )}
     </div>
   );
 }
