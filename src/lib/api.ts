@@ -115,6 +115,46 @@ export async function transcribeFile(args: {
   });
 }
 
+/** Per-input-index translation maps + bounded provenance from
+ *  POST /v1/text/translations (full backend, translation_enabled). */
+export interface TextTranslationResult {
+  /** results[i] = translations of texts[i], keyed by target language code. */
+  results: Record<string, string>[];
+  model?: string;
+  source?: string;
+  warnings?: string[];
+}
+
+/** Translate segment texts (T2T, no audio): dictation settle-time
+ *  translation, the viewer's re-translate, retro-translation, and
+ *  subtitle/text-file sources. */
+export async function translateText(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  texts: string[];
+  targets: string[];
+  source?: string | null;
+  model?: string | null;
+  mode?: "fluent" | "faithful" | null;
+  glossary?: string | null;
+  contextSegments?: number | null;
+}): Promise<TextTranslationResult> {
+  if (!isTauri) throw new Error("Translation requires the desktop app.");
+  return invoke<TextTranslationResult>("translate_text", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    texts: args.texts,
+    targets: args.targets,
+    source: args.source ?? null,
+    model: args.model ?? null,
+    mode: args.mode ?? null,
+    glossary: args.glossary ?? null,
+    contextSegments: args.contextSegments ?? null,
+  });
+}
+
 /** Transcribe a pasted media link: the SERVER downloads the audio (yt-dlp)
  *  and runs the normal pipeline. Full backend only (url_download_enabled). */
 export async function transcribeUrl(args: {

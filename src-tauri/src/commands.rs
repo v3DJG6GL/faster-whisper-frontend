@@ -415,6 +415,40 @@ pub async fn transcribe_file(
     }
 }
 
+/// Translate segment texts via POST /v1/text/translations (T2T, no audio).
+/// Serves dictation settle-time translation, the viewer's re-translate and
+/// subtitle/text-file sources. No epoch-cancel: calls are short (the caller
+/// applies its own timeout for the latency-critical dictation path).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn translate_text(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    texts: Vec<String>,
+    targets: Vec<String>,
+    source: Option<String>,
+    model: Option<String>,
+    mode: Option<String>,
+    glossary: Option<String>,
+    context_segments: Option<u32>,
+) -> Result<transport::text::TextTranslationResult, String> {
+    let key = resolve_key(api_key, backend_id);
+    transport::text::translate_texts(
+        &server_url,
+        key.as_deref(),
+        &texts,
+        &targets,
+        source.as_deref(),
+        model.as_deref(),
+        mode.as_deref(),
+        glossary.as_deref(),
+        context_segments,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// Transcribe a pasted media link: the SERVER downloads the audio (yt-dlp)
 /// and runs the normal pipeline. Same cancellation contract as
 /// `transcribe_file` — the epoch poll drops the request (closing the

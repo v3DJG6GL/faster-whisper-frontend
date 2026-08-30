@@ -190,7 +190,8 @@ pub fn run() {
             commands::cancel_file_transcription, // abort in-flight Transcribe runs (client side)
             commands::cancel_backend_transcription, // …and tell the server to stop the work
             commands::get_transcribe_progress,   // live progress poll (Transcribe screen)
-            commands::transcribe_url,       // transcribe-from-URL (server yt-dlp download)
+            commands::transcribe_url,
+            commands::translate_text,       // T2T of segment texts (dictation / re-translate / text sources)
             commands::url_preview,          // link metadata preview (Transcribe screen)
             commands::fetch_url_media,      // pull downloaded audio for local playback
             commands::import_settings_file, // P30: settings import (parse+validate)

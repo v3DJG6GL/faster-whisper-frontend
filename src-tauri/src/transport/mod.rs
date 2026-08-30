@@ -12,6 +12,7 @@ pub mod discovery;
 pub mod pipeline;
 pub mod stream;
 pub mod sync;
+pub mod text;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
