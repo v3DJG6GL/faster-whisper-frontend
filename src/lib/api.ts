@@ -145,6 +145,9 @@ export async function translateText(args: {
   mode?: "fluent" | "faithful" | null;
   glossary?: string | null;
   contextSegments?: number | null;
+  /** Keys the server-side progress entry (getTranscribeProgress polls it,
+   *  cancelTextTranslation aborts by it). Optional — older backends ignore it. */
+  progressId?: string | null;
 }): Promise<TextTranslationResult> {
   if (!isTauri) throw new Error("Translation requires the desktop app.");
   return invoke<TextTranslationResult>("translate_text", {
@@ -158,6 +161,25 @@ export async function translateText(args: {
     mode: args.mode ?? null,
     glossary: args.glossary ?? null,
     contextSegments: args.contextSegments ?? null,
+    progressId: args.progressId ?? null,
+  });
+}
+
+/** Tell the SERVER to abort the in-flight text translation behind
+ *  `progressId` (the cancel endpoint is shared with batch transcription).
+ *  Best-effort — an older backend just answers 404. */
+export async function cancelTextTranslation(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  progressId: string;
+}): Promise<void> {
+  if (!isTauri) return;
+  await invoke("cancel_text_translation", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    progressId: args.progressId,
   });
 }
 

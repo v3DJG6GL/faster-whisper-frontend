@@ -5,11 +5,24 @@
 use super::{base_url, bounded_server_text, client, detail_from, friendly_err, json_capped, with_auth, MAX_ERROR_TEXT};
 use anyhow::bail;
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 /// Client-side ceilings — the server has its own (4 MiB JSON body, 200k chars
 /// total); these just keep an accidental monster request from leaving the app.
 const MAX_TEXTS: usize = 512;
 const MAX_TARGETS: usize = 8;
+
+/// Generous per-request ceiling for translation runs — same failure mode as
+/// batch.rs's `FILE_TRANSCRIBE_TIMEOUT`: a 400-segment chunk against a slow /
+/// CPU-only MT backend (or one that first has to download the model) can
+/// legitimately work for many minutes — far longer than the shared client's
+/// 120 s default, which is sized for dictation clips and status polls. Without
+/// this, a long retro-translate failed with a spurious "Timed out" while the
+/// server was still translating, losing the chunk. Still bounded so a
+/// black-holed server can't hang the run forever. (The latency-critical
+/// dictation path races the call against its own much shorter budget in JS,
+/// so it is unaffected by this ceiling.)
+const TEXT_TRANSLATE_TIMEOUT: Duration = Duration::from_secs(3600);
 
 #[derive(serde::Serialize)]
 struct RequestBody<'a> {
@@ -25,6 +38,11 @@ struct RequestBody<'a> {
     translation_glossary: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     context_segments: Option<u32>,
+    /// Keys the server-side progress entry (GET progress / POST cancel — the
+    /// same endpoints batch transcription uses). Optional: older backends
+    /// ignore unknown fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progress_id: Option<&'a str>,
 }
 
 #[derive(serde::Serialize)]
@@ -75,6 +93,7 @@ pub async fn translate_texts(
     mode: Option<&str>,
     glossary: Option<&str>,
     context_segments: Option<u32>,
+    progress_id: Option<&str>,
 ) -> anyhow::Result<TextTranslationResult> {
     if texts.is_empty() {
         bail!("nothing to translate");
@@ -103,19 +122,32 @@ pub async fn translate_texts(
         translation_mode: mode.filter(|s| !s.is_empty()),
         translation_glossary: glossary.filter(|s| !s.trim().is_empty()),
         context_segments,
+        progress_id: progress_id.filter(|s| !s.is_empty()),
     };
     let base = base_url(server_url);
+    // Per-request override of the shared client's 120 s default (reqwest's
+    // RequestBuilder::timeout replaces the client-level timeout for this
+    // request only) — see TEXT_TRANSLATE_TIMEOUT for why.
     let resp = with_auth(client().post(format!("{base}/v1/text/translations")), api_key)
         .json(&body)
+        .timeout(TEXT_TRANSLATE_TIMEOUT)
         .send()
         .await
-        .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
+        .map_err(|e| {
+            // The viewer historically swallowed this error into a generic
+            // toast — make sure the log carries the classified cause.
+            let msg = friendly_err(&e);
+            tracing::warn!("[text] translate request failed: {msg}");
+            anyhow::anyhow!(msg)
+        })?;
     let status = resp.status();
     if !status.is_success() {
         let body = super::body_capped_to(resp, super::MAX_ERROR_BODY)
             .await
             .unwrap_or_default();
-        bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
+        let detail = detail_from(&body);
+        tracing::warn!("[text] translate failed: HTTP {} {detail}", status.as_u16());
+        bail!("HTTP {}: {}", status.as_u16(), detail);
     }
     let parsed: ResponseBody = json_capped::<ResponseBody>(resp)
         .await

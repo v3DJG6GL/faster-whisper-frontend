@@ -193,6 +193,7 @@ pub fn run() {
             commands::get_transcribe_progress,   // live progress poll (Transcribe screen)
             commands::transcribe_url,
             commands::translate_text,       // T2T of segment texts (dictation / re-translate / text sources)
+            commands::cancel_text_translation, // tell the server to stop an in-flight T2T run
             commands::url_preview,          // link metadata preview (Transcribe screen)
             commands::fetch_url_media,      // pull downloaded audio for local playback
             commands::import_settings_file, // P30: settings import (parse+validate)

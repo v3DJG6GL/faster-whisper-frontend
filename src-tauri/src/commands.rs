@@ -416,9 +416,12 @@ pub async fn transcribe_file(
 }
 
 /// Translate segment texts via POST /v1/text/translations (T2T, no audio).
-/// Serves dictation settle-time translation, the viewer's re-translate and
-/// subtitle/text-file sources. No epoch-cancel: calls are short (the caller
-/// applies its own timeout for the latency-critical dictation path).
+/// Serves dictation settle-time translation, the viewer's re-translate /
+/// retro-translate and subtitle/text-file sources. Calls can run long (a
+/// 400-segment chunk on a slow MT backend) — the transport applies the
+/// long-job timeout; cancellation goes through `cancel_text_translation`
+/// with the same `progress_id` the request carried. The latency-critical
+/// dictation path still applies its own short JS-side budget.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn translate_text(
@@ -432,6 +435,7 @@ pub async fn translate_text(
     mode: Option<String>,
     glossary: Option<String>,
     context_segments: Option<u32>,
+    progress_id: Option<String>,
 ) -> Result<transport::text::TextTranslationResult, String> {
     let key = resolve_key(api_key, backend_id);
     transport::text::translate_texts(
@@ -444,9 +448,27 @@ pub async fn translate_text(
         mode.as_deref(),
         glossary.as_deref(),
         context_segments,
+        progress_id.as_deref(),
     )
     .await
     .map_err(|e| e.to_string())
+}
+
+/// Ask the SERVER to abort the in-flight text translation behind
+/// `progress_id`. The backend's cancel endpoint is shared with batch
+/// transcription, so this reuses `transport::batch::cancel` verbatim.
+/// Best-effort by design (an older backend just answers 404).
+#[tauri::command]
+pub async fn cancel_text_translation(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    progress_id: String,
+) -> Result<(), String> {
+    let key = resolve_key(api_key, backend_id);
+    transport::batch::cancel(&server_url, key.as_deref(), &progress_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Transcribe a pasted media link: the SERVER downloads the audio (yt-dlp)
