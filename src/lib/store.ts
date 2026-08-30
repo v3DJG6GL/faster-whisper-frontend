@@ -14,6 +14,7 @@ import type {
   ThemeName,
   UsageStats,
 } from "./types";
+import type { TranslateRunUi } from "./retroTranslate";
 import { newSpeakMemo, stepSpeaking } from "./speaking";
 import { swap } from "./arr";
 import { hasOwn } from "./own";
@@ -296,6 +297,17 @@ interface AppState {
   /** Plain strings keep the legacy contract (View logs shown). */
   setLogsDoorway: (msg: string | { msg: string; showLogs: boolean } | null) => void;
 
+  /** Retro-translate runs by record key. Runtime-only, but held in the
+   *  STORE (not viewer state) on purpose: the chunk loop keeps running
+   *  when the viewer unmounts (page switch), and a remounted viewer must
+   *  re-attach to the live card instead of losing it. */
+  trRuns: Record<string, { run: TranslateRunUi; mode?: "fluent" | "faithful" }>;
+  setTrRun: (
+    okey: string,
+    run: TranslateRunUi | null,
+    mode?: "fluent" | "faithful",
+  ) => void;
+
   /** P30 runtime sync status (never persisted): what the Sync tab's status
    *  line shows. `syncUnsupported` = the sync backend 404'd the endpoint
    *  (build too old); `lastSyncedAt`/`lastSyncDevice` mirror sync-state.json. */
@@ -446,6 +458,15 @@ export const useApp = create<AppState>((set) => ({
   logsDoorway: null,
   setLogsDoorway: (msg) =>
     set({ logsDoorway: typeof msg === "string" ? { msg, showLogs: true } : msg }),
+
+  trRuns: {},
+  setTrRun: (okey, run, mode) =>
+    set((s) => {
+      const next = { ...s.trRuns };
+      if (run == null) delete next[okey];
+      else next[okey] = { run, mode: mode ?? next[okey]?.mode };
+      return { trRuns: next };
+    }),
 
   syncStatus: "idle",
   syncError: null,

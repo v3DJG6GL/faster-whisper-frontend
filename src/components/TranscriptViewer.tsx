@@ -51,6 +51,16 @@ function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
 
+/** Live retro-translate controls, keyed by record. MODULE scope on purpose:
+ *  the chunk loop + its 1 s poller must keep running (and keep the store's
+ *  card state fresh) while the viewer is unmounted, and a remounted viewer
+ *  must find the same ctl to gate re-entry and serve Cancel. */
+const trCtls = new Map<
+  string,
+  { pid: string; cancelled: boolean; serverUrl: string; backendId: string }
+>();
+const trDoneTimers = new Map<string, number>();
+
 /** Best-effort MIME for the playback blob (helps WebKitGTK pick a decoder). */
 function mediaMime(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
@@ -833,7 +843,6 @@ export function TranscriptViewer({
     // Only an explicit false hides it once caps are known — absent field
     // (older backend) keeps the old kind-only behavior.
     trCaps?.translation_enabled !== false;
-  const [translating, setTranslating] = useState(false);
   // ── translate options panel (Export-panel idiom) ─────────────────────────
   const [showTranslate, setShowTranslate] = useState(false);
   // null = not touched yet → prefill from the defaults chain below.
@@ -858,27 +867,32 @@ export function TranscriptViewer({
   const effTargets = trTargets ?? seededTargets;
 
   // ── chunked run + mini progress card state ──────────────────────────────
-  const [trRun, setTrRun] = useState<TranslateRunUi | null>(null);
-  const [trRunMode, setTrRunMode] = useState<"fluent" | "faithful" | undefined>(undefined);
-  /** The live run's identity: one progress id for the WHOLE run (the server
-   *  rewrites its entry per chunk request, so a single id keeps the poller
-   *  and Cancel stable across chunk boundaries). Module-lifetime refs so a
-   *  re-render never orphans the poller. */
-  const trCtl = useRef<{
-    pid: string;
-    cancelled: boolean;
-    serverUrl: string;
-    backendId: string;
-  } | null>(null);
-  const trPollTimer = useRef<number | undefined>(undefined);
-  const trDoneTimer = useRef<number | undefined>(undefined);
-  useEffect(
-    () => () => {
-      window.clearInterval(trPollTimer.current);
-      window.clearTimeout(trDoneTimer.current);
+  // Held in the app store keyed by record: the run loop, its poller, and the
+  // card state all outlive this component, so navigating away and back
+  // re-attaches to the live card instead of losing it (the run itself was
+  // never lost — only its UI was).
+  const trEntry = useApp((s) => s.trRuns[okey]);
+  const trRun = trEntry?.run ?? null;
+  const trRunMode = trEntry?.mode;
+  const setTrRun = useCallback(
+    (
+      v:
+        | TranslateRunUi
+        | null
+        | ((s: TranslateRunUi | null) => TranslateRunUi | null),
+      mode?: "fluent" | "faithful",
+    ) => {
+      const st = useApp.getState();
+      st.setTrRun(
+        okey,
+        typeof v === "function" ? v(st.trRuns[okey]?.run ?? null) : v,
+        mode,
+      );
     },
-    [],
+    [okey],
   );
+  // Re-entry gate that survives remounts: a ctl exists ⇔ the loop is live.
+  const translating = trCtls.has(okey) && trRun != null;
 
   /** Translate the given segment indexes into `targets` in 400-segment
    *  chunks, merging each chunk back into the record as it lands (track
@@ -890,7 +904,7 @@ export function TranscriptViewer({
     targets: string[],
     opts?: { mode?: "fluent" | "faithful"; model?: string },
   ) => {
-    if (!indexes.length || !targets.length || translating) return;
+    if (!indexes.length || !targets.length || trCtls.has(okey)) return;
     const backend = trBackend;
     if (!backend) return;
     const serverUrl = effectiveServerUrl(backend, useApp.getState().settings);
@@ -898,23 +912,21 @@ export function TranscriptViewer({
     const mode = opts?.mode ?? trOv?.mode;
     const pid = crypto.randomUUID().replace(/-/g, "");
     const ctl = { pid, cancelled: false, serverUrl, backendId: backend.id };
-    trCtl.current = ctl;
-    setTranslating(true);
-    window.clearTimeout(trDoneTimer.current);
-    setTrRunMode(mode);
-    setTrRun(newTranslateRun(indexes.length, targets));
+    trCtls.set(okey, ctl);
+    window.clearTimeout(trDoneTimers.get(okey));
+    trDoneTimers.delete(okey);
+    setTrRun(newTranslateRun(indexes.length, targets), mode);
     // 1 s poll drives the card. Best-effort split: an HTTP error (older
     // backend without the shared progress entry) leaves the card in its
     // current state; a NETWORK failure flips it to "reconnecting" — the
     // chunk request itself is still in flight on its own long timeout.
-    window.clearInterval(trPollTimer.current);
-    trPollTimer.current = window.setInterval(() => {
+    const pollTimer = window.setInterval(() => {
       getTranscribeProgress({ serverUrl, backendId: backend.id, progressId: pid })
         .then((p) => {
-          if (trCtl.current === ctl) setTrRun((s) => (s ? foldTranslatePoll(s, p) : s));
+          if (trCtls.get(okey) === ctl) setTrRun((s) => (s ? foldTranslatePoll(s, p) : s));
         })
         .catch((e) => {
-          if (trCtl.current !== ctl) return;
+          if (trCtls.get(okey) !== ctl) return;
           if (!String(e).startsWith("HTTP")) setTrRun((s) => (s ? foldPollFailure(s) : s));
         });
     }, 1000);
@@ -952,8 +964,15 @@ export function TranscriptViewer({
         setTrRun((s) =>
           s ? { ...s, phase: "done", pct: 1, done: s.total, frontierIdx: -1 } : s,
         );
-        // Brief success receipt, then the card folds away.
-        trDoneTimer.current = window.setTimeout(() => setTrRun(null), 4000);
+        // Brief success receipt, then the card folds away — module timer, so
+        // the store entry is cleaned even if the viewer is unmounted by then.
+        trDoneTimers.set(
+          okey,
+          window.setTimeout(() => {
+            trDoneTimers.delete(okey);
+            useApp.getState().setTrRun(okey, null);
+          }, 4000),
+        );
       } else {
         setTrRun(null);
       }
@@ -966,16 +985,15 @@ export function TranscriptViewer({
         useApp.getState().setLogsDoorway(transportErrorDoorway("translate", e, backend.name));
       }
     } finally {
-      window.clearInterval(trPollTimer.current);
-      if (trCtl.current === ctl) trCtl.current = null;
-      setTranslating(false);
+      window.clearInterval(pollTimer);
+      if (trCtls.get(okey) === ctl) trCtls.delete(okey);
     }
   };
 
   /** Cancel = server-side abort by progress id + stop the chunk loop. The
    *  in-flight chunk's results are lost; completed chunks stay merged. */
   const cancelTranslate = () => {
-    const ctl = trCtl.current;
+    const ctl = trCtls.get(okey);
     if (!ctl || ctl.cancelled) return;
     ctl.cancelled = true;
     void cancelTextTranslation({
