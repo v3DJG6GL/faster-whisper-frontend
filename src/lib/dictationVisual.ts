@@ -60,6 +60,8 @@ export function dictationVisual(
       return { state: "error", tone: "rec", label: "error", pulse: true, filled: true };
     case "transcribing":
       return { state: "processing", tone: "think", label: "finalizing…", pulse: true, filled: true };
+    case "translating":
+      return { state: "processing", tone: "think", label: "translating…", pulse: true, filled: true };
     case "injecting":
       return { state: "processing", tone: "think", label: "inserting…", pulse: true, filled: true };
     case "listening":
@@ -79,7 +81,10 @@ export function dictationVisual(
  * each used to hand-roll, so a future status can't be silently omitted at one of them.
  */
 export function isActiveDictation(status: DictationStatus): boolean {
-  return status === "listening" || status === "transcribing" || status === "injecting";
+  return (
+    status === "listening" || status === "transcribing" ||
+    status === "translating" || status === "injecting"
+  );
 }
 
 /**
@@ -89,5 +94,5 @@ export function isActiveDictation(status: DictationStatus): boolean {
  * so a future post-capture status can't be silently omitted at one of the ~6 sites that hand-roll it.
  */
 export function isProcessing(status: DictationStatus): boolean {
-  return status === "transcribing" || status === "injecting";
+  return status === "transcribing" || status === "translating" || status === "injecting";
 }

@@ -43,8 +43,9 @@ import {
   reregisterShortcutsUnlessCapturing,
   shortcutModsHeld,
   audioBasePref,
+  translateText,
 } from "./api";
-import type { ActivationKind, AppRule, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertMethod, Profile } from "./types";
+import type { ActivationKind, AppRule, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertMethod, Profile, TranslationOverrides } from "./types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
 import { normalizeAppId } from "./sanitize";
@@ -197,6 +198,68 @@ let sessionMeta: {
 let sessionRecordingPath: string | null = null;
 let capturedRecordId: string | null = null;
 
+// ── T2T dictation translation (per-profile "Translate output") ──────────────
+// Frozen per session from Backend→Profile translationOverrides; target set =
+// every injection carries the translation instead of the original. All doc
+// bookkeeping (committedDoc/injectedText/seenDoc/clipBaseline) stays in
+// ORIGINAL text — only the outbound copy is swapped — so phrase diffing,
+// history capture and recovery paths are structurally untouched.
+let sessionTranslation: {
+  target: string;
+  model?: string;
+  glossary?: string;
+  mode?: "fluent" | "faithful";
+  contextSegments?: number;
+  serverUrl: string;
+  backendId: string;
+} | null = null;
+// Stop-timing: the translated text that actually got injected (History keeps both).
+let sessionTranslatedText: string | null = null;
+// One "translation failed" doorway per session, not one per phrase.
+let sessionTranslateWarned = false;
+// Live mode: recent ORIGINAL phrases, sent as context for the next phrase.
+let sessionPhraseContext: string[] = [];
+const TRANSLATE_TIMEOUT_MS = 2000;
+const PHRASE_CONTEXT_MAX = 3;
+
+/** Translate `text` for injection, or return it unchanged (no target set,
+ *  timeout, failure, superseded session). Never throws; warns once. */
+async function maybeTranslate(text: string, cfg: InsertCfg | null): Promise<string> {
+  const tr = sessionTranslation;
+  if (!tr || !text.trim()) return text;
+  const context = sessionPhraseContext.slice(-PHRASE_CONTEXT_MAX);
+  try {
+    const r = await Promise.race([
+      translateText({
+        serverUrl: tr.serverUrl,
+        backendId: tr.backendId,
+        // Prior phrases ride along as context segments; only the last
+        // result (the current text) is consumed.
+        texts: [...context, text],
+        targets: [tr.target],
+        model: tr.model,
+        mode: tr.mode,
+        glossary: tr.glossary,
+        contextSegments: tr.contextSegments ?? (context.length ? context.length : null),
+      }),
+      new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error("translation timed out")), TRANSLATE_TIMEOUT_MS),
+      ),
+    ]);
+    if (insertCfg !== cfg) return text; // superseded — caller bails on its own guard too
+    const t = r.results[r.results.length - 1]?.[tr.target]?.trim();
+    if (t) return t;
+    throw new Error("empty translation");
+  } catch (e) {
+    console.error("dictation translation failed:", e);
+    if (insertCfg === cfg && !sessionTranslateWarned) {
+      sessionTranslateWarned = true;
+      useApp.getState().setLogsDoorway("Translation failed — inserted the original text.");
+    }
+    return text;
+  }
+}
+
 /** Save the finished session to History — the settleIdle hook. Skips: empty
  *  sessions, App-rules-blocked targets, and the "Keep dictation history" off
  *  switch. Runs once per session (capturedRecordId latch). */
@@ -222,6 +285,9 @@ function captureDictationHistory(): void {
       activation: meta.activation,
       insertMethod: endOutcome(),
       recordingPath: sessionRecordingPath ?? undefined,
+      translatedText: sessionTranslatedText ?? undefined,
+      translationTarget: sessionTranslation?.target,
+      translationInjected: sessionTranslatedText != null,
     });
   } catch (e) {
     // History is a convenience — it must never break the session settle.
@@ -840,9 +906,17 @@ async function ensureListeners(): Promise<void> {
           // final (the flush final the drain emits at latch end), so a clipboard latch that ends
           // mid-speech doesn't re-copy + re-pulse the last phrase on the re-sent final.
           if (phraseClip.length > 0 && grew) {
+            // T2T live: translate the outbound copy only; clipBaseline and the
+            // grew guard keep working in original text.
+            const clipOut = await maybeTranslate(phraseClip, cfg);
+            if (insertCfg !== cfg) return;
+            if (clipOut !== phraseClip) {
+              sessionPhraseContext.push(phraseClip);
+              sessionTranslatedText = ((sessionTranslatedText ?? "") + " " + clipOut).trim();
+            }
             let landed = true;
             try {
-              ({ landed } = await injectText({ text: phraseClip, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
+              ({ landed } = await injectText({ text: clipOut, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
             } catch (e) {
               // A live phrase's clipboard copy failed: surface it AND tear the session down. Once
               // flashError sets status "error" no further phrase reaches this catch (the old "just
@@ -887,6 +961,15 @@ async function ensureListeners(): Promise<void> {
           // re-sent final or already-typed text → skip.
           const toType = target.slice(commonPrefixLen(injectedText, target));
           if (toType.length > 0) {
+            // T2T live: translate the outbound copy only. injectedText still
+            // advances by the ORIGINAL document below, so per-phrase diffing,
+            // skip-and-retype and re-sent-final detection are untouched.
+            const typeOut = await maybeTranslate(toType, cfg);
+            if (insertCfg !== cfg) return;
+            if (typeOut !== toType) {
+              sessionPhraseContext.push(toType);
+              sessionTranslatedText = ((sessionTranslatedText ?? "") + " " + typeOut).trim();
+            }
             // Snapshot the user's CURRENT clipboard right before this paste overwrites it — per phrase,
             // not once at session start — and only when the clipboard does NOT already hold our own text
             // (clipHoldsOurs false), so we never capture our own transcript. Gating on clipHoldsOurs (not
@@ -912,7 +995,7 @@ async function ensureListeners(): Promise<void> {
             let landed = true;
             let diverted = false;
             try {
-              ({ landed, diverted } = await injectText({ text: toType, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
+              ({ landed, diverted } = await injectText({ text: typeOut, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
             } catch (e) {
               // A live phrase insert failed: surface it, then tear the session down (mirrors
               // stream://error) so the mic + system-mute don't leak — once status is "error" no
@@ -924,7 +1007,7 @@ async function ensureListeners(): Promise<void> {
               if (t.method === "direct") {
                 // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
                 try {
-                  const copied = await injectText({ text: toType, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+                  const copied = await injectText({ text: typeOut, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
                   flashError(
                     copied.landed
                       ? "Couldn’t type the text — it’s on the clipboard to paste manually."
@@ -1251,8 +1334,17 @@ async function ensureListeners(): Promise<void> {
           settleIdle();
           return;
         }
-        setDictation({ status: "injecting" });
+        setDictation({ status: sessionTranslation ? "translating" : "injecting" });
         enqueueInject(async () => {
+          // T2T: translate the whole transcript once, then inject the result.
+          // Falls back to the original on timeout/failure (maybeTranslate warns).
+          let outText = text;
+          if (sessionTranslation) {
+            outText = await maybeTranslate(text, cfg);
+            if (insertCfg !== cfg) return;
+            if (outText !== text) sessionTranslatedText = outText;
+            setDictation({ status: "injecting" });
+          }
           const t = await resolveTarget();
           // A cancel (insertCfg→null) OR a cancel-then-fresh-session (insertCfg→a new object) landing
           // during the awaited resolve must not paste the OLD session's whole transcript into the new/
@@ -1263,7 +1355,7 @@ async function ensureListeners(): Promise<void> {
           let diverted = false;
           try {
             ({ landed, diverted } = await injectText({
-              text,
+              text: outText,
               method: t.method,
               autoEnter: cfg.autoEnter,
               restoreClipboard: cfg.restoreClipboard,
@@ -1293,7 +1385,7 @@ async function ensureListeners(): Promise<void> {
             let onClipboard = t.method !== "direct";
             if (t.method === "direct") {
               try {
-                ({ landed: onClipboard } = await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
+                ({ landed: onClipboard } = await injectText({ text: outText, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
               } catch (e2) {
                 console.error("clipboard fallback after failed insert failed:", e2);
               }
@@ -1596,7 +1688,7 @@ export async function startLive(
   backend: Backend,
   deviceId: string | null,
   activation: ActivationKind,
-  pov?: { model?: string; language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; overrideProfile?: string; endpoint?: EndpointKind },
+  pov?: { model?: string; language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; translationOverrides?: TranslationOverrides; overrideProfile?: string; endpoint?: EndpointKind },
 ): Promise<void> {
   if (startingSession) return;
   startingSession = true;
@@ -1630,7 +1722,7 @@ async function startLiveInner(
   backend: Backend,
   deviceId: string | null,
   activation: ActivationKind,
-  pov?: { model?: string; language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; overrideProfile?: string; endpoint?: EndpointKind },
+  pov?: { model?: string; language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; translationOverrides?: TranslationOverrides; overrideProfile?: string; endpoint?: EndpointKind },
 ): Promise<void> {
   await ensureListeners();
   const setDictation = useApp.getState().setDictation;
@@ -1656,6 +1748,26 @@ async function startLiveInner(
   const overrideProfile = pov?.overrideProfile?.trim() ? pov.overrideProfile.trim() : backend.overrideProfile;
   // A set per-Profile endpoint wins; else inherit the Backend's (stream vs batch transport).
   const endpoint = pov?.endpoint ?? backend.endpoint;
+  // T2T dictation translation: per-field merge (Profile wins over Backend);
+  // a first target = translate every injection this session.
+  {
+    const trOv = { ...backend.translationOverrides, ...pov?.translationOverrides };
+    const trTarget = trOv.translateTo?.[0]?.trim();
+    sessionTranslation = trTarget
+      ? {
+          target: trTarget,
+          model: trOv.model,
+          glossary: trOv.glossary,
+          mode: trOv.mode,
+          contextSegments: trOv.contextSegments,
+          serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+          backendId: backend.id,
+        }
+      : null;
+    sessionTranslatedText = null;
+    sessionTranslateWarned = false;
+    sessionPhraseContext = [];
+  }
 
   // Per-app rule (P16): the focused app at start decides block/method/paste-shortcut. Resolved
   // once here — you dictate into the app you triggered from — via the shared resolveInjectionTarget

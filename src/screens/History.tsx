@@ -470,9 +470,30 @@ export default function History() {
             No recording linked — “Keep audio recordings” was off for this session.
           </div>
         )}
-        <div className="mt-3 max-h-56 select-text overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
-          {stripControlChars(recordText(rec))}
-        </div>
+        {rec.translatedText ? (
+          <div className="mt-3 max-h-56 space-y-2 overflow-y-auto">
+            <div>
+              <span className="font-mono text-[10px] uppercase tracking-wider text-[color:var(--c-translate)]">
+                {safeDisplayText(rec.translationTarget ?? "translated", 8)} · injected
+              </span>
+              <div className="select-text whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
+                {stripControlChars(rec.translatedText)}
+              </div>
+            </div>
+            <div>
+              <span className="font-mono text-[10px] uppercase tracking-wider text-faint">
+                original
+              </span>
+              <div className="select-text whitespace-pre-wrap text-[13px] leading-relaxed text-dim">
+                {stripControlChars(recordText(rec))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3 max-h-56 select-text overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
+            {stripControlChars(recordText(rec))}
+          </div>
+        )}
         <div className="mt-3 flex items-center gap-4 border-t border-line pt-3">
           {rec.profileName && (
             <span className="font-mono text-[11px] text-faint">

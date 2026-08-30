@@ -354,6 +354,7 @@ export type DictationStatus =
   | "idle"
   | "listening"
   | "transcribing"
+  | "translating"
   | "injecting"
   | "error";
 

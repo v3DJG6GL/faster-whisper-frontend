@@ -55,6 +55,12 @@ export interface TranscriptRecord {
   /** What actually happened to the text (endOutcome). */
   insertMethod?: "typed" | "clipboard" | "none";
   wordCount?: number;
+  /** T2T dictation: the translated text that was injected (the record's
+   *  `result.text` stays the ORIGINAL transcript), its target language, and
+   *  whether translation actually happened (false = fallback to original). */
+  translatedText?: string;
+  translationTarget?: string;
+  translationInjected?: boolean;
 }
 
 interface HistoryState {
@@ -135,6 +141,9 @@ export interface DictationCapture {
   activation?: "hold" | "latch";
   insertMethod: "typed" | "clipboard" | "none";
   recordingPath?: string;
+  translatedText?: string;
+  translationTarget?: string;
+  translationInjected?: boolean;
 }
 
 /** Save a finished dictation session as a history record; returns its id so
@@ -159,6 +168,9 @@ export function recordDictation(cap: DictationCapture): string {
     activation: cap.activation,
     insertMethod: cap.insertMethod,
     wordCount: cap.text.split(/\s+/).filter(Boolean).length,
+    translatedText: cap.translatedText,
+    translationTarget: cap.translationTarget,
+    translationInjected: cap.translationInjected,
   };
   upsertRecord(rec);
   return rec.id;

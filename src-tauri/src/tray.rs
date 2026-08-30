@@ -75,6 +75,7 @@ pub fn set_tray_state(app: AppHandle, status: String) {
         "warming" => "faster-whisper — warming up…",
         "listening" => "faster-whisper — recording…",
         "transcribing" => "faster-whisper — transcribing…",
+        "translating" => "faster-whisper — translating…",
         "injecting" => "faster-whisper — inserting…",
         "error" => "faster-whisper — error",
         _ => "faster-whisper-frontend",
