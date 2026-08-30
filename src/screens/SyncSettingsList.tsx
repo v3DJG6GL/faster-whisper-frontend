@@ -30,7 +30,7 @@ import {
   type SyncGroup,
 } from "@/lib/settingsManifest";
 import type { Gates } from "@/lib/syncGates";
-import { DisclosureToggle, Toast, Toggle } from "@/components/ui";
+import { DisclosureToggle, Segmented, Toast, Toggle } from "@/components/ui";
 
 const UI_STATE_KEY = "fwf.syncUi.v1";
 
@@ -117,6 +117,10 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
 
   const allOn = DEFS.every((d) => gates[d.id as SettingId]);
   const totalChanged = changed.size;
+  // The exceptions view's unit: switch changed from default, or default-off.
+  const totalExceptions = DEFS.filter(
+    (d) => !gates[d.id as SettingId] || changed.has(d.id as SettingId),
+  ).length;
 
   return (
     <div className={cn(!enabled && "pointer-events-none opacity-40")} aria-disabled={!enabled}>
@@ -142,34 +146,42 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
       {/* The list always renders — the master toggle sets switches, it never
           hides them; only Expand/Collapse and the filter control visibility. */}
       <>
-        <div className="flex items-center gap-4 pb-2 text-[12px]">
-            {/* Tri-state like the group masters: on = all expanded, off = all
-                collapsed, mixed cycles mixed → expanded → collapsed. */}
-            <label className="flex items-center gap-2 font-medium text-dim">
-              <Toggle
-                checked={
-                  SYNC_GROUPS.every((g) => ui.expanded[g])
-                    ? true
+        <div className="flex items-center pb-2">
+            {/* ONE view control — collapsed/expanded/exceptions are three
+                values of the same state, so two switches always left a dead
+                combination. Hand-toggled chevrons produce a mix no segment
+                matches ("custom"): none renders active until a segment snaps
+                the whole list back. */}
+            <Segmented
+              value={
+                ui.changedOnly
+                  ? "exceptions"
+                  : SYNC_GROUPS.every((g) => ui.expanded[g])
+                    ? "expanded"
                     : SYNC_GROUPS.every((g) => !ui.expanded[g])
-                      ? false
-                      : "mixed"
-                }
-                ariaLabel="Expand all groups"
-                onChange={(v) =>
-                  patchUi({ expanded: Object.fromEntries(SYNC_GROUPS.map((g) => [g, v])) })
-                }
-              />
-              Expand all
-            </label>
-            <span className="flex-1" />
-            <label className="flex items-center gap-2 font-medium text-dim">
-              Show changed &amp; off
-              <Toggle
-                checked={ui.changedOnly}
-                ariaLabel="Show only changed and off switches"
-                onChange={(v) => patchUi({ changedOnly: v })}
-              />
-            </label>
+                      ? "collapsed"
+                      : ("custom" as const)
+              }
+              onChange={(v) => {
+                if (v === "exceptions") patchUi({ changedOnly: true });
+                else
+                  patchUi({
+                    changedOnly: false,
+                    expanded: Object.fromEntries(
+                      SYNC_GROUPS.map((g) => [g, v === "expanded"]),
+                    ),
+                  });
+              }}
+              options={[
+                { value: "collapsed", label: "Collapsed" },
+                { value: "expanded", label: "Expanded" },
+                {
+                  value: "exceptions",
+                  label: `Changed & default-off${totalExceptions > 0 ? ` · ${totalExceptions}` : ""}`,
+                },
+              ]}
+              ariaLabel="List view"
+            />
           </div>
 
           {SYNC_GROUPS.map((group) => (
