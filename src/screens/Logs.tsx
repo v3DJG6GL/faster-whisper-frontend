@@ -25,6 +25,7 @@ import {
 import {
   buildBugReport,
   collectTags,
+  foldLines,
   followReduce,
   matchesFilters,
   type FollowState,
@@ -67,6 +68,7 @@ export default function Logs() {
   const [tags, setTags] = useState<ReadonlySet<string>>(new Set());
   const [text, setText] = useState("");
   const [wrap, setWrap] = useState(true);
+  const [merge, setMerge] = useState(true);
   const [copied, setCopied] = useState(false);
   const [follow, setFollow] = useState<FollowState>({ follow: true, pendingNew: 0 });
 
@@ -92,17 +94,24 @@ export default function Logs() {
     () => all.filter((l) => matchesFilters(l, threshold, tags, text)),
     [all, threshold, tags, text],
   );
+  const rows = useMemo(
+    () =>
+      merge
+        ? foldLines(lines)
+        : lines.map((l) => ({ line: l, count: 1, firstTs: l.ts })),
+    [lines, merge],
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
-    count: lines.length,
+    count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 22,
     overscan: 10,
     // Height measurements must follow the LINE, not the list position —
     // filters/clear shift which line sits at an index, and a stale by-index
     // height makes wrapped rows overlap their neighbors.
-    getItemKey: (index) => lines[index].seq,
+    getItemKey: (index) => rows[index].line.seq,
   });
 
   // Follow: on new content, keep the tail pinned (after paint — wrapped rows
@@ -112,9 +121,9 @@ export default function Logs() {
     const added = Math.max(0, lines.length - prevCount.current);
     prevCount.current = lines.length;
     if (follow.follow) {
-      if (lines.length > 0) {
+      if (rows.length > 0) {
         requestAnimationFrame(() => {
-          virtualizer.scrollToIndex(lines.length - 1, { align: "end" });
+          virtualizer.scrollToIndex(rows.length - 1, { align: "end" });
         });
       }
     } else if (added > 0) {
@@ -140,7 +149,7 @@ export default function Logs() {
 
   function relatch() {
     setFollow((f) => followReduce(f, { kind: "relatch" }));
-    virtualizer.scrollToIndex(Math.max(0, lines.length - 1), { align: "end" });
+    virtualizer.scrollToIndex(Math.max(0, rows.length - 1), { align: "end" });
   }
 
   async function copyBugReport() {
@@ -216,6 +225,10 @@ export default function Logs() {
           className="h-8 w-auto min-w-[140px] flex-1 text-[12px]"
         />
         <label className="flex items-center gap-2 text-[12px] text-dim">
+          Merge repeats
+          <Toggle checked={merge} onChange={setMerge} ariaLabel="Merge repeated lines" />
+        </label>
+        <label className="flex items-center gap-2 text-[12px] text-dim">
           Wrap
           <Toggle checked={wrap} onChange={setWrap} ariaLabel="Wrap long lines" />
         </label>
@@ -227,7 +240,7 @@ export default function Logs() {
           onScroll={onScroll}
           className={cn("h-full overflow-y-auto py-2", !wrap && "overflow-x-auto")}
         >
-          {lines.length === 0 ? (
+          {rows.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-1.5 text-center">
               <span className="text-[13.5px] font-medium text-dim">
                 {all.length === 0 ? "Nothing logged yet this session" : "No lines match the filters"}
@@ -241,7 +254,8 @@ export default function Logs() {
           ) : (
             <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
               {virtualizer.getVirtualItems().map((v) => {
-                const l = lines[v.index];
+                const r = rows[v.index];
+                const l = r.line;
                 return (
                   <div
                     key={l.seq}
@@ -259,6 +273,14 @@ export default function Logs() {
                     </span>
                     {l.tag && (
                       <span className="shrink-0 text-accent/85">[{safeDisplayText(l.tag, 24)}]</span>
+                    )}
+                    {r.count > 1 && (
+                      <span
+                        title={`Repeated ${r.count}× since ${rowTime(r.firstTs)}`}
+                        className="shrink-0 self-start rounded-pill bg-accent-soft px-1.5 font-semibold tabular-nums text-accent"
+                      >
+                        ×{r.count}
+                      </span>
                     )}
                     <span
                       className={cn(

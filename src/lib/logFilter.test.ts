@@ -4,6 +4,7 @@ import {
   BUG_REPORT_LINES,
   buildBugReport,
   collectTags,
+  foldLines,
   followReduce,
   formatLine,
   matchesFilters,
@@ -34,6 +35,37 @@ describe("passesThreshold", () => {
     expect(passesThreshold("warn", "error")).toBe(false);
     expect(passesThreshold("error", "error")).toBe(true);
     expect(passesThreshold("error", "all")).toBe(true);
+  });
+});
+
+describe("foldLines", () => {
+  it("folds consecutive identical lines, keeping the latest occurrence and the run start", () => {
+    const rows = foldLines([
+      line({ seq: 1, ts: 100, tag: "focused-app", msg: "id=konsole" }),
+      line({ seq: 2, ts: 200, tag: "focused-app", msg: "id=konsole" }),
+      line({ seq: 3, ts: 300, tag: "focused-app", msg: "id=konsole" }),
+      line({ seq: 4, ts: 400, tag: "focused-app", msg: "id=firefox" }),
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ count: 3, firstTs: 100 });
+    expect(rows[0].line.seq).toBe(3);
+    expect(rows[1]).toMatchObject({ count: 1, firstTs: 400 });
+  });
+
+  it("does not fold across level, tag, or non-adjacent repeats", () => {
+    const rows = foldLines([
+      line({ seq: 1, msg: "m" }),
+      line({ seq: 2, msg: "m", level: "warn" }),
+      line({ seq: 3, msg: "m", tag: "keys" }),
+      line({ seq: 4, msg: "other" }),
+      line({ seq: 5, msg: "m" }),
+    ]);
+    expect(rows).toHaveLength(5);
+    expect(rows.every((r) => r.count === 1)).toBe(true);
+  });
+
+  it("handles the empty list", () => {
+    expect(foldLines([])).toEqual([]);
   });
 });
 

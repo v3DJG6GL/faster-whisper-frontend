@@ -56,6 +56,30 @@ export function collectTags(lines: readonly LogLine[], max = 32): string[] {
   return [...seen];
 }
 
+/** One display row after "Merge repeats": `line` is the LATEST occurrence
+ *  (its ts/seq render), `count` the run length, `firstTs` when the run began. */
+export interface FoldedLine {
+  line: LogLine;
+  count: number;
+  firstTs: number;
+}
+
+/** Fold runs of CONSECUTIVE identical lines (level + tag + message; the
+ *  timestamp is what varies in a poll loop) into single rows. */
+export function foldLines(lines: readonly LogLine[]): FoldedLine[] {
+  const out: FoldedLine[] = [];
+  for (const l of lines) {
+    const prev = out[out.length - 1];
+    if (prev && prev.line.level === l.level && prev.line.tag === l.tag && prev.line.msg === l.msg) {
+      prev.line = l;
+      prev.count += 1;
+    } else {
+      out.push({ line: l, count: 1, firstTs: l.ts });
+    }
+  }
+  return out;
+}
+
 /** Follow / scroll-lock state machine: following auto-scrolls on new lines;
  *  any upward scroll pauses following and counts pending lines for the
  *  "N new lines ↓" pill; returning to the bottom (or the pill) re-latches. */
