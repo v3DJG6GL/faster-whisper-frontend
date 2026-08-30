@@ -20,9 +20,16 @@ import { effectiveServerKind } from "@/lib/serverKind";
 import { Button } from "@/components/ui";
 import { fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import {
-  decodeMediaFile, openSourceUrl, pickExportPath, readMediaFile, saveTextFile, isTauri,
-  translateText,
+  cancelTextTranslation, decodeMediaFile, getTranscribeProgress, openSourceUrl,
+  pickExportPath, readMediaFile, saveTextFile, isTauri, translateText,
 } from "@/lib/api";
+import {
+  beginChunk, foldPollFailure, foldTranslatePoll, newTranslateRun,
+  runChunkedTranslate, type TranslateRunUi,
+} from "@/lib/retroTranslate";
+import { useOverrideContext } from "@/lib/useOverrideContext";
+import { TranslationOptionsFields } from "@/components/TranslationFields";
+import { fmtBytes } from "@/lib/format";
 import {
   clearEdits, mergeSegmentTranslations, setRename, setSegmentEdit, setSegmentSpeaker,
   setSpeakerColor as setSpeakerColorAction, useTranscribeRun,
@@ -128,7 +135,7 @@ type EffSegment = {
 const SegmentRow = memo(function SegmentRow({
   seg, i, isActive, passed, activeWordIdx, passedWordIdx, range, words, showTs,
   showNames, colorize, editMode, reassignOpen, speakers, canSeek, origText,
-  translations, visLangsKey, origVisible, origLang, stale,
+  translations, visLangsKey, origVisible, origLang, stale, isFrontier,
   colorOf, displayName, seekTo, onToggleReassign, onReassign, onCommitEdit,
 }: {
   seg: EffSegment;
@@ -159,6 +166,9 @@ const SegmentRow = memo(function SegmentRow({
   origLang: string;
   /** The original was edited after MT ran — the translated lines are stale. */
   stale: boolean;
+  /** The "translation frontier": first row of the retro-translate run's
+   *  in-flight chunk — teal-tinted with a "translating…" pending line. */
+  isFrontier: boolean;
   colorOf: (label: string) => string;
   displayName: (label: string) => string;
   seekTo: (t: number) => void;
@@ -181,6 +191,9 @@ const SegmentRow = memo(function SegmentRow({
         // branch, an animated 1 → 0.6 fade reads as a bright flash.
         "relative -mx-1.5 flex gap-3 rounded-lg px-1.5 py-0.5",
         isActive && "bg-accent-soft/40",
+        // Karaoke's frontier idiom in the translate accent: the first row the
+        // in-flight chunk will fill next carries a soft teal wash.
+        isFrontier && "bg-[color:var(--c-translate)]/10",
         passed && "opacity-60",
         editMode && seg.edited && "border-l-2 border-ok/60 pl-2",
       )}
@@ -329,6 +342,11 @@ const SegmentRow = memo(function SegmentRow({
           </span>
         );
       })}
+      {isFrontier && (
+        <span className="block animate-pulse font-mono text-[10.5px] text-[color:var(--c-translate)]/80">
+          translating…
+        </span>
+      )}
       </div>
     </div>
   );
@@ -347,6 +365,151 @@ function LangTag({ code, orig }: { code: string; orig?: boolean }) {
     >
       {code}
     </span>
+  );
+}
+
+/** m:ss (h:mm:ss beyond an hour) for the progress card's running clock. */
+function fmtRunClock(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const mm = Math.floor(s / 60);
+  if (mm < 60) return `${mm}:${String(s % 60).padStart(2, "0")}`;
+  return `${Math.floor(mm / 60)}:${String(mm % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Width of the amber model-phase lane in the stage bar, as a fraction —
+ *  fixed so the teal translate segment always grows from the same origin. */
+const MODEL_LANE = 0.15;
+
+/** The retro-translate mini progress card ("Job Signals") — Processing-box
+ *  design language: mono uppercase title, big amber %, Cancel pill, segmented
+ *  stage bar (amber model phase → growing teal translate → hatched remainder),
+ *  detail chips, and the live last-line readout. */
+function TranslateProgressCard({
+  run,
+  modeLabel,
+  onCancel,
+}: {
+  run: TranslateRunUi;
+  /** The run's requested mode ("fluent"/"faithful") — a detail chip. */
+  modeLabel?: string;
+  onCancel: () => void;
+}) {
+  // Self-ticking clock: polls drive most re-renders, but between chunks (or
+  // against a backend without the progress entry) nothing else updates.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+  const reconnecting = run.phase === "reconnecting";
+  const done = run.phase === "done";
+  const lane = run.modelPhaseSeen ? MODEL_LANE : 0;
+  const amberW = lane * run.modelPct;
+  const tealW = (1 - lane) * (done ? 1 : run.pct);
+  const stageText =
+    run.phase === "starting"
+      ? "Starting…"
+      : run.phase === "downloading"
+        ? "Downloading model…"
+        : run.phase === "loading"
+          ? "Loading model…"
+          : run.phase === "reconnecting"
+            ? "Connection lost — the server may still be working; retrying…"
+            : done
+              ? "Done"
+              : "Translating…";
+  // Download receipt chips: fraction, size, and average transfer speed.
+  const dlChips: string[] = [];
+  if (run.phase === "downloading" && run.totalBytes) {
+    const got = run.totalBytes * run.modelPct;
+    dlChips.push(`${Math.round(run.modelPct * 100)}% of ${fmtBytes(run.totalBytes)}`);
+    const secs = run.dlStartedAt ? (now - run.dlStartedAt) / 1000 : 0;
+    if (secs >= 2 && got > 0) dlChips.push(`${fmtBytes(got / secs)}/s`);
+  }
+  const chips: string[] = [
+    ...(run.model ? [safeDisplayText(run.model.split("/").pop() ?? "", 40)] : []),
+    ...(run.device ? [safeDisplayText(run.device, 16)] : []),
+    ...(modeLabel ? [modeLabel] : []),
+    ...dlChips,
+  ];
+  return (
+    <div
+      role="status"
+      className={cn(
+        "mb-2.5 rounded-xl border p-3.5",
+        reconnecting ? "border-warn/40 bg-warn/5" : "border-line bg-surface-2/60",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <span className="font-mono text-[10.5px] uppercase tracking-label text-faint">
+          translate · {run.targets.join(", ")}
+        </span>
+        {!done && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="ring-signal inline-flex h-6 items-center rounded-pill border border-line bg-surface-2 px-2.5 text-[11.5px] font-medium text-dim hover:text-text"
+          >
+            Cancel
+          </button>
+        )}
+      </div>
+      <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        {reconnecting ? (
+          <span className="font-mono text-[20px] font-medium text-warn">reconnecting…</span>
+        ) : done ? (
+          <span className="inline-flex items-center gap-1.5 font-mono text-[20px] font-medium text-ok">
+            <Check className="size-5" /> done
+          </span>
+        ) : (
+          <span className="font-mono text-[20px] font-medium tabular-nums text-warn">
+            {Math.round(run.pct * 100)}%
+          </span>
+        )}
+        <span className="text-[12px] text-dim">{stageText}</span>
+        {run.step && !done && (
+          <span className="font-mono text-[11px] text-faint">{safeDisplayText(run.step, 48)}</span>
+        )}
+        <span className="flex-1" />
+        <span className="font-mono text-[11px] tabular-nums text-faint">
+          {done ? "took" : "running"} {fmtRunClock(now - run.startedAt)}
+        </span>
+      </div>
+      <div className={cn("mt-2.5 flex h-1.5 overflow-hidden rounded-pill", reconnecting && "opacity-50")}>
+        {amberW > 0 && (
+          <div className="bg-warn transition-all" style={{ width: `${amberW * 100}%` }} />
+        )}
+        <div
+          className="bg-[color:var(--c-translate)] transition-all"
+          style={{ width: `${tealW * 100}%` }}
+        />
+        {/* Hatched remainder — "known extent, not yet earned". */}
+        <div
+          className="flex-1 bg-surface-2 text-faint"
+          style={{
+            backgroundImage:
+              "repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, currentColor 25%, transparent) 5px 7px)",
+          }}
+        />
+      </div>
+      {chips.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {chips.map((c, i) => (
+            <span
+              key={i}
+              className="rounded-pill border border-line bg-surface px-2 py-0.5 font-mono text-[10.5px] text-dim"
+            >
+              {c}
+            </span>
+          ))}
+        </div>
+      )}
+      {run.lastText && !done && (
+        <div className="mt-2 truncate font-mono text-[11px] text-[color:var(--c-translate)]/90">
+          {safeDisplayText(run.lastText, 200)}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -648,52 +811,192 @@ export function TranscriptViewer({
   // Retro-translate needs a full backend — a PROVEN-standard server has no
   // /v1/text/translations, so don't offer a button that can only fail.
   const connections = useApp((s) => s.connections);
-  const retroTranslateAvailable = useMemo(() => {
-    const backend = backends.find((b) => b.id === historyBackendId) ?? backends[0];
-    if (!backend) return false;
-    return effectiveServerKind(backend, connections[backend.id]) !== "standard";
-  }, [backends, historyBackendId, connections]);
+  const trBackend = useMemo(
+    () => backends.find((b) => b.id === historyBackendId) ?? backends[0],
+    [backends, historyBackendId],
+  );
+  const trServerKind = trBackend
+    ? effectiveServerKind(trBackend, connections[trBackend.id])
+    : "unknown";
+  // The record's backend's capabilities gate the panel's model/language
+  // lists (and, when known, translation availability itself). Best-effort:
+  // null caps = unknown ⇒ the defaults chain still works.
+  const { caps: trCaps } = useOverrideContext({
+    serverUrl: trBackend ? effectiveServerUrl(trBackend, settings) : "",
+    backendId: trBackend?.id,
+    serverKind: trServerKind,
+  });
+  const retroTranslateAvailable =
+    !!trBackend &&
+    trServerKind !== "standard" &&
+    // Only an explicit false hides it once caps are known — absent field
+    // (older backend) keeps the old kind-only behavior.
+    trCaps?.translation_enabled !== false;
   const [translating, setTranslating] = useState(false);
-  /** Translate the given segment indexes into `targets` and merge back into
-   *  the record. Uses the record's backend (else the first) and its stored
+  // ── translate options panel (Export-panel idiom) ─────────────────────────
+  const [showTranslate, setShowTranslate] = useState(false);
+  // null = not touched yet → prefill from the defaults chain below.
+  const [trTargets, setTrTargets] = useState<string[] | null>(null);
+  const [trMode, setTrMode] = useState<"fluent" | "faithful">(
+    () => trBackend?.translationOverrides?.mode ?? "fluent",
+  );
+  const [trModel, setTrModel] = useState(() => trBackend?.translationOverrides?.model ?? "");
+  // Prefill: Backend Translation defaults → the caller's server-side default
+  // → English; never the known source (a source→source track is a no-op).
+  const seededTargets = useMemo(() => {
+    const src = result.language;
+    const seed = (
+      trBackend?.translationOverrides?.translateTo?.length
+        ? trBackend.translationOverrides.translateTo
+        : trCaps?.translate_to_default?.length
+          ? trCaps.translate_to_default
+          : ["en"]
+    ).filter((c) => c !== src);
+    return seed.length ? seed : [src === "en" ? "de" : "en"];
+  }, [trBackend, trCaps, result.language]);
+  const effTargets = trTargets ?? seededTargets;
+
+  // ── chunked run + mini progress card state ──────────────────────────────
+  const [trRun, setTrRun] = useState<TranslateRunUi | null>(null);
+  const [trRunMode, setTrRunMode] = useState<"fluent" | "faithful" | undefined>(undefined);
+  /** The live run's identity: one progress id for the WHOLE run (the server
+   *  rewrites its entry per chunk request, so a single id keeps the poller
+   *  and Cancel stable across chunk boundaries). Module-lifetime refs so a
+   *  re-render never orphans the poller. */
+  const trCtl = useRef<{
+    pid: string;
+    cancelled: boolean;
+    serverUrl: string;
+    backendId: string;
+  } | null>(null);
+  const trPollTimer = useRef<number | undefined>(undefined);
+  const trDoneTimer = useRef<number | undefined>(undefined);
+  useEffect(
+    () => () => {
+      window.clearInterval(trPollTimer.current);
+      window.clearTimeout(trDoneTimer.current);
+    },
+    [],
+  );
+
+  /** Truthful doorway copy from the transport's classified error string —
+   *  cause + backend name + one fix, instead of the old guessing toast. */
+  const translateDoorway = (msg: string, backendName: string): string => {
+    if (msg.includes("Could not connect")) {
+      return `Could not reach ${backendName} — nothing was started. Is the server running and the URL correct?`;
+    }
+    if (msg.includes("Timed out")) {
+      return `Lost contact with ${backendName} while translating — the log has the details.`;
+    }
+    if (msg.includes("HTTP 403") || /disabled/i.test(msg)) {
+      return `Translation is turned off on ${backendName} — enable it there, or pick another backend.`;
+    }
+    return `Translation failed on ${backendName} — the log has the details.`;
+  };
+
+  /** Translate the given segment indexes into `targets` in 400-segment
+   *  chunks, merging each chunk back into the record as it lands (track
+   *  chips appear on the first merge). Uses the record's backend (else the
+   *  first); explicit `opts` (the panel's picks) override its stored
    *  translation defaults. */
-  const runTranslate = async (indexes: number[], targets: string[]) => {
+  const runTranslate = async (
+    indexes: number[],
+    targets: string[],
+    opts?: { mode?: "fluent" | "faithful"; model?: string },
+  ) => {
     if (!indexes.length || !targets.length || translating) return;
-    const backend = backends.find((b) => b.id === historyBackendId) ?? backends[0];
+    const backend = trBackend;
     if (!backend) return;
+    const serverUrl = effectiveServerUrl(backend, useApp.getState().settings);
+    const trOv = backend.translationOverrides;
+    const mode = opts?.mode ?? trOv?.mode;
+    const pid = crypto.randomUUID().replace(/-/g, "");
+    const ctl = { pid, cancelled: false, serverUrl, backendId: backend.id };
+    trCtl.current = ctl;
     setTranslating(true);
-    try {
-      const texts = indexes.map((i) => (fileEdits[i] ?? result.segments?.[i]?.text ?? "").trim());
-      const trOv = backend.translationOverrides;
-      const r = await translateText({
-        serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
-        backendId: backend.id,
-        texts,
-        targets,
-        source: result.language ?? null,
-        model: trOv?.model ?? null,
-        mode: trOv?.mode ?? null,
-        glossary: trOv?.glossary ?? null,
-        contextSegments: trOv?.contextSegments ?? null,
-      });
-      const patch: Record<number, Record<string, string>> = {};
-      indexes.forEach((segIdx, k) => {
-        const tr = r.results[k];
-        if (tr && Object.keys(tr).length) patch[segIdx] = tr;
-      });
-      if (Object.keys(patch).length) {
-        mergeSegmentTranslations(okey, patch, {
-          model: r.model,
-          targets,
-          source: r.source ?? result.language,
+    window.clearTimeout(trDoneTimer.current);
+    setTrRunMode(mode);
+    setTrRun(newTranslateRun(indexes.length, targets));
+    // 1 s poll drives the card. Best-effort split: an HTTP error (older
+    // backend without the shared progress entry) leaves the card in its
+    // current state; a NETWORK failure flips it to "reconnecting" — the
+    // chunk request itself is still in flight on its own long timeout.
+    window.clearInterval(trPollTimer.current);
+    trPollTimer.current = window.setInterval(() => {
+      getTranscribeProgress({ serverUrl, backendId: backend.id, progressId: pid })
+        .then((p) => {
+          if (trCtl.current === ctl) setTrRun((s) => (s ? foldTranslatePoll(s, p) : s));
+        })
+        .catch((e) => {
+          if (trCtl.current !== ctl) return;
+          if (!String(e).startsWith("HTTP")) setTrRun((s) => (s ? foldPollFailure(s) : s));
         });
+    }, 1000);
+    try {
+      await runChunkedTranslate({
+        indexes,
+        textOf: (i) => (fileEdits[i] ?? result.segments?.[i]?.text ?? "").trim(),
+        translate: (texts) =>
+          translateText({
+            serverUrl,
+            backendId: backend.id,
+            texts,
+            targets,
+            source: result.language ?? null,
+            model: (opts?.model ?? trOv?.model) || null,
+            mode: mode ?? null,
+            glossary: trOv?.glossary ?? null,
+            contextSegments: trOv?.contextSegments ?? null,
+            progressId: pid,
+          }),
+        onChunkStart: (frontierIdx, done, chunkLen) =>
+          setTrRun((s) => (s ? beginChunk(s, frontierIdx, done, chunkLen) : s)),
+        onMerge: (patch, prov) => {
+          mergeSegmentTranslations(okey, patch, {
+            model: prov.model,
+            targets,
+            source: prov.source ?? result.language,
+            mode,
+          });
+        },
+        isCancelled: () => ctl.cancelled,
+      });
+      if (!ctl.cancelled) {
+        setShowTranslate(false);
+        setTrRun((s) =>
+          s ? { ...s, phase: "done", pct: 1, done: s.total, frontierIdx: -1 } : s,
+        );
+        // Brief success receipt, then the card folds away.
+        trDoneTimer.current = window.setTimeout(() => setTrRun(null), 4000);
+      } else {
+        setTrRun(null);
       }
     } catch (e) {
+      // The transport already tracing::warn!s the classified cause; keep the
+      // full message in the webview console too before the toast condenses it.
       console.error("re-translate failed:", e);
-      useApp.getState().setLogsDoorway("Translation failed — the server may be unreachable, or translation is not enabled there.");
+      setTrRun(null);
+      if (!ctl.cancelled) {
+        useApp.getState().setLogsDoorway(translateDoorway(String(e), backend.name));
+      }
     } finally {
+      window.clearInterval(trPollTimer.current);
+      if (trCtl.current === ctl) trCtl.current = null;
       setTranslating(false);
     }
+  };
+
+  /** Cancel = server-side abort by progress id + stop the chunk loop. The
+   *  in-flight chunk's results are lost; completed chunks stay merged. */
+  const cancelTranslate = () => {
+    const ctl = trCtl.current;
+    if (!ctl || ctl.cancelled) return;
+    ctl.cancelled = true;
+    void cancelTextTranslation({
+      serverUrl: ctl.serverUrl,
+      backendId: ctl.backendId,
+      progressId: ctl.pid,
+    }).catch(() => {});
   };
 
   const copyText = (): string => {
@@ -1661,10 +1964,13 @@ export function TranscriptViewer({
               disabled={translating}
               title="Corrected segments still carry the OLD text's translations — re-translate just those"
               onClick={() => {
-                void runTranslate(
-                  Object.keys(fileStale).map(Number),
-                  langs.length ? langs : [],
-                );
+                // No translated tracks yet = nothing to refresh — open the
+                // options panel instead of silently no-opping on [] targets.
+                if (langs.length) {
+                  void runTranslate(Object.keys(fileStale).map(Number).sort((a, b) => a - b), langs);
+                } else {
+                  setShowTranslate(true);
+                }
               }}
             >
               {translating ? "Translating…" : `↻ Re-translate ${staleCount} stale`}
@@ -1867,28 +2173,67 @@ export function TranscriptViewer({
         </div>
       )}
 
-      {hasSegments && langs.length === 0 && isTauri && retroTranslateAvailable && (
-        <div className="mb-2.5">
-          <button
-            type="button"
-            disabled={translating}
-            onClick={() => {
-              // Retro-translate: the backend's default targets, else English.
-              const backend = backends.find((b) => b.id === historyBackendId) ?? backends[0];
-              const targets = backend?.translationOverrides?.translateTo?.length
-                ? backend.translationOverrides.translateTo
-                : ["en"];
-              void runTranslate(
-                (result.segments ?? []).map((_, i) => i),
-                targets.filter((t) => t !== result.language),
-              );
-            }}
-            className="ring-signal inline-flex h-7 items-center gap-1.5 rounded-pill border border-dashed border-line-strong px-3 text-[12px] text-dim hover:text-text disabled:opacity-50"
-            title="Translate this transcript (server-side MT)"
-          >
-            {translating ? "Translating…" : "Translate"}
-          </button>
-        </div>
+      {trRun ? (
+        <TranslateProgressCard run={trRun} modeLabel={trRunMode} onCancel={cancelTranslate} />
+      ) : (
+        <>
+          {hasSegments && langs.length === 0 && isTauri && retroTranslateAvailable && (
+            <div className="mb-2.5">
+              <button
+                type="button"
+                onClick={() => setShowTranslate((v) => !v)}
+                aria-expanded={showTranslate}
+                className={cn(
+                  "ring-signal inline-flex h-7 items-center gap-1.5 rounded-pill border px-3 text-[12px] transition-colors",
+                  showTranslate
+                    ? "border-[color:var(--c-translate)]/45 text-[color:var(--c-translate)]"
+                    : "border-dashed border-line-strong text-dim hover:text-text",
+                )}
+                title="Translate this transcript (server-side MT)"
+              >
+                Translate
+              </button>
+            </div>
+          )}
+          {showTranslate && hasSegments && langs.length === 0 && retroTranslateAvailable && (
+            <div className="mb-3 rounded-xl border border-line bg-surface-2/60 p-4">
+              <div className="mb-2.5 font-mono text-[10.5px] uppercase tracking-label text-faint">
+                translate this transcript
+              </div>
+              <TranslationOptionsFields
+                targets={effTargets}
+                onTargetsChange={setTrTargets}
+                mode={trMode}
+                onModeChange={setTrMode}
+                model={trModel}
+                onModelChange={setTrModel}
+                caps={trCaps}
+                exclude={result.language ?? undefined}
+                disabled={translating}
+              />
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <Button
+                  variant="accent"
+                  size="sm"
+                  disabled={translating || !effTargets.length}
+                  onClick={() =>
+                    void runTranslate(
+                      (result.segments ?? []).map((_, i) => i),
+                      effTargets,
+                      { mode: trMode, model: trModel || undefined },
+                    )
+                  }
+                >
+                  Translate now
+                </Button>
+                <span className="text-[11.5px] text-faint">
+                  runs on {safeDisplayText(trBackend?.name ?? "the backend", 40)} — the original
+                  is kept; translated lines appear as they finish
+                </span>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {hasSegments && (
@@ -2270,6 +2615,7 @@ export function TranscriptViewer({
                 origVisible={origVisible}
                 origLang={result.language ?? "??"}
                 stale={!!fileStale[i]}
+                isFrontier={i === (trRun?.frontierIdx ?? -1)}
                 colorOf={colorOf}
                 displayName={displayName}
                 seekTo={seekTo}

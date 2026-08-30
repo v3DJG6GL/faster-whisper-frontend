@@ -11,7 +11,7 @@ import {
 import { DecodeFields } from "@/components/DecodeFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
-import { TranslationTargetChips } from "@/components/TranslationFields";
+import { TranslationOptionsFields } from "@/components/TranslationFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { TranscriptViewer, speakersOf } from "@/components/TranscriptViewer";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -1238,47 +1238,28 @@ export default function Transcribe() {
                     </p>
                   )}
                   {translateTo.length > 0 && (
-                    <div className="space-y-2.5 pb-4">
-                      <TranslationTargetChips
-                        value={translateTo}
-                        onChange={(next) => {
-                          setTranslateTo(next);
-                          persistOptions({ translateTo: next });
-                        }}
-                        allowed={caps?.translation_languages}
-                        exclude={language !== "auto" ? language : undefined}
-                      />
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                        <Segmented
-                          value={translationMode}
-                          onChange={setTranslationMode}
-                          ariaLabel="Translation mode"
-                          options={[
-                            { value: "fluent", label: "Fluent" },
-                            { value: "faithful", label: "Faithful" },
-                          ]}
-                        />
-                        {(caps?.translation_models?.length ?? 0) > 1 && (
-                          <div className="w-64">
-                            <ModelPicker
-                              value={translationModel}
-                              onChange={(v) => {
-                                setTranslationModel(v);
-                                persistOptions({ translationModel: v });
-                              }}
-                              models={caps?.translation_models ?? []}
-                              defaultLabel={`Default · ${caps?.translation_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
-                              ariaLabel="Translation model"
-                              hideReset
-                            />
-                          </div>
-                        )}
-                      </div>
+                    <TranslationOptionsFields
+                      className="pb-4"
+                      targets={translateTo}
+                      onTargetsChange={(next) => {
+                        setTranslateTo(next);
+                        persistOptions({ translateTo: next });
+                      }}
+                      mode={translationMode}
+                      onModeChange={setTranslationMode}
+                      model={translationModel}
+                      onModelChange={(v) => {
+                        setTranslationModel(v);
+                        persistOptions({ translationModel: v });
+                      }}
+                      caps={caps}
+                      exclude={language !== "auto" ? language : undefined}
+                    >
                       <p className="text-[12px] text-faint">
                         Fluent joins split sentences before translating (timing untouched) ·
                         source auto-detected · karaoke stays on the original
                       </p>
-                    </div>
+                    </TranslationOptionsFields>
                   )}
                 </div>
               )}

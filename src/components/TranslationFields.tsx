@@ -2,6 +2,7 @@
 // as removable pills (in output order) plus a "+ language" picker over the
 // remaining candidates. Reused by the Processing card, the Backend/Profile
 // "Translation defaults" editors, and retro-translate popovers.
+import type { ReactNode } from "react";
 import { LANGUAGES, languageLabel } from "../lib/languages";
 import { cn } from "../lib/cn";
 import type { Capabilities, TranslationOverrides } from "../lib/types";
@@ -84,6 +85,76 @@ export function TranslationTargetChips({
         </select>
       )}
       {atCap && <span className="text-[11px] text-faint">max {max}</span>}
+    </div>
+  );
+}
+
+/** Per-run translation options — target chips, Fluent/Faithful mode, and the
+ *  model pick (shown only when the server offers a choice). Fully controlled;
+ *  shared by the Transcribe Processing card and the viewer's retro-translate
+ *  panel so the two doors stay identical. `children` renders below the
+ *  mode/model row (footer hints). */
+export function TranslationOptionsFields({
+  targets,
+  onTargetsChange,
+  mode,
+  onModeChange,
+  model,
+  onModelChange,
+  caps,
+  exclude,
+  disabled,
+  className,
+  children,
+}: {
+  targets: string[];
+  onTargetsChange: (next: string[]) => void;
+  mode: "fluent" | "faithful";
+  onModeChange: (m: "fluent" | "faithful") => void;
+  model: string;
+  onModelChange: (m: string) => void;
+  /** The backend's /v1/me capabilities (model + language lists); null = unknown. */
+  caps: Capabilities | null;
+  /** The known source language — offering it as a target is a no-op. */
+  exclude?: string;
+  disabled?: boolean;
+  className?: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className={cn("space-y-2.5", className)}>
+      <TranslationTargetChips
+        value={targets}
+        onChange={onTargetsChange}
+        allowed={caps?.translation_languages}
+        exclude={exclude}
+        disabled={disabled}
+      />
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <Segmented
+          value={mode}
+          onChange={onModeChange}
+          ariaLabel="Translation mode"
+          disabled={disabled}
+          options={[
+            { value: "fluent", label: "Fluent" },
+            { value: "faithful", label: "Faithful" },
+          ]}
+        />
+        {(caps?.translation_models?.length ?? 0) > 1 && (
+          <div className="w-64">
+            <ModelPicker
+              value={model}
+              onChange={onModelChange}
+              models={caps?.translation_models ?? []}
+              defaultLabel={`Default · ${caps?.translation_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
+              ariaLabel="Translation model"
+              hideReset
+            />
+          </div>
+        )}
+      </div>
+      {children}
     </div>
   );
 }
