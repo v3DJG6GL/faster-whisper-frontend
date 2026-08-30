@@ -935,8 +935,8 @@ export function TranscriptViewer({
             contextSegments: trOv?.contextSegments ?? null,
             progressId: pid,
           }),
-        onChunkStart: (frontierIdx, done, chunkLen) =>
-          setTrRun((s) => (s ? beginChunk(s, frontierIdx, done, chunkLen) : s)),
+        onChunkStart: (chunkIdxs, done) =>
+          setTrRun((s) => (s ? beginChunk(s, chunkIdxs, done) : s)),
         onMerge: (patch, prov) => {
           mergeSegmentTranslations(okey, patch, {
             model: prov.model,

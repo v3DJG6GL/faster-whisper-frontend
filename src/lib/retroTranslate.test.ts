@@ -19,20 +19,22 @@ describe("runChunkedTranslate", () => {
     const indexes = Array.from({ length: 900 }, (_, i) => i);
     const sizes: number[] = [];
     const merges: { patchKeys: number[]; first: boolean }[] = [];
-    const starts: [number, number, number][] = [];
+    const starts: [number[], number][] = [];
     const r = await runChunkedTranslate({
       indexes,
+      chunk: 400,
       textOf: (i) => `t${i}`,
       translate: (texts) => {
         sizes.push(texts.length);
         return Promise.resolve(answer(texts));
       },
-      onChunkStart: (f, d, l) => starts.push([f, d, l]),
+      onChunkStart: (idxs, d) => starts.push([idxs, d]),
       onMerge: (patch, _prov, first) =>
         merges.push({ patchKeys: Object.keys(patch).map(Number), first }),
     });
     expect(sizes).toEqual([400, 400, 100]);
-    expect(starts).toEqual([[0, 0, 400], [400, 400, 400], [800, 800, 100]]);
+    expect(starts.map(([idxs, d]) => [idxs[0], d, idxs.length]))
+      .toEqual([[0, 0, 400], [400, 400, 400], [800, 800, 100]]);
     expect(merges).toHaveLength(3);
     expect(merges[0].first).toBe(true);
     expect(merges[1].first).toBe(false);
@@ -113,14 +115,16 @@ describe("runChunkedTranslate", () => {
     ).rejects.toThrow("HTTP 403");
   });
 
-  it("default chunk size matches the transport-safe constant", () => {
-    expect(TRANSLATE_CHUNK).toBe(400);
+  it("default chunk size keeps the live fill granular", () => {
+    expect(TRANSLATE_CHUNK).toBe(32);
   });
 });
 
 describe("translate progress state machine", () => {
   const t0 = 1_000_000;
   const start = (): TranslateRunUi => newTranslateRun(800, ["en", "fr"], t0);
+  const idxs = (from: number, len: number) =>
+    Array.from({ length: len }, (_, i) => from + i);
 
   it("starts idle-ish with the frontier unset", () => {
     const s = start();
@@ -128,13 +132,13 @@ describe("translate progress state machine", () => {
   });
 
   it("beginChunk floors pct at the merged prefix and moves the frontier", () => {
-    const s = beginChunk(start(), 400, 400, 400);
+    const s = beginChunk(start(), idxs(400, 400), 400);
     expect(s.frontierIdx).toBe(400);
     expect(s.pct).toBeCloseTo(0.5);
   });
 
   it("folds downloading → loading → translating with the model lane", () => {
-    let s = beginChunk(start(), 0, 0, 400);
+    let s = beginChunk(start(), idxs(0, 400), 0);
     s = foldTranslatePoll(s, { stage: "downloading", progress: 0.25, totalBytes: 4e9 }, t0 + 1000);
     expect(s).toMatchObject({ phase: "downloading", modelPhaseSeen: true, modelPct: 0.25, totalBytes: 4e9, dlStartedAt: t0 + 1000 });
     s = foldTranslatePoll(s, { stage: "loading" });
@@ -147,19 +151,19 @@ describe("translate progress state machine", () => {
   });
 
   it("combines completed chunks with the in-flight chunk's fraction", () => {
-    let s = beginChunk(start(), 400, 400, 400);
+    let s = beginChunk(start(), idxs(400, 400), 400);
     s = foldTranslatePoll(s, { stage: "translating", progress: 0.5 });
     expect(s.pct).toBeCloseTo((400 + 200) / 800);
   });
 
   it("is defensive: an empty poll changes nothing but returns a new object", () => {
-    const s = foldTranslatePoll(beginChunk(start(), 0, 0, 400), {});
+    const s = foldTranslatePoll(beginChunk(start(), idxs(0, 400), 0), {});
     expect(s.phase).toBe("starting");
     expect(s.pct).toBe(0);
   });
 
   it("poll network failure → reconnecting; a good poll recovers", () => {
-    let s = beginChunk(start(), 0, 0, 400);
+    let s = beginChunk(start(), idxs(0, 400), 0);
     s = foldTranslatePoll(s, { stage: "translating", progress: 0.2 });
     const pct = s.pct;
     s = foldPollFailure(s);
@@ -170,10 +174,29 @@ describe("translate progress state machine", () => {
   });
 
   it("a reconnect recovery with no entry settles on a safe busy phase", () => {
-    let s = beginChunk(start(), 0, 0, 400);
+    let s = beginChunk(start(), idxs(0, 400), 0);
     s = foldPollFailure(s);
     s = foldTranslatePoll(s, { stage: "unknown" });
     expect(s.phase).toBe("translating");
+  });
+
+  it("the frontier advances through the chunk as polls arrive", () => {
+    // 2 targets: the server fraction sweeps the chunk twice — position is
+    // taken within the current sweep.
+    let s = beginChunk(start(), idxs(100, 400), 100);
+    expect(s.frontierIdx).toBe(100);
+    s = foldTranslatePoll(s, { stage: "translating", progress: 0.25 });
+    expect(s.frontierIdx).toBe(300); // halfway through target 1 of 2
+    s = foldTranslatePoll(s, { stage: "translating", progress: 0.75 });
+    expect(s.frontierIdx).toBe(300); // halfway through target 2
+    s = foldTranslatePoll(s, { stage: "translating", progress: 1 });
+    expect(s.frontierIdx).toBe(499); // clamped to the chunk's last row
+  });
+
+  it("a sparse stale-row chunk maps the frontier onto real indexes", () => {
+    let s = beginChunk({ ...start(), targets: ["en"] }, [3, 17, 42], 0);
+    s = foldTranslatePoll(s, { stage: "translating", progress: 0.5 });
+    expect(s.frontierIdx).toBe(17);
   });
 
   it("terminal phases are sticky against late polls", () => {

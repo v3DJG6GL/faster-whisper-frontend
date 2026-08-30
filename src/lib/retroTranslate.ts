@@ -6,9 +6,13 @@
 import type { BatchProgress } from "./types";
 import type { TextTranslationResult } from "./api";
 
-/** Segments per /v1/text/translations request — well under the transport's
- *  512-text cap (matches translateTextSource's precedent in transcribeRun). */
-export const TRANSLATE_CHUNK = 400;
+/** Segments per /v1/text/translations request. Small on purpose: results
+ *  merge into the transcript per chunk, so the chunk size IS the "live fill"
+ *  granularity — 400 meant a typical file translated as ONE request and
+ *  nothing appeared until the very end. 32 keeps rows landing every batch or
+ *  two while staying big enough for the server's sentence-merge + context
+ *  window to do their job (context = 3 segments, fluent groups span a few). */
+export const TRANSLATE_CHUNK = 32;
 
 export type TranslatePhase =
   | "starting" // request sent, no progress entry observed yet
@@ -33,9 +37,14 @@ export interface TranslateRunUi {
   done: number;
   /** In-flight chunk length (scales the server's per-chunk 0..1 progress). */
   chunkLen: number;
-  /** First segment index of the in-flight chunk — the "translation frontier"
-   *  row the transcript highlights. -1 = none. */
+  /** Segment index the run is currently translating — the "translation
+   *  frontier" row the transcript highlights. -1 = none. Starts at the
+   *  in-flight chunk's first segment and advances through the chunk as
+   *  server progress polls arrive. */
   frontierIdx: number;
+  /** Segment indexes of the in-flight chunk (may be sparse — stale rows);
+   *  polls map the server's within-chunk fraction onto this list. */
+  chunkIdxs?: number[];
   /** ms epoch when the run started (the "running m:ss" clock). */
   startedAt: number;
   /** A model download/load phase was observed — keeps the amber bar segment. */
@@ -78,17 +87,30 @@ export function newTranslateRun(
  *  prefix and move the frontier to the chunk's first segment. */
 export function beginChunk(
   s: TranslateRunUi,
-  frontierIdx: number,
+  chunkIdxs: number[],
   done: number,
-  chunkLen: number,
 ): TranslateRunUi {
   return {
     ...s,
     done,
-    chunkLen,
-    frontierIdx,
+    chunkLen: chunkIdxs.length,
+    chunkIdxs,
+    frontierIdx: chunkIdxs.length ? chunkIdxs[0] : -1,
     pct: clamp01(done / s.total),
   };
+}
+
+/** Map the server's within-request fraction onto the in-flight chunk's
+ *  segment list. The server counts segments×targets, so with T targets the
+ *  position sweeps the chunk T times — take the position within the current
+ *  sweep. */
+function frontierAt(s: TranslateRunUi, progress: number): number {
+  const idxs = s.chunkIdxs;
+  if (!idxs || !idxs.length) return s.frontierIdx;
+  const T = Math.max(1, s.targets.length);
+  const scaled = clamp01(progress) * T;
+  const within = scaled >= T ? 1 : scaled % 1;
+  return idxs[Math.min(idxs.length - 1, Math.floor(within * idxs.length))];
 }
 
 /** Fold one progress poll into the card state. Defensive throughout: the
@@ -120,6 +142,7 @@ export function foldTranslatePoll(
       if (next.modelPhaseSeen) next.modelPct = 1;
       if (typeof p.progress === "number") {
         next.pct = clamp01((s.done + clamp01(p.progress) * s.chunkLen) / s.total);
+        next.frontierIdx = frontierAt(s, p.progress);
       }
       break;
     default:
@@ -155,9 +178,9 @@ export interface ChunkedTranslateArgs {
   /** One server round trip for a chunk's texts (the caller closes over
    *  targets/model/mode/glossary and the run's progress id). */
   translate: (texts: string[]) => Promise<TextTranslationResult>;
-  /** A chunk request is about to leave: its first segment index (the
-   *  frontier), how many segments are already merged, and its length. */
-  onChunkStart?: (frontierIdx: number, done: number, chunkLen: number) => void;
+  /** A chunk request is about to leave: its segment indexes and how many
+   *  segments are already merged. */
+  onChunkStart?: (chunkIdxs: number[], done: number) => void;
   /** A chunk answered: per-segment-index translation maps (empty results are
    *  dropped) + accumulated provenance. `firstChunk` = first merge of the run
    *  (registers provenance / makes the track chips appear). */
@@ -188,7 +211,7 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
   for (let at = 0; at < a.indexes.length; at += chunk) {
     if (a.isCancelled?.()) return { model, source, cancelled: true, mergedChunks };
     const slice = a.indexes.slice(at, at + chunk);
-    a.onChunkStart?.(slice[0], at, slice.length);
+    a.onChunkStart?.(slice, at);
     const r = await a.translate(slice.map((i) => a.textOf(i)));
     // Cancelled while this chunk was in flight: its results are lost by
     // design (the approved copy says so); everything merged before stays.
