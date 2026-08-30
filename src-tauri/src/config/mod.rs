@@ -186,6 +186,10 @@ pub struct Backend {
     /// so Phase-A configs round-trip byte-stable and the frontend need not send it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_overrides: Option<serde_json::Value>,
+    /// Per-Backend T2T translation defaults (targets/model/context/glossary/
+    /// mode). Opaque to Rust like decode_overrides; skipped when None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation_overrides: Option<serde_json::Value>,
     /// Manual full-vs-standard classification. None/Auto ⇒ infer from the
     /// connection test; Full/Standard override detection. Skipped when None so
     /// existing configs round-trip byte-stable.
@@ -233,6 +237,10 @@ pub struct Profile {
     /// Phase-B placeholder: per-Profile decode-param overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_overrides: Option<serde_json::Value>,
+    /// Per-Profile T2T translation overrides; for dictation, translateTo[0]
+    /// is the injection target. Opaque to Rust; skipped when None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation_overrides: Option<serde_json::Value>,
     /// Override the Backend's server override-profile reference; None/empty = inherit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub override_profile: Option<String>,
@@ -819,6 +827,7 @@ fn migrate_legacy(text: &str) -> Option<Config> {
                 language: None,
                 prompt: None,
                 decode_overrides: None,
+                translation_overrides: None,
                 override_profile: None,
             }
         })

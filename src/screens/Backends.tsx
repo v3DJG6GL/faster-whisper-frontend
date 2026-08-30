@@ -4,6 +4,7 @@ import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, StatusDot, TextArea, TextInput } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
+import { TranslationDefaultsEditor } from "@/components/TranslationFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -108,6 +109,9 @@ function Editor({
   const [keyError, setKeyError] = useState<string | null>(null);
   const [showDecode, setShowDecode] = useState(
     () => !!initial.decodeOverrides && Object.keys(initial.decodeOverrides).length > 0,
+  );
+  const [showTranslation, setShowTranslation] = useState(
+    () => !!initial.translationOverrides && Object.keys(initial.translationOverrides).length > 0,
   );
   const set = (patch: Partial<Backend>) => setB((x) => ({ ...x, ...patch }));
   // `detected` = what the last connection test inferred; `kind` = the effective
@@ -351,6 +355,31 @@ function Editor({
               inherited={resolved}
               serverKind={kind}
               canCustomize={caps?.can_request_decode_overrides}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="mt-5">
+        <DisclosureToggle open={showTranslation} onToggle={() => setShowTranslation((v) => !v)}>
+          Translation defaults
+          {b.translationOverrides && Object.keys(b.translationOverrides).length ? (
+            <span className="text-accent">· set</span>
+          ) : (
+            <span className="text-faint">· inherit server</span>
+          )}
+        </DisclosureToggle>
+        {showTranslation && (
+          <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
+            <p className="mb-3 text-[12px] text-dim">
+              T2T defaults for runs and profiles on this backend (a profile can
+              still override). Empty = the server&apos;s translation config.
+            </p>
+            <TranslationDefaultsEditor
+              value={b.translationOverrides}
+              onChange={(v) => set({ translationOverrides: v })}
+              caps={caps}
+              inheritLabel="server default"
             />
           </div>
         )}

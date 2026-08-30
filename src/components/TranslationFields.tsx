@@ -4,6 +4,9 @@
 // "Translation defaults" editors, and retro-translate popovers.
 import { LANGUAGES, languageLabel } from "../lib/languages";
 import { cn } from "../lib/cn";
+import type { Capabilities, TranslationOverrides } from "../lib/types";
+import { ModelPicker } from "./ModelPicker";
+import { Segmented, Stepper, TextArea } from "./ui";
 
 export const TRANSLATION_MAX_TARGETS = 8;
 
@@ -81,6 +84,97 @@ export function TranslationTargetChips({
         </select>
       )}
       {atCap && <span className="text-[11px] text-faint">max {max}</span>}
+    </div>
+  );
+}
+
+/** The Backend/Profile "Translation defaults" body — targets, model, context
+ *  depth, glossary, and mode, each absent = inherit the previous layer
+ *  (Backend inherits the server; a Profile inherits its Backend). */
+export function TranslationDefaultsEditor({
+  value,
+  onChange,
+  caps,
+  inheritLabel,
+}: {
+  value: TranslationOverrides | undefined;
+  onChange: (next: TranslationOverrides | undefined) => void;
+  /** The backend's /v1/me capabilities (model + language lists); null = unknown. */
+  caps: Capabilities | null;
+  /** What an empty field falls back to — "server config" or "backend". */
+  inheritLabel: string;
+}) {
+  const v = value ?? {};
+  const patch = (p: Partial<TranslationOverrides>) => {
+    const next = { ...v, ...p };
+    // Prune empties so "all inherit" stores undefined (decodeOverrides idiom).
+    if (!next.translateTo?.length) delete next.translateTo;
+    if (!next.model) delete next.model;
+    if (next.contextSegments === undefined) delete next.contextSegments;
+    if (!next.glossary?.trim()) delete next.glossary;
+    if (!next.mode) delete next.mode;
+    onChange(Object.keys(next).length ? next : undefined);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="mb-1.5 text-[12px] font-medium text-dim">Translate to</div>
+        <TranslationTargetChips
+          value={v.translateTo ?? []}
+          onChange={(next) => patch({ translateTo: next })}
+          allowed={caps?.translation_languages}
+        />
+      </div>
+      <div className="grid grid-cols-2 items-start gap-4">
+        <div>
+          <div className="mb-1.5 text-[12px] font-medium text-dim">Model</div>
+          <ModelPicker
+            value={v.model ?? ""}
+            onChange={(m) => patch({ model: m || undefined })}
+            models={caps?.translation_models ?? []}
+            defaultLabel={`Inherit · ${inheritLabel}`}
+            ariaLabel="Translation model"
+            hideReset
+          />
+        </div>
+        <div>
+          <div className="mb-1.5 text-[12px] font-medium text-dim">Mode</div>
+          <Segmented
+            value={v.mode ?? "inherit"}
+            onChange={(m) =>
+              patch({ mode: m === "inherit" ? undefined : (m as "fluent" | "faithful") })
+            }
+            options={[
+              { value: "inherit", label: "Inherit" },
+              { value: "fluent", label: "Fluent" },
+              { value: "faithful", label: "Faithful" },
+            ]}
+            ariaLabel="Translation mode"
+          />
+        </div>
+      </div>
+      <div>
+        <div className="mb-1.5 text-[12px] font-medium text-dim">Context segments</div>
+        <Stepper
+          value={v.contextSegments ?? 0}
+          onChange={(n) => patch({ contextSegments: n === 0 ? undefined : n })}
+          min={0}
+          max={10}
+          zeroLabel="Inherit"
+          ariaLabel="Context segments"
+        />
+      </div>
+      <div>
+        <div className="mb-1.5 text-[12px] font-medium text-dim">Glossary</div>
+        <TextArea
+          aria-label="Translation glossary"
+          value={v.glossary ?? ""}
+          onChange={(e) => patch({ glossary: e.target.value || undefined })}
+          rows={3}
+          placeholder={"One fixed term per line:\nRechnung = invoice"}
+        />
+      </div>
     </div>
   );
 }

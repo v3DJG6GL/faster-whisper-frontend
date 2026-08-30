@@ -175,6 +175,7 @@ export const BACKEND_DEFAULTS_FIELDS = [
   "prompt",
   "responseFormat",
   "decodeOverrides",
+  "translationOverrides",
   "overrideProfile",
 ] as const;
 

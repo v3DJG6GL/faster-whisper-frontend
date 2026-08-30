@@ -7,6 +7,7 @@ import { HotkeyChips } from "@/components/HotkeyChips";
 import { starterProfiles } from "@/lib/starters";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { DecodeFields } from "@/components/DecodeFields";
+import { TranslationDefaultsEditor } from "@/components/TranslationFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -69,7 +70,8 @@ function Editor({
     // as a set override (a truthy check would treat clear as "inherit").
     !!(initial.model || initial.language || initial.endpoint || initial.prompt !== undefined ||
       initial.overrideProfile ||
-      (initial.decodeOverrides && Object.keys(initial.decodeOverrides).length)),
+      (initial.decodeOverrides && Object.keys(initial.decodeOverrides).length) ||
+      (initial.translationOverrides && Object.keys(initial.translationOverrides).length)),
   );
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
   // Resolve the target backend so the decode editor can show its defaults as the
@@ -195,7 +197,7 @@ function Editor({
 
       <DisclosureToggle open={showOverrides} onToggle={() => setShowOverrides((v) => !v)} className="mt-5">
         Overrides{" "}
-        {p.model || p.language || p.endpoint || p.prompt !== undefined || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) ? (
+        {p.model || p.language || p.endpoint || p.prompt !== undefined || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) || (p.translationOverrides && Object.keys(p.translationOverrides).length) ? (
           <span className="text-accent">· set</span>
         ) : (
           <span className="text-faint">· inherit backend</span>
@@ -301,6 +303,24 @@ function Editor({
               inherited={inheritedDecode}
               serverKind={serverKind}
               canCustomize={caps?.can_request_decode_overrides}
+            />
+          </div>
+          <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
+            <div className="mb-3 text-[12px] font-medium text-dim">
+              Translation overrides{" "}
+              <span className="text-faint">
+                · empty inherits the backend · dictation injects the first target
+              </span>
+            </div>
+            <TranslationDefaultsEditor
+              value={p.translationOverrides}
+              onChange={(v) => set({ translationOverrides: v })}
+              caps={caps}
+              inheritLabel={
+                backend?.translationOverrides?.model
+                  ? backend.translationOverrides.model
+                  : "backend default"
+              }
             />
           </div>
           {/* Render unconditionally like the sibling Language/Decode blocks (disable-not-hide): if the
