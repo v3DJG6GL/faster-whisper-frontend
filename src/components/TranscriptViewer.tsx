@@ -16,6 +16,7 @@ import {
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
+import { effectiveServerKind } from "@/lib/serverKind";
 import { Button } from "@/components/ui";
 import { fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import {
@@ -28,7 +29,7 @@ import {
 } from "@/lib/transcribeRun";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
-  cpsWarnings, DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExport, generateExports,
+  cpsWarnings, DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExports,
   type ExportFormat, type ExportOptions,
 } from "@/lib/transcriptExport";
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
@@ -644,6 +645,14 @@ export function TranscriptViewer({
     () => historyRecords.find((r) => r.id === okey)?.backendId,
     [historyRecords, okey],
   );
+  // Retro-translate needs a full backend — a PROVEN-standard server has no
+  // /v1/text/translations, so don't offer a button that can only fail.
+  const connections = useApp((s) => s.connections);
+  const retroTranslateAvailable = useMemo(() => {
+    const backend = backends.find((b) => b.id === historyBackendId) ?? backends[0];
+    if (!backend) return false;
+    return effectiveServerKind(backend, connections[backend.id]) !== "standard";
+  }, [backends, historyBackendId, connections]);
   const [translating, setTranslating] = useState(false);
   /** Translate the given segment indexes into `targets` and merge back into
    *  the record. Uses the record's backend (else the first) and its stored
@@ -681,7 +690,7 @@ export function TranscriptViewer({
       }
     } catch (e) {
       console.error("re-translate failed:", e);
-      useApp.getState().setLogsDoorway("Translation failed — the server may be unreachable.");
+      useApp.getState().setLogsDoorway("Translation failed — the server may be unreachable, or translation is not enabled there.");
     } finally {
       setTranslating(false);
     }
@@ -827,9 +836,12 @@ export function TranscriptViewer({
     [],
   );
 
-  // A newly selected (possibly huge) transcript starts collapsed again.
+  // A newly selected (possibly huge) transcript starts collapsed again — and
+  // export track picks reset (they belong to the previous file's tracks).
   useEffect(() => {
     setShowFullText(false);
+    setExportTracks(null);
+    setLineOrder("orig-first");
   }, [path, result]);
 
   /** The <audio> errored on the asset URL — resolve through the fallback
@@ -1285,8 +1297,13 @@ export function TranscriptViewer({
       ]),
     ),
     wordTimestamps: wordTs,
+    // Intersect with THIS file's tracks — a pick left over from another
+    // file must never silently empty the export.
     ...(langs.length
-      ? { tracks: exportTracks ?? visibleTracks, lineOrder }
+      ? {
+          tracks: (exportTracks ?? visibleTracks).filter((t) => allTracks.includes(t)),
+          lineOrder,
+        }
       : {}),
   });
 
@@ -1436,7 +1453,10 @@ export function TranscriptViewer({
       words: full.words?.filter((w) => w.start < lastEnd + 0.05),
       text: segs.map((s) => s.text.trim()).join(" "),
     };
-    return generateExport(sample, exportOpts());
+    // Preview the first file generateExports would actually write — the
+    // singular generateExport falls back to the original track for
+    // multi-track LRC, which no written file would contain.
+    return generateExports(sample, exportOpts())[0].content;
   };
 
   const exportFileName = () => {
@@ -1470,9 +1490,14 @@ export function TranscriptViewer({
         // stem the user actually chose in the dialog.
         const sep = target.includes("\\") ? "\\" : "/";
         const dir = target.slice(0, target.lastIndexOf(sep) + 1);
-        const pickedStem = target
-          .slice(dir.length)
-          .replace(/\.lrc$/i, "");
+        // The dialog was seeded with files[0]'s name — strip that exact
+        // suffix (e.g. ".de.lrc") from whatever the user confirmed, so the
+        // siblings never double-suffix and files[0] lands on the picked path.
+        const firstSuffix = files[0].name("");
+        const base = target.slice(dir.length);
+        const pickedStem = base.endsWith(firstSuffix)
+          ? base.slice(0, -firstSuffix.length)
+          : base.replace(/\.lrc$/i, "");
         for (const f of files) await saveTextFile(dir + f.name(pickedStem), f.content);
       }
     } catch (e) {
@@ -1842,7 +1867,7 @@ export function TranscriptViewer({
         </div>
       )}
 
-      {hasSegments && langs.length === 0 && isTauri && (
+      {hasSegments && langs.length === 0 && isTauri && retroTranslateAvailable && (
         <div className="mb-2.5">
           <button
             type="button"

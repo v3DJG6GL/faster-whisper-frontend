@@ -380,7 +380,13 @@ export default function History() {
       } else {
         const sep = path.includes("\\") ? "\\" : "/";
         const dir = path.slice(0, path.lastIndexOf(sep) + 1);
-        const pickedStem = path.slice(dir.length).replace(/\.lrc$/i, "");
+        // Strip the seeded first-file suffix from what the user confirmed
+        // (mirrors the viewer's doExport — never double-suffix siblings).
+        const firstSuffix = files[0].name("");
+        const base = path.slice(dir.length);
+        const pickedStem = base.endsWith(firstSuffix)
+          ? base.slice(0, -firstSuffix.length)
+          : base.replace(/\.lrc$/i, "");
         for (const f of files) await saveTextFile(dir + f.name(pickedStem), f.content);
       }
     } catch (e) {

@@ -145,9 +145,10 @@ export function skippedStages(s: {
   stageTimes: Partial<Record<RailStage, StageTime>>;
   lastOptions?: TranscribeOptions;
   forUrl?: boolean;
+  forText?: boolean;
 }): Set<RailStage> {
   const out = new Set<RailStage>();
-  const stages = railStages(s.lastOptions, s.forUrl);
+  const stages = railStages(s.lastOptions, s.forUrl, s.forText);
   for (const r of s.progress?.skipped ?? []) {
     if ((stages as string[]).includes(r)) out.add(r as RailStage);
   }
@@ -170,9 +171,10 @@ export function overallFraction(s: {
   stageTimes: Partial<Record<RailStage, StageTime>>;
   lastOptions?: TranscribeOptions;
   forUrl?: boolean;
+  forText?: boolean;
 }): number | null {
   if (!s.queue.some((it) => it.status === "running" || it.status === "queued")) return null;
-  const stages = railStages(s.lastOptions, s.forUrl);
+  const stages = railStages(s.lastOptions, s.forUrl, s.forText);
   const active = activeRailIndex(s.progress, s.stageTimes, stages);
   const skipped = skippedStages(s);
   let total = 0;
@@ -752,14 +754,16 @@ export function mergeSegmentTranslations(
       },
     },
   };
+  // Clear the merged indexes' stale marks FIRST so the persisted record
+  // carries the post-merge state (upsertRecord stringifies synchronously).
   set((s) => {
     const stale = { ...s.translationsStale[key] };
     for (const i of Object.keys(patch)) delete stale[Number(i)];
     return { translationsStale: { ...s.translationsStale, [key]: stale } };
   });
+  updated.translationsStale = get().translationsStale[key];
   registerRecord(updated);
   upsertRecord(updated);
-  updated.translationsStale = get().translationsStale[key];
   patchItem(rec.sourcePath, { result: updated.result });
 }
 
@@ -864,35 +868,48 @@ async function translateTextSource(
   const content = await readTextFile(path);
   const parsed = parseImportedText(ext, content);
   const targets = options.translateTo ?? [];
-  const r = await translateText({
-    serverUrl: ctx.serverUrl,
-    backendId: ctx.backendId,
-    texts: parsed.segments.map((seg) => seg.text),
-    targets,
-    source: parsed.language ?? null,
-    model: options.translationModel ?? null,
-    mode: options.translationMode ?? null,
-    glossary: options.translationGlossary ?? null,
-  });
+  // Chunk well under the transport's 512-text cap — a feature-length .srt
+  // easily exceeds it, and each chunk is one server round trip.
+  const CHUNK = 400;
+  const results: Record<string, string>[] = [];
+  const warnings: string[] = [];
+  let model: string | undefined;
+  let source: string | undefined;
+  for (let at = 0; at < parsed.segments.length; at += CHUNK) {
+    const r = await translateText({
+      serverUrl: ctx.serverUrl,
+      backendId: ctx.backendId,
+      texts: parsed.segments.slice(at, at + CHUNK).map((seg) => seg.text),
+      targets,
+      source: parsed.language ?? null,
+      model: options.translationModel ?? null,
+      mode: options.translationMode ?? null,
+      glossary: options.translationGlossary ?? null,
+    });
+    results.push(...r.results);
+    if (r.warnings?.length) warnings.push(...r.warnings);
+    model = model ?? r.model;
+    source = source ?? r.source;
+  }
   const segments = parsed.segments.map((seg, i) => ({
     start: seg.start ?? i,
     end: seg.end ?? (seg.start !== undefined ? seg.start : i + 1),
     text: seg.text,
     ...(seg.speaker ? { speaker: seg.speaker } : {}),
-    ...(r.results[i] && Object.keys(r.results[i]).length ? { translations: r.results[i] } : {}),
+    ...(results[i] && Object.keys(results[i]).length ? { translations: results[i] } : {}),
   }));
   return {
     text: parsed.segments.map((seg) => seg.text).join(" "),
-    language: parsed.language ?? r.source ?? undefined,
+    language: parsed.language ?? source ?? undefined,
     segments,
-    warnings: r.warnings?.length ? r.warnings : undefined,
+    warnings: warnings.length ? warnings : undefined,
     translations: Object.fromEntries(
       targets.map((lang) => [
         lang,
         segments.map((seg) => seg.translations?.[lang] ?? "").filter(Boolean).join(" "),
       ]),
     ),
-    translation: { model: r.model, targets, source: r.source ?? parsed.language },
+    translation: { model, targets, source: source ?? parsed.language },
   } as BatchResult;
 }
 

@@ -560,10 +560,12 @@ export default function Transcribe() {
   const run = () => {
     if (!files.length || !backend || busy) return;
     setVadNoticeDismissed(null); // fresh results argue their own case
-    // Effective T2T targets: run picks, else the Backend's stored defaults.
-    const effTargets =
-      translationAvailable && (translateTo.length ? translateTo : (backend.translationOverrides?.translateTo ?? []));
-    const t2t = Array.isArray(effTargets) && effTargets.length > 0;
+    // The screen's toggle/chips are AUTHORITATIVE (an empty list = off) —
+    // Backend defaults only seed the toggle, they never force the stage on
+    // (an invisible fallback made translation impossible to switch off and
+    // silently swallowed an explicit Translate-to-English).
+    const effTargets = translationAvailable ? translateTo : [];
+    const t2t = effTargets.length > 0;
     const options: TranscribeOptions | undefined =
       diarize || translate || separateBgm || t2t
         ? {
@@ -574,7 +576,7 @@ export default function Transcribe() {
               : {}),
             ...(t2t
               ? {
-                  translateTo: effTargets as string[],
+                  translateTo: effTargets,
                   translationMode,
                   ...((translationModel || backend.translationOverrides?.model)
                     ? { translationModel: translationModel || backend.translationOverrides?.model }
@@ -1201,13 +1203,18 @@ export default function Transcribe() {
                       ariaLabel="Translation"
                       onChange={(v) => {
                         if (v) {
-                          // Seed from the caller's server-side default; fall
-                          // back to English. Never offer the known source.
-                          const seed = (caps?.translate_to_default?.length
-                            ? caps.translate_to_default
-                            : ["en"]
-                          ).filter((c) => c !== language);
-                          const next = seed.length ? seed : ["en"];
+                          // Seed: Backend Translation defaults → the caller's
+                          // server-side default → English; never the known
+                          // source (en→en would be a no-op stage).
+                          const src = language !== "auto" ? language : undefined;
+                          const seed = (
+                            backend?.translationOverrides?.translateTo?.length
+                              ? backend.translationOverrides.translateTo
+                              : caps?.translate_to_default?.length
+                                ? caps.translate_to_default
+                                : ["en"]
+                          ).filter((c) => c !== src);
+                          const next = seed.length ? seed : [src === "en" ? "de" : "en"];
                           setTranslateTo(next);
                           if (translate) {
                             setTranslate(false);
@@ -1365,18 +1372,23 @@ export default function Transcribe() {
         const forUrl =
           panelItem?.kind === "url" ||
           (panelItem ? isSourceUrl(panelItem.path) : false);
-        const stages = railStages(lastOptions, forUrl);
+        // Text sources run the translation stage alone — per item, so audio
+        // files in the same run keep the full pipeline rail.
+        const forText =
+          panelItem?.kind === "text" ||
+          (panelItem && !forUrl ? isTextSourcePath(panelItem.path) : false);
+        const stages = railStages(lastOptions, forUrl, forText);
         const active = complete
           ? stages.length
           : activeRailIndex(progress, stageTimes, stages);
         // Requested stages the server jumped over (feature disabled there) —
         // shown as "skipped", never as done, and worth no progress credit.
-        const skipped = skippedStages({ progress, stageTimes, lastOptions, forUrl });
+        const skipped = skippedStages({ progress, stageTimes, lastOptions, forUrl, forText });
         const now = Date.now();
         const fileIdx = queue.findIndex((it) => it.status === "running");
         const overall = complete
           ? 1
-          : overallFraction({ queue, progress, stageTimes, lastOptions, forUrl }) ?? 0;
+          : overallFraction({ queue, progress, stageTimes, lastOptions, forUrl, forText }) ?? 0;
         const starts = Object.values(stageTimes).map((t) => t.start);
         const ends = Object.values(stageTimes).map((t) => t.end ?? t.start);
         const runElapsed = starts.length

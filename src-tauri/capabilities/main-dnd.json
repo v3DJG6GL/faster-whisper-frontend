@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-dnd",
+  "description": "Drag-and-drop events for the main window's Transcribe dropzone only \u2014 the overlay and quick-add windows accept no drops.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:webview:default"
+  ]
+}

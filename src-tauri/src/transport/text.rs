@@ -82,9 +82,19 @@ pub async fn translate_texts(
     if texts.len() > MAX_TEXTS {
         bail!("too many segments in one request (max {MAX_TEXTS})");
     }
+    // Screen target codes like batch.rs does before they join the wire.
+    let targets: Vec<String> = targets
+        .iter()
+        .filter(|t| {
+            (2..=16).contains(&t.len())
+                && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+        .cloned()
+        .collect();
     if targets.is_empty() || targets.len() > MAX_TARGETS {
-        bail!("between 1 and {MAX_TARGETS} target languages");
+        bail!("between 1 and {MAX_TARGETS} valid target languages");
     }
+    let targets = &targets[..];
     let body = RequestBody {
         segments: texts.iter().enumerate().map(|(id, t)| SegmentIn { id, text: t }).collect(),
         targets,

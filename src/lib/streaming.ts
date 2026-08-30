@@ -219,8 +219,13 @@ let sessionTranslatedText: string | null = null;
 let sessionTranslateWarned = false;
 // Live mode: recent ORIGINAL phrases, sent as context for the next phrase.
 let sessionPhraseContext: string[] = [];
-const TRANSLATE_TIMEOUT_MS = 2000;
 const PHRASE_CONTEXT_MAX = 3;
+/** 2 s floor for a live phrase; the stop-timing one-shot carries the WHOLE
+ *  transcript, so the budget scales with length (LLM MT is ~seconds per
+ *  paragraph) up to a minute. */
+function translateBudgetMs(text: string): number {
+  return Math.min(60_000, Math.max(2_000, 1_500 + text.length * 25));
+}
 
 /** Translate `text` for injection, or return it unchanged (no target set,
  *  timeout, failure, superseded session). Never throws; warns once. */
@@ -243,7 +248,7 @@ async function maybeTranslate(text: string, cfg: InsertCfg | null): Promise<stri
         contextSegments: tr.contextSegments ?? (context.length ? context.length : null),
       }),
       new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error("translation timed out")), TRANSLATE_TIMEOUT_MS),
+        setTimeout(() => rej(new Error("translation timed out")), translateBudgetMs(text)),
       ),
     ]);
     if (insertCfg !== cfg) return text; // superseded — caller bails on its own guard too

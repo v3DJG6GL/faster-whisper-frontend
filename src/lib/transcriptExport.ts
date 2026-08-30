@@ -280,10 +280,13 @@ function srtMtLine(ctx: Ctx, text: string, seg: TranscriptSegment): string {
 
 function srtExport(result: BatchResult, ctx: Ctx): string {
   const out: string[] = [];
-  (result.segments ?? []).forEach((seg, i) => {
+  // Cue numbers count EMITTED cues (a translations-only export skips
+  // untranslated segments; strict parsers require monotonic 1..N).
+  let cueNo = 0;
+  (result.segments ?? []).forEach((seg) => {
     const lines = cueLines(ctx, seg, srtLine(ctx, seg), (t) => srtMtLine(ctx, t, seg));
     if (!lines.length) return;
-    out.push(String(i + 1));
+    out.push(String(++cueNo));
     out.push(`${clockTime(seg.start, ",")} --> ${clockTime(seg.end, ",")}`);
     out.push(...lines);
     out.push("");

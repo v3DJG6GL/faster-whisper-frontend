@@ -10,7 +10,6 @@
   "permissions": [
     "core:default",
     "core:event:default",
-    "core:webview:default",
     "core:window:default",
     "core:window:allow-set-size",
     "dialog:default"
