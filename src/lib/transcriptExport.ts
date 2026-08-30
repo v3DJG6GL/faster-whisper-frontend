@@ -30,6 +30,12 @@ export interface ExportOptions {
    *  paragraphs (the screen's Timestamps toggle; cue formats always carry
    *  times — that is the format). */
   timestamps?: boolean;
+  /** Language tracks to include: "orig" + target codes. Undefined = original
+   *  only, exactly the pre-translation output (golden-stable). For LRC with
+   *  more than one track use generateExports — one FILE per track. */
+  tracks?: string[];
+  /** Multi-track cue layout: which line comes first (default orig-first). */
+  lineOrder?: "orig-first" | "trans-first";
 }
 
 /** Default per-speaker colors, cycled by first-appearance order. Eight
@@ -106,6 +112,34 @@ interface Ctx {
   hasSpeakers: boolean;
   /** hasSpeakers AND the speakerNames option — name prefixes wanted. */
   names: boolean;
+  /** Translated tracks to include (empty = original-only output). */
+  visLangs: string[];
+  origIncluded: boolean;
+}
+
+/** A segment's translation for one track, cleaned; null when absent. */
+function trOf(seg: TranscriptSegment, lang: string): string | null {
+  const t = seg.translations?.[lang];
+  return t?.trim() ? clean(t) : null;
+}
+
+/** Cue text lines for one segment across the included tracks, in lineOrder.
+ *  `mt` renders a translated line (plain, name-prefixed like the "off" color
+ *  mode — the color modes stay original-only). */
+function cueLines(
+  ctx: Ctx,
+  seg: TranscriptSegment,
+  orig: string,
+  mt: (text: string, seg: TranscriptSegment) => string,
+): string[] {
+  const trLines = ctx.visLangs
+    .map((lang) => trOf(seg, lang))
+    .filter((t): t is string => t !== null)
+    .map((t) => mt(t, seg));
+  const origLines = ctx.origIncluded ? [orig] : [];
+  return ctx.opts.lineOrder === "trans-first"
+    ? [...trLines, ...origLines]
+    : [...origLines, ...trLines];
 }
 
 function nameOf(ctx: Ctx, label: string): string {
@@ -137,14 +171,65 @@ function txtTime(seconds: number): string {
 
 function txtExport(result: BatchResult, ctx: Ctx): string {
   if (ctx.opts.timestamps && result.segments?.length) {
-    // Timestamps on: one "[mm:ss] Name: text" line per segment.
+    // Timestamps on: one "[mm:ss] Name: text" line per segment (+ one
+    // indented line per included translated track).
     return (
       result.segments
-        .map((seg) => {
+        .flatMap((seg) => {
           const prefix = seg.speaker && ctx.names ? `${nameOf(ctx, seg.speaker)}: ` : "";
-          return `[${txtTime(seg.start)}] ${prefix}${clean(seg.text)}`;
+          return cueLines(
+            ctx,
+            seg,
+            `[${txtTime(seg.start)}] ${prefix}${clean(seg.text)}`,
+            (t) => `        ${prefix}${t}`,
+          );
         })
         .join("\n") + "\n"
+    );
+  }
+  if (ctx.visLangs.length && result.segments?.length) {
+    // Interleaved paragraphs per speaker turn, included tracks in order.
+    const paras: string[] = [];
+    let who: string | null = null;
+    let bufs: string[][] = [];
+    const trackCount = (ctx.origIncluded ? 1 : 0) + ctx.visLangs.length;
+    const flush = () => {
+      if (bufs.some((b) => b.length)) {
+        const prefix = who && ctx.names ? `${nameOf(ctx, who)}: ` : "";
+        for (const b of bufs) if (b.length) paras.push(prefix + b.join(" "));
+      }
+      bufs = Array.from({ length: trackCount }, () => []);
+    };
+    bufs = Array.from({ length: trackCount }, () => []);
+    for (const seg of result.segments) {
+      const label = seg.speaker ?? null;
+      if (label !== who) {
+        flush();
+        who = label;
+      }
+      let slot = 0;
+      if (ctx.opts.lineOrder !== "trans-first" && ctx.origIncluded) {
+        bufs[slot++].push(clean(seg.text));
+      }
+      for (const lang of ctx.visLangs) {
+        const t = trOf(seg, lang);
+        if (t) bufs[slot].push(t);
+        slot++;
+      }
+      if (ctx.opts.lineOrder === "trans-first" && ctx.origIncluded) {
+        bufs[slot].push(clean(seg.text));
+      }
+    }
+    flush();
+    return paras.join("\n\n") + "\n";
+  }
+  if (!ctx.origIncluded && result.segments?.length) {
+    // Translated tracks only, no names path fell through above — join plain.
+    return (
+      result.segments
+        .flatMap((seg) => ctx.visLangs.map((l) => trOf(seg, l)).filter(Boolean))
+        .join(" ")
+        .trim() + "\n"
     );
   }
   if (!ctx.names || !result.segments?.length) {
@@ -189,12 +274,18 @@ function srtLine(ctx: Ctx, seg: TranscriptSegment): string {
   return `<font color="${color}">${text}</font>`; // line-only, name hidden
 }
 
+function srtMtLine(ctx: Ctx, text: string, seg: TranscriptSegment): string {
+  return seg.speaker && ctx.names ? `${nameOf(ctx, seg.speaker)}: ${text}` : text;
+}
+
 function srtExport(result: BatchResult, ctx: Ctx): string {
   const out: string[] = [];
   (result.segments ?? []).forEach((seg, i) => {
+    const lines = cueLines(ctx, seg, srtLine(ctx, seg), (t) => srtMtLine(ctx, t, seg));
+    if (!lines.length) return;
     out.push(String(i + 1));
     out.push(`${clockTime(seg.start, ",")} --> ${clockTime(seg.end, ",")}`);
-    out.push(srtLine(ctx, seg));
+    out.push(...lines);
     out.push("");
   });
   return out.join("\n");
@@ -203,6 +294,13 @@ function srtExport(result: BatchResult, ctx: Ctx): string {
 function vttExport(result: BatchResult, ctx: Ctx): string {
   const mode = ctx.opts.speakerColors ?? "off";
   const out: string[] = ["WEBVTT", ""];
+  if (ctx.visLangs.length) {
+    // Translated lines carry a generated .mt class so players that honor
+    // STYLE can tone them; others degrade to plain text.
+    out.push("STYLE");
+    out.push("::cue(.mt) { color: #4dd0c4; }");
+    out.push("");
+  }
   if (ctx.hasSpeakers && mode !== "off") {
     // Generated class names (spk1, spk2, …) — NEVER derived from user text;
     // the display name appears only as cue text. Class styling renders in
@@ -214,22 +312,31 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
     out.push("");
   }
   (result.segments ?? []).forEach((seg) => {
-    out.push(`${clockTime(seg.start, ".")} --> ${clockTime(seg.end, ".")}`);
     const text = vttEscape(clean(seg.text));
+    let orig: string;
     if (!seg.speaker || !ctx.hasSpeakers) {
-      out.push(text);
+      orig = text;
     } else {
       const cls = `spk${Math.max(0, ctx.order.indexOf(seg.speaker)) + 1}`;
       if (!ctx.names) {
-        out.push(mode === "off" ? text : `<c.${cls}>${text}</c>`);
+        orig = mode === "off" ? text : `<c.${cls}>${text}</c>`;
       } else {
         const name = vttEscape(nameOf(ctx, seg.speaker));
-        if (mode === "off") out.push(`<v ${name}>${text}</v>`);
-        else if (mode === "name") out.push(`<c.${cls}>${name}:</c> ${text}`);
-        else if (mode === "line") out.push(`<c.${cls}>${name}: ${text}</c>`);
-        else out.push(`<c.${cls}>${text}</c>`);
+        if (mode === "off") orig = `<v ${name}>${text}</v>`;
+        else if (mode === "name") orig = `<c.${cls}>${name}:</c> ${text}`;
+        else if (mode === "line") orig = `<c.${cls}>${name}: ${text}</c>`;
+        else orig = `<c.${cls}>${text}</c>`;
       }
     }
+    const lines = cueLines(ctx, seg, orig, (t) => {
+      const escaped = vttEscape(t);
+      const withName =
+        seg.speaker && ctx.names ? `${vttEscape(nameOf(ctx, seg.speaker))}: ${escaped}` : escaped;
+      return `<c.mt>${withName}</c>`;
+    });
+    if (!lines.length) return;
+    out.push(`${clockTime(seg.start, ".")} --> ${clockTime(seg.end, ".")}`);
+    out.push(...lines);
     out.push("");
   });
   return out.join("\n");
@@ -240,12 +347,18 @@ function wordsFor(words: TranscriptWord[], seg: TranscriptSegment): TranscriptWo
   return words.filter((w) => w.start >= seg.start - 0.05 && w.start < seg.end + 0.05);
 }
 
-function lrcExport(result: BatchResult, ctx: Ctx): string {
+function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): string {
   const words = result.words ?? [];
-  const useWords = !!ctx.opts.wordTimestamps && words.length > 0;
+  // Word timing never survives translation — enhanced tags are original-only.
+  const useWords = track === "orig" && !!ctx.opts.wordTimestamps && words.length > 0;
   const out: string[] = [];
   for (const seg of result.segments ?? []) {
     const prefix = seg.speaker && ctx.names ? `${nameOf(ctx, seg.speaker)}: ` : "";
+    if (track !== "orig") {
+      const t = trOf(seg, track);
+      if (t) out.push(`[${lrcTime(seg.start)}]${prefix}${t}`);
+      continue;
+    }
     if (useWords) {
       const ws = wordsFor(words, seg);
       if (ws.length) {
@@ -274,11 +387,28 @@ function jsonExport(result: BatchResult, ctx: Ctx): string {
         // renderers, so recoloring in the app survives into the export.
         color: colorOf(ctx, label),
       })),
+      ...(result.translation
+        ? {
+            translation: {
+              model: result.translation.model ?? null,
+              targets: result.translation.targets,
+              source: result.translation.source ?? null,
+              ...(result.translation.mode ? { mode: result.translation.mode } : {}),
+            },
+          }
+        : {}),
       segments: (result.segments ?? []).map((s) => ({
         start: s.start,
         end: s.end,
         text: stripControlChars(s.text),
         ...(s.speaker ? { speaker: s.speaker, speakerName: nameOf(ctx, s.speaker) } : {}),
+        ...(s.translations && Object.keys(s.translations).length
+          ? {
+              translations: Object.fromEntries(
+                Object.entries(s.translations).map(([k, v]) => [k, stripControlChars(v)]),
+              ),
+            }
+          : {}),
       })),
       ...(result.words?.length
         ? { words: result.words.map((w) => ({ ...w, word: stripControlChars(w.word) })) }
@@ -291,13 +421,7 @@ function jsonExport(result: BatchResult, ctx: Ctx): string {
 
 /** Render `result` in the requested format. Pure — safe to golden-test. */
 export function generateExport(result: BatchResult, opts: ExportOptions): string {
-  const order = speakerOrder(result);
-  const ctx: Ctx = {
-    opts,
-    order,
-    hasSpeakers: order.length > 0,
-    names: order.length > 0 && opts.speakerNames !== false,
-  };
+  const ctx = ctxOf(result, opts);
   switch (opts.format) {
     case "txt":
       return txtExport(result, ctx);
@@ -306,8 +430,82 @@ export function generateExport(result: BatchResult, opts: ExportOptions): string
     case "vtt":
       return vttExport(result, ctx);
     case "lrc":
-      return lrcExport(result, ctx);
+      // LRC is single-track per file: exactly one selected translated track
+      // renders that track; anything else renders the original (multi-track
+      // LRC goes through generateExports — one file per track).
+      return lrcExport(
+        result,
+        ctx,
+        !ctx.origIncluded && ctx.visLangs.length === 1 ? ctx.visLangs[0] : "orig",
+      );
     case "json":
       return jsonExport(result, ctx);
   }
+}
+
+function ctxOf(result: BatchResult, opts: ExportOptions): Ctx {
+  const order = speakerOrder(result);
+  const visLangs =
+    opts.format === "json" ? [] : (opts.tracks?.filter((t) => t !== "orig") ?? []);
+  return {
+    opts,
+    order,
+    hasSpeakers: order.length > 0,
+    names: order.length > 0 && opts.speakerNames !== false,
+    visLangs,
+    origIncluded: !opts.tracks || opts.tracks.includes("orig"),
+  };
+}
+
+/** Like generateExport, but multi-file where the format demands it: LRC with
+ *  several tracks = one FILE per track (duplicate-timestamp bilingual LRC
+ *  renders unreliably across players). `name(stem)` appends the track suffix. */
+export function generateExports(
+  result: BatchResult,
+  opts: ExportOptions,
+): { name: (stem: string) => string; content: string }[] {
+  const ctx = ctxOf(result, opts);
+  const trackList = [...(ctx.origIncluded ? ["orig"] : []), ...ctx.visLangs];
+  if (opts.format === "lrc" && trackList.length > 1) {
+    return trackList.map((track) => ({
+      name: (stem: string) => `${stem}${track === "orig" ? "" : `.${track}`}.lrc`,
+      content: lrcExport(result, ctx, track),
+    }));
+  }
+  return [
+    {
+      name: (stem: string) =>
+        `${stem}${exportStemSuffix(opts.tracks)}.${EXPORT_EXTENSIONS[opts.format]}`,
+      content: generateExport(result, opts),
+    },
+  ];
+}
+
+/** ".de" when exactly one translated track (and not the original) is picked —
+ *  so single-language exports name themselves; "" otherwise. */
+export function exportStemSuffix(tracks?: string[]): string {
+  if (!tracks || tracks.includes("orig")) return "";
+  const langs = tracks.filter((t) => t !== "orig");
+  return langs.length === 1 ? `.${langs[0]}` : "";
+}
+
+/** Translated cue lines that exceed the 20 chars/sec subtitle reading-speed
+ *  norm (DE/FR expand 10–30% over EN — flag, never auto-reflow). */
+export function cpsWarnings(
+  result: BatchResult,
+  tracks?: string[],
+): { lang: string; index: number; cps: number }[] {
+  const langs = (tracks ?? []).filter((t) => t !== "orig");
+  const out: { lang: string; index: number; cps: number }[] = [];
+  (result.segments ?? []).forEach((seg, index) => {
+    const dur = seg.end - seg.start;
+    if (dur <= 0) return;
+    for (const lang of langs) {
+      const t = seg.translations?.[lang];
+      if (!t?.trim()) continue;
+      const cps = t.trim().length / dur;
+      if (cps > 20) out.push({ lang, index, cps: Math.round(cps * 10) / 10 });
+    }
+  });
+  return out;
 }

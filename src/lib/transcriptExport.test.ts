@@ -184,3 +184,82 @@ describe("display-toggle model (speakerNames / timestamps)", () => {
     expect(out).not.toContain("Speaker 1");
   });
 });
+
+// ── T2T multi-track exports ─────────────────────────────────────────────────
+
+const TRANSLATED: BatchResult = {
+  ...RESULT,
+  segments: RESULT.segments!.map((s, i) => ({
+    ...s,
+    translations: {
+      de: i === 0 ? "Hallo zusammen." : "Allgemeine Begrüßung.",
+    },
+  })),
+  translation: { model: "tencent/HY-MT1.5-7B-GGUF:Q4_K_M", targets: ["de"], source: "en", mode: "fluent" },
+};
+
+describe("multi-track (tracks option)", () => {
+  it("tracks undefined ⇒ byte-identical to the pre-translation output", () => {
+    const a = generateExport(TRANSLATED, { format: "srt" });
+    const b = generateExport(RESULT, { format: "srt" });
+    expect(a).toBe(b);
+  });
+  it("srt: one line per selected track inside each cue, orig first", () => {
+    const out = generateExport(TRANSLATED, { format: "srt", tracks: ["orig", "de"] });
+    expect(out).toContain(
+      "1\n00:00:00,400 --> 00:00:02,000\nSpeaker 1: Hello there.\nSpeaker 1: Hallo zusammen.",
+    );
+  });
+  it("srt: trans-first flips the line order", () => {
+    const out = generateExport(TRANSLATED, {
+      format: "srt", tracks: ["orig", "de"], lineOrder: "trans-first",
+    });
+    expect(out).toContain("Speaker 1: Hallo zusammen.\nSpeaker 1: Hello there.");
+  });
+  it("srt: translations-only drops the original line", () => {
+    const out = generateExport(TRANSLATED, { format: "srt", tracks: ["de"] });
+    expect(out).toContain("Speaker 1: Hallo zusammen.");
+    expect(out).not.toContain("Hello there.");
+  });
+  it("vtt: translated lines ride a generated .mt class + STYLE entry", () => {
+    const out = generateExport(TRANSLATED, { format: "vtt", tracks: ["orig", "de"] });
+    expect(out).toContain("::cue(.mt) { color: #4dd0c4; }");
+    expect(out).toContain("<c.mt>Speaker 1: Hallo zusammen.</c>");
+  });
+  it("json: always full fidelity — translations embedded regardless of tracks", () => {
+    const out = JSON.parse(generateExport(TRANSLATED, { format: "json", tracks: ["de"] }));
+    expect(out.segments[0].translations.de).toBe("Hallo zusammen.");
+    expect(out.translation.targets).toEqual(["de"]);
+    expect(out.segments[0].text).toBe(" Hello there."); // json keeps raw segment text
+  });
+});
+
+describe("generateExports / filenames / cps", () => {
+  it("lrc with two tracks = one file per track, suffixed", async () => {
+    const { generateExports } = await import("./transcriptExport");
+    const files = generateExports(TRANSLATED, { format: "lrc", tracks: ["orig", "de"] });
+    expect(files).toHaveLength(2);
+    expect(files[0].name("talk")).toBe("talk.lrc");
+    expect(files[1].name("talk")).toBe("talk.de.lrc");
+    expect(files[1].content).toContain("Hallo zusammen.");
+    expect(files[1].content).not.toContain("Hello there.");
+  });
+  it("single translated track suffixes the stem; orig included does not", async () => {
+    const { exportStemSuffix } = await import("./transcriptExport");
+    expect(exportStemSuffix(["de"])).toBe(".de");
+    expect(exportStemSuffix(["orig", "de"])).toBe("");
+    expect(exportStemSuffix(undefined)).toBe("");
+  });
+  it("cps flags only translated cues over 20 chars/sec", async () => {
+    const { cpsWarnings } = await import("./transcriptExport");
+    const slow = cpsWarnings(TRANSLATED, ["orig", "de"]);
+    expect(slow).toEqual([]); // both cues are comfortably under 20 cps
+    const fast: BatchResult = {
+      ...TRANSLATED,
+      segments: [{ start: 0, end: 1, text: "Hi.", translations: { de: "x".repeat(30) } }],
+    };
+    const warns = cpsWarnings(fast, ["de"]);
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toMatchObject({ lang: "de", index: 0, cps: 30 });
+  });
+});

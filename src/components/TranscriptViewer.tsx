@@ -28,7 +28,7 @@ import {
 } from "@/lib/transcribeRun";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
-  DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExport,
+  cpsWarnings, DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExport, generateExports,
   type ExportFormat, type ExportOptions,
 } from "@/lib/transcriptExport";
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
@@ -398,6 +398,10 @@ export function TranscriptViewer({
   const [exportFormat, setExportFormat] = useState<ExportFormat>(
     () => settings.transcribe?.exportFormat ?? "srt",
   );
+  // Which language tracks the export carries: null = follow the viewer's
+  // visible tracks (the-view-is-the-export); a pick overrides per panel.
+  const [exportTracks, setExportTracks] = useState<string[] | null>(null);
+  const [lineOrder, setLineOrder] = useState<"orig-first" | "trans-first">("orig-first");
   const [wordTs, setWordTs] = useState(() => settings.transcribe?.wordTimestamps ?? false);
   // Export-preview height: null = auto up to 40vh; a number once the user
   // drags the visible resize handle (WebKitGTK's native corner grip is
@@ -1277,6 +1281,9 @@ export function TranscriptViewer({
       ]),
     ),
     wordTimestamps: wordTs,
+    ...(langs.length
+      ? { tracks: exportTracks ?? visibleTracks, lineOrder }
+      : {}),
   });
 
   /** The "in this file" rows for the selected format (see ContractRow). */
@@ -1374,6 +1381,37 @@ export function TranscriptViewer({
           ];
       }
     })();
+    const effTracks = langs.length ? (exportTracks ?? visibleTracks) : [];
+    const mtLangs = effTracks.filter((t) => t !== "orig");
+    if (mtLangs.length && exportFormat !== "json") {
+      rows.push({
+        label: `${mtLangs.map((l) => l.toUpperCase()).join(" + ")} translation`,
+        state: "always",
+        why: `machine-translated${result.translation?.model ? ` (${result.translation.model.split("/").pop()})` : ""} · timing from the original`,
+      });
+      const warns = cpsWarnings(editedResult(), effTracks);
+      if (warns.length) {
+        rows.push({
+          label: "Reading speed",
+          state: "na",
+          why: `${warns.length} translated cue${warns.length === 1 ? "" : "s"} exceed 20 chars/sec (language expansion) — flagged, never reflowed`,
+        });
+      }
+    }
+    if (exportFormat === "json" && langs.length) {
+      rows.push({
+        label: "Translations",
+        state: "always",
+        why: "always — JSON carries every track regardless of the picker",
+      });
+    }
+    if (exportFormat === "lrc" && mtLangs.length && effTracks.length > 1) {
+      rows.push({
+        label: "Files",
+        state: "always",
+        why: `one .lrc per track (${effTracks.length} files) — bilingual LRC renders unreliably in players`,
+      });
+    }
     return rows.filter((r): r is ContractRow => r !== null);
   };
 
@@ -1399,24 +1437,40 @@ export function TranscriptViewer({
 
   const exportFileName = () => {
     const stem = basename(path).replace(/\.[^.]+$/, "");
-    return `${stem}.${EXPORT_EXTENSIONS[exportFormat]}`;
+    const opts = exportOpts();
+    const files = generateExports(editedResult(), opts);
+    if (files.length > 1) return `${files.length} files · ${files.map((f) => f.name(stem)).join(" · ")}`;
+    return files[0].name(stem);
   };
 
   const doExport = async () => {
     setSaveError(null);
     const ext = EXPORT_EXTENSIONS[exportFormat];
     const stem = basename(path).replace(/\.[^.]+$/, "");
+    const opts = exportOpts();
+    const files = generateExports(editedResult(), opts);
     let target: string | null;
     try {
-      target = await pickExportPath(`${stem}.${ext}`, exportFormat.toUpperCase(), ext);
+      target = await pickExportPath(files[0].name(stem), exportFormat.toUpperCase(), ext);
     } catch (e) {
       console.error("export save dialog failed:", e);
       return;
     }
     if (!target) return; // cancelled
     try {
-      const contents = generateExport(editedResult(), exportOpts());
-      await saveTextFile(target, contents);
+      if (files.length === 1) {
+        await saveTextFile(target, files[0].content);
+      } else {
+        // Multi-file (LRC per track): the picked path names the FIRST file;
+        // siblings land beside it with their track suffixes, keyed off the
+        // stem the user actually chose in the dialog.
+        const sep = target.includes("\\") ? "\\" : "/";
+        const dir = target.slice(0, target.lastIndexOf(sep) + 1);
+        const pickedStem = target
+          .slice(dir.length)
+          .replace(/\.lrc$/i, "");
+        for (const f of files) await saveTextFile(dir + f.name(pickedStem), f.content);
+      }
     } catch (e) {
       setSaveError(String(e));
       return;
@@ -1964,6 +2018,50 @@ export function TranscriptViewer({
               );
             })}
           </div>
+
+          {langs.length > 0 && exportFormat !== "json" && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="font-mono text-[10.5px] uppercase tracking-label text-faint">
+                tracks
+              </span>
+              {["orig", ...langs].map((t) => {
+                const eff = exportTracks ?? visibleTracks;
+                const on = eff.includes(t);
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => {
+                      const next = on ? eff.filter((x) => x !== t) : [...eff, t];
+                      if (!next.length) return;
+                      setExportTracks(next);
+                    }}
+                    className={cn(
+                      "ring-signal inline-flex h-6 items-center rounded-pill border px-2.5 font-mono text-[11px] font-medium",
+                      on
+                        ? t === "orig"
+                          ? "border-accent/35 bg-accent-soft text-accent"
+                          : "border-[color:var(--c-translate)]/45 text-[color:var(--c-translate)]"
+                        : "border-line bg-surface-2 text-dim hover:text-text",
+                    )}
+                  >
+                    {t === "orig" ? `${(result.language ?? "??").toUpperCase()} · original` : t.toUpperCase()}
+                  </button>
+                );
+              })}
+              {(exportTracks ?? visibleTracks).length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setLineOrder((o) => (o === "orig-first" ? "trans-first" : "orig-first"))}
+                  className="ring-signal inline-flex h-6 items-center rounded-pill border border-line bg-surface-2 px-2.5 text-[11px] text-dim hover:text-text"
+                  title="Which line comes first inside each cue"
+                >
+                  {lineOrder === "orig-first" ? "original first" : "translations first"}
+                </button>
+              )}
+            </div>
+          )}
 
           {/* "In this file": the contract. Rows mirror the view toggles
               (clicking flips them, live); impossible rows say why. */}

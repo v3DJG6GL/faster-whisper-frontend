@@ -23,7 +23,7 @@ import {
 } from "@/lib/transcriptHistory";
 import { addFiles, openHistoryRecord, useTranscribeRun } from "@/lib/transcribeRun";
 import {
-  DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExport, speakerOrder,
+  DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExports, speakerOrder,
   type ExportFormat,
 } from "@/lib/transcriptExport";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
@@ -350,8 +350,14 @@ export default function History() {
     }
     if (!path) return;
     const order = speakerOrder(rec.result ?? { text: "" });
+    // Every track the record carries rides the quick export ("orig" + targets).
+    const recLangs = Array.from(
+      new Set(
+        (rec.result?.segments ?? []).flatMap((seg) => Object.keys(seg.translations ?? {})),
+      ),
+    );
     try {
-      const contents = generateExport(recordEditedResult(rec), {
+      const files = generateExports(recordEditedResult(rec), {
         format,
         renames: rec.renames ?? {},
         speakerColors: order.length && (t.colorizeSpeakers ?? true) ? "line" : "off",
@@ -364,8 +370,16 @@ export default function History() {
           ]),
         ),
         wordTimestamps: t.wordTimestamps ?? false,
+        ...(recLangs.length ? { tracks: ["orig", ...recLangs] } : {}),
       });
-      await saveTextFile(path, contents);
+      if (files.length === 1) {
+        await saveTextFile(path, files[0].content);
+      } else {
+        const sep = path.includes("\\") ? "\\" : "/";
+        const dir = path.slice(0, path.lastIndexOf(sep) + 1);
+        const pickedStem = path.slice(dir.length).replace(/\.lrc$/i, "");
+        for (const f of files) await saveTextFile(dir + f.name(pickedStem), f.content);
+      }
     } catch (e) {
       console.error("history export failed:", e);
     }
