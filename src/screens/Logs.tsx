@@ -99,6 +99,10 @@ export default function Logs() {
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 22,
     overscan: 10,
+    // Height measurements must follow the LINE, not the list position —
+    // filters/clear shift which line sits at an index, and a stale by-index
+    // height makes wrapped rows overlap their neighbors.
+    getItemKey: (index) => lines[index].seq,
   });
 
   // Follow: on new content, keep the tail pinned (after paint — wrapped rows
@@ -118,6 +122,12 @@ export default function Logs() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, lines.length, follow.follow]);
+
+  // Wrap toggles every row's height at once — drop all cached measurements.
+  useEffect(() => {
+    virtualizer.measure();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wrap]);
 
   function onScroll() {
     const el = scrollRef.current;
