@@ -49,6 +49,7 @@ export interface Backend {
   prompt: string; // optional initial_prompt / vocabulary biasing (default; overridable)
   responseFormat: ResponseFormat;
   decodeOverrides?: DecodeOverrides; // Phase-B: per-Backend decode defaults
+  translationOverrides?: TranslationOverrides; // T2T defaults (absent key = inherit server)
   kind?: BackendKind; // full vs standard server; absent/"auto" = infer from the connection test
   // Server override-profile (full backend only): a profile name to reference,
   // NO_OVERRIDE_PROFILE = force no profile (plain defaults), undefined = server
@@ -73,9 +74,24 @@ export interface Profile {
   language?: string; // override Backend.language; empty/undefined = inherit
   prompt?: string; // override Backend.prompt; tri-state: undefined = inherit, "" = explicit clear (suppress the inherited prompt, send no initial_prompt), value = override
   decodeOverrides?: DecodeOverrides; // Phase-B: per-Profile decode overrides
+  translationOverrides?: TranslationOverrides; // T2T overrides; for dictation, translateTo[0] is the injection target
   // Override Backend.overrideProfile: a profile name, NO_OVERRIDE_PROFILE =
   // force no profile (plain defaults), undefined = inherit the backend.
   overrideProfile?: string;
+}
+
+/** T2T translation defaults, layered Backend → Profile → run (absent key =
+ *  inherit the previous layer, server config at the root). */
+export interface TranslationOverrides {
+  translateTo?: string[];
+  /** Model ref ("org/repo:quant"); empty/undefined = server default. */
+  model?: string;
+  /** Previous-segment context depth; undefined = server default. */
+  contextSegments?: number;
+  /** Glossary — one "source = target" line per fixed term. */
+  glossary?: string;
+  /** "fluent" (sentence-merged) or "faithful" (per-cue); undefined = server default. */
+  mode?: "fluent" | "faithful";
 }
 
 /** Reserved override-profile value meaning "apply NO server profile — plain

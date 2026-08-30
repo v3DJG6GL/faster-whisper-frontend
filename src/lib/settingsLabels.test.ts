@@ -24,6 +24,7 @@ describe("manifest labels match the screens' literal labels", () => {
   const cases: Array<[file: string, settingId: keyof typeof SETTING]> = [
     ["screens/Transcribe.tsx", "diarize"],
     ["screens/Transcribe.tsx", "translate"],
+    ["screens/Transcribe.tsx", "translateTo"],
     ["screens/Transcribe.tsx", "separateBgm"],
     ["components/TranscriptViewer.tsx", "showTimestamps"],
     ["components/TranscriptViewer.tsx", "showSpeakerNames"],

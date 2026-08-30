@@ -11,6 +11,7 @@ import {
 import { DecodeFields } from "@/components/DecodeFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
+import { TranslationTargetChips } from "@/components/TranslationFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { TranscriptViewer, speakersOf } from "@/components/TranscriptViewer";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -280,6 +281,22 @@ export default function Transcribe() {
     Math.min(32, Math.max(1, settings.transcribe?.maxSpeakers || 4)),
   );
   const [translate, setTranslate] = useState(() => settings.transcribe?.translate ?? false);
+  // T2T targets ([] = off) + sticky model pick; mode is per-run only (the
+  // server default is "fluent", Backend/Profile can override).
+  const [translateTo, setTranslateTo] = useState<string[]>(
+    () => settings.transcribe?.translateTo ?? [],
+  );
+  const [translationModel, setTranslationModel] = useState(
+    () => settings.transcribe?.translationModel ?? "",
+  );
+  const [translationMode, setTranslationMode] = useState<"fluent" | "faithful">("fluent");
+  // Per-run stage-model overrides ("" = server default) — runOverrides-style,
+  // deliberately not persisted.
+  const [diarizationModel, setDiarizationModel] = useState("");
+  const [separationModel, setSeparationModel] = useState("");
+  // One-line notice under whichever translate row was auto-switched off (the
+  // two translation mechanisms are mutually exclusive). Cleared on interaction.
+  const [translateExclNotice, setTranslateExclNotice] = useState<"whisper" | "t2t" | null>(null);
   const [separateBgm, setSeparateBgm] = useState(() => settings.transcribe?.separateBgm ?? false);
   // Per-RUN decode overrides layered over the Backend's stored defaults —
   // deliberately not persisted: this is "for this file, try beam 5", not a
@@ -356,6 +373,9 @@ export default function Transcribe() {
   // means the endpoint does not exist (older backend / standard server), so
   // only an explicit true shows the link affordance.
   const urlAvailable = !isStandard && caps?.url_download_enabled === true;
+  // T2T translation is opt-in like URL download: absent = the stage does not
+  // exist on this server (older backend / standard server).
+  const translationAvailable = !isStandard && caps?.translation_enabled === true;
   const urlMeta = useTranscribeRun((s) => s.urlMeta);
 
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
@@ -500,20 +520,41 @@ export default function Transcribe() {
   const run = () => {
     if (!files.length || !backend || busy) return;
     setVadNoticeDismissed(null); // fresh results argue their own case
+    // Effective T2T targets: run picks, else the Backend's stored defaults.
+    const effTargets =
+      translationAvailable && (translateTo.length ? translateTo : (backend.translationOverrides?.translateTo ?? []));
+    const t2t = Array.isArray(effTargets) && effTargets.length > 0;
     const options: TranscribeOptions | undefined =
-      diarize || translate || separateBgm
+      diarize || translate || separateBgm || t2t
         ? {
-            ...(translate
+            // Belt-and-braces exclusivity: when a sync race left both set,
+            // T2T wins and Whisper's task is omitted entirely.
+            ...(translate && !t2t
               ? { task: "translate" as const, useTranslationsEndpoint: isStandard }
+              : {}),
+            ...(t2t
+              ? {
+                  translateTo: effTargets as string[],
+                  translationMode,
+                  ...((translationModel || backend.translationOverrides?.model)
+                    ? { translationModel: translationModel || backend.translationOverrides?.model }
+                    : {}),
+                  ...(backend.translationOverrides?.glossary
+                    ? { translationGlossary: backend.translationOverrides.glossary }
+                    : {}),
+                }
               : {}),
             ...(diarize && diarAvailable && !isStandard
               ? {
                   diarize: true,
                   ...(speakerMode === "count" ? { numSpeakers } : {}),
                   ...(speakerMode === "range" ? { minSpeakers, maxSpeakers } : {}),
+                  ...(diarizationModel ? { diarizationModel } : {}),
                 }
               : {}),
-            ...(separateBgm && bgmAvailable && !isStandard ? { separateBgm: true } : {}),
+            ...(separateBgm && bgmAvailable && !isStandard
+              ? { separateBgm: true, ...(separationModel ? { separationModel } : {}) }
+              : {}),
           }
         : undefined;
     const ctx = buildCtx(runOverrides);
@@ -892,15 +933,29 @@ export default function Transcribe() {
                   }
                   disabled={!bgmAvailable}
                 >
-                  <Toggle
-                    checked={separateBgm && bgmAvailable}
-                    disabled={!bgmAvailable}
-                    ariaLabel="Music source separation"
-                    onChange={(v) => {
-                      setSeparateBgm(v);
-                      persistOptions({ separateBgm: v });
-                    }}
-                  />
+                  <div className="flex items-center gap-4">
+                    {separateBgm && bgmAvailable && (caps?.separation_models?.length ?? 0) > 1 && (
+                      <div className="w-56">
+                        <ModelPicker
+                          value={separationModel}
+                          onChange={setSeparationModel}
+                          models={caps?.separation_models ?? []}
+                          defaultLabel={`Default · ${caps?.separation_models?.[0]?.id ?? "server model"}`}
+                          ariaLabel="Separation model"
+                          hideReset
+                        />
+                      </div>
+                    )}
+                    <Toggle
+                      checked={separateBgm && bgmAvailable}
+                      disabled={!bgmAvailable}
+                      ariaLabel="Music source separation"
+                      onChange={(v) => {
+                        setSeparateBgm(v);
+                        persistOptions({ separateBgm: v });
+                      }}
+                    />
+                  </div>
                 </SettingRow>
               </div>
               <div className="relative">
@@ -950,17 +1005,35 @@ export default function Transcribe() {
                 <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
                 <SettingRow
                   title="Translate to English"
-                  desc="The decode itself outputs English instead of the source language (Whisper's translate task)."
+                  desc={
+                    translationAvailable
+                      ? "During decode — the transcript comes out in English only; the original text is not kept (Whisper's translate task)."
+                      : "The decode itself outputs English instead of the source language (Whisper's translate task)."
+                  }
                 >
                   <Toggle
                     checked={translate}
                     ariaLabel="Translate to English"
                     onChange={(v) => {
                       setTranslate(v);
-                      persistOptions({ translate: v });
+                      // Mutually exclusive with the T2T stage: switching this
+                      // on switches Translation off (and says so).
+                      if (v && translateTo.length) {
+                        setTranslateTo([]);
+                        setTranslateExclNotice("t2t");
+                        persistOptions({ translate: v, translateTo: [] });
+                      } else {
+                        setTranslateExclNotice(null);
+                        persistOptions({ translate: v });
+                      }
                     }}
                   />
                 </SettingRow>
+                {translateExclNotice === "whisper" && (
+                  <p className="-mt-2 pb-3 text-[12px] text-warn">
+                    Turned off — Translation (below) replaces it; the two can't combine.
+                  </p>
+                )}
               </div>
               <div className="relative">
                 <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
@@ -972,9 +1045,21 @@ export default function Transcribe() {
                       : "Not available on this server (DIARIZATION_ENABLED is off)."
                   }
                   disabled={!diarAvailable}
-                  last
+                  last={!translationAvailable}
                 >
                   <div className="flex items-center gap-4">
+                    {diarize && diarAvailable && (caps?.diarization_models?.length ?? 0) > 1 && (
+                      <div className="w-56">
+                        <ModelPicker
+                          value={diarizationModel}
+                          onChange={setDiarizationModel}
+                          models={caps?.diarization_models ?? []}
+                          defaultLabel={`Default · ${caps?.diarization_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
+                          ariaLabel="Diarization model"
+                          hideReset
+                        />
+                      </div>
+                    )}
                     {diarize && diarAvailable && (
                       <div className="flex items-center gap-2">
                         {/* Steppers grow INWARD (left of the segment) so the
@@ -1053,6 +1138,96 @@ export default function Transcribe() {
                   </div>
                 </SettingRow>
               </div>
+              {translationAvailable && (
+                <div className="relative">
+                  <span
+                    aria-hidden
+                    className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint"
+                  />
+                  <SettingRow
+                    title="Translation"
+                    desc="Runs last — translates the finished segments into your target languages, keeping the original (server-side MT)."
+                    last={translateTo.length === 0}
+                  >
+                    <Toggle
+                      checked={translateTo.length > 0}
+                      ariaLabel="Translation"
+                      onChange={(v) => {
+                        if (v) {
+                          // Seed from the caller's server-side default; fall
+                          // back to English. Never offer the known source.
+                          const seed = (caps?.translate_to_default?.length
+                            ? caps.translate_to_default
+                            : ["en"]
+                          ).filter((c) => c !== language);
+                          const next = seed.length ? seed : ["en"];
+                          setTranslateTo(next);
+                          if (translate) {
+                            setTranslate(false);
+                            setTranslateExclNotice("whisper");
+                            persistOptions({ translateTo: next, translate: false });
+                          } else {
+                            setTranslateExclNotice(null);
+                            persistOptions({ translateTo: next });
+                          }
+                        } else {
+                          setTranslateTo([]);
+                          setTranslateExclNotice(null);
+                          persistOptions({ translateTo: [] });
+                        }
+                      }}
+                    />
+                  </SettingRow>
+                  {translateExclNotice === "t2t" && (
+                    <p className="-mt-2 pb-3 text-[12px] text-warn">
+                      Turned off — Translate to English (above) replaces it; the two can't combine.
+                    </p>
+                  )}
+                  {translateTo.length > 0 && (
+                    <div className="space-y-2.5 pb-4">
+                      <TranslationTargetChips
+                        value={translateTo}
+                        onChange={(next) => {
+                          setTranslateTo(next);
+                          persistOptions({ translateTo: next });
+                        }}
+                        allowed={caps?.translation_languages}
+                        exclude={language !== "auto" ? language : undefined}
+                      />
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                        <Segmented
+                          value={translationMode}
+                          onChange={setTranslationMode}
+                          ariaLabel="Translation mode"
+                          options={[
+                            { value: "fluent", label: "Fluent" },
+                            { value: "faithful", label: "Faithful" },
+                          ]}
+                        />
+                        {(caps?.translation_models?.length ?? 0) > 1 && (
+                          <div className="w-64">
+                            <ModelPicker
+                              value={translationModel}
+                              onChange={(v) => {
+                                setTranslationModel(v);
+                                persistOptions({ translationModel: v });
+                              }}
+                              models={caps?.translation_models ?? []}
+                              defaultLabel={`Default · ${caps?.translation_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
+                              ariaLabel="Translation model"
+                              hideReset
+                            />
+                          </div>
+                        )}
+                      </div>
+                      <p className="text-[12px] text-faint">
+                        Fluent joins split sentences before translating (timing untouched) ·
+                        source auto-detected · karaoke stays on the original
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </Card>
