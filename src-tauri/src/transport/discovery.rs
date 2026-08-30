@@ -202,6 +202,32 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     caps.yt_dlp_version = caps
         .yt_dlp_version
         .map(|v| super::bounded_server_text(&v, 32));
+    caps.llama_cpp_version = caps
+        .llama_cpp_version
+        .map(|v| super::bounded_server_text(&v, 32));
+    // Per-stage model lists feed pickers — same treatment as `models`.
+    let bound_models = |list: Option<Vec<ServerModel>>| {
+        list.map(|mut v| {
+            v.truncate(MAX_MODELS);
+            v.into_iter()
+                .map(|m| ServerModel { id: bounded_name(&m.id), loaded: m.loaded })
+                .collect::<Vec<_>>()
+        })
+    };
+    caps.translation_models = bound_models(caps.translation_models);
+    caps.diarization_models = bound_models(caps.diarization_models);
+    caps.separation_models = bound_models(caps.separation_models);
+    let bound_langs = |list: Option<Vec<String>>| {
+        list.map(|mut v| {
+            v.truncate(MAX_MODELS);
+            v.iter().map(|s| super::bounded_server_text(s, 16)).collect::<Vec<_>>()
+        })
+    };
+    caps.translation_languages = bound_langs(caps.translation_languages);
+    caps.translate_to_default = caps.translate_to_default.map(|mut v| {
+        v.truncate(8);
+        v.iter().map(|s| super::bounded_server_text(s, 16)).collect()
+    });
     Some(caps)
 }
 

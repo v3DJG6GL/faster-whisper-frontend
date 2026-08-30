@@ -37,6 +37,10 @@ pub struct Segment {
     /// camelCase rename is a no-op, so it round-trips to TS unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+    /// T2T translations keyed by target language code (translating stage).
+    /// BTreeMap for a stable key order in the persisted record JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translations: Option<std::collections::BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +64,15 @@ pub struct BatchOptions {
     pub max_speakers: Option<u32>,
     /// Strip background music (UVR) server-side before decoding.
     pub separate_bgm: Option<bool>,
+    /// T2T target language codes → the server's translating stage.
+    pub translate_to: Option<Vec<String>>,
+    /// Per-run T2T model / mode / glossary (server validates the allowlist).
+    pub translation_model: Option<String>,
+    pub translation_mode: Option<String>,
+    pub translation_glossary: Option<String>,
+    /// Per-run diarization pipeline / MSS model overrides.
+    pub diarization_model: Option<String>,
+    pub separation_model: Option<String>,
     /// Client-generated hex id the server keys live progress under
     /// (GET /v1/audio/transcriptions/progress/<id> while the POST runs).
     pub progress_id: Option<String>,
@@ -105,6 +118,25 @@ pub struct BatchResult {
     pub source_media_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_media_expires_at: Option<i64>,
+    /// Full translated texts keyed by target language (translating stage).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translations: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translation: Option<TranslationInfo>,
+}
+
+/// Provenance block of the translating stage (verbose_json `translation`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslationInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub targets: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -130,6 +162,17 @@ struct VerboseJson {
     source_media_id: Option<String>,
     #[serde(default)]
     source_media_expires_at: Option<i64>,
+    #[serde(default)]
+    translations: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(default)]
+    translation: Option<TranslationInfo>,
+}
+
+/// Target-language codes are short ISO-ish tags ("de", "pt-BR") — screened
+/// before they join a CSV form field.
+fn is_lang_code(s: &str) -> bool {
+    (2..=16).contains(&s.len())
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 /// Progress ids are client-generated lowercase hex (a UUID without dashes) —
@@ -430,6 +473,36 @@ async fn post(
     if let Some(s) = opts.separate_bgm {
         form = form.text("separate_bgm", if s { "true" } else { "false" });
     }
+    // T2T targets as a CSV of screened language codes. When present, the
+    // whisper `task` field is never sent (T2T wins over translate-to-EN —
+    // the UI enforces the exclusivity, this is the belt-and-braces).
+    let targets: Vec<&str> = opts
+        .translate_to
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(String::as_str)
+        .filter(|t| is_lang_code(t))
+        .take(8)
+        .collect();
+    if !targets.is_empty() {
+        form = form.text("translate_to", targets.join(","));
+        if let Some(m) = opts.translation_model.as_deref().filter(|m| !m.is_empty()) {
+            form = form.text("translation_model", m.to_string());
+        }
+        if let Some(m) = opts.translation_mode.as_deref().filter(|m| !m.is_empty()) {
+            form = form.text("translation_mode", m.to_string());
+        }
+        if let Some(g) = opts.translation_glossary.as_deref().filter(|g| !g.trim().is_empty()) {
+            form = form.text("translation_glossary", g.to_string());
+        }
+    }
+    if let Some(m) = opts.diarization_model.as_deref().filter(|m| !m.is_empty()) {
+        form = form.text("diarization_model", m.to_string());
+    }
+    if let Some(m) = opts.separation_model.as_deref().filter(|m| !m.is_empty()) {
+        form = form.text("separation_model", m.to_string());
+    }
     if let Some(pid) = opts.progress_id.as_deref() {
         if is_progress_id(pid) {
             form = form.text("progress_id", pid.to_string());
@@ -512,6 +585,9 @@ async fn post(
                 s.speaker = s
                     .speaker
                     .map(|sp| super::bounded_server_text(&sp, SPEAKER_MAX));
+                // Translation values are output (untouched, like `text`);
+                // the language-code keys are identity-adjacent — bound them.
+                s.translations = s.translations.map(bound_translation_keys);
                 s
             })
             .collect(),
@@ -539,7 +615,29 @@ async fn post(
         // would interpolate into a URL path.
         source_media_id: parsed.source_media_id.filter(|s| is_progress_id(s)),
         source_media_expires_at: parsed.source_media_expires_at,
+        translations: parsed.translations.map(bound_translation_keys),
+        translation: parsed.translation.map(|t| TranslationInfo {
+            model: t.model.map(|m| super::bounded_server_text(&m, 128)),
+            targets: t
+                .targets
+                .iter()
+                .take(8)
+                .map(|s| super::bounded_server_text(s, 16))
+                .collect(),
+            source: t.source.map(|s| super::bounded_server_text(&s, 16)),
+            mode: t.mode.map(|m| super::bounded_server_text(&m, 16)),
+        }),
     })
+}
+
+/// Re-key a translations map through the server-string bound (values are the
+/// translated output and stay untouched, like `text`).
+fn bound_translation_keys(
+    m: std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
+    m.into_iter()
+        .map(|(k, v)| (super::bounded_server_text(&k, 16), v))
+        .collect()
 }
 
 /// Server preview of a pasted media link (`POST /v1/audio/url-preview`, full

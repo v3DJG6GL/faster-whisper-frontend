@@ -383,6 +383,21 @@ export interface Capabilities {
   /** Installed yt-dlp version on the server (newer backends, only when the
    *  feature is on) — surfaced in download-failure guidance. */
   yt_dlp_version?: string | null;
+  /** Whether this server runs the T2T translating stage. Like
+   *  url_download_enabled, ABSENT means the feature does not exist —
+   *  translation UI shows only on `=== true` (deliberate opt-in). */
+  translation_enabled?: boolean;
+  /** T2T models the caller may pick per run (allowlist ∪ default ∪ loaded). */
+  translation_models?: ServerModel[];
+  /** Target language codes the default T2T model supports. */
+  translation_languages?: string[];
+  /** The caller's resolved TRANSLATE_TO default (seeds the toggle). */
+  translate_to_default?: string[];
+  /** llama-cpp-python version, only when translation is enabled. */
+  llama_cpp_version?: string | null;
+  /** Diarization pipelines / MSS models the caller may pick per run. */
+  diarization_models?: ServerModel[];
+  separation_models?: ServerModel[];
 }
 
 /** A baseline shown (ghosted) under the decode editor: backend defaults and/or a
@@ -543,6 +558,9 @@ export interface TranscriptSegment {
   text: string;
   /** Diarization label (e.g. "SPEAKER_00") when the server ran the stage. */
   speaker?: string;
+  /** T2T translations of this segment, keyed by target language code, when
+   *  the server ran the translating stage (or a retro-translation merged in). */
+  translations?: Record<string, string>;
 }
 
 /** A word-level timestamp from verbose_json's flat `words` list. */
@@ -564,6 +582,19 @@ export interface TranscribeOptions {
   separateBgm?: boolean;
   /** Route translate to POST /v1/audio/translations (standard servers). */
   useTranslationsEndpoint?: boolean;
+  /** T2T target language codes — the server runs the translating stage after
+   *  diarization. Mutually exclusive with task:"translate" (T2T wins). */
+  translateTo?: string[];
+  /** Per-run T2T model override (gated by the server's allowlist). */
+  translationModel?: string;
+  /** "fluent" (sentence-merged, default) or "faithful" (strictly per-cue). */
+  translationMode?: "fluent" | "faithful";
+  /** Glossary — "source = target" lines injected into the MT prompt. */
+  translationGlossary?: string;
+  /** Per-run diarization pipeline override (server allowlist). */
+  diarizationModel?: string;
+  /** Per-run MSS/UVR model override (server allowlist). */
+  separationModel?: string;
   /** Client-generated hex id for live progress polling (full backend only). */
   progressId?: string;
 }
@@ -621,4 +652,16 @@ export interface BatchResult {
    *  via fetchUrlMedia for local playback) + its advisory unix expiry. */
   sourceMediaId?: string;
   sourceMediaExpiresAt?: number;
+  /** Full translated texts keyed by target language (joined per-segment). */
+  translations?: Record<string, string>;
+  /** Provenance of the translating stage when it ran. */
+  translation?: TranslationInfo;
+}
+
+/** Provenance block of a T2T translation (verbose_json `translation`). */
+export interface TranslationInfo {
+  model?: string;
+  targets: string[];
+  source?: string;
+  mode?: string;
 }

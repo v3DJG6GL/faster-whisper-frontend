@@ -13,10 +13,11 @@ pub mod pipeline;
 pub mod stream;
 pub mod sync;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerModel {
     pub id: String,
+    #[serde(default)]
     pub loaded: bool,
 }
 
@@ -79,6 +80,23 @@ pub struct Capabilities {
     /// — surfaced in download-failure guidance. Bounded in discovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub yt_dlp_version: Option<String>,
+    /// Whether the server runs the T2T translating stage. Shown only on
+    /// `Some(true)` — absence means the feature does not exist (url_download
+    /// pattern). The lists below are bounded in discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation_models: Option<Vec<ServerModel>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation_languages: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translate_to_default: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llama_cpp_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diarization_models: Option<Vec<ServerModel>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub separation_models: Option<Vec<ServerModel>>,
 }
 
 /// A single override-profile's decode-relevant values + locked client keys,
