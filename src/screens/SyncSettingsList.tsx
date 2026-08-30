@@ -6,26 +6,24 @@
 // value changed from default OR whose sync switch is off) without expanding —
 // group headers always stay visible so the per-group masters remain reachable.
 //
-// Reset tiers: hover ↺ / row menu (single setting, instant), group menu
+// Reset tiers: hover ↺ / row menu (single switch, instant), group menu
 // ("Reset group"), and a subdued "Restore all defaults…" with an inline
-// confirm + Undo toast. Resets flow through the normal store setters →
-// debounced save → sync push, deliberately: a reset IS a settings change.
+// confirm + Undo toast. Resets restore the SYNC SWITCHES to their default
+// map (on for everything except machine-specific settings) — they never
+// touch the settings' values, and like all sync switches they are
+// per-device, so a reset does not sync anywhere.
 
 import { Fragment, useMemo, useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
-import type { AppSettings } from "@/lib/types";
 import {
+  DEFAULT_SETTING_SYNC,
   MANIFEST,
   SYNC_GROUPS,
   SYNC_GROUP_LABEL,
   completeGates,
-  isChanged,
-  patchFor,
   settingsOfGroup,
-  snapshotOf,
-  type ResetPatch,
   type SettingDef,
   type SettingId,
   type SyncGroup,
@@ -66,23 +64,21 @@ const DEFS: readonly SettingDef[] = MANIFEST;
 export function SyncSettingsList({ enabled }: { enabled: boolean }) {
   const settings = useApp((s) => s.settings);
   const updateSync = useApp((s) => s.updateSync);
-  const updateGeneral = useApp((s) => s.updateGeneral);
-  const updateRecording = useApp((s) => s.updateRecording);
-  const updateLogging = useApp((s) => s.updateLogging);
-  const updateSettings = useApp((s) => s.updateSettings);
-  /** Transcribe settings ride the opaque settings.transcribe blob (merge-patch). */
-  const updateTranscribe = (patch: Partial<NonNullable<AppSettings["transcribe"]>>) =>
-    updateSettings({ transcribe: { ...settings.transcribe, ...patch } });
 
   const gates = useMemo(
     () => completeGates(settings.sync?.sub, settings.sync?.categories),
     [settings.sync],
   );
+  // "Changed" on this screen means the SWITCH differs from its default —
+  // not the setting's value; this list configures sync, not the settings.
   const changed = useMemo(() => {
     const set = new Set<SettingId>();
-    for (const d of DEFS) if (isChanged(settings, d)) set.add(d.id as SettingId);
+    for (const d of DEFS) {
+      const id = d.id as SettingId;
+      if (gates[id] !== DEFAULT_SETTING_SYNC[id]) set.add(id);
+    }
     return set;
-  }, [settings]);
+  }, [gates]);
 
   const [ui, setUi] = useState<UiState>(loadUiState);
   const patchUi = (p: Partial<UiState>) =>
@@ -92,7 +88,10 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
       return next;
     });
 
-  const [toast, setToast] = useState<{ text: string; undo?: ResetPatch } | null>(null);
+  const [toast, setToast] = useState<{
+    text: string;
+    undo?: Partial<Record<SettingId, boolean>>;
+  } | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
 
   function setGates(patch: Partial<Record<SettingId, boolean>>) {
@@ -102,17 +101,16 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
     updateSync({ sub: { ...next, recordingsDir: next.audioFolder } });
   }
 
-  function applyPatch(patch: ResetPatch) {
-    if (patch.general) updateGeneral(patch.general);
-    if (patch.recording) updateRecording(patch.recording);
-    if (patch.transcribe) updateTranscribe(patch.transcribe);
-    if (patch.logging) updateLogging(patch.logging);
-    if (patch.settings) updateSettings(patch.settings);
-  }
-
+  /** Reset the given switches to their DEFAULT position (not to off). */
   function resetDefs(defs: readonly SettingDef[], label: string) {
-    const undo = snapshotOf(settings, defs);
-    applyPatch(patchFor(defs));
+    const undo = Object.fromEntries(
+      defs.map((d) => [d.id, gates[d.id as SettingId]]),
+    ) as Partial<Record<SettingId, boolean>>;
+    setGates(
+      Object.fromEntries(
+        defs.map((d) => [d.id, DEFAULT_SETTING_SYNC[d.id as SettingId]]),
+      ) as Partial<Record<SettingId, boolean>>,
+    );
     setToast({ text: label, undo });
   }
 
@@ -145,9 +143,10 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
         />
       </div>
 
-      {!allOn && (
-        <>
-          <div className="flex items-center gap-4 pb-2 text-[12px]">
+      {/* The list always renders — the master toggle sets switches, it never
+          hides them; only Expand/Collapse and the filter control visibility. */}
+      <>
+        <div className="flex items-center gap-4 pb-2 text-[12px]">
             <button
               type="button"
               className="ring-signal font-semibold text-accent hover:underline disabled:text-faint disabled:no-underline"
@@ -193,9 +192,9 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
               onToggleExpand={() => patchUi({ expanded: { [group]: !ui.expanded[group] } })}
               onGate={(id, v) => setGates({ [id]: v } as Partial<Record<SettingId, boolean>>)}
               onGateMany={(patch) => setGates(patch)}
-              onResetSetting={(def) => resetDefs([def], `Reset “${def.label}” to default`)}
+              onResetSetting={(def) => resetDefs([def], `“${def.label}” sync switch reset to default`)}
               onResetGroup={(defs) =>
-                resetDefs(defs, `Reset ${defs.length} ${defs.length === 1 ? "setting" : "settings"} in ${SYNC_GROUP_LABEL[group]}`)
+                resetDefs(defs, `${defs.length} sync ${defs.length === 1 ? "switch" : "switches"} in ${SYNC_GROUP_LABEL[group]} reset to default`)
               }
             />
           ))}
@@ -204,9 +203,9 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
             {confirmAll ? (
               <>
                 <span className="text-[12px] text-warn">
-                  Reset {totalChanged} changed {totalChanged === 1 ? "setting" : "settings"} to
-                  factory defaults? Servers, profiles, dictionary and app rules are untouched —
-                  and the reset syncs to your other devices.
+                  Reset {totalChanged} sync {totalChanged === 1 ? "switch" : "switches"} to
+                  default? Your settings&rsquo; values stay untouched — this only changes what
+                  this device syncs, and applies to this device only.
                 </span>
                 <button
                   type="button"
@@ -215,7 +214,7 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
                     setConfirmAll(false);
                     resetDefs(
                       DEFS.filter((d) => changed.has(d.id as SettingId)),
-                      `Reset ${totalChanged} ${totalChanged === 1 ? "setting" : "settings"} to defaults`,
+                      `${totalChanged} sync ${totalChanged === 1 ? "switch" : "switches"} reset to default`,
                     );
                   }}
                 >
@@ -240,8 +239,7 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
               </button>
             )}
           </div>
-        </>
-      )}
+      </>
 
       {toast && (
         <Toast
@@ -249,7 +247,7 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
           onAction={
             toast.undo
               ? () => {
-                  applyPatch(toast.undo!);
+                  setGates(toast.undo!);
                   setToast(null);
                 }
               : undefined
