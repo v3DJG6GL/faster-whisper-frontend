@@ -125,6 +125,8 @@ export const TRANSCRIPTION_FIELDS = [
   "minSpeakers",
   "maxSpeakers",
   "translate",
+  "translateTo",
+  "translationModel",
   "separateBgm",
   "exportFormat",
   "wordTimestamps",

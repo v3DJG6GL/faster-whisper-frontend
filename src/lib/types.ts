@@ -265,6 +265,14 @@ export interface TranscribeSettings {
   minSpeakers?: number;
   maxSpeakers?: number;
   translate?: boolean;
+  /** T2T target language codes (the translating stage). Mutually exclusive
+   *  with `translate` — when both survive a sync race, translateTo wins. */
+  translateTo?: string[];
+  /** Sticky T2T model pick; "" = the server's default translation model. */
+  translationModel?: string;
+  /** Viewer track visibility ("orig" + language codes). LOCAL view state —
+   *  never synced, like layout. Absent = all tracks visible. */
+  viewTracks?: string[];
   separateBgm?: boolean;
   exportFormat?: "txt" | "srt" | "vtt" | "lrc" | "json";
   /** Legacy export color mode — superseded by the three display toggles

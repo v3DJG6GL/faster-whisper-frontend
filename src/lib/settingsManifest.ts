@@ -182,6 +182,9 @@ export const MANIFEST = [
     fields: [t("speakerMode"), t("numSpeakers"), t("minSpeakers"), t("maxSpeakers")] },
   { id: "translate", label: "Translate to English", group: "transcribeDefaults", category: "transcription",
     fields: [t("translate")] },
+  { id: "translateTo", label: "Translation", group: "transcribeDefaults", category: "transcription",
+    desc: "T2T target languages and the model pick.",
+    fields: [t("translateTo"), t("translationModel")] },
   { id: "separateBgm", label: "Music source separation (MSS)", group: "transcribeDefaults", category: "transcription",
     fields: [t("separateBgm")] },
   { id: "showTimestamps", label: "Timestamps", group: "transcribeDefaults", category: "transcription",
@@ -364,6 +367,9 @@ export const TRANSCRIBE_COVERAGE = {
   minSpeakers: "speakers",
   maxSpeakers: "speakers",
   translate: "translate",
+  translateTo: "translateTo",
+  translationModel: "translateTo",
+  viewTracks: LOCAL, // viewer track visibility — view state, like layout
   separateBgm: "separateBgm",
   exportFormat: "exportFormat",
   speakerColorMode: LOCAL, // legacy, superseded by the display toggles

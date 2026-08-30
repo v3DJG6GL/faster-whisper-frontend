@@ -895,9 +895,17 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
   }
   // The sub-toggle-gated picks: free strings, bounded. backendId is only a
   // reference — the Transcribe screen ignores ids that don't resolve.
-  for (const k of ["backendId", "model", "language"]) {
+  for (const k of ["backendId", "model", "language", "translationModel"]) {
     const str = ownProp(v, k);
     if (typeof str === "string" && str.length <= 256) out[k] = str;
+  }
+  // T2T targets: the blob's only array-of-strings field — clamp shape hard
+  // (8 short codes max) so a hostile peer can't balloon the settings blob.
+  const tt = ownProp(v, "translateTo");
+  if (Array.isArray(tt)) {
+    out.translateTo = tt
+      .filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 16)
+      .slice(0, 8);
   }
   return out as Partial<TranscribeSettings>;
 }
