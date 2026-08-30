@@ -27,6 +27,7 @@ import {
   beginChunk, foldPollFailure, foldTranslatePoll, newTranslateRun,
   runChunkedTranslate, type TranslateRunUi,
 } from "@/lib/retroTranslate";
+import { transportErrorDoorway } from "@/lib/errors";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
 import { fmtBytes } from "@/lib/format";
@@ -879,21 +880,6 @@ export function TranscriptViewer({
     [],
   );
 
-  /** Truthful doorway copy from the transport's classified error string —
-   *  cause + backend name + one fix, instead of the old guessing toast. */
-  const translateDoorway = (msg: string, backendName: string): string => {
-    if (msg.includes("Could not connect")) {
-      return `Could not reach ${backendName} — nothing was started. Is the server running and the URL correct?`;
-    }
-    if (msg.includes("Timed out")) {
-      return `Lost contact with ${backendName} while translating — the log has the details.`;
-    }
-    if (msg.includes("HTTP 403") || /disabled/i.test(msg)) {
-      return `Translation is turned off on ${backendName} — enable it there, or pick another backend.`;
-    }
-    return `Translation failed on ${backendName} — the log has the details.`;
-  };
-
   /** Translate the given segment indexes into `targets` in 400-segment
    *  chunks, merging each chunk back into the record as it lands (track
    *  chips appear on the first merge). Uses the record's backend (else the
@@ -977,7 +963,7 @@ export function TranscriptViewer({
       console.error("re-translate failed:", e);
       setTrRun(null);
       if (!ctl.cancelled) {
-        useApp.getState().setLogsDoorway(translateDoorway(String(e), backend.name));
+        useApp.getState().setLogsDoorway(transportErrorDoorway("translate", e, backend.name));
       }
     } finally {
       window.clearInterval(trPollTimer.current);

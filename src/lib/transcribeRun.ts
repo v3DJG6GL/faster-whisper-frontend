@@ -12,6 +12,7 @@ import {
   getTranscribeProgress, readTextFile, saveTranscriptMedia, transcribeFile, transcribeUrl,
   translateText,
 } from "./api";
+import { transportErrorDoorway } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText } from "./subtitleImport";
 import { useApp } from "./store";
@@ -1016,8 +1017,15 @@ async function pump(
         if (epoch !== get().epoch) return;
         patchItem(next.path, { status: "failed", error: String(e) });
         recordRun(next.path, ctx, options, { status: "failed", error: String(e) });
-        // Failure doorway banner → Logs screen (pre-filtered to Warn+).
-        useApp.getState().setLogsDoorway("Transcription failed — the log has the details.");
+        // Failure doorway banner → Logs screen (pre-filtered to Warn+). The
+        // queue item keeps the raw error; the doorway gets the truthful
+        // template (cause + backend + one fix). A text source only ran the
+        // translate stage, so it toasts as a translation failure.
+        const backendName =
+          useApp.getState().backends.find((b) => b.id === ctx.backendId)?.name ?? "the backend";
+        useApp
+          .getState()
+          .setLogsDoorway(transportErrorDoorway(isText ? "translate" : "transcribe", e, backendName));
       } finally {
         activeCancel = null;
         if (poller !== undefined) window.clearInterval(poller);

@@ -289,9 +289,12 @@ interface AppState {
   // write/conflict failure ("Couldn't save…"), "load" = a startup load-recovery / load-failure notice
   // (which is self-contained and must NOT show the save-failure framing). null when saveError is null.
   saveErrorKind: "save" | "load" | null;
-  /** Failure-doorway banner text ("Transcription failed — View logs"); null = hidden. */
-  logsDoorway: string | null;
-  setLogsDoorway: (msg: string | null) => void;
+  /** Failure-doorway banner ("Transcription failed — View logs"); null = hidden.
+   *  `showLogs: false` = the message already says everything the log knows,
+   *  so the banner drops its "View logs" affordance (truthful-toast contract). */
+  logsDoorway: { msg: string; showLogs: boolean } | null;
+  /** Plain strings keep the legacy contract (View logs shown). */
+  setLogsDoorway: (msg: string | { msg: string; showLogs: boolean } | null) => void;
 
   /** P30 runtime sync status (never persisted): what the Sync tab's status
    *  line shows. `syncUnsupported` = the sync backend 404'd the endpoint
@@ -441,7 +444,8 @@ export const useApp = create<AppState>((set) => ({
   saveError: null,
   saveErrorKind: null,
   logsDoorway: null,
-  setLogsDoorway: (msg) => set({ logsDoorway: msg }),
+  setLogsDoorway: (msg) =>
+    set({ logsDoorway: typeof msg === "string" ? { msg, showLogs: true } : msg }),
 
   syncStatus: "idle",
   syncError: null,

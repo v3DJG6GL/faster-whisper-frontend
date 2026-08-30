@@ -22,6 +22,7 @@
 // baseline so the next utterance starts fresh, and optionally type a separator.
 
 import { useApp } from "./store";
+import { shortCause } from "./errors";
 import { attachRecordingPath, recordDictation } from "./transcriptHistory";
 import { effectiveServerUrl } from "./backends";
 import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
@@ -259,7 +260,11 @@ async function maybeTranslate(text: string, cfg: InsertCfg | null): Promise<stri
     console.error("dictation translation failed:", e);
     if (insertCfg === cfg && !sessionTranslateWarned) {
       sessionTranslateWarned = true;
-      useApp.getState().setLogsDoorway("Translation failed — inserted the original text.");
+      // Keep the dictation-specific promise ("your words still landed") but
+      // name the cause instead of leaving it a mystery (truthful-toast rule).
+      useApp
+        .getState()
+        .setLogsDoorway(`Translation failed (${shortCause(e)}) — inserted the original text.`);
     }
     return text;
   }

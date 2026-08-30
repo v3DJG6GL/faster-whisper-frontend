@@ -127,10 +127,10 @@ function SaveErrorBanner() {
 // it when both are up, since it sits earlier in the flex column). Must live
 // inside <HashRouter> for useNavigate.
 function LogsDoorwayBanner() {
-  const msg = useApp((s) => s.logsDoorway);
+  const doorway = useApp((s) => s.logsDoorway);
   const setLogsDoorway = useApp((s) => s.setLogsDoorway);
   const navigate = useNavigate();
-  if (!msg) return null;
+  if (!doorway) return null;
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-14 z-50 flex justify-center px-4 pb-4">
       <div
@@ -138,18 +138,22 @@ function LogsDoorwayBanner() {
         className="pointer-events-auto flex max-w-xl items-center gap-2.5 rounded-xl border border-warn/40 bg-warn/10 px-3.5 py-2.5 text-[12.5px] text-warn shadow-lg backdrop-blur-sm"
       >
         <AlertTriangle className="h-4 w-4 shrink-0" />
-        <span className="flex-1">{msg}</span>
-        <button
-          type="button"
-          onClick={() => {
-            setLogsDoorway(null);
-            openLogsPrefiltered("warn");
-            navigate("/logs");
-          }}
-          className="shrink-0 whitespace-nowrap font-semibold text-accent hover:underline"
-        >
-          View logs
-        </button>
+        <span className="flex-1">{doorway.msg}</span>
+        {/* Only when the log actually holds MORE than the message says —
+            the truthful-toast contract (errors.ts sets showLogs). */}
+        {doorway.showLogs && (
+          <button
+            type="button"
+            onClick={() => {
+              setLogsDoorway(null);
+              openLogsPrefiltered("warn");
+              navigate("/logs");
+            }}
+            className="shrink-0 whitespace-nowrap font-semibold text-accent hover:underline"
+          >
+            View logs
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setLogsDoorway(null)}
