@@ -46,6 +46,8 @@ export interface TranscriptRecord {
   speakerColors?: Record<string, number>;
   edits?: Record<number, string>;
   speakerEdits?: Record<number, string>;
+  /** Segment indexes whose translations went stale (original edited). */
+  translationsStale?: Record<number, true>;
   // ── dictation-only metadata ──
   /** Focused app id at session start (also the filter facet). */
   appId?: string;

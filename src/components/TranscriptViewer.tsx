@@ -15,13 +15,15 @@ import {
 } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
+import { effectiveServerUrl } from "@/lib/backends";
 import { Button } from "@/components/ui";
 import { fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import {
   decodeMediaFile, openSourceUrl, pickExportPath, readMediaFile, saveTextFile, isTauri,
+  translateText,
 } from "@/lib/api";
 import {
-  clearEdits, setRename, setSegmentEdit, setSegmentSpeaker,
+  clearEdits, mergeSegmentTranslations, setRename, setSegmentEdit, setSegmentSpeaker,
   setSpeakerColor as setSpeakerColorAction, useTranscribeRun,
 } from "@/lib/transcribeRun";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
@@ -32,6 +34,7 @@ import {
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
+import { useTranscriptHistory } from "@/lib/transcriptHistory";
 import type { BatchResult, TranscriptWord } from "@/lib/types";
 
 function basename(path: string): string {
@@ -123,6 +126,7 @@ type EffSegment = {
 const SegmentRow = memo(function SegmentRow({
   seg, i, isActive, passed, activeWordIdx, passedWordIdx, range, words, showTs,
   showNames, colorize, editMode, reassignOpen, speakers, canSeek, origText,
+  translations, visLangsKey, origVisible, origLang, stale,
   colorOf, displayName, seekTo, onToggleReassign, onReassign, onCommitEdit,
 }: {
   seg: EffSegment;
@@ -144,6 +148,15 @@ const SegmentRow = memo(function SegmentRow({
   speakers: string[];
   canSeek: boolean;
   origText: string;
+  /** This segment's translations (server result — corrections don't touch them). */
+  translations: Record<string, string> | undefined;
+  /** Visible translated tracks as a joined CSV — a STRING so the memo's
+   *  shallow compare holds during playback re-renders. */
+  visLangsKey: string;
+  origVisible: boolean;
+  origLang: string;
+  /** The original was edited after MT ran — the translated lines are stale. */
+  stale: boolean;
   colorOf: (label: string) => string;
   displayName: (label: string) => string;
   seekTo: (t: number) => void;
@@ -154,8 +167,9 @@ const SegmentRow = memo(function SegmentRow({
   // Word spans only on the ACTIVE segment — keeps the DOM light. Edited
   // segments stay karaoke too: their words are re-aligned to the corrected
   // text (wordAlign), so the timings still match what's on screen.
-  const karaoke = isActive && range && range[0] < range[1];
+  const karaoke = isActive && origVisible && range && range[0] < range[1];
   const lineColor = colorize && seg.speaker ? { color: colorOf(seg.speaker) } : undefined;
+  const visLangs = visLangsKey ? visLangsKey.split(",") : [];
   return (
     <div
       id={`seg-row-${i}`}
@@ -227,6 +241,7 @@ const SegmentRow = memo(function SegmentRow({
           </div>
         </>
       )}
+      <div className="min-w-0 flex-1">
       {editMode ? (
         <span
           contentEditable
@@ -249,7 +264,8 @@ const SegmentRow = memo(function SegmentRow({
           {seg.text.trim()}
         </span>
       ) : karaoke ? (
-        <span className="min-w-0 flex-1 whitespace-pre-wrap" style={lineColor}>
+        <span className="block min-w-0 whitespace-pre-wrap" style={lineColor}>
+          {visLangs.length > 0 && <LangTag code={origLang} orig />}
           {words.slice(range[0], range[1]).map((w, k) => {
             const wi = range[0] + k;
             const current = wi === activeWordIdx;
@@ -276,21 +292,61 @@ const SegmentRow = memo(function SegmentRow({
             <span className="ml-2 align-middle font-mono text-[10.5px] text-ok">· edited</span>
           )}
         </span>
-      ) : (
+      ) : origVisible ? (
         <span
-          className="min-w-0 flex-1 whitespace-pre-wrap"
+          className="block min-w-0 whitespace-pre-wrap"
           style={lineColor}
           onClick={canSeek ? () => seekTo(seg.start) : undefined}
         >
+          {visLangs.length > 0 && <LangTag code={origLang} orig />}
           {stripControlChars(seg.text.trim())}
           {seg.edited && (
             <span className="ml-2 align-middle font-mono text-[10.5px] text-ok">· edited</span>
           )}
         </span>
-      )}
+      ) : null}
+      {visLangs.map((lang) => {
+        const tr = translations?.[lang];
+        if (!tr?.trim()) return null;
+        return (
+          <span
+            key={lang}
+            className={cn(
+              "block min-w-0 whitespace-pre-wrap text-[color:var(--c-translate)]",
+              stale && "opacity-50",
+            )}
+            onClick={!origVisible && canSeek ? () => seekTo(seg.start) : undefined}
+          >
+            <LangTag code={lang} />
+            {stale ? <s>{stripControlChars(tr.trim())}</s> : stripControlChars(tr.trim())}
+            {stale && (
+              <span className="ml-2 align-middle font-mono text-[10.5px] not-italic text-warn">
+                · stale — re-translate in Edit
+              </span>
+            )}
+          </span>
+        );
+      })}
+      </div>
     </div>
   );
 });
+
+/** Leading language tag on a track line (original amber-neutral, MT teal). */
+function LangTag({ code, orig }: { code: string; orig?: boolean }) {
+  return (
+    <span
+      className={cn(
+        "mr-1.5 inline-block translate-y-[-1px] rounded border px-1 font-mono text-[9.5px] uppercase tracking-wider",
+        orig
+          ? "border-line-strong text-dim"
+          : "border-[color:var(--c-translate)]/40 text-[color:var(--c-translate)]",
+      )}
+    >
+      {code}
+    </span>
+  );
+}
 
 export function TranscriptViewer({
   result,
@@ -330,6 +386,7 @@ export function TranscriptViewer({
   const speakerColors = useTranscribeRun((s) => s.speakerColors);
   const edits = useTranscribeRun((s) => s.edits);
   const speakerEdits = useTranscribeRun((s) => s.speakerEdits);
+  const translationsStaleAll = useTranscribeRun((s) => s.translationsStale);
 
   const [copied, setCopied] = useState(false);
   // Reset per file, so a new (possibly huge) transcript starts collapsed again.
@@ -358,6 +415,11 @@ export function TranscriptViewer({
     const legacy = settings.transcribe?.speakerColorMode;
     return settings.transcribe?.colorizeSpeakers ?? (legacy ? legacy !== "off" : true);
   });
+  // Visible language tracks ("orig" + target codes). Empty/absent = all.
+  // LOCAL view state (like layout) — persisted but never synced.
+  const [viewTracks, setViewTracks] = useState<string[]>(
+    () => settings.transcribe?.viewTracks ?? [],
+  );
   // Pre-export corrections mode.
   const [editMode, setEditMode] = useState(false);
   const [reassignRow, setReassignRow] = useState<number | null>(null);
@@ -501,7 +563,18 @@ export function TranscriptViewer({
   // surface renders, copies and exports.
   const fileEdits = useMemo(() => edits[okey] ?? {}, [edits, okey]);
   const fileSpkEdits = useMemo(() => speakerEdits[okey] ?? {}, [speakerEdits, okey]);
+  const fileStale = useMemo(() => translationsStaleAll[okey] ?? {}, [translationsStaleAll, okey]);
+  const staleCount = Object.keys(fileStale).length;
   const editCount = Object.keys(fileEdits).length + Object.keys(fileSpkEdits).length;
+  // Translated tracks present on this result, in target order.
+  const langs = useMemo(() => {
+    const seen: string[] = [];
+    for (const t of result.translation?.targets ?? []) if (!seen.includes(t)) seen.push(t);
+    for (const seg of result.segments ?? []) {
+      for (const k of Object.keys(seg.translations ?? {})) if (!seen.includes(k)) seen.push(k);
+    }
+    return seen;
+  }, [result]);
   const effSegments = useMemo(
     (): EffSegment[] =>
       (result.segments ?? []).map((seg, i) => ({
@@ -541,14 +614,89 @@ export function TranscriptViewer({
     };
   };
 
+  // ── language tracks (which lines each segment row renders) ───────────────
+  const allTracks = useMemo(() => ["orig", ...langs], [langs]);
+  const visibleTracks = useMemo(() => {
+    const pick = viewTracks.length ? allTracks.filter((t) => viewTracks.includes(t)) : allTracks;
+    return pick.length ? pick : allTracks; // never zero tracks
+  }, [allTracks, viewTracks]);
+  // Editing needs the original on screen — Edit mode forces it visible.
+  const origVisible = visibleTracks.includes("orig") || editMode;
+  const visLangs = useMemo(() => visibleTracks.filter((t) => t !== "orig"), [visibleTracks]);
+  const visLangsKey = visLangs.join(","); // stable string for the row memo
+  const toggleTrack = (t: string) => {
+    const cur = visibleTracks;
+    const next = cur.includes(t) ? cur.filter((x) => x !== t) : allTracks.filter((x) => cur.includes(x) || x === t);
+    if (!next.length) return; // the last chip can't be untoggled
+    setViewTracks(next);
+    persistOptions({ viewTracks: next });
+  };
+
+  // ── re-translate / retro-translate ───────────────────────────────────────
+  const backends = useApp((s) => s.backends);
+  const historyRecords = useTranscriptHistory((s) => s.records);
+  const historyBackendId = useMemo(
+    () => historyRecords.find((r) => r.id === okey)?.backendId,
+    [historyRecords, okey],
+  );
+  const [translating, setTranslating] = useState(false);
+  /** Translate the given segment indexes into `targets` and merge back into
+   *  the record. Uses the record's backend (else the first) and its stored
+   *  translation defaults. */
+  const runTranslate = async (indexes: number[], targets: string[]) => {
+    if (!indexes.length || !targets.length || translating) return;
+    const backend = backends.find((b) => b.id === historyBackendId) ?? backends[0];
+    if (!backend) return;
+    setTranslating(true);
+    try {
+      const texts = indexes.map((i) => (fileEdits[i] ?? result.segments?.[i]?.text ?? "").trim());
+      const trOv = backend.translationOverrides;
+      const r = await translateText({
+        serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+        backendId: backend.id,
+        texts,
+        targets,
+        source: result.language ?? null,
+        model: trOv?.model ?? null,
+        mode: trOv?.mode ?? null,
+        glossary: trOv?.glossary ?? null,
+        contextSegments: trOv?.contextSegments ?? null,
+      });
+      const patch: Record<number, Record<string, string>> = {};
+      indexes.forEach((segIdx, k) => {
+        const tr = r.results[k];
+        if (tr && Object.keys(tr).length) patch[segIdx] = tr;
+      });
+      if (Object.keys(patch).length) {
+        mergeSegmentTranslations(okey, patch, {
+          model: r.model,
+          targets,
+          source: r.source ?? result.language,
+        });
+      }
+    } catch (e) {
+      console.error("re-translate failed:", e);
+      useApp.getState().setLogsDoorway("Translation failed — the server may be unreachable.");
+    } finally {
+      setTranslating(false);
+    }
+  };
+
   const copyText = (): string => {
     if (!effSegments.length) return result.text;
     return effSegments
-      .map((seg) => {
+      .map((seg, i) => {
         const ts = showTs ? `[${fmtTimestamp(seg.start)}] ` : "";
         const who = showNames && seg.speaker ? `${displayName(seg.speaker)}: ` : "";
-        return `${ts}${who}${seg.text.trim()}`;
+        const lines: string[] = [];
+        if (origVisible) lines.push(`${ts}${who}${seg.text.trim()}`);
+        for (const lang of visLangs) {
+          const tr = result.segments?.[i]?.translations?.[lang];
+          if (tr?.trim()) lines.push(`${origVisible ? "  " : ts}${who}${tr.trim()}`);
+        }
+        return lines.join("\n");
       })
+      .filter(Boolean)
       .join("\n");
   };
 
@@ -1423,6 +1571,22 @@ export function TranscriptViewer({
               : "click a sentence to correct it · click a speaker chip to reassign"}
           </span>
           <span className="flex-1" />
+          {staleCount > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={translating}
+              title="Corrected segments still carry the OLD text's translations — re-translate just those"
+              onClick={() => {
+                void runTranslate(
+                  Object.keys(fileStale).map(Number),
+                  langs.length ? langs : [],
+                );
+              }}
+            >
+              {translating ? "Translating…" : `↻ Re-translate ${staleCount} stale`}
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -1576,6 +1740,71 @@ export function TranscriptViewer({
         <div className="mb-3 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2 text-[12px] text-dim">
           No audio is stored for this link — run it again to restore playback.
           The transcript and edits still work.
+        </div>
+      )}
+
+      {hasSegments && langs.length > 0 && (
+        <div className="mb-2.5 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            aria-pressed={visibleTracks.includes("orig")}
+            onClick={() => toggleTrack("orig")}
+            className={cn(
+              "ring-signal inline-flex h-7 items-center gap-1 rounded-pill border px-3 font-mono text-[11.5px] font-medium transition-colors",
+              visibleTracks.includes("orig")
+                ? "border-accent/35 bg-accent-soft text-accent"
+                : "border-line bg-surface-2 text-dim hover:text-text",
+            )}
+          >
+            {visibleTracks.includes("orig") ? "✓ " : ""}
+            {(result.language ?? "??").toUpperCase()} · original
+          </button>
+          {langs.map((lang) => (
+            <button
+              key={lang}
+              type="button"
+              aria-pressed={visibleTracks.includes(lang)}
+              onClick={() => toggleTrack(lang)}
+              className={cn(
+                "ring-signal inline-flex h-7 items-center gap-1 rounded-pill border px-3 font-mono text-[11.5px] font-medium transition-colors",
+                visibleTracks.includes(lang)
+                  ? "border-[color:var(--c-translate)]/45 text-[color:var(--c-translate)]"
+                  : "border-line bg-surface-2 text-dim hover:text-text",
+              )}
+            >
+              {visibleTracks.includes(lang) ? "✓ " : ""}
+              {lang.toUpperCase()}
+            </button>
+          ))}
+          {result.translation?.model && (
+            <span className="text-[11px] text-faint">
+              MT · {safeDisplayText(result.translation.model.split("/").pop() ?? "", 40)}
+            </span>
+          )}
+        </div>
+      )}
+
+      {hasSegments && langs.length === 0 && isTauri && (
+        <div className="mb-2.5">
+          <button
+            type="button"
+            disabled={translating}
+            onClick={() => {
+              // Retro-translate: the backend's default targets, else English.
+              const backend = backends.find((b) => b.id === historyBackendId) ?? backends[0];
+              const targets = backend?.translationOverrides?.translateTo?.length
+                ? backend.translationOverrides.translateTo
+                : ["en"];
+              void runTranslate(
+                (result.segments ?? []).map((_, i) => i),
+                targets.filter((t) => t !== result.language),
+              );
+            }}
+            className="ring-signal inline-flex h-7 items-center gap-1.5 rounded-pill border border-dashed border-line-strong px-3 text-[12px] text-dim hover:text-text disabled:opacity-50"
+            title="Translate this transcript (server-side MT)"
+          >
+            {translating ? "Translating…" : "Translate"}
+          </button>
         </div>
       )}
 
@@ -1909,6 +2138,11 @@ export function TranscriptViewer({
                 speakers={speakers}
                 canSeek={canSeek}
                 origText={result.segments?.[i]?.text ?? ""}
+                translations={result.segments?.[i]?.translations}
+                visLangsKey={visLangsKey}
+                origVisible={origVisible}
+                origLang={result.language ?? "??"}
+                stale={!!fileStale[i]}
                 colorOf={colorOf}
                 displayName={displayName}
                 seekTo={seekTo}

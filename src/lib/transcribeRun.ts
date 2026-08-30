@@ -337,6 +337,9 @@ interface TranscribeRunState {
    *  Copy and every export. */
   edits: Record<string, Record<number, string>>;
   speakerEdits: Record<string, Record<number, string>>;
+  /** Per-file segment indexes whose translations went stale (the ORIGINAL
+   *  text was edited after the MT ran). Cleared per index by re-translate. */
+  translationsStale: Record<string, Record<number, true>>;
   /** Link metadata by URL key (title/duration/uploader from the preview) —
    *  labels queue rows and survives resetForInputChange (re-adding the same
    *  link keeps its name). */
@@ -375,6 +378,7 @@ export const useTranscribeRun = create<TranscribeRunState>(() => ({
   speakerColors: {},
   edits: {},
   speakerEdits: {},
+  translationsStale: {},
   urlMeta: {},
   lastOptions: undefined,
   lastOverrides: {},
@@ -504,6 +508,7 @@ function schedulePersistEdits(key: string) {
       speakerColors: s.speakerColors[key],
       edits: s.edits[key],
       speakerEdits: s.speakerEdits[key],
+      translationsStale: s.translationsStale[key],
     };
     registerRecord(updated);
     upsertRecord(updated);
@@ -639,6 +644,7 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
     speakerColors: { ...s.speakerColors, [rec.id]: rec.speakerColors ?? {} },
     edits: { ...s.edits, [rec.id]: rec.edits ?? {} },
     speakerEdits: { ...s.speakerEdits, [rec.id]: rec.speakerEdits ?? {} },
+    translationsStale: { ...s.translationsStale, [rec.id]: rec.translationsStale ?? {} },
   }));
   return true;
 }
@@ -666,7 +672,18 @@ export function setSegmentEdit(key: string, index: number, text: string | null) 
     const file = { ...s.edits[key] };
     if (text === null) delete file[index];
     else file[index] = text;
-    return { edits: { ...s.edits, [key]: file } };
+    // Editing the ORIGINAL text marks this segment's translations stale (they
+    // translated the old text); reverting the edit clears the mark.
+    const rec = recordById[key] ?? historyByPath[key];
+    const hasTr = !!rec?.result?.segments?.[index]?.translations;
+    let translationsStale = s.translationsStale;
+    if (hasTr) {
+      const stale = { ...s.translationsStale[key] };
+      if (text === null) delete stale[index];
+      else stale[index] = true;
+      translationsStale = { ...s.translationsStale, [key]: stale };
+    }
+    return { edits: { ...s.edits, [key]: file }, translationsStale };
   });
   schedulePersistEdits(key);
 }
@@ -687,11 +704,57 @@ export function clearEdits(key: string) {
   set((s) => {
     const edits = { ...s.edits };
     const speakerEdits = { ...s.speakerEdits };
+    const translationsStale = { ...s.translationsStale };
     delete edits[key];
     delete speakerEdits[key];
-    return { edits, speakerEdits };
+    // Discarding the corrections restores the text the MT translated.
+    delete translationsStale[key];
+    return { edits, speakerEdits, translationsStale };
   });
   schedulePersistEdits(key);
+}
+
+/** Merge fresh per-segment translations into a record (re-translate /
+ *  retro-translate): updates the persisted record DIRECTLY (not via the
+ *  debounced schedulePersistEdits — its single timer handle could drop a
+ *  pending write for another key), patches the open queue item so the viewer
+ *  re-renders, and clears the merged indexes' stale marks. */
+export function mergeSegmentTranslations(
+  key: string,
+  patch: Record<number, Record<string, string>>,
+  provenance?: { model?: string; targets?: string[]; source?: string; mode?: string },
+) {
+  const rec = recordById[key] ?? historyByPath[key];
+  if (!rec?.result?.segments) return;
+  const segments = rec.result.segments.map((seg, i) =>
+    patch[i] ? { ...seg, translations: { ...seg.translations, ...patch[i] } } : seg,
+  );
+  const targets = Array.from(
+    new Set([...(rec.result.translation?.targets ?? []), ...(provenance?.targets ?? [])]),
+  );
+  const updated: TranscriptRecord = {
+    ...rec,
+    result: {
+      ...rec.result,
+      segments,
+      translation: {
+        ...rec.result.translation,
+        model: provenance?.model ?? rec.result.translation?.model,
+        source: provenance?.source ?? rec.result.translation?.source ?? rec.result.language,
+        mode: provenance?.mode ?? rec.result.translation?.mode,
+        targets,
+      },
+    },
+  };
+  set((s) => {
+    const stale = { ...s.translationsStale[key] };
+    for (const i of Object.keys(patch)) delete stale[Number(i)];
+    return { translationsStale: { ...s.translationsStale, [key]: stale } };
+  });
+  registerRecord(updated);
+  upsertRecord(updated);
+  updated.translationsStale = get().translationsStale[key];
+  patchItem(rec.sourcePath, { result: updated.result });
 }
 
 /** Fold a progress poll into the store. "unknown" is the server saying "no
