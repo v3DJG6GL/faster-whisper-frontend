@@ -261,12 +261,22 @@ export function Toast({
   actionLabel,
   onAction,
   onDismiss,
+  durationMs = 8000,
 }: {
   children: ReactNode;
   actionLabel?: string;
   onAction?: () => void;
   onDismiss: () => void;
+  /** Auto-dismiss delay; 0 disables (sticky toast). */
+  durationMs?: number;
 }) {
+  useEffect(() => {
+    if (!durationMs) return;
+    const t = window.setTimeout(onDismiss, durationMs);
+    return () => window.clearTimeout(t);
+    // Re-arm when the message changes so a second reset gets its full window.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [children, durationMs]);
   return createPortal(
     <div className="pointer-events-none fixed inset-x-0 bottom-16 z-50 flex justify-center px-4">
       <div
