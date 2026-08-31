@@ -161,6 +161,7 @@ pub fn run() {
             commands::transcribe_file,
             commands::list_override_profiles,
             commands::get_capabilities, // P11: GET /v1/me capabilities
+            commands::preload_models,   // POST /v1/models/preload (best-effort warm hint)
             commands::get_override_profile, // P11: GET /v1/override-profiles/{name}
             commands::get_pipeline_rules, // P17: GET /v1/pipeline-rules
             commands::save_pipeline_rules, // P17: PATCH /v1/pipeline-rules

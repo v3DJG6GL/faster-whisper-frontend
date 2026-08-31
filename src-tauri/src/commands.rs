@@ -627,6 +627,22 @@ pub async fn get_capabilities(
     transport::discovery::get_capabilities(&server_url, key.as_deref()).await
 }
 
+/// Ask the server to start warming the models a job will need
+/// (`POST /v1/models/preload`). Returns a plain bool rather than a Result: this
+/// is fired from timers and effects with no user-visible outcome, and a Result
+/// would let an IPC-level failure surface as an unhandled promise rejection.
+#[tauri::command]
+pub async fn preload_models(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    models: Vec<transport::preload::PreloadModel>,
+    plan_id: Option<String>,
+) -> bool {
+    let key = resolve_key(api_key, backend_id);
+    transport::preload::preload_models(&server_url, key.as_deref(), models, plan_id).await
+}
+
 /// One override-profile's decode values + locked client keys, for previewing
 /// inherited defaults when a profile is selected. Best-effort — null on error.
 #[tauri::command]

@@ -1,6 +1,7 @@
 //! HTTP transport to a faster-whisper / OpenAI-compatible backend.
 //!
 //! `discovery` resolves server capabilities (`/v1/models`, `/auth/whoami`);
+//! `preload` sends the best-effort model pre-warm hint;
 //! `batch` does the multipart `POST /v1/audio/transcriptions`; `stream` is the
 //! streaming WebSocket client; `pipeline` reads/writes the server's text rules.
 
@@ -10,6 +11,7 @@ use std::time::Duration;
 pub mod batch;
 pub mod discovery;
 pub mod pipeline;
+pub mod preload;
 pub mod stream;
 pub mod sync;
 pub mod text;

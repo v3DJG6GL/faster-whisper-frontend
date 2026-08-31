@@ -328,6 +328,32 @@ export async function getCapabilities(args: {
   });
 }
 
+/** A model family the server can pre-warm. There is deliberately no `vad`
+ *  member — the backend contract has no such family and rejects unknown ones. */
+export type PreloadFamily = "whisper" | "diarization" | "separation" | "translation";
+
+/** Ask the server to start warming the models a job will need
+ *  (POST /v1/models/preload, full backend only). Best-effort: `false` outside
+ *  Tauri or on any error — an older backend that 404s this endpoint must be
+ *  indistinguishable from one that honours it, so no caller may branch on it
+ *  beyond deciding not to retry. Never throws. */
+export async function preloadModels(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  models: { family: PreloadFamily; id: string }[];
+  planId?: string | null;
+}): Promise<boolean> {
+  if (!isTauri) return false;
+  return invoke<boolean>("preload_models", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    models: args.models,
+    planId: args.planId ?? null,
+  });
+}
+
 /** One override-profile's decode values + locked client keys, for previewing
  *  inherited defaults. Best-effort: null outside Tauri or on any error (incl.
  *  404 when the caller may not request that profile). */
