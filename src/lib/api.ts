@@ -602,7 +602,17 @@ export async function startStream(args: {
    *  orphan [translate] lines with nothing linking them. Omitted → the server
    *  logs immediately, exactly as it always has, which is what keeps an older
    *  backend's behaviour unchanged. */
-  translateExpect?: { targets: string[]; include_original: boolean } | null;
+  translateExpect?: {
+    targets: string[];
+    include_original: boolean;
+    /** Whether a translate request will arrive for EVERY utterance (live
+     *  mode) or once for the whole transcript (stop-timing). The server holds
+     *  a log receipt open per utterance only in the first case — in the second
+     *  nothing would ever claim them and they would all release on the idle
+     *  timeout. Absent on older clients, where the server assumes per-utterance
+     *  because that is what it already did. */
+    per_utterance: boolean;
+  } | null;
   deviceId?: string | null;
   save?: boolean;
   recordingsDir?: string | null;

@@ -2343,6 +2343,11 @@ async function startLiveInner(
           ? {
               targets: [...sessionTranslation.targets],
               include_original: !!sessionTranslation.includeOriginal,
+              // Stop-timing translates the whole transcript in ONE call at the
+              // end, so there is no per-utterance translation to wait for and
+              // holding a receipt per utterance would strand every one of them
+              // until the server's idle sweep.
+              per_utterance: !!insertCfg?.live,
             }
           : null,
         responseFormat: backend.responseFormat,
