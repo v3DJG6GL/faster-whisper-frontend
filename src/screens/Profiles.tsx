@@ -66,13 +66,15 @@ function Editor({
   const lowLevelActive = IS_WINDOWS || (!!evdev?.permitted && evdevEnabled);
   const [p, setP] = useState<Profile>(initial);
   const [capturing, setCapturing] = useState(false);
-  const [showOverrides, setShowOverrides] = useState(
-    // prompt is tri-state: `!== undefined` so an explicit clear ("") still counts
-    // as a set override (a truthy check would treat clear as "inherit").
-    !!(initial.model || initial.language || initial.endpoint || initial.prompt !== undefined ||
-      initial.overrideProfile ||
-      (initial.decodeOverrides && Object.keys(initial.decodeOverrides).length) ||
-      (initial.translationOverrides && Object.keys(initial.translationOverrides).length)),
+  // Each disclosure opens when it has something in it -- the same "open when
+  // non-empty" rule the Backends editor uses for its two. The old combined
+  // flag also watched model/language/endpoint/prompt/overrideProfile, which
+  // now sit flat and need no flag at all.
+  const [showDecode, setShowDecode] = useState(
+    () => !!initial.decodeOverrides && Object.keys(initial.decodeOverrides).length > 0,
+  );
+  const [showTranslation, setShowTranslation] = useState(
+    () => !!initial.translationOverrides && Object.keys(initial.translationOverrides).length > 0,
   );
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
   // Resolve the target backend so the decode editor can show its defaults as the
@@ -196,130 +198,149 @@ function Editor({
         </Labeled>
       </div>
 
-      <DisclosureCard
-        className="mt-5"
-        open={showOverrides}
-        onToggle={() => setShowOverrides((v) => !v)}
-        bodyClassName="p-4"
-        title={
-          <>
-            Overrides{" "}
-            {p.model || p.language || p.endpoint || p.prompt !== undefined || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) || (p.translationOverrides && Object.keys(p.translationOverrides).length) ? (
-              <span className="text-accent">· set</span>
-            ) : (
-              <span className="text-faint">· inherit backend</span>
+      {/* Laid out like the Backends editor: the plain fields sit flat, and
+          decode + translation each get their OWN disclosure. One combined
+          "Overrides" fold meant the two screens that edit the SAME two
+          settings groups looked nothing alike, and opening it produced four
+          unrelated panels at once. */}
+      <div className="mt-5">
+        <div className="grid grid-cols-2 gap-4 rounded-xl border border-line bg-surface-2/40 p-4">
+          <Labeled label="Language">
+            <LanguageSelect
+              ariaLabel="Language"
+              value={p.language ?? ""}
+              onChange={(v) => set({ language: v })}
+              inheritLabel="Inherit from backend"
+            />
+          </Labeled>
+          <Labeled label="Model">
+            <ModelPicker
+              ariaLabel="Model"
+              value={p.model ?? ""}
+              onChange={(v) => set({ model: v || undefined })}
+              models={models}
+              defaultLabel={
+                backend?.model ? `Inherit · ${backend.model}` : "Inherit from backend"
+              }
+            />
+          </Labeled>
+          <div>
+            <Labeled label="Endpoint">
+              {/* Same switch as the Backends editor, plus the tri-state "Inherit" the other
+                  overrides have — mirroring the Server-type Segmented's Auto sentinel. */}
+              <Segmented
+                value={p.endpoint ?? "inherit"}
+                onChange={(v) => set({ endpoint: v === "inherit" ? undefined : v })}
+                options={[
+                  { value: "inherit", label: "Inherit" },
+                  { value: "stream", label: "Streaming" },
+                  { value: "batch", label: "Batch" },
+                ]}
+              />
+            </Labeled>
+            {/* Mirror the Backends editor's standard-server warning for a PROFILE-forced stream
+                (an inherited stream endpoint already warns over there). */}
+            {p.endpoint === "stream" && serverKind === "standard" && (
+              <Notice className="mt-2">
+                A standard Whisper server has no streaming endpoint — this override won’t work on{" "}
+                <span className="font-medium">{safeDisplayText(backend?.name, 80) || "this backend"}</span>.
+              </Notice>
             )}
-          </>
-        }
-      >
-        <>
-          <div className="grid grid-cols-2 gap-4 rounded-xl border border-line bg-surface-2/40 p-4">
-            <Labeled label="Language">
-              <LanguageSelect
-                ariaLabel="Language"
-                value={p.language ?? ""}
-                onChange={(v) => set({ language: v })}
-                inheritLabel="Inherit from backend"
-              />
-            </Labeled>
-            <Labeled label="Model">
-              <ModelPicker
-                ariaLabel="Model"
-                value={p.model ?? ""}
-                onChange={(v) => set({ model: v || undefined })}
-                models={models}
-                defaultLabel={
-                  backend?.model ? `Inherit · ${backend.model}` : "Inherit from backend"
-                }
-              />
-            </Labeled>
-            <div>
-              <Labeled label="Endpoint">
-                {/* Same switch as the Backends editor, plus the tri-state "Inherit" the other
-                    overrides have — mirroring the Server-type Segmented's Auto sentinel. */}
-                <Segmented
-                  value={p.endpoint ?? "inherit"}
-                  onChange={(v) => set({ endpoint: v === "inherit" ? undefined : v })}
-                  options={[
-                    { value: "inherit", label: "Inherit" },
-                    { value: "stream", label: "Streaming" },
-                    { value: "batch", label: "Batch" },
-                  ]}
-                />
-              </Labeled>
-              {/* Mirror the Backends editor's standard-server warning for a PROFILE-forced stream
-                  (an inherited stream endpoint already warns over there). */}
-              {p.endpoint === "stream" && serverKind === "standard" && (
-                <Notice className="mt-2">
-                  A standard Whisper server has no streaming endpoint — this override won’t work on{" "}
-                  <span className="font-medium">{safeDisplayText(backend?.name, 80) || "this backend"}</span>.
-                </Notice>
-              )}
-            </div>
-            <div>
-              <div className="mb-2 flex items-center gap-1.5">
-                {promptOverridden && (
-                  <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
-                )}
-                <label className="text-[12px] font-medium text-dim">Vocabulary / prompt</label>
-                <div className="ml-auto flex items-center gap-2">
-                  {p.prompt !== "" && (
-                    <button
-                      type="button"
-                      onClick={() => set({ prompt: "" })}
-                      title="Override with empty (suppress the inherited prompt)"
-                      className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
-                    >
-                      <Eraser className="size-3" /> clear
-                    </button>
-                  )}
-                  {promptOverridden && (
-                    <button
-                      type="button"
-                      onClick={() => set({ prompt: undefined })}
-                      title="Reset to inherited"
-                      className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
-                    >
-                      <RotateCcw className="size-3" /> reset
-                    </button>
-                  )}
-                </div>
-              </div>
-              <TextArea
-                aria-label="Vocabulary / prompt"
-                value={p.prompt ?? ""}
-                onChange={(e) => set({ prompt: e.target.value })}
-                rows={2}
-                // Tri-state: empty an existing value → "" (clear, suppresses the
-                // inherited prompt); reset → undefined (inherit, ghosts the baseline).
-                placeholder={
-                  p.prompt === ""
-                    ? "(cleared — no prompt sent)"
-                    : inheritedPrompt || "Inherit from backend"
-                }
-              />
-            </div>
           </div>
-          <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
-            <div className="mb-3 text-[12px] font-medium text-dim">
-              Decode overrides <span className="text-faint">· empty inherits the backend</span>
+          <div>
+            <div className="mb-2 flex items-center gap-1.5">
+              {promptOverridden && (
+                <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+              )}
+              <label className="text-[12px] font-medium text-dim">Vocabulary / prompt</label>
+              <div className="ml-auto flex items-center gap-2">
+                {p.prompt !== "" && (
+                  <button
+                    type="button"
+                    onClick={() => set({ prompt: "" })}
+                    title="Override with empty (suppress the inherited prompt)"
+                    className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
+                  >
+                    <Eraser className="size-3" /> clear
+                  </button>
+                )}
+                {promptOverridden && (
+                  <button
+                    type="button"
+                    onClick={() => set({ prompt: undefined })}
+                    title="Reset to inherited"
+                    className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
+                  >
+                    <RotateCcw className="size-3" /> reset
+                  </button>
+                )}
+              </div>
             </div>
-            <DecodeFields
+            <TextArea
+              aria-label="Vocabulary / prompt"
+              value={p.prompt ?? ""}
+              onChange={(e) => set({ prompt: e.target.value })}
+              rows={2}
+              // Tri-state: empty an existing value → "" (clear, suppresses the
+              // inherited prompt); reset → undefined (inherit, ghosts the baseline).
+              placeholder={
+                p.prompt === ""
+                  ? "(cleared — no prompt sent)"
+                  : inheritedPrompt || "Inherit from backend"
+              }
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <DisclosureCard
+          open={showDecode}
+          onToggle={() => setShowDecode((v) => !v)}
+          title={
+            <>
+              Decode overrides{" "}
+              {p.decodeOverrides && Object.keys(p.decodeOverrides).length ? (
+                <span className="text-accent">· set</span>
+              ) : (
+                <span className="text-faint">· inherit backend</span>
+              )}
+            </>
+          }
+        >
+          <p className="mb-3 text-[12px] text-dim">
+            Only for this profile. Empty inherits the bound backend&apos;s defaults.
+          </p>
+          <DecodeFields
               value={p.decodeOverrides ?? {}}
               onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
               inherited={inheritedDecode}
               serverKind={serverKind}
-              canCustomize={caps?.can_request_decode_overrides}
-            />
-          </div>
-          <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
-            <div className="mb-3 text-[12px] font-medium text-dim">
+            canCustomize={caps?.can_request_decode_overrides}
+          />
+        </DisclosureCard>
+      </div>
+
+      <div className="mt-5">
+        <DisclosureCard
+          open={showTranslation}
+          onToggle={() => setShowTranslation((v) => !v)}
+          title={
+            <>
               Translation overrides{" "}
-              <span className="text-faint">
-                · empty inherits the backend · dictation injects every target
-              </span>
-            </div>
-            <TranslationDefaultsEditor
+              {p.translationOverrides && Object.keys(p.translationOverrides).length ? (
+                <span className="text-accent">· set</span>
+              ) : (
+                <span className="text-faint">· inherit backend</span>
+              )}
+            </>
+          }
+        >
+          <p className="mb-3 text-[12px] text-dim">
+            Only for this profile. Empty inherits the bound backend&apos;s defaults;
+            dictation injects every target.
+          </p>
+          <TranslationDefaultsEditor
               value={p.translationOverrides}
               onChange={(v) => set({ translationOverrides: v })}
               caps={caps}
@@ -327,29 +348,31 @@ function Editor({
                 backend?.translationOverrides?.model
                   ? backend.translationOverrides.model
                   : "backend default"
-              }
-            />
+            }
+          />
+        </DisclosureCard>
+      </div>
+
+      {/* Render unconditionally like the sibling Language/Decode blocks (disable-not-hide): if the
+          bound backend was deleted (backendId cleared), a stored overrideProfile still applies to
+          the fallback backend at dictation time, so the user must be able to SEE and clear it. With
+          no resolvable backend the picker degrades to its free-text path (serverKind "unknown"). */}
+      <div className="mt-5">
+        <div className="rounded-xl border border-line bg-surface-2/40 p-4">
+          <div className="mb-3 text-[12px] font-medium text-dim">
+            Server override profile <span className="text-faint">· empty inherits the backend</span>
           </div>
-          {/* Render unconditionally like the sibling Language/Decode blocks (disable-not-hide): if the
-              bound backend was deleted (backendId cleared), a stored overrideProfile still applies to
-              the fallback backend at dictation time, so the user must be able to SEE and clear it. With
-              no resolvable backend the picker degrades to its free-text path (serverKind "unknown"). */}
-          <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
-            <div className="mb-3 text-[12px] font-medium text-dim">
-              Server override profile <span className="text-faint">· empty inherits the backend</span>
-            </div>
-            <OverrideProfilePicker
-              serverUrl={backend ? effectiveServerUrl(backend, useApp.getState().settings) : ""}
-              backendId={backend?.id ?? ""}
-              serverKind={serverKind}
-              canRequest={caps?.can_request_override_profile}
-              value={p.overrideProfile ?? ""}
-              inheritLabel="(inherit backend)"
-              onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
-            />
-          </div>
-        </>
-      </DisclosureCard>
+          <OverrideProfilePicker
+            serverUrl={backend ? effectiveServerUrl(backend, useApp.getState().settings) : ""}
+            backendId={backend?.id ?? ""}
+            serverKind={serverKind}
+            canRequest={caps?.can_request_override_profile}
+            value={p.overrideProfile ?? ""}
+            inheritLabel="(inherit backend)"
+            onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
+          />
+        </div>
+      </div>
 
       <div className="mt-5 flex items-start gap-2 text-[12px] text-faint">
         <Info className="mt-0.5 size-3.5 shrink-0" />
