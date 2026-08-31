@@ -1986,7 +1986,7 @@ export default function Transcribe() {
                           </div>
                         </div>
                       ) : null}
-                      {st === "transcribing" && state === "active" && progress?.lastText && (
+                      {(st === "transcribing" || st === "translating") && state === "active" && progress?.lastText && (
                         <div className="mt-2 flex items-center gap-2.5 rounded-lg bg-surface-2/60 px-3 py-1.5">
                           <span className="size-[7px] shrink-0 rounded-full bg-live" />
                           {progress.position ? (

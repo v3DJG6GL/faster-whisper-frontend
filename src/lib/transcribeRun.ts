@@ -882,6 +882,7 @@ async function translateTextSource(
   path: string,
   options: TranscribeOptions,
   ctx: RunContext,
+  progressId?: string | null,
 ): Promise<BatchResult> {
   const ext = /\.([A-Za-z0-9]+)$/.exec(path)?.[1] ?? "txt";
   const content = await readTextFile(path);
@@ -904,6 +905,7 @@ async function translateTextSource(
       model: options.translationModel ?? null,
       mode: options.translationMode ?? null,
       glossary: options.translationGlossary ?? null,
+      progressId: progressId ?? null,
     });
     results.push(...r.results);
     if (r.warnings?.length) warnings.push(...r.warnings);
@@ -973,8 +975,9 @@ async function pump(
       // Live progress (full backend only): a fresh hex id per file keys the
       // server-side entry; a 1 s poll paints the rail. Best-effort — a poll
       // error (older backend, standard server) just leaves it indeterminate.
-      // Text runs are one short client-driven request — no server progress entry.
-      const pid = ctx.standard || isText ? null : crypto.randomUUID().replace(/-/g, "");
+      // Text runs poll too: /v1/text/translations registers the same progress
+      // entry (stage "translating" + last_text live line).
+      const pid = ctx.standard ? null : crypto.randomUUID().replace(/-/g, "");
       activeCancel = pid
         ? { serverUrl: ctx.serverUrl, backendId: ctx.backendId, progressId: pid }
         : null;
@@ -1017,7 +1020,7 @@ async function pump(
           options: pid ? { ...options, progressId: pid } : options,
         };
         const res = isText
-          ? await translateTextSource(next.path, options!, ctx)
+          ? await translateTextSource(next.path, options!, ctx, pid)
           : isUrl
             ? await transcribeUrl({ ...common, sourceUrl: next.path })
             : await transcribeFile({ ...common, filePath: next.path });
