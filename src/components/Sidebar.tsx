@@ -23,6 +23,21 @@ function TranscribeRunBadge() {
   );
 }
 
+/** Live percentage of in-flight retro-translate run(s) — same pill idiom as
+ *  the transcribe badge, in the translate accent, so a run started from the
+ *  viewer stays visible from every tab. Max pct across runs when several. */
+function TranslateRunBadge() {
+  const runs = useApp((s) => s.trRuns);
+  const entries = Object.values(runs);
+  if (entries.length === 0) return null;
+  const pct = Math.max(...entries.map((e) => e.run.pct));
+  return (
+    <span className="ml-auto font-mono text-[10.5px] tabular-nums text-[color:var(--c-translate)]">
+      {Math.round(pct * 100)}%
+    </span>
+  );
+}
+
 /** Errors + warnings logged since the Logs screen was last viewed — quiet when
  *  everything is healthy, self-evident when a run fails. Cleared on view. */
 function LogsBadge() {
@@ -147,6 +162,7 @@ export function Sidebar() {
                 {label}
                 {setupDot(id, backendCount, profileCount)}
                 {id === "transcribe" && <TranscribeRunBadge />}
+                {id === "transcribe" && <TranslateRunBadge />}
                 {id === "logs" && <LogsBadge />}
               </>
             )}

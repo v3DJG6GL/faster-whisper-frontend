@@ -32,6 +32,10 @@ export interface TranslateRunUi {
   pct: number;
   /** Requested target codes (the card's title). */
   targets: string[];
+  /** What's being translated (file basename / record title) — lets GLOBAL
+   *  surfaces (sidebar badge, other-runs strip) name the run when its
+   *  transcript is not the one on screen. */
+  title?: string;
   /** Total segments across the run / how many chunks-worth are merged. */
   total: number;
   done: number;

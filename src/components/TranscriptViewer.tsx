@@ -909,7 +909,13 @@ export function TranscriptViewer({
   // card state all outlive this component, so navigating away and back
   // re-attaches to the live card instead of losing it (the run itself was
   // never lost — only its UI was).
-  const trEntry = useApp((s) => s.trRuns[okey]);
+  // The key a LIVE run is found under. Runs start under okey, but okey moves
+  // when openRecordId swaps/nulls while the same transcript stays on screen
+  // (same-URL records) — a run started under the path key (no record id yet)
+  // must stay visible after the id lands, so fall back to the path slot.
+  const trRunsAll = useApp((s) => s.trRuns);
+  const trKey = trRunsAll[okey] ? okey : path && trRunsAll[path] ? path : okey;
+  const trEntry = trRunsAll[trKey];
   const trRun = trEntry?.run ?? null;
   const trRunMode = trEntry?.mode;
   const setTrRun = useCallback(
@@ -930,7 +936,7 @@ export function TranscriptViewer({
     [okey],
   );
   // Re-entry gate that survives remounts: a ctl exists ⇔ the loop is live.
-  const translating = trCtls.has(okey) && trRun != null;
+  const translating = trCtls.has(trKey) && trRun != null;
 
   /** Translate the given segment indexes into `targets` in 400-segment
    *  chunks, merging each chunk back into the record as it lands (track
@@ -942,7 +948,8 @@ export function TranscriptViewer({
     targets: string[],
     opts?: { mode?: "fluent" | "faithful"; model?: string },
   ) => {
-    if (!indexes.length || !targets.length || trCtls.has(okey)) return;
+    // Guard BOTH keys: a live run may sit under the path fallback slot.
+    if (!indexes.length || !targets.length || trCtls.has(okey) || trCtls.has(trKey)) return;
     const backend = trBackend;
     if (!backend) return;
     const serverUrl = effectiveServerUrl(backend, useApp.getState().settings);
@@ -953,7 +960,12 @@ export function TranscriptViewer({
     trCtls.set(okey, ctl);
     window.clearTimeout(trDoneTimers.get(okey));
     trDoneTimers.delete(okey);
-    setTrRun(newTranslateRun(indexes.length, targets), mode);
+    setTrRun(
+      // Name the run so global surfaces (sidebar badge, other-runs strip)
+      // can identify it while its transcript is off screen.
+      { ...newTranslateRun(indexes.length, targets), title: fileLabel ?? basename(path) },
+      mode,
+    );
     // 1 s poll drives the card. Best-effort split: an HTTP error (older
     // backend without the shared progress entry) leaves the card in its
     // current state; a NETWORK failure flips it to "reconnecting" — the
@@ -1031,7 +1043,7 @@ export function TranscriptViewer({
   /** Cancel = server-side abort by progress id + stop the chunk loop. The
    *  in-flight chunk's results are lost; completed chunks stay merged. */
   const cancelTranslate = () => {
-    const ctl = trCtls.get(okey);
+    const ctl = trCtls.get(trKey);
     if (!ctl || ctl.cancelled) return;
     ctl.cancelled = true;
     void cancelTextTranslation({

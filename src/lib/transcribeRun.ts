@@ -474,10 +474,20 @@ export function removeFile(path: string) {
 
 export function selectPath(path: string | null) {
   // Selection defines what's "open": keep the Recent-strip marker on the
-  // record registered for the newly selected row.
-  set({
-    selectedPath: path,
-    openRecordId: (path && historyByPath[path]?.id) || null,
+  // record registered for the newly selected row. If the CURRENTLY open
+  // record already belongs to this path, keep it — historyByPath only holds
+  // the last-registered record per path, and the user may have an OLDER
+  // same-path record open (three records of one URL). Recomputing here used
+  // to swap the overlay/run key under the viewer mid-look.
+  set((s) => {
+    const cur = s.openRecordId ? recordById[s.openRecordId] : undefined;
+    return {
+      selectedPath: path,
+      openRecordId:
+        path && cur && cur.sourcePath === path
+          ? s.openRecordId
+          : (path && historyByPath[path]?.id) || null,
+    };
   });
 }
 
@@ -1006,7 +1016,11 @@ async function pump(
         if (epoch !== get().epoch) return;
         const tookMs = Date.now() - fileT0;
         patchItem(next.path, { status: "done", result: res, tookMs });
-        set({ selectedPath: next.path }); // follow the latest finished file
+        // Follow the latest finished file. The old open record (possibly a
+        // DIFFERENT path's) must not linger as the overlay/run key for even a
+        // render: null it here — recordRun below registers the fresh record
+        // and stamps its id as the open one.
+        set({ selectedPath: next.path, openRecordId: null });
         const rec = recordRun(next.path, ctx, options, { status: "done", result: res, tookMs });
         if (isUrl) {
           if (res.sourceMediaId) fetchRunUrlMedia(next.path, rec, ctx, res.sourceMediaId);

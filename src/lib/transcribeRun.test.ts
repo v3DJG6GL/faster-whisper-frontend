@@ -3,11 +3,12 @@
 // side is exercised through the app; these guard the math.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  activeRailIndex, foldProgress, overallFraction, railIndex, railOf, railStages,
-  skippedStages, stageEstimateMs, stageTimeline, useTranscribeRun,
-  _resetStageRtfForTests,
+  activeRailIndex, foldProgress, openHistoryRecord, overallFraction, railIndex,
+  railOf, railStages, selectPath, skippedStages, stageEstimateMs, stageTimeline,
+  useTranscribeRun, _resetStageRtfForTests,
 } from "./transcribeRun";
 import type { QueueItem } from "./transcribeRun";
+import type { TranscriptRecord } from "./transcriptHistory";
 
 describe("railOf", () => {
   it("folds resolving onto the download row", () => {
@@ -332,5 +333,39 @@ describe("stageTimeline (the proportional strip)", () => {
       vi.useRealTimers();
     }
     expect(stageEstimateMs("separating", 1000)).toBeCloseTo(100_000, 0);
+  });
+});
+
+describe("selectPath keeps a same-path open record", () => {
+  const recOf = (id: string, sourcePath: string): TranscriptRecord => ({
+    schemaVersion: 1,
+    kind: "file",
+    id,
+    createdAt: "2026-08-30T12:00:00Z",
+    sourcePath,
+    sourceName: sourcePath,
+    status: "done",
+  });
+
+  it("re-selecting the open record's path does not swap to the last-registered record", () => {
+    // r1 and r2 are two records of the SAME source; registering r2 makes it
+    // the historyByPath entry, but the user still has r1 open on screen.
+    openHistoryRecord(recOf("rec-1", "/a.mp3"));
+    openHistoryRecord(recOf("rec-2", "/a.mp3"));
+    useTranscribeRun.setState({ openRecordId: "rec-1" });
+    selectPath("/a.mp3");
+    expect(useTranscribeRun.getState().openRecordId).toBe("rec-1");
+  });
+
+  it("selecting a different path recomputes (or clears) the open record", () => {
+    openHistoryRecord(recOf("rec-3", "/a.mp3"));
+    openHistoryRecord(recOf("rec-4", "/b.mp3"));
+    useTranscribeRun.setState({ openRecordId: "rec-3" });
+    selectPath("/b.mp3"); // rec-3 is not a record of /b.mp3
+    expect(useTranscribeRun.getState().openRecordId).toBe("rec-4");
+    selectPath("/nowhere.mp3"); // no record at all
+    expect(useTranscribeRun.getState().openRecordId).toBeNull();
+    selectPath(null);
+    expect(useTranscribeRun.getState().openRecordId).toBeNull();
   });
 });
