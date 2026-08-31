@@ -34,6 +34,7 @@ import { closeRecord, openHistoryRecord } from "@/lib/transcribeRun";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isTextSourcePath } from "@/lib/subtitleImport";
+import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
 import {
@@ -463,6 +464,61 @@ export default function Transcribe() {
   const urlMeta = useTranscribeRun((s) => s.urlMeta);
 
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
+
+  // Warm the models the pending run will need, while the user is still choosing
+  // options. ONE effect rather than a call at each entry point: addFiles lives in
+  // the store module and has no backend, caps or option state in scope, so this
+  // is the only place that can build the plan — and it covers drag-drop, the URL
+  // row and the file picker alike, since all three end in `files`.
+  // Held only while there is something queued and nothing running: once the run
+  // starts, the run itself keeps the models hot.
+  useEffect(() => {
+    if (!backend || !files.length || busy) return;
+    const forUrl = files.some((p) => isSourceUrl(p));
+    const forText = files.every((p) => !isSourceUrl(p) && isTextSourcePath(p));
+    // The same gating `run()` applies, so we never ask the server to warm a
+    // stage this run would not actually request.
+    const t2t = translationAvailable && translateTo.length > 0;
+    const stages = railStages(
+      {
+        ...(t2t ? { translateTo } : {}),
+        ...(diarize && diarAvailable && !isStandard ? { diarize: true } : {}),
+        ...(separateBgm && bgmAvailable && !isStandard ? { separateBgm: true } : {}),
+      },
+      forUrl,
+      forText,
+    );
+    const plan = preloadPlanFor({
+      stages,
+      whisperModel: model || backend.model,
+      separationModel,
+      diarizationModel,
+      translationModel: translationModel || backend.translationOverrides?.model,
+    });
+    if (!plan.length) return;
+    const lease = acquireWarm("transcribe", {
+      serverUrl: effectiveServerUrl(backend, settings),
+      backendId: backend.id,
+      models: plan,
+    });
+    return () => lease.release();
+  }, [
+    files,
+    busy,
+    backend,
+    settings,
+    isStandard,
+    translationAvailable,
+    translateTo,
+    translationModel,
+    diarize,
+    diarAvailable,
+    diarizationModel,
+    separateBgm,
+    bgmAvailable,
+    separationModel,
+    model,
+  ]);
 
   // Debounced (500 ms) link preview. Advisory only: a failed probe shows its
   // reason but never blocks Add — the run itself is the authority.

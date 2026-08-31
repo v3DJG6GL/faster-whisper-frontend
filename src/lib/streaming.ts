@@ -25,6 +25,9 @@ import { useApp } from "./store";
 import { shortCause } from "./errors";
 import { attachRecordingPath, recordDictation } from "./transcriptHistory";
 import { effectiveServerUrl } from "./backends";
+import { refreshCaps, translationWarm } from "./capabilities";
+import { acquireWarm, preloadPlanFor, type WarmLease } from "./preload";
+import { ownProp } from "./own";
 import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
 import {
   isTauri,
@@ -221,13 +224,25 @@ let sessionTranslation: {
   contextSegments?: number;
   serverUrl: string;
   backendId: string;
-  /** Has this server already answered a translate this session? Starts `null`
-   *  (unknown — a capability probe would fill it in at session start; for now
-   *  the FIRST success is the only evidence we have) and is treated as cold
-   *  until then, so the first phrase gets the long cold budget and every later
-   *  one the short warm formula. */
+  /** Is this server's translation model resident? Seeded at session start from
+   *  the forced capability refresh (`translationWarm`), which can still leave it
+   *  `null` on a backend that reports no model inventory — null is treated as
+   *  cold, so the first phrase gets the long budget. A landed translate proves it
+   *  regardless, and every later phrase then takes the short warm formula. */
   warm?: boolean | null;
 } | null = null;
+/** The session's model pre-warm lease. Held from startLiveInner to whichever
+ *  teardown runs first; a leaked one would POST /v1/models/preload every two
+ *  minutes for the life of the app, so EVERY exit path releases it. */
+let warmLease: WarmLease | null = null;
+
+/** Idempotent by construction (WarmLease.release is), so the overlapping
+ *  teardown paths — a cancel arriving after an error frame — can all call it. */
+function releaseWarmLease(): void {
+  warmLease?.release();
+  warmLease = null;
+}
+
 // Stop-timing: the translated text that actually got injected (History keeps both).
 let sessionTranslatedText: string | null = null;
 // One "translation failed" doorway per session, not one per phrase.
@@ -749,6 +764,11 @@ function consumePendingHoldStart(): void {
  *  collapse linger and Home's 10 s "done" card both keep showing the finished transcript
  *  after settle (the next startLive clears it). Fires a queued fast re-press start last. */
 function settleIdle(): void {
+  // The success end of a session: the models this run asked the server to keep
+  // hot are no longer ours to hold. Unlike the cancel below this is NOT paired
+  // with cancelDictationTranslate — releasing a lease stops a renew timer, it
+  // never interrupts server-side work.
+  releaseWarmLease();
   // NO cancelDictationTranslate() here, deliberately. Settling is the SUCCESS
   // path: we only reach it after the injection queue drained, which means every
   // translate already resolved and maybeTranslate's finally dropped the handle.
@@ -1649,6 +1669,7 @@ async function ensureListeners(): Promise<void> {
     // never be injected, so stop the server's side of it too (mirrors cancelLive
     // / teardownAfterFatalInject / the stopLive reject).
     cancelDictationTranslate();
+    releaseWarmLease();
     // clearPhraseEnd cancelled the pending per-phrase clipboard restore, so a pasted phrase would
     // leave the clipboard holding the transcript (and the un-consumed snapshot would leak into the
     // next session, whose begin_injection keeps the prior snapshot). Restore the user's clipboard: a
@@ -1781,6 +1802,7 @@ function teardownAfterFatalInject(): void {
   // The failed phrase (or one queued behind it) may still have a translate in
   // flight; nothing will consume it now, so stop the server's work too.
   cancelDictationTranslate();
+  releaseWarmLease();
   // Null insertCfg (like cancelLive) so any inject task still QUEUED behind the failed one bails on
   // its `insertCfg !== cfg` guard — its only gate — instead of typing/pasting a phrase and firing a
   // green "inserted" pulse onto the now-red error chip. Safe: the failing task `return`s without
@@ -1968,6 +1990,40 @@ async function startLiveInner(
     sessionTranslateWarned = false;
     sessionTranslateFailure = null;
     sessionPhraseContext = [];
+
+    // Warm the models this session will need before the first phrase arrives.
+    // Best-effort and silent: a server that doesn't know the endpoint is
+    // indistinguishable from one that does.
+    releaseWarmLease(); // a previous session's lease, if a teardown was skipped
+    const trModel = sessionTranslation?.model?.trim() || undefined;
+    const plan = preloadPlanFor({
+      stages: sessionTranslation ? ["transcribing", "translating"] : ["transcribing"],
+      whisperModel: model,
+      translationModel: trModel,
+    });
+    if (plan.length) {
+      warmLease = acquireWarm("dictation", {
+        serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+        backendId: backend.id,
+        models: plan,
+      });
+    }
+    // Ask the server what is already resident, so the FIRST phrase can take the
+    // short budget when the model is warm instead of always paying the cold
+    // allowance. Forced: staleness is the entire point at session start, and the
+    // answer is only useful before the first translate goes out — hence the
+    // fire-and-forget shape (a session must never wait on a capability probe).
+    if (sessionTranslation) {
+      const tr = sessionTranslation;
+      void refreshCaps(backend, { force: true })
+        .then(() => {
+          // The session may have ended (or been replaced) during the fetch;
+          // only the session that asked may take the answer.
+          if (sessionTranslation !== tr) return;
+          tr.warm = translationWarm(ownProp(useApp.getState().caps, backend.id) ?? null, trModel);
+        })
+        .catch(() => {});
+    }
   }
 
   // Per-app rule (P16): the focused app at start decides block/method/paste-shortcut. Resolved
@@ -2205,6 +2261,7 @@ export async function stopLive(): Promise<void> {
     // model load) would keep the server busy for text this path is about to
     // recover to the clipboard instead. Stop it here.
     cancelDictationTranslate();
+    releaseWarmLease();
     // The detached drain (if any) can still emit a late final/closed on this epoch; retire it so it
     // can't bleed onto a session re-triggered during the error linger (mirrors stream://error).
     void retireSessionEpoch().catch((err) => console.error("retire epoch on stop-reject failed:", err));
@@ -2267,6 +2324,7 @@ export async function cancelLive(): Promise<void> {
   // App.tsx's resume handler and the chip's ✕ — routes through THIS function,
   // so this one call covers them all; don't add duplicates at those sites.
   cancelDictationTranslate();
+  releaseWarmLease();
   committedDoc = "";
   injectedText = "";
   seenDoc = "";

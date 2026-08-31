@@ -16,6 +16,7 @@ import {
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
+import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { Button } from "@/components/ui";
 import { fmtDurationExact, fmtTimestamp } from "@/lib/format";
@@ -971,6 +972,25 @@ export function TranscriptViewer({
     return seed.length ? seed : [src === "en" ? "de" : "en"];
   }, [trBackend, trCaps, result.language]);
   const effTargets = trTargets ?? seededTargets;
+
+  // Warm the translation model while the panel is open, so the run doesn't start
+  // with a cold load. Released on close and on unmount — the panel also closes
+  // itself on a successful start, which drops the lease exactly when the run
+  // takes over keeping the model hot.
+  useEffect(() => {
+    if (!showTranslate || !trBackend || !retroTranslateAvailable) return;
+    const plan = preloadPlanFor({
+      stages: ["translating"],
+      translationModel: trModel || trBackend.translationOverrides?.model,
+    });
+    if (!plan.length) return;
+    const lease = acquireWarm("viewer-translate", {
+      serverUrl: effectiveServerUrl(trBackend, settings),
+      backendId: trBackend.id,
+      models: plan,
+    });
+    return () => lease.release();
+  }, [showTranslate, trBackend, retroTranslateAvailable, trModel, settings]);
 
   // ── chunked run + mini progress card state ──────────────────────────────
   // Held in the app store keyed by record: the run loop, its poller, and the

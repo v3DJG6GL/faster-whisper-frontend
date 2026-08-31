@@ -1,0 +1,140 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RENEW_MS, acquireWarm, preloadPlanFor, setPreloadTransport } from "./preload";
+
+describe("preloadPlanFor", () => {
+  it("maps each rail stage onto its model family", () => {
+    expect(
+      preloadPlanFor({
+        stages: ["downloading", "separating", "transcribing", "diarizing", "translating"],
+        whisperModel: "large-v3",
+        separationModel: "mdx",
+        diarizationModel: "pyannote",
+        translationModel: "gemma",
+      }),
+    ).toEqual([
+      { family: "separation", id: "mdx" },
+      { family: "whisper", id: "large-v3" },
+      { family: "diarization", id: "pyannote" },
+      { family: "translation", id: "gemma" },
+    ]);
+  });
+
+  it("drops stages with no named model — the server picks its own default", () => {
+    expect(preloadPlanFor({ stages: ["transcribing", "diarizing"], whisperModel: "small" })).toEqual(
+      [{ family: "whisper", id: "small" }],
+    );
+  });
+
+  it("has nothing to warm for a download-only rail", () => {
+    expect(preloadPlanFor({ stages: ["downloading"] })).toEqual([]);
+  });
+
+  it("ignores a blank model id", () => {
+    expect(preloadPlanFor({ stages: ["transcribing"], whisperModel: "   " })).toEqual([]);
+  });
+
+  it("de-duplicates a family/id pair", () => {
+    expect(
+      preloadPlanFor({
+        stages: ["transcribing", "transcribing"],
+        whisperModel: "large-v3",
+      }),
+    ).toEqual([{ family: "whisper", id: "large-v3" }]);
+  });
+});
+
+describe("acquireWarm", () => {
+  const spec = {
+    serverUrl: "http://x",
+    backendId: "b1",
+    models: [{ family: "whisper" as const, id: "large-v3" }],
+  };
+  let calls: number;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    calls = 0;
+    setPreloadTransport(async () => {
+      calls += 1;
+      return true;
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    setPreloadTransport();
+  });
+
+  it("fires once immediately and once per renew tick", () => {
+    const lease = acquireWarm("k", spec);
+    expect(calls).toBe(1);
+    vi.advanceTimersByTime(RENEW_MS);
+    expect(calls).toBe(2);
+    vi.advanceTimersByTime(RENEW_MS * 2);
+    expect(calls).toBe(4);
+    lease.release();
+  });
+
+  it("shares one timer between holders of the same key", () => {
+    const a = acquireWarm("k", spec);
+    const b = acquireWarm("k", spec);
+    // The second acquire carries an identical plan inside the window, so it is
+    // debounced rather than re-POSTed.
+    expect(calls).toBe(1);
+    vi.advanceTimersByTime(RENEW_MS);
+    expect(calls).toBe(2); // one tick, not two
+    a.release();
+    vi.advanceTimersByTime(RENEW_MS);
+    expect(calls).toBe(3); // still held by b
+    b.release();
+    vi.advanceTimersByTime(RENEW_MS * 3);
+    expect(calls).toBe(3);
+  });
+
+  it("stops the timer on release", () => {
+    const lease = acquireWarm("k", spec);
+    lease.release();
+    vi.advanceTimersByTime(RENEW_MS * 5);
+    expect(calls).toBe(1);
+  });
+
+  it("treats a double release as one", () => {
+    const a = acquireWarm("k", spec);
+    const b = acquireWarm("k", spec);
+    a.release();
+    a.release();
+    vi.advanceTimersByTime(RENEW_MS);
+    expect(calls).toBe(2); // b still holds it
+    b.release();
+  });
+
+  it("re-fires when the plan actually changes", () => {
+    const a = acquireWarm("k", spec);
+    const b = acquireWarm("k", {
+      ...spec,
+      models: [{ family: "whisper" as const, id: "small" }],
+    });
+    expect(calls).toBe(2);
+    a.release();
+    b.release();
+  });
+
+  it("keeps renewing after a rejecting transport, and never throws", () => {
+    setPreloadTransport(() => {
+      calls += 1;
+      return Promise.reject(new Error("nope"));
+    });
+    const lease = acquireWarm("k", spec);
+    expect(calls).toBe(1);
+    vi.advanceTimersByTime(RENEW_MS * 2);
+    expect(calls).toBe(3);
+    lease.release();
+  });
+
+  it("sends nothing for an empty plan", () => {
+    const lease = acquireWarm("k", { ...spec, models: [] });
+    vi.advanceTimersByTime(RENEW_MS);
+    expect(calls).toBe(0);
+    lease.release();
+  });
+});
