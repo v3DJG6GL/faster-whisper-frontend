@@ -206,7 +206,8 @@ let capturedRecordId: string | null = null;
 // ORIGINAL text — only the outbound copy is swapped — so phrase diffing,
 // history capture and recovery paths are structurally untouched.
 let sessionTranslation: {
-  target: string;
+  targets: string[];
+  includeOriginal?: boolean;
   model?: string;
   glossary?: string;
   mode?: "fluent" | "faithful";
@@ -242,7 +243,7 @@ async function maybeTranslate(text: string, cfg: InsertCfg | null): Promise<stri
         // Prior phrases ride along as context segments; only the last
         // result (the current text) is consumed.
         texts: [...context, text],
-        targets: [tr.target],
+        targets: tr.targets,
         model: tr.model,
         mode: tr.mode,
         glossary: tr.glossary,
@@ -253,9 +254,14 @@ async function maybeTranslate(text: string, cfg: InsertCfg | null): Promise<stri
       ),
     ]);
     if (insertCfg !== cfg) return text; // superseded — caller bails on its own guard too
-    const t = r.results[r.results.length - 1]?.[tr.target]?.trim();
-    if (t) return t;
-    throw new Error("empty translation");
+    const last = r.results[r.results.length - 1] ?? {};
+    const parts = tr.targets
+      .map((lang) => last[lang]?.trim())
+      .filter((t): t is string => !!t);
+    if (!parts.length) throw new Error("empty translation");
+    // One block per language, blank-line separated — the transcript itself may
+    // contain single line breaks, so a lone \n wouldn't read as a boundary.
+    return (tr.includeOriginal ? [text.trim(), ...parts] : parts).join("\n\n");
   } catch (e) {
     console.error("dictation translation failed:", e);
     if (insertCfg === cfg && !sessionTranslateWarned) {
@@ -296,7 +302,7 @@ function captureDictationHistory(): void {
       insertMethod: endOutcome(),
       recordingPath: sessionRecordingPath ?? undefined,
       translatedText: sessionTranslatedText ?? undefined,
-      translationTarget: sessionTranslation?.target,
+      translationTarget: sessionTranslation?.targets.join(", "),
       translationInjected: sessionTranslatedText != null,
     });
   } catch (e) {
@@ -1759,13 +1765,15 @@ async function startLiveInner(
   // A set per-Profile endpoint wins; else inherit the Backend's (stream vs batch transport).
   const endpoint = pov?.endpoint ?? backend.endpoint;
   // T2T dictation translation: per-field merge (Profile wins over Backend);
-  // a first target = translate every injection this session.
+  // any targets set = translate every injection this session (all targets,
+  // blank-line separated, original first when includeOriginal).
   {
     const trOv = { ...backend.translationOverrides, ...pov?.translationOverrides };
-    const trTarget = trOv.translateTo?.[0]?.trim();
-    sessionTranslation = trTarget
+    const trTargets = (trOv.translateTo ?? []).map((t) => t.trim()).filter(Boolean);
+    sessionTranslation = trTargets.length
       ? {
-          target: trTarget,
+          targets: trTargets,
+          includeOriginal: trOv.includeOriginal,
           model: trOv.model,
           glossary: trOv.glossary,
           mode: trOv.mode,

@@ -74,7 +74,7 @@ export interface Profile {
   language?: string; // override Backend.language; empty/undefined = inherit
   prompt?: string; // override Backend.prompt; tri-state: undefined = inherit, "" = explicit clear (suppress the inherited prompt, send no initial_prompt), value = override
   decodeOverrides?: DecodeOverrides; // Phase-B: per-Profile decode overrides
-  translationOverrides?: TranslationOverrides; // T2T overrides; for dictation, translateTo[0] is the injection target
+  translationOverrides?: TranslationOverrides; // T2T overrides; for dictation, ALL translateTo targets are injected (blank-line separated)
   // Override Backend.overrideProfile: a profile name, NO_OVERRIDE_PROFILE =
   // force no profile (plain defaults), undefined = inherit the backend.
   overrideProfile?: string;
@@ -92,6 +92,10 @@ export interface TranslationOverrides {
   glossary?: string;
   /** "fluent" (sentence-merged) or "faithful" (per-cue); undefined = server default. */
   mode?: "fluent" | "faithful";
+  /** Dictation only: also inject the untranslated original, before the
+   *  translations (blank-line separated). Batch/viewer runs always keep the
+   *  original as its own track, so this has no effect there. */
+  includeOriginal?: boolean;
 }
 
 /** Reserved override-profile value meaning "apply NO server profile — plain

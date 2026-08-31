@@ -498,7 +498,7 @@ export default function History() {
           <div className="mt-3 max-h-56 space-y-2 overflow-y-auto">
             <div>
               <span className="font-mono text-[10px] uppercase tracking-wider text-[color:var(--c-translate)]">
-                {safeDisplayText(rec.translationTarget ?? "translated", 8)} · injected
+                {safeDisplayText(rec.translationTarget ?? "translated", 24)} · injected
               </span>
               <div className="select-text whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
                 {stripControlChars(rec.translatedText)}
