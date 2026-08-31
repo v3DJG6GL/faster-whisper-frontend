@@ -29,6 +29,7 @@ export interface TranslateDeps {
     glossary?: string;
     contextSegments?: number | null;
     progressId?: string | null;
+    capturedId?: string | null;
   }) => Promise<TextTranslationResult>;
   /** Best-effort server-side abort. Called ONLY when we stopped waiting. */
   cancel: (args: { serverUrl: string; backendId: string; progressId: string }) => unknown;
@@ -56,6 +57,8 @@ export interface DictationTranslateRequest {
   contextSegments?: number;
   serverUrl: string;
   backendId: string;
+  /** The capture whose server-side log receipt is waiting on this call. */
+  capturedId?: string | null;
   /** Has this server already produced a translation this session? `null` =
    *  unknown (older backend / no capability probe yet) — treated as cold. */
   warm: boolean | null;
@@ -180,6 +183,7 @@ export async function runDictationTranslate(
         glossary: req.glossary,
         contextSegments: req.contextSegments ?? (req.context.length ? req.context.length : null),
         progressId,
+        capturedId: req.capturedId ?? null,
       }),
       new Promise<never>((_, rej) => {
         timer = setTimeout(() => rej(new BudgetExpired("translation timed out")), budgetMs);

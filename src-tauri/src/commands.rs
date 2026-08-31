@@ -436,6 +436,7 @@ pub async fn translate_text(
     glossary: Option<String>,
     context_segments: Option<u32>,
     progress_id: Option<String>,
+    captured_id: Option<String>,
 ) -> Result<transport::text::TextTranslationResult, String> {
     let key = resolve_key(api_key, backend_id);
     transport::text::translate_texts(
@@ -449,6 +450,7 @@ pub async fn translate_text(
         glossary.as_deref(),
         context_segments,
         progress_id.as_deref(),
+        captured_id.as_deref(),
     )
     .await
     .map_err(|e| e.to_string())
@@ -1272,6 +1274,10 @@ pub async fn start_stream(
     prompt: Option<String>,
     decode_overrides: Option<serde_json::Value>,
     override_profile: Option<String>,
+    // Opaque {targets, include_original}: tells the server this session will
+    // translate on a separate request, so it holds each utterance's log
+    // receipt open rather than logging two unlinked halves.
+    translate_expect: Option<serde_json::Value>,
     device_id: Option<String>,
     save: bool,
     recordings_dir: Option<String>,
@@ -1298,6 +1304,7 @@ pub async fn start_stream(
                 response_format,
                 prompt,
                 decode_overrides,
+                translate_expect,
                 override_profile,
                 device_id,
                 save_dir,

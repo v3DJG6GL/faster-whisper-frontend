@@ -152,6 +152,11 @@ export async function translateText(args: {
   /** Keys the server-side progress entry (getTranscribeProgress polls it,
    *  cancelTextTranslation aborts by it). Optional — older backends ignore it. */
   progressId?: string | null;
+  /** The dictation capture whose log receipt the server is holding open for
+   *  this translation, so the utterance and its translation are logged as ONE
+   *  block. Omitted by every non-dictation caller; an older backend ignores
+   *  the unknown field. */
+  capturedId?: string | null;
 }): Promise<TextTranslationResult> {
   if (!isTauri) throw new Error("Translation requires the desktop app.");
   return invoke<TextTranslationResult>("translate_text", {
@@ -166,6 +171,7 @@ export async function translateText(args: {
     glossary: args.glossary ?? null,
     contextSegments: args.contextSegments ?? null,
     progressId: args.progressId ?? null,
+    capturedId: args.capturedId ?? null,
   });
 }
 
@@ -590,6 +596,13 @@ export async function startStream(args: {
   responseFormat: string;
   decodeOverrides?: DecodeOverrides | null;
   overrideProfile?: string | null;
+  /** Declares that this session's utterances WILL be translated on a separate
+   *  request. The server then holds each per-utterance log receipt open and
+   *  merges the translation into it, instead of logging a receipt and four
+   *  orphan [translate] lines with nothing linking them. Omitted → the server
+   *  logs immediately, exactly as it always has, which is what keeps an older
+   *  backend's behaviour unchanged. */
+  translateExpect?: { targets: string[]; include_original: boolean } | null;
   deviceId?: string | null;
   save?: boolean;
   recordingsDir?: string | null;
@@ -607,6 +620,7 @@ export async function startStream(args: {
     responseFormat: args.responseFormat,
     decodeOverrides: args.decodeOverrides ?? null,
     overrideProfile: args.overrideProfile ?? null,
+    translateExpect: args.translateExpect ?? null,
     deviceId: args.deviceId ?? null,
     save: args.save ?? false,
     recordingsDir: args.recordingsDir ?? null,

@@ -265,6 +265,15 @@ let sessionTranslatedText: string | null = null;
  *  language instead keeps each track continuous and readable, and is what
  *  History renders. */
 let sessionByLang: Record<string, string[]> = {};
+/** The capture id of the most recently finalized utterance.
+ *
+ *  The server holds that utterance's log receipt open waiting for our
+ *  translate call, and this id is how it links the two. It arrives on its own
+ *  frame because the `final` frame goes out BEFORE the capture row is written,
+ *  so the id does not exist yet at that point. Best-effort throughout: an
+ *  older backend never sends it, and a translation that carries no id simply
+ *  completes nothing — which is the pre-existing behaviour. */
+let sessionCapturedId: string | null = null;
 
 /** Fold a phrase's per-language translations into the session accumulator. */
 function accumulateByLang(byLang: Record<string, string> | undefined): void {
@@ -413,6 +422,14 @@ async function maybeTranslate(
         contextSegments: tr.contextSegments,
         serverUrl: tr.serverUrl,
         backendId: tr.backendId,
+        // Completes the server-side receipt this utterance is waiting on.
+        // Taken (not copied) so a later phrase cannot re-claim an id that has
+        // already been spent -- each held receipt is claimed exactly once.
+        capturedId: (() => {
+          const id = sessionCapturedId;
+          sessionCapturedId = null;
+          return id;
+        })(),
         warm: tr.warm ?? null,
         oneShot,
         queued: opts?.queued ?? 0,
@@ -1395,6 +1412,12 @@ async function ensureListeners(): Promise<void> {
     if (capturedRecordId) attachRecordingPath(capturedRecordId, e.payload);
   });
 
+  await reg<string>("stream://captured", (e) => {
+    // Epoch-gated in Rust, so a cancelled session's id never lands here and
+    // gets attached to whatever session started next.
+    sessionCapturedId = e.payload || null;
+  });
+
   await reg<string>("stream://boundary", (e) => {
     // Same un-advanced-epoch path as `final`/`overrides-ignored`: a cancelled/errored session's
     // detached WS drain can still emit a late boundary. Unlike cancel, a stream://error does NOT
@@ -2077,6 +2100,7 @@ async function startLiveInner(
       : null;
     sessionTranslatedText = null;
     sessionByLang = {};
+    sessionCapturedId = null;
     sessionTranslateWarned = false;
     sessionTranslateFailure = null;
     sessionPhraseContext = [];
@@ -2256,6 +2280,18 @@ async function startLiveInner(
         prompt,
         decodeOverrides,
         overrideProfile,
+        // Tell the server a translation is coming on a separate request, so
+        // it holds each utterance's log receipt open and merges the two
+        // halves into one block instead of logging a receipt and then orphan
+        // [translate] lines with nothing linking them. sessionTranslation was
+        // frozen a few lines above, so this is the same intent the session
+        // will actually act on — not a second, drifting source of truth.
+        translateExpect: sessionTranslation
+          ? {
+              targets: [...sessionTranslation.targets],
+              include_original: !!sessionTranslation.includeOriginal,
+            }
+          : null,
         responseFormat: backend.responseFormat,
         deviceId,
         save: rec.saveRecordings,

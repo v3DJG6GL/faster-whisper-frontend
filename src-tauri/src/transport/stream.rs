@@ -25,6 +25,12 @@ pub enum StreamEvent {
     /// Long-silence hard break: the server reset its document. The client should
     /// reset its injection baseline and optionally type `separator` between docs.
     Boundary { separator: String },
+    /// The capture-row id the server minted for the utterance it just
+    /// finalized. Rides its own frame because the `final` frame is emitted
+    /// BEFORE the capture is written, so the id does not exist yet at that
+    /// point. The client hands it back on the translate request, which is how
+    /// the server links the two halves into one log receipt.
+    Captured(String),
     /// The session's audio was saved to this path ("Keep audio recordings" on).
     /// Emitted before `Closed` so the client can link its history record to the
     /// file. Epoch-gated like every other event — a cancelled session's save
@@ -48,6 +54,13 @@ pub struct StreamParams {
     pub prompt: Option<String>,
     pub decode_overrides: Option<serde_json::Value>, // opaque JSON object → handshake "decode_overrides"
     pub override_profile: Option<String>, // server override-profile name → handshake "override_profile"
+    // Declares that this session's utterances WILL be translated on a separate
+    // request, so the server holds each per-utterance receipt open and merges
+    // the translation into it instead of logging two unlinked halves. Opaque
+    // JSON like decode_overrides: the shape is the server's contract, not this
+    // transport's business. Omitted → the server logs immediately, exactly as
+    // it always has.
+    pub translate_expect: Option<serde_json::Value>,
     pub api_key: Option<String>,
     pub in_rate: u32,
     pub save_dir: Option<PathBuf>, // Some → save the streamed 16 kHz audio as .wav
@@ -270,6 +283,12 @@ pub async fn run<F>(
     if let Some(p) = &params.override_profile {
         if !p.is_empty() {
             config["override_profile"] = json!(p);
+        }
+    }
+    // Forward the translation declaration (only when it names targets).
+    if let Some(v) = &params.translate_expect {
+        if v.as_object().map_or(false, |m| !m.is_empty()) {
+            config["translate_expect"] = v.clone();
         }
     }
     if let Err(e) = write.send(text_msg(config.to_string())).await {
@@ -625,6 +644,16 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
             on_event(StreamEvent::Boundary {
                 separator: bounded(&str_field(&v, "separator"), MAX_SEPARATOR),
             });
+            false
+        }
+        Some("captured") => {
+            // Server-authored id; bounded at the parse boundary like every
+            // other string here, and it only ever travels back out as an
+            // opaque field on the next translate request.
+            let id = bounded(&str_field(&v, "id"), 64);
+            if !id.is_empty() {
+                on_event(StreamEvent::Captured(id));
+            }
             false
         }
         Some("error") => {

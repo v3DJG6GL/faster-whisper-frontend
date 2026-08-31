@@ -82,6 +82,28 @@ describe("runDictationTranslate", () => {
     expect(d.cancel).not.toHaveBeenCalled();
   });
 
+  it("forwards the capture id so the server can complete its held receipt", async () => {
+    let seen: unknown;
+    const d = deps((a) => {
+      seen = (a as { capturedId?: string | null }).capturedId;
+      return Promise.resolve(answer(a.texts));
+    });
+    await runDictationTranslate(req({ capturedId: "caac29d3" }), d);
+    expect(seen).toBe("caac29d3");
+  });
+
+  it("sends null when there is no held receipt", async () => {
+    // Every non-dictation caller, and any dictation against a backend too old
+    // to send the id. The server treats it as "nothing held", not an error.
+    let seen: unknown = "unset";
+    const d = deps((a) => {
+      seen = (a as { capturedId?: string | null }).capturedId;
+      return Promise.resolve(answer(a.texts));
+    });
+    await runDictationTranslate(req({}), d);
+    expect(seen).toBeNull();
+  });
+
   it("joins every target with a blank line, original first when asked", async () => {
     const d = deps((a) => Promise.resolve(answer(a.texts, ["en", "fr"])));
     const r = await runDictationTranslate(

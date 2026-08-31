@@ -43,6 +43,12 @@ struct RequestBody<'a> {
     /// ignore unknown fields.
     #[serde(skip_serializing_if = "Option::is_none")]
     progress_id: Option<&'a str>,
+    /// The capture row whose per-utterance log receipt the server is holding
+    /// open, waiting for this translation to complete it. Omitted for every
+    /// non-dictation caller (a subtitle file, the viewer's retro-translate),
+    /// which the server treats as "nothing held" rather than an error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    captured_id: Option<&'a str>,
 }
 
 #[derive(serde::Serialize)]
@@ -102,6 +108,9 @@ pub async fn translate_texts(
     glossary: Option<&str>,
     context_segments: Option<u32>,
     progress_id: Option<&str>,
+    // The capture row whose log receipt the server is holding open for this
+    // translation. Opaque here; the server links the two halves with it.
+    captured_id: Option<&str>,
 ) -> anyhow::Result<TextTranslationResult> {
     if texts.is_empty() {
         bail!("nothing to translate");
@@ -131,6 +140,7 @@ pub async fn translate_texts(
         translation_glossary: glossary.filter(|s| !s.trim().is_empty()),
         context_segments,
         progress_id: progress_id.filter(|s| !s.is_empty()),
+        captured_id: captured_id.filter(|s| !s.is_empty()),
     };
     let base = base_url(server_url);
     // Per-request override of the shared client's 120 s default (reqwest's

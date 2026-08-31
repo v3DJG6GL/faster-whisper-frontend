@@ -120,6 +120,9 @@ pub struct StartParams {
     pub decode_overrides: Option<serde_json::Value>,
     /// Server override-profile name forwarded to the backend (None/empty = none).
     pub override_profile: Option<String>,
+    /// Declares that this session will translate on a separate request, so the
+    /// server keeps each utterance's log receipt open until it lands.
+    pub translate_expect: Option<serde_json::Value>,
     pub device_id: Option<String>,
     pub save_dir: Option<PathBuf>,
     pub trim_silence: bool,
@@ -211,6 +214,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         language: p.language,
         response_format: p.response_format,
         prompt: p.prompt,
+        translate_expect: p.translate_expect,
         decode_overrides: p.decode_overrides,
         override_profile: p.override_profile,
         api_key: p.api_key,
@@ -244,6 +248,12 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         }
         StreamEvent::RecordingSaved(path) => {
             emit_if_active(&appc, epoch, "stream://recording", path);
+        }
+        StreamEvent::Captured(id) => {
+            // Epoch-gated like every other event: a cancelled session's
+            // capture id must never reach the UI and get attached to whatever
+            // session started next.
+            emit_if_active(&appc, epoch, "stream://captured", id);
         }
         StreamEvent::Loading => {
             // Server is cold-loading its model — alive, just slow. The client
