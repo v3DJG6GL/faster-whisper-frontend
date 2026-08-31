@@ -187,6 +187,16 @@ const SegmentRow = memo(function SegmentRow({
   // text (wordAlign), so the timings still match what's on screen.
   const karaoke = isActive && origVisible && range && range[0] < range[1];
   const lineColor = colorize && seg.speaker ? { color: colorOf(seg.speaker) } : undefined;
+  // Translated lines carry the segment's SPEAKER color, dimmed (mixed toward
+  // --c-faint, NOT transparent — WebKitGTK's unpremultiplied transparent mix
+  // muddies text, see app.css). Teal stays reserved for run chrome (progress
+  // card, frontier, chips); with colors off / no speaker the lines fall back
+  // to teal so MT text stays distinguishable from the original.
+  const mtAccent = colorize && seg.speaker ? colorOf(seg.speaker) : "var(--c-translate)";
+  const mtColor =
+    colorize && seg.speaker
+      ? `color-mix(in srgb, ${colorOf(seg.speaker)} 65%, var(--c-faint))`
+      : "var(--c-translate)";
   const visLangs = visLangsKey ? visLangsKey.split(",") : [];
   return (
     <div
@@ -353,12 +363,13 @@ const SegmentRow = memo(function SegmentRow({
           <span
             key={lang}
             className={cn(
-              "block min-w-0 whitespace-pre-wrap text-[color:var(--c-translate)]",
+              "block min-w-0 whitespace-pre-wrap",
               stale && "opacity-50",
             )}
+            style={{ color: mtColor }}
             onClick={!origVisible && canSeek ? () => seekTo(seg.start) : undefined}
           >
-            <LangTag code={lang} />
+            <LangTag code={lang} color={mtColor} />
             {stale ? (
               <s>{stripControlChars(tr.trim())}</s>
             ) : trWords ? (
@@ -366,10 +377,20 @@ const SegmentRow = memo(function SegmentRow({
                 <span
                   key={k}
                   className={cn(
-                    k === trCur &&
-                      "rounded bg-[color:var(--c-translate)] px-0.5 font-medium text-accent-ink",
+                    k === trCur && "rounded px-0.5 font-medium",
                     k !== trCur && k <= trPassed && "opacity-60",
                   )}
+                  // Soft speaker-accent fill (chipStyle idiom) — reads as the
+                  // follow-along highlight in both themes without the shared
+                  // teal block the MT lines used to carry.
+                  style={
+                    k === trCur
+                      ? {
+                          backgroundColor: `color-mix(in srgb, ${mtAccent} 22%, transparent)`,
+                          color: mtAccent,
+                        }
+                      : undefined
+                  }
                 >
                   {w}
                   {k < trWords.length - 1 ? " " : ""}
@@ -396,16 +417,27 @@ const SegmentRow = memo(function SegmentRow({
   );
 });
 
-/** Leading language tag on a track line (original amber-neutral, MT teal). */
-function LangTag({ code, orig }: { code: string; orig?: boolean }) {
+/** Leading language tag on a track line (original neutral; MT takes the
+ *  line's resolved color — dimmed speaker accent, or teal fallback). */
+function LangTag({ code, orig, color }: { code: string; orig?: boolean; color?: string }) {
   return (
     <span
       className={cn(
         "mr-1.5 inline-block translate-y-[-1px] rounded border px-1 font-mono text-[9.5px] uppercase tracking-wider",
         orig
           ? "border-line-strong text-dim"
-          : "border-[color:var(--c-translate)]/40 text-[color:var(--c-translate)]",
+          : !color && "border-[color:var(--c-translate)]/40 text-[color:var(--c-translate)]",
       )}
+      style={
+        !orig && color
+          ? {
+              color,
+              // A 40%-alpha border is fine to mix toward transparent — the
+              // WebKitGTK gradient caveat only bites large text/fill areas.
+              borderColor: `color-mix(in srgb, ${color} 40%, transparent)`,
+            }
+          : undefined
+      }
     >
       {code}
     </span>
