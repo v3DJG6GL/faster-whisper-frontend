@@ -805,6 +805,7 @@ const DOT_BG: Record<string, string> = {
   live: "bg-live",
   dim: "bg-dim",
   think: "bg-think",
+  translate: "bg-translate",
 };
 /** A small state dot. The dictation surfaces drive `tone`/`filled`/`pulse` from
  *  `dictationVisual()` so colour + shape + motion all match the overlay chip; off
@@ -816,7 +817,10 @@ export function StatusDot({
   filled = true,
   title,
 }: {
-  tone?: "ok" | "warn" | "rec" | "idle" | "faint" | "accent" | "live" | "dim" | "think";
+  // The dictation half of this union IS DictationTone — the sidebar hands `vis.tone`
+  // straight through, so a tone added there must exist here (and in DOT_BG) or the dot
+  // renders unstyled.
+  tone?: "ok" | "warn" | "rec" | "idle" | "faint" | "accent" | "live" | "dim" | "think" | "translate";
   pulse?: boolean;
   filled?: boolean;
   title?: string;

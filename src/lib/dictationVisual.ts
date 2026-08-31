@@ -9,6 +9,13 @@ import type { DictationStatus } from "./types";
  * It mirrors the overlay chip's long-standing palette, which is the design intent:
  *   • green  (live)   — actively speaking
  *   • amber  (accent) — armed but silent ("ready to speak"; the OS mic-in-use cue)
+ *   • teal   (translate) — the T2T translating stage. It is a machine-working state like
+ *                       the blue ones, but the ONE that can take tens of seconds (a cold
+ *                       GGUF load), so it earns its own hue rather than hiding inside the
+ *                       generic blue: a wait you can't distinguish from "finalizing…" reads
+ *                       as a hang. The hue isn't new — `--c-translate` was already reserved
+ *                       for T2T and is what the viewer's MT lines and the translate run
+ *                       chrome use, so the chip now agrees with those surfaces too.
  *   • blue   (think)  — finalizing / inserting / mic warm-up (machine working). Was
  *                       neutral-grey (dim), but grey-working was indistinguishable
  *                       from grey-off — literally identical on the tucked edge-dot,
@@ -31,7 +38,7 @@ import type { DictationStatus } from "./types";
 export type DictationVisualState = "off" | "armed" | "speaking" | "processing" | "error";
 
 /** Colour-token key — maps 1:1 to an `app.css` --c-* token / Tailwind `bg-*`/`text-*` utility. */
-export type DictationTone = "faint" | "accent" | "live" | "dim" | "rec" | "think";
+export type DictationTone = "faint" | "accent" | "live" | "dim" | "rec" | "think" | "translate";
 
 export interface DictationVisual {
   state: DictationVisualState;
@@ -61,7 +68,7 @@ export function dictationVisual(
     case "transcribing":
       return { state: "processing", tone: "think", label: "finalizing…", pulse: true, filled: true };
     case "translating":
-      return { state: "processing", tone: "think", label: "translating…", pulse: true, filled: true };
+      return { state: "processing", tone: "translate", label: "translating…", pulse: true, filled: true };
     case "injecting":
       return { state: "processing", tone: "think", label: "inserting…", pulse: true, filled: true };
     case "listening":

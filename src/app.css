@@ -26,6 +26,11 @@
   --color-ok: var(--c-ok);
   --color-warn: var(--c-warn);
   --color-think: var(--c-think);
+  /* Both themes have defined --c-translate since the T2T suite landed, but five
+     surfaces reach it as `text-[color:var(--c-translate)]` because no Tailwind
+     alias existed. The overlay's tone→class maps need a class NAME, not an
+     inline style, so the alias stops being optional here. */
+  --color-translate: var(--c-translate);
 
   --font-display: "Hubot Sans Variable", system-ui, sans-serif;
   --font-sans: "Mona Sans Variable", system-ui, sans-serif;

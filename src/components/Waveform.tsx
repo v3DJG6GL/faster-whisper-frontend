@@ -65,7 +65,10 @@ export function Waveform({
   processing?: boolean;
   bars?: number;
   variant?: "bars" | "dots";
-  tone?: "accent" | "rec" | "dim" | "live" | "think";
+  // Mirrors DictationTone minus "faint" (callers map that to "dim"): the chip and
+  // Home hand `dictationVisual().tone` straight through, so a tone added there must
+  // be renderable here or the bars fall back to amber "ready" beside a working dot.
+  tone?: "accent" | "rec" | "dim" | "live" | "think" | "translate";
   /** Reveal the Pride flag through the bars while hovered (see component note). */
   pride?: boolean;
   className?: string;
@@ -301,7 +304,9 @@ export function Waveform({
             ? "text-live"
             : tone === "think"
               ? "text-think"
-              : tone === "dim"
+              : tone === "translate"
+                ? "text-translate"
+                : tone === "dim"
                 ? "text-faint"
                 : "text-accent",
         className,

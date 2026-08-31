@@ -64,6 +64,21 @@ const TONE_BG: Record<DictationTone, string> = {
   dim: "bg-dim",
   rec: "bg-rec",
   think: "bg-think",
+  translate: "bg-translate",
+};
+
+// The dot's glow, keyed off the SAME tone as its fill. These used to be an if-chain
+// hand-rolled from `vis.state`, which meant a new tone got the fill from the map above
+// and a glow from whichever branch happened to catch it — teal dot, blue halo. Keyed
+// off `vis.tone`, the two cannot disagree. Alphas match the old chain's.
+const TONE_GLOW: Record<DictationTone, string> = {
+  faint: "none",
+  accent: "0 0 12px rgba(255,158,44,0.6)",
+  live: "0 0 12px rgba(54,208,122,0.5)",
+  dim: "0 0 10px rgba(168,159,147,0.5)",
+  rec: "0 0 10px rgba(255,92,70,0.5)",
+  think: "0 0 10px rgba(111,174,217,0.45)", // finishing/warm-up: cool "working" blue
+  translate: "0 0 10px rgba(77,208,196,0.45)", // T2T stage: --c-translate teal, think's alpha
 };
 
 // After speech stops, the pill stays expanded this long before collapsing back to
@@ -606,28 +621,37 @@ export default function Overlay() {
         : standby
           ? "border border-faint bg-transparent"
           : "bg-accent";
+  // Same gate as dotColorClass above, deliberately: whenever the fill comes from the
+  // tone map, so does the glow.
   const dotGlow =
-    vis.state === "error"
-      ? "0 0 10px rgba(255,92,70,0.5)"
-      : vis.state === "speaking"
-        ? "0 0 12px rgba(54,208,122,0.5)"
-        : vis.state === "processing"
-          ? "0 0 10px rgba(111,174,217,0.45)" // finishing/warm-up: cool "working" blue
-          : peeked
-            ? standby
-              ? "0 0 10px rgba(168,159,147,0.5)" // tucked idle: soft neutral halo
-              : "0 0 12px rgba(255,158,44,0.6)" // tucked armed: amber halo
-            : standby
-              ? "none"
-              : !expanded
-                ? "0 0 12px rgba(255,158,44,0.55)" // calm breathing ember
-                : "0 0 8px rgba(255,158,44,0.4)";
-  // Match the dot + transcript during the post-speech finalize/insert phase: dictationVisual
-  // maps processing to the blue "machine working" tone, so the bars must too (else they'd
-  // glow amber "ready" next to a blue dot). Mirrors Home's waveTone derivation.
+    vis.state === "error" || vis.state === "speaking" || vis.state === "processing"
+      ? TONE_GLOW[vis.tone]
+      : peeked
+        ? standby
+          ? "0 0 10px rgba(168,159,147,0.5)" // tucked idle: soft neutral halo
+          : "0 0 12px rgba(255,158,44,0.6)" // tucked armed: amber halo
+        : standby
+          ? "none"
+          : !expanded
+            ? "0 0 12px rgba(255,158,44,0.55)" // calm breathing ember
+            : "0 0 8px rgba(255,158,44,0.4)";
+  // Match the dot + transcript during the post-speech working phase: take the tone from the
+  // SAME dictationVisual() call the dot uses (else the bars would glow amber "ready" next to a
+  // working dot, or blue next to the teal translating one). Mirrors Home's waveTone derivation.
   // Armed-amber only while actually listening; idle (the post-session expand-linger) reads neutral
   // grey like the hollow idle dot + every other surface (off/idle = grey), not the amber "ready" tone.
-  const barTone = state.warming || processing ? "think" : speaking ? "live" : state.status === "listening" ? "accent" : "dim";
+  const barTone =
+    state.warming || processing
+      ? // "faint" can't actually reach here (it is the off/idle tone), but Waveform has no
+        // hollow-grey bar tone, so fold it to "dim" exactly as Home's waveTone does.
+        vis.tone === "faint"
+        ? "dim"
+        : vis.tone
+      : speaking
+        ? "live"
+        : state.status === "listening"
+          ? "accent"
+          : "dim";
 
   // Deep-idle edge-peek driver: after the chip sits undisturbed for peekTimeoutSec, tuck it to
   // the edge; ANY activity — a status change (e.g. dictation starting), speech, finishing, a
