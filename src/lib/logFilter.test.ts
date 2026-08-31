@@ -4,6 +4,8 @@ import {
   BUG_REPORT_LINES,
   buildBugReport,
   collectTags,
+  FOLD_RUN_CAP,
+  foldDropped,
   foldLines,
   followReduce,
   formatLine,
@@ -66,6 +68,36 @@ describe("foldLines", () => {
 
   it("handles the empty list", () => {
     expect(foldLines([])).toEqual([]);
+  });
+
+  it("keeps the run's earlier occurrences, newest first, for the ×N expansion", () => {
+    const rows = foldLines([
+      line({ seq: 1, ts: 100, msg: "retry" }),
+      line({ seq: 2, ts: 200, msg: "retry" }),
+      line({ seq: 3, ts: 300, msg: "retry" }),
+    ]);
+    expect(rows[0].line.seq).toBe(3);
+    expect(rows[0].earlier.map((l) => l.seq)).toEqual([2, 1]);
+    expect(rows[0].firstSeq).toBe(1);
+    expect(foldDropped(rows[0])).toBe(0);
+  });
+
+  it("caps a wedged run at FOLD_RUN_CAP, keeping the newest and counting the rest", () => {
+    const many = Array.from({ length: FOLD_RUN_CAP + 20 }, (_, i) =>
+      line({ seq: i + 1, ts: i * 10, msg: "poll" }),
+    );
+    const [r] = foldLines(many);
+    expect(r.count).toBe(FOLD_RUN_CAP + 20);
+    expect(r.earlier).toHaveLength(FOLD_RUN_CAP);
+    // Newest kept: the occurrence just under the displayed one.
+    expect(r.earlier[0].seq).toBe(FOLD_RUN_CAP + 19);
+    expect(foldDropped(r)).toBe(19);
+  });
+
+  it("gives an unfolded row an empty run and its own seq as the run start", () => {
+    const [r] = foldLines([line({ seq: 7, ts: 70 })]);
+    expect(r).toMatchObject({ count: 1, firstSeq: 7, earlier: [] });
+    expect(foldDropped(r)).toBe(0);
   });
 });
 

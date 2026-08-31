@@ -56,12 +56,30 @@ export function collectTags(lines: readonly LogLine[], max = 32): string[] {
   return [...seen];
 }
 
+/** How many of a run's earlier occurrences a folded row keeps for expansion.
+ *  A wedged poll loop can repeat thousands of times; holding every one would
+ *  put the whole buffer behind a single row. The newest are kept — the oldest
+ *  is already named by `firstTs`. */
+export const FOLD_RUN_CAP = 50;
+
 /** One display row after "Merge repeats": `line` is the LATEST occurrence
- *  (its ts/seq render), `count` the run length, `firstTs` when the run began. */
+ *  (its ts/seq render), `count` the run length, `firstTs`/`firstSeq` when the
+ *  run began. `earlier` holds the run's other occurrences, newest first and
+ *  capped, so the row can expand to show WHEN each one landed — the burst rate
+ *  is the thing folding otherwise destroys. */
 export interface FoldedLine {
   line: LogLine;
   count: number;
   firstTs: number;
+  /** Seq of the run's FIRST occurrence. Stable while the run grows (`line.seq`
+   *  is not), so the view can key an expanded row by it. */
+  firstSeq: number;
+  earlier: LogLine[];
+}
+
+/** Occurrences in the run that `earlier` had to drop (0 when it holds them all). */
+export function foldDropped(r: FoldedLine): number {
+  return Math.max(0, r.count - 1 - r.earlier.length);
 }
 
 /** Fold runs of CONSECUTIVE identical lines (level + tag + message; the
@@ -71,10 +89,13 @@ export function foldLines(lines: readonly LogLine[]): FoldedLine[] {
   for (const l of lines) {
     const prev = out[out.length - 1];
     if (prev && prev.line.level === l.level && prev.line.tag === l.tag && prev.line.msg === l.msg) {
+      // The occurrence being displaced is the newest of the earlier ones.
+      prev.earlier.unshift(prev.line);
+      if (prev.earlier.length > FOLD_RUN_CAP) prev.earlier.pop();
       prev.line = l;
       prev.count += 1;
     } else {
-      out.push({ line: l, count: 1, firstTs: l.ts });
+      out.push({ line: l, count: 1, firstTs: l.ts, firstSeq: l.seq, earlier: [] });
     }
   }
   return out;

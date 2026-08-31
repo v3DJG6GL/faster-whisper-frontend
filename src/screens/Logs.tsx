@@ -7,8 +7,8 @@
 // Lines are virtualized (@tanstack/react-virtual) — the DOM never holds the
 // full 10k-line buffer — and live OUTSIDE the store (see lib/logs.ts).
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Check, Copy, Eraser, FolderOpen } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ArrowDown, Check, ChevronRight, Copy, Eraser, FolderOpen } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
@@ -25,9 +25,11 @@ import {
 import {
   buildBugReport,
   collectTags,
+  foldDropped,
   foldLines,
   followReduce,
   matchesFilters,
+  type FoldedLine,
   type FollowState,
   type LevelThreshold,
 } from "@/lib/logFilter";
@@ -63,6 +65,94 @@ function rowTime(ts: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
 }
 
+/** "1.70 s" / "480 ms" — how long a merged run took, which is the burst rate
+ *  the fold otherwise hides. */
+function spanText(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+/** The cells of one log line. Shared by the row itself and, when a merged row
+ *  is expanded, by each earlier occurrence underneath it. */
+function LineCells({ l, wrap, chip }: { l: LogLine; wrap: boolean; chip?: ReactNode }) {
+  return (
+    <>
+      <span className="w-[86px] shrink-0 tabular-nums text-faint">{rowTime(l.ts)}</span>
+      <span className={cn("w-[44px] shrink-0 font-semibold uppercase", levelClasses(l.level))}>
+        {l.level}
+      </span>
+      {l.tag && <span className="shrink-0 text-accent/85">[{safeDisplayText(l.tag, 24)}]</span>}
+      {chip}
+      <span
+        className={cn(
+          "min-w-0",
+          wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre",
+          l.level === "error" ? "text-rec" : l.level === "warn" ? "text-warn" : "text-text/85",
+          (l.level === "debug" || l.level === "trace") && "text-faint",
+        )}
+      >
+        {stripControlChars(l.msg)}
+      </span>
+    </>
+  );
+}
+
+const LINE_ROW = "flex select-text gap-3 px-2 py-[2px] font-mono text-[12px] leading-[1.55]";
+
+/** One virtualized row: the (possibly merged) line, plus — when its ×N chip is
+ *  expanded — the run's earlier occurrences. The expansion renders INSIDE the
+ *  measured row element, so the virtualizer picks up the height change itself
+ *  and the row count never moves. */
+function LogRow({ r, wrap, open, onToggle }: {
+  r: FoldedLine;
+  wrap: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const l = r.line;
+  const err = l.level === "error";
+  const dropped = foldDropped(r);
+  return (
+    <>
+      <div className={cn(LINE_ROW, "hover:bg-accent-soft/50", err && "border-l-2 border-rec bg-rec/5 pl-[6px]")}>
+        <LineCells
+          l={l}
+          wrap={wrap}
+          chip={
+            r.count > 1 ? (
+              <button
+                type="button"
+                onClick={onToggle}
+                aria-expanded={open}
+                title={`Repeated ${r.count}× over ${spanText(l.ts - r.firstTs)} — ${open ? "hide" : "show"} each one`}
+                className="ring-signal flex shrink-0 select-none items-center gap-0.5 self-start rounded-pill bg-accent-soft py-px pl-0.5 pr-1.5 font-semibold tabular-nums text-accent transition-colors hover:bg-accent/25"
+              >
+                <ChevronRight
+                  className={cn("size-3 transition-transform", open && "rotate-90")}
+                  aria-hidden
+                />
+                ×{r.count}
+              </button>
+            ) : undefined
+          }
+        />
+      </div>
+      {open && r.count > 1 && (
+        <div className="border-l-2 border-accent-soft bg-accent/[0.04] pl-1">
+          {r.earlier.map((e) => (
+            <div key={e.seq} className={cn(LINE_ROW, "opacity-80")}>
+              <LineCells l={e} wrap={wrap} />
+            </div>
+          ))}
+          <div className="px-2 pb-1 pl-[98px] font-mono text-[10.5px] text-faint">
+            {r.count} in {spanText(l.ts - r.firstTs)} · first {rowTime(r.firstTs)}
+            {dropped > 0 && ` · ${dropped.toLocaleString()} more not kept — turn off Merge repeats to see every line`}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function Logs() {
   const version = useLogs((s) => s.version);
   const [threshold, setThreshold] = useState<LevelThreshold>(() => takePrefilter() ?? "all");
@@ -70,6 +160,9 @@ export default function Logs() {
   const [text, setText] = useState("");
   const [wrap, setWrap] = useState(true);
   const [merge, setMerge] = useState(true);
+  // Which merged runs are unfolded, keyed by the run's FIRST seq — stable while
+  // the run keeps growing (the row's own `line.seq` is not).
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
   const [copied, setCopied] = useState(false);
   const [follow, setFollow] = useState<FollowState>({ follow: true, pendingNew: 0 });
 
@@ -99,7 +192,7 @@ export default function Logs() {
     () =>
       merge
         ? foldLines(lines)
-        : lines.map((l) => ({ line: l, count: 1, firstTs: l.ts })),
+        : lines.map((l) => ({ line: l, count: 1, firstTs: l.ts, firstSeq: l.seq, earlier: [] })),
     [lines, merge],
   );
   // What the bug report header records about the copied subset (null = the
@@ -148,6 +241,12 @@ export default function Logs() {
     virtualizer.measure();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wrap]);
+
+  // Turning merging off dissolves the runs the expansions belong to; keeping
+  // the set would silently re-open rows on the way back.
+  useEffect(() => {
+    setExpanded((s) => (s.size === 0 ? s : new Set()));
+  }, [merge]);
 
   function onScroll() {
     const el = scrollRef.current;
@@ -217,7 +316,7 @@ export default function Logs() {
   }
 
   return (
-    <div className="flex h-full flex-col px-10 pt-10">
+    <div className="flex h-full flex-col px-[var(--page-pad)] pt-10">
       <div className="flex items-baseline gap-3">
         <h1 className="font-display text-[24px] font-bold text-text">Logs</h1>
         <span className="flex items-center gap-1.5 text-[12px] font-medium text-live">
@@ -263,7 +362,10 @@ export default function Logs() {
           aria-label="Filter lines"
           className="h-8 w-auto min-w-[140px] flex-1 text-[12px]"
         />
-        <label className="flex items-center gap-2 text-[12px] text-dim">
+        <label
+          className="flex items-center gap-2 text-[12px] text-dim"
+          title="Collapse runs of identical lines into one row wearing the NEWEST timestamp. Click a ×N chip to see each occurrence."
+        >
           Merge repeats
           <Toggle checked={merge} onChange={setMerge} ariaLabel="Merge repeated lines" />
         </label>
@@ -294,43 +396,25 @@ export default function Logs() {
             <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
               {virtualizer.getVirtualItems().map((v) => {
                 const r = rows[v.index];
-                const l = r.line;
                 return (
                   <div
-                    key={l.seq}
+                    key={r.line.seq}
                     ref={virtualizer.measureElement}
                     data-index={v.index}
                     style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${v.start}px)` }}
-                    className={cn(
-                      "flex select-text gap-3 px-2 py-[2px] font-mono text-[12px] leading-[1.55] hover:bg-accent-soft/50",
-                      l.level === "error" && "border-l-2 border-rec bg-rec/5 pl-[6px]",
-                    )}
                   >
-                    <span className="w-[86px] shrink-0 tabular-nums text-faint">{rowTime(l.ts)}</span>
-                    <span className={cn("w-[44px] shrink-0 font-semibold uppercase", levelClasses(l.level))}>
-                      {l.level}
-                    </span>
-                    {l.tag && (
-                      <span className="shrink-0 text-accent/85">[{safeDisplayText(l.tag, 24)}]</span>
-                    )}
-                    {r.count > 1 && (
-                      <span
-                        title={`Repeated ${r.count}× since ${rowTime(r.firstTs)}`}
-                        className="shrink-0 self-start rounded-pill bg-accent-soft px-1.5 font-semibold tabular-nums text-accent"
-                      >
-                        ×{r.count}
-                      </span>
-                    )}
-                    <span
-                      className={cn(
-                        "min-w-0",
-                        wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre",
-                        l.level === "error" ? "text-rec" : l.level === "warn" ? "text-warn" : "text-text/85",
-                        (l.level === "debug" || l.level === "trace") && "text-faint",
-                      )}
-                    >
-                      {stripControlChars(l.msg)}
-                    </span>
+                    <LogRow
+                      r={r}
+                      wrap={wrap}
+                      open={expanded.has(r.firstSeq)}
+                      onToggle={() =>
+                        setExpanded((prev) => {
+                          const next = new Set(prev);
+                          if (!next.delete(r.firstSeq)) next.add(r.firstSeq);
+                          return next;
+                        })
+                      }
+                    />
                   </div>
                 );
               })}
