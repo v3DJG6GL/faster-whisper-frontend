@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { getCapabilities, getOverrideProfile } from "@/lib/api";
+import { getOverrideProfile } from "@/lib/api";
+import { refreshCaps } from "@/lib/capabilities";
+import { useApp } from "@/lib/store";
+import { hasOwn, ownProp } from "@/lib/own";
 import { NO_OVERRIDE_PROFILE, type Capabilities, type InheritedValues } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
 
@@ -28,34 +31,23 @@ export function useOverrideContext(args: {
   resolvedPrompt: string | undefined;
 } {
   const { serverUrl, backendId, apiKey, profileName, serverKind } = args;
-  const [caps, setCaps] = useState<Capabilities | null>(null);
+  // Read-through of the store cache instead of a per-mount fetch: streaming.ts and
+  // preload.ts need the same answer with no hook to fetch from, so the fetch moved
+  // to lib/capabilities.ts and this hook became one of its readers. Absent key ⇒
+  // trigger a refresh; present-null ⇒ fetched and unsupported, don't refetch.
+  const caps = useApp((s) => (backendId ? (ownProp(s.caps, backendId) ?? null) : null));
+  const capsFetched = useApp((s) => (backendId ? hasOwn(s.caps, backendId) : false));
   const [resolved, setResolved] = useState<InheritedValues | undefined>(undefined);
   const [resolvedPrompt, setResolvedPrompt] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    if (serverKind === "standard") {
-      setCaps(null);
-      return;
-    }
-    // Clear before refetching so a backend switch shows the neutral "unknown ⇒ permitted" gate
-    // during the in-flight window instead of ghosting the PREVIOUS server's caps (the cancelled
-    // flag only suppresses the stale setState; it doesn't reset the already-committed value).
-    // Mirrors OverrideProfilePicker, which clears its names up front for the same reason.
-    setCaps(null);
-    let cancelled = false;
-    void getCapabilities({ serverUrl, backendId, apiKey })
-      .then((c) => {
-        if (!cancelled) setCaps(c);
-      })
-      .catch(() => {
-        // Best-effort (mirrors OverrideProfilePicker): a rare IPC reject degrades to null,
-        // never an unhandled rejection.
-        if (!cancelled) setCaps(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [serverUrl, backendId, apiKey, serverKind]);
+    if (serverKind === "standard" || !backendId || capsFetched) return;
+    // Absent ⇒ never fetched for this backend; the store is invalidated at the four
+    // sites that repoint or drop a backend, so a stale entry can't survive an edit
+    // and there is nothing to clear here. refreshCaps is best-effort and coalesces.
+    const backend = useApp.getState().backends.find((b) => b.id === backendId);
+    if (backend) void refreshCaps(backend);
+  }, [backendId, serverKind, capsFetched]);
 
   useEffect(() => {
     const name = profileName?.trim();

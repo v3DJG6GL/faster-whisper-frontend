@@ -3,6 +3,7 @@ import type {
   AppRule,
   AppSettings,
   Backend,
+  Capabilities,
   Config,
   ConnectionInfo,
   DictationPhase,
@@ -282,6 +283,15 @@ interface AppState {
    *  the persisted Config. Fed by the usage controller (lib/usage.ts). */
   usage: Record<string, UsageStats | null>;
 
+  /** Per-Backend server capabilities (GET /v1/me), keyed by Backend id. Same
+   *  convention as `connections`/`usage`: an ABSENT key means "not fetched
+   *  yet", a present-but-null value means "fetched and unsupported" (standard
+   *  or old server). Runtime-only — never persisted into Config. Cached here
+   *  rather than refetched per mount because the non-React callers
+   *  (streaming.ts, preload.ts) have no hook to hang a fetch off. Fed by
+   *  lib/capabilities.ts. */
+  caps: Record<string, Capabilities | null>;
+
   /** P31: which Backend the usage VIEW (Home strip + Statistics page) shows. null =
    *  follow the dictation/home-target backend. Runtime-only (a view preference, not
    *  persisted). The chip readout ignores this — it always uses activeStatsBackend. */
@@ -353,6 +363,9 @@ interface AppState {
 
   /** Store the latest usage stats for a Backend (null = fetched-but-unsupported). */
   setUsage: (backendId: string, stats: UsageStats | null) => void;
+
+  /** Store a Backend's fetched capabilities (null = fetched-but-unsupported). */
+  setCaps: (backendId: string, caps: Capabilities | null) => void;
 
   /** Pick which Backend the usage view shows (null = follow the dictation target). */
   setUsageViewBackend: (id: string | null) => void;
@@ -460,6 +473,7 @@ export const useApp = create<AppState>((set) => ({
 
   connections: {},
   usage: {},
+  caps: {},
   usageViewBackendId: null,
   saveError: null,
   saveErrorKind: null,
@@ -503,15 +517,18 @@ export const useApp = create<AppState>((set) => ({
       if (next) urlOverrides[backendId] = next;
       else delete urlOverrides[backendId];
       // The effective connect target changed: drop the cached connection +
-      // usage so status/classification re-test against the new address.
+      // usage + caps so status/classification re-test against the new address.
       const connections = { ...s.connections };
       delete connections[backendId];
       const usage = { ...s.usage };
       delete usage[backendId];
+      const caps = { ...s.caps };
+      delete caps[backendId];
       return {
         settings: { ...s.settings, sync: { ...sync, urlOverrides } },
         connections,
         usage,
+        caps,
       };
     }),
   updateGeneral: (patch) =>
@@ -540,18 +557,22 @@ export const useApp = create<AppState>((set) => ({
         delete connections[b.id];
         const usage = { ...s.usage };
         delete usage[b.id];
-        return { backends, connections, usage };
+        const caps = { ...s.caps };
+        delete caps[b.id];
+        return { backends, connections, usage, caps };
       }
       return { backends };
     }),
   removeBackend: (id) =>
     set((s) => {
-      // Drop the removed backend's cached connection + usage too, so a re-added backend that
-      // recycles the id (or a late in-flight test) can't read the dead server's state.
+      // Drop the removed backend's cached connection + usage + caps too, so a re-added backend
+      // that recycles the id (or a late in-flight fetch) can't read the dead server's state.
       const connections = { ...s.connections };
       delete connections[id];
       const usage = { ...s.usage };
       delete usage[id];
+      const caps = { ...s.caps };
+      delete caps[id];
       return {
         backends: s.backends.filter((b) => b.id !== id),
         // Only build a new profiles array if a profile actually referenced the removed backend —
@@ -562,6 +583,7 @@ export const useApp = create<AppState>((set) => ({
           : s.profiles,
         connections,
         usage,
+        caps,
         // Scrub the other id-keyed references to the removed backend so none dangle: the usage-view
         // pin (runtime), the PERSISTED quick-add-list pin, and the sync meta (removing the sync
         // server disables sync — there's nowhere to push to; also drop its per-device URL
@@ -652,6 +674,16 @@ export const useApp = create<AppState>((set) => ({
       return { usage: { ...s.usage, [backendId]: stats } };
     }),
 
+  setCaps: (backendId, caps) =>
+    set((s) => {
+      // Same stability guard as setUsage, for the same reason: refreshCaps can be
+      // re-triggered by unrelated store churn and hands us a structurally identical
+      // object each time. hasOwn, not `in`, so an id like `constructor` doesn't read
+      // as already-present via the prototype.
+      if (hasOwn(s.caps, backendId) && JSON.stringify(s.caps[backendId]) === JSON.stringify(caps)) return {};
+      return { caps: { ...s.caps, [backendId]: caps } };
+    }),
+
   setUsageViewBackend: (id) => set({ usageViewBackendId: id }),
 
   setSaveError: (msg, kind = "save") => set({ saveError: msg, saveErrorKind: msg ? kind : null }),
@@ -690,12 +722,18 @@ export const useApp = create<AppState>((set) => ({
       const prev = new Map(s.backends.map((b) => [b.id, b]));
       const connections = { ...s.connections };
       const usage = { ...s.usage };
-      for (const id of new Set([...Object.keys(connections), ...Object.keys(usage)])) {
+      const caps = { ...s.caps };
+      for (const id of new Set([
+        ...Object.keys(connections),
+        ...Object.keys(usage),
+        ...Object.keys(caps),
+      ])) {
         const before = prev.get(id);
         const after = c.backends.find((b) => b.id === id);
         if (!after || !before || before.serverUrl !== after.serverUrl || before.hasApiKey !== after.hasApiKey) {
           delete connections[id];
           delete usage[id];
+          delete caps[id];
         }
       }
       return {
@@ -705,6 +743,7 @@ export const useApp = create<AppState>((set) => ({
         appRules: c.appRules ?? [],
         connections,
         usage,
+        caps,
       };
     }),
 }));
