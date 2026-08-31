@@ -3,7 +3,7 @@
 // `vi.mock` is used nowhere), so the transport reaches this module as injected
 // parameters — the same idiom runChunkedTranslate uses.
 //
-// Two bugs live here, and both are why the seam exists:
+// Three bugs live here, and all three are why the seam exists:
 //   • The budget was derived from the TEXT LENGTH alone, so a 73-character
 //     sentence got 3.3 s while a cold llama.cpp server needed 13 s (12.3 s of
 //     it a GGUF load). Every first phrase of a session lost that race and
@@ -11,7 +11,16 @@
 //   • Losing the race cancelled NOTHING: no progressId was ever sent, so the
 //     request kept running against Rust's 3600 s TEXT_TRANSLATE_TIMEOUT and the
 //     GPU finished a translation nobody would read.
+//   • The length formula itself was priced for the wrong job. The request
+//     submits `[...context, phrase]` and the server translates ALL of it for
+//     EVERY target — a live phrase with 3 context segments and 2 targets is
+//     six passes — while the budget paid for one pass over the phrase alone.
+//     The shorter the phrase the worse the underpricing, so a 4-word phrase
+//     ("Ich weiss es nicht") was given 1.95 s for 2.4 s of work and lost the
+//     race EVERY time, deterministically. Elapsed time is now a ceiling only;
+//     the real signal is whether the server's progress entry is still moving.
 import type { TextTranslationResult } from "./api";
+import type { BatchProgress } from "./types";
 
 /** Why the translation didn't land. Recorded per session so the failure
  *  doorway can name the cause instead of blaming the server for a race we
@@ -33,6 +42,18 @@ export interface TranslateDeps {
   }) => Promise<TextTranslationResult>;
   /** Best-effort server-side abort. Called ONLY when we stopped waiting. */
   cancel: (args: { serverUrl: string; backendId: string; progressId: string }) => unknown;
+  /** The server's progress entry for `progressId`. This is what makes the
+   *  stall detector possible — without it there is nothing to distinguish a
+   *  wedged server from a slow one, and only the ceiling applies. Absent under
+   *  vitest (nothing mocks Tauri) and on a backend with no progress endpoint. */
+  pollProgress?: (args: {
+    serverUrl: string;
+    backendId: string;
+    progressId: string;
+  }) => Promise<BatchProgress | null>;
+  /** How often to poll. Kept injectable so the tests don't have to model the
+   *  real cadence. */
+  pollMs?: number;
   now?: () => number;
   newId?: () => string;
 }
@@ -71,8 +92,17 @@ export interface DictationTranslateRequest {
   abort?: AbortHandle;
   /** Fires once the progress id exists, before the request goes out — the
    *  caller uses it to arm the cancel handle and, on a cold one-shot, the
-   *  progress poller. */
-  onStart?: (info: { progressId: string; budgetMs: number; cold: boolean }) => void;
+   *  progress phase card. */
+  onStart?: (info: {
+    progressId: string;
+    ceilingMs: number;
+    stallMs: number;
+    cold: boolean;
+  }) => void;
+  /** Every progress reading the stall detector takes, handed on so the caller
+   *  can drive its phase card from the SAME poll instead of running a second
+   *  interval against the same endpoint. */
+  onProgress?: (p: BatchProgress) => void;
 }
 
 export interface DictationTranslateResult {
@@ -96,31 +126,64 @@ export interface DictationTranslateResult {
   byLang?: Record<string, string>;
 }
 
-/** A cold model load (download + GGUF into VRAM) is tens of seconds, and the
- *  stop-timing one-shot has nothing queued behind it, so it can afford to wait.
+/** What the submitted payload should cost, measured on the reference
+ *  deployment (HY-MT1.5-7B Q4_K_M, warm, CUDA llama.cpp): roughly 0.4 s of
+ *  fixed overhead plus 5 ms per source character, PER TARGET.
  *
- *  | case                                    | budget                 |
- *  | warm === true                           | the length formula     |
- *  | oneShot (stop-timing) && not warm       | 60 s                   |
- *  | live phrase, not warm, queued <= 1      | 20 s                   |
- *  | live phrase, not warm, queued > 1       | the length formula     |
+ *      174 chars → 2 targets → 2.5 s predicted / 2.2 s actual
+ *      221 chars → 2 targets → 3.0 s predicted / 3.1 s actual
+ *      193 chars → 2 targets → 2.7 s predicted / 2.4 s actual
  *
- *  WHY the live cap is 20 s and not the one-shot's 60 s: a phrase landing a
+ *  `chars` is every character SUBMITTED — the context segments as well as the
+ *  phrase — because the server translates all of them (its own log says
+ *  `3 segments × 2 targets`). Pricing the phrase alone, once, is what made
+ *  short multi-target phrases fail deterministically. */
+export function pricedMs(chars: number, targets: number): number {
+  return Math.max(1, targets) * (400 + chars * 5);
+}
+
+/** The point past which a phrase is worth less than the original text landing
+ *  now. NOT a prediction of how long the work takes — the stall detector owns
+ *  that — just a bound on how late an answer may be and still be useful.
+ *
+ *  | case                        | ceiling                          |
+ *  | live phrase                 | max(20 s, priced × 3)            |
+ *  | live phrase, backlog behind | max(20 s, priced × 1.5)          |
+ *  | oneShot (stop-timing)       | max(60 s, priced × 3)            |
+ *
+ *  WHY the live floor is 20 s and not the one-shot's 60 s: a phrase landing a
  *  minute after it was spoken, while the user has kept talking, is WORSE than
- *  the original landing now. And why a backlog falls back to the short formula:
- *  a queue means phrases are already waiting on this one — stalling it stalls
- *  them all, so take the original and keep the typing current. */
-export const COLD_ONESHOT_MS = 60_000;
-export const COLD_LIVE_MS = 20_000;
-export function translateBudgetMs(
-  len: number,
-  o: { warm: boolean | null; oneShot: boolean; queued: number },
+ *  the original landing now. And why a backlog is less patient: a queue means
+ *  later phrases are already waiting on this one — stalling it stalls them
+ *  all, so take the original and keep the typing current.
+ *
+ *  `queued >= 1`, not `> 1`: the depth is read BEFORE this phrase's own
+ *  increment, so `1` already means one task ahead of us. The old `> 1` made
+ *  the whole branch unreachable in live dictation — it never fired once. */
+export const CEILING_FLOOR_ONESHOT_MS = 60_000;
+export const CEILING_FLOOR_LIVE_MS = 20_000;
+export const CEILING_MAX_MS = 300_000;
+export function translateCeilingMs(
+  chars: number,
+  targets: number,
+  o: { oneShot: boolean; queued: number },
 ): number {
-  const byLength = Math.min(60_000, Math.max(2_000, 1_500 + len * 25));
-  if (o.warm === true) return byLength;
-  if (o.oneShot) return COLD_ONESHOT_MS;
-  if (o.queued > 1) return byLength;
-  return COLD_LIVE_MS;
+  const floor = o.oneShot ? CEILING_FLOOR_ONESHOT_MS : CEILING_FLOOR_LIVE_MS;
+  const slack = o.queued >= 1 ? 1.5 : 3;
+  return Math.min(CEILING_MAX_MS, Math.max(floor, Math.round(pricedMs(chars, targets) * slack)));
+}
+
+/** How long the server may go SILENT before we give up on it.
+ *
+ *  A cold start is the reason there are two values: downloading and loading a
+ *  GGUF produces no measurable progress for tens of seconds, and treating that
+ *  silence as a hang is precisely the mistake the old budget made. Once the
+ *  session has seen one translation land, the model is resident and a long
+ *  silence really is a wedge. */
+export const STALL_WARM_MS = 8_000;
+export const STALL_COLD_MS = 45_000;
+export function translateStallMs(warm: boolean | null): number {
+  return warm === true ? STALL_WARM_MS : STALL_COLD_MS;
 }
 
 /** Distinguishable rejections: the `finally` must cancel server-side for a race
@@ -160,15 +223,21 @@ export async function runDictationTranslate(
 ): Promise<DictationTranslateResult> {
   const original = req.text;
   const progressId = (deps.newId ?? defaultId)();
-  const budgetMs = translateBudgetMs(original.length, {
-    warm: req.warm,
+  // Every character the server will actually translate, not just this phrase's.
+  const submittedChars =
+    req.context.reduce((n, c) => n + c.length, 0) + original.length;
+  const ceilingMs = translateCeilingMs(submittedChars, req.targets.length, {
     oneShot: req.oneShot,
     queued: req.queued,
   });
+  const stallMs = translateStallMs(req.warm);
+  const clock = deps.now ?? (() => Date.now());
+  const pollMs = deps.pollMs ?? 1_000;
   // Only a race WE abandoned owes the server a cancel; set at the catch.
   let lost: TranslateFailure | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  req.onStart?.({ progressId, budgetMs, cold: req.warm !== true });
+  let watchdog: ReturnType<typeof setInterval> | undefined;
+  req.onStart?.({ progressId, ceilingMs, stallMs, cold: req.warm !== true });
   try {
     const r = await Promise.race([
       deps.translate({
@@ -186,7 +255,44 @@ export async function runDictationTranslate(
         capturedId: req.capturedId ?? null,
       }),
       new Promise<never>((_, rej) => {
-        timer = setTimeout(() => rej(new BudgetExpired("translation timed out")), budgetMs);
+        timer = setTimeout(
+          () => rej(new BudgetExpired(`no answer within ${Math.round(ceilingMs / 1000)}s`)),
+          ceilingMs,
+        );
+      }),
+      // The stall detector. Elapsed time cannot tell a slow GPU from a wedged
+      // one; a progress entry that stops advancing can. Same idle-timer shape
+      // the server uses to decide when to release a held log receipt.
+      new Promise<never>((_, rej) => {
+        const poll = deps.pollProgress;
+        if (!poll) return; // no progress endpoint — the ceiling is the only guard
+        let lastAdvance = clock();
+        let lastSig: string | null = null;
+        watchdog = setInterval(() => {
+          void poll({ serverUrl: req.serverUrl, backendId: req.backendId, progressId })
+            .then((p) => {
+              if (p) req.onProgress?.(p);
+              // `position` moves within a stage that reports no fraction, so it
+              // belongs in the signature: without it a long single-target pass
+              // reads as frozen.
+              const sig = p ? `${p.stage ?? ""}|${p.progress ?? ""}|${p.position ?? ""}` : "";
+              if (sig !== lastSig) {
+                lastSig = sig;
+                lastAdvance = clock();
+                return;
+              }
+              if (clock() - lastAdvance >= stallMs) {
+                rej(new BudgetExpired(`no progress for ${Math.round(stallMs / 1000)}s`));
+              }
+            })
+            // A failed poll is NOT a stall: an older backend has no progress
+            // endpoint at all, and one dropped request must never abandon a
+            // translation that is running fine. Restamping degrades this to
+            // "ceiling only", which is the conservative direction.
+            .catch(() => {
+              lastAdvance = clock();
+            });
+        }, pollMs);
       }),
       new Promise<never>((_, rej) => {
         const h = req.abort;
@@ -225,6 +331,7 @@ export async function runDictationTranslate(
     return { text: original, ok: false, cause: lost, error: e };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (watchdog !== undefined) clearInterval(watchdog);
     // The GPU is still working on a translation nobody will read — stop it. NOT
     // on success (the request is over), and NOT on a rejected request or an
     // empty answer (the server already finished; a cancel would only 404).
