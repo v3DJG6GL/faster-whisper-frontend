@@ -111,3 +111,53 @@ describe("loadHistory", () => {
     expect(useTranscriptHistory.getState().loaded).toBe(true);
   });
 });
+
+describe("per-language tracks", () => {
+  it("round-trips the keyed map, the target array and includeOriginal", () => {
+    const id = recordDictation({
+      ...CAPTURE,
+      translatedText: "Hallo\n\nHello\n\nSalut",
+      translationTarget: "en, fr",
+      translationTargets: ["en", "fr"],
+      translations: { en: "Hello", fr: "Salut" },
+      includeOriginal: true,
+      translationInjected: true,
+      translationAttempted: true,
+    });
+    const rec = useTranscriptHistory
+      .getState()
+      .records.find((r) => r.id === id) as TranscriptRecord;
+
+    // The keyed map is what lets History render one track per language. The
+    // injected blob is kept too, because it is what actually reached the
+    // target app — but it is a lossy join (blank-line separated, and a
+    // transcript contains its own line breaks), so it can never be split
+    // back apart.
+    expect(rec.translations).toEqual({ en: "Hello", fr: "Salut" });
+    expect(rec.translationTargets).toEqual(["en", "fr"]);
+    expect(rec.includeOriginal).toBe(true);
+    // result.text stays the ORIGINAL, which is why rendering both it and the
+    // blob showed the source language twice.
+    expect(rec.result?.text).toBe(CAPTURE.text);
+    expect(rec.schemaVersion).toBe(1);
+  });
+
+  it("normalises includeOriginal:false to absent", () => {
+    // Matches how TranslationFields stores the flag, so a record written with
+    // it off compares equal to one written before the field existed.
+    const id = recordDictation({ ...CAPTURE, includeOriginal: false });
+    const rec = useTranscriptHistory
+      .getState()
+      .records.find((r) => r.id === id) as TranscriptRecord;
+    expect(rec.includeOriginal).toBeUndefined();
+  });
+
+  it("an older record simply has no tracks", () => {
+    const id = recordDictation({ ...CAPTURE, translatedText: "Hello" });
+    const rec = useTranscriptHistory
+      .getState()
+      .records.find((r) => r.id === id) as TranscriptRecord;
+    expect(rec.translations).toBeUndefined();
+    expect(rec.translationTargets).toBeUndefined();
+  });
+});

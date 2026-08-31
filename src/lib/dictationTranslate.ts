@@ -80,6 +80,17 @@ export interface DictationTranslateResult {
   cause?: TranslateFailure;
   /** The raw failure, for the doorway's `shortCause`. */
   error?: unknown;
+  /** The same translations, still keyed by language.
+   *
+   *  `text` above is what gets INJECTED, so it must stay a single joined
+   *  string — but the join is lossy: blocks are separated by a blank line
+   *  and a transcript contains its own line breaks, so nothing downstream
+   *  can split it back apart. This function is the only place the
+   *  language→text association ever exists, so anything that wants to show
+   *  the tracks separately (History, the log receipt) has to be handed the
+   *  map from here. Absent on the failure paths, where `text` is the
+   *  untranslated original. */
+  byLang?: Record<string, string>;
 }
 
 /** A cold model load (download + GGUF into VRAM) is tens of seconds, and the
@@ -181,15 +192,22 @@ export async function runDictationTranslate(
       }),
     ]);
     const last = r.results[r.results.length - 1] ?? {};
-    const parts = req.targets
-      .map((lang) => last[lang]?.trim())
-      .filter((t): t is string => !!t);
+    // Keep the language keys alongside the parts. Same iteration, same
+    // drop-a-missing-target rule — the parts array is derived FROM the map so
+    // the two can never disagree about which targets came back.
+    const byLang: Record<string, string> = {};
+    for (const lang of req.targets) {
+      const t = last[lang]?.trim();
+      if (t) byLang[lang] = t;
+    }
+    const parts = Object.values(byLang);
     if (!parts.length) throw new EmptyTranslation("empty translation");
     // One block per language, blank-line separated — the transcript itself may
     // contain single line breaks, so a lone \n wouldn't read as a boundary.
     return {
       text: (req.includeOriginal ? [original.trim(), ...parts] : parts).join("\n\n"),
       ok: true,
+      byLang,
     };
   } catch (e) {
     lost =

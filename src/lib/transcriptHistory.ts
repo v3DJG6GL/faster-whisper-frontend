@@ -63,6 +63,29 @@ export interface TranscriptRecord {
   translatedText?: string;
   translationTarget?: string;
   translationInjected?: boolean;
+  /** Per-language transcripts, keyed the same way a batch run keys them
+   *  (`BatchResult.translations`). `translatedText` above is the FLATTENED
+   *  form that was actually injected — it is what went into the target app,
+   *  so it stays — but it cannot be taken apart again: the join is
+   *  blank-line separated and a transcript contains its own line breaks.
+   *  History rendered that blob under one label and then rendered
+   *  `result.text` again beneath it, which is why the original appeared
+   *  twice. With this map every track is addressable, so each renders once
+   *  under its own code.
+   *
+   *  Absent on records written before this existed; those still render as a
+   *  single untitled block, which is the most that can honestly be said
+   *  about them. */
+  translations?: Record<string, string>;
+  /** Target codes as an ARRAY. `translationTarget` is the same list joined
+   *  with ", " for display, which loses the boundaries — `RouteBadge` needs
+   *  the parts, and a 3+ target list was being truncated mid-code. */
+  translationTargets?: string[];
+  /** Whether the untranslated original was injected alongside the
+   *  translations. Without it the renderer cannot tell whether the first
+   *  block of `translatedText` is the original or a translation, so it
+   *  cannot strip the duplicate even when it can see one. */
+  includeOriginal?: boolean;
   /** Was translation even configured for this session, and if it was attempted and
    *  didn't land, why. Additive + OPTIONAL on purpose, so schemaVersion stays 1: an
    *  old record reads back as "no translation configured", which is what it is. The
@@ -156,6 +179,12 @@ export interface DictationCapture {
   translationInjected?: boolean;
   translationAttempted?: boolean;
   translationFailure?: string;
+  /** Per-language transcripts + the target list, kept apart. See the notes on
+   *  TranscriptRecord.translations: the injected string is a lossy join and
+   *  cannot be split back into languages. */
+  translations?: Record<string, string>;
+  translationTargets?: string[];
+  includeOriginal?: boolean;
 }
 
 /** Save a finished dictation session as a history record; returns its id so
@@ -185,6 +214,11 @@ export function recordDictation(cap: DictationCapture): string {
     translationInjected: cap.translationInjected,
     translationAttempted: cap.translationAttempted,
     translationFailure: cap.translationFailure,
+    translations: cap.translations,
+    translationTargets: cap.translationTargets,
+    // Normalized to absent when false, matching how TranslationFields stores
+    // the flag, so old and new records compare the same way.
+    includeOriginal: cap.includeOriginal || undefined,
   };
   upsertRecord(rec);
   return rec.id;

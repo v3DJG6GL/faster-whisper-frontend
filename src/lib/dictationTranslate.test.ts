@@ -75,7 +75,10 @@ describe("runDictationTranslate", () => {
       d,
     );
     expect(seen).toEqual([["eins", "zwei", "drei"]]);
-    expect(r).toEqual({ text: "en:drei", ok: true });
+    // byLang carries the same translations still keyed by language: `text` is
+    // the injected join and cannot be split back apart, so this map is the
+    // only way History can render one track per language.
+    expect(r).toEqual({ text: "en:drei", ok: true, byLang: { en: "en:drei" } });
     expect(d.cancel).not.toHaveBeenCalled();
   });
 
@@ -117,7 +120,9 @@ describe("runDictationTranslate", () => {
       );
       const p = runDictationTranslate(req({ oneShot: true }), d);
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(await p).toEqual({ text: "en:Hallo Welt", ok: true });
+      expect(await p).toEqual({
+        text: "en:Hallo Welt", ok: true, byLang: { en: "en:Hallo Welt" },
+      });
       await vi.advanceTimersByTimeAsync(COLD_ONESHOT_MS);
       expect(d.cancel).not.toHaveBeenCalled();
     });
@@ -155,7 +160,12 @@ describe("runDictationTranslate", () => {
   it("a target missing from the answer is dropped, not rendered blank", async () => {
     const d = deps((a) => Promise.resolve(answer(a.texts, ["en"])));
     const r = await runDictationTranslate(req({ targets: ["en", "fr"] }), d);
-    expect(r).toEqual({ text: "en:Hallo Welt", ok: true });
+    // Dropped from BOTH views, not blank in one of them — the parts array is
+    // derived from byLang, so the join and the map cannot disagree about
+    // which targets actually came back.
+    expect(r).toEqual({
+      text: "en:Hallo Welt", ok: true, byLang: { en: "en:Hallo Welt" },
+    });
   });
 
   it("a rejecting request is an error, and the request already ended → no cancel", async () => {

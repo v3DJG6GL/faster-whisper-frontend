@@ -255,6 +255,36 @@ function releaseWarmLease(): void {
 
 // Stop-timing: the translated text that actually got injected (History keeps both).
 let sessionTranslatedText: string | null = null;
+/** The same text, accumulated PER LANGUAGE across the session's phrases.
+ *
+ *  In live mode each phrase is translated separately and its already-joined
+ *  blob used to be appended to the previous one with a space — so phrase 2's
+ *  German ran straight into phrase 1's French and a multi-target session
+ *  collapsed into `DE EN FR DE EN FR…` in a single paragraph, with even the
+ *  blank-line boundaries destroyed at every phrase seam. Accumulating by
+ *  language instead keeps each track continuous and readable, and is what
+ *  History renders. */
+let sessionByLang: Record<string, string[]> = {};
+
+/** Fold a phrase's per-language translations into the session accumulator. */
+function accumulateByLang(byLang: Record<string, string> | undefined): void {
+  if (!byLang) return;
+  for (const [lang, text] of Object.entries(byLang)) {
+    const t = text.trim();
+    if (!t) continue;
+    (sessionByLang[lang] ??= []).push(t);
+  }
+}
+
+/** The session's tracks as finished strings, or undefined when empty. */
+function sessionTracks(): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const [lang, parts] of Object.entries(sessionByLang)) {
+    const joined = parts.join(" ").trim();
+    if (joined) out[lang] = joined;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 // One "translation failed" doorway per session, not one per phrase.
 let sessionTranslateWarned = false;
 /** Why this session's last translate didn't land — kept for the session-end
@@ -414,6 +444,10 @@ async function maybeTranslate(
       // session takes the SHORT budget, so one cold start doesn't buy the whole
       // session a minute-long allowance.
       tr.warm = true;
+      // Keep the tracks apart while we still can. r.text is the joined string
+      // that gets injected and is unsplittable afterwards; this is the only
+      // point where the language keys are still attached.
+      accumulateByLang(r.byLang);
       return r.text;
     }
     sessionTranslateFailure = r.cause ?? "error";
@@ -495,6 +529,15 @@ function captureDictationHistory(): void {
       translatedText: sessionTranslatedText ?? undefined,
       translationTarget: sessionTranslation?.targets.join(", "),
       translationInjected: sessionTranslatedText != null,
+      // The tracks kept apart, plus the target list as an ARRAY. The joined
+      // `translationTarget` above stays for records already on disk, but it
+      // is display-only: RouteBadge needs the parts, and a 3+ target list was
+      // being truncated mid-code.
+      translations: sessionTracks(),
+      translationTargets: sessionTranslation
+        ? [...sessionTranslation.targets]
+        : undefined,
+      includeOriginal: sessionTranslation?.includeOriginal || undefined,
       // Without these, a failed translation is indistinguishable in History from a
       // session that never had translation configured — the record would quietly
       // present the original as the intended output.
@@ -2033,6 +2076,7 @@ async function startLiveInner(
         }
       : null;
     sessionTranslatedText = null;
+    sessionByLang = {};
     sessionTranslateWarned = false;
     sessionTranslateFailure = null;
     sessionPhraseContext = [];
