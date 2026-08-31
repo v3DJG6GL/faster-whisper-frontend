@@ -168,10 +168,10 @@ const RAIL_DESCRIPTIONS: Record<RailStage, string> = {
  *  per stage. Identity is carried by position + name — hue is redundant
  *  reinforcement, never the only channel. */
 const STAGE_COLORS: Record<RailStage, string> = {
-  downloading: "#d9a45b",
-  separating: "#6faed9",
+  downloading: "var(--c-download)",
+  separating: "var(--c-separate)",
   transcribing: "var(--c-ok)",
-  diarizing: "#c68fb4",
+  diarizing: "var(--c-diarize)",
   translating: "var(--c-translate)",
 };
 const AXIS_NAMES: Record<RailStage, string> = {

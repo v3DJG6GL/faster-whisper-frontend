@@ -31,6 +31,9 @@
      alias existed. The overlay's tone→class maps need a class NAME, not an
      inline style, so the alias stops being optional here. */
   --color-translate: var(--c-translate);
+  --color-separate: var(--c-separate);
+  --color-diarize: var(--c-diarize);
+  --color-download: var(--c-download);
 
   --font-display: "Hubot Sans Variable", system-ui, sans-serif;
   --font-sans: "Mona Sans Variable", system-ui, sans-serif;
@@ -60,6 +63,15 @@
   --c-warn: #e0a33a;
   --c-think: #6faed9; /* cool steel blue: machine working (finalizing/inserting/warm-up) — the only cool hue, so it can't be read as off-grey, armed-amber, live-green, or error-red */
   --c-translate: #4dd0c4; /* teal: the T2T translating stage — unclaimed by any other stage hue */
+  /* Remaining pipeline-stage hues. These were bare hexes inside STAGE_COLORS
+     in Transcribe.tsx, which meant they had NO light-theme value at all —
+     #c68fb4 is barely legible on a light background. They are also what the
+     backend's /logs receipt and the quick-config trace viewer colour their
+     stage rows with, so a stage should read the same wherever it appears;
+     one definition here is what makes that true rather than coincidental. */
+  --c-separate: #6faed9; /* music source separation (shares the think blue) */
+  --c-diarize: #c68fb4;  /* speaker diarization */
+  --c-download: #d9a45b; /* fetching a URL's media */
   /* Speaker-chip palette (Transcribe screen): eight hue-separated tones at
      matched brightness, indexed — exports resolve the same indexes to the
      DEFAULT_SPEAKER_COLORS hexes in transcriptExport.ts. Coral stays
@@ -101,6 +113,9 @@
   --c-warn: #b9791f;
   --c-think: #33719f; /* cool steel blue: machine working (darker for light bg) */
   --c-translate: #0f8a7e; /* teal, darkened for cream backgrounds */
+  --c-separate: #33719f;  /* stage hues, darkened for cream backgrounds */
+  --c-diarize: #9a5a84;
+  --c-download: #a06f22;
   /* Speaker-chip palette, darkened for cream backgrounds (same hue order). */
   --spk-1: #bf6f12;
   --spk-2: #33719f;
