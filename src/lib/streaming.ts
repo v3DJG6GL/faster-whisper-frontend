@@ -56,6 +56,7 @@ import {
   runDictationTranslate,
   type TranslateFailure,
 } from "./dictationTranslate";
+import { newCaptureIdBook } from "./captureIds";
 import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertMethod, Profile, TranslationOverrides } from "./types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
@@ -265,15 +266,10 @@ let sessionTranslatedText: string | null = null;
  *  language instead keeps each track continuous and readable, and is what
  *  History renders. */
 let sessionByLang: Record<string, string[]> = {};
-/** The capture id of the most recently finalized utterance.
- *
- *  The server holds that utterance's log receipt open waiting for our
- *  translate call, and this id is how it links the two. It arrives on its own
- *  frame because the `final` frame goes out BEFORE the capture row is written,
- *  so the id does not exist yet at that point. Best-effort throughout: an
- *  older backend never sends it, and a translation that carries no id simply
- *  completes nothing — which is the pre-existing behaviour. */
-let sessionCapturedId: string | null = null;
+/** This session's capture ids, keyed by the utterance ordinal both the `final`
+ *  and `captured` frames carry. See captureIds.ts for why the pairing has to be
+ *  by ordinal and not by arrival order. */
+const captureIds = newCaptureIdBook();
 
 /** Fold a phrase's per-language translations into the session accumulator. */
 function accumulateByLang(byLang: Record<string, string> | undefined): void {
@@ -289,7 +285,10 @@ function accumulateByLang(byLang: Record<string, string> | undefined): void {
 function sessionTracks(): Record<string, string> | undefined {
   const out: Record<string, string> = {};
   for (const [lang, parts] of Object.entries(sessionByLang)) {
-    const joined = parts.join(" ").trim();
+    // A blank line per phrase, mirroring how the phrases were injected: each
+    // one is its own block, so a track reads as paragraphs rather than as one
+    // run-on sentence stream.
+    const joined = parts.join("\n\n").trim();
     if (joined) out[lang] = joined;
   }
   return Object.keys(out).length ? out : undefined;
@@ -336,21 +335,44 @@ export function abortDictationTranslate(): void {
 let sessionPhraseContext: string[] = [];
 const PHRASE_CONTEXT_MAX = 3;
 
+/** What a phrase translate produced, and whether it actually translated.
+ *
+ *  `translated` used to be inferred as `out !== in`, which is wrong twice over:
+ *  a translation that legitimately equals the original reads as a failure, and
+ *  it forced every caller to re-derive a fact this function already knew. */
+interface PhraseOut {
+  text: string;
+  translated: boolean;
+}
+
+/** The gap between consecutive PHRASES of a translated live session.
+ *
+ *  One blank line already separates the languages WITHIN a phrase (the
+ *  `\n\n` join in runDictationTranslate), so phrases need a wider gap or the
+ *  two boundaries are indistinguishable — you cannot see where one phrase's
+ *  French ends and the next phrase's German begins.
+ *
+ *  It also has to be inserted explicitly, because the two paths disagreed
+ *  about whitespace: a translated phrase is trimmed and joined, arriving with
+ *  no leading space at all, while a phrase whose translation was abandoned is
+ *  the raw document slice and keeps Whisper's leading space. That asymmetry is
+ *  what glued an untranslated German phrase onto the end of the previous
+ *  phrase's French line. */
+const PHRASE_GAP = "\n\n\n";
+
 // ── Cold-translate progress ─────────────────────────────────────────────────
 // A cold llama.cpp server spends tens of seconds downloading/loading the GGUF
 // before a single token is produced. The chip's "translating…" alone reads as a
 // hang for that long, so the stop-timing one-shot (the only path that waits
-// that long) polls the server's progress entry and publishes a phase label.
+// that long) publishes a phase label from the server's progress entry.
 // Same vocabulary as the retro-translate card: downloading → a real fraction,
 // loading → indeterminate, translating → a real fraction.
-const TRANSLATE_POLL_MS = 1000;
-let translatePhaseTimer: ReturnType<typeof setInterval> | null = null;
-function stopTranslatePhasePoll(): void {
-  if (translatePhaseTimer !== null) {
-    clearInterval(translatePhaseTimer);
-    translatePhaseTimer = null;
-  }
-}
+//
+// This module no longer runs its own interval: runDictationTranslate polls the
+// SAME endpoint for EVERY phrase (that poll is how it tells a slow server from
+// a wedged one) and hands each reading here, so one poll now serves both. The
+// early-out below is what keeps a live phrase's polling invisible — the phase
+// card only exists for the cold one-shot.
 function foldTranslatePhase(p: BatchProgress): void {
   const cur = useApp.getState().dictationPhase;
   if (!cur) return; // the phase was cleared (settled/cancelled) — a late poll adds nothing
@@ -377,20 +399,6 @@ function foldTranslatePhase(p: BatchProgress): void {
       break; // no entry yet (the request hasn't registered the id) — keep what we show
   }
 }
-function startTranslatePhasePoll(
-  tr: { serverUrl: string; backendId: string },
-  progressId: string,
-): void {
-  stopTranslatePhasePoll();
-  translatePhaseTimer = setInterval(() => {
-    void getTranscribeProgress({ serverUrl: tr.serverUrl, backendId: tr.backendId, progressId })
-      .then(foldTranslatePhase)
-      // Best-effort: an older backend / standard server has no progress
-      // endpoint, and a poll failure must never disturb the translate itself.
-      .catch(() => {});
-  }, TRANSLATE_POLL_MS);
-}
-
 /** Translate `text` for injection, or return it unchanged (no target set,
  *  timeout, failure, superseded session). Never throws; warns once.
  *
@@ -401,15 +409,21 @@ function startTranslatePhasePoll(
 async function maybeTranslate(
   text: string,
   cfg: InsertCfg | null,
-  opts?: { oneShot?: boolean; queued?: number },
-): Promise<string> {
+  opts?: { oneShot?: boolean; queued?: number; utterance?: number },
+): Promise<PhraseOut> {
   const tr = sessionTranslation;
-  if (!tr || !text.trim()) return text;
+  if (!tr || !text.trim()) return { text, translated: false };
   const context = sessionPhraseContext.slice(-PHRASE_CONTEXT_MAX);
   const abort = newAbortHandle();
   activeTranslateAbort = abort;
   const oneShot = opts?.oneShot === true;
   try {
+    // Pair this phrase with ITS OWN capture row before the request goes out.
+    // The one-shot claims nothing: it translates the whole transcript in one
+    // call, so there is no single utterance whose receipt it completes — and
+    // taking "the most recent id" (what it used to do) meant stealing the last
+    // live phrase's receipt.
+    const capturedId = await captureIds.take(oneShot ? null : (opts?.utterance ?? null));
     const r = await runDictationTranslate(
       {
         text,
@@ -422,14 +436,8 @@ async function maybeTranslate(
         contextSegments: tr.contextSegments,
         serverUrl: tr.serverUrl,
         backendId: tr.backendId,
-        // Completes the server-side receipt this utterance is waiting on.
-        // Taken (not copied) so a later phrase cannot re-claim an id that has
-        // already been spent -- each held receipt is claimed exactly once.
-        capturedId: (() => {
-          const id = sessionCapturedId;
-          sessionCapturedId = null;
-          return id;
-        })(),
+        // Completes the server-side receipt THIS utterance is waiting on.
+        capturedId,
         warm: tr.warm ?? null,
         oneShot,
         queued: opts?.queued ?? 0,
@@ -449,23 +457,34 @@ async function maybeTranslate(
                 cancellable: true,
               },
             });
-            startTranslatePhasePoll(tr, progressId);
           }
         },
+        // Every reading the stall detector takes. foldTranslatePhase no-ops
+        // unless a phase card is up, so a live phrase's polls stay silent.
+        onProgress: foldTranslatePhase,
       },
-      { translate: translateText, cancel: cancelTextTranslation },
+      {
+        translate: translateText,
+        cancel: cancelTextTranslation,
+        // Deliberately NOT wrapped in a .catch: the stall detector has to see
+        // the rejection to know the endpoint is unreachable (it then falls back
+        // to the ceiling alone). Swallowing it here would look like a server
+        // reporting the same progress forever, i.e. a stall.
+        pollProgress: getTranscribeProgress,
+      },
     );
-    if (insertCfg !== cfg) return text; // superseded — caller bails on its own guard too
+    // Recorded BEFORE the supersede check: a translation that succeeded proves
+    // the model is resident whether or not this phrase still has a session to
+    // land in, and throwing that away made the NEXT phrase pay the cold
+    // allowance all over again.
+    if (r.ok) tr.warm = true;
+    if (insertCfg !== cfg) return { text, translated: false }; // superseded — caller bails on its own guard too
     if (r.ok) {
-      // Proof this server has its model resident: every later phrase of the
-      // session takes the SHORT budget, so one cold start doesn't buy the whole
-      // session a minute-long allowance.
-      tr.warm = true;
       // Keep the tracks apart while we still can. r.text is the joined string
       // that gets injected and is unsplittable afterwards; this is the only
       // point where the language keys are still attached.
       accumulateByLang(r.byLang);
-      return r.text;
+      return { text: r.text, translated: true };
     }
     sessionTranslateFailure = r.cause ?? "error";
     console.error("dictation translation failed:", r.error ?? r.cause);
@@ -477,9 +496,8 @@ async function maybeTranslate(
         .getState()
         .setLogsDoorway(`Translation failed (${shortCause(r.error)}) — inserted the original text.`);
     }
-    return text;
+    return { text, translated: false };
   } finally {
-    stopTranslatePhasePoll();
     if (activeTranslateAbort === abort) activeTranslateAbort = null;
     // The request is over either way — drop the cancel handle so a later
     // teardown can't cancel a progress id that already completed.
@@ -504,9 +522,9 @@ async function maybeTranslate(
 async function translatePhrase(
   text: string,
   cfg: InsertCfg | null,
-  opts?: { queued?: number },
-): Promise<string> {
-  if (!sessionTranslation) return text;
+  opts?: { queued?: number; utterance?: number },
+): Promise<PhraseOut> {
+  if (!sessionTranslation) return { text, translated: false };
   const before = useApp.getState().status;
   useApp.getState().setDictation({ status: "translating" });
   try {
@@ -1128,7 +1146,8 @@ async function ensureListeners(): Promise<void> {
     if (insertCfg?.live && capturing) bumpPhraseEnd();
   });
 
-  await reg<{ committed: string; tail: string; last: boolean }>("stream://final", (e) => {
+  type FinalFrame = { committed: string; tail: string; last: boolean; utterance: number };
+  await reg<FinalFrame>("stream://final", (e) => {
     // A cancelled/errored session's detached drain can still emit a late `final` on the
     // un-advanced epoch (cancelLive/stopRecord don't bump ACTIVE_EPOCH, so emit_if_active
     // still passes). Don't let it resurrect the preview / re-inject after the cancel cleared
@@ -1186,6 +1205,11 @@ async function ensureListeners(): Promise<void> {
       // translate queue, say) would advance the typed baseline at diff time and
       // lose skip-and-retype.
       const queuedAtEnqueue = injectDepth;
+      // The server's ordinal for THIS utterance, captured synchronously with
+      // everything else the queued task needs. It is how the phrase finds its
+      // own capture id (and so its own held log receipt) instead of taking
+      // whichever id happened to arrive last.
+      const utterance = e.payload.utterance ?? 0;
       enqueueInject(async () => {
         const t = await resolveTarget();
         // Discard a cancelled/superseded session's phrase — don't inject it into the new/refocused
@@ -1210,11 +1234,19 @@ async function ensureListeners(): Promise<void> {
           if (phraseClip.length > 0 && grew) {
             // T2T live: translate the outbound copy only; clipBaseline and the
             // grew guard keep working in original text.
-            const clipOut = await translatePhrase(phraseClip, cfg, { queued: queuedAtEnqueue });
+            const { text: clipOut, translated } = await translatePhrase(phraseClip, cfg, {
+              queued: queuedAtEnqueue,
+              utterance,
+            });
             if (insertCfg !== cfg) return;
-            if (clipOut !== phraseClip) {
+            if (translated) {
               sessionPhraseContext.push(phraseClip);
-              sessionTranslatedText = ((sessionTranslatedText ?? "") + " " + clipOut).trim();
+              // The clipboard is REPLACED per phrase (never appended to), so
+              // the copied text needs no phrase gap — only this session
+              // accumulator, which History renders as one document, does.
+              sessionTranslatedText = sessionTranslatedText
+                ? sessionTranslatedText + PHRASE_GAP + clipOut.trim()
+                : clipOut.trim();
             }
             let landed = true;
             try {
@@ -1266,11 +1298,25 @@ async function ensureListeners(): Promise<void> {
             // T2T live: translate the outbound copy only. injectedText still
             // advances by the ORIGINAL document below, so per-phrase diffing,
             // skip-and-retype and re-sent-final detection are untouched.
-            const typeOut = await translatePhrase(toType, cfg, { queued: queuedAtEnqueue });
+            const phrase = await translatePhrase(toType, cfg, {
+              queued: queuedAtEnqueue,
+              utterance,
+            });
             if (insertCfg !== cfg) return;
-            if (typeOut !== toType) {
+            // A translated session types BLOCKS, so normalise the seam here
+            // rather than inheriting whichever whitespace each path happened to
+            // carry. `injectedText` is the already-typed original document, so
+            // a non-empty one means a previous phrase really landed — a phrase
+            // the own-window guard skipped leaves it untouched and so does not
+            // buy a leading gap for text that was never typed.
+            const typeOut = sessionTranslation
+              ? (injectedText.length > 0 ? PHRASE_GAP : "") + phrase.text.trim()
+              : phrase.text;
+            if (phrase.translated) {
               sessionPhraseContext.push(toType);
-              sessionTranslatedText = ((sessionTranslatedText ?? "") + " " + typeOut).trim();
+              sessionTranslatedText = sessionTranslatedText
+                ? sessionTranslatedText + PHRASE_GAP + phrase.text.trim()
+                : phrase.text.trim();
             }
             // Snapshot the user's CURRENT clipboard right before this paste overwrites it — per phrase,
             // not once at session start — and only when the clipboard does NOT already hold our own text
@@ -1412,10 +1458,12 @@ async function ensureListeners(): Promise<void> {
     if (capturedRecordId) attachRecordingPath(capturedRecordId, e.payload);
   });
 
-  await reg<string>("stream://captured", (e) => {
+  await reg<{ id: string; utterance: number }>("stream://captured", (e) => {
     // Epoch-gated in Rust, so a cancelled session's id never lands here and
     // gets attached to whatever session started next.
-    sessionCapturedId = e.payload || null;
+    const id = e.payload?.id;
+    if (!id) return;
+    captureIds.resolve(e.payload.utterance ?? 0, id);
   });
 
   await reg<string>("stream://boundary", (e) => {
@@ -1655,9 +1703,10 @@ async function ensureListeners(): Promise<void> {
           // HERE and not given to live phrases, which block the next phrase.
           let outText = text;
           if (sessionTranslation) {
-            outText = await maybeTranslate(text, cfg, { oneShot: true });
+            const one = await maybeTranslate(text, cfg, { oneShot: true });
             if (insertCfg !== cfg) return;
-            if (outText !== text) sessionTranslatedText = outText;
+            outText = one.text;
+            if (one.translated) sessionTranslatedText = one.text;
             setDictation({ status: "injecting" });
           }
           const t = await resolveTarget();
@@ -2100,7 +2149,7 @@ async function startLiveInner(
       : null;
     sessionTranslatedText = null;
     sessionByLang = {};
-    sessionCapturedId = null;
+    captureIds.reset();
     sessionTranslateWarned = false;
     sessionTranslateFailure = null;
     sessionPhraseContext = [];
@@ -2134,6 +2183,10 @@ async function startLiveInner(
           // The session may have ended (or been replaced) during the fetch;
           // only the session that asked may take the answer.
           if (sessionTranslation !== tr) return;
+          // Never downgrade a PROVEN warm: this probe is fire-and-forget and
+          // can resolve after a phrase has already had a translation land, and
+          // its answer is a snapshot of the inventory, not of what just ran.
+          if (tr.warm === true) return;
           tr.warm = translationWarm(ownProp(useApp.getState().caps, backend.id) ?? null, trModel);
         })
         .catch(() => {});

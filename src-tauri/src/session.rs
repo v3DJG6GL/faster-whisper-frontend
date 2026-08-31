@@ -185,6 +185,16 @@ struct FinalPayload {
     committed: String,
     tail: String,
     last: bool,
+    /// The server's utterance ordinal, forwarded so the client can pair this
+    /// phrase with the `stream://captured` frame that follows it.
+    utterance: u32,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CapturedPayload {
+    id: String,
+    utterance: u32,
 }
 
 pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
@@ -237,23 +247,28 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         StreamEvent::Partial { committed, pending } => {
             emit_if_active(&appc, epoch, "stream://partial", PartialPayload { committed, pending });
         }
-        StreamEvent::Final { committed, tail, last } => {
+        StreamEvent::Final { committed, tail, last, utterance } => {
             tracing::info!(
                 "[stream] session {epoch} final committed={} tail={} last={}",
                 committed.len(),
                 tail.len(),
                 last
             );
-            emit_if_active(&appc, epoch, "stream://final", FinalPayload { committed, tail, last });
+            emit_if_active(
+                &appc,
+                epoch,
+                "stream://final",
+                FinalPayload { committed, tail, last, utterance },
+            );
         }
         StreamEvent::RecordingSaved(path) => {
             emit_if_active(&appc, epoch, "stream://recording", path);
         }
-        StreamEvent::Captured(id) => {
+        StreamEvent::Captured { id, utterance } => {
             // Epoch-gated like every other event: a cancelled session's
             // capture id must never reach the UI and get attached to whatever
             // session started next.
-            emit_if_active(&appc, epoch, "stream://captured", id);
+            emit_if_active(&appc, epoch, "stream://captured", CapturedPayload { id, utterance });
         }
         StreamEvent::Loading => {
             // Server is cold-loading its model — alive, just slow. The client
@@ -869,6 +884,10 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
                     committed: text,
                     tail: String::new(),
                     last: true,
+                    // The batch sibling produces ONE final for the whole
+                    // recording — there are no utterances to pair with, and no
+                    // `captured` frame ever follows on this path.
+                    utterance: 0,
                 },
             );
             emit_if_active(&app, epoch, "stream://status", "closed");
