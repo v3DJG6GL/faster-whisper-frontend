@@ -92,7 +92,12 @@ parking_lot = "0.12"
 # reproduce a keys::get() inside a running tokio runtime + spawn_blocking, and
 # consider pinning the store's rt-tokio feature. Costs of staying on 3:
 # dbus-secret-service -> libdbus-sys (a system lib) stays in the Linux tree.
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+# No crypto-* feature: keyring then opens PLAIN Secret Service sessions. The
+# encrypted DH session trips a kwalletd6/ksecretd bug on KDE Frameworks < 6.25
+# (KDE #514194: ~1/256 handshakes are rejected as "Client public key size is
+# invalid" or decrypt to "Unpad Error"), which read as random 403s in the app.
+# The secret only crosses the user-session D-Bus socket — same trust domain.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 enigo = "0.6.1"
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 

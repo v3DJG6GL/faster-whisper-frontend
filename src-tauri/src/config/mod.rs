@@ -950,6 +950,18 @@ pub fn save(dir: &Path, config: &Config) -> anyhow::Result<()> {
 /// keyring entries keep resolving.)
 pub mod keys {
     use super::KEYRING_SERVICE;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    /// Write-through cache over the OS store. Every command resolves the key
+    /// fresh, so without this each poll/translate-chunk/WS-connect is a D-Bus
+    /// round trip — tens of ms each, and on flaky Secret Service daemons every
+    /// read is another chance to fail. The store is only ever written through
+    /// `set`/`delete` below, so the cache cannot go stale within the process.
+    fn cache() -> &'static Mutex<HashMap<String, String>> {
+        static CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+        CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+    }
 
     fn entry(backend_id: &str) -> keyring::Result<keyring::Entry> {
         keyring::Entry::new(KEYRING_SERVICE, backend_id)
@@ -957,28 +969,53 @@ pub mod keys {
 
     pub fn set(backend_id: &str, secret: &str) -> anyhow::Result<()> {
         entry(backend_id)?.set_password(secret)?;
+        cache()
+            .lock()
+            .unwrap()
+            .insert(backend_id.to_string(), secret.to_string());
         Ok(())
     }
 
     pub fn get(backend_id: &str) -> Option<String> {
-        match entry(backend_id).and_then(|e| e.get_password()) {
-            Ok(k) => Some(k),
-            // Simply not stored — the caller treats the backend as keyless.
-            Err(keyring::Error::NoEntry) => None,
-            // Anything else (Ambiguous duplicate items, a store/platform failure) means a
-            // key may EXIST but cannot be read — the visible symptom is an opaque 403 on
-            // connect, so say what actually happened.
-            Err(e) => {
-                // Debug-format the id, like `resolve_key`'s sibling log: it is a sync/import-supplied
-                // string with no length bound and no control-character fold, so a Display copy would
-                // let a peer forge whole records in the log the user is asked to send for support.
-                tracing::warn!("[keys] keyring read failed for backend {backend_id:?}: {e}");
-                None
+        if let Some(k) = cache().lock().unwrap().get(backend_id) {
+            return Some(k.clone());
+        }
+        // One extra attempt on a transient platform error: each try opens a
+        // fresh D-Bus connection (and, with an encrypted session, a fresh DH
+        // keypair), so per-session daemon flakiness rarely strikes twice.
+        for attempt in 0..2u8 {
+            match entry(backend_id).and_then(|e| e.get_password()) {
+                Ok(k) => {
+                    if attempt > 0 {
+                        tracing::debug!("[keys] keyring read recovered on retry");
+                    }
+                    cache()
+                        .lock()
+                        .unwrap()
+                        .insert(backend_id.to_string(), k.clone());
+                    return Some(k);
+                }
+                // Simply not stored — the caller treats the backend as keyless.
+                Err(keyring::Error::NoEntry) => return None,
+                // Anything else (Ambiguous duplicate items, a store/platform failure) means a
+                // key may EXIST but cannot be read — the visible symptom is an opaque 403 on
+                // connect, so say what actually happened.
+                Err(e) => {
+                    if attempt == 0 {
+                        continue;
+                    }
+                    // Debug-format the id, like `resolve_key`'s sibling log: it is a sync/import-supplied
+                    // string with no length bound and no control-character fold, so a Display copy would
+                    // let a peer forge whole records in the log the user is asked to send for support.
+                    tracing::warn!("[keys] keyring read failed for backend {backend_id:?}: {e}");
+                }
             }
         }
+        None
     }
 
     pub fn delete(backend_id: &str) -> anyhow::Result<()> {
+        cache().lock().unwrap().remove(backend_id);
         match entry(backend_id)?.delete_credential() {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
