@@ -3,13 +3,13 @@ import { AnimatePresence, motion } from "motion/react";
 import { Mic, Radio, Hand, Square, Pencil } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
-import { dictationVisual, isActiveDictation, isProcessing } from "@/lib/dictationVisual";
+import { dictationVisual, isActiveDictation, isGracefulStop, isProcessing } from "@/lib/dictationVisual";
 import { Button, Card, Notice, SectionLabel, Select, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/UsageStats";
 import { SetupChecklist } from "@/components/SetupChecklist";
-import { startLive, stopLive, cancelLive, requestStopIfStarting } from "@/lib/streaming";
+import { startLive, stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/streaming";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile } from "@/lib/dictation";
 import type { Backend, Profile } from "@/lib/types";
@@ -160,7 +160,9 @@ export default function Home() {
     return () => clearTimeout(t);
   }, [cardActive]);
   const toggle = () => {
-    if (status === "listening") {
+    // A processing status with the mic still open (a per-phrase translate) is a STOP, not
+    // a cancel — the session is alive and the user asked to end it, not discard it.
+    if (isGracefulStop(status, isCapturing())) {
       void stopLive();
       return;
     }

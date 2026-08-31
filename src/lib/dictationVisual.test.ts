@@ -9,7 +9,9 @@ import { describe, expect, it } from "vitest";
 // COMPLETENESS is exactly what a missing entry breaks (a tone with no fill/glow renders
 // as `undefined`, i.e. an invisible dot), so read them out of the source instead.
 import overlaySrc from "../Overlay.tsx?raw";
-import { dictationVisual, isActiveDictation, isProcessing, type DictationTone } from "./dictationVisual";
+import {
+  dictationVisual, isActiveDictation, isGracefulStop, isProcessing, type DictationTone,
+} from "./dictationVisual";
 import type { DictationStatus } from "./types";
 
 const STATUSES: DictationStatus[] = [
@@ -85,6 +87,33 @@ describe("status membership", () => {
 
   it("pins the post-capture processing subset", () => {
     expect(STATUSES.filter(isProcessing)).toEqual(["transcribing", "translating", "injecting"]);
+  });
+});
+
+describe("isGracefulStop", () => {
+  it("is a stop while the mic is open, whatever the status says", () => {
+    // The live per-phrase translate: a PROCESSING status with capture still running. Under
+    // the old `status === "listening"` test a PTT chord release here was dropped on the
+    // floor and the session wedged listening.
+    expect(isGracefulStop("translating", true)).toBe(true);
+    expect(isGracefulStop("listening", true)).toBe(true);
+  });
+
+  it("keeps post-capture processing on the cancel path", () => {
+    for (const s of ["transcribing", "translating", "injecting"] as DictationStatus[]) {
+      expect(isGracefulStop(s, false), s).toBe(false);
+    }
+  });
+
+  it("still stops a listening session even if the capture flag lags", () => {
+    expect(isGracefulStop("listening", false)).toBe(true);
+  });
+
+  it("is never a stop for idle or error", () => {
+    for (const capturing of [false, true]) {
+      expect(isGracefulStop("idle", capturing)).toBe(false);
+      expect(isGracefulStop("error", capturing)).toBe(false);
+    }
   });
 });
 

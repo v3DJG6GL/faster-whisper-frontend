@@ -7,9 +7,10 @@ import { useApp } from "./store";
 import {
   startLive, stopLive, cancelLive, requestStopIfStarting, cancelStopIfStarting, isStarting,
   queuePendingHoldStart, registerPendingStartRunner, reclassifyLive, abortDictationTranslate,
+  isCapturing,
 } from "./streaming";
 import { showQuickAdd } from "./api";
-import { isActiveDictation, isProcessing } from "./dictationVisual";
+import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
 import type { Backend, Profile } from "./types";
 
 export type TriggerAction = "start" | "stop" | "toggle" | "reclassify" | "cancel";
@@ -32,7 +33,9 @@ function isBusy(): boolean {
 //     sentence" bug found in on-Windows testing over a slow VPN link).
 function stopOrCancel(hard: boolean): void {
   const s = useApp.getState().status;
-  if (s === "listening") void stopLive();
+  // "listening" OR a processing status with the mic still open (a per-phrase translate) —
+  // see isGracefulStop. Getting this wrong drops a PTT chord release on the floor.
+  if (isGracefulStop(s, isCapturing())) void stopLive();
   else if (isProcessing(s)) {
     if (hard) void cancelLive();
   }
@@ -113,7 +116,10 @@ export function dictate(profileId: string, action: TriggerAction): void {
     // drop it: queue it, and streaming fires it on settle IF the chord is still held
     // (checked against Rust's HeldKeys), so the next sentence starts the moment the
     // previous text lands, without another press. Its release is a no-op (stopOrCancel).
-    if (action === "start" && isProcessing(s.status)) queuePendingHoldStart(profileId);
+    // …and only when capture is actually OVER: a per-phrase translate reports a processing
+    // status with the mic still open, and queueing there would fire a whole new session the
+    // moment that phrase settled — on top of the one still running.
+    if (action === "start" && isProcessing(s.status) && !isCapturing()) queuePendingHoldStart(profileId);
     return;
   }
 
@@ -174,7 +180,7 @@ export function runOverlayAction(kind: string): void {
   }
   const s = useApp.getState();
   if (kind === "toggle-dictation") {
-    if (s.status === "listening") {
+    if (isGracefulStop(s.status, isCapturing())) {
       void stopLive();
       return;
     }

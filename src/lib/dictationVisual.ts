@@ -103,3 +103,25 @@ export function isActiveDictation(status: DictationStatus): boolean {
 export function isProcessing(status: DictationStatus): boolean {
   return status === "transcribing" || status === "translating" || status === "injecting";
 }
+
+/**
+ * Does a stop gesture mean "end this session gracefully" (stopLive) rather than "kill it"
+ * (cancelLive)? The three stop-vs-cancel branches — the hotkey/PTT path, the Home hero
+ * button, and the chip's toggle — all used `status === "listening"` for this.
+ *
+ * That stopped being sufficient when a per-phrase translate began reporting itself:
+ * "translating" is a PROCESSING status, but on the live path it happens WHILE THE MIC IS
+ * STILL OPEN. Under the old test a push-to-talk chord release landing in that window was
+ * silently DROPPED (stopOrCancel does nothing for a processing status on a soft stop) and
+ * the session wedged listening with the chord already released; the hero and the chip
+ * would meanwhile have offered a cancel — discarding a live session — where the user
+ * expected a stop.
+ *
+ * So the question is really "is there a live mic behind this status", which is what
+ * `capturing` answers (streaming.isCapturing). Post-capture processing keeps the old
+ * behaviour exactly: a soft stop is a no-op, a deliberate toggle is the cancel that
+ * recovers a wedged finalize.
+ */
+export function isGracefulStop(status: DictationStatus, capturing: boolean): boolean {
+  return status === "listening" || (capturing && isProcessing(status));
+}

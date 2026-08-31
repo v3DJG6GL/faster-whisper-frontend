@@ -72,6 +72,16 @@ let autoStopMs = 0;
 let lastSpokeAt = 0;
 
 let activeEndpoint: "stream" | "batch" | null = null;
+// Is the mic still open? NOT the same question as `activeEndpoint !== null`, which stays
+// set through the finalize drain — this one goes false the moment capture ends (a user
+// stop, a `closed`, a teardown). It exists because a per-phrase translate makes the
+// status "translating" WHILE STILL CAPTURING, and the stop-vs-cancel branches key on that
+// status: they need to know whether there is a live mic behind it. See isGracefulStop.
+let capturing = false;
+/** True while the Rust capture session is live (the mic is open). */
+export function isCapturing(): boolean {
+  return capturing;
+}
 
 // Mic warm-up gate. A cold mic can be open but deliver SILENCE for ~1–2s before real
 // audio flows (classic for a Bluetooth headset switching into its HFP/mic profile). From
@@ -425,6 +435,34 @@ async function maybeTranslate(
     activeTranslateCancel = null;
     if (useApp.getState().dictationPhase) {
       useApp.getState().setDictation({ dictationPhase: null });
+    }
+  }
+}
+
+/** Translate one LIVE phrase, reporting it as its own stage.
+ *
+ *  The status flip is why this wrapper exists: a per-phrase translate can take
+ *  seconds, and without it the chip claims "listening" while the machine is
+ *  actually working — the one lie the shared visual SSOT exists to prevent.
+ *
+ *  It restores whatever status it displaced (rather than assuming "listening"):
+ *  the live path runs while the mic is open, the tail path while injecting. And
+ *  it restores ONLY if nothing else moved us on — a stop, cancel or error landing
+ *  during the wait owns the status from then on, and re-stamping "listening" over
+ *  a teardown would wedge the chip on a session that no longer exists. */
+async function translatePhrase(
+  text: string,
+  cfg: InsertCfg | null,
+  opts?: { queued?: number },
+): Promise<string> {
+  if (!sessionTranslation) return text;
+  const before = useApp.getState().status;
+  useApp.getState().setDictation({ status: "translating" });
+  try {
+    return await maybeTranslate(text, cfg, opts);
+  } finally {
+    if (useApp.getState().status === "translating" && isActiveDictation(before)) {
+      useApp.getState().setDictation({ status: before });
     }
   }
 }
@@ -1107,7 +1145,7 @@ async function ensureListeners(): Promise<void> {
           if (phraseClip.length > 0 && grew) {
             // T2T live: translate the outbound copy only; clipBaseline and the
             // grew guard keep working in original text.
-            const clipOut = await maybeTranslate(phraseClip, cfg, { queued: queuedAtEnqueue });
+            const clipOut = await translatePhrase(phraseClip, cfg, { queued: queuedAtEnqueue });
             if (insertCfg !== cfg) return;
             if (clipOut !== phraseClip) {
               sessionPhraseContext.push(phraseClip);
@@ -1163,7 +1201,7 @@ async function ensureListeners(): Promise<void> {
             // T2T live: translate the outbound copy only. injectedText still
             // advances by the ORIGINAL document below, so per-phrase diffing,
             // skip-and-retype and re-sent-final detection are untouched.
-            const typeOut = await maybeTranslate(toType, cfg, { queued: queuedAtEnqueue });
+            const typeOut = await translatePhrase(toType, cfg, { queued: queuedAtEnqueue });
             if (insertCfg !== cfg) return;
             if (typeOut !== toType) {
               sessionPhraseContext.push(toType);
@@ -1428,6 +1466,7 @@ async function ensureListeners(): Promise<void> {
       // the Rust drain's idle window resets on the same frames.
       if (useApp.getState().status === "transcribing") armStuckWatchdog();
     } else if (e.payload === "closed") {
+      capturing = false; // covers the closes that ran no stopLive (capture death, server-initiated)
       clearStuckWatchdog(); // the stream resolved on its own
       stopTargetPoll(); // session ending — stop tracking focus for the chip
       clearWarmTimer(); // reconcile the warm-up gate: a close that bypasses stopLive/cancelLive
@@ -1715,6 +1754,7 @@ async function ensureListeners(): Promise<void> {
     // status is preserved (the subsequent `closed` keeps it; we don't reset to idle).
     const endpoint = activeEndpoint;
     activeEndpoint = null;
+    capturing = false;
     void (endpoint === "batch" ? stopRecord() : stopStream()).catch((err) =>
       console.error("stream error teardown failed:", err),
     );
@@ -1815,6 +1855,7 @@ function teardownAfterFatalInject(): void {
     .catch((err) => console.error("discard injection snapshot after fatal inject failed:", err));
   const endpoint = activeEndpoint;
   activeEndpoint = null;
+  capturing = false;
   void (endpoint === "batch" ? stopRecord() : stopStream()).catch((err) =>
     console.error("teardown after fatal inject failed:", err),
   );
@@ -2122,6 +2163,7 @@ async function startLiveInner(
     useApp.getState().setDictation({ warming: false, micLive: true });
   }, MIC_WARM_TIMEOUT_MS);
   activeEndpoint = endpoint;
+  capturing = true;
   // A chord-family upgrade landed during the prologue (the common case — Space
   // arrives well inside the ~1s start) — the session context exists now, apply it
   // so this session comes up hands-free from its first frame.
@@ -2187,6 +2229,7 @@ async function startLiveInner(
     // stale target forever) and activeEndpoint stays set.
     stopTargetPoll();
     activeEndpoint = null;
+    capturing = false;
     console.error("start dictation failed:", e);
     flashError(String(e));
   }
@@ -2233,6 +2276,10 @@ function applyReclassify(profile: Profile): void {
 
 export async function stopLive(): Promise<void> {
   autoStopMs = 0; // disarm latch auto-stop — we're stopping now
+  // The mic closes with this call, not with the `closed` that follows it: from here a
+  // second stop gesture is a CANCEL again (the recovery for a wedged finalize), even if a
+  // per-phrase translate still has the status on "translating".
+  capturing = false;
   clearWarmTimer(); // drop the warm-up gate if we stop before the mic went live
   // Streaming: server flushes + drains. Batch: transcription runs now. Either way the
   // `closed` event then moves us "transcribing" → "injecting" (while the text is
@@ -2256,6 +2303,7 @@ export async function stopLive(): Promise<void> {
     clearStuckWatchdog();
     stopTargetPoll();
     activeEndpoint = null;
+    capturing = false;
     // A rejected stop leaves no `closed` behind to clean anything up, so the
     // stop-timing one-shot's translate (which can be waiting out a 60 s cold
     // model load) would keep the server busy for text this path is about to
@@ -2362,6 +2410,7 @@ export async function cancelLive(): Promise<void> {
     .setDictation({ status: "idle", warming: false, partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", lastInsert: null, activeProfile: null, dictationPhase: null });
   const endpoint = activeEndpoint;
   activeEndpoint = null;
+  capturing = false;
   try {
     // ABORT, don't finish: a cancel discards the in-flight session, so skip the drain (streaming) /
     // the transcription POST (batch) — they'd produce a result we immediately throw away. This also
