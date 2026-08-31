@@ -226,6 +226,24 @@ describe("multi-track (tracks option)", () => {
     expect(out).toContain("::cue(.mt) { color: #4dd0c4; }");
     expect(out).toContain("<c.mt>Speaker 1: Hallo zusammen.</c>");
   });
+  it("srt: color modes style translated lines too (speaker is language-independent)", () => {
+    const out = generateExport(TRANSLATED, {
+      format: "srt", tracks: ["orig", "de"], speakerColors: "line",
+    });
+    expect(out).toContain('<font color="#ff9e2c">Speaker 1: Hello there.</font>');
+    expect(out).toContain('<font color="#ff9e2c">Speaker 1: Hallo zusammen.</font>');
+    const only = generateExport(TRANSLATED, {
+      format: "srt", tracks: ["de"], speakerColors: "line",
+    });
+    expect(only).toContain('<font color="#ff9e2c">Speaker 1: Hallo zusammen.</font>');
+  });
+  it("vtt: colorized translated lines stack .mt with the speaker class", () => {
+    const out = generateExport(TRANSLATED, {
+      format: "vtt", tracks: ["orig", "de"], speakerColors: "line",
+    });
+    expect(out).toContain("::cue(.spk1) { color: #ff9e2c; }");
+    expect(out).toContain("<c.mt.spk1>Speaker 1: Hallo zusammen.</c>");
+  });
   it("json: always full fidelity — translations embedded regardless of tracks", () => {
     const out = JSON.parse(generateExport(TRANSLATED, { format: "json", tracks: ["de"] }));
     expect(out.segments[0].translations.de).toBe("Hallo zusammen.");

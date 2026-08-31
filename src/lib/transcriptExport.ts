@@ -258,8 +258,10 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
   return paras.join("\n\n") + "\n";
 }
 
-function srtLine(ctx: Ctx, seg: TranscriptSegment): string {
-  const text = clean(seg.text);
+/** Speaker-styled SRT line — shared by original AND translated lines: the
+ *  speaker (and their color) is language-independent, so a translations-only
+ *  export keeps the same names/colors the original would carry. */
+function srtStyled(ctx: Ctx, seg: TranscriptSegment, text: string): string {
   if (!seg.speaker || !ctx.hasSpeakers) return text;
   const mode = ctx.opts.speakerColors ?? "off";
   if (mode === "off") {
@@ -274,8 +276,12 @@ function srtLine(ctx: Ctx, seg: TranscriptSegment): string {
   return `<font color="${color}">${text}</font>`; // line-only, name hidden
 }
 
+function srtLine(ctx: Ctx, seg: TranscriptSegment): string {
+  return srtStyled(ctx, seg, clean(seg.text));
+}
+
 function srtMtLine(ctx: Ctx, text: string, seg: TranscriptSegment): string {
-  return seg.speaker && ctx.names ? `${nameOf(ctx, seg.speaker)}: ${text}` : text;
+  return srtStyled(ctx, seg, text);
 }
 
 function srtExport(result: BatchResult, ctx: Ctx): string {
@@ -332,10 +338,20 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
       }
     }
     const lines = cueLines(ctx, seg, orig, (t) => {
+      // Translated lines carry the SAME speaker classes as the original (the
+      // speaker is language-independent) stacked with .mt — the spk STYLE
+      // block is emitted after .mt's, so the speaker color wins when on.
       const escaped = vttEscape(t);
-      const withName =
-        seg.speaker && ctx.names ? `${vttEscape(nameOf(ctx, seg.speaker))}: ${escaped}` : escaped;
-      return `<c.mt>${withName}</c>`;
+      if (!seg.speaker || !ctx.hasSpeakers) return `<c.mt>${escaped}</c>`;
+      const name = vttEscape(nameOf(ctx, seg.speaker));
+      if (mode === "off") {
+        return `<c.mt>${ctx.names ? `${name}: ` : ""}${escaped}</c>`;
+      }
+      const cls = `spk${Math.max(0, ctx.order.indexOf(seg.speaker)) + 1}`;
+      if (!ctx.names) return `<c.mt.${cls}>${escaped}</c>`;
+      if (mode === "name") return `<c.${cls}>${name}:</c> <c.mt>${escaped}</c>`;
+      if (mode === "line") return `<c.mt.${cls}>${name}: ${escaped}</c>`;
+      return `<c.mt.${cls}>${escaped}</c>`;
     });
     if (!lines.length) return;
     out.push(`${clockTime(seg.start, ".")} --> ${clockTime(seg.end, ".")}`);

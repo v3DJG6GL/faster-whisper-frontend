@@ -334,6 +334,26 @@ const SegmentRow = memo(function SegmentRow({
       {visLangs.map((lang) => {
         const tr = translations?.[lang];
         if (!tr?.trim()) return null;
+        // Follow-along on translated lines: MT text has no word timing, so
+        // the original words' progress through the segment is mapped onto
+        // the translated words proportionally — an honest approximation
+        // (the same char-share philosophy the fluent redistributor uses).
+        const followable = isActive && !stale && range && range[1] > range[0];
+        const trWords = followable ? stripControlChars(tr.trim()).split(/\s+/) : null;
+        let trCur = -1;
+        let trPassed = -1;
+        if (trWords && range) {
+          const n = range[1] - range[0];
+          const pos = activeWordIdx >= 0 ? activeWordIdx - range[0] : passedWordIdx + 1 - range[0];
+          const frac = Math.min(1, Math.max(0, pos / n));
+          trCur = activeWordIdx >= 0
+            ? Math.min(trWords.length - 1, Math.floor(frac * trWords.length))
+            : -1;
+          trPassed = Math.min(
+            trWords.length - 1,
+            Math.floor(frac * trWords.length) - (activeWordIdx >= 0 ? 1 : 0),
+          );
+        }
         return (
           <span
             key={lang}
@@ -344,7 +364,25 @@ const SegmentRow = memo(function SegmentRow({
             onClick={!origVisible && canSeek ? () => seekTo(seg.start) : undefined}
           >
             <LangTag code={lang} />
-            {stale ? <s>{stripControlChars(tr.trim())}</s> : stripControlChars(tr.trim())}
+            {stale ? (
+              <s>{stripControlChars(tr.trim())}</s>
+            ) : trWords ? (
+              trWords.map((w, k) => (
+                <span
+                  key={k}
+                  className={cn(
+                    k === trCur &&
+                      "rounded bg-[color:var(--c-translate)] px-0.5 font-medium text-accent-ink",
+                    k !== trCur && k <= trPassed && "opacity-60",
+                  )}
+                >
+                  {w}
+                  {k < trWords.length - 1 ? " " : ""}
+                </span>
+              ))
+            ) : (
+              stripControlChars(tr.trim())
+            )}
             {stale && (
               <span className="ml-2 align-middle font-mono text-[10.5px] not-italic text-warn">
                 · stale — re-translate in Edit
@@ -1647,6 +1685,8 @@ export function TranscriptViewer({
       state: "na",
       why,
     });
+    const effTracksEarly = langs.length ? (exportTracks ?? visibleTracks) : [];
+    const origInExport = !effTracksEarly.length || effTracksEarly.includes("orig");
     const rows: (ContractRow | null)[] = (() => {
       switch (exportFormat) {
         case "srt":
@@ -1683,19 +1723,27 @@ export function TranscriptViewer({
             { label: "Line timings", state: "always" as const, why: "always — [mm:ss.xx] tags are the format" },
             namesRow,
             colorsNa("LRC can't carry color"),
-            hasWords
-              ? {
-                  label: "Word timestamps",
-                  state: (wordTs ? "on" : "off") as ContractRow["state"],
-                  why: wordTs
-                    ? "on — enhanced-LRC <mm:ss.xx> word tags (karaoke players)"
-                    : "off — click to include",
-                  onToggle: () => {
-                    setWordTs(!wordTs);
-                    persistOptions({ wordTimestamps: !wordTs });
+            !hasWords
+              ? wordsNa("this run captured no word timing")
+              : !origInExport
+                ? // Truthful contract: MT lines have no word timing, and no
+                  // original-track file is being written to carry any.
+                  wordsNa(
+                    "word timing is original-track only — translated lines carry line timing",
+                  )
+                : {
+                    label: "Word timestamps",
+                    state: (wordTs ? "on" : "off") as ContractRow["state"],
+                    why: wordTs
+                      ? effTracksEarly.some((t) => t !== "orig")
+                        ? "on — enhanced-LRC word tags in the original-track file (translated files carry line timing)"
+                        : "on — enhanced-LRC <mm:ss.xx> word tags (karaoke players)"
+                      : "off — click to include",
+                    onToggle: () => {
+                      setWordTs(!wordTs);
+                      persistOptions({ wordTimestamps: !wordTs });
+                    },
                   },
-                }
-              : wordsNa("this run captured no word timing"),
           ];
         case "json":
           return [
