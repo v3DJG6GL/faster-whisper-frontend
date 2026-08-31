@@ -1116,7 +1116,15 @@ export function TranscriptViewer({
   };
 
   /** Cancel = server-side abort by progress id + stop the chunk loop. The
-   *  in-flight chunk's results are lost; completed chunks stay merged. */
+   *  in-flight chunk's results are lost; completed chunks stay merged.
+   *
+   *  This is the ONLY thing that cancels a retro-translate run, and that is
+   *  deliberate: unmounting this component must NOT. The run, its poller and
+   *  its card state all live in the app store keyed by record (see the chunked
+   *  run block above) precisely so navigating away and back re-attaches to the
+   *  live card — cancelling on unmount would kill a long translate every time
+   *  the user looked at another screen. A future "cancel everything on
+   *  teardown" audit must leave this one alone. */
   const cancelTranslate = () => {
     const ctl = trCtls.get(trKey);
     if (!ctl || ctl.cancelled) return;

@@ -418,6 +418,10 @@ export function patchItem(path: string, patch: Partial<QueueItem>) {
  *  used to wipe every finished transcript from view, and they are in the
  *  history now, so keep showing them. */
 export function resetForInputChange() {
+  // Reached from addFiles/removeFile: touching the file list mid-run used to
+  // abandon the running file silently, leaving the server transcribing for a
+  // queue we had already thrown away.
+  abandonActiveRun();
   set((s) => {
     const settled = s.queue.filter(
       (it) => it.status === "done" || it.status === "failed",
@@ -442,6 +446,11 @@ export function resetForInputChange() {
  *  Only meaningful between runs; the record itself stays in history. */
 export function closeRecord() {
   if (get().running) return;
+  // `running` is false, so there should be nothing left to abandon — but the
+  // epoch bump below is exactly the "our end is gone" move, and a stale handle
+  // here is the one shape that leaks server work. Idempotent, so it costs
+  // nothing when there is none.
+  abandonActiveRun();
   set((s) => ({
     epoch: s.epoch + 1,
     queue: [],
@@ -627,6 +636,9 @@ function fetchRunUrlMedia(path: string, rec: TranscriptRecord, ctx: RunContext, 
  *  queue then). */
 export function openHistoryRecord(rec: TranscriptRecord): boolean {
   if (get().running) return false;
+  // Loading a history record replaces the workbench (epoch bump below), so any
+  // still-registered server-side run is ours to stop.
+  abandonActiveRun();
   registerRecord(rec);
   const recIsUrl = isSourceUrl(rec.sourcePath);
   set((s) => ({
@@ -873,6 +885,19 @@ let activeCancel: {
   progressId: string;
 } | null = null;
 
+/** Tell the SERVER to stop the in-flight file. Every epoch bump abandons our
+ *  end of the request — the pump exits and the rejection is ignored — but the
+ *  server's pipeline (separate → transcribe → diarize, minutes of GPU) runs to
+ *  completion regardless: dropping the HTTP request does not stop it. So every
+ *  path that bumps the epoch calls this, not just the explicit Cancel button.
+ *  Take-and-null makes it idempotent, and the API swallows a 404 for an id the
+ *  server already retired. */
+function abandonActiveRun(): void {
+  const target = activeCancel;
+  activeCancel = null;
+  if (target) void cancelBackendTranscription(target).catch(() => {});
+}
+
 /** Sequential queue pump. Runs detached from the component; every commit
  *  compares against the CURRENT epoch so a cancel/input-change abandons it. */
 /** Translate-only run for a subtitle/text source: read + parse locally, one
@@ -1083,6 +1108,10 @@ export function startRun(options: TranscribeOptions | undefined,
                          overrides: DecodeOverrides, ctx: RunContext) {
   const s = get();
   if (!s.files.length || s.running) return;
+  // A previous run's handle can still be live here (a failed/abandoned pump
+  // that never reached its `finally`); the epoch bump below orphans it, so
+  // stop it before the new run competes with it for the same GPU.
+  abandonActiveRun();
   const epoch = s.epoch + 1;
   set({
     epoch,
@@ -1112,9 +1141,7 @@ export function cancelRun() {
   // request alone leaves its pipeline stages running to completion), and
   // the Rust epoch bump drops our end of the request. Bumping the epoch
   // makes the pump exit and ignores the aborted call's rejection.
-  const target = activeCancel;
-  activeCancel = null;
-  if (target) void cancelBackendTranscription(target).catch(() => {});
+  abandonActiveRun();
   set((s) => ({
     epoch: s.epoch + 1,
     progress: null,

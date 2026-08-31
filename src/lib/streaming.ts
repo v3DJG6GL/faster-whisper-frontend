@@ -749,6 +749,14 @@ function consumePendingHoldStart(): void {
  *  collapse linger and Home's 10 s "done" card both keep showing the finished transcript
  *  after settle (the next startLive clears it). Fires a queued fast re-press start last. */
 function settleIdle(): void {
+  // NO cancelDictationTranslate() here, deliberately. Settling is the SUCCESS
+  // path: we only reach it after the injection queue drained, which means every
+  // translate already resolved and maybeTranslate's finally dropped the handle.
+  // Cancelling a finished translation would either 404 or, worse, abort a
+  // translate belonging to a session that started meanwhile. The teardown paths
+  // (cancelLive / stopLive-reject / stream://error / teardownAfterFatalInject)
+  // are the ones that abandon work mid-flight, and they all cancel.
+  //
   // Before the state flip: the capture reads the session docs (reset only by
   // the NEXT startLiveInner / cancelLive) and must run while they're intact.
   captureDictationHistory();
@@ -1637,6 +1645,10 @@ async function ensureListeners(): Promise<void> {
     // so without this the ~1.2s quiet timer armed by the last `final` would fire a stray Enter
     // into the user's now-refocused window. On error we want no trailing Enter (like cancel).
     clearPhraseEnd();
+    // The session is over; any in-flight translate belongs to a phrase that will
+    // never be injected, so stop the server's side of it too (mirrors cancelLive
+    // / teardownAfterFatalInject / the stopLive reject).
+    cancelDictationTranslate();
     // clearPhraseEnd cancelled the pending per-phrase clipboard restore, so a pasted phrase would
     // leave the clipboard holding the transcript (and the un-consumed snapshot would leak into the
     // next session, whose begin_injection keeps the prior snapshot). Restore the user's clipboard: a
@@ -1766,6 +1778,9 @@ function teardownAfterFatalInject(): void {
   stopTargetPoll();
   clearWarmTimer();
   clearPhraseEnd();
+  // The failed phrase (or one queued behind it) may still have a translate in
+  // flight; nothing will consume it now, so stop the server's work too.
+  cancelDictationTranslate();
   // Null insertCfg (like cancelLive) so any inject task still QUEUED behind the failed one bails on
   // its `insertCfg !== cfg` guard — its only gate — instead of typing/pasting a phrase and firing a
   // green "inserted" pulse onto the now-red error chip. Safe: the failing task `return`s without
@@ -2185,6 +2200,11 @@ export async function stopLive(): Promise<void> {
     clearStuckWatchdog();
     stopTargetPoll();
     activeEndpoint = null;
+    // A rejected stop leaves no `closed` behind to clean anything up, so the
+    // stop-timing one-shot's translate (which can be waiting out a 60 s cold
+    // model load) would keep the server busy for text this path is about to
+    // recover to the clipboard instead. Stop it here.
+    cancelDictationTranslate();
     // The detached drain (if any) can still emit a late final/closed on this epoch; retire it so it
     // can't bleed onto a session re-triggered during the error linger (mirrors stream://error).
     void retireSessionEpoch().catch((err) => console.error("retire epoch on stop-reject failed:", err));
@@ -2240,6 +2260,13 @@ export async function cancelLive(): Promise<void> {
   clearStuckWatchdog();
   stopTargetPoll();
   sessionMeta = null; // a cancelled session is never recorded to History
+  // A translate may be in flight for a phrase this cancel just discarded. Tell
+  // the server to stop: dropping our end leaves it generating tokens for text
+  // nobody will read (Rust waits an hour on that request). Every cancel entry
+  // point in the app — dictation.ts's five call sites, Home's stop button,
+  // App.tsx's resume handler and the chip's ✕ — routes through THIS function,
+  // so this one call covers them all; don't add duplicates at those sites.
+  cancelDictationTranslate();
   committedDoc = "";
   injectedText = "";
   seenDoc = "";
