@@ -146,6 +146,22 @@ describe("formatLine / buildBugReport", () => {
     const body = report.split("——")[2].trim().split("\n");
     expect(body.length).toBe(BUG_REPORT_LINES);
   });
+  it("copies only the lines handed in and names the active filters", () => {
+    const shown = [line({ seq: 1, level: "warn", msg: "kept" })];
+    const report = buildBugReport(
+      {
+        appVersion: "1",
+        platform: "linux",
+        backend: null,
+        model: null,
+        profile: null,
+        filters: "warn+ · text: portal",
+      },
+      shown,
+    );
+    expect(report).toContain("—— last 1 lines —— filtered: warn+ · text: portal");
+    expect(report).toContain("kept");
+  });
   it("omits absent context fields", () => {
     const report = buildBugReport(
       { appVersion: "1", platform: "linux", backend: null, model: null, profile: null },

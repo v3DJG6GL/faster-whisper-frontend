@@ -121,12 +121,18 @@ export interface BugReportHeader {
   backend: string | null;
   model: string | null;
   profile: string | null;
+  /** Human-readable description of the view filters the copied lines passed
+   *  ("warn+ · tag: overlay · text: portal"); omitted when nothing is
+   *  filtered. Recorded in the header so a reader knows the paste is a
+   *  SUBSET, not the whole session. */
+  filters?: string | null;
 }
 
 export const BUG_REPORT_LINES = 500;
 
-/** The paste-ready support bundle: context header + the last 500 RAW lines
- *  (ignores the active view filters — the helper always gets the full picture). */
+/** The paste-ready support bundle: context header + the last 500 lines the
+ *  caller passes in — the Logs screen hands over exactly what the view shows,
+ *  so what you filtered to is what you paste. */
 export function buildBugReport(hdr: BugReportHeader, raw: readonly LogLine[]): string {
   const tail = raw.slice(-BUG_REPORT_LINES);
   const ctx = [
@@ -138,7 +144,7 @@ export function buildBugReport(hdr: BugReportHeader, raw: readonly LogLine[]): s
     ]
       .filter(Boolean)
       .join(" · "),
-    `—— last ${tail.length} lines ——`,
+    `—— last ${tail.length} lines ——${hdr.filters ? ` filtered: ${hdr.filters}` : ""}`,
   ]
     .filter((s) => s !== "")
     .join("\n");

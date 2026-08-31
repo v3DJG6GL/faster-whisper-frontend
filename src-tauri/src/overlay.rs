@@ -336,7 +336,11 @@ fn apply_hit_region(win: &WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> Opti
         }
     };
     let Some(gdk_win) = WidgetExt::window(&gtk_win) else {
-        tracing::warn!("[overlay] no GdkWindow yet (window not realized?)");
+        // EXPECTED at startup: the webview reports the chip's bounds as soon as
+        // it paints, which is before GTK realizes the overlay toplevel. The
+        // caller does nothing and a later report applies the shape, so this is
+        // a retry note, not a warning (it fired 5× per launch in the log view).
+        tracing::debug!("[overlay] no GdkWindow yet (window not realized?)");
         return None;
     };
     install_crossing_forwarder(win, &gtk_win);

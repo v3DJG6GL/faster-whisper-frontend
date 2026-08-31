@@ -101,6 +101,16 @@ export default function Logs() {
         : lines.map((l) => ({ line: l, count: 1, firstTs: l.ts })),
     [lines, merge],
   );
+  // What the bug report header records about the copied subset (null = the
+  // view is unfiltered, so the paste IS the session tail).
+  const filterSummary = useMemo(() => {
+    const parts = [
+      threshold !== "all" ? `${threshold}+` : null,
+      tags.size ? `tags: ${[...tags].join(", ")}` : null,
+      text.trim() ? `text: ${text.trim()}` : null,
+    ].filter(Boolean);
+    return parts.length ? parts.join(" · ") : null;
+  }, [threshold, tags, text]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -169,8 +179,12 @@ export default function Logs() {
           s.profiles.find((p) => p.id === s.settings.homeProfileId)?.name ??
           s.profiles.find((p) => p.enabled)?.name ??
           null,
+        filters: filterSummary,
       },
-      visibleLines(),
+      // Exactly what the view shows: copying a filtered log must not silently
+      // paste the whole session (the header records the filters, so a reader
+      // knows the paste is a subset).
+      lines,
     );
     await navigator.clipboard.writeText(report);
     setCopied(true);
