@@ -18,7 +18,7 @@ import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { Button } from "@/components/ui";
+import { Button, LangTag } from "@/components/ui";
 import { fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import {
   cancelTextTranslation, decodeMediaFile, getTranscribeProgress, openSourceUrl,
@@ -438,33 +438,6 @@ const SegmentRow = memo(function SegmentRow({
     </div>
   );
 });
-
-/** Leading language tag on a track line (original neutral; MT takes the
- *  line's resolved color — dimmed speaker accent, or teal fallback). */
-function LangTag({ code, orig, color }: { code: string; orig?: boolean; color?: string }) {
-  return (
-    <span
-      className={cn(
-        "mr-1.5 inline-block translate-y-[-1px] rounded border px-1 font-mono text-[9.5px] uppercase tracking-wider",
-        orig
-          ? "border-line-strong text-dim"
-          : !color && "border-[color:var(--c-translate)]/40 text-[color:var(--c-translate)]",
-      )}
-      style={
-        !orig && color
-          ? {
-              color,
-              // A 40%-alpha border is fine to mix toward transparent — the
-              // WebKitGTK gradient caveat only bites large text/fill areas.
-              borderColor: `color-mix(in srgb, ${color} 40%, transparent)`,
-            }
-          : undefined
-      }
-    >
-      {code}
-    </span>
-  );
-}
 
 /** m:ss (h:mm:ss beyond an hour) for the progress card's running clock. */
 function fmtRunClock(ms: number): string {

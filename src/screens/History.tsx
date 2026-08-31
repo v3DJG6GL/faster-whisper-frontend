@@ -13,7 +13,16 @@ import {
   Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, FileText, Link2, Mic, MicOff,
   Pause, Play, RotateCcw, Search, Trash2, X,
 } from "lucide-react";
-import { Badge, Button, Card, PageHeader, Segmented, TextInput } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  LangTag,
+  PageHeader,
+  RouteBadge,
+  Segmented,
+  TextInput,
+} from "@/components/ui";
 import { useApp } from "@/lib/store";
 import { fmtDuration } from "@/lib/format";
 import { pickExportPath, readMediaFile, saveTextFile } from "@/lib/api";
@@ -50,6 +59,33 @@ function timeOf(iso: string): string {
 }
 
 const isDictation = (r: TranscriptRecord) => r.kind === "dictation";
+
+/** The record's language tracks, original first, or null when it has none.
+ *
+ *  Returns null for records written before per-language tracks existed: their
+ *  `translatedText` is a blank-line join and a transcript contains its own
+ *  line breaks, so splitting it back apart would mislabel text rather than
+ *  recover it. Those records render as one untitled block instead — the most
+ *  that can honestly be said about them. */
+export function tracksOf(
+  rec: TranscriptRecord,
+): { lang: string; text: string; orig?: boolean }[] | null {
+  const tr = rec.translations;
+  if (!tr || typeof tr !== "object") return null;
+  const langs = (rec.translationTargets ?? Object.keys(tr)).filter(
+    (l) => typeof l === "string" && tr[l]?.trim(),
+  );
+  if (!langs.length) return null;
+  const original = recordText(rec).trim();
+  // The original is a track like any other, dimmed and carrying its own code.
+  // Rendering it as a separate labelled section BELOW the blob is what showed
+  // it twice, because the blob already began with it.
+  const head =
+    original && rec.includeOriginal
+      ? [{ lang: rec.language && rec.language !== "auto" ? rec.language : "orig", text: original, orig: true }]
+      : [];
+  return [...head, ...langs.map((lang) => ({ lang, text: tr[lang] }))];
+}
 
 /** Human app label from a dictation record — the stored window title, else the
  *  app id's last dot-segment, capitalized ("org.mozilla.thunderbird" → "Thunderbird"). */
@@ -325,15 +361,32 @@ export default function History() {
     navigate("/transcribe");
   };
 
+  const flashCopied = (key: string) => {
+    setCopiedId(key);
+    window.clearTimeout(copyTimer.current);
+    copyTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  /** Copy what the session actually put into the target app.
+   *
+   *  This used to copy recordText(rec) — the ORIGINAL transcript — under a
+   *  button labelled "Copy the dictated text", even when what was dictated
+   *  into the field was all three languages. For a translated session the
+   *  dictated text IS the injected join, so that is what the clipboard gets;
+   *  a single language stays one hover away on each track. */
   const copyText = (rec: TranscriptRecord) => {
+    const text = rec.translatedText ?? recordText(rec);
     void navigator.clipboard
-      .writeText(stripControlChars(recordText(rec)))
-      .then(() => {
-        setCopiedId(rec.id);
-        window.clearTimeout(copyTimer.current);
-        copyTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
-      })
+      .writeText(stripControlChars(text))
+      .then(() => flashCopied(rec.id))
       .catch((e) => console.error("history copy failed:", e));
+  };
+
+  const copyTrack = (rec: TranscriptRecord, lang: string, text: string) => {
+    void navigator.clipboard
+      .writeText(stripControlChars(text))
+      .then(() => flashCopied(`${rec.id}:${lang}`))
+      .catch((e) => console.error("history track copy failed:", e));
   };
 
   const quickExport = async (rec: TranscriptRecord) => {
@@ -494,28 +547,64 @@ export default function History() {
             No recording linked — “Keep audio recordings” was off for this session.
           </div>
         )}
-        {rec.translatedText ? (
-          <div className="mt-3 max-h-56 space-y-2 overflow-y-auto">
-            <div>
-              <span className="font-mono text-[10px] uppercase tracking-wider text-translate">
-                {/* Never hard-code "injected": the record already carries whether the
-                    translation actually reached the field (stop-timing can produce a
-                    translation that the session then failed to insert), and a label that
-                    can lie about where the user's words went is worse than none. */}
-                {safeDisplayText(rec.translationTarget ?? "translated", 24)}
-                {rec.translationInjected ? " · injected" : " · not injected"}
-              </span>
-              <div className="select-text whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
-                {stripControlChars(rec.translatedText)}
+        {tracksOf(rec) ? (
+          /* One track per language, the original included as a track of its
+             own. Previously this rendered the INJECTED blob (which, with
+             "include original" on, already begins with the original) and then
+             rendered result.text again beneath it under an "original" label —
+             so the source language appeared twice, under a heading naming only
+             the targets. Hairline dividers rather than blank lines, because a
+             transcript contains its own line breaks and a blank line does not
+             read as a language boundary. */
+          <div className="mt-3 max-h-56 overflow-y-auto">
+            {tracksOf(rec)!.map(({ lang, text, orig }, i) => (
+              <div
+                key={lang}
+                className={cn(
+                  "grid grid-cols-[2.5rem_1fr] gap-2 py-2",
+                  i > 0 && "border-t border-line",
+                )}
+              >
+                <div className="pt-[3px]">
+                  <LangTag code={lang} orig={orig} />
+                </div>
+                <div className="group/track relative">
+                  <div
+                    className={cn(
+                      "select-text whitespace-pre-wrap text-[13px] leading-relaxed",
+                      orig ? "text-dim" : "text-text/90",
+                    )}
+                  >
+                    {stripControlChars(text)}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => copyTrack(rec, lang, text)}
+                    className="absolute right-0 top-0 rounded px-1.5 py-0.5 font-mono text-[10px] text-faint opacity-0 transition hover:text-text focus-visible:opacity-100 group-hover/track:opacity-100"
+                    title={`Copy the ${lang.toUpperCase()} track`}
+                  >
+                    {copiedId === `${rec.id}:${lang}` ? "copied" : "copy"}
+                  </button>
+                </div>
               </div>
-            </div>
-            <div>
-              <span className="font-mono text-[10px] uppercase tracking-wider text-faint">
-                original
-              </span>
-              <div className="select-text whitespace-pre-wrap text-[13px] leading-relaxed text-dim">
-                {stripControlChars(recordText(rec))}
-              </div>
+            ))}
+          </div>
+        ) : rec.translatedText ? (
+          /* A record written before per-language tracks existed. The blob is
+             an unsplittable join, so the honest rendering is one untitled
+             block — but result.text is NOT repeated beneath it any more, which
+             was the duplicate the user saw. */
+          <div className="mt-3 max-h-56 overflow-y-auto">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-translate">
+              {/* Never hard-code "injected": the record already carries whether the
+                  translation actually reached the field (stop-timing can produce a
+                  translation that the session then failed to insert), and a label that
+                  can lie about where the user's words went is worse than none. */}
+              {safeDisplayText(rec.translationTarget ?? "translated", 24)}
+              {rec.translationInjected ? " · injected" : " · not injected"}
+            </span>
+            <div className="select-text whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
+              {stripControlChars(rec.translatedText)}
             </div>
           </div>
         ) : (
@@ -604,6 +693,12 @@ export default function History() {
             {safeDisplayText(appLabel(rec), 60)}
           </span>
           {rec.profileTag && <Badge tone="accent">{safeDisplayText(rec.profileTag, 20)}</Badge>}
+          {/* Which languages this dictation produced. Without it a translated
+              session and a plain one look identical in the list, and the only
+              way to find out was to expand every row. */}
+          {rec.translationTargets?.length ? (
+            <RouteBadge source={rec.language ?? ""} targets={rec.translationTargets} />
+          ) : null}
           <span className="shrink-0 font-mono text-[11px] text-faint">{dictMeta(rec)}</span>
         </div>
         <div className="truncate text-[12px] text-faint">
