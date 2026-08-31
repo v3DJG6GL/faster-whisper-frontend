@@ -497,8 +497,13 @@ export default function History() {
         {rec.translatedText ? (
           <div className="mt-3 max-h-56 space-y-2 overflow-y-auto">
             <div>
-              <span className="font-mono text-[10px] uppercase tracking-wider text-[color:var(--c-translate)]">
-                {safeDisplayText(rec.translationTarget ?? "translated", 24)} · injected
+              <span className="font-mono text-[10px] uppercase tracking-wider text-translate">
+                {/* Never hard-code "injected": the record already carries whether the
+                    translation actually reached the field (stop-timing can produce a
+                    translation that the session then failed to insert), and a label that
+                    can lie about where the user's words went is worse than none. */}
+                {safeDisplayText(rec.translationTarget ?? "translated", 24)}
+                {rec.translationInjected ? " · injected" : " · not injected"}
               </span>
               <div className="select-text whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
                 {stripControlChars(rec.translatedText)}
@@ -514,9 +519,23 @@ export default function History() {
             </div>
           </div>
         ) : (
-          <div className="mt-3 max-h-56 select-text overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
-            {stripControlChars(recordText(rec))}
-          </div>
+          <>
+            {/* Translation was configured but produced nothing: the body below IS the
+                original, and it is the text that was inserted. Saying so — with the cause —
+                is the difference between "this session had no translation" and "the
+                translation you asked for didn't happen"; without it the record silently
+                presents the original as the intended output. */}
+            {rec.translationAttempted && (
+              <div className="mt-3 font-mono text-[11px] text-warn">
+                translation to {safeDisplayText(rec.translationTarget ?? "the target language", 40)} failed
+                {rec.translationFailure ? ` (${safeDisplayText(rec.translationFailure, 24)})` : ""} — original
+                inserted
+              </div>
+            )}
+            <div className="mt-3 max-h-56 select-text overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
+              {stripControlChars(recordText(rec))}
+            </div>
+          </>
         )}
         <div className="mt-3 flex items-center gap-4 border-t border-line pt-3">
           {rec.profileName && (

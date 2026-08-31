@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, DisclosureCard, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextArea, TextInput, Toggle } from "@/components/ui";
+import { Badge, Button, Card, RouteBadge, DisclosureCard, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextArea, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { starterProfiles } from "@/lib/starters";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
@@ -21,6 +21,7 @@ import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
+import { backendForProfile } from "@/lib/dictation";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import type { Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
@@ -380,6 +381,7 @@ function Editor({
 function ProfileRow({
   p,
   backendName,
+  backendLanguage,
   conflictText,
   canUp,
   canDown,
@@ -391,6 +393,10 @@ function ProfileRow({
 }: {
   p: Profile;
   backendName: string;
+  /** The bound Backend's language — the fallback half of the effective-language
+   *  resolution the chip does (a set Profile override wins). Resolved by the parent,
+   *  which holds the backend list. */
+  backendLanguage?: string;
   conflictText: string | null;
   canUp: boolean;
   canDown: boolean;
@@ -403,6 +409,8 @@ function ProfileRow({
   const updateProfile = useApp((s) => s.updateProfile);
   const meta = ACTIVATION[p.activation];
   const Glyph = meta.icon;
+  const effLangCode = p.language?.trim() ? p.language : backendLanguage;
+  const effLang = effLangCode ? languageLabel(effLangCode) : "";
   return (
     <Card className={cn("p-5", conflictText && "border-warn/40")}>
       <div className="flex items-center gap-4">
@@ -420,7 +428,11 @@ function ProfileRow({
             <span className="truncate text-[14px] font-semibold text-text">{safeDisplayText(p.name, 80)}</span>
             {p.tag?.trim() && <Badge tone="accent">{safeDisplayText(p.tag.trim(), 40)}</Badge>}
             <Badge>{meta.label}</Badge>
-            {p.language && <Badge>{safeDisplayText(languageLabel(p.language), 40)}</Badge>}
+            {/* The dictation ROUTE, not just the input language: a translating profile's
+                row would otherwise say "German" about output that lands in French. The
+                effective language mirrors chipPayload's resolution exactly (profile
+                override, else the bound backend), so the row can't disagree with the chip. */}
+            <RouteBadge source={effLang} targets={p.translationOverrides?.translateTo} />
             {p.model && <Badge>{safeDisplayText(p.model.split("/").pop() ?? p.model, 40)}</Badge>}
             {p.endpoint && <Badge>{p.endpoint}</Badge>}
           </div>
@@ -612,6 +624,7 @@ export default function Profiles() {
                   key={p.id}
                   p={p}
                   backendName={backendName(p.backendId)}
+                  backendLanguage={backendForProfile(p, backends)?.language}
                   conflictText={conflictText(p.id)}
                   canUp={i > 0}
                   canDown={i < profiles.length - 1}

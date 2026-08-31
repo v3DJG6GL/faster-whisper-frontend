@@ -4,7 +4,7 @@ import { Mic, Radio, Hand, Square, Pencil } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
 import { dictationVisual, isActiveDictation, isGracefulStop, isProcessing } from "@/lib/dictationVisual";
-import { Button, Card, Notice, SectionLabel, Select, Toggle } from "@/components/ui";
+import { Button, Card, Notice, SectionLabel, Select, Toggle, routeParts } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/UsageStats";
@@ -12,6 +12,7 @@ import { SetupChecklist } from "@/components/SetupChecklist";
 import { startLive, stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/streaming";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile } from "@/lib/dictation";
+import { languageLabel } from "@/lib/languages";
 import type { Backend, Profile } from "@/lib/types";
 
 const GLYPH = { hold: Mic, latch: Hand } as const;
@@ -117,6 +118,15 @@ export default function Home() {
   // activeProfile is null when idle, so this falls back to the home target then.
   const shown = (activeProfile ? profiles.find((p) => p.id === activeProfile) : undefined) ?? target;
   const shownBackend: Backend | undefined = backendForProfile(shown, backends);
+  // The next dictation's ROUTE: the language spoken → the languages it is turned into.
+  // Effective language resolves exactly as the chip's does (profile override, else the
+  // bound backend), and both halves go through `languageLabel` + routeParts' bounds —
+  // `model`/`language` are peer-authored and arrive on an unattended sync pull.
+  const routeLang = shown?.language?.trim() ? shown.language : (shownBackend?.language ?? "auto");
+  const route = routeParts(languageLabel(routeLang), shown?.translationOverrides?.translateTo);
+  const routeReadout =
+    (route.source || "auto") +
+    (route.targets.length ? ` → ${route.targets.join(", ")}${route.more ? ` +${route.more}` : ""}` : "");
 
   // "Busy" = any non-idle state; the hero button is a stop/cancel while busy. We keep
   // a graceful stop for "listening" (deliver the last words) but force a hard reset
@@ -283,16 +293,10 @@ export default function Home() {
               uses, so it gets the same treatment. */}
           <Readout label="model" value={safeDisplayText(shownBackend?.model, 80) || "—"} />
           <Readout label="endpoint" value={shown?.endpoint ?? shownBackend?.endpoint ?? "—"} accent />
-          <Readout
-            label="language"
-            value={
-              safeDisplayText(
-                shown?.language?.trim() ? shown.language : (shownBackend?.language ?? "auto"),
-                40,
-              ) || "auto"
-            }
-            last
-          />
+          {/* The ROUTE, not just the input language: with translation on, "German" alone
+              would describe words that land in French. Also the one surface that showed the
+              raw CODE (`de`) where every other shows the label — languageLabel fixes that. */}
+          <Readout label="language" value={routeReadout} last />
         </div>
       </Card>
 

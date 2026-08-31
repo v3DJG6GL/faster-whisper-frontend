@@ -14,6 +14,8 @@ import {
 import { createPortal } from "react-dom";
 import { AlertTriangle, Check, Minus, MoreHorizontal, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { languageLabel } from "@/lib/languages";
+import { safeDisplayText } from "@/lib/sanitize";
 
 /* ── Card ─────────────────────────────────────────────────────────────── */
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
@@ -93,17 +95,22 @@ export function ListScreenHeader({
 }
 
 /* ── Badge ────────────────────────────────────────────────────────────── */
+// The pill's shape, shared with RouteBadge below. Exported as a STRING rather than
+// widening Badge with a className/tone: Badge has neither by design, it is used on
+// nearly every screen, and a per-site escape hatch on it would be the end of that.
+// `max-w` + `truncate`: badges carry remote-authored leaves (a backend's language, a
+// profile's tag) whose sanitizers bound the LIST length, not the per-field length — and
+// `languageLabel` returns an unknown code unchanged. Unbounded here, one field pushed
+// the Test/Edit/Remove controls off the card it labels.
+export const BADGE_BASE =
+  "inline-block max-w-[16ch] truncate align-bottom rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider";
+
 /** A small uppercase pill. `accent` = highlighted, `warn` = caution, default = dim. */
 export function Badge({ children, tone }: { children: ReactNode; tone?: "accent" | "dim" | "warn" }) {
   return (
     <span
       className={cn(
-        // `max-w` + `truncate`: badges carry remote-authored leaves (a backend's language, a
-        // profile's tag) whose sanitizers bound the LIST length, not the per-field length — and
-        // `languageLabel` returns an unknown code unchanged. Unbounded here, one field pushed
-        // the Test/Edit/Remove controls off the card it labels.
-        "inline-block max-w-[16ch] truncate align-bottom",
-        "rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider",
+        BADGE_BASE,
         tone === "accent"
           ? "bg-accent-soft text-accent"
           : tone === "warn"
@@ -112,6 +119,57 @@ export function Badge({ children, tone }: { children: ReactNode; tone?: "accent"
       )}
     >
       {children}
+    </span>
+  );
+}
+
+/* ── RouteBadge ───────────────────────────────────────────────────────── */
+// How many targets are spelled out before the rest become "+N". Three is what fits
+// beside a profile's name, model and endpoint badges without wrapping the row.
+const ROUTE_TARGETS_SHOWN = 3;
+
+/** The pieces of a `source → targets` route, bounded for display.
+ *
+ *  Pure + exported so it can be tested: every part is user- or peer-authored (a
+ *  profile's language, a synced backend's, the translate-to list), and
+ *  `languageLabel` passes an unknown code through unchanged — the same unbounded-leaf
+ *  hazard the badge's own truncate exists for, except a LIST of them multiplies it. */
+export function routeParts(
+  source: string,
+  targets?: string[] | null,
+): { source: string; targets: string[]; more: number } {
+  const labels = (targets ?? [])
+    .map((t) => (typeof t === "string" ? t.trim() : ""))
+    .filter(Boolean)
+    .map((t) => safeDisplayText(languageLabel(t), 24));
+  return {
+    source: safeDisplayText(source, 24),
+    targets: labels.slice(0, ROUTE_TARGETS_SHOWN),
+    more: Math.max(0, labels.length - ROUTE_TARGETS_SHOWN),
+  };
+}
+
+/** The dictation ROUTE as one badge: the spoken language, and — when the profile
+ *  translates — the languages its output is turned into. With no targets it renders
+ *  exactly the plain language badge it replaced, so a profile without translation
+ *  looks unchanged. */
+export function RouteBadge({ source, targets }: { source: string; targets?: string[] | null }) {
+  const r = routeParts(source, targets);
+  if (!r.source && r.targets.length === 0) return null;
+  return (
+    // max-w is raised over BADGE_BASE's 16ch because this pill legitimately holds a
+    // route, not a single leaf — each PART is bounded by routeParts instead.
+    <span className={cn(BADGE_BASE, "max-w-[34ch] bg-surface-2")}>
+      <span className="text-dim">{r.source || "auto"}</span>
+      {r.targets.length > 0 && (
+        <>
+          <span className="px-1 text-faint" aria-hidden>
+            →
+          </span>
+          <span className="text-translate">{r.targets.join(", ")}</span>
+          {r.more > 0 && <span className="pl-1 text-faint">+{r.more}</span>}
+        </>
+      )}
     </span>
   );
 }

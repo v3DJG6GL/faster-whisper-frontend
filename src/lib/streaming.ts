@@ -495,6 +495,11 @@ function captureDictationHistory(): void {
       translatedText: sessionTranslatedText ?? undefined,
       translationTarget: sessionTranslation?.targets.join(", "),
       translationInjected: sessionTranslatedText != null,
+      // Without these, a failed translation is indistinguishable in History from a
+      // session that never had translation configured — the record would quietly
+      // present the original as the intended output.
+      translationAttempted: sessionTranslation != null,
+      translationFailure: sessionTranslateFailure ?? undefined,
     });
   } catch (e) {
     // History is a convenience — it must never break the session settle.

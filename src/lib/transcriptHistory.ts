@@ -63,6 +63,14 @@ export interface TranscriptRecord {
   translatedText?: string;
   translationTarget?: string;
   translationInjected?: boolean;
+  /** Was translation even configured for this session, and if it was attempted and
+   *  didn't land, why. Additive + OPTIONAL on purpose, so schemaVersion stays 1: an
+   *  old record reads back as "no translation configured", which is what it is. The
+   *  distinction matters because `translatedText` absent means BOTH "translation was
+   *  off" and "translation failed and the original went in" — two very different
+   *  stories to tell the user about the text they are looking at. */
+  translationAttempted?: boolean;
+  translationFailure?: string;
 }
 
 interface HistoryState {
@@ -146,6 +154,8 @@ export interface DictationCapture {
   translatedText?: string;
   translationTarget?: string;
   translationInjected?: boolean;
+  translationAttempted?: boolean;
+  translationFailure?: string;
 }
 
 /** Save a finished dictation session as a history record; returns its id so
@@ -173,6 +183,8 @@ export function recordDictation(cap: DictationCapture): string {
     translatedText: cap.translatedText,
     translationTarget: cap.translationTarget,
     translationInjected: cap.translationInjected,
+    translationAttempted: cap.translationAttempted,
+    translationFailure: cap.translationFailure,
   };
   upsertRecord(rec);
   return rec.id;
