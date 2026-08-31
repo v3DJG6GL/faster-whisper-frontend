@@ -121,6 +121,16 @@ export interface BugReportHeader {
   backend: string | null;
   model: string | null;
   profile: string | null;
+  /** What the reported run actually DID.
+   *
+   *  The header used to name only a backend and a model, and it read them
+   *  from the Transcribe screen's settings — so a dictation bug report named
+   *  a model that never ran. These come from the last session instead, and
+   *  they name the stages, because "the French came out wrong" is
+   *  unactionable without the targets and the translation model. */
+  route?: string | null;
+  stages?: string | null;
+  source?: string | null;
   /** Human-readable description of the view filters the copied lines passed
    *  ("warn+ · tag: overlay · text: portal"); omitted when nothing is
    *  filtered. Recorded in the header so a reader knows the paste is a
@@ -138,9 +148,16 @@ export function buildBugReport(hdr: BugReportHeader, raw: readonly LogLine[]): s
   const ctx = [
     `faster-whisper-frontend v${hdr.appVersion} · ${hdr.platform}`,
     [
+      hdr.source ? `source: ${hdr.source}` : null,
       hdr.backend ? `backend: ${hdr.backend}` : null,
       hdr.model ? `model: ${hdr.model}` : null,
       hdr.profile ? `profile: ${hdr.profile}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    [
+      hdr.route ? `route: ${hdr.route}` : null,
+      hdr.stages ? `stages: ${hdr.stages}` : null,
     ]
       .filter(Boolean)
       .join(" · "),

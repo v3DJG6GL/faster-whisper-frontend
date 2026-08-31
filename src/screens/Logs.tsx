@@ -31,6 +31,7 @@ import {
   type FollowState,
   type LevelThreshold,
 } from "@/lib/logFilter";
+import { useTranscriptHistory } from "@/lib/transcriptHistory";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { Button, Segmented, StatusDot, TextInput, Toggle } from "@/components/ui";
@@ -169,16 +170,40 @@ export default function Logs() {
     // object each render trips useSyncExternalStore's infinite-loop guard.
     const s = useApp.getState();
     const t = s.settings.transcribe;
+    // The most recent run, which is what a bug report is almost always about.
+    // The header used to read the TRANSCRIBE SCREEN's configured backend and
+    // model even for a dictation bug — so it confidently named a model that
+    // never ran, and a reader had no way to tell. A history record is the
+    // only durable account of what actually executed.
+    const last = useTranscriptHistory.getState().records[0] ?? null;
+    const backendOf = (id?: string) => s.backends.find((b) => b.id === id)?.name ?? null;
     const report = buildBugReport(
       {
         appVersion: ver,
         platform,
-        backend: s.backends.find((b) => b.id === t?.backendId)?.name ?? null,
-        model: t?.model ?? null,
+        source: last ? (last.kind ?? "file") : null,
+        backend: backendOf(last?.backendId ?? t?.backendId) ?? null,
+        model: last?.model ?? t?.model ?? null,
         profile:
+          last?.profileName ??
           s.profiles.find((p) => p.id === s.settings.homeProfileId)?.name ??
           s.profiles.find((p) => p.enabled)?.name ??
           null,
+        route: last?.translationTargets?.length
+          ? `${last.language || "auto"} → ${last.translationTargets.join(",")}`
+          : null,
+        // Name the stages that ran. "The French came out wrong" is
+        // unactionable without knowing translation happened at all.
+        stages:
+          [
+            last?.translationTargets?.length ? "translate" : null,
+            last?.insertMethod && last.insertMethod !== "none"
+              ? `insert:${last.insertMethod}`
+              : null,
+            last?.translationFailure ? `translate-failed:${last.translationFailure}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || null,
         filters: filterSummary,
       },
       // Exactly what the view shows: copying a filtered log must not silently

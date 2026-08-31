@@ -171,3 +171,41 @@ describe("formatLine / buildBugReport", () => {
     expect(report).toContain("—— last 1 lines ——");
   });
 });
+
+describe("bug report: what actually ran", () => {
+  const L = [line({ msg: "m" })];
+
+  it("names the route and stages so a translation bug is actionable", () => {
+    // "The French came out wrong" is unactionable without the targets and
+    // the fact that translation ran at all.
+    const out = buildBugReport(
+      {
+        appVersion: "0.1.89",
+        platform: "linux",
+        source: "dictation",
+        backend: "informethic",
+        model: "large-v2",
+        profile: "PTT DE",
+        route: "de → en,fr",
+        stages: "translate · insert:typed",
+      },
+      L,
+    );
+    expect(out).toContain("source: dictation");
+    expect(out).toContain("route: de → en,fr");
+    expect(out).toContain("stages: translate · insert:typed");
+  });
+
+  it("omits the provenance lines entirely when there is nothing to say", () => {
+    // A fresh install with no history must not paste a line of empty labels.
+    const out = buildBugReport(
+      { appVersion: "0.1.89", platform: "linux", backend: null, model: null, profile: null },
+      L,
+    );
+    expect(out).not.toContain("route:");
+    expect(out).not.toContain("stages:");
+    expect(out).not.toContain("source:");
+    // ...and no blank line where the row would have been.
+    expect(out).not.toMatch(/\n\n/);
+  });
+});
