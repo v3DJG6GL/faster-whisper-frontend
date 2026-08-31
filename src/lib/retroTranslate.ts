@@ -59,6 +59,9 @@ export interface TranslateRunUi {
   dlStartedAt?: number;
   /** Bytes expected during the downloading stage. */
   totalBytes?: number;
+  /** Server warnings accumulated across the run's chunks (e.g. quality-guard
+   *  "kept original" notices) — the card shows a compact amber line. */
+  warnings?: string[];
   /** Server detail passthroughs, all optional/defensive. */
   step?: string;
   lastText?: string;
@@ -187,12 +190,18 @@ export interface ChunkedTranslateArgs {
   onChunkStart?: (chunkIdxs: number[], done: number) => void;
   /** A chunk answered: per-segment-index translation maps (empty results are
    *  dropped) + accumulated provenance. `firstChunk` = first merge of the run
-   *  (registers provenance / makes the track chips appear). */
+   *  (registers provenance / makes the track chips appear). `kept` mirrors
+   *  the patch: per merged segment index, the target codes whose entry kept
+   *  the SOURCE text (server quality guard) — [] on a clean segment, so a
+   *  successful re-translate REPLACES (clears) an earlier mark. */
   onMerge: (
     patch: Record<number, Record<string, string>>,
     prov: { model?: string; source?: string },
     firstChunk: boolean,
+    kept: Record<number, string[]>,
   ) => void;
+  /** Warnings accumulated so far (called after any chunk that added some). */
+  onWarnings?: (all: string[]) => void;
   /** Checked between chunks AND after each response: a cancelled run keeps
    *  its completed chunks, the in-flight chunk's results are dropped. */
   isCancelled?: () => boolean;
@@ -207,30 +216,40 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
   source?: string;
   cancelled: boolean;
   mergedChunks: number;
+  warnings: string[];
 }> {
   const chunk = Math.max(1, a.chunk ?? TRANSLATE_CHUNK);
   let model: string | undefined;
   let source: string | undefined;
   let mergedChunks = 0;
+  const warnings: string[] = [];
   for (let at = 0; at < a.indexes.length; at += chunk) {
-    if (a.isCancelled?.()) return { model, source, cancelled: true, mergedChunks };
+    if (a.isCancelled?.()) return { model, source, cancelled: true, mergedChunks, warnings };
     const slice = a.indexes.slice(at, at + chunk);
     a.onChunkStart?.(slice, at);
     const r = await a.translate(slice.map((i) => a.textOf(i)));
     // Cancelled while this chunk was in flight: its results are lost by
     // design (the approved copy says so); everything merged before stays.
-    if (a.isCancelled?.()) return { model, source, cancelled: true, mergedChunks };
+    if (a.isCancelled?.()) return { model, source, cancelled: true, mergedChunks, warnings };
     model = model ?? r.model;
     source = source ?? r.source;
+    if (r.warnings?.length) {
+      warnings.push(...r.warnings);
+      a.onWarnings?.(warnings.slice());
+    }
     const patch: Record<number, Record<string, string>> = {};
+    const kept: Record<number, string[]> = {};
     slice.forEach((segIdx, k) => {
       const tr = r.results[k];
-      if (tr && Object.keys(tr).length) patch[segIdx] = tr;
+      if (tr && Object.keys(tr).length) {
+        patch[segIdx] = tr;
+        kept[segIdx] = r.kept?.[k] ?? [];
+      }
     });
     if (Object.keys(patch).length) {
-      a.onMerge(patch, { model, source }, mergedChunks === 0);
+      a.onMerge(patch, { model, source }, mergedChunks === 0, kept);
       mergedChunks += 1;
     }
   }
-  return { model, source, cancelled: false, mergedChunks };
+  return { model, source, cancelled: false, mergedChunks, warnings };
 }

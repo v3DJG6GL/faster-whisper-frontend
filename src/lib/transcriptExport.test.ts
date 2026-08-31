@@ -3,8 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_SPEAKER_COLORS, generateExport, prettySpeaker, speakerColorIndex,
-  speakerHex, speakerOrder,
+  cpsWarnings, DEFAULT_SPEAKER_COLORS, generateExport, prettySpeaker,
+  speakerColorIndex, speakerHex, speakerOrder,
 } from "./transcriptExport";
 import type { BatchResult } from "./types";
 
@@ -316,5 +316,54 @@ describe("speakerColorIndex / speakerHex (one resolver for viewer + exports)", (
     });
     expect(out).toContain(`<font color="${DEFAULT_SPEAKER_COLORS[5]}">Speaker 2: General greeting.</font>`);
     expect(DEFAULT_SPEAKER_COLORS[5]).toBe("#4dd0c4");
+  });
+});
+
+describe("kept-original translations (quality guard)", () => {
+  // Segment 2's "de" entry carries the SOURCE text — flagged translationsKept.
+  const KEPT: BatchResult = {
+    ...RESULT,
+    translation: { targets: ["de"] },
+    segments: [
+      { start: 0.4, end: 2.0, text: " Hello there.", speaker: "SPEAKER_00",
+        translations: { de: "Hallo." } },
+      { start: 2.1, end: 3.8, text: " General greeting.", speaker: "SPEAKER_01",
+        translations: { de: " General greeting." }, translationsKept: ["de"] },
+    ],
+  };
+
+  it("srt keeps the original line but never emits the kept 'translation'", () => {
+    const out = generateExport(KEPT, { format: "srt", tracks: ["orig", "de"] });
+    expect(out).toContain("Hallo.");
+    // The kept segment's text appears exactly once — as the original line.
+    expect(out.match(/General greeting\./g)).toHaveLength(1);
+  });
+
+  it("translated-only tracks drop the kept segment entirely (vtt/txt/lrc)", () => {
+    const vtt = generateExport(KEPT, { format: "vtt", tracks: ["de"] });
+    expect(vtt).toContain("Hallo.");
+    expect(vtt).not.toContain("General greeting");
+    const txt = generateExport(KEPT, { format: "txt", tracks: ["de"] });
+    expect(txt).toContain("Hallo.");
+    expect(txt).not.toContain("General greeting");
+    const lrc = generateExport(KEPT, { format: "lrc", tracks: ["de"] });
+    expect(lrc).toContain("Hallo.");
+    expect(lrc).not.toContain("General greeting");
+  });
+
+  it("json carries the marker (full-data format)", () => {
+    const j = JSON.parse(generateExport(KEPT, { format: "json" }));
+    expect(j.segments[1].translationsKept).toEqual(["de"]);
+    expect(j.segments[0].translationsKept).toBeUndefined();
+  });
+
+  it("cps warnings skip kept lines", () => {
+    const long = {
+      ...KEPT,
+      segments: KEPT.segments!.map((s, i) =>
+        i === 1 ? { ...s, translations: { de: "x".repeat(200) } } : s,
+      ),
+    };
+    expect(cpsWarnings(long, ["de"])).toEqual([]);
   });
 });

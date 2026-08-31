@@ -144,8 +144,11 @@ interface Ctx {
   origIncluded: boolean;
 }
 
-/** A segment's translation for one track, cleaned; null when absent. */
+/** A segment's translation for one track, cleaned; null when absent — or when
+ *  the server's quality guard KEPT the source text for this target (emitting
+ *  it as a translated line would duplicate the original). */
 function trOf(seg: TranscriptSegment, lang: string): string | null {
+  if (seg.translationsKept?.includes(lang)) return null;
   const t = seg.translations?.[lang];
   return t?.trim() ? clean(t) : null;
 }
@@ -458,6 +461,11 @@ function jsonExport(result: BatchResult, ctx: Ctx): string {
               ),
             }
           : {}),
+        // JSON is the full-data format: carry the quality-guard marker so a
+        // downstream consumer can tell a kept-original from a translation.
+        ...(s.translationsKept?.length
+          ? { translationsKept: s.translationsKept.map((k) => stripControlChars(k)) }
+          : {}),
       })),
       ...(result.words?.length
         ? { words: result.words.map((w) => ({ ...w, word: stripControlChars(w.word) })) }
@@ -550,6 +558,8 @@ export function cpsWarnings(
     const dur = seg.end - seg.start;
     if (dur <= 0) return;
     for (const lang of langs) {
+      // Kept-original lines are never exported — don't warn about them.
+      if (seg.translationsKept?.includes(lang)) continue;
       const t = seg.translations?.[lang];
       if (!t?.trim()) continue;
       const cps = t.trim().length / dur;

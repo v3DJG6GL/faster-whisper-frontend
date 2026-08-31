@@ -126,6 +126,10 @@ export async function readTextFile(path: string): Promise<string> {
 export interface TextTranslationResult {
   /** results[i] = translations of texts[i], keyed by target language code. */
   results: Record<string, string>[];
+  /** kept[i] = target codes for which results[i] carries the SOURCE text
+   *  unchanged (server quality guard) — dense, aligned with `results`.
+   *  Optional defensively (absent from older payloads / test fixtures). */
+  kept?: string[][];
   model?: string;
   source?: string;
   warnings?: string[];

@@ -41,6 +41,12 @@ pub struct Segment {
     /// BTreeMap for a stable key order in the persisted record JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub translations: Option<std::collections::BTreeMap<String, String>>,
+    /// Target codes whose `translations` entry kept the SOURCE text (the
+    /// server's quality guard rejected the MT output). Wire is snake_case
+    /// (`translations_kept`); TS-facing serialization is camelCase via
+    /// rename_all, so the alias covers deserialization.
+    #[serde(default, alias = "translations_kept", skip_serializing_if = "Option::is_none")]
+    pub translations_kept: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -588,6 +594,14 @@ async fn post(
                 // Translation values are output (untouched, like `text`);
                 // the language-code keys are identity-adjacent — bound them.
                 s.translations = s.translations.map(bound_translation_keys);
+                // Kept-original markers are language codes too — same bound,
+                // capped at the translate target ceiling.
+                s.translations_kept = s.translations_kept.map(|v| {
+                    v.iter()
+                        .take(8)
+                        .map(|k| super::bounded_server_text(k, 16))
+                        .collect()
+                });
                 s
             })
             .collect(),

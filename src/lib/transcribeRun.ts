@@ -742,12 +742,20 @@ export function mergeSegmentTranslations(
   key: string,
   patch: Record<number, Record<string, string>>,
   provenance?: { model?: string; targets?: string[]; source?: string; mode?: string },
+  /** Per merged index: target codes whose entry kept the SOURCE text (server
+   *  quality guard). REPLACES the segment's mark — a successful re-translate
+   *  passes [] (or omits the map) and clears it. */
+  kept?: Record<number, string[]>,
 ) {
   const rec = recordById[key] ?? historyByPath[key];
   if (!rec?.result?.segments) return;
-  const segments = rec.result.segments.map((seg, i) =>
-    patch[i] ? { ...seg, translations: { ...seg.translations, ...patch[i] } } : seg,
-  );
+  const segments = rec.result.segments.map((seg, i) => {
+    if (!patch[i]) return seg;
+    const next: typeof seg = { ...seg, translations: { ...seg.translations, ...patch[i] } };
+    if (kept?.[i]?.length) next.translationsKept = kept[i];
+    else delete next.translationsKept;
+    return next;
+  });
   const targets = Array.from(
     new Set([...(rec.result.translation?.targets ?? []), ...(provenance?.targets ?? [])]),
   );

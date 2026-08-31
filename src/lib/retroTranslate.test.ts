@@ -205,3 +205,46 @@ describe("translate progress state machine", () => {
     expect(foldPollFailure(done)).toBe(done);
   });
 });
+
+describe("kept-original + warnings threading", () => {
+  it("mirrors the patch with per-index kept lists and accumulates warnings", async () => {
+    const kepts: Record<number, string[]>[] = [];
+    const warnCalls: string[][] = [];
+    const r = await runChunkedTranslate({
+      indexes: [0, 1, 2, 3],
+      chunk: 2,
+      textOf: (i) => `t${i}`,
+      translate: (texts) =>
+        Promise.resolve({
+          results: texts.map((t) => ({ en: `en:${t}` })),
+          // First segment of every chunk fails the quality guard.
+          kept: texts.map((_, k) => (k === 0 ? ["en"] : [])),
+          warnings: ["1 segment kept original"],
+        }),
+      onMerge: (_patch, _prov, _first, kept) => kepts.push(kept),
+      onWarnings: (all) => warnCalls.push(all),
+    });
+    expect(kepts).toEqual([
+      { 0: ["en"], 1: [] },
+      { 2: ["en"], 3: [] },
+    ]);
+    // Warnings accumulate across chunks (the card shows the running total).
+    expect(warnCalls[0]).toEqual(["1 segment kept original"]);
+    expect(warnCalls[1]).toEqual(["1 segment kept original", "1 segment kept original"]);
+    expect(r.warnings).toHaveLength(2);
+  });
+
+  it("a response without kept/warnings yields empty kept lists and no calls", async () => {
+    const kepts: Record<number, string[]>[] = [];
+    const onWarnings = vi.fn();
+    await runChunkedTranslate({
+      indexes: [0, 1],
+      textOf: (i) => `t${i}`,
+      translate: (texts) => Promise.resolve(answer(texts)),
+      onMerge: (_patch, _prov, _first, kept) => kepts.push(kept),
+      onWarnings,
+    });
+    expect(kepts).toEqual([{ 0: [], 1: [] }]);
+    expect(onWarnings).not.toHaveBeenCalled();
+  });
+});

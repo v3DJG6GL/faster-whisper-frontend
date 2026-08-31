@@ -3,9 +3,9 @@
 // side is exercised through the app; these guard the math.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  activeRailIndex, foldProgress, openHistoryRecord, overallFraction, railIndex,
-  railOf, railStages, selectPath, skippedStages, stageEstimateMs, stageTimeline,
-  useTranscribeRun, _resetStageRtfForTests,
+  activeRailIndex, foldProgress, mergeSegmentTranslations, openHistoryRecord,
+  overallFraction, railIndex, railOf, railStages, selectPath, skippedStages,
+  stageEstimateMs, stageTimeline, useTranscribeRun, _resetStageRtfForTests,
 } from "./transcribeRun";
 import type { QueueItem } from "./transcribeRun";
 import type { TranscriptRecord } from "./transcriptHistory";
@@ -367,5 +367,44 @@ describe("selectPath keeps a same-path open record", () => {
     expect(useTranscribeRun.getState().openRecordId).toBeNull();
     selectPath(null);
     expect(useTranscribeRun.getState().openRecordId).toBeNull();
+  });
+});
+
+describe("mergeSegmentTranslations kept-original marks", () => {
+  it("sets translationsKept per merged segment; a clean re-merge clears it", async () => {
+    const { useTranscriptHistory } = await import("./transcriptHistory");
+    const rec: TranscriptRecord = {
+      schemaVersion: 1,
+      kind: "file",
+      id: "kept-1",
+      createdAt: "2026-08-30T12:00:00Z",
+      sourcePath: "/k.mp3",
+      sourceName: "k.mp3",
+      status: "done",
+      result: {
+        text: "a b",
+        segments: [
+          { start: 0, end: 1, text: "a" },
+          { start: 1, end: 2, text: "b" },
+        ],
+      },
+    };
+    openHistoryRecord(rec);
+    mergeSegmentTranslations(
+      "kept-1",
+      { 0: { de: "a" }, 1: { de: "B" } },
+      { targets: ["de"] },
+      { 0: ["de"], 1: [] },
+    );
+    const saved = () =>
+      useTranscriptHistory.getState().records.find((r) => r.id === "kept-1")!;
+    expect(saved().result!.segments![0].translationsKept).toEqual(["de"]);
+    expect(saved().result!.segments![1].translationsKept).toBeUndefined();
+    // A successful re-translate REPLACES the mark (clears it) — not a union.
+    mergeSegmentTranslations("kept-1", { 0: { de: "A!" } }, { targets: ["de"] }, { 0: [] });
+    expect(saved().result!.segments![0].translationsKept).toBeUndefined();
+    expect(saved().result!.segments![0].translations).toEqual({ de: "A!" });
+    // Untouched segment keeps its earlier merge untouched.
+    expect(saved().result!.segments![1].translations).toEqual({ de: "B" });
   });
 });

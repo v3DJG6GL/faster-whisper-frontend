@@ -588,6 +588,10 @@ export interface TranscriptSegment {
   /** T2T translations of this segment, keyed by target language code, when
    *  the server ran the translating stage (or a retro-translation merged in). */
   translations?: Record<string, string>;
+  /** Target codes whose `translations` entry kept the SOURCE text (the
+   *  server's quality guard rejected the MT output) — rendered flagged, never
+   *  exported as a translated line, re-translatable from Edit mode. */
+  translationsKept?: string[];
 }
 
 /** A word-level timestamp from verbose_json's flat `words` list. */

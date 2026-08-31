@@ -141,7 +141,8 @@ type EffSegment = {
 const SegmentRow = memo(function SegmentRow({
   seg, i, isActive, passed, activeWordIdx, passedWordIdx, range, words, showTs,
   showNames, colorize, editMode, reassignOpen, speakers, canSeek, origText,
-  translations, visLangsKey, origVisible, origLang, stale, isFrontier,
+  translations, translationsKept, visLangsKey, origVisible, origLang, stale,
+  isFrontier,
   colorOf, displayName, seekTo, onToggleReassign, onReassign, onCommitEdit,
 }: {
   seg: EffSegment;
@@ -165,6 +166,9 @@ const SegmentRow = memo(function SegmentRow({
   origText: string;
   /** This segment's translations (server result — corrections don't touch them). */
   translations: Record<string, string> | undefined;
+  /** Targets whose translation KEPT the source text (server quality guard) —
+   *  rendered flagged/neutral, not as a translation. */
+  translationsKept: string[] | undefined;
   /** Visible translated tracks as a joined CSV — a STRING so the memo's
    *  shallow compare holds during playback re-renders. */
   visLangsKey: string;
@@ -339,6 +343,24 @@ const SegmentRow = memo(function SegmentRow({
       {visLangs.map((lang) => {
         const tr = translations?.[lang];
         if (!tr?.trim()) return null;
+        // The quality guard kept the SOURCE text for this target: don't
+        // present it as a translation — neutral faint line, flagged inline,
+        // no follow-along (its "translation" is the original's words).
+        if (translationsKept?.includes(lang)) {
+          return (
+            <span
+              key={lang}
+              className="block min-w-0 whitespace-pre-wrap text-faint"
+              onClick={!origVisible && canSeek ? () => seekTo(seg.start) : undefined}
+            >
+              <LangTag code={lang} color="var(--c-faint)" />
+              {stripControlChars(tr.trim())}
+              <span className="ml-2 align-middle font-mono text-[10.5px]">
+                · kept original — re-translate in Edit
+              </span>
+            </span>
+          );
+        }
         // Follow-along on translated lines: MT text has no word timing, so
         // the original words' progress through the segment is mapped onto
         // the translated words proportionally — an honest approximation
@@ -580,6 +602,15 @@ function TranslateProgressCard({
           ))}
         </div>
       )}
+      {/* Server warnings (quality guard "kept original" etc.) — compact amber
+          line; the flagged transcript lines carry the per-segment detail. */}
+      {(run.warnings?.length ?? 0) > 0 && (
+        <div className="mt-2 font-mono text-[11px] text-warn">
+          {run.warnings!.length === 1
+            ? safeDisplayText(run.warnings![0], 160)
+            : `${run.warnings!.length} warnings — some segments kept the original`}
+        </div>
+      )}
       {run.lastText && !done && (
         <div className="mt-2 truncate font-mono text-[11px] text-[color:var(--c-translate)]/90">
           {safeDisplayText(run.lastText, 200)}
@@ -808,7 +839,19 @@ export function TranscriptViewer({
   const fileEdits = useMemo(() => edits[okey] ?? {}, [edits, okey]);
   const fileSpkEdits = useMemo(() => speakerEdits[okey] ?? {}, [speakerEdits, okey]);
   const fileStale = useMemo(() => translationsStaleAll[okey] ?? {}, [translationsStaleAll, okey]);
-  const staleCount = Object.keys(fileStale).length;
+  // Kept-original segments (server quality guard) join the stale ones in the
+  // Edit banner's re-translate set — `translationsStale` itself is untouched.
+  const keptIdxs = useMemo(
+    () => (result.segments ?? []).flatMap((s, i) => (s.translationsKept?.length ? [i] : [])),
+    [result],
+  );
+  const flaggedIdxs = useMemo(
+    () =>
+      Array.from(new Set([...Object.keys(fileStale).map(Number), ...keptIdxs])).sort(
+        (a, b) => a - b,
+      ),
+    [fileStale, keptIdxs],
+  );
   const editCount = Object.keys(fileEdits).length + Object.keys(fileSpkEdits).length;
   // Translated tracks present on this result, in target order.
   const langs = useMemo(() => {
@@ -1025,14 +1068,21 @@ export function TranscriptViewer({
           }),
         onChunkStart: (chunkIdxs, done) =>
           setTrRun((s) => (s ? beginChunk(s, chunkIdxs, done) : s)),
-        onMerge: (patch, prov) => {
-          mergeSegmentTranslations(okey, patch, {
-            model: prov.model,
-            targets,
-            source: prov.source ?? result.language,
-            mode,
-          });
+        onMerge: (patch, prov, _first, kept) => {
+          mergeSegmentTranslations(
+            okey,
+            patch,
+            {
+              model: prov.model,
+              targets,
+              source: prov.source ?? result.language,
+              mode,
+            },
+            kept,
+          );
         },
+        // Quality-guard notices accumulate on the card ("N kept original").
+        onWarnings: (all) => setTrRun((s) => (s ? { ...s, warnings: all } : s)),
         isCancelled: () => ctl.cancelled,
       });
       if (!ctl.cancelled) {
@@ -2046,23 +2096,23 @@ export function TranscriptViewer({
               : "click a sentence to correct it · click a speaker chip to reassign"}
           </span>
           <span className="flex-1" />
-          {staleCount > 0 && (
+          {flaggedIdxs.length > 0 && (
             <Button
               variant="ghost"
               size="sm"
               disabled={translating}
-              title="Corrected segments still carry the OLD text's translations — re-translate just those"
+              title="Corrected segments carry the OLD text's translations; kept-original segments failed the server's quality guard — re-translate just those"
               onClick={() => {
                 // No translated tracks yet = nothing to refresh — open the
                 // options panel instead of silently no-opping on [] targets.
                 if (langs.length) {
-                  void runTranslate(Object.keys(fileStale).map(Number).sort((a, b) => a - b), langs);
+                  void runTranslate(flaggedIdxs, langs);
                 } else {
                   setShowTranslate(true);
                 }
               }}
             >
-              {translating ? "Translating…" : `↻ Re-translate ${staleCount} stale`}
+              {translating ? "Translating…" : `↻ Re-translate ${flaggedIdxs.length} flagged`}
             </Button>
           )}
           <Button
@@ -2700,6 +2750,7 @@ export function TranscriptViewer({
                 canSeek={canSeek}
                 origText={result.segments?.[i]?.text ?? ""}
                 translations={result.segments?.[i]?.translations}
+                translationsKept={result.segments?.[i]?.translationsKept}
                 visLangsKey={visLangsKey}
                 origVisible={origVisible}
                 origLang={result.language ?? "??"}

@@ -66,6 +66,11 @@ struct SegmentOut {
     id: usize,
     #[serde(default)]
     translations: BTreeMap<String, String>,
+    /// Target codes whose `translations` entry kept the SOURCE text (the
+    /// server's quality guard rejected the MT output) — the frontend must
+    /// not present those as translations.
+    #[serde(default)]
+    kept_original: Vec<String>,
 }
 
 /// The IPC-facing result: `results[i]` is the translations map for input i
@@ -74,6 +79,9 @@ struct SegmentOut {
 #[serde(rename_all = "camelCase")]
 pub struct TextTranslationResult {
     pub results: Vec<BTreeMap<String, String>>,
+    /// `kept[i]` = target codes for which `results[i]` carries the source
+    /// text unchanged (quality guard) — dense, aligned with `results`.
+    pub kept: Vec<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -155,6 +163,7 @@ pub async fn translate_texts(
     // Re-order by id into a dense list aligned with the input; translation
     // VALUES are output (untouched), the language-code keys get bounded.
     let mut results: Vec<BTreeMap<String, String>> = (0..texts.len()).map(|_| BTreeMap::new()).collect();
+    let mut kept: Vec<Vec<String>> = (0..texts.len()).map(|_| Vec::new()).collect();
     for seg in parsed.segments {
         if let Some(slot) = results.get_mut(seg.id) {
             *slot = seg
@@ -162,10 +171,19 @@ pub async fn translate_texts(
                 .into_iter()
                 .map(|(k, v)| (bounded_server_text(&k, 16), v))
                 .collect();
+            // Kept-original markers are language codes — bound like the
+            // translation keys, capped at the target ceiling.
+            kept[seg.id] = seg
+                .kept_original
+                .iter()
+                .take(MAX_TARGETS)
+                .map(|k| bounded_server_text(k, 16))
+                .collect();
         }
     }
     Ok(TextTranslationResult {
         results,
+        kept,
         model: parsed
             .translation
             .as_ref()
