@@ -364,6 +364,26 @@ export type DictationStatus =
   | "injecting"
   | "error";
 
+/** What the current dictation status is actually WAITING on, when that is worth
+ *  more than the one-word status — today only the cold translate ("loading the
+ *  model" vs "translating"), where the wait is tens of seconds and silence
+ *  reads as a hang.
+ *
+ *  `startedAt` is an epoch, deliberately: consumers derive the elapsed seconds
+ *  locally off their own clock. Broadcasting a per-second value through the
+ *  store would re-render every dictation subscriber once a second for a number
+ *  only one card shows. `pct` is present ONLY when the server reported a real
+ *  fraction — a cold server we haven't probed (`warm === null`) must never be
+ *  given a determinate bar guessed from the elapsed time. */
+export interface DictationPhase {
+  kind: DictationStatus;
+  label: string;
+  startedAt: number;
+  cold?: boolean;
+  pct?: number;
+  cancellable?: boolean;
+}
+
 export interface AudioDevice {
   id: string;
   label: string;

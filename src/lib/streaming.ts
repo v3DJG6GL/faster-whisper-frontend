@@ -45,8 +45,15 @@ import {
   shortcutModsHeld,
   audioBasePref,
   translateText,
+  cancelTextTranslation,
+  getTranscribeProgress,
 } from "./api";
-import type { ActivationKind, AppRule, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertMethod, Profile, TranslationOverrides } from "./types";
+import {
+  newAbortHandle,
+  runDictationTranslate,
+  type TranslateFailure,
+} from "./dictationTranslate";
+import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertMethod, Profile, TranslationOverrides } from "./types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
 import { normalizeAppId } from "./sanitize";
@@ -214,65 +221,196 @@ let sessionTranslation: {
   contextSegments?: number;
   serverUrl: string;
   backendId: string;
+  /** Has this server already answered a translate this session? Starts `null`
+   *  (unknown — a capability probe would fill it in at session start; for now
+   *  the FIRST success is the only evidence we have) and is treated as cold
+   *  until then, so the first phrase gets the long cold budget and every later
+   *  one the short warm formula. */
+  warm?: boolean | null;
 } | null = null;
 // Stop-timing: the translated text that actually got injected (History keeps both).
 let sessionTranslatedText: string | null = null;
 // One "translation failed" doorway per session, not one per phrase.
 let sessionTranslateWarned = false;
+/** Why this session's last translate didn't land — kept for the session-end
+ *  readout (a timeout on a cold model reads very differently from a refused
+ *  request). Reset per session alongside sessionTranslateWarned. */
+let sessionTranslateFailure: TranslateFailure | null = null;
+/** Read-only view of the above. Exported rather than left module-private
+ *  because the session-end readout that consumes it is a later commit, and
+ *  `noUnusedLocals` would otherwise delete the record before its reader lands. */
+export function dictationTranslateFailure(): TranslateFailure | null {
+  return sessionTranslateFailure;
+}
+/** What a running dictation translate would need to abort SERVER-side: a lost
+ *  race leaves the GPU working on text nobody will read (Rust waits on the
+ *  request for TEXT_TRANSLATE_TIMEOUT = 1 h). Module-level for the same reason
+ *  as transcribeRun's `activeCancel`: the teardown paths must reach it without
+ *  a component or a closure. */
+let activeTranslateCancel: { serverUrl: string; backendId: string; progressId: string } | null = null;
+/** Trips the in-flight translate so it resolves with the ORIGINAL text NOW. */
+let activeTranslateAbort: ReturnType<typeof newAbortHandle> | null = null;
+/** Stop the server working on a translation we've stopped waiting for.
+ *  IDEMPOTENT, and deliberately so — the teardown paths overlap (a cancel
+ *  during a stop, an error then a cancel) and each may fire it: take-and-null
+ *  means the second call has nothing to send, and the API answers 404 for an
+ *  id the server already retired. Never call it on a FINISHED translation. */
+export function cancelDictationTranslate(): void {
+  const target = activeTranslateCancel;
+  activeTranslateCancel = null;
+  if (target) void cancelTextTranslation(target).catch(() => {});
+}
+/** Give up on the in-flight translate immediately: the awaiting inject task
+ *  resolves with the ORIGINAL text and proceeds normally — the user's words
+ *  still land, which is exactly what the existing toast already promises — and
+ *  the server is told to stop. Unlike cancelDictationTranslate this doesn't
+ *  wait out the remaining budget. */
+export function abortDictationTranslate(): void {
+  activeTranslateAbort?.abort();
+}
 // Live mode: recent ORIGINAL phrases, sent as context for the next phrase.
 let sessionPhraseContext: string[] = [];
 const PHRASE_CONTEXT_MAX = 3;
-/** 2 s floor for a live phrase; the stop-timing one-shot carries the WHOLE
- *  transcript, so the budget scales with length (LLM MT is ~seconds per
- *  paragraph) up to a minute. */
-function translateBudgetMs(text: string): number {
-  return Math.min(60_000, Math.max(2_000, 1_500 + text.length * 25));
+
+// ── Cold-translate progress ─────────────────────────────────────────────────
+// A cold llama.cpp server spends tens of seconds downloading/loading the GGUF
+// before a single token is produced. The chip's "translating…" alone reads as a
+// hang for that long, so the stop-timing one-shot (the only path that waits
+// that long) polls the server's progress entry and publishes a phase label.
+// Same vocabulary as the retro-translate card: downloading → a real fraction,
+// loading → indeterminate, translating → a real fraction.
+const TRANSLATE_POLL_MS = 1000;
+let translatePhaseTimer: ReturnType<typeof setInterval> | null = null;
+function stopTranslatePhasePoll(): void {
+  if (translatePhaseTimer !== null) {
+    clearInterval(translatePhaseTimer);
+    translatePhaseTimer = null;
+  }
+}
+function foldTranslatePhase(p: BatchProgress): void {
+  const cur = useApp.getState().dictationPhase;
+  if (!cur) return; // the phase was cleared (settled/cancelled) — a late poll adds nothing
+  const pct = typeof p.progress === "number" ? Math.min(1, Math.max(0, p.progress)) : undefined;
+  switch (p.stage) {
+    case "downloading":
+      useApp.getState().setDictation({
+        dictationPhase: { ...cur, label: "Downloading the translation model…", pct },
+      });
+      break;
+    case "loading":
+      // No fraction exists for a GGUF load — leave the bar indeterminate rather
+      // than inventing one from the elapsed time.
+      useApp.getState().setDictation({
+        dictationPhase: { ...cur, label: "Loading the translation model…", pct: undefined },
+      });
+      break;
+    case "translating":
+      useApp.getState().setDictation({
+        dictationPhase: { ...cur, label: "Translating…", pct },
+      });
+      break;
+    default:
+      break; // no entry yet (the request hasn't registered the id) — keep what we show
+  }
+}
+function startTranslatePhasePoll(
+  tr: { serverUrl: string; backendId: string },
+  progressId: string,
+): void {
+  stopTranslatePhasePoll();
+  translatePhaseTimer = setInterval(() => {
+    void getTranscribeProgress({ serverUrl: tr.serverUrl, backendId: tr.backendId, progressId })
+      .then(foldTranslatePhase)
+      // Best-effort: an older backend / standard server has no progress
+      // endpoint, and a poll failure must never disturb the translate itself.
+      .catch(() => {});
+  }, TRANSLATE_POLL_MS);
 }
 
 /** Translate `text` for injection, or return it unchanged (no target set,
- *  timeout, failure, superseded session). Never throws; warns once. */
-async function maybeTranslate(text: string, cfg: InsertCfg | null): Promise<string> {
+ *  timeout, failure, superseded session). Never throws; warns once.
+ *
+ *  A thin adapter over runDictationTranslate: this half owns the SESSION state
+ *  (identity re-check, the once-per-session doorway, warm knowledge, the cold
+ *  progress phase); the logic and the budget table live in dictationTranslate,
+ *  where they are testable without Tauri. */
+async function maybeTranslate(
+  text: string,
+  cfg: InsertCfg | null,
+  opts?: { oneShot?: boolean; queued?: number },
+): Promise<string> {
   const tr = sessionTranslation;
   if (!tr || !text.trim()) return text;
   const context = sessionPhraseContext.slice(-PHRASE_CONTEXT_MAX);
+  const abort = newAbortHandle();
+  activeTranslateAbort = abort;
+  const oneShot = opts?.oneShot === true;
   try {
-    const r = await Promise.race([
-      translateText({
+    const r = await runDictationTranslate(
+      {
+        text,
+        context,
+        targets: tr.targets,
+        includeOriginal: tr.includeOriginal,
+        model: tr.model,
+        glossary: tr.glossary,
+        mode: tr.mode,
+        contextSegments: tr.contextSegments,
         serverUrl: tr.serverUrl,
         backendId: tr.backendId,
-        // Prior phrases ride along as context segments; only the last
-        // result (the current text) is consumed.
-        texts: [...context, text],
-        targets: tr.targets,
-        model: tr.model,
-        mode: tr.mode,
-        glossary: tr.glossary,
-        contextSegments: tr.contextSegments ?? (context.length ? context.length : null),
-      }),
-      new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error("translation timed out")), translateBudgetMs(text)),
-      ),
-    ]);
+        warm: tr.warm ?? null,
+        oneShot,
+        queued: opts?.queued ?? 0,
+        abort,
+        onStart: ({ progressId, cold }) => {
+          activeTranslateCancel = { serverUrl: tr.serverUrl, backendId: tr.backendId, progressId };
+          // Only the one-shot waits long enough for the silence to read as a
+          // hang; a live phrase's 20 s cap lands while the user is still
+          // talking, and a per-phrase progress card would fight the chip.
+          if (oneShot && cold) {
+            useApp.getState().setDictation({
+              dictationPhase: {
+                kind: "translating",
+                label: "Translating…",
+                startedAt: Date.now(),
+                cold: true,
+                cancellable: true,
+              },
+            });
+            startTranslatePhasePoll(tr, progressId);
+          }
+        },
+      },
+      { translate: translateText, cancel: cancelTextTranslation },
+    );
     if (insertCfg !== cfg) return text; // superseded — caller bails on its own guard too
-    const last = r.results[r.results.length - 1] ?? {};
-    const parts = tr.targets
-      .map((lang) => last[lang]?.trim())
-      .filter((t): t is string => !!t);
-    if (!parts.length) throw new Error("empty translation");
-    // One block per language, blank-line separated — the transcript itself may
-    // contain single line breaks, so a lone \n wouldn't read as a boundary.
-    return (tr.includeOriginal ? [text.trim(), ...parts] : parts).join("\n\n");
-  } catch (e) {
-    console.error("dictation translation failed:", e);
-    if (insertCfg === cfg && !sessionTranslateWarned) {
+    if (r.ok) {
+      // Proof this server has its model resident: every later phrase of the
+      // session takes the SHORT budget, so one cold start doesn't buy the whole
+      // session a minute-long allowance.
+      tr.warm = true;
+      return r.text;
+    }
+    sessionTranslateFailure = r.cause ?? "error";
+    console.error("dictation translation failed:", r.error ?? r.cause);
+    if (!sessionTranslateWarned) {
       sessionTranslateWarned = true;
       // Keep the dictation-specific promise ("your words still landed") but
       // name the cause instead of leaving it a mystery (truthful-toast rule).
       useApp
         .getState()
-        .setLogsDoorway(`Translation failed (${shortCause(e)}) — inserted the original text.`);
+        .setLogsDoorway(`Translation failed (${shortCause(r.error)}) — inserted the original text.`);
     }
     return text;
+  } finally {
+    stopTranslatePhasePoll();
+    if (activeTranslateAbort === abort) activeTranslateAbort = null;
+    // The request is over either way — drop the cancel handle so a later
+    // teardown can't cancel a progress id that already completed.
+    activeTranslateCancel = null;
+    if (useApp.getState().dictationPhase) {
+      useApp.getState().setDictation({ dictationPhase: null });
+    }
   }
 }
 
@@ -614,7 +752,10 @@ function settleIdle(): void {
   // Before the state flip: the capture reads the session docs (reset only by
   // the NEXT startLiveInner / cancelLive) and must run while they're intact.
   captureDictationHistory();
-  useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null });
+  // `dictationPhase` is cleared in the SAME call as the status move — a phase
+  // published for a status that no longer exists would keep a cold-translate
+  // card on screen over an idle chip.
+  useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null, dictationPhase: null });
   consumePendingHoldStart();
 }
 
@@ -900,6 +1041,20 @@ async function ensureListeners(): Promise<void> {
       // landing during EITHER await — mirrors the stop-timing task (cfg captured before its enqueue).
       // Within a session insertCfg keeps a stable identity, so a normal phrase still injects.
       const cfg = insertCfg;
+      // Inject-queue depth read HERE, synchronously at enqueue time, and carried
+      // into the queued task: it decides how long this phrase's translate may
+      // wait on a cold model (20 s when nothing is behind it, the short
+      // length-based budget when a backlog exists — see translateBudgetMs).
+      // Read inside the task instead and it would report the depth at DRAIN
+      // time, by which point this task is the one being drained.
+      //
+      // NB the translate deliberately happens INSIDE the queue, after the
+      // append-only diff: `toType` is computed in-queue on purpose so a phrase
+      // the own-window guard skips leaves `injectedText` untouched and gets
+      // retyped later. Translating before the diff (in a separate serial
+      // translate queue, say) would advance the typed baseline at diff time and
+      // lose skip-and-retype.
+      const queuedAtEnqueue = injectDepth;
       enqueueInject(async () => {
         const t = await resolveTarget();
         // Discard a cancelled/superseded session's phrase — don't inject it into the new/refocused
@@ -924,7 +1079,7 @@ async function ensureListeners(): Promise<void> {
           if (phraseClip.length > 0 && grew) {
             // T2T live: translate the outbound copy only; clipBaseline and the
             // grew guard keep working in original text.
-            const clipOut = await maybeTranslate(phraseClip, cfg);
+            const clipOut = await maybeTranslate(phraseClip, cfg, { queued: queuedAtEnqueue });
             if (insertCfg !== cfg) return;
             if (clipOut !== phraseClip) {
               sessionPhraseContext.push(phraseClip);
@@ -980,7 +1135,7 @@ async function ensureListeners(): Promise<void> {
             // T2T live: translate the outbound copy only. injectedText still
             // advances by the ORIGINAL document below, so per-phrase diffing,
             // skip-and-retype and re-sent-final detection are untouched.
-            const typeOut = await maybeTranslate(toType, cfg);
+            const typeOut = await maybeTranslate(toType, cfg, { queued: queuedAtEnqueue });
             if (insertCfg !== cfg) return;
             if (typeOut !== toType) {
               sessionPhraseContext.push(toType);
@@ -1354,9 +1509,15 @@ async function ensureListeners(): Promise<void> {
         enqueueInject(async () => {
           // T2T: translate the whole transcript once, then inject the result.
           // Falls back to the original on timeout/failure (maybeTranslate warns).
+          //
+          // `oneShot`: this is the LAST task in the inject chain — the session is
+          // over, nothing is queued behind it — so it can afford to wait out a
+          // cold model load (tens of seconds for a GGUF) instead of timing out
+          // and inserting the original. That is why the long wait is scoped
+          // HERE and not given to live phrases, which block the next phrase.
           let outText = text;
           if (sessionTranslation) {
-            outText = await maybeTranslate(text, cfg);
+            outText = await maybeTranslate(text, cfg, { oneShot: true });
             if (insertCfg !== cfg) return;
             if (outText !== text) sessionTranslatedText = outText;
             setDictation({ status: "injecting" });
@@ -1639,7 +1800,9 @@ function flashError(message: string): void {
   // Fifth writer of `partial`: drop any pending tick so it cannot repaint a preview over the
   // error the user is being shown.
   resetPartialPreview();
-  useApp.getState().setDictation({ status: "error", dictationError: message, level: 0, partial: "", warming: false });
+  // Same call as the status move (see settleIdle): the error supersedes whatever
+  // the cold-translate phase was reporting.
+  useApp.getState().setDictation({ status: "error", dictationError: message, level: 0, partial: "", warming: false, dictationPhase: null });
   // Failure doorway: the dictation error itself lingers only briefly (chip/Home);
   // the banner persists with a "View logs" path to the full story.
   useApp.getState().setLogsDoorway("Dictation failed — the log has the details.");
@@ -1647,7 +1810,7 @@ function flashError(message: string): void {
   errorClearTimer = setTimeout(() => {
     errorClearTimer = null;
     if (useApp.getState().status === "error") {
-      useApp.getState().setDictation({ status: "idle", dictationError: null, activeProfile: null });
+      useApp.getState().setDictation({ status: "idle", dictationError: null, activeProfile: null, dictationPhase: null });
     }
   }, ERROR_LINGER_MS);
 }
@@ -1780,10 +1943,15 @@ async function startLiveInner(
           contextSegments: trOv.contextSegments,
           serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
           backendId: backend.id,
+          // Unknown until this session sees a translate land: a server warm for
+          // the LAST session may have evicted the model since, so warmth is
+          // never carried across sessions.
+          warm: null,
         }
       : null;
     sessionTranslatedText = null;
     sessionTranslateWarned = false;
+    sessionTranslateFailure = null;
     sessionPhraseContext = [];
   }
 
@@ -2106,7 +2274,7 @@ export async function cancelLive(): Promise<void> {
     .getState()
     // Cancelled → no done marker (outcome "none"); clear any pending per-phrase pulse.
     // `warming: false` so a cancel during warm-up doesn't strand the chip on "warming up…".
-    .setDictation({ status: "idle", warming: false, partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", lastInsert: null, activeProfile: null });
+    .setDictation({ status: "idle", warming: false, partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", lastInsert: null, activeProfile: null, dictationPhase: null });
   const endpoint = activeEndpoint;
   activeEndpoint = null;
   try {

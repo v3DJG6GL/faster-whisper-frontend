@@ -5,6 +5,7 @@ import type {
   Backend,
   Config,
   ConnectionInfo,
+  DictationPhase,
   DictationStatus,
   FocusedApp,
   Profile,
@@ -267,6 +268,11 @@ interface AppState {
   /** Truthful end-of-session insert result, set WITH the idle transition — drives the chip's
    *  done marker (✓ typed / clipboard glyph / nothing). null = no session finished yet. */
   sessionOutcome: "typed" | "clipboard" | "none" | null;
+  /** What the current status is waiting on, when the wait is long enough that
+   *  the status word alone reads as a hang (the cold translate). Cleared in the
+   *  SAME setDictation call as every transition to idle/error, so a stale phase
+   *  can never outlive its session. */
+  dictationPhase: DictationPhase | null;
 
   connections: Record<string, ConnectionInfo | undefined>; // keyed by Backend id
 
@@ -384,6 +390,7 @@ interface AppState {
       targetSkip: "blocked" | "notEditable" | null;
       lastInsert: { kind: "typed" | "clipboard"; seq: number } | null;
       sessionOutcome: "typed" | "clipboard" | "none" | null;
+      dictationPhase: DictationPhase | null;
     }>,
   ) => void;
 
@@ -449,6 +456,7 @@ export const useApp = create<AppState>((set) => ({
   targetSkip: null,
   lastInsert: null,
   sessionOutcome: null,
+  dictationPhase: null,
 
   connections: {},
   usage: {},
