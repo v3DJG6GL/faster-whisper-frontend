@@ -688,7 +688,12 @@ export default function Settings() {
   };
 
   return (
-    <div className="mx-auto flex max-w-[880px] gap-8 px-10 py-12">
+    // Not a centered `.page`: the section nav is a RAIL, and a rail belongs
+    // against the sidebar it continues. Centering the pair left a wide gap
+    // between the two menus that read as one piece of chrome. So the rail sits
+    // at the page padding and the content column takes the rest, capped at the
+    // form width so setting rows never stretch past a comfortable measure.
+    <div className="flex gap-8 px-[var(--page-pad)] py-12">
       <div className="sticky top-12 z-10 w-[150px] shrink-0 self-start">
         <h1 className="mb-5 font-display text-[22px] font-bold tracking-tight text-text">Settings</h1>
         <div className="flex flex-col gap-0.5">
@@ -708,7 +713,7 @@ export default function Settings() {
         </div>
       </div>
 
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 max-w-[var(--w-form)] flex-1">
         {tab === "General" && (
           <Card className="px-6">
             <SettingRow title={SETTING.openAtLogin.label} desc="Launch automatically when you sign in.">

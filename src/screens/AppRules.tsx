@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppWindow, Ban, Crosshair, Pencil, Trash2 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Labeled, ListScreenHeader, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
+import { Button, Card, ConfirmLeave, EditorHeader, Labeled, ListScreenHeader, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
+import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { getFocusedOtherApp } from "@/lib/api";
 import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
 import { IS_WINDOWS } from "@/lib/platform";
@@ -93,8 +94,37 @@ function Editor({
     onSave({ ...r, appId: normalizeAppId(r.appId), name: r.name?.trim() ? r.name.trim() : undefined });
   };
 
+  // Unsaved-work guard, shared with the Profiles and Backends editors: a
+  // sidebar click used to discard a half-written rule in silence.
+  const dirty = isDirty(r, initial);
+  const guard = useUnsavedGuard(dirty);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !guard.asking) guard.guardExit(onCancel);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   return (
     <Card className="p-6">
+      <EditorHeader
+        onBack={() => guard.guardExit(onCancel)}
+        title={r.name?.trim() || r.appId || "New rule"}
+        subtitle={r.block ? "Per-app rule · never type here" : "Per-app rule"}
+        dirty={dirty}
+        saveLabel="Save rule"
+        onSave={save}
+        saveDisabled={!canSave}
+      />
+      {guard.asking && (
+        <ConfirmLeave
+          what="rule"
+          onSaveAndLeave={() => guard.saveAndLeave(save)}
+          onDiscard={guard.leave}
+          onStay={guard.stay}
+        />
+      )}
       <Labeled label="Application id">
         <div className="flex gap-2">
           <TextInput value={r.appId} onChange={(e) => set({ appId: e.target.value })} placeholder={APP_ID_PLACEHOLDER} />
@@ -138,7 +168,7 @@ function Editor({
       </Labeled>
 
       <div className="mt-6 flex items-center justify-between">
-        <Button variant="ghost" onClick={onCancel}>
+        <Button variant="ghost" onClick={() => guard.guardExit(onCancel)}>
           Cancel
         </Button>
         <Button variant="accent" onClick={save} disabled={!canSave}>
@@ -221,7 +251,7 @@ export default function AppRules() {
   };
 
   return (
-    <div className="mx-auto max-w-[820px] px-10 py-12">
+    <div className="page page-form">
       <ListScreenHeader
         eyebrow="app rules"
         title="Per-app rules"

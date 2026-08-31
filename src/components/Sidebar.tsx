@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
+import { tryNavigate } from "@/lib/navGuard";
 import { Settings as SettingsIcon, Moon, Sun, SunMoon } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
@@ -121,6 +122,14 @@ export function Sidebar() {
       .catch(() => {}); // best-effort: a missing version just hides the readout
   }, []);
 
+  // An open editor holds unsaved work in local state, so leaving the screen
+  // discards it. Ask first: the guard runs the navigation itself if the user
+  // says to go. With no editor open (or a clean one) this is a straight pass.
+  const navigate = useNavigate();
+  const guardedNav = (path: string) => (e: React.MouseEvent) => {
+    if (!tryNavigate(() => navigate(path))) e.preventDefault();
+  };
+
   return (
     <aside className="relative z-10 flex w-[228px] shrink-0 flex-col border-r border-line bg-panel/60">
       <div className="flex items-center gap-3 px-5 pb-5 pt-6">
@@ -146,6 +155,7 @@ export function Sidebar() {
             key={path}
             to={path}
             end={end}
+            onClick={guardedNav(path)}
             className={({ isActive }) =>
               cn(
                 "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-medium transition-colors",
@@ -179,6 +189,7 @@ export function Sidebar() {
         <div className="flex items-center gap-1 border-t border-line pt-3">
           <NavLink
             to="/settings"
+            onClick={guardedNav("/settings")}
             className={({ isActive }) =>
               cn(
                 "flex flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-medium transition-colors",

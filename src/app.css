@@ -209,6 +209,45 @@ textarea {
   background-clip: padding-box;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   Page width system.
+
+   Every screen used to hardcode its own max-width (820 / 880 / 900 / 1760),
+   which on a wide window left a third of the main area empty while setting
+   rows — a label, a description and a control on one line — wrapped their
+   descriptions to eight lines. Width is not one number: it depends on what the
+   content IS. Prose has a reading measure. A label-plus-control row has none;
+   it just wants the description to stop wrapping. A queue wants everything it
+   can get.
+
+   Screens set `.page` plus ONE width class. Padding scales with the window
+   instead of sitting at a fixed 40px at every size.
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  --page-pad: clamp(20px, 3vw, 48px);
+  --w-prose: 820px;  /* reading measure — transcript excerpts, dictionary terms */
+  --w-cards: 900px;  /* deliberately composed card layouts — Home, Statistics */
+  --w-form: 1180px;  /* label + control rows, two-column editors */
+  --w-dense: 1760px; /* self-scrolling panes side by side — Transcribe studio */
+}
+
+@layer components {
+  .page {
+    width: 100%;
+    max-width: var(--page-w, none);
+    margin-inline: auto;
+    padding-inline: var(--page-pad);
+    padding-block: 48px;
+  }
+  .page-prose { --page-w: var(--w-prose); }
+  .page-cards { --page-w: var(--w-cards); }
+  .page-form { --page-w: var(--w-form); }
+  .page-dense { --page-w: var(--w-dense); }
+  /* Settings opts out of `.page` entirely — see the comment on its root: a
+     section rail has to sit against the sidebar, not float in a centred
+     column — and reads --w-form directly to cap its content. */
+}
+
 @layer utilities {
   .font-num {
     font-family: var(--font-mono);

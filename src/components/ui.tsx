@@ -12,7 +12,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Check, Minus, MoreHorizontal, Plus } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Minus, MoreHorizontal, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { languageLabel } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
@@ -91,6 +91,129 @@ export function ListScreenHeader({
         </Button>
       )}
     </div>
+  );
+}
+
+/* ── EditorHeader ─────────────────────────────────────────────────────── */
+/**
+ * The header of a full-page editor (Profiles / Backends / Per-app rules), where
+ * the editor REPLACES the list it came from.
+ *
+ * It pins to the top of the scroll container, because that is the whole point:
+ * these forms run past a screen height, and the only way out used to be a
+ * Cancel button below the fold. It also names what you're editing — the page
+ * header behind it keeps saying "Profiles", which is a lie once the editor is
+ * open — and shows whether there is unsaved work.
+ *
+ * The bottom Save/Cancel pair stays: that's where a form finishes. This adds a
+ * way out from the top, it doesn't move the finish line.
+ */
+export function EditorHeader({
+  onBack,
+  title,
+  subtitle,
+  dirty,
+  saveLabel,
+  onSave,
+  saveDisabled,
+}: {
+  onBack: () => void;
+  title: string;
+  subtitle?: ReactNode;
+  dirty?: boolean;
+  saveLabel: string;
+  onSave: () => void;
+  saveDisabled?: boolean;
+}) {
+  return (
+    <div className="sticky top-0 z-20 -mx-6 -mt-6 mb-5 flex items-center gap-3 rounded-t-card border-b border-line bg-surface/95 px-6 py-3 backdrop-blur-sm">
+      <button
+        type="button"
+        onClick={onBack}
+        title="Back — Esc"
+        aria-label="Back"
+        className="ring-signal -ml-1 grid size-8 shrink-0 place-items-center rounded-lg text-dim transition-colors hover:bg-surface-2 hover:text-text"
+      >
+        <ArrowLeft className="size-4" />
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[14px] font-semibold text-text">{title}</div>
+        {subtitle && <div className="truncate text-[11.5px] text-faint">{subtitle}</div>}
+      </div>
+      {dirty && (
+        <span className="flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-label text-warn">
+          <span className="size-1.5 rounded-full bg-warn" aria-hidden />
+          unsaved
+        </span>
+      )}
+      <Button variant="accent" size="sm" onClick={onSave} disabled={saveDisabled}>
+        {saveLabel}
+      </Button>
+    </div>
+  );
+}
+
+/* ── ConfirmLeave ─────────────────────────────────────────────────────── */
+/**
+ * The prompt an editor raises when you try to leave with unsaved changes.
+ * Three named outcomes rather than "Are you sure?" — every button says what it
+ * does to the work.
+ */
+export function ConfirmLeave({
+  what,
+  onSaveAndLeave,
+  onDiscard,
+  onStay,
+}: {
+  /** What is being edited, e.g. "profile" — used in the sentence. */
+  what: string;
+  onSaveAndLeave: () => void;
+  onDiscard: () => void;
+  onStay: () => void;
+}) {
+  // Esc keeps you here: the destructive answer is never the reflex one.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onStay();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onStay]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-6"
+      onClick={onStay}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Unsaved changes"
+    >
+      <div className="w-full max-w-[420px]" onClick={(e) => e.stopPropagation()}>
+        <Card className="px-6 py-5">
+          <div className="text-[14px] font-semibold text-text">
+            This {what} has unsaved changes
+          </div>
+          <p className="mt-1.5 text-[13px] text-dim">
+            Leaving now keeps the {what} as it was before you started editing.
+          </p>
+          <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={onStay}>
+              Keep editing
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onDiscard}>
+              Discard changes
+            </Button>
+            <Button variant="accent" size="sm" onClick={onSaveAndLeave}>
+              Save and leave
+            </Button>
+          </div>
+        </Card>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -566,7 +689,9 @@ export function Segmented<T extends string>({
             disabled={disabled}
             onClick={() => onChange(o.value)}
             className={cn(
-              "ring-signal rounded-pill px-3.5 py-1 text-[13px] font-medium transition-colors",
+              // Labels are short by design and read as one token ("Clipboard paste"):
+              // wrapping one across two lines makes the group look broken.
+              "ring-signal whitespace-nowrap rounded-pill px-3.5 py-1 text-[13px] font-medium transition-colors",
               active ? "bg-accent text-accent-ink" : "text-dim hover:text-text",
               disabled && "cursor-not-allowed hover:text-dim",
             )}
@@ -988,14 +1113,24 @@ export function SettingRow({
           ariaLabel: (children.props as { ariaLabel?: string }).ariaLabel ?? title,
         })
       : children;
+  // Grid, not flex: the control used to take whatever width it wanted and hand
+  // the text the remainder, so a wide Segmented starved the description at ANY
+  // page width — the "Insertion method" row wrapped to eight lines. A capped
+  // control column gives the description a stable measure that doesn't shift as
+  // controls change.
+  //
+  // Measured as a CONTAINER query on the row, not a viewport breakpoint: the
+  // same component sits in Settings' full-width cards and in the Transcribe
+  // studio's 420px rail, and only the row's own width says which layout fits.
+  // Under 640px the control drops underneath instead of squeezing the text.
   return (
-    <div className={cn("py-4", !last && "border-b border-line")}>
-      <div className="flex items-center gap-6">
-        <div className={cn("min-w-0 flex-1 transition-opacity", disabled && "opacity-50")}>
+    <div className={cn("@container py-4", !last && "border-b border-line")}>
+      <div className="flex flex-col gap-3 @[640px]:grid @[640px]:grid-cols-[minmax(0,1fr)_minmax(0,max-content)] @[640px]:items-center @[640px]:gap-6">
+        <div className={cn("min-w-0 transition-opacity", disabled && "opacity-50")}>
           <div className="text-[14px] font-medium text-text">{title}</div>
           {desc && <div className="mt-0.5 text-[12.5px] leading-snug text-dim">{desc}</div>}
         </div>
-        <div className="shrink-0">{control}</div>
+        <div className="flex min-w-0 justify-start @[640px]:justify-end">{control}</div>
       </div>
       {expand}
     </div>

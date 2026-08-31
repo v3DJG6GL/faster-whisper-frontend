@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/ui";
 
 export default function Statistics() {
   return (
-    <div className="mx-auto max-w-[900px] px-10 py-12">
+    <div className="page page-cards">
       <PageHeader eyebrow="faster-whisper · usage" title="Statistics">
         Everything you’ve dictated — today and all-time — with the full trend over the last 7, 30 or 90 days.
         Hover the chart for a day’s detail.

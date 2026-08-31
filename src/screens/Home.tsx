@@ -196,7 +196,7 @@ export default function Home() {
   };
 
   return (
-    <div className="mx-auto max-w-[900px] px-10 py-12">
+    <div className="page page-cards">
       <div className="flex items-end justify-between">
         <div>
           <div className="font-mono text-[11px] uppercase tracking-label text-accent">faster-whisper · dictation</div>

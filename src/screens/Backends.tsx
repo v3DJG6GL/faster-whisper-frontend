@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, DisclosureCard, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, StatusDot, TextArea, TextInput } from "@/components/ui";
+import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, StatusDot, TextArea, TextInput } from "@/components/ui";
+import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { DecodeFields } from "@/components/DecodeFields";
 import { TranslationDefaultsEditor } from "@/components/TranslationFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
@@ -190,13 +191,40 @@ function Editor({
     });
   };
 
+  // Unsaved-work guard, shared with the Profiles and Per-app rules editors. A
+  // typed API key counts as unsaved work; "Address on this device" does not —
+  // it applies live and needs no save. A draft arriving with a connect-step
+  // result is the connect-first add path: the user has already paid for a
+  // connection test, so leaving would throw away real work even untouched.
+  const dirty = isDirty(b, initial) || key !== (initialKey ?? "") || initialResult != null;
+  const guard = useUnsavedGuard(dirty);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !guard.asking && !savingKey) guard.guardExit(onCancel);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   return (
     <Card className="p-6">
-      <div className="flex items-center gap-2 text-text">
-        <Server className="size-[18px] text-accent" />
-        <span className="text-[14px] font-semibold">Backend</span>
-        <span className="text-[12px] text-dim">· faster-whisper / OpenAI-compatible</span>
-      </div>
+      <EditorHeader
+        onBack={() => guard.guardExit(onCancel)}
+        title={b.name.trim() || "New backend"}
+        subtitle="Backend · faster-whisper / OpenAI-compatible"
+        dirty={dirty}
+        saveLabel="Save backend"
+        onSave={() => void doSave()}
+        saveDisabled={savingKey}
+      />
+      {guard.asking && (
+        <ConfirmLeave
+          what="backend"
+          onSaveAndLeave={() => guard.saveAndLeave(doSave)}
+          onDiscard={guard.leave}
+          onStay={guard.stay}
+        />
+      )}
 
       <div className="mt-5 grid grid-cols-2 gap-4">
         <Labeled label="Name">
@@ -411,7 +439,7 @@ function Editor({
       )}
 
       <div className="mt-6 flex items-center justify-between">
-        <Button variant="ghost" onClick={onCancel} disabled={savingKey}>
+        <Button variant="ghost" onClick={() => guard.guardExit(onCancel)} disabled={savingKey}>
           Cancel
         </Button>
         <div className="flex items-center gap-2">
@@ -744,7 +772,7 @@ export default function Backends() {
   };
 
   return (
-    <div className="mx-auto max-w-[820px] px-10 py-12">
+    <div className="page page-form">
       <ListScreenHeader
         eyebrow="backends"
         title="Backends"

@@ -2378,8 +2378,8 @@ export default function Transcribe() {
     <div
       className={
         studio
-          ? "mx-auto flex h-full min-h-0 max-w-[1760px] gap-7 px-8 py-8"
-          : "mx-auto max-w-[820px] px-10 py-12"
+          ? "page page-dense flex h-full min-h-0 gap-7 px-8 py-8"
+          : "page page-form"
       }
     >
       <div

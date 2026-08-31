@@ -791,7 +791,7 @@ export default function History() {
           : "dictations";
 
   return (
-    <div ref={rootRef} className="mx-auto max-w-[820px] px-10 py-12">
+    <div ref={rootRef} className="page page-prose">
       <PageHeader eyebrow="transcribe" title="History">
         Everything you transcribed or dictated — stored only on this machine.
       </PageHeader>

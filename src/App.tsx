@@ -13,6 +13,7 @@ import { cancelLive, requestStopIfStarting } from "@/lib/streaming";
 import { SCREEN_PATH } from "@/lib/screens";
 import { applyTheme, watchSystemTheme } from "@/lib/theme";
 import { initLogStatus, openLogsPrefiltered } from "@/lib/logs";
+import { tryNavigate } from "@/lib/navGuard";
 import { Onboarding } from "@/screens/Onboarding";
 import Logs from "@/screens/Logs";
 import Home from "@/screens/Home";
@@ -71,7 +72,9 @@ function NavigationBridge() {
     () =>
       onAppNavigate((screen) => {
         const path = SCREEN_PATH[screen as keyof typeof SCREEN_PATH];
-        if (path) navigate(path);
+        // Same unsaved-work guard the sidebar runs: the overlay chip can fire
+        // this while a list editor is open.
+        if (path) tryNavigate(() => navigate(path));
       }),
     [navigate],
   );

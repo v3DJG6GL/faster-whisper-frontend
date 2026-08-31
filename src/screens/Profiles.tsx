@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, RouteBadge, DisclosureCard, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextArea, TextInput, Toggle } from "@/components/ui";
+import { Badge, Button, Card, ConfirmLeave, RouteBadge, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextArea, TextInput, Toggle } from "@/components/ui";
+import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { starterProfiles } from "@/lib/starters";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
@@ -118,6 +119,20 @@ function Editor({
 
   const Glyph = ACTIVATION[p.activation].icon;
 
+  // Unsaved-work guard: this form runs well past a screen height, and until it
+  // grew a top exit the only way out was a Cancel button below the fold — while
+  // a sidebar click discarded everything in silence.
+  const dirty = isDirty(p, initial);
+  const guard = useUnsavedGuard(dirty);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Not while capturing a chord — Esc cancels the capture there.
+      if (e.key === "Escape" && !capturing && !guard.asking) guard.guardExit(onCancel);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   const save = () =>
     onSave({
       ...p,
@@ -136,13 +151,29 @@ function Editor({
 
   return (
     <Card className="p-6">
-      <div className="flex items-center gap-2 text-text">
-        <Glyph className="size-[18px] text-accent" />
-        <span className="text-[14px] font-semibold">Dictation profile</span>
-        <span className="text-[12px] text-dim">· {ACTIVATION[p.activation].hint}</span>
-      </div>
+      <EditorHeader
+        onBack={() => guard.guardExit(onCancel)}
+        title={p.name.trim() || "New profile"}
+        subtitle={
+          <span className="inline-flex items-center gap-1.5">
+            <Glyph className="size-3 text-accent" />
+            Dictation profile · {ACTIVATION[p.activation].hint}
+          </span>
+        }
+        dirty={dirty}
+        saveLabel="Save profile"
+        onSave={save}
+      />
+      {guard.asking && (
+        <ConfirmLeave
+          what="profile"
+          onSaveAndLeave={() => guard.saveAndLeave(save)}
+          onDiscard={guard.leave}
+          onStay={guard.stay}
+        />
+      )}
 
-      <div className="mt-5 grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         <Labeled label="Name">
           <TextInput value={p.name} onChange={(e) => set({ name: e.target.value })} placeholder="Email — German" />
         </Labeled>
@@ -390,7 +421,7 @@ function Editor({
       </div>
 
       <div className="mt-6 flex items-center justify-between">
-        <Button variant="ghost" onClick={onCancel}>
+        <Button variant="ghost" onClick={() => guard.guardExit(onCancel)}>
           Cancel
         </Button>
         <Button variant="accent" onClick={save}>
@@ -576,7 +607,7 @@ export default function Profiles() {
   };
 
   return (
-    <div className="mx-auto max-w-[820px] px-10 py-12">
+    <div className="page page-form">
       <ListScreenHeader
         eyebrow="profiles"
         title="Profiles"

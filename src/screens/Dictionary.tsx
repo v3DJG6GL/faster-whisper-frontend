@@ -834,7 +834,7 @@ export default function Dictionary() {
   }
 
   return (
-    <Stack gap={6} className="mx-auto max-w-[820px] px-10 py-12">
+    <Stack gap={6} className="page page-prose">
       <header className="flex items-start justify-between gap-4">
         <div>
           <div className="font-mono text-[11px] uppercase tracking-label text-accent">Server rules</div>
