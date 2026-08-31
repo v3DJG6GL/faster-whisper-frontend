@@ -153,19 +153,49 @@ function trOf(seg: TranscriptSegment, lang: string): string | null {
   return t?.trim() ? clean(t) : null;
 }
 
+/** Is this export carrying more than one translated track?
+ *
+ *  The tag rule for every format: label a translated line ONLY when the file
+ *  contains more than one translated language. With a single target the
+ *  language is unambiguous and the output stays byte-identical to what it has
+ *  always been; with two or more, an untagged line is genuinely unreadable —
+ *  nothing in the file says which of them it is. */
+function ambiguous(ctx: Ctx): boolean {
+  return ctx.visLangs.length > 1;
+}
+
+/** A language code reduced to something safe inside a WebVTT cue class.
+ *
+ *  Target codes come from user-editable settings and a synced backend, so they
+ *  are not guaranteed to be well-formed BCP-47 — and a class name lands inside
+ *  `<c.…>` markup and a STYLE block, where a stray `.`, `>` or space would
+ *  break the cue rather than merely look wrong. Lowercased alphanumerics and
+ *  hyphens only, bounded; an unusable code degrades to a positional `x`
+ *  instead of emitting broken markup. */
+function vttClass(lang: string): string {
+  const safe = lang.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 12);
+  return safe || "x";
+}
+
 /** Cue text lines for one segment across the included tracks, in lineOrder.
  *  `mt` renders a translated line (plain, name-prefixed like the "off" color
- *  mode — the color modes stay original-only). */
+ *  mode — the color modes stay original-only).
+ *
+ *  `lang` reaches `mt` because it used to be dropped between two maps here:
+ *  the language was known, iterated over, and then thrown away before the
+ *  line was built, which is why every format emitted untagged translated
+ *  lines no matter how many targets were included. */
 function cueLines(
   ctx: Ctx,
   seg: TranscriptSegment,
   orig: string,
-  mt: (text: string, seg: TranscriptSegment) => string,
+  mt: (text: string, seg: TranscriptSegment, lang: string) => string,
 ): string[] {
-  const trLines = ctx.visLangs
-    .map((lang) => trOf(seg, lang))
-    .filter((t): t is string => t !== null)
-    .map((t) => mt(t, seg));
+  const trLines: string[] = [];
+  for (const lang of ctx.visLangs) {
+    const t = trOf(seg, lang);
+    if (t !== null) trLines.push(mt(t, seg, lang));
+  }
   const origLines = ctx.origIncluded ? [orig] : [];
   return ctx.opts.lineOrder === "trans-first"
     ? [...trLines, ...origLines]
@@ -214,7 +244,8 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
             ctx,
             seg,
             `[${txtTime(seg.start)}] ${prefix}${clean(seg.text)}`,
-            (t) => `        ${prefix}${t}`,
+            (t, _s, lang) =>
+              `        ${ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
           );
         })
         .join("\n") + "\n"
@@ -226,10 +257,23 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
     let who: string | null = null;
     let bufs: string[][] = [];
     const trackCount = (ctx.origIncluded ? 1 : 0) + ctx.visLangs.length;
+    // Which language each buffer slot holds, so a paragraph can say what it
+    // is. Without this every track produced an identically-prefixed paragraph
+    // and a reader had only paragraph ORDER to go on.
+    const slotLangs: (string | null)[] = [
+      ...(ctx.opts.lineOrder !== "trans-first" && ctx.origIncluded ? [null] : []),
+      ...ctx.visLangs,
+      ...(ctx.opts.lineOrder === "trans-first" && ctx.origIncluded ? [null] : []),
+    ];
     const flush = () => {
       if (bufs.some((b) => b.length)) {
         const prefix = who && ctx.names ? `${nameOf(ctx, who)}: ` : "";
-        for (const b of bufs) if (b.length) paras.push(prefix + b.join(" "));
+        bufs.forEach((b, i) => {
+          if (!b.length) return;
+          const lang = slotLangs[i];
+          const tag = lang && ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : "";
+          paras.push(tag + prefix + b.join(" "));
+        });
       }
       bufs = Array.from({ length: trackCount }, () => []);
     };
@@ -257,13 +301,23 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
     return paras.join("\n\n") + "\n";
   }
   if (!ctx.origIncluded && result.segments?.length) {
-    // Translated tracks only, no names path fell through above — join plain.
-    return (
-      result.segments
-        .flatMap((seg) => ctx.visLangs.map((l) => trOf(seg, l)).filter(Boolean))
-        .join(" ")
-        .trim() + "\n"
-    );
+    // Translated tracks only. This used to interleave EVERY target into ONE
+    // sentence stream -- "Hello this is Salut voila" -- which is not a
+    // document in any language. One block per language instead, in the
+    // configured order, tagged when there is more than one.
+    const segs = result.segments;
+    const blocks = ctx.visLangs
+      .map((lang) => {
+        const body = segs
+          .map((seg) => trOf(seg, lang))
+          .filter((t): t is string => !!t)
+          .join(" ")
+          .trim();
+        if (!body) return null;
+        return ctx.visLangs.length > 1 ? `[${lang.toUpperCase()}]\n${body}` : body;
+      })
+      .filter((b): b is string => b !== null);
+    return blocks.join("\n\n").trim() + "\n";
   }
   if (!ctx.names || !result.segments?.length) {
     return stripControlChars(result.text).trim() + "\n";
@@ -313,8 +367,12 @@ function srtLine(ctx: Ctx, seg: TranscriptSegment): string {
   return srtStyled(ctx, seg, clean(seg.text));
 }
 
-function srtMtLine(ctx: Ctx, text: string, seg: TranscriptSegment): string {
-  return srtStyled(ctx, seg, text);
+function srtMtLine(ctx: Ctx, text: string, seg: TranscriptSegment, lang: string): string {
+  // SRT has no class mechanism, so an ambiguous file tags in the text itself.
+  // Prefixed rather than appended: a player truncating a long cue must not be
+  // able to cut off the only thing identifying the language.
+  const tagged = ambiguous(ctx) ? `[${lang.toUpperCase()}] ${text}` : text;
+  return srtStyled(ctx, seg, tagged);
 }
 
 function srtExport(result: BatchResult, ctx: Ctx): string {
@@ -323,7 +381,8 @@ function srtExport(result: BatchResult, ctx: Ctx): string {
   // untranslated segments; strict parsers require monotonic 1..N).
   let cueNo = 0;
   (result.segments ?? []).forEach((seg) => {
-    const lines = cueLines(ctx, seg, srtLine(ctx, seg), (t) => srtMtLine(ctx, t, seg));
+    const lines = cueLines(ctx, seg, srtLine(ctx, seg),
+      (t, _s, lang) => srtMtLine(ctx, t, seg, lang));
     if (!lines.length) return;
     out.push(String(++cueNo));
     out.push(`${clockTime(seg.start, ",")} --> ${clockTime(seg.end, ",")}`);
@@ -341,6 +400,16 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
     // STYLE can tone them; others degrade to plain text.
     out.push("STYLE");
     out.push("::cue(.mt) { color: #4dd0c4; }");
+    // ...plus a PER-LANGUAGE class when more than one target is present.
+    // .mt alone was emitted for every target, so an EN line and an FR line
+    // were literally indistinguishable to any player or downstream tool —
+    // the file said "this is a translation" and never which one. The classes
+    // are generated from the language code, which is a code, never user text.
+    if (ambiguous(ctx)) {
+      for (const lang of ctx.visLangs) {
+        out.push(`::cue(.mt-${vttClass(lang)}) { color: #4dd0c4; }`);
+      }
+    }
     out.push("");
   }
   if (ctx.hasSpeakers && mode !== "off") {
@@ -370,21 +439,22 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
         else orig = `<c.${cls}>${text}</c>`;
       }
     }
-    const lines = cueLines(ctx, seg, orig, (t) => {
+    const lines = cueLines(ctx, seg, orig, (t, _s, lang) => {
+      const mt = ambiguous(ctx) ? `mt.mt-${vttClass(lang)}` : "mt";
       // Translated lines carry the SAME speaker classes as the original (the
       // speaker is language-independent) stacked with .mt — the spk STYLE
       // block is emitted after .mt's, so the speaker color wins when on.
       const escaped = vttEscape(t);
-      if (!seg.speaker || !ctx.hasSpeakers) return `<c.mt>${escaped}</c>`;
+      if (!seg.speaker || !ctx.hasSpeakers) return `<c.${mt}>${escaped}</c>`;
       const name = vttEscape(nameOf(ctx, seg.speaker));
       if (mode === "off") {
-        return `<c.mt>${ctx.names ? `${name}: ` : ""}${escaped}</c>`;
+        return `<c.${mt}>${ctx.names ? `${name}: ` : ""}${escaped}</c>`;
       }
       const cls = `spk${Math.max(0, ctx.order.indexOf(seg.speaker)) + 1}`;
-      if (!ctx.names) return `<c.mt.${cls}>${escaped}</c>`;
-      if (mode === "name") return `<c.${cls}>${name}:</c> <c.mt>${escaped}</c>`;
-      if (mode === "line") return `<c.mt.${cls}>${name}: ${escaped}</c>`;
-      return `<c.mt.${cls}>${escaped}</c>`;
+      if (!ctx.names) return `<c.${mt}.${cls}>${escaped}</c>`;
+      if (mode === "name") return `<c.${cls}>${name}:</c> <c.${mt}>${escaped}</c>`;
+      if (mode === "line") return `<c.${mt}.${cls}>${name}: ${escaped}</c>`;
+      return `<c.${mt}.${cls}>${escaped}</c>`;
     });
     if (!lines.length) return;
     out.push(`${clockTime(seg.start, ".")} --> ${clockTime(seg.end, ".")}`);
@@ -543,7 +613,11 @@ export function generateExports(
 export function exportStemSuffix(tracks?: string[]): string {
   if (!tracks || tracks.includes("orig")) return "";
   const langs = tracks.filter((t) => t !== "orig");
-  return langs.length === 1 ? `.${langs[0]}` : "";
+  if (!langs.length) return "";
+  // A multi-target export used to return "" here, so the file name carried no
+  // language at all -- the one case where naming matters MOST, since the file
+  // holds several. Bounded: these codes are user-authored and land in a path.
+  return "." + langs.map((l) => l.replace(/[^A-Za-z0-9-]/g, "")).filter(Boolean).slice(0, 4).join("+");
 }
 
 /** Translated cue lines that exceed the 20 chars/sec subtitle reading-speed

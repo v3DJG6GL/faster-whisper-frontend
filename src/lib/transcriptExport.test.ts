@@ -3,8 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  cpsWarnings, DEFAULT_SPEAKER_COLORS, generateExport, prettySpeaker,
-  speakerColorIndex, speakerHex, speakerOrder,
+  cpsWarnings, DEFAULT_SPEAKER_COLORS, exportStemSuffix, generateExport,
+  prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
 } from "./transcriptExport";
 import type { BatchResult } from "./types";
 
@@ -365,5 +365,116 @@ describe("kept-original translations (quality guard)", () => {
       ),
     };
     expect(cpsWarnings(long, ["de"])).toEqual([]);
+  });
+});
+
+// ── multi-target: the flattening bug ────────────────────────────────────────
+//
+// Every format emitted translated lines with no language marker, because
+// cueLines dropped `lang` between two maps. With ONE target that is merely
+// redundant; with two it makes the output unusable — VTT gave EN and FR the
+// same cue class, TXT concatenated every language into one sentence stream,
+// and the file name carried no language at all.
+
+const TWO_TARGETS: BatchResult = {
+  ...RESULT,
+  segments: RESULT.segments!.map((s, i) => ({
+    ...s,
+    translations: {
+      de: i === 0 ? "Hallo zusammen." : "Allgemeine Begrüßung.",
+      fr: i === 0 ? "Salut à tous." : "Salutation générale.",
+    },
+  })),
+  translation: {
+    model: "m", targets: ["de", "fr"], source: "en", mode: "fluent",
+  },
+};
+
+describe("multi-target language tagging", () => {
+  const two = { tracks: ["orig", "de", "fr"] };
+
+  it("srt: tags each translated line, since SRT has no class mechanism", () => {
+    const out = generateExport(TWO_TARGETS, { format: "srt", ...two });
+    expect(out).toContain("[DE] Hallo zusammen.");
+    expect(out).toContain("[FR] Salut à tous.");
+    // The original is never tagged — it is identified by position and by not
+    // being a translation.
+    expect(out).toContain("Speaker 1: Hello there.");
+  });
+
+  it("srt: a single target stays untagged and byte-identical", () => {
+    const one = generateExport(TRANSLATED, { format: "srt", tracks: ["orig", "de"] });
+    expect(one).not.toContain("[DE]");
+  });
+
+  it("vtt: emits a distinct cue class per language", () => {
+    const out = generateExport(TWO_TARGETS, { format: "vtt", ...two });
+    expect(out).toContain("::cue(.mt-de)");
+    expect(out).toContain("::cue(.mt-fr)");
+    // .mt is still emitted, so a player styling only that keeps working.
+    expect(out).toContain("::cue(.mt) { color: #4dd0c4; }");
+    expect(out).toContain("<c.mt.mt-de");
+    expect(out).toContain("<c.mt.mt-fr");
+  });
+
+  it("vtt: a single target keeps the plain .mt class", () => {
+    const out = generateExport(TRANSLATED, { format: "vtt", tracks: ["orig", "de"] });
+    expect(out).not.toContain(".mt-de");
+    expect(out).toContain("<c.mt>");
+  });
+
+  it("txt translations-only: one block per language, not one sentence stream", () => {
+    const out = generateExport(TWO_TARGETS, {
+      format: "txt", tracks: ["de", "fr"], speakerNames: false,
+    });
+    // The bug: "Hallo zusammen. Salut à tous. Allgemeine…" — every language
+    // interleaved into a single paragraph that is no language at all.
+    expect(out).not.toMatch(/Hallo zusammen\. Salut/);
+    expect(out).toContain("[DE]");
+    expect(out).toContain("[FR]");
+    // Every paragraph is tagged, and no paragraph mixes two languages.
+    // (Paragraphs group by speaker TURN, so the tracks alternate per turn
+    // rather than forming two document-length blocks.)
+    const paras = out.trim().split("\n\n");
+    expect(paras.length).toBeGreaterThan(1);
+    for (const para of paras) {
+      expect(para).toMatch(/^\[(DE|FR)\] /);
+      const isDe = para.startsWith("[DE]");
+      expect(para.includes("Salut") || para.includes("Salutation")).toBe(!isDe);
+    }
+  });
+
+  it("txt with timestamps: tags the indented translated lines", () => {
+    const out = generateExport(TWO_TARGETS, {
+      format: "txt", timestamps: true, ...two,
+    });
+    expect(out).toContain("[DE] ");
+    expect(out).toContain("[FR] ");
+  });
+
+  it("file name carries every language, not just a lone one", () => {
+    // A 2+ target export returned "" here, so the one case where the name
+    // matters most produced a file with no language in it at all.
+    expect(exportStemSuffix(["de", "fr"])).toBe(".de+fr");
+    expect(exportStemSuffix(["de"])).toBe(".de");
+    expect(exportStemSuffix(["orig", "de"])).toBe("");
+    expect(exportStemSuffix(undefined)).toBe("");
+  });
+
+  it("a hostile language code cannot break the cue markup or a path", () => {
+    // Target codes are user-editable settings and come from synced backends.
+    const evil: BatchResult = {
+      ...RESULT,
+      segments: RESULT.segments!.map((s) => ({
+        ...s,
+        translations: { de: "Hallo.", "x>.<y z": "Boom." },
+      })),
+    };
+    const out = generateExport(evil, {
+      format: "vtt", tracks: ["orig", "de", "x>.<y z"],
+    });
+    expect(out).not.toContain("::cue(.mt-x>");
+    expect(out).toContain("::cue(.mt-xy-z)".replace("-z", "z"));
+    expect(exportStemSuffix(["de", "x>.<y z"])).toBe(".de+xyz");
   });
 });

@@ -1138,8 +1138,19 @@ export function TranscriptViewer({
         const lines: string[] = [];
         if (origVisible) lines.push(`${ts}${who}${seg.text.trim()}`);
         for (const lang of visLangs) {
-          const tr = result.segments?.[i]?.translations?.[lang];
-          if (tr?.trim()) lines.push(`${origVisible ? "  " : ts}${who}${tr.trim()}`);
+          const src = result.segments?.[i];
+          const tr = src?.translations?.[lang];
+          // Skip a track the server's quality guard kept as the ORIGINAL —
+          // pasting the source language under a translation's label is worse
+          // than omitting it. (trOf in transcriptExport already does this;
+          // this copy path never did.)
+          if (src?.translationsKept?.includes(lang)) continue;
+          if (!tr?.trim()) continue;
+          // Tag only when the clipboard would otherwise be ambiguous: with
+          // two targets an untagged line says nothing about which language it
+          // is, and `lang` was in scope here all along and simply unused.
+          const tag = visLangs.length > 1 ? `[${lang.toUpperCase()}] ` : "";
+          lines.push(`${origVisible ? "  " : ts}${tag}${who}${tr.trim()}`);
         }
         return lines.join("\n");
       })
