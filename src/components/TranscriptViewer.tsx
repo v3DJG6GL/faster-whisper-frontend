@@ -38,6 +38,7 @@ import {
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
   cpsWarnings, DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExports,
+  speakerColorIndex, speakerHex, speakerOrder,
   type ExportFormat, type ExportOptions,
 } from "@/lib/transcriptExport";
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
@@ -121,15 +122,9 @@ export function prettySpeaker(label: string): string {
   return m ? `Speaker ${parseInt(m[1], 10) + 1}` : label;
 }
 
-/** Distinct speaker labels of a result, in first-appearance order. */
-export function speakersOf(result: BatchResult): string[] {
-  if (result.speakers?.length) return result.speakers;
-  const seen: string[] = [];
-  for (const s of result.segments ?? []) {
-    if (s.speaker && !seen.includes(s.speaker)) seen.push(s.speaker);
-  }
-  return seen;
-}
+/** Distinct speaker labels of a result, in first-appearance order — the
+ *  export module owns the implementation (one resolver for viewer + exports). */
+export { speakerOrder as speakersOf } from "@/lib/transcriptExport";
 
 type EffSegment = {
   start: number;
@@ -742,7 +737,7 @@ export function TranscriptViewer({
   };
 
   // ── selected-result derivations ──────────────────────────────────────────
-  const speakers = useMemo(() => speakersOf(result), [result]);
+  const speakers = useMemo(() => speakerOrder(result), [result]);
   const hasSegments = !!result.segments?.length;
   const hasSpeakers = speakers.length > 0;
   // Overlay slot: the record id when known, else the path (see overlayKey).
@@ -754,11 +749,10 @@ export function TranscriptViewer({
     [fileRenames],
   );
   // User-picked palette index first, else first-appearance order — the chips
-  // (via theme tokens) and the exported SRT/VTT (via hexes) stay in step.
+  // (via theme tokens) and the exported SRT/VTT (via hexes) resolve through
+  // the SAME shared resolver, so they can't disagree again.
   const colorIdxOf = useCallback(
-    (label: string) =>
-      fileColors[label] ??
-      Math.max(0, speakers.indexOf(label)) % DEFAULT_SPEAKER_COLORS.length,
+    (label: string) => speakerColorIndex(speakers, fileColors, label),
     [fileColors, speakers],
   );
   const colorOf = useCallback(
@@ -1647,11 +1641,10 @@ export function TranscriptViewer({
     speakerColors: hasSpeakers && colorize ? "line" : "off",
     speakerNames: showNames,
     timestamps: showTs,
+    // The wire format is explicit hexes, resolved by the SAME shared resolver
+    // the chips use — a pick can't render one color and export another.
     colors: Object.fromEntries(
-      Object.entries(fileColors).map(([l, i]) => [
-        l,
-        DEFAULT_SPEAKER_COLORS[i % DEFAULT_SPEAKER_COLORS.length],
-      ]),
+      Object.keys(fileColors).map((l) => [l, speakerHex(speakers, fileColors, l)]),
     ),
     wordTimestamps: wordTs,
     // Intersect with THIS file's tracks — a pick left over from another

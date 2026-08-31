@@ -79,6 +79,33 @@ export function speakerOrder(result: BatchResult): string[] {
   return seen;
 }
 
+/** THE speaker-color resolver — viewer chips (via --spk-N tokens) and export
+ *  hexes both resolve through this: an explicit user pick wins, else the
+ *  label's first-appearance index, cycled through the palette. Keeping one
+ *  implementation is the point — the viewer and the exports drifted apart
+ *  once (picks read under a different overlay key) and disagreed on colors. */
+export function speakerColorIndex(
+  order: string[],
+  picks: Record<string, number> | undefined,
+  label: string,
+): number {
+  const n = DEFAULT_SPEAKER_COLORS.length;
+  const picked = picks?.[label];
+  if (typeof picked === "number" && Number.isFinite(picked)) {
+    return ((Math.trunc(picked) % n) + n) % n;
+  }
+  return Math.max(0, order.indexOf(label)) % n;
+}
+
+/** The resolved palette hex for a label (export wire format / JSON export). */
+export function speakerHex(
+  order: string[],
+  picks: Record<string, number> | undefined,
+  label: string,
+): string {
+  return DEFAULT_SPEAKER_COLORS[speakerColorIndex(order, picks, label)];
+}
+
 function clean(s: string): string {
   // Exports are single-logical-line records; a newline inside segment text
   // would corrupt SRT/LRC framing, so collapse it.
@@ -148,10 +175,13 @@ function nameOf(ctx: Ctx, label: string): string {
 }
 
 function colorOf(ctx: Ctx, label: string): string {
+  // `opts.colors` is the wire format: explicit hexes, built FROM the user's
+  // palette picks by callers (the viewer maps its pick indexes through
+  // DEFAULT_SPEAKER_COLORS — i.e. speakerHex). Absent/invalid entries fall
+  // through to the shared first-appearance resolver.
   const explicit = ctx.opts.colors?.[label];
   if (explicit && /^#[0-9a-fA-F]{6}$/.test(explicit)) return explicit;
-  const i = Math.max(0, ctx.order.indexOf(label));
-  return DEFAULT_SPEAKER_COLORS[i % DEFAULT_SPEAKER_COLORS.length];
+  return speakerHex(ctx.order, undefined, label);
 }
 
 /** VTT cue payloads use an HTML-ish syntax — escape text so a transcript that

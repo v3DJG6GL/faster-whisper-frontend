@@ -2,7 +2,10 @@
 // node (no Tauri, no DOM) — exactly why the generators live in src/lib.
 
 import { describe, expect, it } from "vitest";
-import { generateExport, speakerOrder, prettySpeaker } from "./transcriptExport";
+import {
+  DEFAULT_SPEAKER_COLORS, generateExport, prettySpeaker, speakerColorIndex,
+  speakerHex, speakerOrder,
+} from "./transcriptExport";
 import type { BatchResult } from "./types";
 
 const RESULT: BatchResult = {
@@ -279,5 +282,39 @@ describe("generateExports / filenames / cps", () => {
     const warns = cpsWarnings(fast, ["de"]);
     expect(warns).toHaveLength(1);
     expect(warns[0]).toMatchObject({ lang: "de", index: 0, cps: 30 });
+  });
+});
+
+describe("speakerColorIndex / speakerHex (one resolver for viewer + exports)", () => {
+  const order = ["SPEAKER_00", "SPEAKER_01"];
+
+  it("pick wins; else first-appearance index mod palette length", () => {
+    expect(speakerColorIndex(order, undefined, "SPEAKER_00")).toBe(0);
+    expect(speakerColorIndex(order, undefined, "SPEAKER_01")).toBe(1);
+    expect(speakerColorIndex(order, { SPEAKER_01: 5 }, "SPEAKER_01")).toBe(5);
+    expect(speakerColorIndex(order, { SPEAKER_01: 5 }, "SPEAKER_00")).toBe(0);
+    // Unknown label → first palette slot; out-of-range picks wrap.
+    expect(speakerColorIndex(order, undefined, "GHOST")).toBe(0);
+    expect(speakerColorIndex(order, { SPEAKER_00: 9 }, "SPEAKER_00"))
+      .toBe(9 % DEFAULT_SPEAKER_COLORS.length);
+  });
+
+  it("viewer var(--spk-N) index and export hex agree for the same picks", () => {
+    // The regression: a saved pick {"SPEAKER_01": 5} exported teal but
+    // rendered amber (viewer read picks under a different key). With one
+    // resolver, the viewer's palette index and the hex colorOf emits for the
+    // SAME order+picks must always point at the same palette slot.
+    const picks = { SPEAKER_01: 5 };
+    const idx = speakerColorIndex(order, picks, "SPEAKER_01");
+    expect(speakerHex(order, picks, "SPEAKER_01")).toBe(DEFAULT_SPEAKER_COLORS[idx]);
+    // colorOf receives picks as explicit hexes (the wire format callers
+    // build via speakerHex) — the emitted <font color> matches slot 5 (teal).
+    const out = generateExport(RESULT, {
+      format: "srt",
+      speakerColors: "line",
+      colors: { SPEAKER_01: speakerHex(order, picks, "SPEAKER_01") },
+    });
+    expect(out).toContain(`<font color="${DEFAULT_SPEAKER_COLORS[5]}">Speaker 2: General greeting.</font>`);
+    expect(DEFAULT_SPEAKER_COLORS[5]).toBe("#4dd0c4");
   });
 });
