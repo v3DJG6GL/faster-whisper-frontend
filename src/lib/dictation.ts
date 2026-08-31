@@ -6,7 +6,7 @@
 import { useApp } from "./store";
 import {
   startLive, stopLive, cancelLive, requestStopIfStarting, cancelStopIfStarting, isStarting,
-  queuePendingHoldStart, registerPendingStartRunner, reclassifyLive,
+  queuePendingHoldStart, registerPendingStartRunner, reclassifyLive, abortDictationTranslate,
 } from "./streaming";
 import { showQuickAdd } from "./api";
 import { isActiveDictation, isProcessing } from "./dictationVisual";
@@ -158,6 +158,14 @@ export function homeTargetProfile(
 export function runOverlayAction(kind: string): void {
   if (kind === "cancel-dictation") {
     void cancelLive();
+    return;
+  }
+  // Give up on the TRANSLATION only — the session survives and the user's words still
+  // land, as the original. Deliberately NOT cancelLive: the transcript is finished and
+  // waiting on the GPU, so discarding the session here would throw away the very text the
+  // user spoke, to escape a wait that has a cheaper exit.
+  if (kind === "cancel-translate") {
+    abortDictationTranslate();
     return;
   }
   if (kind === "open-quick-add") {

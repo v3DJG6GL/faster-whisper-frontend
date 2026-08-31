@@ -80,6 +80,10 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     partial: rec.realtimePreview ? state.partial : "",
     previewOnHover: rec.realtimePreview && rec.realtimePreviewOnHover,
     dictationError: state.dictationError ?? "",
+    // The current stage, when the machine has more to say than the one-word status
+    // (a cold translate's download/load/translate + its start time). Written by the
+    // store only on transitions, so forwarding it adds no churn to this ~30Hz path.
+    phase: state.dictationPhase,
     // So the chip can pin itself to the correct edge of its window.
     position: rec.indicatorPosition,
     // So the chip can follow the app's dark/light theme.
@@ -158,6 +162,7 @@ export async function initOverlayController(): Promise<void> {
       state.level !== prev.level ||
       state.partial !== prev.partial ||
       state.dictationError !== prev.dictationError ||
+      state.dictationPhase !== prev.dictationPhase || // stage label / progress / elapsed clock
       state.activeProfile !== prev.activeProfile || // switching Profiles mid-session
       state.profiles !== prev.profiles || // a rename/tag/language edit changes the chip identity tag
       state.backends !== prev.backends || // a bound-backend language/endpoint edit changes language/mode

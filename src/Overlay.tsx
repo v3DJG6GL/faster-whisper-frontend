@@ -8,8 +8,12 @@ import { safeDisplayText, safeIdentityText, stripControlChars } from "@/lib/sani
 import { quickLaunchMeta } from "@/lib/screens";
 import { newSpeakMemo, stepSpeaking } from "@/lib/speaking";
 import { dictationVisual, isActiveDictation, isProcessing, type DictationTone } from "@/lib/dictationVisual";
+import {
+  CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipExpansion, chipTuckHold, currentPhase,
+  phaseClock, phaseElapsedMs,
+} from "@/lib/chipRules";
 import { applyTheme, watchSystemTheme } from "@/lib/theme";
-import type { DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
+import type { DictationPhase, DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
 
 interface ChipState {
   status: DictationStatus;
@@ -20,6 +24,11 @@ interface ChipState {
   // When true, the live words are revealed only while the chip is hover-revealed (else always).
   previewOnHover?: boolean;
   dictationError: string;
+  // What the machine is doing right now, when there is more to say than the one-word
+  // status (today: a cold translate's download/load/translate stages + its elapsed
+  // clock). ONE field, not four flat ones: chipPayload's change-detect list runs on the
+  // ~30Hz level path, and the store writes this only on transitions.
+  phase?: DictationPhase | null;
   position: "top" | "bottom" | "off";
   theme: ThemeName;
   // Active-Profile indicator (optional; absent when the feature is off / no Profile).
@@ -85,11 +94,6 @@ const TONE_GLOW: Record<DictationTone, string> = {
 // the dot — so the last words you spoke remain readable instead of vanishing the
 // instant you pause. Stacks on top of SILENCE_HOLD_MS.
 const COLLAPSE_LINGER_MS = 2000;
-
-// The cancel-finalize affordance (the ✕) is a RECOVERY control for a slow/stuck finalize, not
-// something to flash on every normal end — a quarter-second blink you can't use and that reads
-// as noise. Only surface it once finalizing/inserting has actually persisted this long.
-const CANCEL_AFFORDANCE_DELAY_MS = 700;
 
 // The chip morph: one element fluidly grows from a calm dot into the full pill
 // (Motion `layout` → FLIP/transform, smooth on WebKit). Spring tuned snappy-but-
@@ -174,6 +178,7 @@ export default function Overlay() {
             ...e.payload,
             warming: e.payload.warming ?? false,
             dictationError: e.payload.dictationError ?? "",
+            phase: e.payload.phase ?? null,
             position: e.payload.position ?? "top",
             theme,
             persistentDock: e.payload.persistentDock ?? false,
@@ -276,16 +281,37 @@ export default function Overlay() {
 
   const [expanded, setExpanded] = useState(false);
 
+  // The stage the machine is in, trusted only while it still matches the status (see
+  // chipRules). Everything the phase row renders hangs off this one value.
+  const phase = currentPhase(state.status, state.phase);
+  // Re-render once a second while a phase is up: the elapsed readout counts on the
+  // READER's clock (DictationPhase broadcasts a start epoch, deliberately — a per-second
+  // store write would wake every dictation subscriber for a number one row shows), and
+  // chipExpansion's "has this outlasted the anti-glitch window" term is likewise a
+  // function of time, not of any prop. Keyed on the phase IDENTITY (kind+start), not the
+  // payload object, which is replaced ~30 times a second by the level stream — depending
+  // on that would restart the interval before it ever fired. A phase exists only during a
+  // processing stage, so this never ticks at idle.
+  const phaseKey = phase ? `${phase.kind}:${phase.startedAt}` : "";
+  const [, tickPhase] = useState(0);
+  useEffect(() => {
+    if (!phaseKey) return;
+    const id = setInterval(() => tickPhase((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [phaseKey]);
+
   // Collapsed = armed but silent (or idle, when the window is hidden anyway). Warming
-  // expands too, so "warming up…" is actually visible. The end-of-session finalize/insert
-  // (transcribing/injecting) only KEEPS an already-open pill open (continuity through the
-  // linger below) — it never POPS a minimized chip open just to flash a sub-second state,
-  // which read as a glitch (a tucked dot sliding out, an empty pill falling back to "listening").
-  const wantExpanded =
-    state.status === "error" ||
-    !!state.warming ||
-    (state.status === "listening" && speaking) ||
-    (isProcessing(state.status) && expanded);
+  // expands too, so "warming up…" is actually visible. See chipRules.chipExpansion for
+  // the processing rule (sub-second stages still never pop a minimized chip; a stage
+  // that will visibly last does).
+  const wantExpanded = chipExpansion({
+    status: state.status,
+    warming: state.warming,
+    speaking,
+    expanded,
+    phase: state.phase,
+    now: Date.now(),
+  });
 
   // Expand instantly when speech (or a state change) wants it; collapse only after a
   // linger, so the final words linger on screen rather than snapping shut on a pause.
@@ -545,18 +571,28 @@ export default function Overlay() {
   const working = processing || !!state.warming;
   const standby = state.status === "idle"; // only ever visible when persistentDock is on
 
-  // Hold off the cancel ✕ until finalizing/inserting has actually persisted (see the const): on a
-  // normal quick end it never shows, so there's no quarter-second blink; a genuinely slow/stuck
-  // finalize surfaces it as a real, clickable recovery control.
-  const [showCancel, setShowCancel] = useState(false);
+  // Hold off the cancel ✕ until finalizing/inserting has actually persisted (see
+  // chipRules): on a normal quick end it never shows, so there's no quarter-second blink;
+  // a genuinely slow/stuck stage surfaces it as a real, clickable recovery control — and a
+  // KNOWN-cold translate gets it immediately, since that wait is long by definition.
+  const [processingSince, setProcessingSince] = useState<number | null>(null);
   useEffect(() => {
-    if (!processing) {
-      setShowCancel(false);
-      return;
-    }
-    const t = setTimeout(() => setShowCancel(true), CANCEL_AFFORDANCE_DELAY_MS);
-    return () => clearTimeout(t);
+    setProcessingSince(processing ? Date.now() : null);
   }, [processing]);
+  // One re-render at the delay mark: what changes there is the clock, not a prop, so
+  // nothing else would re-evaluate the rule below.
+  const [, tickCancel] = useState(0);
+  useEffect(() => {
+    if (processingSince == null) return;
+    const t = setTimeout(() => tickCancel((n) => n + 1), CANCEL_AFFORDANCE_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [processingSince]);
+  const showCancel = chipCancelVisible({
+    phase: state.phase,
+    processingSince,
+    status: state.status,
+    now: Date.now(),
+  });
 
   // Insert feedback is ONE thing: a colour-coded pulse of the status dot — green when text was
   // typed/pasted into the field, amber when it was copied to the clipboard. No distinct glyphs.
@@ -653,6 +689,42 @@ export default function Overlay() {
           ? "accent"
           : "dim";
 
+  // The ✕'s meaning depends on the stage: a cancellable translate SKIPS the translation
+  // (the original text still lands — what the failure toast already promises), where the
+  // generic cancel discards the whole session. Two actions, not one with a branch in the
+  // main window, so the chip's tooltip can say which one it is.
+  const cancelAction = phase?.kind === "translating" && phase.cancellable ? "cancel-translate" : "cancel-dictation";
+
+  // The stage row, when there is one — it takes the label slot (and, while translating,
+  // takes it AHEAD of the live words: those are the ORIGINAL, already captured and stale
+  // by the time translation starts, so leaving them up would show a moving preview of the
+  // wrong text while the user waits on the right one). `null` = the slot renders as before.
+  const partialShown = !!state.partial && (!state.previewOnHover || hoverReveal);
+  const phaseRow =
+    phase && (phase.kind === "translating" || !partialShown) ? (
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-2 whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.14em]">
+          {/* Our own literal (streaming.ts's stage vocabulary), but it rides the same
+              cross-window payload as the peer-authored fields around it. */}
+          <span className="truncate text-translate">{safeDisplayText(phase.label, 60)}</span>
+          <span className="tabular-nums text-faint">{phaseClock(phaseElapsedMs(phase, Date.now()))}</span>
+        </div>
+        {/* A 2px rule under the row: a real fraction when the server reported one, else
+            the same breathing motion the rest of the chip uses for "working, no number"
+            — never a bar guessed from the elapsed time. */}
+        <div className="mt-1 h-0.5 overflow-hidden rounded-full bg-line">
+          {phase.pct != null ? (
+            <div
+              className="h-full bg-translate transition-[width] duration-500"
+              style={{ width: `${Math.round(Math.min(1, Math.max(0, phase.pct)) * 100)}%` }}
+            />
+          ) : (
+            <div className="animate-chip-think h-full w-full bg-translate/60" />
+          )}
+        </div>
+      </div>
+    ) : null;
+
   // Deep-idle edge-peek driver: after the chip sits undisturbed for peekTimeoutSec, tuck it to
   // the edge; ANY activity — a status change (e.g. dictation starting), speech, finishing, a
   // hover, or disabling the feature — pops it back and re-arms the timer. The window never
@@ -680,7 +752,10 @@ export default function Overlay() {
     // Already tucked + the session is wrapping up (finalize/insert): hold the tuck so a minimized
     // chip just hides from the edge instead of sliding out to flash a sub-second end state (the
     // "it pops open for a quarter second" glitch). Only affects an already-peeked chip.
-    const endFlash = peeked && isProcessing(state.status);
+    // …EXCEPT for a stage that will visibly last (a cold translate): the user is about to
+    // wait, and the pill is where the elapsed clock and the ✕ live. See chipRules —
+    // peekWhileActive still wins below, via keepMin.
+    const endFlash = chipTuckHold({ peeked, status: state.status, phase: state.phase, now: Date.now() });
     const blocked =
       !state.overlayPeek ||
       state.position === "off" ||
@@ -717,6 +792,7 @@ export default function Overlay() {
     expanded,
     standby,
     peeked,
+    state.phase, // a phase arriving mid-tuck can release the hold (chipTuckHold)
   ]);
 
   // Quick-launch: icon buttons shown when hovering the idle/standby chip (never while
@@ -984,8 +1060,10 @@ export default function Overlay() {
                           text keeps its natural width (sits next to the waveform). */}
                       <div className="min-w-0">
                         {/* "On hover" live transcript: keep the waveform + status label while speaking,
-                            and only reveal the words once the chip is hover-revealed. */}
-                        {state.partial && (!state.previewOnHover || hoverReveal) ? (
+                            and only reveal the words once the chip is hover-revealed. The phase row
+                            (below) takes this slot ahead of the words while translating — see phaseRow. */}
+                        {phaseRow ??
+                          (state.partial && (!state.previewOnHover || hoverReveal) ? (
                           // Left-edge fade via a STATIC overlay rather than a CSS mask:
                           // the transcript text/scroll changes several times a second,
                           // and re-evaluating a mask-image each time flickers on
@@ -1027,24 +1105,30 @@ export default function Overlay() {
                               />
                             )}
                           </div>
-                        ) : (
-                          <div className="whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.14em] text-dim">
-                            {label}
-                          </div>
-                        )}
+                          ) : (
+                            <div className="whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.14em] text-dim">
+                              {label}
+                            </div>
+                          ))}
                       </div>
-                      {/* Cancel the in-flight finalize/insert. The chip can't call
-                          cancelLive() directly (separate window), so route it through the
-                          main window via an action event. Delayed (showCancel) so it only
-                          appears for a slow/stuck finalize, never a quarter-second blink. */}
+                      {/* Cancel the in-flight stage. The chip can't call into streaming.ts
+                          directly (separate window), so route it through the main window via
+                          an action event. Delayed (showCancel) so it only appears for a
+                          slow/stuck stage, never a quarter-second blink. A cancellable
+                          translate sends its OWN action: that one inserts the original text
+                          instead of discarding the session (see runOverlayAction). */}
                       {showCancel && (
                         <button
                           type="button"
-                          title="Cancel"
-                          aria-label="Cancel dictation"
+                          title={cancelAction === "cancel-translate" ? "Insert the original now" : "Cancel"}
+                          aria-label={
+                            cancelAction === "cancel-translate"
+                              ? "Skip the translation and insert the original"
+                              : "Cancel dictation"
+                          }
                           onClick={() =>
-                            void emitOverlayAction("cancel-dictation").catch((e) =>
-                              console.error("cancel-dictation failed:", e),
+                            void emitOverlayAction(cancelAction).catch((e) =>
+                              console.error(`${cancelAction} failed:`, e),
                             )
                           }
                           className="ring-signal grid size-8 shrink-0 place-items-center rounded-full text-faint transition-colors hover:text-text"
