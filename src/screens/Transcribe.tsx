@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import {
-  Button, Card, DisclosureToggle, MicroLabel, Notice, PageHeader, Segmented, Select,
+  Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select,
   SettingExpand, SettingRow, Stepper, TextInput, Toggle,
 } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
@@ -1336,50 +1336,53 @@ export default function Transcribe() {
       </div>
 
       <div className="mt-5">
-        <DisclosureToggle open={showOverrides} onToggle={() => setShowOverrides((v) => !v)}>
-          Decode overrides
-          {Object.keys(runOverrides).length > 0 && (
-            <span className="text-faint"> · {Object.keys(runOverrides).length} set for this run</span>
-          )}
-          {runOverrideProfile && (
-            <span className="text-faint"> · server profile set for this run</span>
-          )}
-        </DisclosureToggle>
-        {showOverrides && (
-          <Card className="mt-3 p-5">
-            <p className="mb-4 text-[12.5px] text-dim">
-              Only for this run — your Backend and Profile defaults are untouched. Empty = inherit.
-            </p>
-            <DecodeFields
-              value={runOverrides}
-              onChange={setRunOverrides}
-              inherited={inheritedBaseline}
-              serverKind={serverKind}
-              canCustomize={caps?.can_request_decode_overrides}
-            />
-            <div className="mt-4 border-t border-line pt-4">
-              <div className="mb-3 text-[12px] font-medium text-dim">
-                Server override profile{" "}
-                <span className="text-faint">· only for this run — empty inherits the backend</span>
-              </div>
-              <OverrideProfilePicker
-                serverUrl={backend ? effectiveServerUrl(backend, settings) : ""}
-                backendId={backend?.id ?? ""}
-                serverKind={serverKind}
-                canRequest={caps?.can_request_override_profile}
-                value={runOverrideProfile}
-                inheritLabel={
-                  !backend?.overrideProfile
-                    ? "Backend default"
-                    : backend.overrideProfile === NO_OVERRIDE_PROFILE
-                      ? "Backend default · none"
-                      : `Backend default · ${safeDisplayText(backend.overrideProfile, 40)}`
-                }
-                onChange={(v) => setRunOverrideProfile(v.trim() ? v : "")}
-              />
+        <DisclosureCard
+          open={showOverrides}
+          onToggle={() => setShowOverrides((v) => !v)}
+          title={
+            <>
+              Decode overrides
+              {Object.keys(runOverrides).length > 0 && (
+                <span className="text-faint"> · {Object.keys(runOverrides).length} set for this run</span>
+              )}
+              {runOverrideProfile && (
+                <span className="text-faint"> · server profile set for this run</span>
+              )}
+            </>
+          }
+        >
+          <p className="mb-4 text-[12.5px] text-dim">
+            Only for this run — your Backend and Profile defaults are untouched. Empty = inherit.
+          </p>
+          <DecodeFields
+            value={runOverrides}
+            onChange={setRunOverrides}
+            inherited={inheritedBaseline}
+            serverKind={serverKind}
+            canCustomize={caps?.can_request_decode_overrides}
+          />
+          <div className="mt-4 border-t border-line pt-4">
+            <div className="mb-3 text-[12px] font-medium text-dim">
+              Server override profile{" "}
+              <span className="text-faint">· only for this run — empty inherits the backend</span>
             </div>
-          </Card>
-        )}
+            <OverrideProfilePicker
+              serverUrl={backend ? effectiveServerUrl(backend, settings) : ""}
+              backendId={backend?.id ?? ""}
+              serverKind={serverKind}
+              canRequest={caps?.can_request_override_profile}
+              value={runOverrideProfile}
+              inheritLabel={
+                !backend?.overrideProfile
+                  ? "Backend default"
+                  : backend.overrideProfile === NO_OVERRIDE_PROFILE
+                    ? "Backend default · none"
+                    : `Backend default · ${safeDisplayText(backend.overrideProfile, 40)}`
+              }
+              onChange={(v) => setRunOverrideProfile(v.trim() ? v : "")}
+            />
+          </div>
+        </DisclosureCard>
       </div>
 
       <div className="mt-6 flex items-center gap-3">

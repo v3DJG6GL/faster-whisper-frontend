@@ -7,6 +7,7 @@ import {
   forwardRef,
   isValidElement,
   useEffect,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -175,6 +176,61 @@ export function DisclosureToggle({
       <span className={cn("transition-transform", open && "rotate-90")}>›</span>
       {children}
     </button>
+  );
+}
+
+/** A disclosure whose HEADER LIVES INSIDE THE BOX: collapsed it is a slim
+ *  tinted strip, expanding grows the same framed panel. Replaces the older
+ *  "floating toggle above a card" pattern, which left the label stranded on
+ *  the page background. `nested` renders the sub-panel scale (one surface
+ *  step up, tighter padding) for a disclosure inside another panel. */
+export function DisclosureCard({
+  open,
+  onToggle,
+  title,
+  nested,
+  className,
+  bodyClassName,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  /** Header content — the label plus any "· 2 set" style suffixes. */
+  title: ReactNode;
+  nested?: boolean;
+  className?: string;
+  bodyClassName?: string;
+  children: ReactNode;
+}) {
+  const panelId = useId();
+  return (
+    <div
+      className={cn(
+        "overflow-hidden border border-line",
+        nested ? "rounded-xl" : "rounded-card bg-surface/80",
+        className,
+      )}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={panelId}
+        className={cn(
+          "ring-signal flex w-full items-center gap-2 text-left font-medium text-dim hover:text-text",
+          nested ? "bg-surface-2/70 px-3.5 py-2.5 text-[12px]" : "bg-surface-2/60 px-4 py-3 text-[12.5px]",
+          open && "border-b border-line",
+        )}
+      >
+        <span className={cn("transition-transform", open && "rotate-90")}>›</span>
+        <span className="min-w-0 flex-1">{title}</span>
+      </button>
+      {open && (
+        <div id={panelId} className={cn(nested ? "p-3.5" : "p-5", bodyClassName)}>
+          {children}
+        </div>
+      )}
+    </div>
   );
 }
 

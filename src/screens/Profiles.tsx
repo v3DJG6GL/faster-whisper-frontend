@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextArea, TextInput, Toggle } from "@/components/ui";
+import { Badge, Button, Card, DisclosureCard, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextArea, TextInput, Toggle } from "@/components/ui";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { starterProfiles } from "@/lib/starters";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
@@ -195,18 +195,24 @@ function Editor({
         </Labeled>
       </div>
 
-      <DisclosureToggle open={showOverrides} onToggle={() => setShowOverrides((v) => !v)} className="mt-5">
-        Overrides{" "}
-        {p.model || p.language || p.endpoint || p.prompt !== undefined || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) || (p.translationOverrides && Object.keys(p.translationOverrides).length) ? (
-          <span className="text-accent">· set</span>
-        ) : (
-          <span className="text-faint">· inherit backend</span>
-        )}
-      </DisclosureToggle>
-
-      {showOverrides && (
+      <DisclosureCard
+        className="mt-5"
+        open={showOverrides}
+        onToggle={() => setShowOverrides((v) => !v)}
+        bodyClassName="p-4"
+        title={
+          <>
+            Overrides{" "}
+            {p.model || p.language || p.endpoint || p.prompt !== undefined || p.overrideProfile || (p.decodeOverrides && Object.keys(p.decodeOverrides).length) || (p.translationOverrides && Object.keys(p.translationOverrides).length) ? (
+              <span className="text-accent">· set</span>
+            ) : (
+              <span className="text-faint">· inherit backend</span>
+            )}
+          </>
+        }
+      >
         <>
-          <div className="mt-3 grid grid-cols-2 gap-4 rounded-xl border border-line bg-surface-2/40 p-4">
+          <div className="grid grid-cols-2 gap-4 rounded-xl border border-line bg-surface-2/40 p-4">
             <Labeled label="Language">
               <LanguageSelect
                 ariaLabel="Language"
@@ -309,7 +315,7 @@ function Editor({
             <div className="mb-3 text-[12px] font-medium text-dim">
               Translation overrides{" "}
               <span className="text-faint">
-                · empty inherits the backend · dictation injects the first target
+                · empty inherits the backend · dictation injects every target
               </span>
             </div>
             <TranslationDefaultsEditor
@@ -342,7 +348,7 @@ function Editor({
             />
           </div>
         </>
-      )}
+      </DisclosureCard>
 
       <div className="mt-5 flex items-start gap-2 text-[12px] text-faint">
         <Info className="mt-0.5 size-3.5 shrink-0" />

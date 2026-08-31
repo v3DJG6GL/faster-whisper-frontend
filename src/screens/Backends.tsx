@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, DisclosureToggle, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, StatusDot, TextArea, TextInput } from "@/components/ui";
+import { Badge, Button, Card, DisclosureCard, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, StatusDot, TextArea, TextInput } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { TranslationDefaultsEditor } from "@/components/TranslationFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
@@ -335,54 +335,60 @@ function Editor({
       </Labeled>
 
       <div className="mt-5">
-        <DisclosureToggle open={showDecode} onToggle={() => setShowDecode((v) => !v)}>
-          Decode defaults
-          {b.decodeOverrides && Object.keys(b.decodeOverrides).length ? (
-            <span className="text-accent">· set</span>
-          ) : (
-            <span className="text-faint">· inherit server</span>
-          )}
-        </DisclosureToggle>
-        {showDecode && (
-          <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
-            <p className="mb-3 text-[12px] text-dim">
-              Defaults for every profile that uses this backend (a profile can still
-              override per field). Empty = the server&apos;s per-model config.
-            </p>
-            <DecodeFields
-              value={b.decodeOverrides ?? {}}
-              onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
-              inherited={resolved}
-              serverKind={kind}
-              canCustomize={caps?.can_request_decode_overrides}
-            />
-          </div>
-        )}
+        <DisclosureCard
+          open={showDecode}
+          onToggle={() => setShowDecode((v) => !v)}
+          title={
+            <>
+              Decode defaults{" "}
+              {b.decodeOverrides && Object.keys(b.decodeOverrides).length ? (
+                <span className="text-accent">· set</span>
+              ) : (
+                <span className="text-faint">· inherit server</span>
+              )}
+            </>
+          }
+        >
+          <p className="mb-3 text-[12px] text-dim">
+            Defaults for every profile that uses this backend (a profile can still
+            override per field). Empty = the server&apos;s per-model config.
+          </p>
+          <DecodeFields
+            value={b.decodeOverrides ?? {}}
+            onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
+            inherited={resolved}
+            serverKind={kind}
+            canCustomize={caps?.can_request_decode_overrides}
+          />
+        </DisclosureCard>
       </div>
 
       <div className="mt-5">
-        <DisclosureToggle open={showTranslation} onToggle={() => setShowTranslation((v) => !v)}>
-          Translation defaults
-          {b.translationOverrides && Object.keys(b.translationOverrides).length ? (
-            <span className="text-accent">· set</span>
-          ) : (
-            <span className="text-faint">· inherit server</span>
-          )}
-        </DisclosureToggle>
-        {showTranslation && (
-          <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-4">
-            <p className="mb-3 text-[12px] text-dim">
-              T2T defaults for runs and profiles on this backend (a profile can
-              still override). Empty = the server&apos;s translation config.
-            </p>
-            <TranslationDefaultsEditor
-              value={b.translationOverrides}
-              onChange={(v) => set({ translationOverrides: v })}
-              caps={caps}
-              inheritLabel="server default"
-            />
-          </div>
-        )}
+        <DisclosureCard
+          open={showTranslation}
+          onToggle={() => setShowTranslation((v) => !v)}
+          title={
+            <>
+              Translation defaults{" "}
+              {b.translationOverrides && Object.keys(b.translationOverrides).length ? (
+                <span className="text-accent">· set</span>
+              ) : (
+                <span className="text-faint">· inherit server</span>
+              )}
+            </>
+          }
+        >
+          <p className="mb-3 text-[12px] text-dim">
+            T2T defaults for runs and profiles on this backend (a profile can
+            still override). Empty = the server&apos;s translation config.
+          </p>
+          <TranslationDefaultsEditor
+            value={b.translationOverrides}
+            onChange={(v) => set({ translationOverrides: v })}
+            caps={caps}
+            inheritLabel="server default"
+          />
+        </DisclosureCard>
       </div>
 
       <Labeled label="Server override profile" className="mt-5">

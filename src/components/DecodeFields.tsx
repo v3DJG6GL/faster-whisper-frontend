@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { RotateCcw, Info, Eraser } from "lucide-react";
-import { DisclosureToggle, Segmented, TextInput, SectionLabel } from "@/components/ui";
+import { DisclosureCard, Segmented, TextInput, SectionLabel } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { DecodeOverrides, InheritedValues } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
@@ -229,12 +229,14 @@ export function DecodeFields({
 
       {grid(FIELDS.filter((f) => f.section === "primary"))}
 
-      <DisclosureToggle open={showAdvanced} onToggle={() => setShowAdvanced((v) => !v)} className="mt-4">
-        Advanced decode params
-      </DisclosureToggle>
-
-      {showAdvanced && (
-        <div className="mt-4 space-y-5">
+      <DisclosureCard
+        className="mt-4"
+        nested
+        open={showAdvanced}
+        onToggle={() => setShowAdvanced((v) => !v)}
+        title="Advanced decode params"
+      >
+        <div className="space-y-5">
           {SECTIONS.map((s) => (
             <div key={s.id}>
               <SectionLabel className="mb-2.5">{s.title}</SectionLabel>
@@ -242,7 +244,7 @@ export function DecodeFields({
             </div>
           ))}
         </div>
-      )}
+      </DisclosureCard>
     </div>
   );
 }

@@ -191,16 +191,15 @@ const SegmentRow = memo(function SegmentRow({
   // text (wordAlign), so the timings still match what's on screen.
   const karaoke = isActive && origVisible && range && range[0] < range[1];
   const lineColor = colorize && seg.speaker ? { color: colorOf(seg.speaker) } : undefined;
-  // Translated lines carry the segment's SPEAKER color, dimmed (mixed toward
-  // --c-faint, NOT transparent — WebKitGTK's unpremultiplied transparent mix
-  // muddies text, see app.css). Teal stays reserved for run chrome (progress
-  // card, frontier, chips); with colors off / no speaker the lines fall back
-  // to teal so MT text stays distinguishable from the original.
+  // Translated lines carry the segment's SPEAKER color, heavily dimmed (30%
+  // toward --c-faint, NOT transparent — WebKitGTK's unpremultiplied transparent
+  // mix muddies text, see app.css) and set one step smaller, so a translation
+  // never reads as a transcribed line. The language TAG keeps the full accent,
+  // which is what tells stacked targets apart. Teal stays reserved for run
+  // chrome (progress card, frontier, chips) and is the accent with colors off /
+  // no speaker.
   const mtAccent = colorize && seg.speaker ? colorOf(seg.speaker) : "var(--c-translate)";
-  const mtColor =
-    colorize && seg.speaker
-      ? `color-mix(in srgb, ${colorOf(seg.speaker)} 65%, var(--c-faint))`
-      : "var(--c-translate)";
+  const mtColor = `color-mix(in srgb, ${mtAccent} 30%, var(--c-faint))`;
   const visLangs = visLangsKey ? visLangsKey.split(",") : [];
   return (
     <div
@@ -385,13 +384,13 @@ const SegmentRow = memo(function SegmentRow({
           <span
             key={lang}
             className={cn(
-              "block min-w-0 whitespace-pre-wrap",
+              "block min-w-0 whitespace-pre-wrap text-[13px]",
               stale && "opacity-50",
             )}
             style={{ color: mtColor }}
             onClick={!origVisible && canSeek ? () => seekTo(seg.start) : undefined}
           >
-            <LangTag code={lang} color={mtColor} />
+            <LangTag code={lang} color={mtAccent} />
             {stale ? (
               <s>{stripControlChars(tr.trim())}</s>
             ) : trWords ? (
