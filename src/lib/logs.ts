@@ -54,13 +54,25 @@ function append(lines: LogLine[]) {
   useLogs.setState((s) => ({ version: s.version + 1 }));
 }
 
-/** The buffer minus the "Clear view" floor. Reference-stable per version. */
+/** The buffer minus the "Clear view" floor. Reference-stable WITHIN a version,
+ *  and a NEW array on every version bump.
+ *
+ *  The second half is load-bearing and used to be wrong: with no clear floor
+ *  this returned `buf` itself, which `append()` mutates in place — so the
+ *  reference never changed, and every `useMemo` keyed on it in Logs.tsx went
+ *  on believing its work was still valid. The screen rendered the snapshot it
+ *  computed at mount (empty, before hydration) forever: no lines, no subsystem
+ *  chips, no live tail, no "N new lines" pill, and a bug report that copied
+ *  nothing. Changing a filter was the only thing that invalidated those memos,
+ *  which is why the view only ever populated after touching one.
+ *
+ *  Cost is one slice per event BATCH (not per render), bounded by the 10k cap. */
 export function visibleLines(): LogLine[] {
   const version = useLogs.getState().version;
   if (visibleCache?.version !== version) {
     visibleCache = {
       version,
-      lines: clearFloorSeq > 0 ? buf.filter((l) => l.seq >= clearFloorSeq) : buf,
+      lines: clearFloorSeq > 0 ? buf.filter((l) => l.seq >= clearFloorSeq) : buf.slice(),
     };
   }
   return visibleCache.lines;
