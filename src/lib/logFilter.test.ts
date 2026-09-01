@@ -28,6 +28,14 @@ function line(over: Partial<LogLine> = {}): LogLine {
   };
 }
 
+describe("formatLine keeps one physical line per LogLine", () => {
+  it("folds a multi-line message so the bug report's line count stays honest", () => {
+    const out = formatLine(line({ msg: "connect failed\nCaused by: ECONNREFUSED" }));
+    expect(out).not.toContain("\n");
+    expect(out).toContain("connect failed ⏎ Caused by: ECONNREFUSED");
+  });
+});
+
 describe("passesThreshold", () => {
   it("applies and-above semantics per threshold", () => {
     expect(passesThreshold("trace", "all")).toBe(true);

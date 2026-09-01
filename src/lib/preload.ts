@@ -25,8 +25,6 @@ export interface PreloadSpec {
 }
 
 export interface WarmLease {
-  /** Re-send the hint now (e.g. the plan changed under a held lease). */
-  renew(): void;
   /** Drop this holder's reference; the timer stops when the last one goes. */
   release(): void;
 }
@@ -36,8 +34,6 @@ export interface WarmLease {
  *  costs nothing, far enough that we are not chatting every few seconds. */
 export const RENEW_MS = 120_000;
 
-/** The backend rejects a plan of more than 6 entries with a 422. */
-const MAX_MODELS = 6;
 
 type Transport = (args: {
   serverUrl: string;
@@ -62,7 +58,9 @@ export function resetWarmDebounceForTests(): void {
 interface Entry {
   key: string;
   spec: PreloadSpec;
-  timer: ReturnType<typeof setInterval>;
+  /** The one-shot "first renew" timeout until it fires, then the steady interval. */
+  timer: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>;
+  timerIsInterval: boolean;
   refs: number;
   /** Serialized spec of the last hint actually sent, and when — so a re-render
    *  that re-acquires with an identical plan cannot turn into a second POST. */
@@ -101,7 +99,6 @@ export function preloadPlanFor(opts: {
     if (!hit || !id) continue;
     if (out.some((m) => m.family === hit.family && m.id === id)) continue;
     out.push({ family: hit.family, id });
-    if (out.length === MAX_MODELS) break;
   }
   return out;
 }
@@ -158,27 +155,37 @@ export function acquireWarm(key: string, spec: PreloadSpec): WarmLease {
     fire(entry, false);
   } else {
     const prev = lastSent.get(key);
-    entry = {
+    // The first renew tick is due RENEW_MS after the carried send, not after this
+    // re-acquire: every React caller releases and re-acquires on any dep change, and a
+    // re-acquire at t=119 s was debounced (no POST) while a fresh interval put the next
+    // POST at t≈239 s — past the server's 180 s plan lease, with the app believing it
+    // held the models warm.
+    const due = prev ? Math.max(0, RENEW_MS - (Date.now() - prev.sentAt)) : RENEW_MS;
+    const e0: Entry = {
       key,
       spec,
       refs: 1,
       sentKey: prev?.sentKey ?? "",
       sentAt: prev?.sentAt ?? 0,
-      timer: setInterval(() => {
+      timerIsInterval: false,
+      timer: setTimeout(() => {
         const e = leases.get(key);
+        if (!e) return;
         // Force: the renew tick is exactly the case the debounce must not eat.
-        if (e) fire(e, true);
-      }, RENEW_MS),
+        fire(e, true);
+        e.timer = setInterval(() => {
+          const e2 = leases.get(key);
+          if (e2) fire(e2, true);
+        }, RENEW_MS);
+        e.timerIsInterval = true;
+      }, due),
     };
+    entry = e0;
     leases.set(key, entry);
     fire(entry, false);
   }
   let released = false;
   return {
-    renew() {
-      const e = leases.get(key);
-      if (!released && e) fire(e, true);
-    },
     release() {
       // Idempotent: teardown paths overlap (a cancel can follow an error), and a
       // double release must not drop another holder's reference.
@@ -188,7 +195,8 @@ export function acquireWarm(key: string, spec: PreloadSpec): WarmLease {
       if (!e) return;
       e.refs -= 1;
       if (e.refs <= 0) {
-        clearInterval(e.timer);
+        if (e.timerIsInterval) clearInterval(e.timer);
+        else clearTimeout(e.timer);
         leases.delete(key);
       }
     },

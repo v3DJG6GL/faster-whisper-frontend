@@ -3,7 +3,7 @@
 // wire-neutrality proof (all gates on ≡ ungated compose).
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { ALL_CATEGORIES, applyBlob, composeBlob } from "./sync";
+import { ALL_CATEGORIES, applyBlob, composeBlob, mergeBlobs } from "./sync";
 import { completeGates, DEFAULT_SETTING_SYNC } from "./settingsManifest";
 import { catsFromGates, gateApplyScalar, gateComposeScalar } from "./syncGates";
 import { stableStringify } from "./stable";
@@ -116,8 +116,11 @@ describe("compose: scalar gate passthrough", () => {
     // `logging.logDir` is the one deliberate difference: its gate is what
     // ships the path at all (an ungated compose — the export contract —
     // never includes it). Everything else must be byte-identical.
-    delete (gated as Record<string, unknown>).logging;
-    delete (ungated as Record<string, unknown>).logging;
+    // Only `logDir` — the other logging fields must stay byte-identical too.
+    for (const b of [gated, ungated]) {
+      const lg = (b as Record<string, unknown>).logging;
+      if (lg && typeof lg === "object") delete (lg as Record<string, unknown>).logDir;
+    }
     expect(stableStringify(gated)).toBe(stableStringify(ungated));
   });
 });
@@ -267,5 +270,23 @@ describe("forward-compat: unknown categories carry through", () => {
       { includeSecrets: false, sub: SUB_ALL, gates: GATES_ALL },
     );
     expect((blob as Record<string, unknown>).futureCategory).toEqual({ someFlag: true });
+  });
+
+  it("mergeBlobs carries an unknown category from either side", () => {
+    const remote = { futureCategory: { x: 1 } } as unknown as SyncBlob;
+    const fromRemote = mergeBlobs(undefined, {} as SyncBlob, remote).merged;
+    expect((fromRemote as Record<string, unknown>).futureCategory).toEqual({ x: 1 });
+    const local = { localOnly: { y: 2 } } as unknown as SyncBlob;
+    const fromLocal = mergeBlobs(undefined, local, {} as SyncBlob).merged;
+    expect((fromLocal as Record<string, unknown>).localOnly).toEqual({ y: 2 });
+  });
+
+  it("an own __proto__ key in a remote blob cannot replace the merged blob's prototype", () => {
+    // Server JSON: `__proto__` is an ordinary own key after JSON.parse, and a plain `[]=`
+    // would invoke the setter — swapping the prototype and DROPPING the key.
+    const remote = JSON.parse('{"__proto__":{"general":{"theme":"light"}}}') as SyncBlob;
+    const merged = mergeBlobs(undefined, {} as SyncBlob, remote).merged;
+    expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
+    expect(merged.general).toBeUndefined();
   });
 });

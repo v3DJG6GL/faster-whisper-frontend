@@ -19,22 +19,25 @@ import type {
  *  type simply doesn't have them. The quick-add chord lived here before the
  *  `dictionary` category existed; `migrateBlob` moves it on every inbound
  *  path, so post-migration blobs never carry it here. */
+/** EVERY field is optional on the wire: `gateComposeScalar` deletes a gated-off key the
+ *  snapshot has no value for, and `gateApplyScalar` deletes gated-off keys from every
+ *  inbound blob — so "required" here was a lie the compiler could not see through, and a
+ *  `blob.general.deepFieldDetection` deref reached Rust as `undefined`. Apply's spread keeps
+ *  the device's local value for anything absent. */
 export interface SyncGeneral {
-  theme: ThemeName;
-  startMinimized: boolean;
-  /** Optional: absent in blobs/exports written before it became syncable
-   *  (2026-07-13) — apply's spread then keeps the device's local value. */
+  theme?: ThemeName;
+  startMinimized?: boolean;
+  /** Absent in blobs/exports written before it became syncable (2026-07-13). */
   openAtLogin?: boolean;
-  insertTiming: InsertTiming;
-  /** Optional: absent in blobs written before it became syncable (2026-09-01) —
-   *  apply's spread then keeps the device's local value. The global default every
-   *  inheriting Profile resolves through; replaced `insertTiming`. */
+  insertTiming?: InsertTiming;
+  /** Absent in blobs written before it became syncable (2026-09-01). The global default
+   *  every inheriting Profile resolves through; replaced `insertTiming`. */
   typeAsISpeak?: boolean;
-  insertMethod: InsertMethod;
-  pasteShortcut: string[];
-  restoreClipboard: boolean;
-  soundEffects: boolean;
-  deepFieldDetection: boolean;
+  insertMethod?: InsertMethod;
+  pasteShortcut?: string[];
+  restoreClipboard?: boolean;
+  soundEffects?: boolean;
+  deepFieldDetection?: boolean;
 }
 
 /** The fields of RecordingSettings that belong to the `chip` category — the
@@ -71,9 +74,10 @@ export type ChipField = (typeof CHIP_FIELDS)[number];
 export type SyncChip = Pick<RecordingSettings, ChipField>;
 
 /** The `recording` category: RecordingSettings minus the chip fields.
- *  `recordingsDir` is a machine-specific path: present only when the writing
- *  device's "Recordings folder" sub-toggle is on (default off), else passed
- *  through from the snapshot so an opted-out device never erases it. */
+ *  `audioBaseDir` (and the legacy `recordingsDir`) are machine-specific paths: present
+ *  only when the writing device's "Audio folder" switch (manifest id `audioFolder`,
+ *  default off) is on, else passed through from the snapshot so an opted-out device
+ *  never erases them. */
 export type SyncRecording = Partial<Pick<RecordingSettings, "recordingsDir" | "audioBaseDir">> &
   Omit<RecordingSettings, ChipField | "recordingsDir" | "audioBaseDir"> &
   Partial<Pick<TranscribeSettings, (typeof DICTATION_HISTORY_FIELDS)[number]>>;
@@ -119,8 +123,8 @@ export interface SyncAppRules {
  *  dictation clock rides the `recording` category, the file-transcription
  *  clock the `fileTranscriptions` category — so the Sync page can mirror the
  *  Recording & history tab's groups with independent toggles. The last-used
- *  backendId/model/language picks travel only when the "Last-used backend &
- *  model" sub-toggle opts in (TRANSCRIPTION_PICK_FIELDS), else pass through
+ *  backendId/model/language picks travel only when the "Last-used server, model &
+ *  language" switch (manifest id `transcribePicks`) opts in (TRANSCRIPTION_PICK_FIELDS), else pass through
  *  from the snapshot so an opted-out device never erases them.
  *  speakerColorMode is legacy (superseded by the display toggles), local. */
 export const TRANSCRIPTION_FIELDS = [

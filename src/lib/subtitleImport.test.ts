@@ -71,9 +71,14 @@ describe("plain text + errors", () => {
     expect(parseImportedText("txt", "One para.\n\nTwo para.").segments).toHaveLength(2);
     expect(parseImportedText("txt", "line a\nline b\nline c").segments).toHaveLength(3);
   });
-  it("clock-like prefixes never become speakers", () => {
-    const back = parseImportedText("txt", "12: lunch at noon");
+  it("clock-like prefixes never become speakers (a cue-bearing format reaches the guard)", () => {
+    // Through lrc, not txt: plain text can never set a speaker, so the old fixture passed
+    // for every input and the guard in cueText was untested.
+    const back = parseImportedText("lrc", "[00:12.00]12: lunch at noon");
     expect(back.segments[0].speaker).toBeUndefined();
+    expect(back.segments[0].text).toBe("12: lunch at noon");
+    const named = parseImportedText("lrc", "[00:12.00]Kate: lunch at noon");
+    expect(named.segments[0]).toMatchObject({ speaker: "Kate", text: "lunch at noon" });
   });
   it("empty input throws a user-facing message", () => {
     expect(() => parseImportedText("srt", "")).toThrow(/No text found/);

@@ -44,8 +44,7 @@ export type TranslatePhase =
   | "loading" // model load into VRAM/RAM
   | "translating"
   | "reconnecting" // progress polls fail on the network while a chunk request is still in flight
-  | "done"
-  | "error";
+  | "done";
 
 /** Everything the mini progress card renders. One value per run — chunk
  *  boundaries fold into the whole-run fraction, they are not visible states. */
@@ -123,6 +122,11 @@ export function beginChunk(
 ): TranslateRunUi {
   return {
     ...s,
+    // A chunk request leaving IS the run translating: against a server with no shared
+    // progress entry (every poll 404s, which the viewer swallows) nothing else ever left
+    // "starting", so the card read "Starting…" for the whole run while rows landed.
+    // Promote only from "starting"; a later poll still corrects to downloading/loading.
+    phase: s.phase === "starting" ? "translating" : s.phase,
     done,
     chunkLen: chunkIdxs.length,
     chunkIdxs,
@@ -153,7 +157,7 @@ export function foldTranslatePoll(
   p: BatchProgress,
   now: number = Date.now(),
 ): TranslateRunUi {
-  if (s.phase === "done" || s.phase === "error") return s;
+  if (s.phase === "done") return s;
   const next: TranslateRunUi = { ...s };
   switch (p.stage) {
     case "downloading":
@@ -197,7 +201,7 @@ export function foldTranslatePoll(
  *  keeps going — the chunk request has its own long timeout, and polling
  *  continues until it recovers. Terminal phases are sticky here too. */
 export function foldPollFailure(s: TranslateRunUi): TranslateRunUi {
-  if (s.phase === "done" || s.phase === "error") return s;
+  if (s.phase === "done") return s;
   return { ...s, phase: "reconnecting" };
 }
 
@@ -258,8 +262,16 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
     model = model ?? r.model;
     source = source ?? r.source;
     if (r.warnings?.length) {
-      warnings.push(...r.warnings);
-      a.onWarnings?.(warnings.slice());
+      // De-duplicated: the server emits its quality notice per REQUEST, so a 900-segment run
+      // otherwise reported "29 warnings" for one recurring condition.
+      let added = false;
+      for (const w of r.warnings) {
+        if (!warnings.includes(w)) {
+          warnings.push(w);
+          added = true;
+        }
+      }
+      if (added) a.onWarnings?.(warnings.slice());
     }
     const patch: Record<number, Record<string, string>> = {};
     const kept: Record<number, string[]> = {};

@@ -82,7 +82,7 @@ export function dictationVisual(
 }
 
 /**
- * THE single membership test for the "active session" set {listening, transcribing, injecting}
+ * THE single membership test for the "active session" set {listening, transcribing, translating, injecting}
  * — armed/capturing → finalizing → inserting. Excludes idle (no session) and error. Centralizes
  * what the chip visibility, Home stop/cancel button, hotkey busy-gate, and stream epoch-gating
  * each used to hand-roll, so a future status can't be silently omitted at one of them.
@@ -95,7 +95,7 @@ export function isActiveDictation(status: DictationStatus): boolean {
 }
 
 /**
- * The post-capture "processing" subset {transcribing, injecting} — finalizing → inserting,
+ * The post-capture "processing" subset {transcribing, translating, injecting} — finalizing → translating → inserting,
  * the states with no audio to react to that drive the self-animated chip/waveform motion AND
  * the hotkey/button stop-vs-cancel branch. Centralized for the same reason as isActiveDictation:
  * so a future post-capture status can't be silently omitted at one of the ~6 sites that hand-roll it.

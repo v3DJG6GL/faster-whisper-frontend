@@ -37,7 +37,6 @@ export function useOverrideContext(args: {
   // to lib/capabilities.ts and this hook became one of its readers. Absent key ⇒
   // trigger a refresh; present-null ⇒ fetched and unsupported, don't refetch.
   const caps = useApp((s) => (backendId ? (ownProp(s.caps, backendId) ?? null) : null));
-  const capsFetched = useApp((s) => (backendId ? hasOwn(s.caps, backendId) : false));
   // The store cache is keyed on the SAVED backend. A draft (not in the store yet) or a
   // target being typed into the Backends editor is not that backend: fetch the typed
   // target directly, into local state, so the capability gate and the translation
@@ -48,7 +47,13 @@ export function useOverrideContext(args: {
   const [resolvedPrompt, setResolvedPrompt] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    if (serverKind === "standard" || !backendId) return;
+    if (serverKind === "standard" || !backendId) {
+      // A backend that turns out to be a plain OpenAI server (or is gone) must not keep
+      // returning the last probed server's caps.
+      setLive(false);
+      setLiveCaps(null);
+      return;
+    }
     const st = useApp.getState();
     const backend = st.backends.find((b) => b.id === backendId);
     const savedTarget = backend ? effectiveServerUrl(backend, st.settings) : null;
@@ -63,10 +68,18 @@ export function useOverrideContext(args: {
       // drop a backend. A cached NULL is NOT terminal: refreshCaps cannot tell "server
       // said no" from "the probe failed" (both arrive as null), so one blip pinned the
       // panels to empty lists for the session — retry on mount; refreshCaps coalesces.
-      if (!capsFetched || !caps) void refreshCaps(backend);
+      // Read fresh, not from the effect's closure: `caps` is deliberately NOT a dependency,
+      // or every unrelated refreshCaps write re-ran the EDITING branch below and re-probed
+      // the typed target (and, with the clear below, blanked the gate for a round trip).
+      const cur = useApp.getState();
+      if (!hasOwn(cur.caps, backendId) || !ownProp(cur.caps, backendId)) void refreshCaps(backend);
       return;
     }
     setLive(true);
+    // Clear before refetching so a backend switch / retyped address shows the neutral
+    // "unknown ⇒ permitted" gate during the in-flight window instead of ghosting the
+    // PREVIOUS server's caps.
+    setLiveCaps(null);
     let cancelled = false;
     void getCapabilities({ serverUrl: typedTarget, backendId, apiKey })
       .catch(() => null)
@@ -76,7 +89,7 @@ export function useOverrideContext(args: {
     return () => {
       cancelled = true;
     };
-  }, [serverUrl, apiKey, backendId, serverKind, capsFetched, caps]);
+  }, [serverUrl, apiKey, backendId, serverKind]);
 
   useEffect(() => {
     const name = profileName?.trim();

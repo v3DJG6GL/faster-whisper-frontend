@@ -248,6 +248,8 @@ let sessionTranslationBase: Omit<NonNullable<typeof sessionTranslation>, "target
 let sessionPerUtteranceDeclared = false;
 let sessionTranslation: {
   targets: string[];
+  /** The resolved source language (null = let the server detect it). */
+  source?: string | null;
   includeOriginal?: boolean;
   model?: string;
   glossary?: string;
@@ -455,6 +457,7 @@ async function maybeTranslate(
         text,
         context,
         targets: tr.targets,
+        source: tr.source ?? null,
         includeOriginal: tr.includeOriginal,
         model: tr.model,
         glossary: tr.glossary,
@@ -771,15 +774,6 @@ function clearPhraseEnd(): void {
   clipBaseline = "";
 }
 
-/** The per-app injection policy: focused app + per-app rule + opt-in deep detection → the effective
- *  insertion method, paste shortcut, the matched rule, and whether a non-editable target was coerced
- *  to clipboard. This MUST be the single source: it is resolved both at session start (startLive,
- *  frozen into insertCfg + the chip's blocked/notEditable flags) AND per phrase / on the focus poll
- *  (resolveTarget) — open-coding it twice risks the chip readout, the start-of-session decision, and
- *  the per-phrase injection silently disagreeing. `targetApp` null (nothing known yet) → no rule, so
- *  global settings apply. Opt-in deep detection is positive-only (only editable===false coerces) and
- *  an explicit per-app insert method opts out — the user already decided how to inject here (e.g.
- *  "konsole → paste": a terminal isn't an editable AT-SPI field, yet the user told us to paste). */
 /** Must this injection go to the CLIPBOARD rather than the keyboard?
  *
  *  Two independent reasons, and both have to be checked at every keystroke site:
@@ -833,6 +827,15 @@ export function liveAllowed(args: {
   return args.wants && args.endpoint === "stream" && deliverySafe;
 }
 
+/** The per-app injection policy: focused app + per-app rule + opt-in deep detection → the effective
+ *  insertion method, paste shortcut, the matched rule, and whether a non-editable target was coerced
+ *  to clipboard. This MUST be the single source: it is resolved both at session start (startLive,
+ *  frozen into insertCfg + the chip's blocked/notEditable flags) AND per phrase / on the focus poll
+ *  (resolveTarget) — open-coding it twice risks the chip readout, the start-of-session decision, and
+ *  the per-phrase injection silently disagreeing. `targetApp` null (nothing known yet) → no rule, so
+ *  global settings apply. Opt-in deep detection is positive-only (only editable===false coerces) and
+ *  an explicit per-app insert method opts out — the user already decided how to inject here (e.g.
+ *  "konsole → paste": a terminal isn't an editable AT-SPI field, yet the user told us to paste). */
 export function resolveInjectionTarget(
   targetApp: FocusedApp | null,
   appRules: AppRule[],
@@ -1115,7 +1118,10 @@ function applySessionTargets(targets: string[]): void {
     return;
   }
   // Republish so the chip's route matches what will actually be injected.
-  useApp.getState().setDictation({ sessionTargets: clean.length ? clean : null });
+  // `[]`, not null, while the session lives: null means "no session" (the chip then previews
+  // the Profile's configured route), and an EMPTY pick is a real answer — publishing null for it
+  // made the chip advertise "→ FR IT" for a session that inserts the original untranslated.
+  useApp.getState().setDictation({ sessionTargets: clean });
 }
 
 /** A stream-event handler should fold in / act on a late emit only while genuinely busy — a
@@ -1148,10 +1154,12 @@ function settleToIdleAfterInjection(startedAt: number, cfg: InsertCfg | null): v
 // link) that event may never arrive, leaving the chip stuck. After this long with no
 // resolution we force a clean idle. Streaming only — a batch transcription can take a
 // while legitimately (bounded by the HTTP client's own 120 s timeout). Must outlast
-// the Rust drain deadline (10 s warm, 30 s when the server sent nothing — a model
-// cold-load), which normally resolves the stream first; the overlay's ✕ stays
-// available throughout for anyone who'd rather bail early.
-const STUCK_FINALIZE_MS = 35_000;
+// the Rust drain bounds, which are SEQUENTIAL: up to 10 s of PCM-drain / flush / stop
+// writes (DRAIN_WRITE_DEADLINE), THEN a first-frame idle window of 10 s warm or 30 s
+// when the server sent nothing (a model cold-load) — ~40 s worst case, and the 30 s
+// branch is exactly the one no `loading` keepalive re-arms this watchdog in. The
+// overlay's ✕ stays available throughout for anyone who'd rather bail early.
+const STUCK_FINALIZE_MS = 45_000;
 let stuckTimer: ReturnType<typeof setTimeout> | null = null;
 function clearStuckWatchdog(): void {
   if (stuckTimer !== null) {
@@ -1190,9 +1198,11 @@ function armStuckWatchdog(): void {
             // recovery paths fire exactly when the user is most likely looking at (or clicking
             // into) our own window. No re-send is introduced, so this cannot duplicate text.
             //
-            // `expectAppId` was omitted here, which DISABLES Rust's sink-side focus re-check —
-            // the one guard that stops a recovery resolved for one window from writing after
-            // focus moved to another. Every other inject site passes it; this one now does too.
+            // `expectAppId` is passed for uniformity only: on a clipboard-method call Rust
+            // returns from its clipboard arm BEFORE the per-app sink re-check that reads it, so
+            // the argument is inert here (and at every other clipboard-method site). The guard
+            // that CAN answer `landed: false` on this call is inject_text's own-window ENTRY
+            // check — which is what the "believe the answer" logic above relies on.
             ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [], expectAppId: pendingAppId }));
           } catch (err) {
             console.error("clipboard recovery after stuck-finalize failed:", err);
@@ -1537,12 +1547,9 @@ async function ensureListeners(): Promise<void> {
             const typeOut = sessionTranslation
               ? (injectedText.length > 0 ? PHRASE_GAP : "") + phrase.text.trim()
               : phrase.text;
-            if (phrase.translated) {
-              sessionPhraseContext.push(toType);
-              sessionTranslatedText = sessionTranslatedText
-                ? sessionTranslatedText + PHRASE_GAP + phrase.text.trim()
-                : phrase.text.trim();
-            }
+            // The translated-document accumulators advance further down, inside `if (delivered)`:
+            // a sink-skipped phrase is deliberately re-sent with the next insert (injectedText
+            // stays un-advanced), and booking it here appended its translation to history twice.
             // Snapshot the user's CURRENT clipboard right before this paste overwrites it — per phrase,
             // not once at session start — and only when the clipboard does NOT already hold our own text
             // (clipHoldsOurs false), so we never capture our own transcript. Gating on clipHoldsOurs (not
@@ -1650,6 +1657,12 @@ async function ensureListeners(): Promise<void> {
             // un-advanced re-sends the skipped text with the next insert, which is the whole point.
             if (delivered) {
               injectedText = target;
+              if (phrase.translated) {
+                sessionPhraseContext.push(toType);
+                sessionTranslatedText = sessionTranslatedText
+                  ? sessionTranslatedText + PHRASE_GAP + phrase.text.trim()
+                  : phrase.text.trim();
+              }
               // Tell the truth about WHERE it went. Rust can divert a typed/pasted insert to the
               // clipboard — the trigger chord is still held, or focus moved to another app — and
               // until it reported that back, this stamped the green "typed" pulse over it either
@@ -1979,8 +1992,15 @@ async function ensureListeners(): Promise<void> {
             if (insertCfg !== cfg) return;
             outText = one.text;
             if (one.translated) sessionTranslatedText = one.text;
-            setDictation({ status: "injecting" });
           }
+          // Unconditionally, not only after a translate: the status was set to "translating"
+          // above whenever the Profile had targets, and an EMPTY settle-time pick (a real
+          // answer: insert the original only) nulls `sessionTranslation` — so the block above
+          // is skipped and, with the move inside it, nothing ever said "injecting". Then
+          // `settleToIdleAfterInjection` (which requires "injecting") never settled: the chip
+          // wedged on "translating…", the outcome was never stamped, history never recorded
+          // the session and the warm lease renewed forever.
+          setDictation({ status: "injecting" });
           const t = await resolveTarget(cfg);
           // A cancel (insertCfg→null) OR a cancel-then-fresh-session (insertCfg→a new object) landing
           // during the awaited resolve must not paste the OLD session's whole transcript into the new/
@@ -2049,15 +2069,17 @@ async function ensureListeners(): Promise<void> {
             if (t.method === "clipboard" || diverted) sessionClipboard = true;
             else sessionTyped = true;
           } else if (!t.isSelf && !landed) {
-            // Our own window took focus mid-insert: nothing was typed and — unlike every other
-            // failure on this path — nothing reached the clipboard either, because the sink skip
-            // returns before any write. Offer the same recovery, but believe the ANSWER rather than
-            // the attempt: this retry goes back through the same own-window guard, so while our
-            // window still holds focus it writes nothing and reports false. Claiming a clipboard
-            // recovery there would be the false confirmation this whole fix removes.
+            // Nothing was written: our own window took focus mid-insert (the sink skip returns
+            // before any write), or — on a clipboard-method insert — the clipboard write itself
+            // failed, which Rust reports the same way. Offer the same recovery, but believe the
+            // ANSWER rather than the attempt: this retry goes back through the same own-window
+            // guard, so while our window still holds focus it writes nothing and reports false.
+            // Claiming a clipboard recovery there would be the false confirmation this whole fix
+            // removes. `outText`, not `text`: the translated transcript is what was being inserted,
+            // and history has already booked it as the delivered translation.
             let onClipboard = false;
             try {
-              onClipboard = (await injectText({ text, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId })).landed;
+              onClipboard = (await injectText({ text: outText, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId })).landed;
             } catch (e2) {
               console.error("clipboard fallback after a sink-skipped insert failed:", e2);
             }
@@ -2065,7 +2087,7 @@ async function ensureListeners(): Promise<void> {
               sessionClipboard = true;
               flashError("Focus moved to this app — the transcript is on the clipboard to paste manually.");
             } else {
-              flashError("Focus moved to this app — nothing was inserted.");
+              flashError(sinkSkipMessage(t.method));
             }
           }
         });
@@ -2253,7 +2275,22 @@ function teardownAfterFatalInject(): void {
 
 /** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
  *  Guarded: if a new session starts first (status leaves "error"), the pending clear is a no-op. */
+/** The wording for "nothing was written and the clipboard retry failed too": on a
+ *  clipboard-method insert the ONLY producer of that shape is a failed clipboard write
+ *  (the own-window case is `t.isSelf`), so blaming focus there sent the user after the
+ *  wrong problem. */
+export function sinkSkipMessage(method: InsertMethod): string {
+  return method === "clipboard"
+    ? "Couldn’t put the text on the clipboard — nothing was inserted."
+    : "Focus moved to this app — nothing was inserted.";
+}
+
 function flashError(message: string): void {
+  // Every call site is terminal for the session (a failed start, a failed insert, a lost
+  // connection), and `settleIdle` — the normal releaser — only runs for a session that reached
+  // "injecting". Release the preload lease here, or a session that died on this path kept
+  // POSTing the warm hint every RENEW_MS until the next successful start. Idempotent.
+  releaseWarmLease();
   voidPendingHoldStart(); // don't chain a queued start onto a failed session (in-flight check included)
   // Clear the live preview too (like level:0 freezes the meter): the error supersedes it, and
   // otherwise the stale `partial` lingers in the store — when the error auto-clears to idle the
@@ -2357,8 +2394,9 @@ export async function startLive(
     // startLiveInner awaits ensureListeners() + getFocusedApp() BEFORE its own try/catch, so a
     // reject there (e.g. an AT-SPI error out of get_focused_app) escapes to here. Surface it and
     // log — otherwise it leaks as an unhandled rejection through every `void startLive(...)` caller
-    // (Home toggle, dictate, runOverlayAction) and the user sees nothing. Nothing is armed yet at
-    // the prologue stage (warm timer / target poll / activeEndpoint), so there's nothing to undo.
+    // (Home toggle, dictate, runOverlayAction) and the user sees nothing. The target poll and
+    // activeEndpoint are not armed yet at the prologue stage, but the warm lease IS (it is taken
+    // before the focus read) — flashError releases it.
     console.error("start dictation failed (prologue):", e);
     flashError(String(e));
   } finally {
@@ -2404,6 +2442,9 @@ async function startLiveInner(
     const trOv = { ...backend.translationOverrides, ...pov?.translationOverrides };
     const trTargets = (trOv.translateTo ?? []).map((t) => t.trim()).filter(Boolean);
     sessionTranslationBase = {
+      // The resolved source language, so the per-phrase request does not leave the server
+      // to auto-detect a few words (every other T2T caller passes it); "auto"/"" → null.
+      source: language && language !== "auto" ? language : null,
       includeOriginal: trOv.includeOriginal,
       model: trOv.model,
       glossary: trOv.glossary,
@@ -2430,7 +2471,7 @@ async function startLiveInner(
     // for one session (a per-session picker). Cleared alongside the rest of the session's
     // state, so the standby dock falls back to previewing the home Profile's own route.
     useApp.getState().setDictation({
-      sessionTargets: trTargets.length ? trTargets : null,
+      sessionTargets: trTargets, // `[]` = this session translates nothing (see applySessionTargets)
       translateFailure: null,
     });
 

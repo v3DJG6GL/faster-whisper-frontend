@@ -30,14 +30,26 @@ describe("manifest labels match the screens' literal labels", () => {
     ["components/TranscriptViewer.tsx", "showSpeakerNames"],
     ["components/TranscriptViewer.tsx", "colorizeSpeakers"],
     ["components/TranscriptViewer.tsx", "wordTimestamps"],
+    ["components/TranscriptViewer.tsx", "exportFormat"], // aria-label on the bespoke radiogroup
     ["screens/Settings.tsx", "audioFolder"], // bespoke Audio-storage block heading
   ];
   for (const [file, id] of cases) {
     it(`${String(id)} ↔ ${file}`, () => {
       const label = SETTING[id].label;
+      // Control-shaped occurrences only: a bare `includes("Translation")` also matched an
+      // unrelated status-phrase map, so a renamed row title passed on the wrong string.
+      const pats = [
+        `title="${label}"`,
+        `label="${label}"`,
+        `label: "${label}"`,
+        `ariaLabel="${label}"`,
+        `aria-label="${label}"`,
+        `["${label}",`,
+        `>${label}<`,
+      ];
       expect(
-        src(file).includes(`"${label}"`) || src(file).includes(`>${label}<`),
-        `"${label}" not found in ${file} — rename the manifest label or the screen's literal together`,
+        pats.some((p) => src(file).includes(p)),
+        `"${label}" not found as a control label in ${file} — rename the manifest label or the screen's literal together`,
       ).toBe(true);
     });
   }

@@ -682,7 +682,7 @@ export interface Config {
   backends: Backend[];
   profiles: Profile[];
   appRules?: AppRule[]; // per-application injection rules (P16)
-  version?: number; // schema version (absent/legacy ⇒ 1; current ⇒ 2)
+  version?: number; // schema version (absent/legacy ⇒ 1; current ⇒ CONFIG_VERSION in store.ts, 3)
 }
 
 /** A single segment from verbose_json with its timestamps. */

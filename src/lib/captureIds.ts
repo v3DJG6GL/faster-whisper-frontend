@@ -41,8 +41,10 @@ export interface CaptureIdBook {
    *  `null` for an utterance that will never have one (the one-shot, an older
    *  backend, a capture the server declined to write). */
   take(utterance: number | null): Promise<string | null>;
-  /** The session is over: drop every pending id and unpark every waiter, so no
-   *  phrase of the NEXT session can be handed this one's receipt. */
+  /** Called at session START (streaming.ts, startLiveInner) — deliberately NOT at
+   *  teardown, where a phrase still queued at cancel must keep its chance at a
+   *  legitimate receipt. Drops every pending id and unparks every waiter, so no
+   *  phrase of the new session can be handed the previous one's receipt. */
   reset(): void;
 }
 

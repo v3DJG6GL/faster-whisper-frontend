@@ -85,6 +85,7 @@ export function withSettingsDefaults(raw: unknown): AppSettings {
       // count would propagate a truncation to the user's other devices.
       .slice(0, MAX_QUICK_LAUNCH)
     : [];
+  const migratedCategories = completeCategories(s.sync?.categories);
   return {
     ...DEFAULT_SETTINGS,
     ...s,
@@ -93,12 +94,13 @@ export function withSettingsDefaults(raw: unknown): AppSettings {
     sync: {
       ...DEFAULT_SYNC,
       ...(s.sync ?? {}),
-      categories: completeCategories(s.sync?.categories),
+      categories: migratedCategories,
       // The MIGRATED map, not the raw one: a pre-split `recording:false` /
       // `general:false` only reaches the chip/dictionary members through the
       // split-out keys completeCategories adds, and the completed gates are
-      // persisted in full — so a miss here was permanent.
-      sub: completeSub(s.sync?.sub, completeCategories(s.sync?.categories)),
+      // persisted in full — so a miss here was permanent. One binding, so the
+      // two cannot drift apart.
+      sub: completeSub(s.sync?.sub, migratedCategories),
       urlOverrides: { ...(s.sync?.urlOverrides ?? {}) },
     },
     logging: { ...DEFAULT_SETTINGS.logging!, ...(s.logging ?? {}) },
@@ -158,7 +160,12 @@ function wellFormedProfiles(v: unknown): Profile[] {
         // The ELEMENTS, not just the container — the sync sanitizer's floor. A numeric code throws
         // in `canonicalizeCodes`' localeCompare tie-break, which runs in a component body and in
         // the debounced save.
-        isStringList((p as Profile).hotkey),
+        isStringList((p as Profile).hotkey) &&
+        // The activation kind too — the map below explains why the value is load-bearing (an
+        // unknown one is rendered AS A COMPONENT and unmounts the window). Dropped, not
+        // rewritten, matching the shape-only rule: Rust's typed load rejects such a config
+        // anyway; this covers the no-Rust dev path. The legacy spelling survives to the map.
+        (["hold", "handsfree", LEGACY_HANDSFREE] as string[]).includes((p as Profile).activation as string),
     )
     // Normalize the pre-rename `"latch"` spelling of `"handsfree"`. Rust's `#[serde(alias)]`
     // already does this for every config it parses, so this only covers the paths that skip
@@ -241,9 +248,13 @@ function isReservedId(id: unknown): boolean {
  * the note there — so a rollback to an older build still reads a conservative value
  * rather than defaulting itself back to "live".
  */
-export function migrateInsertTiming(settings: AppSettings, profiles: Profile[]): { settings: AppSettings; profiles: Profile[] } {
+export function migrateInsertTiming(
+  settings: AppSettings,
+  profiles: Profile[],
+  appRules: AppRule[] = [],
+): { settings: AppSettings; profiles: Profile[]; appRules: AppRule[] } {
   const timing = settings.general.insertTiming;
-  if (timing !== "off" && timing !== "stop" && timing !== "live") return { settings, profiles };
+  if (timing !== "off" && timing !== "stop" && timing !== "live") return { settings, profiles, appRules };
   const live = timing === "live";
   return {
     settings: {
@@ -262,6 +273,14 @@ export function migrateInsertTiming(settings: AppSettings, profiles: Profile[]):
     // Only seed profiles that haven't been given an explicit value already (a config
     // written by a newer build and then re-read by this path).
     profiles: profiles.map((p) => (p.typeAsISpeak === undefined ? { ...p, typeAsISpeak: live } : p)),
+    // "off" meant never insert ANYWHERE, and a per-app `insertMethod` override out-ranks the
+    // migrated global "clipboard" — so a rule pinning paste/direct for some app would have
+    // started typing real keystrokes into it the moment the global short-circuit went away.
+    // Coerce those to clipboard too; `block`, chords and everything else stay as they were.
+    appRules:
+      timing === "off"
+        ? appRules.map((r) => (r.insertMethod == null ? r : { ...r, insertMethod: "clipboard" as const }))
+        : appRules,
   };
 }
 
@@ -289,12 +308,13 @@ function migrateConfig(raw: unknown): Config {
     const version = typeof c.version === "number" ? c.version : 0;
     const settings = withSettingsDefaults(c.settings);
     const profiles = wellFormedProfiles(c.profiles);
-    const migrated = version < 3 ? migrateInsertTiming(settings, profiles) : { settings, profiles };
+    const appRules = wellFormedAppRules((c as { appRules?: unknown }).appRules);
+    const migrated = version < 3 ? migrateInsertTiming(settings, profiles, appRules) : { settings, profiles, appRules };
     return {
       settings: migrated.settings,
       backends: wellFormedBackends(c.backends),
       profiles: migrated.profiles,
-      appRules: wellFormedAppRules((c as { appRules?: unknown }).appRules),
+      appRules: migrated.appRules,
       version: CONFIG_VERSION,
     };
   }
@@ -471,6 +491,11 @@ interface AppState {
    *  onboarding gate waits on this so it can't flash over a config still loading. */
   configLoaded: boolean;
   setConfigLoaded: () => void;
+  /** The load failed at the IPC level (the store holds the EMPTY boot state, not the user's
+   *  config). The first-run gate must not open on it: every exit from onboarding is a store
+   *  write the armed auto-save would persist over the real config. */
+  configLoadFailed: boolean;
+  setConfigLoadFailed: () => void;
 
   /** P30: update the runtime sync status line (engine-owned). */
   setSyncRuntime: (
@@ -788,6 +813,8 @@ export const useApp = create<AppState>((set) => ({
   setSaveError: (msg, kind = "save") => set({ saveError: msg, saveErrorKind: msg ? kind : null }),
   configLoaded: false,
   setConfigLoaded: () => set({ configLoaded: true }),
+  configLoadFailed: false,
+  setConfigLoadFailed: () => set({ configLoadFailed: true }),
 
   setSyncRuntime: (patch) => set(patch),
 

@@ -187,7 +187,7 @@ export default function Home() {
     }
     // A toggle-off that lands during the start prologue (status still "idle", session
     // mid-start) would otherwise fall through to start and be swallowed by startLive's
-    // startingSession guard, wedging the just-started latch. Honor it like the hotkey
+    // startingSession guard, wedging the just-started hands-free session. Honor it like the hotkey
     // (dictate) and chip (runOverlayAction) toggles do.
     if (requestStopIfStarting()) return;
     // idle or error → start fresh (startLive clears any prior error).

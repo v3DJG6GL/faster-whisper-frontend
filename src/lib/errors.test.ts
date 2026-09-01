@@ -30,6 +30,12 @@ describe("describeTransportError", () => {
     expect(d.title).toBe("Translation is turned off on GPU box.");
   });
 
+  it("strips bidi and bounds a peer-authored backend name", () => {
+    const d = describeTransportError("transcribe", "HTTP 500", "\u202E" + "A".repeat(300));
+    expect(d.title).not.toContain("\u202E");
+    expect(d.title.length).toBeLessThan(200);
+  });
+
   it("HTTP 401 elsewhere points at the API key", () => {
     const d = describeTransportError("transcribe", "HTTP 401: unauthorized", "GPU box");
     expect(d.title).toContain("rejected the request (HTTP 401)");

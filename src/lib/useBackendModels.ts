@@ -14,11 +14,15 @@ import type { Backend, ServerModel } from "@/lib/types";
 export function useBackendModels(backend: Backend | undefined): ServerModel[] {
   const conn = useApp((s) => (backend ? ownProp(s.connections, backend.id) : undefined));
   const id = backend?.id;
+  // Reactive, through the store: a corrected address (or a per-device URL override) must
+  // re-run the probe — keyed on `[id, conn]` alone, a failed probe (conn stays undefined)
+  // left the model picker empty for the rest of the mount after the user fixed the URL.
+  const url = useApp((s) => (backend ? effectiveServerUrl(backend, s.settings) : ""));
   useEffect(() => {
     if (!backend || !isTauri || conn) return;
     let stale = false;
     testConnection({
-      serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+      serverUrl: url,
       backendId: backend.id,
     })
       .then((info) => {
@@ -29,6 +33,6 @@ export function useBackendModels(backend: Backend | undefined): ServerModel[] {
       stale = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, conn]);
+  }, [id, conn, url]);
   return conn?.models ?? [];
 }

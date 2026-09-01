@@ -92,6 +92,24 @@ describe("acquireWarm", () => {
     expect(calls).toBe(3);
   });
 
+  it("a re-acquire keeps the renew clock of the carried send, not its own", () => {
+    // The React shape: release + re-acquire at t=RENEW_MS-1s is debounced (no POST), and the
+    // renew must still land at RENEW_MS from the ORIGINAL send — a fresh interval put it at
+    // ~2×RENEW_MS, past the server's plan lease.
+    const a = acquireWarm("k", spec);
+    expect(calls).toBe(1);
+    vi.advanceTimersByTime(RENEW_MS - 1000);
+    a.release();
+    const b = acquireWarm("k", spec);
+    expect(calls).toBe(1);
+    vi.advanceTimersByTime(1001);
+    expect(calls).toBe(2);
+    // …and the steady interval continues from there.
+    vi.advanceTimersByTime(RENEW_MS);
+    expect(calls).toBe(3);
+    b.release();
+  });
+
   it("a release followed by a re-acquire of the same plan does not re-POST", () => {
     // The shape every React caller has: effect cleanup (release) runs before the effect
     // re-runs (acquire) on any dep change, e.g. an unrelated option click.

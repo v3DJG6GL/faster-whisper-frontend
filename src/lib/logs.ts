@@ -80,7 +80,15 @@ export function visibleLines(): LogLine[] {
 
 /** Lines "Clear view" hid — still in the ring and on disk, absent from the view. */
 export function clearedCount(): number {
-  return clearFloorSeq > 0 ? buf.filter((l) => l.seq < clearFloorSeq).length : 0;
+  // A count, not a filtered copy: this runs in the Logs render body on every batch and
+  // keystroke, and `buf` holds up to LOG_BUFFER_CAP lines. `buf` is seq-ordered.
+  if (clearFloorSeq <= 0) return 0;
+  let n = 0;
+  for (const l of buf) {
+    if (l.seq >= clearFloorSeq) break;
+    n++;
+  }
+  return n;
 }
 
 export function clearView() {
@@ -125,22 +133,27 @@ export function initLogStatus(): void {
     // The baseline deliberately stays at zero here: startup errors and warns SHOULD light
     // the badge on a fresh session. It moves to the current totals only when the Logs
     // screen is opened or closed (markLogsViewed).
-    const t = await getLogStatus();
-    useLogs.setState({ status: { seq: t.seq, errors: t.errors, warns: t.warns } });
+    try {
+      const t = await getLogStatus();
+      useLogs.setState({ status: { seq: t.seq, errors: t.errors, warns: t.warns } });
+    } catch {
+      // The badge starts at zero; the stream below still feeds it. Without this a failed
+      // hydrate skipped the subscription too and froze the badge for the session.
+    }
     await onLogStatus((p) => {
       useLogs.setState({ status: p });
-    });
+    }).catch(() => {});
   })();
 }
 
-/** Attach the Logs screen: hydrate the buffer, then stream new batches.
- *  Returns a detach fn (unlisten + stream off). All-or-nothing rollback à la
- *  streaming.ts `reg()`: a mount/unmount race can't leak a subscription. */
 /** Bumped per attach; only the CURRENT attachment may turn the stream off, so a
  *  late-resolving detach from a previous mount (StrictMode's double mount, or a
  *  fast route flap) can't disable the live one's stream. */
 let attachGen = 0;
 
+/** Attach the Logs screen: hydrate the buffer, then stream new batches.
+ *  Returns a detach fn (unlisten + stream off). All-or-nothing rollback à la
+ *  streaming.ts `reg()`: a mount/unmount race can't leak a subscription. */
 export async function attachLogStream(): Promise<() => void> {
   const gen = ++attachGen;
   let cancelled = false;

@@ -1,3 +1,4 @@
+import { safeDisplayText } from "./sanitize";
 // Truthful error toasts ("Job Signals"): one template mapping the Rust
 // transport's classified error strings (friendly_err's "Could not connect…" /
 // "Timed out…" + the "HTTP nnn: detail" form) onto cause + backend name + one
@@ -46,17 +47,21 @@ export function describeTransportError(
   e: unknown,
   backendLabel: string,
 ): TransportErrorInfo {
+  // Defang once at the template boundary: the label is a peer-authored backend name that
+  // otherwise reached the fixed doorway banner — the one surface above every screen — uncapped.
+  const label = safeDisplayText(backendLabel, 80) || "the backend";
+
   const msg = String(e ?? "");
   if (msg.includes("Could not connect")) {
     return {
-      title: `Could not reach ${backendLabel} — nothing was started.`,
+      title: `Could not reach ${label} — nothing was started.`,
       hint: "Is the server running and the URL correct?",
       showLogs: false,
     };
   }
   if (/timed out/i.test(msg)) {
     return {
-      title: `Lost contact with ${backendLabel} while ${GERUND[kind]}.`,
+      title: `Lost contact with ${label} while ${GERUND[kind]}.`,
       hint: "The server may still be working — check it, then try again.",
       showLogs: true,
     };
@@ -66,29 +71,27 @@ export function describeTransportError(
     const code = Number(http[1]);
     if (kind === "translate" && (code === 403 || /\bdisabled\b/i.test(msg))) {
       return {
-        title: `Translation is turned off on ${backendLabel}.`,
+        title: `Translation is turned off on ${label}.`,
         hint: "Enable it there, or pick another backend.",
         showLogs: true,
       };
     }
     if (code === 401 || code === 403) {
       return {
-        title: `${backendLabel} rejected the request (HTTP ${code}).`,
+        title: `${label} rejected the request (HTTP ${code}).`,
         hint: "Check the backend's API key.",
         showLogs: true,
       };
     }
     return {
-      title: `${NOUN[kind]} failed on ${backendLabel} (HTTP ${code}).`,
+      title: `${NOUN[kind]} failed on ${label} (HTTP ${code}).`,
       hint: "",
       showLogs: true,
     };
   }
-  return { title: `${NOUN[kind]} failed on ${backendLabel}.`, hint: "", showLogs: true };
+  return { title: `${NOUN[kind]} failed on ${label}.`, hint: "", showLogs: true };
 }
 
-/** The failure-doorway payload for setLogsDoorway: title + fix in one line,
- *  "View logs" offered only when the log holds more than the line says. */
 /** The dictation per-phrase translate fallback doorway. The client-side causes (our own
  *  budget, our own cancel, an empty answer) are named as such and offer no "View logs":
  *  the Logs buffer is fed by Rust tracing only, and a client-side budget expiry writes
@@ -105,6 +108,8 @@ export function translateFailureDoorway(
   return { msg: `Translation failed (${shortCause(e)})${tail}`, showLogs: true };
 }
 
+/** The failure-doorway payload for setLogsDoorway: title + fix in one line,
+ *  "View logs" offered only when the log holds more than the line says. */
 export function transportErrorDoorway(
   kind: TransportErrorKind,
   e: unknown,

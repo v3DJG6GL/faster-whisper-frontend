@@ -71,10 +71,10 @@ export function dictate(profileId: string, action: TriggerAction): void {
     }
     // A toggle-off that lands during the start prologue (status still "idle", session mid-start)
     // would otherwise fall through to the start branch and be swallowed by startLive's
-    // startingSession guard, wedging the just-started latch. Honor it like the explicit "stop".
+    // startingSession guard, wedging the just-started hands-free session. Honor it like the explicit "stop".
     if (requestStopIfStarting()) return;
   }
-  // Chord family: the latch superset completed over the hold root. Three meanings:
+  // Chord family: the hands-free superset completed over the hold root. Three meanings:
   //   • session running under ANOTHER profile → upgrade it in place (hold → hands-free);
   //   • session running under THIS hands-free profile → the user pressed the family again:
   //     toggle off (the root's own "start" was the busy-gate no-op just before this);
@@ -195,8 +195,10 @@ async function startWithPickedTargets(
   const preset = profile.translationOverrides?.translateTo ?? [];
   const backendLang = backend.language;
   try {
-    // Resolve the injection target BEFORE taking focus — see the docblock.
-    const targetApp = await getFocusedApp();
+    // Resolve the injection target BEFORE taking focus — see the docblock. Non-fatal: an
+    // AT-SPI/IPC reject here used to escape as an unhandled rejection from a bare `void`
+    // caller and silently drop the whole start; null = no known target, the session still runs.
+    const targetApp = await getFocusedApp().catch(() => null);
     const picked = await askTranslationTargets({
       source: profile.language?.trim() ? profile.language : backendLang,
       preset,

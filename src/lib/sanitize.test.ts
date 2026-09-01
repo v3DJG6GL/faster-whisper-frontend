@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { stripControlChars } from "./sanitize";
 
 describe("stripControlChars with an output bound", () => {
+  it("normalises a lone CR and a CRLF without touching the text past the bound", () => {
+    expect(stripControlChars("a\rb")).toBe("a\nb");
+    expect(stripControlChars("a\r\nb")).toBe("a\nb");
+    expect(stripControlChars("a\r\nb", 2)).toBe("a\n");
+    expect(stripControlChars("a\r", 2)).toBe("a\n");
+  });
+
   it("equals the unbounded result's prefix — control chars, CRLF and astral chars included", () => {
     const s = "ab\u0007c\r\nd\u200be😀f".repeat(60);
     expect(stripControlChars(s, 162)).toBe(stripControlChars(s).slice(0, 162));

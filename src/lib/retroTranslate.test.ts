@@ -138,6 +138,13 @@ describe("translate progress state machine", () => {
     expect(s.pct).toBeCloseTo(0.5);
   });
 
+  it("a chunk leaving promotes 'starting' to 'translating' and nothing else", () => {
+    // Against a server with no progress entry nothing else ever left "starting".
+    expect(beginChunk(start(), idxs(0, 32), 0).phase).toBe("translating");
+    const downloading = { ...start(), phase: "downloading" as const };
+    expect(beginChunk(downloading, idxs(0, 32), 0).phase).toBe("downloading");
+  });
+
   it("folds downloading → loading → translating with the model lane", () => {
     let s = beginChunk(start(), idxs(0, 400), 0);
     s = foldTranslatePoll(s, { stage: "downloading", progress: 0.25, totalBytes: 4e9 }, t0 + 1000);
@@ -158,8 +165,10 @@ describe("translate progress state machine", () => {
   });
 
   it("is defensive: an empty poll changes nothing but returns a new object", () => {
+    // A chunk has left, so the run IS translating (beginChunk promotes "starting");
+    // the empty poll must not move it anywhere else.
     const s = foldTranslatePoll(beginChunk(start(), idxs(0, 400), 0), {});
-    expect(s.phase).toBe("starting");
+    expect(s.phase).toBe("translating");
     expect(s.pct).toBe(0);
   });
 
@@ -208,7 +217,7 @@ describe("translate progress state machine", () => {
 });
 
 describe("kept-original + warnings threading", () => {
-  it("mirrors the patch with per-index kept lists and accumulates warnings", async () => {
+  it("mirrors the patch with per-index kept lists and accumulates distinct warnings", async () => {
     const kepts: Record<number, string[]>[] = [];
     const warnCalls: string[][] = [];
     const r = await runChunkedTranslate({
@@ -229,10 +238,10 @@ describe("kept-original + warnings threading", () => {
       { 0: ["en"], 1: [] },
       { 2: ["en"], 3: [] },
     ]);
-    // Warnings accumulate across chunks (the card shows the running total).
-    expect(warnCalls[0]).toEqual(["1 segment kept original"]);
-    expect(warnCalls[1]).toEqual(["1 segment kept original", "1 segment kept original"]);
-    expect(r.warnings).toHaveLength(2);
+    // Warnings accumulate across chunks — DE-DUPLICATED: the server emits its notice per
+    // request, and "29 warnings" for one recurring condition misread as 29 problems.
+    expect(warnCalls).toEqual([["1 segment kept original"]]);
+    expect(r.warnings).toHaveLength(1);
   });
 
   it("a response without kept/warnings yields empty kept lists and no calls", async () => {

@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { CONFIG_VERSION, migrateInsertTiming, useApp } from "./store";
 import { DEFAULT_SETTINGS } from "./defaults";
-import type { AppSettings, InsertTiming, Profile } from "./types";
+import type { AppRule, AppSettings, InsertTiming, Profile } from "./types";
 
 const settingsWith = (timing: InsertTiming, insertMethod: AppSettings["general"]["insertMethod"] = "paste"): AppSettings => ({
   ...DEFAULT_SETTINGS,
@@ -26,6 +26,22 @@ const profile = (over: Partial<Profile> = {}): Profile => ({
 });
 
 describe("migrateInsertTiming", () => {
+  it('"off" also neutralises a per-app insertMethod override (never insert ANYWHERE)', () => {
+    const rules: AppRule[] = [
+      { id: "r1", appId: "konsole", block: false, insertMethod: "paste" },
+      { id: "r2", appId: "code", block: false },
+    ];
+    const r = migrateInsertTiming(settingsWith("off"), [], rules);
+    expect(r.appRules.map((x) => x.insertMethod)).toEqual(["clipboard", undefined]);
+    expect(r.appRules[1]).toBe(rules[1]);
+  });
+
+  it('"stop" and "live" leave app rules byte-identical', () => {
+    const rules: AppRule[] = [{ id: "r1", appId: "konsole", block: false, insertMethod: "paste" }];
+    expect(migrateInsertTiming(settingsWith("stop"), [], rules).appRules).toBe(rules);
+    expect(migrateInsertTiming(settingsWith("live"), [], rules).appRules).toBe(rules);
+  });
+
   it('maps "live" onto typeAsISpeak for every existing profile', () => {
     const r = migrateInsertTiming(settingsWith("live"), [profile(), profile({ id: "p2" })]);
     expect(r.profiles.map((p) => p.typeAsISpeak)).toEqual([true, true]);

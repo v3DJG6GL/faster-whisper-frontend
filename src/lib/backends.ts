@@ -197,6 +197,10 @@ export function authorityOf(raw: string): { host: string; hasUserinfo: boolean }
   }
 }
 
+/** The disambiguating separator. Defined once so the label builder and the forgery test below can
+ *  never drift apart — the whole guard rests on the two meaning the same string. */
+const SEP = " \u00b7 ";
+
 /** Display labels for a backend list, disambiguated when two of them collide.
  *
  *  The labels are defanged before rendering, which DELETES zero-width and bidi characters — so two
@@ -211,10 +215,6 @@ export function authorityOf(raw: string): { host: string; hasUserinfo: boolean }
  *  List-level by design. The per-item form was O(n^2) with an 80-codepoint scan per comparison,
  *  called from three unmemoized render bodies over a list `MAX_SYNCED_ENTRIES` bounds at 500 —
  *  measured at 233ms per render pass. One pass builds the collision counts, then labels. */
-/** The disambiguating separator. Defined once so the label builder and the forgery test below can
- *  never drift apart — the whole guard rests on the two meaning the same string. */
-const SEP = " \u00b7 ";
-
 export function backendOptions(all: Backend[], max = 80): { value: string; label: string }[] {
   const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
   // `safeIdentityText`, not `safeDisplayText`: G4 moved the three identity renders beside a trust

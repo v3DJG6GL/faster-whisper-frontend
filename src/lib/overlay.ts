@@ -123,25 +123,25 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     : rec.persistentDock
       ? homeTargetProfile(state.profiles, state.settings.homeProfileId)
       : undefined;
-  if (chipProfile) {
-    const backend = backendForProfile(chipProfile, state.backends);
-    if (rec.showProfileOnOverlay) {
-      chip = {
-        profileTag: chipTagFor(chipProfile),
-        // Effective language: a set per-Profile override wins; else the Backend's.
-        language: chipProfile.language?.trim() ? chipProfile.language : backend?.language,
-        // Effective endpoint likewise (a Profile may override stream/batch).
-        mode: chipProfile.endpoint ?? backend?.endpoint,
-      };
-    }
-    // The translation ROUTE has its own switch: it is a promise about what will be typed,
-    // so it must not disappear with the tag. See chipRouteTargets for the resolution order
-    // and why both inputs need bounding.
-    if (rec.showRouteOnOverlay) {
-      const configured = configuredRouteTargets(chipProfile, backend);
-      chip.translateTo = chipRouteTargets(state.sessionTargets, configured);
-      chip.translateMore = chipRouteMore(state.sessionTargets, configured);
-    }
+  const chipBackend = chipProfile ? backendForProfile(chipProfile, state.backends) : undefined;
+  if (chipProfile && rec.showProfileOnOverlay) {
+    chip = {
+      profileTag: chipTagFor(chipProfile),
+      // Effective language: a set per-Profile override wins; else the Backend's.
+      language: chipProfile.language?.trim() ? chipProfile.language : chipBackend?.language,
+      // Effective endpoint likewise (a Profile may override stream/batch).
+      mode: chipProfile.endpoint ?? chipBackend?.endpoint,
+    };
+  }
+  // The translation ROUTE has its own switch: it is a promise about what will be typed,
+  // so it must not disappear with the tag — nor with the Profile: a session started with no
+  // Profile (Home / the chip with none enabled) still translates from the Backend's targets,
+  // and the tray showed that route while the chip did not. See chipRouteTargets for the
+  // resolution order and why both inputs need bounding.
+  if (rec.showRouteOnOverlay) {
+    const configured = configuredRouteTargets(chipProfile, chipBackend);
+    chip.translateTo = chipRouteTargets(state.sessionTargets, configured);
+    chip.translateMore = chipRouteMore(state.sessionTargets, configured);
   }
   // P28: a tiny usage readout (today's words/minutes) for the chip, gated by the
   // setting. Scoped to the same backend the stats controller tracks; omitted when
@@ -288,7 +288,8 @@ export async function initOverlayController(): Promise<void> {
       state.warming !== prev.warming ||
       state.sessionTargets !== prev.sessionTargets ||
       state.activeProfile !== prev.activeProfile ||
-      state.profiles !== prev.profiles
+      state.profiles !== prev.profiles ||
+      state.backends !== prev.backends // the inherited source language lives on the Backend
     ) {
       void setTrayState(
         state.warming && state.status === "listening" ? "warming" : state.status,

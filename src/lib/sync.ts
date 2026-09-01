@@ -91,6 +91,7 @@ import {
   substituteElementFields,
   type Gates,
   catsFromGates,
+  SCALAR_CATS,
 } from "./syncGates";
 
 export const ALL_CATEGORIES: SyncCategory[] = [
@@ -135,7 +136,7 @@ function syncCats(): Record<SyncCategory, boolean> {
   return catsFromGates(settingGates()) as Record<SyncCategory, boolean>;
 }
 
-const GATED_SCALAR_CATS = ["general", "recording", "chip", "transcription", "fileTranscriptions", "dictionary", "logging"] as const;
+const GATED_SCALAR_CATS = SCALAR_CATS;
 
 /** applyBlob strips gated-off scalar fields, so the security review must judge what
  *  will actually apply: comparing ungated blobs raised the consent dialog (and held a
@@ -173,10 +174,6 @@ export function hashBlob(v: unknown): string {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
-/** Category equality — the test that decides whether a category conflicts and prompts, or merges
- *  silently. Compares the canonical strings, NOT their hashes: `hashBlob` builds this exact string
- *  first and then folds it to 32 bits, so the digest comparison was strictly more work for a
- *  probabilistic answer — on inputs one of which (the base) is the server's own last blob. */
 /** A JSON object — not null, not an array, not a string. The blob's containers are attacker-shaped
  *  just like its lists, and `Object.entries`/`Object.keys` accept a string by expanding it per code
  *  unit; every ceiling in the engine bounds ENTRY COUNT, which that turns into 4M. */
@@ -184,6 +181,10 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
+/** Category equality — the test that decides whether a category conflicts and prompts, or merges
+ *  silently. Compares the canonical strings, NOT their hashes: `hashBlob` builds this exact string
+ *  first and then folds it to 32 bits, so the digest comparison was strictly more work for a
+ *  probabilistic answer — on inputs one of which (the base) is the server's own last blob. */
 const catEqual = (a: unknown, b: unknown) => stableStringify(a ?? null) === stableStringify(b ?? null);
 
 /** Bound an await that may never settle. The ONLY unbounded await in the
@@ -343,11 +344,6 @@ function extractChip(settings: AppSettings): SyncBlob["chip"] {
   return pickFields(settings.recording as unknown as Record<string, unknown>, CHIP_FIELD_SET) as SyncChip;
 }
 
-/** Profiles, with the "Profile shortcuts" sub-toggle applied: when OFF, each
- *  known profile ships the SNAPSHOT's chord (this device's chord edits stay
- *  local) — a profile the snapshot doesn't know yet ships its live chord, so
- *  peers never receive a chord-less profile (`sanitizeProfiles` requires a
- *  code list). */
 const TRANSCRIPTION_FIELD_SET: ReadonlySet<string> = new Set(TRANSCRIPTION_FIELDS);
 const DICTATION_HISTORY_SET: ReadonlySet<string> = new Set(DICTATION_HISTORY_FIELDS);
 const FILE_TRANSCRIPTION_SET: ReadonlySet<string> = new Set(FILE_TRANSCRIPTION_FIELDS);
@@ -400,6 +396,11 @@ function extractFileTranscriptions(settings: AppSettings): SyncFileTranscription
   ) as SyncFileTranscriptions;
 }
 
+/** Profiles, with the "Profile shortcuts" sub-toggle applied: when OFF, each
+ *  known profile ships the SNAPSHOT's chord (this device's chord edits stay
+ *  local) — a profile the snapshot doesn't know yet ships its live chord, so
+ *  peers never receive a chord-less profile (`sanitizeProfiles` requires a
+ *  code list). */
 function extractProfiles(
   profiles: Profile[],
   homeProfileId: string | null,
@@ -506,15 +507,20 @@ export async function composeBlob(
         // that actually runs by default: when the wallet is locked the read above degrades to
         // `{}`, and pushing this list without secrets replaces the server's copy with a keyless
         // one — which pushNow then records as the new snapshot, orphaning the stash. If this
-        // device believes it HAS keys and we read none back, push nothing for this category.
-        blob.backends = undefined;
+        // device believes it HAS keys and we read none back, re-push the SNAPSHOT's category
+        // (the server's own last content, unchanged). NOT `undefined`: the transport is a
+        // whole-blob PUT and the client does the merge, so an omitted key does not "leave the
+        // server's copy alone" — JSON.stringify drops it and the stored list AND its keys are
+        // erased, then recorded as the new merge base.
+        blob.backends = snapshot?.backends;
       }
     }
   } else if (opts.includeSecrets && snapshotSecretsUnavailable) {
-    // The snapshot recorded keys we could not read back this session. Pushing its backends now
-    // would send the list WITHOUT them and erase the server's stored keys, so leave the category
-    // out entirely and let the server keep what it holds.
-    blob.backends = undefined;
+    // The snapshot recorded keys we could not read back this session — and the snapshot holds
+    // no key VALUES (those live in the keyring), so neither its list nor an omitted key can be
+    // pushed without erasing the server's stored keys (see above). `pushNow` refuses the whole
+    // push while this latch is set (`backendsPushBlocked`); this arm only keeps the shape sane.
+    blob.backends = snapshot?.backends;
   } else {
     blob.backends = snapshot?.backends;
   }
@@ -538,7 +544,7 @@ export async function composeBlob(
   // device's opted-out edits, and nothing is erased for devices that sync).
   if (opts.gates) {
     const gates = opts.gates;
-    for (const c of ["general", "recording", "chip", "transcription", "fileTranscriptions", "dictionary", "logging"] as const) {
+    for (const c of SCALAR_CATS) {
       if (cats[c] && blob[c] !== undefined) {
         (blob as Record<string, unknown>)[c] = gateComposeScalar(c, blob[c], snapshot?.[c], gates);
       }
@@ -658,7 +664,13 @@ export function mergeBlobs(
   const known = new Set<string>(ALL_CATEGORIES);
   for (const side of [local, remote]) {
     for (const [k, v] of Object.entries(side)) {
-      if (!known.has(k) && v !== undefined) (merged as Record<string, unknown>)[k] = v;
+      // defineProperty, not `[]=`: the remote blob is parsed server JSON, so an own
+      // `__proto__` key arrives here and a plain assignment would invoke the setter —
+      // replacing `merged`'s prototype and silently DROPPING the key (the one thing this
+      // block promises never to do). composeBlob's twin is immune via `k in blob`.
+      if (!known.has(k) && v !== undefined) {
+        Object.defineProperty(merged, k, { value: v, writable: true, enumerable: true, configurable: true });
+      }
     }
   }
   return { merged, conflicts };
@@ -698,10 +710,6 @@ function safePasteShortcut(codes: unknown, fallback: string[]): string[] {
   return PASTE_PRESETS.some((p) => p.codes.join("+") === joined) ? (codes as string[]) : fallback;
 }
 
-/** Drop inbound app rules that aren't shaped like rules. `appId` is only checked for existence
- *  by the Rust importer (and not at all on the pull path), yet every injection resolves through
- *  `rule.appId.toLowerCase()` — one malformed entry throws there and no transcript is ever
- *  inserted again, including in the editor the user would need to remove it. */
 /** Keyring accounts this app reserves for its own bookkeeping. A Backend `id` is used verbatim
  *  as the keyring account name, and an inbound `id` is whatever the sender chose — so without
  *  this a peer could name a backend after our snapshot stash and have `readBackendKeys` hand it
@@ -809,14 +817,6 @@ export function sanitizeProfiles(list: unknown): Profile[] {
     .slice(0, MAX_SYNCED_ENTRIES);
 }
 
-/** A chord as the capture UI produces it: a list of `KeyboardEvent.code` strings.
- *
- *  The LENGTH bound matters as much as the element type. `Profile.hotkey` is canonicalized
- *  (sort + dedup) by Rust's `de_hotkey` on the round-trip, but the store holds the raw inbound
- *  value for the rest of the session, and the TS consumers are the expensive ones: `HotkeyChips`
- *  renders one DOM node per code, `conflictsByProfile` runs an O(k²) subset scan in a component
- *  body (not memoized), both sync preview dialogs cap the PEER count but not the chord, and the
- *  debounced save gate runs the same scan. A real binding is at most a handful of codes. */
 /** The quick-add pin as Rust requires it: both leaves present and both strings.
  *
  *  Rebuilding rather than returning the object as-is would drop a newer peer's extra fields, so
@@ -839,6 +839,14 @@ export function isCodeList(v: unknown): v is string[] {
 
 /** Ceiling on the codes in ONE chord. Every real binding is ≤6 (modifiers + a key); the capture
  *  UI cannot produce more. */
+/** A chord as the capture UI produces it: a list of `KeyboardEvent.code` strings.
+ *
+ *  The LENGTH bound matters as much as the element type. `Profile.hotkey` is canonicalized
+ *  (sort + dedup) by Rust's `de_hotkey` on the round-trip, but the store holds the raw inbound
+ *  value for the rest of the session, and the TS consumers are the expensive ones: `HotkeyChips`
+ *  renders one DOM node per code, `conflictsByProfile` runs an O(k²) subset scan in a component
+ *  body (not memoized), both sync preview dialogs cap the PEER count but not the chord, and the
+ *  debounced save gate runs the same scan. A real binding is at most a handful of codes. */
 const MAX_CHORD_CODES = 16;
 
 /** Ceiling on the LENGTH of one code, paired with `MAX_CHORD_CODE_LEN` in commands.rs — the same
@@ -871,7 +879,13 @@ function disableConflictingProfiles(
   const order = new Map(peers.map((p, i) => [p.id, i]));
   const disable = new Set<string>();
   let rejectQuickAddHotkey = false;
-  for (const c of conflicts(peers, true)) {
+  // Collapse modifier SIDES only where the registrar does (the plugin / evdev-off platforms):
+  // the Windows low-level hook registers side-distinct chords (win_hotkeys.rs, VK_LCONTROL ≠
+  // VK_RCONTROL), the save gate (persistence.ts) and the Sync tab's preview both know that,
+  // and collapsing here anyway disabled a working LCtrl+Space / RCtrl+Space pair on every
+  // pull — persisted, and pushed back out. On Linux the over-detection is kept on purpose:
+  // the sanitizer runs before the live backend is known and must be a superset of the gate.
+  for (const c of conflicts(peers, !IS_WINDOWS)) {
     // Keep whichever came first — the quick-add peer always wins, since it is a single global
     // chord the user may have bound locally, not one of many list entries.
     //
@@ -901,10 +915,6 @@ function disableConflictingProfiles(
   };
 }
 
-/** Ceiling on how many entries one inbound blob may install. Far above any real profile /
- *  backend / rule set, so nothing legitimate is truncated — but it bounds the O(n²) passes
- *  these lists feed: `chords_from`'s dedup and `Engine::step`, which runs on EVERY system-wide
- *  key event, plus `conflicts()` and the unbounded list renders. */
 /** Drop later entries sharing an id. Uniqueness is unenforced everywhere else, and every consumer
  *  resolves by FIRST match (`backends.find(b => b.id === …)`) while the pickers render one option
  *  per entry — so two entries with one id give two differently-LABELLED options that both select
@@ -919,6 +929,10 @@ function dedupeById<T extends { id: string }>(list: T[]): T[] {
   return list.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
 }
 
+/** Ceiling on how many entries one inbound blob may install. Far above any real profile /
+ *  backend / rule set, so nothing legitimate is truncated — but it bounds the O(n²) passes
+ *  these lists feed: `chords_from`'s dedup and `Engine::step`, which runs on EVERY system-wide
+ *  key event, plus `conflicts()` and the unbounded list renders. */
 const MAX_SYNCED_ENTRIES = 500;
 
 /** Closed-vocabulary settings arrive as raw JSON. `save_config` takes a typed `Config` whose
@@ -929,20 +943,12 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T)
   return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
 }
 
-/** Same failure as `oneOf`, one level down: the settings blocks are spread in wholesale, and
- *  `save_config` takes a typed `Config` whose scalars (`bool`, `u32`, `f64`) have no serde
- *  fallback either. `#[serde(default)]` covers an ABSENT key, not a present one of the wrong
- *  type — so `soundEffects: "yes"` or `hoverRevealMs: -1` makes Tauri reject the invoke, and
- *  because nothing reverts the store, every later debounced save fails the same way for the rest
- *  of the session (the save banner sticks, `pushNow` short-circuits, and shortcut
- *  re-registration — which only runs on the success path — stops happening).
- *
- *  Drop only KNOWN keys whose type disagrees with what this device holds. Unknown keys are
- *  passed through untouched: Rust ignores unrecognised fields, so a newer peer's additions must
- *  survive the round-trip rather than being erased by an older client's next push. */
 /** The settings leaves Rust declares as `u32` (`config/mod.rs`: `hover_reveal_ms`,
- *  `recordings_retention_days`). Every other numeric leaf is `f64`. */
-const U32_KEYS = new Set(["hoverRevealMs", "recordingsRetentionDays"]);
+ *  `recordings_retention_days`, `LoggingSettings::keep_days`). Every other numeric leaf is `f64`.
+ *  Keep this in step with the Rust structs: a `u32` leaf missing here rides through `typedLike` on
+ *  `typeof === "number"` alone, and `-1` then fails `deserialize_u32` for the WHOLE Config —
+ *  every later save_config rejected for the session. */
+const U32_KEYS = new Set(["hoverRevealMs", "recordingsRetentionDays", "keepDays"]);
 
 /** Per-field validation for the `transcription` category. `settings.transcribe`
  *  is OPAQUE to Rust (serde_json::Value), so nothing downstream rejects a bad
@@ -1004,6 +1010,17 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
   return out as Partial<TranscribeSettings>;
 }
 
+/** Same failure as `oneOf`, one level down: the settings blocks are spread in wholesale, and
+ *  `save_config` takes a typed `Config` whose scalars (`bool`, `u32`, `f64`) have no serde
+ *  fallback either. `#[serde(default)]` covers an ABSENT key, not a present one of the wrong
+ *  type — so `soundEffects: "yes"` or `hoverRevealMs: -1` makes Tauri reject the invoke, and
+ *  because nothing reverts the store, every later debounced save fails the same way for the rest
+ *  of the session (the save banner sticks, `pushNow` short-circuits, and shortcut
+ *  re-registration — which only runs on the success path — stops happening).
+ *
+ *  Drop only KNOWN keys whose type disagrees with what this device holds. Unknown keys are
+ *  passed through untouched: Rust ignores unrecognised fields, so a newer peer's additions must
+ *  survive the round-trip rather than being erased by an older client's next push. */
 function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(incoming as Record<string, unknown>)) {
@@ -1096,7 +1113,15 @@ function sanitizeBackends(list: unknown): Backend[] {
       // stayed dirty while the comparison saw a cleaned one, a dirty→clean swap of the same host
       // would compare equal and the consent prompt would not fire for the very transition it
       // exists to catch.
-      serverUrl: isStorableServerUrl(b.serverUrl) ? stripUrlNoise(b.serverUrl) : "",
+      // …and the SCHEMELESS form the keyboard path accepts ("host:8000") is stored the way
+      // that path stores it — with the `http://` `normalizeUrl` prepends. Stored bare, every
+      // display helper re-normalised it for the UI while the transport handed reqwest a
+      // scheme-less string and every request failed with an opaque URL-parse error.
+      serverUrl: isStorableServerUrl(b.serverUrl)
+        ? (/^https?:\/\//i.test(stripUrlNoise(b.serverUrl)) || stripUrlNoise(b.serverUrl) === ""
+          ? stripUrlNoise(b.serverUrl)
+          : normalizeUrl(b.serverUrl) || stripUrlNoise(b.serverUrl))
+        : "",
       name: typeof b.name === "string" ? b.name : "",
       model: typeof b.model === "string" ? b.model : "",
       language: typeof b.language === "string" ? b.language : "auto",
@@ -1120,6 +1145,10 @@ function sanitizeBackends(list: unknown): Backend[] {
     .slice(0, MAX_SYNCED_ENTRIES);
 }
 
+/** Drop inbound app rules that aren't shaped like rules. `appId` is only checked for existence
+ *  by the Rust importer (and not at all on the pull path), yet every injection resolves through
+ *  `rule.appId.toLowerCase()` — one malformed entry throws there and no transcript is ever
+ *  inserted again, including in the editor the user would need to remove it. */
 function sanitizeAppRules(rules: unknown): AppRule[] {
   if (!Array.isArray(rules)) return [];
   return rules
@@ -1480,7 +1509,10 @@ export async function applyBlob(
         },
       };
     }
-    if (cats.backends && blob.backends) {
+    // isPlainObject, like every scalar arm: a malformed container (`"backends": []` or a
+    // string) is truthy, and `sanitizeBackends(undefined)` then returned `[]` — which the
+    // dangling-reference scrub below turned into "every profile's backend is gone".
+    if (cats.backends && isPlainObject(blob.backends)) {
       let inboundBackends = sanitizeBackends(blob.backends.list);
       // Element-wise keep-local for the gated backend aspects (the profile
       // chord idiom): addresses and model/decode defaults re-pin to this
@@ -1513,17 +1545,22 @@ export async function applyBlob(
       // and `upsertProfile`/`patchProfile`/`upsertAppRule`/`removeAppRule` all return only
       // `{profiles}` / `{appRules}` — `settings` stays byte-identical, so a user deleting the
       // app rule this very blob installed slipped the check and had their deletion hydrated
-      // away and written to disk. `nextBackends` needs no check: this wait only exists inside
-      // the `cats.backends` branch, and there `nextBackends` is derived from the wait's own
-      // result rather than the snapshot.
+      // away and written to disk. `backends` too: `nextBackends` is the inbound list re-pinned
+      // against the PRE-wait `st.backends` (the wait only re-derives `hasApiKey`), so a backend
+      // added, repointed or deleted while the apply was parked was hydrated away the same way.
       const live = useApp.getState();
-      if (live.settings !== settings || live.profiles !== st.profiles || live.appRules !== st.appRules) {
+      if (
+        live.settings !== settings ||
+        live.backends !== st.backends ||
+        live.profiles !== st.profiles ||
+        live.appRules !== st.appRules
+      ) {
         staleRestart = retries > 0;
         staleAbort = true;
         throw STALE;
       }
     }
-    if (cats.profiles && blob.profiles) {
+    if (cats.profiles && isPlainObject(blob.profiles)) {
       nextProfiles = sanitizeProfiles(blob.profiles.list);
       // "Profile shortcuts" sub-toggle OFF: chords are per-machine — re-pin each profile this
       // device already knows to ITS chord (the recordingsDir precedent, per list element). A
@@ -1604,7 +1641,7 @@ export async function applyBlob(
         nextSettings = { ...nextSettings, quickAddList: safeQuickAddTarget(d.quickAddList) };
       }
     }
-    if (cats.appRules && blob.appRules) {
+    if (cats.appRules && isPlainObject(blob.appRules)) {
       let rules = sanitizeAppRules(blob.appRules[MY_BUCKET]);
       // Per-rule field gates: overrides/chords re-pin to this device's values
       // (including their ABSENCE — an override that isn't set locally stays
@@ -1689,8 +1726,11 @@ export async function applyBlob(
     // Rust imperatively by its Settings toggle, so mirror that here. (Autostart
     // re-syncs via save_config; theme is reactive; hotkeys re-register via the
     // persistence subscriber.)
-    if (cats.general && blob.general) {
-      void setDeepFieldDetection(blob.general.deepFieldDetection).catch(() => {});
+    // From what was APPLIED, not the raw wire value: a gated-off or absent field is deleted
+    // from the blob before this point, and invoking the typed Rust arg with `undefined` was a
+    // silently swallowed failure on every unattended pull.
+    if (cats.general && isPlainObject(blob.general)) {
+      void setDeepFieldDetection(nextSettings.general.deepFieldDetection).catch(() => {});
     }
   } catch (e) {
     if (e !== STALE) throw e;
@@ -1814,6 +1854,14 @@ const SNAPSHOT_SECRETS_ACCOUNT = "__sync_snapshot_secrets__";
  *  (locked wallet, wiped keyring). Blocks composing a backends push FROM the snapshot, which
  *  would otherwise send a secret-less list and wipe the server's stored keys. */
 let snapshotSecretsUnavailable = false;
+
+/** Would a push right now erase the server's stored API keys? True while the keyring
+ *  could not give back the keys the snapshot recorded — the push is refused instead of
+ *  sending a keyless list (or omitting the category, which the whole-blob PUT treats as
+ *  deletion). Latched for the session like the flag it reads. */
+export function backendsPushBlocked(): boolean {
+  return snapshotSecretsUnavailable;
+}
 
 async function stashSnapshotSecrets(secrets: Record<string, string>): Promise<void> {
   await withTimeout(
@@ -2057,6 +2105,16 @@ export async function pushNow(manual = false): Promise<void> {
       setRuntime({ syncStatus: "ok" });
       return;
     }
+    if (cats.backends && backendsPushBlocked()) {
+      // Refuse rather than degrade: every alternative (a keyless list, an omitted category)
+      // erases the server's stored keys through the whole-blob PUT. Said out loud so the
+      // user knows why nothing is leaving this device.
+      setRuntime({
+        syncStatus: "error",
+        syncError: "Your API keys couldn't be read from the keyring, so settings weren't pushed. Unlock it and restart the app to resume syncing.",
+      });
+      return;
+    }
     for (let attempt = 0; attempt < 3; attempt++) {
       // Re-asked per ATTEMPT, not once before the loop: a conflict retry re-composes and re-sends,
       // so the address can go stale between attempts too. This is the request that carries every
@@ -2108,7 +2166,7 @@ export async function pushNow(manual = false): Promise<void> {
         // A 409 merge adopts remote values too, so it gets the same consent gate as a pull.
         const riskyPush = securityChanges(
           gateScalars(merged, settingGates()),
-          gateScalars(blob, settingGates()),
+          gateScalars(localForReview(blob), settingGates()),
           pushCats,
         );
         if (riskyPush.length > 0) {
@@ -2158,7 +2216,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   const applyCats = cats;
   // This pull is unattended (startup + every window focus). If it would repoint a backend or
   // swap a stored key, hold it for confirmation instead of adopting it silently.
-  const risky = securityChanges(gateScalars(merged, settingGates()), gateScalars(local, settingGates()), applyCats);
+  const risky = securityChanges(gateScalars(merged, settingGates()), gateScalars(localForReview(local), settingGates()), applyCats);
   if (risky.length > 0) {
     // Everything else still applies — only the backends category waits. Deliberately no
     // persistState here: adopting the server's version as the new base would drop the held-back
@@ -2271,6 +2329,17 @@ function heldBack(
 /** Compare what a pull would apply against what this device holds, and report only the
  *  security-relevant differences. `local` is the freshly composed local blob, so its
  *  `backends.secrets` already reflects the keyring — no extra wallet read here. */
+/** The local side for `securityChanges`, with a truthful `backends` container: composeBlob
+ *  deliberately omits the category when the keyring read degraded, and a MISSING container
+ *  read as "this device has no backends" — so every server backend, including ones this
+ *  device already holds byte-identically, was reported as "new" and parked sync on a
+ *  review. `secrets: {}` keeps the api-key comparison fail-closed (an incoming key still
+ *  raises a review); only the bogus new-backend rows go. */
+function localForReview(local: SyncBlob): SyncBlob {
+  if (local.backends) return local;
+  return { ...local, backends: { list: useApp.getState().backends, secrets: {} } };
+}
+
 export function securityChanges(
   incoming: SyncBlob,
   local: SyncBlob,
@@ -2398,10 +2467,10 @@ export function securityChanges(
     // as "the stored key would be replaced" for a key that does not exist locally.
     const incomingKey = ownProp(nextSecrets, b.id);
     const localKey = ownProp(localSecrets, b.id);
-    if (incomingKey && here.has(b.id) && incomingKey !== localKey) {
+    if (incomingKey && cur && incomingKey !== localKey) {
       out.push({
         kind: "api-key",
-        backend: cur?.name || name,
+        backend: cur.name || name,
         detail: localKey
           ? "the stored key would be replaced"
           : "a key would be stored for this server",
@@ -2442,6 +2511,11 @@ function raiseReview(r: PendingReview): void {
 export async function approvePendingReview(): Promise<void> {
   const r = pendingReview;
   if (!r) return;
+  // Never QUEUE a consented apply behind a live dictation: applyBlob would park the blob in
+  // `pendingApply` and the store subscriber would land it the moment the session ends — even
+  // after the user changed their mind and pressed Reject. Leave the review up instead; the
+  // dialog says why.
+  if (useApp.getState().status !== "idle") return;
   pendingReview = null;
   if (!(await applyBlob(r.blob, r.cats))) {
     // Deferred (dictation live): put the review back so the approval isn't
@@ -2464,7 +2538,14 @@ export async function approvePendingReview(): Promise<void> {
  *  re-offers it rather than silently treating the rejected state as agreed. */
 export function rejectPendingReview(): void {
   pendingReview = null;
+  pendingApply = null; // a refusal also cancels anything a deferred approve left queued
   setRuntime({ syncStatus: "idle", syncError: null });
+}
+
+/** Is the review dialog's Apply actionable right now? (Not while dictating — see
+ *  approvePendingReview.) */
+export function reviewApplyBlocked(): boolean {
+  return useApp.getState().status !== "idle";
 }
 
 // ── conflict resolution (driven by the Sync tab dialog) ─────────────────────
@@ -2498,6 +2579,7 @@ export async function resolveSyncConflicts(
 ): Promise<void> {
   const c = pendingConflict;
   if (!c) return;
+  if (useApp.getState().status !== "idle") return; // same rule as approvePendingReview
   pendingConflict = null;
   const final: SyncBlob = { ...c.merged };
   for (const cat of c.categories) {
@@ -2514,7 +2596,7 @@ export async function resolveSyncConflicts(
   // unreviewed. The conflict dialog only ever showed the CONFLICTING category names, never the
   // address change. Same shape as reconcileRemote: apply everything else, hold backends, and
   // persist no base so a rejection is re-offered on the next pull.
-  const risky = securityChanges(gateScalars(final, settingGates()), gateScalars(c.local, settingGates()), applyCats);
+  const risky = securityChanges(gateScalars(final, settingGates()), gateScalars(localForReview(c.local), settingGates()), applyCats);
   if (risky.length > 0) {
     await applyBlob(final, heldBack(applyCats, risky));
     raiseReview({
@@ -2540,10 +2622,14 @@ export async function resolveSyncConflicts(
   // later automatic pushes still see a difference and retry.
   await persistState({
     version: c.remoteVersion,
+    // The writer of the version being adopted, like the two sibling adopt sites — otherwise
+    // "Last synced just now · from X" kept naming the PREVIOUS sync's device.
+    updatedAt: null,
+    device: c.remoteDevice ?? null,
     hash: hashBlob(c.remote),
     snapshot: c.remote,
   });
-  setRuntime({ syncStatus: "ok", syncError: null, lastSyncedAt: Date.now() });
+  setRuntime({ syncStatus: "ok", syncError: null, lastSyncedAt: Date.now(), lastSyncDevice: c.remoteDevice ?? null });
   // The resolved doc differs from what the server holds unless "remote" won
   // everywhere — push it (base = the server version the conflict reported).
   if (hashBlob(final) !== hashBlob(c.remote)) void pushNow(true);
@@ -2551,6 +2637,7 @@ export async function resolveSyncConflicts(
 
 export function dismissSyncConflict(): void {
   pendingConflict = null;
+  pendingApply = null; // "Later" also cancels a deferred resolve
   setRuntime({ syncStatus: "idle", syncError: null });
 }
 

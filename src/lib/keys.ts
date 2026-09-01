@@ -94,13 +94,14 @@ const NUMPAD_KEY_CODES: Record<string, string> = {
  * downstream `codeToToken` then rejects it exactly as before.
  */
 export function eventToCode(e: Pick<KeyboardEvent, "code" | "key" | "location">): string {
-  if (e.code && e.code !== "Unidentified") return LEGACY_CODES[e.code] ?? e.code;
-  const sides = KEY_MODIFIER_SIDES[e.key];
+  if (e.code && e.code !== "Unidentified") return ownProp(LEGACY_CODES, e.code) ?? e.code;
+  const sides = ownProp(KEY_MODIFIER_SIDES, e.key);
   if (sides) return e.location === 2 ? sides[1] : sides[0];
   if (/^[a-zA-Z]$/.test(e.key)) return `Key${e.key.toUpperCase()}`;
   if (/^[0-9]$/.test(e.key)) return e.location === 3 ? `Numpad${e.key}` : `Digit${e.key}`;
   if (e.key === " ") return "Space";
-  if (e.location === 3 && NUMPAD_KEY_CODES[e.key]) return NUMPAD_KEY_CODES[e.key];
+  const numpad = ownProp(NUMPAD_KEY_CODES, e.key);
+  if (e.location === 3 && numpad) return numpad;
   if (NAMED_CODES.has(e.key)) return e.key; // Enter, Tab, ArrowUp, PageDown, F1…
   return e.code;
 }
@@ -176,8 +177,6 @@ export function collapseModifierSides(codes: string[]): string[] {
   return codes.map((c) => ownProp(SIDE_COLLAPSE, c) ?? c);
 }
 
-/** Canonical order (modifiers by type+side, key last) + de-duped, so a stored
- *  chord is independent of press order and comparable by value. */
 /** Windows/WebView2 synthesizes a phantom `ControlLeft` keydown just before
  *  `AltRight` on AltGr layouts (German/Swiss). The Windows backend drops that
  *  phantom in both feeds (scan 0x21D / injected raw input), so a captured
@@ -197,6 +196,8 @@ export function altGrPhantomActive(e: { getModifierState?: (k: string) => boolea
   return IS_WINDOWS && e.getModifierState?.("AltGraph") === true;
 }
 
+/** Canonical order (modifiers by type+side, key last) + de-duped, so a stored
+ *  chord is independent of press order and comparable by value. */
 export function canonicalizeCodes(codes: string[]): string[] {
   return Array.from(new Set(codes)).sort(
     // Rank orders modifiers first (by type+side); equal-rank codes — e.g. two non-modifier

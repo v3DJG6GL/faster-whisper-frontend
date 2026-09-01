@@ -133,7 +133,9 @@ export function formatLine(l: LogLine): string {
   const ts = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
   const level = l.level.toUpperCase().padEnd(5);
   const tag = l.tag ? `[${l.tag}] ` : "";
-  return `${ts} ${level} ${tag}${stripControlChars(l.msg)}`;
+  // One physical line per LogLine: `stripControlChars` keeps LF on purpose (the viewer
+  // wraps), but the bug report counts "last N lines" and aligns a prefix per line.
+  return `${ts} ${level} ${tag}${stripControlChars(l.msg).replace(/\n/g, " ⏎ ")}`;
 }
 
 export interface BugReportHeader {

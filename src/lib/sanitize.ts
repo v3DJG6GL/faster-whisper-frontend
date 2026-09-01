@@ -159,10 +159,22 @@ export function safeIdentityText(s: unknown, max = 80): string {
  *  keystroke). Bounding the input instead would not be equivalent — this only ever drops
  *  characters, and an input slice can split a surrogate pair. */
 export function stripControlChars(text: string, max = Infinity): string {
-  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   let out = "";
   if (max <= 0) return out;
-  for (const ch of normalized) {
+  // CR normalisation folded into the bounded loop — two whole-string `replace` passes up
+  // front copied a full transcript twice per row per keystroke before the bound applied.
+  let prevCR = false;
+  for (const raw of text) {
+    let ch = raw;
+    if (ch === "\r") {
+      prevCR = true;
+      ch = "\n";
+    } else if (ch === "\n" && prevCR) {
+      prevCR = false;
+      continue; // the CRLF's LF — its CR already became "\n"
+    } else {
+      prevCR = false;
+    }
     const code = ch.codePointAt(0) ?? 0;
     // Drop the Unicode Cc set (matches Rust char::is_control): C0 0x00-0x1F, DEL 0x7F, C1 0x80-0x9F.
     // Keep Tab (0x09) and LF (0x0A) — legitimate text/keystrokes.

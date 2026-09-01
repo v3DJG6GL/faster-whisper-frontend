@@ -50,6 +50,8 @@ export interface TranslateDeps {
     backendId: string;
     texts: string[];
     targets: string[];
+    /** The spoken language; null = let the server detect it. */
+    source?: string | null;
     model?: string;
     mode?: "fluent" | "faithful";
     glossary?: string;
@@ -88,6 +90,8 @@ export interface DictationTranslateRequest {
   /** Prior ORIGINAL phrases, sent as leading context segments. */
   context: string[];
   targets: string[];
+  /** The session's resolved source language (null/absent = auto-detect). */
+  source?: string | null;
   includeOriginal?: boolean;
   model?: string;
   glossary?: string;
@@ -264,6 +268,7 @@ export async function runDictationTranslate(
         // (the current text) is consumed.
         texts: [...req.context, original],
         targets: req.targets,
+        source: req.source?.trim() ? req.source.trim() : null,
         model: req.model,
         mode: req.mode,
         glossary: req.glossary,
