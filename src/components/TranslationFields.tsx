@@ -7,7 +7,7 @@ import { LANGUAGES, languageLabel } from "../lib/languages";
 import { cn } from "../lib/cn";
 import type { Capabilities, TranslationOverrides } from "../lib/types";
 import { ModelPicker } from "./ModelPicker";
-import { MicroLabel, Segmented, Stepper, TextArea, Toggle } from "./ui";
+import { MicroLabel, Segmented, Stepper, TextArea } from "./ui";
 
 export const TRANSLATION_MAX_TARGETS = 8;
 
@@ -199,7 +199,11 @@ export function TranslationDefaultsEditor({
     if (next.contextSegments === undefined) delete next.contextSegments;
     if (!next.glossary?.trim()) delete next.glossary;
     if (!next.mode) delete next.mode;
-    if (!next.includeOriginal) delete next.includeOriginal;
+    // Tri-state: only `undefined` is "inherit". `false` is an explicit OFF and must be
+    // STORED — the effective value is a per-field spread merge (streaming.ts trOv), so a
+    // pruned `false` silently re-inherited a Backend default of `true` while the toggle
+    // sat visibly off.
+    if (next.includeOriginal === undefined) delete next.includeOriginal;
     onChange(Object.keys(next).length ? next : undefined);
   };
 
@@ -282,9 +286,14 @@ export function TranslationDefaultsEditor({
             Inject the untranslated text first, then each language — blank-line separated.
           </div>
         </div>
-        <Toggle
-          checked={v.includeOriginal ?? false}
-          onChange={(on) => patch({ includeOriginal: on || undefined })}
+        <Segmented
+          value={v.includeOriginal === undefined ? "inherit" : v.includeOriginal ? "on" : "off"}
+          onChange={(m) => patch({ includeOriginal: m === "inherit" ? undefined : m === "on" })}
+          options={[
+            { value: "inherit", label: "Inherit" },
+            { value: "on", label: "On" },
+            { value: "off", label: "Off" },
+          ]}
           ariaLabel="Include original text in dictation output"
         />
       </div>

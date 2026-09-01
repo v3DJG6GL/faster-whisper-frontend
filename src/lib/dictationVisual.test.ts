@@ -4,6 +4,7 @@
 // one surface's hand-rolled map and not another's) is cheap to pin here.
 
 import { describe, expect, it } from "vitest";
+import homeSrc from "../screens/Home.tsx?raw";
 // Raw source import (vite `?raw`), as settingsLabels.test.ts does: Overlay.tsx pulls in
 // motion/react and DOM globals, and there is no jsdom in this repo — but the maps'
 // COMPLETENESS is exactly what a missing entry breaks (a tone with no fill/glow renders
@@ -125,4 +126,15 @@ describe("the chip's tone maps", () => {
       expect(mapKeys(name).sort()).toEqual([...TONES].sort());
     });
   }
+});
+
+describe("Home hero follows the tone, not only the state", () => {
+  it("paints the translate tone", () => {
+    // `dictationVisual("translating")` is state "processing" + tone "translate"; the
+    // waveform, sidebar dot and chip all use the tone, so the hero fill must too.
+    expect(/vis\.tone === "translate"[\s\S]{0,80}bg-translate/.test(homeSrc)).toBe(true);
+  });
+  it("tooltip and click agree on graceful stop", () => {
+    expect(/title=\{[\s\S]{0,400}isGracefulStop\(status, isCapturing\(\)\)/.test(homeSrc)).toBe(true);
+  });
 });

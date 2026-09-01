@@ -12,6 +12,7 @@ import { SetupChecklist } from "@/components/SetupChecklist";
 import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/streaming";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation";
+import { configuredRouteTargets } from "@/lib/overlay";
 import { languageLabel } from "@/lib/languages";
 import type { Backend, Profile } from "@/lib/types";
 
@@ -122,7 +123,10 @@ export default function Home() {
   // bound backend), and both halves go through `languageLabel` + routeParts' bounds —
   // `model`/`language` are peer-authored and arrive on an unattended sync pull.
   const routeLang = shown?.language?.trim() ? shown.language : (shownBackend?.language ?? "auto");
-  const route = routeParts(languageLabel(routeLang), shown?.translationOverrides?.translateTo);
+  // Targets resolve as the chip's and the session's do: the bound Backend's translation
+  // defaults under the Profile's overrides — an inheriting profile must not read as "no
+  // translation" while it translates.
+  const route = routeParts(languageLabel(routeLang), configuredRouteTargets(shown, shownBackend));
   const routeReadout =
     (route.source || "auto") +
     (route.targets.length ? ` → ${route.targets.join(", ")}${route.more ? ` +${route.more}` : ""}` : "");
@@ -142,7 +146,9 @@ export default function Home() {
     vis.state === "speaking"
       ? "bg-live text-white"
       : vis.state === "processing"
-        ? "bg-think text-white"
+        ? vis.tone === "translate"
+          ? "bg-translate text-white" // the T2T stage's own tone — the waveform, sidebar dot and chip all show it
+          : "bg-think text-white"
         : vis.state === "armed"
           ? "bg-accent text-accent-ink"
           : "bg-surface-2 text-dim";
@@ -234,7 +240,9 @@ export default function Home() {
               heroFill
             }
             title={
-              status === "listening"
+              // Same predicate as the click: a per-phrase translate keeps the mic open under
+              // "translating", where a click DELIVERS the words — not "Cancel (force stop)".
+              isGracefulStop(status, isCapturing())
                 ? "Stop dictation"
                 : busy
                   ? "Cancel (force stop)"

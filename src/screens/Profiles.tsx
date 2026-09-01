@@ -25,6 +25,7 @@ import { effectiveServerKind } from "@/lib/serverKind";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { backendForProfile } from "@/lib/dictation";
 import { liveAllowed } from "@/lib/streaming";
+import { configuredRouteTargets } from "@/lib/overlay";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import type { Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
@@ -559,6 +560,7 @@ function ProfileRow({
   p,
   backendName,
   backendLanguage,
+  backendTargets,
   conflictText,
   canUp,
   canDown,
@@ -574,6 +576,8 @@ function ProfileRow({
    *  resolution the chip does (a set Profile override wins). Resolved by the parent,
    *  which holds the backend list. */
   backendLanguage?: string;
+  /** The bound Backend's translate-to defaults — the inherited half of the route. */
+  backendTargets?: string[];
   conflictText: string | null;
   canUp: boolean;
   canDown: boolean;
@@ -609,7 +613,10 @@ function ProfileRow({
                 row would otherwise say "German" about output that lands in French. The
                 effective language mirrors chipPayload's resolution exactly (profile
                 override, else the bound backend), so the row can't disagree with the chip. */}
-            <RouteBadge source={effLang} targets={p.translationOverrides?.translateTo} />
+            <RouteBadge
+              source={effLang}
+              targets={configuredRouteTargets(p, { translationOverrides: { translateTo: backendTargets } })}
+            />
             {p.model && <Badge>{safeDisplayText(p.model.split("/").pop() ?? p.model, 40)}</Badge>}
             {p.endpoint && <Badge>{p.endpoint}</Badge>}
           </div>
@@ -802,6 +809,7 @@ export default function Profiles() {
                   p={p}
                   backendName={backendName(p.backendId)}
                   backendLanguage={backendForProfile(p, backends)?.language}
+                  backendTargets={backendForProfile(p, backends)?.translationOverrides?.translateTo}
                   conflictText={conflictText(p.id)}
                   canUp={i > 0}
                   canDown={i < profiles.length - 1}

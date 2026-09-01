@@ -2,7 +2,25 @@
 // store or the cross-window payload it normally rides in.
 
 import { describe, expect, it } from "vitest";
-import { chipRouteMore, chipRouteTargets } from "./overlay";
+import { chipRouteMore, chipRouteTargets, configuredRouteTargets } from "./overlay";
+
+describe("configuredRouteTargets", () => {
+  // The Backend's translation defaults under the Profile's overrides — the session's merge.
+  // Home and the Profiles row once read the Profile alone, so an inheriting profile read as
+  // "no translation" while the chip and the dictation translated.
+  const backend = { translationOverrides: { translateTo: ["fr", "it"] } };
+  it("inherits the backend's targets when the profile sets none", () => {
+    expect(configuredRouteTargets({}, backend)).toEqual(["fr", "it"]);
+    expect(configuredRouteTargets({ translationOverrides: {} }, backend)).toEqual(["fr", "it"]);
+  });
+  it("lets the profile override them", () => {
+    expect(configuredRouteTargets({ translationOverrides: { translateTo: ["de"] } }, backend)).toEqual(["de"]);
+  });
+  it("is undefined when neither layer translates", () => {
+    expect(configuredRouteTargets({}, {})).toBeUndefined();
+    expect(configuredRouteTargets(null, undefined)).toBeUndefined();
+  });
+});
 
 describe("chipRouteTargets", () => {
   it("prefers the running session's resolved targets over the Profile's config", () => {

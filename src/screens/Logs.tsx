@@ -31,9 +31,8 @@ import {
   matchesFilters,
   type FoldedLine,
   type FollowState,
-  type LevelThreshold,
-} from "@/lib/logFilter";
-import { useTranscriptHistory } from "@/lib/transcriptHistory";
+  type LevelThreshold, bugReportRunFields } from "@/lib/logFilter";
+import { loadHistory, useTranscriptHistory } from "@/lib/transcriptHistory";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { Button, Segmented, StatusDot, TextInput, Toggle } from "@/components/ui";
@@ -169,6 +168,9 @@ export default function Logs() {
   // Attach the stream for the screen's lifetime; badge clears on open & close.
   useEffect(() => {
     markLogsViewed();
+    // The bug-report header names the last recorded run; a launch straight into Logs (a
+    // failure doorway's own destination) has not loaded history yet. Idempotent.
+    void loadHistory();
     let detach: (() => void) | undefined;
     let cancelled = false;
     void attachLogStream().then((d) => {
@@ -283,29 +285,8 @@ export default function Logs() {
       {
         appVersion: ver,
         platform,
-        source: last ? (last.kind ?? "file") : null,
-        backend: backendOf(last?.backendId ?? t?.backendId) ?? null,
-        model: last?.model ?? t?.model ?? null,
-        profile:
-          last?.profileName ??
-          s.profiles.find((p) => p.id === s.settings.homeProfileId)?.name ??
-          s.profiles.find((p) => p.enabled)?.name ??
-          null,
-        route: last?.translationTargets?.length
-          ? `${last.language || "auto"} → ${last.translationTargets.join(",")}`
-          : null,
-        // Name the stages that ran. "The French came out wrong" is
-        // unactionable without knowing translation happened at all.
-        stages:
-          [
-            last?.translationTargets?.length ? "translate" : null,
-            last?.insertMethod && last.insertMethod !== "none"
-              ? `insert:${last.insertMethod}`
-              : null,
-            last?.translationFailure ? `translate-failed:${last.translationFailure}` : null,
-          ]
-            .filter(Boolean)
-            .join(" · ") || null,
+        // One block, one source: the run's own fields, or the settings labelled as such.
+        ...bugReportRunFields(last, t, backendOf),
         filters: filterSummary,
       },
       // Exactly what the view shows: copying a filtered log must not silently

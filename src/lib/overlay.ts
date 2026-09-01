@@ -45,6 +45,17 @@ export function chipRouteTargets(
     .map((t) => t.trim().slice(0, 12));
 }
 
+/** The CONFIGURED route targets for a profile: the Backend's translation defaults with the
+ *  Profile's overrides spread on top — the same per-field merge the session freezes
+ *  (streaming.ts trOv). Every readout of the route (chip, Home, the Profiles row) goes
+ *  through this, or an inheriting profile reads as "no translation" while it translates. */
+export function configuredRouteTargets(
+  profile?: { translationOverrides?: { translateTo?: string[] } } | null,
+  backend?: { translationOverrides?: { translateTo?: string[] } } | null,
+): string[] | undefined {
+  return { ...backend?.translationOverrides, ...profile?.translationOverrides }.translateTo;
+}
+
 /** How many targets `chipRouteTargets` left out. A route is a promise about what will be
  *  typed, so a three-target session must not read as a two-target one: the chip shows
  *  "→ FR IT +1", as the tray tooltip and the Profile card already do. */
@@ -127,7 +138,7 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // so it must not disappear with the tag. See chipRouteTargets for the resolution order
     // and why both inputs need bounding.
     if (rec.showRouteOnOverlay) {
-      const configured = { ...backend?.translationOverrides, ...chipProfile.translationOverrides }.translateTo;
+      const configured = configuredRouteTargets(chipProfile, backend);
       chip.translateTo = chipRouteTargets(state.sessionTargets, configured);
       chip.translateMore = chipRouteMore(state.sessionTargets, configured);
     }

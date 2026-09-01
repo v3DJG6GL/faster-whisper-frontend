@@ -164,6 +164,65 @@ export const BUG_REPORT_LINES = 500;
 /** The paste-ready support bundle: context header + the last 500 lines the
  *  caller passes in — the Logs screen hands over exactly what the view shows,
  *  so what you filtered to is what you paste. */
+/** The slice of a history record the bug-report header reads. Structural, so this module
+ *  needs no import from the history store. */
+export interface BugReportRun {
+  kind?: "file" | "dictation" | "url" | "text";
+  backendId?: string;
+  model?: string;
+  language?: string;
+  profileName?: string;
+  insertMethod?: "typed" | "clipboard" | "none";
+  translationTargets?: string[];
+  translationFailure?: string;
+  options?: { translateTo?: string[] };
+  result?: { translation?: { targets?: string[] } };
+}
+
+/** The "what actually ran" fields of the header, attributed as ONE block.
+ *
+ *  Either every field comes from the last recorded run, or — with no run recorded — the
+ *  block is the Transcribe screen's settings and SAYS so. The two must never interleave:
+ *  a file run has no profile, so borrowing the Home profile for it named a profile that
+ *  had nothing to do with the run, and a batch run keeps its targets in the result /
+ *  options rather than in `translationTargets` (which only dictation writes). */
+export function bugReportRunFields(
+  last: BugReportRun | null,
+  transcribe: { backendId?: string; model?: string } | undefined,
+  backendName: (id?: string) => string | null,
+): Pick<BugReportHeader, "source" | "backend" | "model" | "profile" | "route" | "stages"> {
+  if (!last) {
+    return {
+      source: "settings (no run recorded)",
+      backend: backendName(transcribe?.backendId),
+      model: transcribe?.model ?? null,
+      profile: null,
+      route: null,
+      stages: null,
+    };
+  }
+  const targets = last.translationTargets?.length
+    ? last.translationTargets
+    : last.result?.translation?.targets?.length
+      ? last.result.translation.targets
+      : (last.options?.translateTo ?? []);
+  return {
+    source: last.kind ?? "file",
+    backend: backendName(last.backendId),
+    model: last.model ?? null,
+    profile: last.profileName ?? null,
+    route: targets.length ? `${last.language || "auto"} → ${targets.join(",")}` : null,
+    stages:
+      [
+        targets.length ? "translate" : null,
+        last.insertMethod && last.insertMethod !== "none" ? `insert:${last.insertMethod}` : null,
+        last.translationFailure ? `translate-failed:${last.translationFailure}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || null,
+  };
+}
+
 export function buildBugReport(hdr: BugReportHeader, raw: readonly LogLine[]): string {
   const tail = raw.slice(-BUG_REPORT_LINES);
   const ctx = [

@@ -12,6 +12,7 @@ import {
   matchesFilters,
   passesThreshold,
   type FollowState,
+  bugReportRunFields,
 } from "./logFilter";
 
 function line(over: Partial<LogLine> = {}): LogLine {
@@ -201,6 +202,43 @@ describe("formatLine / buildBugReport", () => {
     );
     expect(report).not.toContain("backend:");
     expect(report).toContain("—— last 1 lines ——");
+  });
+});
+
+describe("bugReportRunFields", () => {
+  const backendName = (id?: string) => (id === "b1" ? "informethic" : null);
+
+  it("attributes a file run to the run alone — no borrowed profile", () => {
+    const f = bugReportRunFields(
+      { kind: "file", backendId: "b1", model: "large-v2", language: "de",
+        options: { translateTo: ["fr"] }, result: { translation: { targets: ["fr"] } } },
+      { backendId: "b2", model: "tiny" },
+      backendName,
+    );
+    expect(f.profile).toBeNull();
+    expect(f.backend).toBe("informethic");
+    expect(f.model).toBe("large-v2");
+    expect(f.route).toBe("de → fr");
+    expect(f.stages).toBe("translate");
+  });
+
+  it("reads a dictation run's targets and insertion", () => {
+    const f = bugReportRunFields(
+      { kind: "dictation", profileName: "PTT DE", language: "de", translationTargets: ["en", "fr"], insertMethod: "typed" },
+      undefined,
+      backendName,
+    );
+    expect(f.profile).toBe("PTT DE");
+    expect(f.route).toBe("de → en,fr");
+    expect(f.stages).toBe("translate · insert:typed");
+  });
+
+  it("labels the settings fallback when nothing ran", () => {
+    const f = bugReportRunFields(null, { backendId: "b1", model: "tiny" }, backendName);
+    expect(f.source).toBe("settings (no run recorded)");
+    expect(f.backend).toBe("informethic");
+    expect(f.profile).toBeNull();
+    expect(f.route).toBeNull();
   });
 });
 
