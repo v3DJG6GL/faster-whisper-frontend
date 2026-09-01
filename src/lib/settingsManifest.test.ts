@@ -138,3 +138,36 @@ describe("completeGates migration", () => {
     expect(g.liveTranscript).toBe(false); // unfolded member stays category-off
   });
 });
+
+describe("store completion of a pre-split config", () => {
+  it("an OFF pre-split category keeps its split-out members OFF after migration", async () => {
+    const { withSettingsDefaults } = await import("./store");
+    const settings = withSettingsDefaults({ sync: { categories: { recording: false, general: false } } });
+    const sub = settings.sync!.sub!;
+    // chip was split out of recording, dictionary out of general
+    expect(sub.chipPosition).toBe(false);
+    expect(sub.liveTranscript).toBe(false);
+    expect(sub.quickAddHotkey).toBe(false);
+    expect(sub.pinnedMappings).toBe(false);
+    expect(sub.backendList).toBe(true); // unrelated category untouched
+  });
+
+  it("legacy latchAutoStop survives a completion round-trip (downgrade keeps the intent)", async () => {
+    const { withSettingsDefaults } = await import("./store");
+    const sub = withSettingsDefaults({ sync: { sub: { latchAutoStop: false } } }).sync!.sub!;
+    expect(sub.handsFreeAutoStop).toBe(false);
+    expect(sub.latchAutoStop).toBe(false);
+  });
+
+  it("DEFAULT_SYNC.sub agrees with the manifest so the two can never drift", async () => {
+    const { DEFAULT_SYNC } = await import("./defaults");
+    const sub = DEFAULT_SYNC.sub!;
+    expect(sub.profileHotkeys).toBe(DEFAULT_SETTING_SYNC.profileHotkeys);
+    expect(sub.quickAddHotkey).toBe(DEFAULT_SETTING_SYNC.quickAddHotkey);
+    expect(sub.transcribePicks).toBe(DEFAULT_SETTING_SYNC.transcribePicks);
+    expect(sub.recordingsDir).toBe(DEFAULT_SETTING_SYNC.audioFolder);
+    const vals = Object.values(DEFAULT_SETTING_SYNC);
+    expect(vals.some((v) => !v)).toBe(true); // a boolean "sync everything" master can never read on by default
+    expect(vals.some((v) => v)).toBe(true);
+  });
+});

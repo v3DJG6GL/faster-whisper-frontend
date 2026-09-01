@@ -14,8 +14,9 @@
 // key sets — add a field to GeneralSettings/RecordingSettings/… without
 // deciding its sync story and `tsc` fails.
 //
-// Pure data + pure helpers only. Imports types and defaults — never the
-// store, api, or sync engine (unit-tests under plain node).
+// Pure data + pure helpers only. Imports types only — never defaults, the
+// store, api, or sync engine (unit-tests under plain node; defaults.ts
+// imports THIS file for the sync sub-defaults).
 
 import type {
   AppSettings,

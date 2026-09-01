@@ -605,8 +605,9 @@ impl LogLevel {
     }
 }
 
-/// In-app logging preferences (Settings → General → Logging). Unlike
-/// `sync`/`transcribe`, Rust interprets every field, so it's typed.
+/// In-app logging preferences (Settings → General → Logging). Typed rather
+/// than an opaque blob like `sync`/`transcribe`: Rust interprets `log_level`,
+/// `keep_days` and `log_dir`; `show_in_sidebar` is frontend-only nav state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoggingSettings {
@@ -618,8 +619,9 @@ pub struct LoggingSettings {
     pub keep_days: u32,
     #[serde(default = "default_log_sidebar")]
     pub show_in_sidebar: bool,
-    /// Custom log folder; None = `<app_data>/logs`. MACHINE-LOCAL by contract:
-    /// the TS sync layer never ships it in a synced blob or export.
+    /// Custom log folder; None = `<app_data>/logs`. Machine-specific: never
+    /// included in an export, and synced only when this device's `logFolder`
+    /// gate is on (TS `extractLogging` / `applySyncBlob`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_dir: Option<String>,
 }
@@ -670,8 +672,11 @@ pub struct AppSettings {
     pub sync: Option<serde_json::Value>,
     /// Transcribe-screen preferences (export format, display toggles, history
     /// retention). Frontend-owned opaque JSON like `sync` — Rust stores +
-    /// round-trips it, and reads exactly ONE key (`historyRetentionDays`, via
-    /// `transcribe_retention_days`) for the history pruning sweep. Was silently
+    /// round-trips it, and reads exactly THREE keys — `historyRetentionDays`
+    /// (`transcribe_retention_days`), `dictationRetentionDays`
+    /// (`dictation_retention_days`) and `keepDictationHistory`
+    /// (`keep_dictation_history`) — for the retention sweeps in transcripts.rs.
+    /// Renaming any of them on the TS side silently changes retention. Was silently
     /// DROPPED before this field existed (serde ignored the unknown key), so
     /// these preferences never survived a restart. `#[serde(default, skip…)]`
     /// so older configs load and an unset value round-trips byte-stable.
@@ -694,7 +699,7 @@ pub struct AppSettings {
 
 impl AppSettings {
     /// History retention window in days (0 = keep forever) from the opaque
-    /// `transcribe` blob — the one transcribe key Rust interprets.
+    /// `transcribe` blob — one of the three transcribe keys Rust interprets.
     pub fn transcribe_retention_days(&self) -> u32 {
         self.transcribe_days("historyRetentionDays", 0)
     }

@@ -55,7 +55,7 @@ export { DEFAULT_SYNC };
  *  — or with fields omitted by the backend's skip-empty serialization (e.g. an empty
  *  `recording.quickLaunch`) — still gets every field. Without this, a missing field is
  *  `undefined` at runtime and crashes code that assumes the typed shape. */
-function withSettingsDefaults(raw: unknown): AppSettings {
+export function withSettingsDefaults(raw: unknown): AppSettings {
   const s = (raw ?? {}) as Partial<AppSettings>;
   const recording = { ...DEFAULT_SETTINGS.recording, ...(s.recording ?? {}) };
   // This merge fills MISSING keys but cannot vouch for the type of a key that is PRESENT, and
@@ -94,7 +94,11 @@ function withSettingsDefaults(raw: unknown): AppSettings {
       ...DEFAULT_SYNC,
       ...(s.sync ?? {}),
       categories: completeCategories(s.sync?.categories),
-      sub: completeSub(s.sync?.sub, s.sync?.categories),
+      // The MIGRATED map, not the raw one: a pre-split `recording:false` /
+      // `general:false` only reaches the chip/dictionary members through the
+      // split-out keys completeCategories adds, and the completed gates are
+      // persisted in full — so a miss here was permanent.
+      sub: completeSub(s.sync?.sub, completeCategories(s.sync?.categories)),
       urlOverrides: { ...(s.sync?.urlOverrides ?? {}) },
     },
     logging: { ...DEFAULT_SETTINGS.logging!, ...(s.logging ?? {}) },
@@ -111,7 +115,8 @@ function completeSub(
   savedCategories: Partial<Record<SyncCategory, boolean>> | undefined,
 ): SyncSubSettings {
   const gates = completeGates(saved, savedCategories);
-  return { ...gates, recordingsDir: gates.audioFolder };
+  // Legacy keys written back so a downgraded app reads the same intent.
+  return { ...gates, recordingsDir: gates.audioFolder, latchAutoStop: gates.handsFreeAutoStop };
 }
 
 /** Fill missing category toggles — with a one-time split migration: a config

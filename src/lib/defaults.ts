@@ -1,9 +1,9 @@
-// Pure default values for settings + sync, extracted from store.ts so the
-// settings manifest can consume them without an import cycle (the manifest
-// needs defaults for changed-detection/reset; the store needs the manifest
-// for derived sync defaults). Imports ONLY types — keep it that way.
+// Pure default values for settings + sync, extracted from store.ts as pure
+// data: any module can read a default without pulling in the store. Imports
+// only types and the (equally pure) settings manifest.
 
 import type { AppSettings, SyncSettings } from "./types";
+import { DEFAULT_SETTING_SYNC } from "./settingsManifest";
 
 /** Sync starts off with every category opted in — flipping "Enable sync" is
  *  the single gate; the toggles then subtract. Machine-local by contract
@@ -23,9 +23,10 @@ export const DEFAULT_SYNC: SyncSettings = {
     fileTranscriptions: true,
     logging: true,
   },
-  // Every default preserves the pre-sub-toggle behavior exactly: the folder
-  // was never synced, chords always were; the Transcribe picks never were.
-  sub: { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: false },
+  // Derived from the manifest (the single source); `recordingsDir` is the
+  // legacy alias of `audioFolder`. A hand-written literal here outranks the
+  // manifest once persisted (a saved boolean reads as an explicit choice).
+  sub: { ...DEFAULT_SETTING_SYNC, recordingsDir: DEFAULT_SETTING_SYNC.audioFolder },
   urlOverrides: {},
 };
 

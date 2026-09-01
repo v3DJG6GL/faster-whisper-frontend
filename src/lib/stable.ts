@@ -1,6 +1,6 @@
-// Canonical JSON stringify, extracted from sync.ts so pure modules (the
-// settings manifest) can compare values without importing the sync engine
-// (which pulls in store/api). sync.ts re-exports this one.
+// Canonical JSON stringify, extracted from sync.ts so modules can compare
+// values without importing the sync engine (which pulls in store/api).
+// Consumers: useUnsavedGuard.ts, sync.ts (which re-exports this one).
 
 /** JSON.stringify with recursively sorted object keys, so semantically-equal
  *  values hash equal regardless of construction order. */
