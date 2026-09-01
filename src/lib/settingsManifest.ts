@@ -25,8 +25,6 @@ import type {
   SyncCategory,
   TranscribeSettings,
 } from "./types";
-import { DEFAULT_SETTINGS } from "./defaults";
-import { stableStringify } from "./stable";
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 
@@ -439,84 +437,6 @@ export function settingsOfCategory(cat: WireCategory): SettingDef[] {
 
 /* ── Value access (changed-detection / reset) ──────────────────────────── */
 
-/** Documented absent-means-default values for optional transcribe fields, so
- *  `{keepAudioCopies: true}` and `{}` compare equal (both are the default). */
-const TRANSCRIBE_IMPLICIT: Partial<Record<keyof TranscribeSettings, unknown>> = {
-  keepDictationHistory: true,
-  dictationRetentionDays: 7,
-  keepAudioCopies: true,
-  keepUrlAudioCopies: true,
-  historyRetentionDays: 0,
-  numSpeakers: 0,
-};
-
-export function readField(s: AppSettings, ref: FieldRef): unknown {
-  switch (ref.slice) {
-    case "general":
-      return s.general[ref.key];
-    case "recording":
-      return s.recording[ref.key];
-    case "transcribe":
-      return s.transcribe?.[ref.key] ?? TRANSCRIBE_IMPLICIT[ref.key];
-    case "logging":
-      return s.logging?.[ref.key];
-    case "settings":
-      return s[ref.key];
-  }
-}
-
-export function defaultOf(ref: FieldRef): unknown {
-  return readField(DEFAULT_SETTINGS, ref);
-}
-
-/** Does any of the setting's fields differ from its default? List-arm rows
- *  (custom, no fields) are never "changed" — their data isn't a scalar. */
-export function isChanged(s: AppSettings, def: SettingDef): boolean {
-  if (def.fields.length === 0) return false;
-  return def.fields.some(
-    (ref) => stableStringify(readField(s, ref) ?? null) !== stableStringify(defaultOf(ref) ?? null),
-  );
-}
-
-/** Store patches that reset a setting to its defaults, per slice — apply via
- *  the matching store setters (updateGeneral/updateRecording/…). */
-export interface ResetPatch {
-  general?: Partial<GeneralSettings>;
-  recording?: Partial<RecordingSettings>;
-  transcribe?: Partial<TranscribeSettings>;
-  logging?: Partial<LoggingSettings>;
-  settings?: Partial<Pick<AppSettings, "theme" | "homeProfileId" | "quickAddList">>;
-}
-
-export function patchFor(defs: readonly SettingDef[]): ResetPatch {
-  const patch: ResetPatch = {};
-  for (const def of defs) {
-    for (const ref of def.fields) {
-      const value = defaultOf(ref);
-      switch (ref.slice) {
-        case "general":
-          (patch.general ??= {})[ref.key] = value as never;
-          break;
-        case "recording":
-          (patch.recording ??= {})[ref.key] = value as never;
-          break;
-        case "transcribe":
-          (patch.transcribe ??= {})[ref.key] = value as never;
-          break;
-        case "logging":
-          (patch.logging ??= {})[ref.key] = value as never;
-          break;
-        case "settings":
-          (patch.settings ??= {})[ref.key] = value as never;
-          break;
-      }
-    }
-  }
-  return patch;
-}
-
-/* ── Sync gates (per-setting toggles) ──────────────────────────────────── */
-
 /** Complete a persisted (possibly older-version) gate set to one boolean per
  *  manifest entry. Precedence, lowest to highest:
  *  1. manifest defaults (on unless machine-specific);
@@ -553,30 +473,3 @@ export function completeGates(
   return gates;
 }
 
-/** Snapshot of a setting's current values (for undo after a reset). */
-export function snapshotOf(s: AppSettings, defs: readonly SettingDef[]): ResetPatch {
-  const patch: ResetPatch = {};
-  for (const def of defs) {
-    for (const ref of def.fields) {
-      const value = readField(s, ref);
-      switch (ref.slice) {
-        case "general":
-          (patch.general ??= {})[ref.key] = value as never;
-          break;
-        case "recording":
-          (patch.recording ??= {})[ref.key] = value as never;
-          break;
-        case "transcribe":
-          (patch.transcribe ??= {})[ref.key] = value as never;
-          break;
-        case "logging":
-          (patch.logging ??= {})[ref.key] = value as never;
-          break;
-        case "settings":
-          (patch.settings ??= {})[ref.key] = value as never;
-          break;
-      }
-    }
-  }
-  return patch;
-}

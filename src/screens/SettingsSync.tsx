@@ -56,20 +56,17 @@ const OTHER_BUCKET = IS_WINDOWS ? ("linux" as const) : ("windows" as const);
  *  error boundary in the app that unmounts the whole window. */
 const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
-/** `group` renders as a slim header over consecutive rows sharing it — the
- *  Recording & history TAB's groups become independently toggleable rows
- *  under one heading, instead of one catch-all toggle. */
-const CATEGORY_META: { key: SyncCategory; title: string; desc: string; group?: string }[] = [
+/** Category descriptions for the import preview and the restore dialog (the Sync
+ *  list itself renders per-setting switches from the manifest). */
+const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
   { key: "general", title: "General", desc: "Theme, insertion, sounds, launch at login." },
   {
     key: "recording",
-    group: "Recording & history",
     title: "Dictation",
     desc: "Save dictation audio, silence trim, the dictation history & retention clock, system-audio mute, hands-free auto-stop.",
   },
   {
     key: "fileTranscriptions",
-    group: "Recording & history",
     title: "File transcriptions",
     desc: "History retention and audio copies.",
   },

@@ -190,14 +190,3 @@ export const APP_RULE_PASTE_FIELDS = ["pasteShortcut"] as const;
 export const APP_RULE_LOCAL_ONLY_FIELDS = ["autoEnter"] as const;
 /** The per-Profile insertion overrides the Profiles field switch governs. */
 export const PROFILE_INSERTION_FIELDS = ["typeAsISpeak", "insertionOverrides"] as const;
-
-/** Sanity guard used by tests: every non-custom manifest field of a scalar
- *  category must be gateable (its def id present in Gates). */
-export function scalarCategoryFieldMap(): Record<string, string[]> {
-  const map: Record<string, string[]> = {};
-  for (const d of DEFS) {
-    if (d.custom || !SCALAR_CATS.includes(d.category)) continue;
-    map[d.id] = d.fields.map((r) => r.key);
-  }
-  return map;
-}

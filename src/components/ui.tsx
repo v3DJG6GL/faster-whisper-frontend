@@ -12,7 +12,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, ArrowLeft, Check, Minus, MoreHorizontal, Plus } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { languageLabel } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
@@ -442,78 +442,6 @@ export function DisclosureCard({
       {open && (
         <div id={panelId} className={cn(nested ? "p-3.5" : "p-5", bodyClassName)}>
           {children}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ── Row overflow menu (⋯) ────────────────────────────────────────────── */
-
-export interface RowMenuItem {
-  label: string;
-  onSelect: () => void;
-  disabled?: boolean;
-  danger?: boolean;
-}
-
-/** A small "⋯" popover menu for row/group-level secondary actions (reset
- *  tiers on the Sync list). Absolute dropdown inside its own relative
- *  wrapper; Escape and click-away close it. */
-export function RowMenu({ items, ariaLabel }: { items: RowMenuItem[]; ariaLabel: string }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  return (
-    <div ref={rootRef} className="relative shrink-0">
-      <button
-        type="button"
-        aria-label={ariaLabel}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className="ring-signal grid size-7 place-items-center rounded-lg text-faint hover:bg-surface-2 hover:text-text"
-      >
-        <MoreHorizontal className="size-4" />
-      </button>
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 top-8 z-30 min-w-[200px] rounded-xl border border-line-strong bg-panel p-1 shadow-lg"
-        >
-          {items.map((it) => (
-            <button
-              key={it.label}
-              type="button"
-              role="menuitem"
-              disabled={it.disabled}
-              onClick={() => {
-                setOpen(false);
-                it.onSelect();
-              }}
-              className={cn(
-                "ring-signal block w-full rounded-lg px-3 py-1.5 text-left text-[12.5px] font-medium",
-                it.danger ? "text-rec hover:bg-rec/10" : "text-dim hover:bg-surface-2 hover:text-text",
-                it.disabled && "cursor-not-allowed opacity-40 hover:bg-transparent",
-              )}
-            >
-              {it.label}
-            </button>
-          ))}
         </div>
       )}
     </div>

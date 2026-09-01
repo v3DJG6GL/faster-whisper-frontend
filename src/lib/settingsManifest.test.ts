@@ -10,15 +10,10 @@ import {
   SYNC_GROUPS,
   TOP_COVERAGE,
   TRANSCRIBE_COVERAGE,
-  isChanged,
-  patchFor,
   settingsOfGroup,
-  snapshotOf,
   type FieldRef,
   type SettingDef,
 } from "./settingsManifest";
-import { DEFAULT_SETTINGS } from "./defaults";
-import type { AppSettings } from "./types";
 
 const DEFS: readonly SettingDef[] = MANIFEST;
 
@@ -111,47 +106,6 @@ describe("manifest integrity", () => {
     expect(DEFAULT_SETTING_SYNC.profileHotkeys).toBe(true);
     expect(DEFAULT_SETTING_SYNC.quickAddHotkey).toBe(true);
     expect(DEFAULT_SETTING_SYNC.transcribePicks).toBe(false);
-  });
-});
-
-describe("changed-detection and reset", () => {
-  const base: AppSettings = structuredClone(DEFAULT_SETTINGS);
-
-  it("defaults read as unchanged, including absent-means-default transcribe flags", () => {
-    for (const d of DEFS) expect(isChanged(base, d), d.id).toBe(false);
-    // Absent vs explicitly-default transcribe values compare equal.
-    const explicit = { ...base, transcribe: { keepAudioCopies: true, historyRetentionDays: 0 } };
-    expect(isChanged(explicit, SETTING.keepAudioCopies)).toBe(false);
-    expect(isChanged(explicit, SETTING.transcriptionRetention)).toBe(false);
-  });
-
-  it("a changed field marks exactly its owning setting", () => {
-    const s = structuredClone(base);
-    s.recording.trimSilence = false;
-    expect(isChanged(s, SETTING.trimSilence)).toBe(true);
-    expect(isChanged(s, SETTING.keepDictationAudio)).toBe(false);
-    const changed = DEFS.filter((d) => isChanged(s, d)).map((d) => d.id);
-    expect(changed).toEqual(["trimSilence"]);
-  });
-
-  it("multi-field settings change when any owned field changes", () => {
-    const s = structuredClone(base);
-    s.recording.realtimePreviewOnHover = true; // second field of liveTranscript
-    expect(isChanged(s, SETTING.liveTranscript)).toBe(true);
-  });
-
-  it("patchFor resets every owned field; snapshotOf captures for undo", () => {
-    const s = structuredClone(base);
-    s.recording.recordingsRetentionDays = 30;
-    s.transcribe = { dictationRetentionDays: 99 };
-    const snap = snapshotOf(s, [SETTING.dictationRetention]);
-    expect(snap.recording?.recordingsRetentionDays).toBe(30);
-    expect(snap.transcribe?.dictationRetentionDays).toBe(99);
-    const patch = patchFor([SETTING.dictationRetention]);
-    expect(patch.recording?.recordingsRetentionDays).toBe(
-      DEFAULT_SETTINGS.recording.recordingsRetentionDays,
-    );
-    expect(patch.transcribe?.dictationRetentionDays).toBe(7); // documented implicit default
   });
 });
 
