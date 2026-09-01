@@ -56,6 +56,7 @@ function Editor({
   const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
   const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
+  const globalTypeAsISpeak = useApp((s) => s.settings.general.typeAsISpeak);
   // A low-level backend owns the chords when evdev is enabled AND permitted (Linux) or always on
   // Windows (the hook backend) — same gate as the Settings quick-add row, so both rebind surfaces
   // accept the same chords (useHotkeyCapture commits modifier-only / AltGr chords ONLY then).
@@ -476,6 +477,13 @@ function Editor({
               value={p.translationOverrides}
               onChange={(v) => set({ translationOverrides: v })}
               caps={caps}
+              // Resolved the same way the session will resolve it: the profile's own
+              // opinion, else the Dictation-tab default — and only on a streaming
+              // endpoint, since batch has no live phrases to translate one at a time.
+              liveInsert={
+                (p.typeAsISpeak ?? globalTypeAsISpeak) &&
+                (p.endpoint ?? backend?.endpoint) !== "batch"
+              }
               inheritLabel={
                 backend?.translationOverrides?.model
                   ? backend.translationOverrides.model

@@ -22,6 +22,23 @@
 import type { TextTranslationResult } from "./api";
 import type { BatchProgress } from "./types";
 
+/** The translation mode a dictation request must use.
+ *
+ *  A LIVE phrase is always faithful, whatever the profile asks for. Live sends
+ *  `[...context, phrase]` and consumes ONLY THE LAST result; fluent is sentence-MERGED, so
+ *  the server may fold the phrase's opening clause into the preceding context segment —
+ *  which is then discarded, and the user gets a beheaded translation. It bites per target,
+ *  so one language can arrive whole while another is truncated from the same request.
+ *
+ *  The one-shot path keeps the profile's choice: it translates the whole transcript in one
+ *  call and consumes every segment, so merging is a benefit there rather than a hazard. */
+export function translateModeFor(
+  oneShot: boolean,
+  configured: "fluent" | "faithful" | undefined,
+): "fluent" | "faithful" | undefined {
+  return oneShot ? configured : "faithful";
+}
+
 /** Why the translation didn't land. Recorded per session so the failure
  *  doorway can name the cause instead of blaming the server for a race we
  *  lost. */

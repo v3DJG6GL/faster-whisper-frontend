@@ -177,6 +177,7 @@ export function TranslationDefaultsEditor({
   onChange,
   caps,
   inheritLabel,
+  liveInsert,
 }: {
   value: TranslationOverrides | undefined;
   onChange: (next: TranslationOverrides | undefined) => void;
@@ -184,6 +185,10 @@ export function TranslationDefaultsEditor({
   caps: Capabilities | null;
   /** What an empty field falls back to — "server config" or "backend". */
   inheritLabel: string;
+  /** Will this profile insert phrase-by-phrase? Live translation is forced to Faithful —
+   *  see `translateModeFor` — so the Mode control is inert and says so rather than
+   *  offering a choice that quietly doesn't apply. */
+  liveInsert?: boolean;
 }) {
   const v = value ?? {};
   const patch = (p: Partial<TranslationOverrides>) => {
@@ -223,7 +228,8 @@ export function TranslationDefaultsEditor({
         <div>
           <div className="mb-1.5 text-[12px] font-medium text-dim">Mode</div>
           <Segmented
-            value={v.mode ?? "inherit"}
+            value={liveInsert ? "faithful" : v.mode ?? "inherit"}
+            disabled={liveInsert}
             onChange={(m) =>
               patch({ mode: m === "inherit" ? undefined : (m as "fluent" | "faithful") })
             }
@@ -234,6 +240,18 @@ export function TranslationDefaultsEditor({
             ]}
             ariaLabel="Translation mode"
           />
+          {liveInsert && (
+            // Full contrast, not dimmed with the control: the reason is the one thing on a
+            // dead row that has to stay readable (the same rule SettingRow's disabledReason
+            // follows). Shows the stored value so switching this profile back to
+            // insert-on-stop makes plain what it will return to.
+            <div className="mt-1.5 text-[12px] text-warn">
+              Always Faithful while “Type as I speak” is on — a live phrase is translated on
+              its own, and Fluent merges sentences across it, which can drop the opening
+              clause. {v.mode ? `Set to ${v.mode}; applies` : "Applies"} when this profile
+              inserts on stop.
+            </div>
+          )}
         </div>
       </div>
       <div>

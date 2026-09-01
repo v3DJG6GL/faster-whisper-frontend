@@ -54,6 +54,7 @@ import {
 import {
   newAbortHandle,
   runDictationTranslate,
+  translateModeFor,
   type TranslateFailure,
 } from "./dictationTranslate";
 import { newCaptureIdBook } from "./captureIds";
@@ -442,7 +443,20 @@ async function maybeTranslate(
         includeOriginal: tr.includeOriginal,
         model: tr.model,
         glossary: tr.glossary,
-        mode: tr.mode,
+        // A LIVE phrase is always translated faithfully, whatever the profile asks for.
+        //
+        // Live sends `[...context, phrase]` and consumes ONLY THE LAST result. Fluent mode
+        // is sentence-MERGED, so the server may redistribute a sentence across output
+        // segments — and when it folds the phrase's opening clause into the preceding
+        // context segment, that segment is discarded and the user gets a beheaded
+        // translation ("…überprüft, und dabei…"). It shows up per-target, so one language
+        // can arrive whole while another is truncated from the same request.
+        //
+        // The one-shot path keeps the profile's choice: it translates the WHOLE transcript
+        // in one call and consumes every segment, so merging is a benefit there, not a
+        // hazard. `mode` is therefore a stop-timing setting in practice — the Profile
+        // editor greys it out and says so when this session types as it speaks.
+        mode: translateModeFor(oneShot, tr.mode),
         contextSegments: tr.contextSegments,
         serverUrl: tr.serverUrl,
         backendId: tr.backendId,

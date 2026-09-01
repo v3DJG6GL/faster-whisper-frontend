@@ -4,6 +4,7 @@
 // cancel. Transport is injected as parameters (nothing here mocks Tauri).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  translateModeFor,
   CEILING_FLOOR_LIVE_MS, CEILING_FLOOR_ONESHOT_MS, STALL_COLD_MS, STALL_WARM_MS,
   newAbortHandle, pricedMs, runDictationTranslate, translateCeilingMs, translateStallMs,
   type DictationTranslateRequest, type TranslateDeps,
@@ -105,6 +106,26 @@ describe("translateStallMs", () => {
 
   it("is impatient once the model is known resident", () => {
     expect(translateStallMs(true)).toBe(STALL_WARM_MS);
+  });
+});
+
+describe("translateModeFor", () => {
+  it("forces faithful for a LIVE phrase, whatever the profile configured", () => {
+    // Live consumes only the LAST of `[...context, phrase]`. Fluent is sentence-merged, so
+    // the server may fold the phrase's opening clause into the preceding context segment —
+    // which is discarded, beheading the translation. Seen in the wild as one language
+    // arriving whole and another truncated from the SAME request.
+    expect(translateModeFor(false, "fluent")).toBe("faithful");
+    expect(translateModeFor(false, "faithful")).toBe("faithful");
+    expect(translateModeFor(false, undefined)).toBe("faithful");
+  });
+
+  it("keeps the profile's choice for the one-shot, which consumes every segment", () => {
+    expect(translateModeFor(true, "fluent")).toBe("fluent");
+    expect(translateModeFor(true, "faithful")).toBe("faithful");
+    // undefined stays undefined so the SERVER's default still applies — not silently
+    // pinned to one of the two by passing through this helper.
+    expect(translateModeFor(true, undefined)).toBeUndefined();
   });
 });
 
