@@ -11,6 +11,13 @@ import { MicroLabel, Segmented, Stepper, TextArea } from "./ui";
 
 export const TRANSLATION_MAX_TARGETS = 8;
 
+/** Drop the known source language from a target list — a source→source stage
+ *  is a no-op run. "auto" is not a known source, so nothing is pruned. */
+export function pruneTargets(targets: string[], source: string): string[] {
+  if (!source || source === "auto") return targets;
+  return targets.filter((c) => c !== source);
+}
+
 export function TranslationTargetChips({
   value,
   onChange,

@@ -11,7 +11,7 @@ import {
 import { DecodeFields } from "@/components/DecodeFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
-import { TranslationOptionsFields } from "@/components/TranslationFields";
+import { TranslationOptionsFields, pruneTargets } from "@/components/TranslationFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { TranscriptViewer, speakersOf } from "@/components/TranscriptViewer";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -57,6 +57,7 @@ const STUDIO_MIN_WINDOW = 1400;
 function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | null)[] }) {
   const trRuns = useApp((s) => s.trRuns);
   const records = useTranscriptHistory((s) => s.records);
+  const running = useTranscribeRun((s) => s.running); // openHistoryRecord refuses mid-run
   const entries = Object.entries(trRuns).filter(([k]) => !excludeKeys.includes(k));
   if (entries.length === 0) return null;
   return (
@@ -81,7 +82,7 @@ function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | null)[] })
             </span>
             <span className="flex-1" />
             {rec && (
-              <Button variant="ghost" size="sm" onClick={() => openHistoryRecord(rec)}>
+              <Button variant="ghost" size="sm" disabled={running} onClick={() => openHistoryRecord(rec)}>
                 Open
               </Button>
             )}
@@ -163,6 +164,17 @@ const RAIL_DESCRIPTIONS: Record<RailStage, string> = {
   translating: "Translates the finished segments into your target languages.",
 };
 
+/** Why a stage the run asked for did not happen — one sentence per stage. The
+ *  old two-way branch predated `translating`/`downloading` on the rail and
+ *  printed the diarization sentence for both. */
+export const SKIPPED_EXPLANATIONS: Record<RailStage, string> = {
+  downloading: " — the server already had the media.",
+  separating: " — transcribing the original audio instead.",
+  transcribing: "",
+  diarizing: " — segments stay unlabeled.",
+  translating: " — the transcript stays in its source language.",
+};
+
 /** Timeline-strip identity: a muted hue and a compact lowercase axis name
  *  per stage. Identity is carried by position + name — hue is redundant
  *  reinforcement, never the only channel. */
@@ -207,7 +219,7 @@ function axisTextWidth(text: string): number {
  *  longer leader tick. A label that would run past the strip's right edge is
  *  pulled left to end exactly at it (`offset` ≤ 0, applied relative to its
  *  column). `px` are segment widths, `labelPx` measured label widths. */
-function axisLayout(
+export function axisLayout(
   px: number[],
   labelPx: number[],
   totalW: number,
@@ -221,7 +233,9 @@ function axisLayout(
     const xl = Math.min(x, Math.max(totalW - labelPx[i], 0));
     const clamped = xl < x - 0.5;
     const fitsOwn = (labelPx[i] <= w - 2 || i === px.length - 1) && !clamped;
+    const maxStart = Math.max(totalW - labelPx[i], 0);
     let row: 0 | 1;
+    let xUse = xl;
     if (fitsOwn && xl >= topEnd) {
       row = 0;
       topEnd = xl + labelPx[i] + 16;
@@ -229,10 +243,16 @@ function axisLayout(
       row = 1;
       dropEnd = xl + labelPx[i] + 16;
     } else {
-      row = 0;
-      topEnd = xl + labelPx[i] + 16;
+      // Neither row is clear at xl: take the row that frees up first and
+      // start where it ends, so the label is pushed right instead of printed
+      // through its predecessor (two tiny early stages at the 5px floor).
+      const useTop = topEnd <= dropEnd;
+      row = useTop ? 0 : 1;
+      xUse = Math.min(Math.max(xl, useTop ? topEnd : dropEnd), maxStart);
+      if (useTop) topEnd = xUse + labelPx[i] + 16;
+      else dropEnd = xUse + labelPx[i] + 16;
     }
-    out.push({ row, offset: xl - x });
+    out.push({ row, offset: xUse - x });
     x += w + 2;
   });
   return out;
@@ -411,11 +431,26 @@ export default function Transcribe() {
   // The store boots with a seeded backend, then config hydration (and later edits/removals)
   // can replace the list with different ids. Re-sync the selection when the current id falls
   // out of the list, so the Backend dropdown and language don't reference a backend that's gone.
+  // Every pick that names something on ONE server: the per-run whisper model,
+  // a server override-profile, and the three stage-model ids. They must all
+  // fall away together whenever the backend under the screen changes, or the
+  // run ships ids the new server doesn't have (invisible when its picker
+  // renders only for >1 advertised model).
+  const clearBackendScopedPicks = () => {
+    setModel("");
+    setRunOverrideProfile("");
+    setSeparationModel("");
+    setDiarizationModel("");
+    setTranslationModel("");
+  };
   useEffect(() => {
     if (backends.length && !backends.some((b) => b.id === backendId)) {
       setBackendId(backends[0].id);
       setLanguage(backends[0].language ?? "auto");
+      clearBackendScopedPicks();
+      persistOptions({ backendId: backends[0].id, model: "", translationModel: "" });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the resets are stable setters
   }, [backends, backendId]);
 
   const backend = backends.find((b) => b.id === backendId) ?? backends[0];
@@ -983,12 +1018,13 @@ export default function Transcribe() {
               // results, else the prior backend's transcript/error shows under the new selection.
               resetForInputChange();
               setBackendId(v);
-              setModel(""); // a per-run model pick belongs to ONE backend
-              setRunOverrideProfile(""); // so does a server-profile name
+              clearBackendScopedPicks(); // model, profile and stage models all name ONE server
               const b = backends.find((x) => x.id === v);
               const lang = b?.language ?? "auto";
               if (b) setLanguage(lang);
-              persistOptions({ backendId: v, model: "", language: lang });
+              const nextT = pruneTargets(translateTo, lang);
+              if (nextT.length !== translateTo.length) setTranslateTo(nextT);
+              persistOptions({ backendId: v, model: "", translationModel: "", language: lang, translateTo: nextT });
             }}
             options={backendOptions(backends)}
           />
@@ -1038,7 +1074,11 @@ export default function Transcribe() {
             onChange={(v) => {
               resetForInputChange();
               setLanguage(v);
-              persistOptions({ backendId, language: v });
+              // The seed never targets the known source; keep that true when the
+              // source changes AFTER seeding (a de→de stage is a no-op run).
+              const next = pruneTargets(translateTo, v);
+              if (next.length !== translateTo.length) setTranslateTo(next);
+              persistOptions({ backendId, language: v, translateTo: next });
             }}
           />
         </div>
@@ -1893,9 +1933,7 @@ export default function Transcribe() {
                       {state === "skipped" && (
                         <div className="mt-0.5 text-[12px] text-dim">
                           <span className="text-warn">Not enabled on this server</span>
-                          {st === "separating"
-                            ? " — transcribing the original audio instead."
-                            : " — segments stay unlabeled."}
+                          {SKIPPED_EXPLANATIONS[st]}
                         </div>
                       )}
                       {frac !== null && (
@@ -2340,17 +2378,22 @@ export default function Transcribe() {
               <div
                 key={rec.id}
                 role="button"
-                tabIndex={0}
+                tabIndex={busy ? -1 : 0}
+                aria-disabled={busy || undefined}
+                title={busy ? "Finish or cancel the run to open a past transcript" : undefined}
                 aria-current={isOpen || undefined}
-                onClick={() => openHistoryRecord(rec)}
+                onClick={() => {
+                  if (!busy) openHistoryRecord(rec);
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
+                  if (!busy && (e.key === "Enter" || e.key === " ")) {
                     e.preventDefault();
                     openHistoryRecord(rec);
                   }
                 }}
                 className={cn(
-                  "flex cursor-pointer items-center gap-3 px-5 py-2.5 hover:bg-text/[0.03]",
+                  "flex items-center gap-3 px-5 py-2.5",
+                  busy ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-text/[0.03]",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60",
                   i < recentRecords.length - 1 && "border-b border-line",
                   isOpen && "bg-accent-soft/40",
