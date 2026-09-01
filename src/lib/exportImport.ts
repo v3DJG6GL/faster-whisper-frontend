@@ -2,7 +2,7 @@
 // apply core so a file round-trip and a server sync agree on exactly what
 // travels (same categories, same machine-local exclusions).
 
-import { useApp } from "./store";
+import { CONFIG_VERSION, useApp } from "./store";
 import { appVersion, exportSettingsFile, syncDeviceInfo } from "./api";
 import { ALL_CATEGORIES, applyBlob, composeBlob, migrateBlob } from "./sync";
 import type { SyncCategory } from "./types";
@@ -29,7 +29,7 @@ export async function buildEnvelope(includeSecrets: boolean): Promise<ExportEnve
   const device = await syncDeviceInfo();
   return {
     formatVersion: 1,
-    configVersion: 2,
+    configVersion: CONFIG_VERSION,
     appVersion: await appVersion(),
     createdAt: new Date().toISOString(),
     hostname: device?.hostname ?? "",

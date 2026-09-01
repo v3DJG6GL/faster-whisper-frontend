@@ -1019,13 +1019,17 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
                 .into(),
         );
     }
+    // Keep in sync with the frontend's `CONFIG_VERSION` (src/lib/store.ts) — the
+    // envelope now carries that value, and warning on `> 2` would flag our own
+    // exports as foreign.
+    const CURRENT_CONFIG_VERSION: u32 = 3;
     let config_version = doc
         .get("configVersion")
         .and_then(|v| v.as_u64())
         .unwrap_or(2) as u32;
 
     let mut warnings: Vec<String> = Vec::new();
-    if config_version > 2 {
+    if config_version > CURRENT_CONFIG_VERSION {
         warnings.push(
             "The file uses a newer settings schema — unknown settings will be skipped.".into(),
         );

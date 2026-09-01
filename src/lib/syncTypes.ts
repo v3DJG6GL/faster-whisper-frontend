@@ -202,7 +202,9 @@ export interface SyncBlob {
 /** The export-file envelope (single pretty-printed JSON file). */
 export interface ExportEnvelope {
   formatVersion: 1;
-  configVersion: 2;
+  /** The app's `CONFIG_VERSION` at write time — lets an older build warn that
+   *  the file's schema is newer than the one it understands. */
+  configVersion: number;
   appVersion: string;
   createdAt: string; // ISO 8601
   hostname: string;
