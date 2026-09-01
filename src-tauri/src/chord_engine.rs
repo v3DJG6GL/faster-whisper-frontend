@@ -37,7 +37,35 @@ pub const QUICK_ADD_GRACE: Duration = Duration::from_millis(500);
 pub enum ChordKind {
     Hold { profile_id: String },
     HandsFree { profile_id: String },
+
     QuickAdd,
+}
+
+/// Allocation-free discriminant for the per-keystroke dispatch: `step` runs for
+/// every key transition system-wide, and cloning `ChordKind` there heap-allocates
+/// a `String` per chord per event (see the `fully` scratch comment).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KindTag {
+    Hold,
+    HandsFree,
+    QuickAdd,
+}
+
+impl ChordKind {
+    fn tag(&self) -> KindTag {
+        match self {
+            ChordKind::Hold { .. } => KindTag::Hold,
+            ChordKind::HandsFree { .. } => KindTag::HandsFree,
+            ChordKind::QuickAdd => KindTag::QuickAdd,
+        }
+    }
+    /// The owning profile ("" for quick-add) — cloned only at a fire site.
+    fn profile(&self) -> &str {
+        match self {
+            ChordKind::Hold { profile_id } | ChordKind::HandsFree { profile_id } => profile_id,
+            ChordKind::QuickAdd => "",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -168,23 +196,25 @@ impl Engine {
             let rising = fully && !self.fully_prev[i];
             let falling = !fully && self.fully_prev[i];
             let sup_fully = self.supersets[i].iter().any(|&j| self.fully[j]);
-            match self.chords[i].kind.clone() {
-                ChordKind::Hold { profile_id } => {
+            match self.chords[i].kind.tag() {
+                KindTag::Hold => {
                     if rising && !sup_fully && !self.active[i] {
                         self.active[i] = true;
                         self.started_at[i] = Some(now);
-                        out.push(Fire::Start(profile_id));
+                        out.push(Fire::Start(self.chords[i].kind.profile().to_string()));
                     } else if falling && self.active[i] {
                         self.active[i] = false;
                         self.started_at[i] = None;
-                        out.push(Fire::Stop(profile_id));
+                        out.push(Fire::Stop(self.chords[i].kind.profile().to_string()));
                     }
                     // Suppression by a superset (fully stays true) is NOT a stop,
                     // and suppression-lift is NOT a start — supersets act through
                     // their own arms below; the hold reacts only to its own edges.
                 }
-                ChordKind::HandsFree { profile_id } => {
-                    let on = fully && !sup_fully;
+                KindTag::HandsFree => {
+                    // Edge, not level: a chord that completed while suppressed by a
+                    // strict superset must stay silent — suppression-lift is NOT a start.
+                    let on = rising && !sup_fully;
                     if on && !self.active[i] {
                         self.active[i] = true;
                         if let Some(r) = self.active_hold_subset(i) {
@@ -194,9 +224,9 @@ impl Engine {
                             if let ChordKind::Hold { profile_id: root } = &self.chords[r].kind {
                                 out.push(Fire::ReleaseHold(root.clone()));
                             }
-                            out.push(Fire::Reclassify(profile_id));
+                            out.push(Fire::Reclassify(self.chords[i].kind.profile().to_string()));
                         } else {
-                            out.push(Fire::Toggle(profile_id));
+                            out.push(Fire::Toggle(self.chords[i].kind.profile().to_string()));
                         }
                     } else if !fully {
                         // Re-arm on a real RELEASE only — not when a superset chord
@@ -204,8 +234,8 @@ impl Engine {
                         self.active[i] = false;
                     }
                 }
-                ChordKind::QuickAdd => {
-                    let on = fully && !sup_fully;
+                KindTag::QuickAdd => {
+                    let on = rising && !sup_fully;
                     if on && !self.active[i] {
                         self.active[i] = true;
                         match self.active_hold_subset(i) {
@@ -395,6 +425,33 @@ mod tests {
             &[(&[CTRL_R], t), (&[CTRL_R, CTRL_L], t), (&[CTRL_R, CTRL_L, SHIFT_L], t), (&[], t)],
         );
         assert_eq!(fires, vec![Fire::OpenQuickAdd]);
+    }
+
+
+    /// The lift of a superset-only key must not fire the nested chord: only the
+    /// Hold arm was edge-gated; HandsFree/QuickAdd used the level and fired on
+    /// suppression-lift (dictation starting behind a just-opened quick-add window).
+    #[test]
+    fn suppression_lift_does_not_fire_handsfree_or_quick_add() {
+        let t = Instant::now();
+        // hands-free nested in quick-add: lifting the extra key must not toggle dictation.
+        let mut e = Engine::new(vec![
+            ChordSpec { keys: vec![CTRL_L, SHIFT_L], kind: ChordKind::HandsFree { profile_id: "hf".into() } },
+            ChordSpec { keys: vec![CTRL_L, SHIFT_L, SPACE], kind: ChordKind::QuickAdd },
+        ]);
+        assert_eq!(
+            run(&mut e, &[(&[SPACE], t), (&[SPACE, CTRL_L], t), (&[SPACE, CTRL_L, SHIFT_L], t), (&[CTRL_L, SHIFT_L], t), (&[], t)]),
+            vec![Fire::OpenQuickAdd]
+        );
+        // quick-add nested in hands-free: lifting the extra key must not open the window.
+        let mut e2 = Engine::new(vec![
+            ChordSpec { keys: vec![CTRL_L, SHIFT_L, SPACE], kind: ChordKind::QuickAdd },
+            ChordSpec { keys: vec![CTRL_L, SHIFT_L, SPACE, KEY_H], kind: ChordKind::HandsFree { profile_id: "hf".into() } },
+        ]);
+        assert_eq!(
+            run(&mut e2, &[(&[KEY_H], t), (&[KEY_H, CTRL_L], t), (&[KEY_H, CTRL_L, SHIFT_L], t), (&[KEY_H, CTRL_L, SHIFT_L, SPACE], t), (&[CTRL_L, SHIFT_L, SPACE], t), (&[], t)]),
+            vec![Fire::Toggle("hf".into())]
+        );
     }
 
     #[test]
