@@ -125,6 +125,14 @@ describe("foldProgress stage clocks (the phantom-transcribe regression)", () => 
     foldProgress({ stage, ...extra });
   };
 
+  it("the request-entry 'waiting' seed never teaches the transcribe realtime factor", () => {
+    _resetStageRtfForTests();
+    const before = stageEstimateMs("transcribing", 1000);
+    at(0, "waiting", { duration: 1000 }); // phantom transcribing clock
+    at(11_000, "resolving", { duration: 1000 }); // closes it 11 s later with a duration
+    expect(stageEstimateMs("transcribing", 1000)).toBe(before); // not ~11 s
+  });
+
   it("re-entering a closed stage restarts its clock (the request-entry" +
      " 'waiting' seeds a transcribing clock the first real stage closes)", () => {
     // The live-run sequence from the server log, in seconds:

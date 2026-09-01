@@ -21,4 +21,14 @@ describe("buildEnvelope", () => {
     expect(env.configVersion).toBe(CONFIG_VERSION);
     expect(env.formatVersion).toBe(1);
   });
+  it("carries the Transcribe screen's last-used server, model and language", async () => {
+    const { useApp } = await import("./store");
+    const s = useApp.getState().settings;
+    useApp.setState({ settings: { ...s, transcribe: { ...s.transcribe, backendId: "b1", model: "m", language: "en" } } });
+    const { buildEnvelope } = await import("./exportImport");
+    const tr = (await buildEnvelope(false)).categories.transcription as Record<string, unknown>;
+    expect(tr.backendId).toBe("b1");
+    expect(tr.model).toBe("m");
+    expect(tr.language).toBe("en");
+  });
 });

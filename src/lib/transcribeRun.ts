@@ -826,6 +826,11 @@ export function foldProgress(p: BatchProgress) {
     const now = Date.now();
     const prev = s.progress ? railOf(s.progress.stage) : null;
     const cur = railOf(p.stage);
+    // "waiting" is the registry's request-entry seed, not evidence the
+    // transcribe row ran: it must not stamp a clock `observed`, or the phantom
+    // span it opens is fed to learnStageRtf by the first real stage (a
+    // realtime factor of hundreds → every later transcribe estimate ~0).
+    const obs = p.stage !== "waiting";
     let stageTimes = s.stageTimes;
     // Every poll marks its stage observed — a stage whose clock only ever got
     // seeded (never polled) is one the server jumped over.
@@ -850,9 +855,9 @@ export function foldProgress(p: BatchProgress) {
       const existing = stageTimes[cur];
       stageTimes[cur] =
         existing && !existing.end
-          ? { ...existing, observed: true }
-          : { start: now, observed: true };
-    } else if (!stageTimes[cur]?.observed) {
+          ? { ...existing, observed: existing.observed || obs }
+          : { start: now, observed: obs };
+    } else if (obs && !stageTimes[cur]?.observed) {
       stageTimes = {
         ...stageTimes,
         [cur]: { start: now, ...stageTimes[cur], observed: true },
@@ -1063,6 +1068,10 @@ async function pump(
         stageMeta: {},
         stageTimes: { [first]: { start: fileT0 } },
       });
+      // The epoch does not change between files of one run, so it cannot tell
+      // this file's polls from the previous file's last in-flight one — a late
+      // answer would open the previous file's stage on the next file's clocks.
+      let pollingDone = false;
       const poller = pid
         ? window.setInterval(() => {
             getTranscribeProgress({
@@ -1071,7 +1080,7 @@ async function pump(
               progressId: pid,
             })
               .then((p) => {
-                if (epoch === get().epoch) foldProgress(p);
+                if (!pollingDone && epoch === get().epoch) foldProgress(p);
               })
               .catch(() => {});
           }, 1000)
@@ -1120,6 +1129,7 @@ async function pump(
           .getState()
           .setLogsDoorway(transportErrorDoorway(isText ? "translate" : "transcribe", e, backendName));
       } finally {
+        pollingDone = true;
         activeCancel = null;
         if (poller !== undefined) window.clearInterval(poller);
         if (epoch === get().epoch) {

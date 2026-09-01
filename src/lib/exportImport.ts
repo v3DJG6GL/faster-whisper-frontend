@@ -24,7 +24,9 @@ export async function buildEnvelope(includeSecrets: boolean): Promise<ExportEnve
     { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
     allOn,
     undefined,
-    { includeSecrets, sub: { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true } },
+    // The Transcribe picks are portable (the backends list travels in the same
+    // envelope); only the machine-specific recordings folder stays behind.
+    { includeSecrets, sub: { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: true } },
   );
   const device = await syncDeviceInfo();
   return {

@@ -16,6 +16,13 @@ describe("isSourceUrl", () => {
 });
 
 describe("normalizeMediaUrl", () => {
+  it("bounds the serialized output, not just the input, and is idempotent", () => {
+    expect(normalizeMediaUrl("https://x.tld/" + "ä".repeat(1900))).toBeNull();
+    const u = "https://x.tld/straße?q=ü";
+    const once = normalizeMediaUrl(u)!;
+    expect(once).not.toBeNull();
+    expect(normalizeMediaUrl(once)).toBe(once);
+  });
   it("accepts explicit-scheme links and keeps the query", () => {
     expect(normalizeMediaUrl("https://www.youtube.com/watch?v=abc&t=10")).toBe(
       "https://www.youtube.com/watch?v=abc&t=10",
@@ -50,6 +57,10 @@ describe("displayLabel", () => {
   it("uses basename for paths", () => {
     expect(displayLabel("/a/b/talk.mp3")).toBe("talk.mp3");
     expect(displayLabel("C:\\a\\talk.mp3")).toBe("talk.mp3");
+  });
+  it("an all-whitespace or control-only title falls back to host + path", () => {
+    expect(displayLabel("https://x.tld/a", "   ")).toBe("x.tld/a");
+    expect(displayLabel("https://x.tld/a", "\u0001\u0002")).toBe("x.tld/a");
   });
   it("prefers the sanitized title for links", () => {
     expect(displayLabel("https://youtube.com/watch?v=x", "A Great Talk")).toBe("A Great Talk");
