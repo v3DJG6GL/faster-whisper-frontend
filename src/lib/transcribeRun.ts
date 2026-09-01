@@ -153,11 +153,17 @@ export function skippedStages(s: {
   for (const r of s.progress?.skipped ?? []) {
     if ((stages as string[]).includes(r)) out.add(r as RailStage);
   }
+  // A backend that names its skipped stages is authoritative — including an empty list:
+  // inference on top of it convicted stages that ran between two polls.
+  if (Array.isArray(s.progress?.skipped)) return out;
   const stage = s.progress?.stage;
   if (!stage || stage === "waiting" || stage === "unknown") return out;
   const active = railIndex(stage, stages);
   stages.forEach((st, i) => {
-    if (i < active && !s.stageTimes[st]?.observed) out.add(st);
+    // No clock at all, not merely "never sampled": the pump seeds the first stage's clock
+    // when it opens, and a seeded stage RAN even if every poll missed it. Absence of a
+    // poll is not evidence of absence of a stage.
+    if (i < active && !s.stageTimes[st]) out.add(st);
   });
   return out;
 }

@@ -64,7 +64,7 @@ symphonia = { version = "0.6", default-features = false, features = [
 
 # Streaming dictation: resample to 16 kHz + WebSocket to the backend.
 rubato = "0.16"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "fs"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 

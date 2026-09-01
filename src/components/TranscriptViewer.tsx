@@ -1336,6 +1336,10 @@ export function TranscriptViewer({
           });
       };
       if (urlSource) tryDecode(mediaPath);
+      // Stage 1 already learned the original is unreadable when it fell through to the
+      // stored copy — don't pay a second round trip into a path known to be gone (and
+      // let ITS failure decide the "gone"-vs-"codec" wording).
+      else if (audioNote === "copy" && mediaPath) tryDecode(mediaPath);
       else tryDecode(path, () => tryDecode(mediaPath));
       return;
     }
@@ -1510,7 +1514,9 @@ export function TranscriptViewer({
   // scrollTo({behavior:"smooth"}) and jumps instantly.
   const followAnimRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!follow || !playing || activeSegIdx < 0) return;
+    // Not while editing: the highlight is not drawn in Edit mode, and a scroll on every
+    // segment boundary would pull the transcript out from under the caret.
+    if (!follow || !playing || editMode || activeSegIdx < 0) return;
     const box = transcriptBoxRef.current;
     const row = document.getElementById(`seg-row-${activeSegIdx}`);
     if (!box || !row) return;
@@ -1601,7 +1607,7 @@ export function TranscriptViewer({
         followAnimRef.current = null;
       }
     };
-  }, [activeSegIdx, follow, playing]);
+  }, [activeSegIdx, follow, playing, editMode]);
   // Manual wheel/touch INSIDE the transcript box disarms follow (the chip
   // re-arms); scrolling anywhere else on the page leaves it armed — a stray
   // tick over the sidebar used to kill it. Listener-level, not onScroll:
@@ -1668,6 +1674,15 @@ export function TranscriptViewer({
         t &&
         (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" ||
           t.isContentEditable)
+      )
+        return;
+      // A focused control owns Space and the arrows: every switch/segment/chip in this
+      // app is a <button> that activates on Space, and preventDefault here cancelled that
+      // — Tab to "Speaker diarization", press Space, and the audio play/paused instead.
+      if (
+        t?.closest(
+          'button, [role="button"], [role="switch"], [role="radio"], [role="checkbox"], [role="tab"], [role="slider"], [role="option"], [role="combobox"]',
+        )
       )
         return;
       if (e.key === "Escape") {

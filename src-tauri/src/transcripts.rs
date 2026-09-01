@@ -496,7 +496,7 @@ fn remove_media_for(dir: &Path, id: &str) {
 }
 
 /// Drop media files whose record is gone — covers retention pruning, wipes,
-/// and half-finished copies (`.tmp` stems never match a record id). One clock:
+/// but never an in-progress `.tmp` copy (see the loop). One clock:
 /// a copy lives exactly as long as its transcript.
 fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
     let Ok(records) = transcripts_dir(app) else {
@@ -515,6 +515,13 @@ fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
         };
         for entry in entries.flatten() {
             let path = entry.path();
+            // An in-progress copy (`<id>.<ext>.tmp`, written on a blocking thread for up
+            // to 2 GB) is not an orphan: this sweep runs on every config save, and
+            // unlinking the tmp under the writer made its final rename fail — the record
+            // then silently lost its only playable audio.
+            if path.extension().and_then(|e| e.to_str()) == Some("tmp") {
+                continue;
+            }
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };

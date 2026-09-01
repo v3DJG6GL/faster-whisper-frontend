@@ -175,6 +175,27 @@ describe("skippedStages with a download rail", () => {
     expect(skipped.has("separating")).toBe(true);
     expect(skipped.has("downloading")).toBe(false);
   });
+
+  it("never convicts a stage whose clock was seeded but never sampled", () => {
+    // The pump seeds the first stage's clock without `observed`; a fast stage can finish
+    // between two polls. That stage RAN.
+    const skipped = skippedStages({
+      progress: { stage: "diarizing", progress: 0.2 },
+      stageTimes: { transcribing: { start: 1 } },
+      lastOptions: { diarize: true },
+    });
+    expect(skipped.has("transcribing")).toBe(false);
+  });
+
+  it("trusts a backend that names its skipped stages, even an empty list", () => {
+    const skipped = skippedStages({
+      progress: { stage: "transcribing", progress: 0.5, skipped: [] },
+      stageTimes: {},
+      lastOptions: { separateBgm: true },
+      forUrl: true,
+    });
+    expect(skipped.size).toBe(0);
+  });
 });
 
 describe("overallFraction with a download rail", () => {

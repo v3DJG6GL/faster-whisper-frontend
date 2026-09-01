@@ -429,7 +429,10 @@ export default function Transcribe() {
   const { caps, resolved } = useOverrideContext({
     serverUrl: backend ? effectiveServerUrl(backend, settings) : "",
     backendId: backend?.id,
-    profileName: backend?.overrideProfile ?? undefined,
+    // The EFFECTIVE profile — the per-run pick wins, exactly as the run sends it — so the
+    // ghosted "Empty = inherit" baseline and the Skip-silence "Default · on/off" describe
+    // what this run will actually inherit, not the backend's profile.
+    profileName: (runOverrideProfile || backend?.overrideProfile) || undefined,
     serverKind,
   });
   // What a blank per-run field inherits: profile baseline, overridden by the

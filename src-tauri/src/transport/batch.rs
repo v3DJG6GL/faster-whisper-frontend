@@ -788,13 +788,16 @@ pub async fn download_result_media(
     std::fs::create_dir_all(dest_dir).context("creating the media folder")?;
     let dest = dest_dir.join(format!("{record_id}.{ext}"));
     let tmp = dest_dir.join(format!("{record_id}.{ext}.tmp"));
+    // Async file I/O: up to MAX_MEDIA_BYTES lands here, and a synchronous write per chunk
+    // parked a runtime worker (the same contract `save_transcript_media` documents by
+    // running on a blocking thread) while the run's progress polls share that runtime.
     let write_result: anyhow::Result<()> = async {
-        use std::io::Write;
-        let mut f = std::fs::File::create(&tmp).context("creating the media file")?;
+        use tokio::io::AsyncWriteExt;
+        let mut f = tokio::fs::File::create(&tmp).await.context("creating the media file")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+            let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600)).await;
         }
         let mut total: u64 = 0;
         while let Some(chunk) = resp.chunk().await.map_err(|e| anyhow::anyhow!(friendly_err(&e)))? {
@@ -802,12 +805,12 @@ pub async fn download_result_media(
             if total > max_bytes {
                 bail!("media exceeds the local copy cap");
             }
-            f.write_all(&chunk).context("writing the media file")?;
+            f.write_all(&chunk).await.context("writing the media file")?;
         }
         if total == 0 {
             bail!("the server sent no audio");
         }
-        f.flush().ok();
+        f.flush().await.ok();
         Ok(())
     }
     .await;
