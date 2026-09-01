@@ -217,14 +217,58 @@ pub(crate) fn valid_id(id: &str) -> bool {
         && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
 }
 
-/// Is this a media copy THIS app wrote (`<id>.<ext>`, id from `valid_id`)? The audio
-/// base is a free user pick, so `files/`/`links/` may already hold foreign data — the
-/// sweeps and wipes below must never touch anything else (the dictation twin is
+/// Is `s` shaped like the ids this app actually writes — a `crypto.randomUUID()`, 36 chars
+/// in 8-4-4-4-12 hex? `valid_id` is the looser PATH-SAFETY predicate for command inputs;
+/// as an OWNERSHIP predicate it accepted any 8+ hex-ish stem, so a user's own
+/// `20260901.mp3` or `12345678.wav` in the media folder read as ours and was deleted.
+fn is_uuid_id(s: &str) -> bool {
+    s.len() == 36
+        && s.bytes().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => b.is_ascii_hexdigit(),
+        })
+}
+
+/// Is this a media copy THIS app wrote (`<uuid>.<ext>`)? The audio base is a free user
+/// pick, so `files/`/`links/` may already hold foreign data — the sweeps, wipes and the
+/// storage readout must never touch or count anything else (the dictation twin is
 /// `audio::is_dictation_file`).
 fn is_own_media(path: &Path) -> bool {
     path.file_stem()
         .and_then(|s| s.to_str())
-        .map(valid_id)
+        .map(is_uuid_id)
+        .unwrap_or(false)
+}
+
+/// Bytes and count of the files in `dir` that `own` claims — the same predicate the delete
+/// commands use, so the "Frees N MB / Delete N files" readout promises exactly what a wipe
+/// does. In-progress `.tmp` copies are skipped like every sweep skips them.
+fn owned_dir_bytes(dir: &Path, own: impl Fn(&Path) -> bool) -> (u64, u32) {
+    let (mut bytes, mut files) = (0u64, 0u32);
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("tmp") || !own(&path) {
+                continue;
+            }
+            if let Ok(m) = entry.metadata() {
+                if m.is_file() {
+                    bytes += m.len();
+                    files += 1;
+                }
+            }
+        }
+    }
+    (bytes, files)
+}
+
+/// Does the transcript store hold ANY record? Cheap (a directory listing), so the startup
+/// migration can skip the full read+parse heal on a fresh install.
+pub fn has_any_records(app: &AppHandle) -> bool {
+    transcripts_dir(app)
+        .ok()
+        .and_then(|d| std::fs::read_dir(d).ok())
+        .map(|mut e| e.any(|x| x.is_ok()))
         .unwrap_or(false)
 }
 
@@ -423,24 +467,17 @@ pub fn transcript_store_stats(
             })
             .unwrap_or(0)
     }
-    fn dir_bytes(dir: &Path) -> (u64, u32) {
-        let (mut bytes, mut files) = (0u64, 0u32);
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                if let Ok(m) = entry.metadata() {
-                    if m.is_file() {
-                        bytes += m.len();
-                        files += 1;
-                    }
-                }
-            }
-        }
-        (bytes, files)
-    }
-    let (file_bytes, file_files) = dir_bytes(&files_media_dir(&app, audio_base.clone())?);
-    let (link_bytes, link_files) = dir_bytes(&links_media_dir(&app, audio_base.clone())?);
+    let (file_bytes, file_files) = owned_dir_bytes(&files_media_dir(&app, audio_base.clone())?, is_own_media);
+    let (link_bytes, link_files) = owned_dir_bytes(&links_media_dir(&app, audio_base.clone())?, is_own_media);
     let (rec_bytes, rec_files) = crate::commands::resolve_recordings_dir(&app, audio_base)
-        .map(|d| dir_bytes(&d))
+        .map(|d| {
+            owned_dir_bytes(&d, |p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(crate::audio::is_dictation_file)
+                    .unwrap_or(false)
+            })
+        })
         .unwrap_or((0, 0));
     Ok(serde_json::json!({
         "dictationCount": count_json(&dictations_dir(&app)?),
@@ -700,6 +737,27 @@ mod tests {
         remove_dictation_audio(dir.join("interview.wav").to_str().unwrap());
         assert!(dir.join("interview.wav").exists());
         assert!(dir.join("interview.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ownership_is_uuid_shaped_not_merely_hex() {
+        assert!(is_own_media(Path::new("/x/files/9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.m4a")));
+        assert!(!is_own_media(Path::new("/x/files/20260901.mp3")));
+        assert!(!is_own_media(Path::new("/x/files/12345678.wav")));
+        assert!(!is_own_media(Path::new("/x/files/cafe1234.wav")));
+    }
+
+    #[test]
+    fn the_storage_readout_counts_only_what_a_wipe_would_delete() {
+        let dir = std::env::temp_dir().join(format!("fwf-store-stats-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let own = "9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b";
+        std::fs::write(dir.join(format!("{own}.m4a")), b"12345").unwrap();
+        std::fs::write(dir.join(format!("{own}.m4a.tmp")), b"1234567").unwrap();
+        std::fs::write(dir.join("holiday video.mp4"), b"123456789").unwrap();
+        assert_eq!(owned_dir_bytes(&dir, is_own_media), (5, 1));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

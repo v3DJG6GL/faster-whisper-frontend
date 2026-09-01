@@ -203,6 +203,14 @@ fn write_new_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         opts.mode(0o600);
     }
     let mut f = opts.open(path)?;
+    // The Windows half of "owner-only": a file inherits the DACL of its folder, and a folder
+    // that already existed when the user picked it (a synced tree, a restore from backup) kept
+    // whatever permissions it had — nothing on the file itself compensated. Best-effort, like
+    // the directory call.
+    #[cfg(windows)]
+    if let Err(e) = windows_owner_only_dacl(path) {
+        tracing::warn!("[audio] could not restrict {} to the current user: {e}", path.display());
+    }
     f.write_all(bytes)?;
     f.sync_all()
 }
@@ -210,7 +218,8 @@ fn write_new_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// Create the recordings directory owner-only — 0700 on Unix, an owner-only inheritable DACL on
 /// Windows.
 ///
-/// The files themselves have been 0600 since `write_new_private`, but the containing directory was
+/// The files themselves are owner-only since `write_new_private` (0600 on Unix, an owner-only DACL
+/// on Windows), but the containing directory was
 /// still created with `create_dir_all`'s default (0777 & ~umask, typically 0755) — and the folder
 /// is USER-CHOSEN, so it may sit somewhere shared. A listing of it is a per-second timestamped log
 /// of every dictation the user made: when they dictate, how often, and how large the archive is.
@@ -228,7 +237,14 @@ pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
         if dir.exists() {
             return Ok(());
         }
-        return std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir);
+        // The LEAF is owner-only; missing ancestors get the default mode. A recursive 0700
+        // builder locked down every intermediate directory it had to create — a parent the
+        // app has no claim on (`~/Nextcloud/Voice` for a base of `~/Nextcloud/Voice/whisper`)
+        // — where the Windows branch below applies its DACL to `dir` alone.
+        if let Some(parent) = dir.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        return std::fs::DirBuilder::new().mode(0o700).create(dir);
     }
     #[cfg(windows)]
     {
@@ -487,6 +503,21 @@ pub fn save_transcript_sidecar(wav_path: &Path, text: &str) {
 
 #[cfg(test)]
 mod retention_tests {
+    #[cfg(unix)]
+    #[test]
+    fn private_dir_locks_down_the_leaf_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("fwf-private-dir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let leaf = root.join("a").join("b").join("leaf");
+        super::create_dir_private(&leaf).unwrap();
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&leaf), 0o700);
+        assert_ne!(mode(&root.join("a")), 0o700);
+        assert_ne!(mode(&root.join("a").join("b")), 0o700);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     use super::*;
 
     #[test]

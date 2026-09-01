@@ -233,8 +233,8 @@ pub fn init(ring: LogRing, writer: SwapWriter) {
     tracing_subscriber::registry()
         .with(filter)
         .with(RingLayer { ring })
-        .with(fmt::layer())
-        .with(fmt::layer().with_ansi(false).with_writer(writer))
+        .with(fmt::layer().with_timer(LocalTimer))
+        .with(fmt::layer().with_timer(LocalTimer).with_ansi(false).with_writer(writer))
         .init();
 }
 
@@ -276,9 +276,24 @@ pub fn prune_legacy_dir(dir: &Path) {
     let _ = std::fs::remove_file(dir.join("fwf.prev.log"));
 }
 
+/// One timestamp format for the whole session file: the replayed ring head (`format_line`)
+/// and the live tail (`fmt::layer`) used to write two different clocks into one file — local
+/// time without a date, then UTC RFC-3339 — so correlating a startup line with a later one
+/// meant comparing clocks hours apart in the artifact users attach to bug reports.
+const TS_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.3f";
+
+/// `tracing_subscriber` timer matching `format_line`: local time, `TS_FORMAT`.
+struct LocalTimer;
+
+impl tracing_subscriber::fmt::time::FormatTime for LocalTimer {
+    fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
+        write!(w, "{}", chrono::Local::now().format(TS_FORMAT))
+    }
+}
+
 fn format_line(l: &LogLine) -> String {
     let ts = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(l.ts as i64)
-        .map(|t| t.with_timezone(&chrono::Local).format("%H:%M:%S%.3f").to_string())
+        .map(|t| t.with_timezone(&chrono::Local).format(TS_FORMAT).to_string())
         .unwrap_or_default();
     let level = l.level.to_uppercase();
     match &l.tag {
@@ -318,8 +333,11 @@ pub fn prune_log_files(dir: &Path, keep_days: u32) {
     if keep_days == 0 {
         return;
     }
+    // Clamp before the arithmetic — see `audio::prune_recordings` for the Windows overflow
+    // panic this prevents (inside setup(), with the value already persisted).
+    const MAX_RETENTION_DAYS: u32 = 3650;
     let cutoff = std::time::SystemTime::now()
-        - std::time::Duration::from_secs(u64::from(keep_days) * 24 * 60 * 60);
+        - std::time::Duration::from_secs(u64::from(keep_days.min(MAX_RETENTION_DAYS)) * 24 * 60 * 60);
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name();
@@ -439,6 +457,12 @@ pub fn get_log_status(ring: State<'_, LogRing>) -> LogTail {
     t
 }
 
+/// The live `logDir` preference as the config field: a blank or absent custom folder means
+/// the default, never "no opinion".
+fn live_log_dir(custom: Option<String>) -> Option<String> {
+    custom.map(|c| c.trim().to_string()).filter(|c| !c.is_empty())
+}
+
 fn current_config(app: &AppHandle) -> Result<Config, String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     Ok(crate::config::load(&dir))
@@ -446,12 +470,11 @@ fn current_config(app: &AppHandle) -> Result<Config, String> {
 
 #[tauri::command]
 pub fn log_folder_path(app: AppHandle, custom: Option<String>) -> Result<String, String> {
-    // `custom` is the LIVE preference: the store's save is debounced, so reading the
-    // on-disk config alone showed the previous folder right after a change.
+    // `custom` is the LIVE preference (null/blank = the default folder): the store's save is
+    // debounced, so the on-disk config lags a change by 400 ms — and it lags a RESET too, so
+    // "None = read the config" showed (and opened) the just-cleared custom folder.
     let mut cfg = current_config(&app)?;
-    if let Some(c) = custom {
-        cfg.settings.logging.log_dir = Some(c);
-    }
+    cfg.settings.logging.log_dir = live_log_dir(custom);
     let dir = log_dir(&app, &cfg).ok_or("no log folder")?;
     // Home-relative display, same as audio_dir_path.
     if let Ok(home) = app.path().home_dir() {
@@ -466,9 +489,7 @@ pub fn log_folder_path(app: AppHandle, custom: Option<String>) -> Result<String,
 pub fn open_log_folder(app: AppHandle, custom: Option<String>) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let mut cfg = current_config(&app)?;
-    if let Some(c) = custom {
-        cfg.settings.logging.log_dir = Some(c);
-    }
+    cfg.settings.logging.log_dir = live_log_dir(custom); // see log_folder_path
     let dir = log_dir(&app, &cfg).ok_or("no log folder")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     app.opener()
@@ -479,6 +500,16 @@ pub fn open_log_folder(app: AppHandle, custom: Option<String>) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_replayed_head_uses_the_same_stamp_format_as_the_live_tail() {
+        let l = LogLine { seq: 1, ts: 1_700_000_000_123, level: "info", target: "t".into(), tag: None, msg: "m".into() };
+        let out = format_line(&l);
+        // "YYYY-MM-DD HH:MM:SS.mmm" — a date, a space, a time with millis.
+        let stamp = out.split(' ').take(2).collect::<Vec<_>>().join(" ");
+        assert_eq!(stamp.len(), "2023-11-14 22:13:20.123".len(), "{out:?}");
+        assert!(stamp.as_bytes()[4] == b'-' && stamp.as_bytes()[10] == b' ' && stamp.as_bytes()[19] == b'.', "{out:?}");
+    }
 
     fn line(msg: &str, level: &'static str) -> LogLine {
         let (tag, rest) = split_tag(msg);

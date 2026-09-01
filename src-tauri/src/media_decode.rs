@@ -54,24 +54,48 @@ pub fn decode_to_cached_wav(app: &tauri::AppHandle, path: &str) -> Result<String
     crate::audio::create_dir_private(&dir).map_err(|e| e.to_string())?;
     let out = dir.join(format!("{:016x}.wav", h.finish()));
     if out.exists() {
+        // Touch the mtime so eviction is really least-RECENTLY-used: `prune_cache` orders by
+        // mtime, and a pure read left the transcript replayed daily looking older than one
+        // decoded yesterday and never played again. Best-effort.
+        if let Ok(f) = std::fs::File::options().write(true).open(&out) {
+            let _ = f.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
+        }
+        prune_cache(&dir, &out);
         return Ok(out.to_string_lossy().into_owned());
     }
     let wav = decode_to_wav(path)?;
+    write_cached(&out, &wav)?;
+    prune_cache(&dir, &out);
+    Ok(out.to_string_lossy().into_owned())
+}
+
+/// tmp + rename, and no tmp left behind on EITHER failure — a WAV here can be hundreds of
+/// MB, so ENOSPC mid-write is the realistic case (`save_text_file` has the same shape).
+fn write_cached(out: &std::path::Path, wav: &[u8]) -> Result<(), String> {
     let tmp = out.with_extension("wav.tmp");
-    std::fs::write(&tmp, &wav).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::write(&tmp, wav) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
     }
-    std::fs::rename(&tmp, &out).map_err(|e| e.to_string())?;
-    prune_cache(&dir, &out);
-    Ok(out.to_string_lossy().into_owned())
+    if let Err(e) = std::fs::rename(&tmp, out) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    Ok(())
 }
 
 /// Keep the playback cache under `MAX_CACHE_BYTES`, deleting oldest-modified
 /// first and never the file just written. Best-effort housekeeping.
 fn prune_cache(dir: &std::path::Path, keep: &std::path::Path) {
+    prune_cache_to(dir, keep, MAX_CACHE_BYTES)
+}
+
+fn prune_cache_to(dir: &std::path::Path, keep: &std::path::Path, max_bytes: u64) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -90,7 +114,7 @@ fn prune_cache(dir: &std::path::Path, keep: &std::path::Path) {
     let mut total: u64 = keep_len + files.iter().map(|f| f.2).sum::<u64>();
     files.sort_by_key(|f| f.1);
     for (p, _, len) in files {
-        if total <= MAX_CACHE_BYTES {
+        if total <= max_bytes {
             break;
         }
         if std::fs::remove_file(&p).is_ok() {
@@ -176,4 +200,48 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
     let data_len = (pcm.len() - 44) as u32;
     pcm[..44].copy_from_slice(&crate::audio::wav_header(data_len, sample_rate, channels));
     Ok(pcm)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_cache_write_leaves_no_tmp_behind() {
+        let dir = std::env::temp_dir().join(format!("fwf-decode-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // `out` is an existing NON-EMPTY directory, so the rename into it fails.
+        let out = dir.join("abc.wav");
+        std::fs::create_dir_all(out.join("occupied")).unwrap();
+        assert!(write_cached(&out, b"RIFF").is_err());
+        assert!(!dir.join("abc.wav.tmp").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn eviction_is_by_oldest_mtime_and_spares_the_kept_file() {
+        let dir = std::env::temp_dir().join(format!("fwf-decode-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let big = vec![0u8; 1024];
+        let stamp = |p: &std::path::Path, secs: u64| {
+            let f = std::fs::File::options().write(true).open(p).unwrap();
+            let t = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+            f.set_times(std::fs::FileTimes::new().set_modified(t)).unwrap();
+        };
+        let (old, mid, keep) = (dir.join("old.wav"), dir.join("mid.wav"), dir.join("keep.wav"));
+        for p in [&old, &mid, &keep] {
+            std::fs::write(p, &big).unwrap();
+        }
+        stamp(&old, 1_000_000);
+        stamp(&mid, 2_000_000);
+        stamp(&keep, 500_000); // oldest of all, but it is the one just written
+        // Force eviction of exactly one file by pretending the ceiling is tiny.
+        prune_cache_to(&dir, &keep, 2 * 1024 + 512);
+        assert!(!old.exists(), "the oldest-modified file is evicted first");
+        assert!(mid.exists());
+        assert!(keep.exists(), "the file just written is never evicted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
