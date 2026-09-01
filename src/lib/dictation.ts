@@ -7,8 +7,9 @@ import { useApp } from "./store";
 import {
   startLive, stopLive, cancelLive, requestStopIfStarting, cancelStopIfStarting, isStarting,
   queuePendingHoldStart, voidPendingHoldStart, registerPendingStartRunner, reclassifyLive, abortDictationTranslate,
-  isCapturing, setSettleTargetPicker,
+  isCapturing, setSettleTargetPicker, setRouteHint,
 } from "./streaming";
+import type { TargetPick } from "./streaming";
 import { getFocusedApp, isTauri, showLangPick, showQuickAdd } from "./api";
 import { ownProp } from "./own";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
@@ -135,7 +136,9 @@ export function dictate(profileId: string, action: TriggerAction): void {
   // may set it, and only for the session it starts. (Before this, the hands-free return
   // skipped the arming call and a previous push-to-talk session's picker stayed armed —
   // its wrongly-seeded prompt then popped at the NEXT session's one-shot translate.)
+  // The route hint likewise: only an explicit hands-free "0" sets it (startWithPickedTargets).
   setSettleTargetPicker(null);
+  setRouteHint(null);
   if (profile.askTranslationTargets && profile.activation !== "hold") {
     void startWithPickedTargets(profile, backend, s.settings.microphoneId, profile.activation);
     return;
@@ -154,10 +157,11 @@ export function dictate(profileId: string, action: TriggerAction): void {
             tag: profile.tag?.trim() || profile.name,
             when: "after",
             theme: useApp.getState().settings.theme,
+            accentHue: useApp.getState().settings.accentHue,
             allowed: ownProp(useApp.getState().caps, backend.id)?.translation_languages ?? undefined,
-          }).then((picked) => {
-            if (picked) rememberTranslationTargets(picked);
-            return picked;
+          }).then((pick) => {
+            if (pick.kind === "picked") rememberTranslationTargets(pick.targets);
+            return pick;
           })
       : null,
   );
@@ -179,10 +183,14 @@ let pickerOpen = false;
  *   • FOCUS. `startLive` resolves the injection target from the focused app, and a focused
  *     picker makes that OUR OWN window — dictation would refuse to type. The target is
  *     captured before the picker shows and handed to the session as its own app.
- *   • DISMISSAL. Esc and a closed window fall back to the Profile's configured targets, so
- *     ignoring the prompt reproduces exactly today's behaviour. An empty COMMIT is
- *     different — that means "insert the original only" — which is why the two arrive on
- *     separate events. */
+ *   • ABORT. Esc, the Cancel button and a closed window abort the whole action: no session
+ *     starts, and the chip returns to standby. An empty COMMIT is different — that means
+ *     "start, and insert the original only" — which is why the two arrive on separate
+ *     events. Only a picker that could not be shown at all ("unavailable") falls back to
+ *     the Profile's configured targets: that is not a user gesture, so it must not cancel.
+ *
+ *  While the picker is up the chip says "choosing targets…" (`routePending: "choosing"`)
+ *  under the Profile's tag, instead of previewing a route the user has not chosen yet. */
 async function startWithPickedTargets(
   profile: Profile,
   backend: Backend,
@@ -199,19 +207,33 @@ async function startWithPickedTargets(
     // AT-SPI/IPC reject here used to escape as an unhandled rejection from a bare `void`
     // caller and silently drop the whole start; null = no known target, the session still runs.
     const targetApp = await getFocusedApp().catch(() => null);
-    const picked = await askTranslationTargets({
+    useApp.getState().setDictation({ activeProfile: profile.id, routePending: "choosing" });
+    const pick = await askTranslationTargets({
       source: profile.language?.trim() ? profile.language : backendLang,
       preset,
       recent: s.settings.recentTranslationTargets ?? [],
       tag: profile.tag?.trim() || profile.name,
       when: "before",
       theme: s.settings.theme,
+      accentHue: s.settings.accentHue,
       allowed: ownProp(s.caps, backend.id)?.translation_languages ?? undefined,
     });
-    // `null` = dismissed → the Profile's own targets, i.e. unchanged behaviour.
-    const targets = picked ?? preset;
-    if (picked) rememberTranslationTargets(picked);
-    useApp.getState().setDictation({ activeProfile: profile.id });
+    if (pick.kind === "aborted") {
+      // The user backed out: nothing starts, and the chip returns to standby (no Profile
+      // claimed, no route pending). `pickerOpen` is released in `finally`.
+      useApp.getState().setDictation({ activeProfile: null, routePending: null });
+      return;
+    }
+    // "unavailable" (no picker could be shown) → the Profile's own targets, unchanged behaviour.
+    const targets = pick.kind === "picked" ? pick.targets : preset;
+    if (pick.kind === "picked") rememberTranslationTargets(pick.targets);
+    // An explicit "0" (original only) is a decision the chip should acknowledge ("· original")
+    // rather than render as a session that merely has no route. The hint is consumed once by
+    // startLiveInner, so a Profile that simply configures no targets never picks it up. It has
+    // to ride a seam rather than the store: `sessionTargets` is republished by startLiveInner
+    // itself, a tick later than anything set here.
+    setRouteHint(pick.kind === "picked" && targets.length === 0 ? "original" : null);
+    useApp.getState().setDictation({ activeProfile: profile.id, routePending: null });
     void startLive(
       backend,
       micId,
@@ -234,6 +256,7 @@ async function startWithPickedTargets(
  *  undefined when only a Backend is targeted. */
 export function startHandsFree(backend: Backend, micId: string | null, profile: Profile | undefined): void {
   setSettleTargetPicker(null);
+  setRouteHint(null);
   useApp.getState().setDictation({ activeProfile: profile?.id ?? null });
   if (profile?.askTranslationTargets) {
     void startWithPickedTargets(profile, backend, micId, "handsfree");
@@ -242,12 +265,17 @@ export function startHandsFree(backend: Backend, micId: string | null, profile: 
   void startLive(backend, micId, "handsfree", profile);
 }
 
-/** Show the picker and resolve with the chosen targets, or `null` if dismissed. */
-function askTranslationTargets(seed: Record<string, unknown>): Promise<string[] | null> {
-  if (!isTauri) return Promise.resolve(null);
+/** Show the picker and resolve with its answer:
+ *   • `picked`      — the chosen targets (`[]` = insert the original only);
+ *   • `aborted`     — Esc / Cancel / a closed window: the caller abandons the action;
+ *   • `unavailable` — no picker could be shown (no window, IPC failure): not a gesture, so
+ *                     the caller proceeds with the Profile's configured targets.
+ *  A picker always answers, one way or another — see the catch below. */
+function askTranslationTargets(seed: Record<string, unknown>): Promise<TargetPick> {
+  if (!isTauri) return Promise.resolve({ kind: "unavailable" });
   return new Promise((resolve) => {
     let done = false;
-    const finish = (v: string[] | null) => {
+    const finish = (v: TargetPick) => {
       if (done) return;
       done = true;
       unlisten.forEach((un) => un());
@@ -256,14 +284,17 @@ function askTranslationTargets(seed: Record<string, unknown>): Promise<string[] 
     const unlisten: (() => void)[] = [];
     void import("@tauri-apps/api/event")
       .then(async ({ listen }) => {
-        unlisten.push(await listen<string[]>("langpick://commit", (e) => finish(e.payload ?? [])));
-        unlisten.push(await listen("langpick://cancel", () => finish(null)));
+        unlisten.push(await listen<string[]>("langpick://commit", (e) => finish({ kind: "picked", targets: e.payload ?? [] })));
+        unlisten.push(await listen("langpick://abort", () => finish({ kind: "aborted" })));
+        unlisten.push(await listen("langpick://unavailable", () => finish({ kind: "unavailable" })));
         await showLangPick(seed);
       })
-      // A failed import/listen/show must read as "dismissed", never as a pending answer:
+      // A failed import/listen/show must read as "unavailable", never as a pending answer:
       // the hands-free caller holds `pickerOpen` across this await and push-to-talk holds
       // the inject queue, so a promise that never settles wedges dictation for the process.
-      .catch(() => finish(null));
+      // "unavailable" rather than "aborted" because no user gesture happened — the
+      // dictation goes on with the Profile's preset instead of being thrown away.
+      .catch(() => finish({ kind: "unavailable" }));
   });
 }
 

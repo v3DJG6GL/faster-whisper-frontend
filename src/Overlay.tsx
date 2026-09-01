@@ -12,7 +12,7 @@ import {
   CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipExpansion, chipTuckHold, currentPhase,
   phaseClock, phaseElapsedMs,
 } from "@/lib/chipRules";
-import { applyTheme, watchSystemTheme } from "@/lib/theme";
+import { applyTheme, setAccentHue, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
 import type { DictationPhase, DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
 
 interface ChipState {
@@ -31,6 +31,8 @@ interface ChipState {
   phase?: DictationPhase | null;
   position: "top" | "bottom" | "off";
   theme: ThemeName;
+  /** Signal colour hue (0–360); absent = the amber default. */
+  accentHue?: number;
   // Active-Profile indicator (optional; absent when the feature is off / no Profile).
   profileTag?: string;
   // When true, the Profile tag is revealed only while the chip is hover-revealed (else always).
@@ -46,6 +48,11 @@ interface ChipState {
   // How many further targets `translateTo` left out (rendered as "+N"), so a bounded route
   // never reads as the whole route.
   translateMore?: number;
+  // What stands in the route slot when there is no route to promise yet: "ask" (standby
+  // preview of a Profile that asks for its targets), "undecided" (a push-to-talk session
+  // that asks at release), "choosing" (the hands-free picker is open), "original" (the user
+  // explicitly chose no translation — acknowledged briefly). "" = the route is the truth.
+  routePending?: "" | "ask" | "undecided" | "choosing" | "original";
   // Why the session's translation didn't land ("timeout" | "cancelled" | "error" | "empty").
   // Qualifies the done marker: without it, text inserted in the ORIGINAL because the
   // translate failed is indistinguishable from a translation that succeeded.
@@ -65,6 +72,10 @@ interface ChipState {
   // end-of-session done marker (✓ typed / clipboard glyph / nothing).
   lastInsert?: { kind: "typed" | "clipboard"; seq: number } | null;
   sessionOutcome?: "typed" | "clipboard" | "none" | null;
+  // Qualifies a "none" outcome that was NOT a cancel: the translate-to picker was aborted
+  // after release, so the words were kept (and, "-saved", recorded to History) but nothing
+  // was inserted. Shown once, briefly, in the status-label slot.
+  sessionNote?: "not-inserted" | "not-inserted-saved" | null;
   // Overlay-chip behaviour, forwarded from settings via dictation://update.
   persistentDock: boolean;
   overlayPeek: boolean;
@@ -184,6 +195,7 @@ export default function Overlay() {
       .then(({ listen, emit }) => {
         const registered = listen<ChipState>("dictation://update", (e) => {
           const theme = e.payload.theme ?? "auto";
+          setAccentHue(e.payload.accentHue ?? DEFAULT_ACCENT_HUE);
           // Follow the app's theme (the chip is a separate webview); "auto" resolves
           // against this webview's own prefers-color-scheme — same OS, same answer.
           applyTheme(theme);
@@ -208,12 +220,14 @@ export default function Overlay() {
             targetOnHover: e.payload.targetOnHover ?? false,
             lastInsert: e.payload.lastInsert ?? null,
             sessionOutcome: e.payload.sessionOutcome ?? null,
+            sessionNote: e.payload.sessionNote ?? null,
             statsOnHover: e.payload.statsOnHover ?? false,
             profileOnHover: e.payload.profileOnHover ?? false,
             routeOnHover: e.payload.routeOnHover ?? false,
             previewOnHover: e.payload.previewOnHover ?? false,
             translateTo: e.payload.translateTo ?? [],
             translateMore: e.payload.translateMore ?? 0,
+            routePending: e.payload.routePending ?? "",
             translateFailure: e.payload.translateFailure ?? "",
           });
         });
@@ -447,11 +461,60 @@ export default function Overlay() {
   const routeMore = Math.min(99, Math.max(0, Math.floor(Number(state.translateMore) || 0)));
   const routeText = routeMore > 0 ? `${routeTargets.join(" ")} +${routeMore}` : routeTargets.join(" ");
   // The route has its own visibility setting ("Show translation route"), sent only when on.
-  const showRoute = hasRoute && (!state.routeOnHover || hoverReveal);
+  const routeGate = !state.routeOnHover || hoverReveal;
+  const showRoute = hasRoute && routeGate;
+  // What stands in for the route when there is none to promise (overlay.ts chipRoutePending):
+  // a dashed "→ ask" / "→ ?" glyph, the "choosing targets…" sub-label, or — for a moment —
+  // "· original", the acknowledgement of an explicit "no translation". Same setting gate as
+  // the route: these are the route's own honesty, not a separate feature.
+  const pending = state.routePending ?? "";
+  const pendingGlyph = pending === "ask" ? "ask" : pending === "undecided" ? "?" : "";
+  const choosing = pending === "choosing";
+  // "· original" is timed on its own edge: the session runs on for minutes after the pick,
+  // and a permanent "original" under the tag would be a second vocabulary for "no route".
+  const [originalShown, setOriginalShown] = useState(false);
+  const originalTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPending = useRef(pending);
+  useEffect(() => {
+    const prev = lastPending.current;
+    lastPending.current = pending;
+    if (pending === prev) return;
+    if (originalTimer.current) clearTimeout(originalTimer.current);
+    originalTimer.current = null;
+    if (pending === "original") {
+      setOriginalShown(true);
+      originalTimer.current = setTimeout(() => setOriginalShown(false), 2000);
+    } else {
+      setOriginalShown(false);
+    }
+  }, [pending]);
+  const showPending = (!!pendingGlyph || choosing || originalShown) && routeGate;
   // "On hover" mode for the Profile tag: only surface it once the chip is hover-revealed;
-  // "always" (profileOnHover false) shows it whenever a tag was sent. A visible ROUTE
-  // overrides that gate — the tag names the route's owner, so it comes along.
-  const showProfile = !!state.profileTag && (!state.profileOnHover || hoverReveal || showRoute);
+  // "always" (profileOnHover false) shows it whenever a tag was sent. A visible ROUTE — or
+  // its pending stand-in — overrides that gate: the tag names the route's owner, so it comes along.
+  const showProfile = !!state.profileTag && (!state.profileOnHover || hoverReveal || showRoute || showPending);
+  // The route slot's content, shared by the tagged and the tag-less identity group. At rest
+  // the route is in the ACCENT — the colour the picker teaches (its chosen chips) and the one
+  // the chip already uses for "armed" — not the translate teal, which is reserved for the
+  // translating STAGE row below (work in progress, not a promise).
+  const routeSlot = choosing ? (
+    <span className="whitespace-nowrap normal-case text-dim">choosing targets…</span>
+  ) : originalShown && !showRoute && !pendingGlyph ? (
+    <span className="whitespace-nowrap text-faint">· original</span>
+  ) : showRoute || pendingGlyph ? (
+    <span className="flex items-center whitespace-nowrap">
+      {/* `→` is aria-hidden: it is punctuation between two codes, and a screen reader
+          saying "right arrow" adds nothing. */}
+      <span className="text-faint" aria-hidden>
+        →
+      </span>
+      {showRoute ? (
+        <span className="ml-1 text-accent">{routeText}</span>
+      ) : (
+        <span className="ml-1 animate-chip-breathe font-mono text-faint">{pendingGlyph}</span>
+      )}
+    </span>
+  ) : null;
   // P16/D target readout: overlay.ts only sends `targetTitle` while a session is active AND the
   // "Show injection target" setting is on, so its presence alone gates the chip's "→ app" segment.
   // A `targetSkip` reason means injection was coerced to the clipboard → tint the readout warn.
@@ -676,6 +739,28 @@ export default function Overlay() {
     }
   }, [state.sessionOutcome, state.translateFailure]);
 
+  // "not inserted" note: a "none" outcome that was NOT a cancel — the translate-to picker
+  // was aborted after release, the words were kept. Its own edge + timer (like the
+  // untranslated pulse): it qualifies an outcome the pulse machinery above deliberately
+  // treats as "nothing to show", so it cannot ride `pulse`.
+  const [note, setNote] = useState<"not-inserted" | "not-inserted-saved" | null>(null);
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastNote = useRef(state.sessionNote);
+  useEffect(() => {
+    const prev = lastNote.current;
+    const n = state.sessionNote ?? null;
+    lastNote.current = n;
+    if (n === prev) return;
+    if (noteTimer.current) clearTimeout(noteTimer.current);
+    noteTimer.current = null;
+    if (n) {
+      setNote(n);
+      noteTimer.current = setTimeout(() => setNote(null), 2000);
+    } else {
+      setNote(null); // a fresh session clears it
+    }
+  }, [state.sessionNote]);
+
   // Status dot colour (NEVER red while listening) via the SHARED dictationVisual()
   // mapping — so the chip, sidebar dot, Home button + waveforms all agree. The chip
   // layers its own presentation on top: a tucked (peeked) dot is SOLID so its visible
@@ -695,12 +780,16 @@ export default function Overlay() {
     { timeout: "timed out", cancelled: "cancelled", error: "failed", empty: "came back empty" }[
       state.translateFailure ?? ""
     ] ?? "failed";
+  // The "not inserted" note takes the slot the same way, for the same reason.
+  const noteLabel = note === "not-inserted-saved" ? "not inserted · saved to History" : "not inserted";
   const label =
     pulse === "untranslated"
       ? `inserted as spoken — translation ${failureLabel}`
-      : state.status === "idle"
-        ? ""
-        : vis.label;
+      : note
+        ? noteLabel
+        : state.status === "idle"
+          ? ""
+          : vis.label;
   const dotColorClass =
     vis.state === "error" || vis.state === "speaking" || vis.state === "processing"
       ? TONE_BG[vis.tone]
@@ -898,18 +987,8 @@ export default function Overlay() {
         <span className="max-w-[140px] truncate uppercase text-dim">
           {safeDisplayText(state.profileTag, 40)}
         </span>
-        {/* The route, at rest, in the same teal `--c-translate` the translating STAGE and the
-            viewer's MT lines use — so the promise made here and the work reported later are
-            visibly the same thing. `→` is aria-hidden: it is punctuation between two codes,
-            and a screen reader saying "right arrow" adds nothing. */}
-        {showRoute && (
-          <span className="ml-1.5 flex items-center whitespace-nowrap">
-            <span className="text-faint" aria-hidden>
-              →
-            </span>
-            <span className="ml-1 text-translate">{routeText}</span>
-          </span>
-        )}
+        {/* The route (or what stands in for it), beside the tag — see routeSlot. */}
+        {routeSlot && <span className="ml-1.5 flex items-center">{routeSlot}</span>}
         <AnimatePresence>
           {hoverReveal && detail && (
             <motion.span
@@ -933,14 +1012,12 @@ export default function Overlay() {
     );
   }
   // The route on its own, when the Profile tag is off: "→ FR IT" with no owner named is
-  // still the promise the user chose to see (the tag has its own switch).
-  if (showRoute && !showProfile) {
+  // still the promise the user chose to see (the tag has its own switch) — and so is its
+  // pending stand-in.
+  if (routeSlot && !showProfile) {
     idGroups.push(
-      <span key="route" className="flex items-center whitespace-nowrap">
-        <span className="text-faint" aria-hidden>
-          →
-        </span>
-        <span className="ml-1 text-translate">{routeText}</span>
+      <span key="route" className="flex items-center">
+        {routeSlot}
       </span>,
     );
   }
@@ -1016,7 +1093,9 @@ export default function Overlay() {
               ? "Copied to clipboard"
               : pulse === "untranslated"
                 ? "Inserted untranslated — the translation did not finish"
-                : ""}
+                : note
+                  ? noteLabel
+                  : ""}
         </span>
         <motion.div
           ref={chipRef}
@@ -1156,8 +1235,14 @@ export default function Overlay() {
                             and only reveal the words once the chip is hover-revealed. The phase row
                             (below) takes this slot ahead of the words while translating — see phaseRow. */}
                         {phaseRow ??
-                          (pulse === "untranslated" ? (
-                            <div className="whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.14em] text-dim">
+                          (pulse === "untranslated" || note ? (
+                            <div
+                              className={cn(
+                                "whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.14em]",
+                                // The note is a quiet qualifier, not a warning: faint, not dim.
+                                pulse === "untranslated" ? "text-dim" : "text-faint",
+                              )}
+                            >
                               {label}
                             </div>
                           ) : partialShown ? (

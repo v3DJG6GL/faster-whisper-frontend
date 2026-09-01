@@ -373,12 +373,25 @@ interface AppState {
   /** Truthful end-of-session insert result, set WITH the idle transition — drives the chip's
    *  done marker (✓ typed / clipboard glyph / nothing). null = no session finished yet. */
   sessionOutcome: "typed" | "clipboard" | "none" | null;
+  /** Qualifies a "none" outcome that was NOT a cancel: the user aborted the translate-to
+   *  picker after release, so the transcript was kept but nothing was inserted. Set in the
+   *  SAME call as `sessionOutcome` (the chip is edge-triggered on that), "-saved" only when
+   *  a History record was actually written. null = no such note. */
+  sessionNote: "not-inserted" | "not-inserted-saved" | null;
   /** The RESOLVED translation targets of the active session — what will actually be injected,
    *  not what the Profile is configured with. The two diverge once a per-session picker can
    *  change them, and the authoritative value (`sessionTranslation` in streaming.ts) lives in
    *  module scope the chip's window can never read. Empty/null = this session doesn't translate;
    *  the chip then falls back to the home Profile's configured targets for its standby preview. */
   sessionTargets: string[] | null;
+  /** What the chip may NOT promise about the route yet — the answer to "what will this
+   *  session translate into" while it is still open:
+   *   • "undecided" — push-to-talk with the picker armed: the targets are asked at release;
+   *   • "choosing"  — hands-free: the picker is on screen right now;
+   *   • "original"  — the user explicitly chose to insert the original only (acknowledged
+   *                   briefly by the chip, then silent).
+   *  null = nothing pending: `sessionTargets` (or the standby preview) is the truth. */
+  routePending: "undecided" | "choosing" | "original" | null;
   /** Why this session's translation didn't land, set WITH the idle transition alongside
    *  `sessionOutcome`. Drives the chip's truthful done marker: without it a session that
    *  inserted the ORIGINAL after a failed translate is indistinguishable from one that
@@ -523,7 +536,9 @@ interface AppState {
       targetSkip: "blocked" | "notEditable" | null;
       lastInsert: { kind: "typed" | "clipboard"; seq: number } | null;
       sessionOutcome: "typed" | "clipboard" | "none" | null;
+      sessionNote: "not-inserted" | "not-inserted-saved" | null;
       sessionTargets: string[] | null;
+      routePending: "undecided" | "choosing" | "original" | null;
       translateFailure: TranslateFailure | null;
       dictationPhase: DictationPhase | null;
     }>,
@@ -591,7 +606,9 @@ export const useApp = create<AppState>((set) => ({
   targetSkip: null,
   lastInsert: null,
   sessionOutcome: null,
+  sessionNote: null,
   sessionTargets: null,
+  routePending: null,
   translateFailure: null,
   dictationPhase: null,
 

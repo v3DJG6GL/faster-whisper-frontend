@@ -423,6 +423,10 @@ export interface LoggingSettings {
 
 export interface AppSettings {
   theme: ThemeName;
+  /** Signal colour: the accent's hue in degrees (0–360). Hue-only — lightness and
+   *  chroma are fixed per theme (theme.ts derives the tokens). Absent = 65, the
+   *  hand-tuned amber in app.css. */
+  accentHue?: number;
   microphoneId: string | null;
   transcribe?: TranscribeSettings; // Transcribe-screen defaults (per-run options)
   homeProfileId?: string | null; // which Profile the Home button targets (null = first enabled)

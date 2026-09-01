@@ -11,13 +11,21 @@
 // without looking. Typing still filters, for the long tail.
 //
 // The rail across the top assembles the same `source → targets` route the chip will show a
-// second later — same arrow, same teal — so the picker teaches the chip rather than
-// introducing a second vocabulary for one idea.
+// second later — same arrow, same accent — so the picker teaches the chip rather than
+// introducing a second vocabulary for one idea. (The accent, not the translate teal: teal is
+// the chip's translating STAGE, work in progress; a chosen target is a promise, and the chip
+// shows its resolved route in the accent too.)
+//
+// Three answers, and only three: Enter commits the chosen targets, `0` commits none (insert
+// the original only), and Esc / Cancel / a closed window ABORT the whole action — no session
+// starts (hands-free), or the finished transcript is not inserted (push-to-talk; it still
+// goes to History). There is no "dismiss and quietly use the Profile's preset": every way
+// out of this window is a decision the user can see.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { cancelLangPick, commitLangPick } from "@/lib/api";
+import { abortLangPick, commitLangPick } from "@/lib/api";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
-import { applyTheme, watchSystemTheme } from "@/lib/theme";
+import { applyTheme, setAccentHue, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
 import { safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
 import type { ThemeName } from "@/lib/types";
@@ -48,6 +56,8 @@ interface Seed {
   /** Server-advertised target codes; absent = the app's curated list. */
   allowed?: string[];
   theme?: ThemeName;
+  /** Signal colour hue, so the accent-tinted picks match the app. */
+  accentHue?: number;
 }
 
 export default function LangPick() {
@@ -73,10 +83,12 @@ export default function LangPick() {
           const s = e.payload ?? {};
           setSeed(s);
           themeRef.current = s.theme ?? "auto";
+          setAccentHue(typeof s.accentHue === "number" ? s.accentHue : DEFAULT_ACCENT_HUE);
           applyTheme(s.theme ?? "auto");
           // Preselect the Profile's own targets: Enter with no keystrokes must reproduce
           // what would have happened without the picker. Anything else makes the prompt a
-          // trap — dismissing it by habit would silently change the outcome.
+          // trap — confirming it by habit would silently change the outcome. (Esc is the
+          // other habit, and it aborts loudly rather than changing anything.)
           setChosen((s.preset ?? []).filter((t) => typeof t === "string").slice(0, MAX_TARGETS));
           setQuery("");
           setActive(0);
@@ -104,7 +116,7 @@ export default function LangPick() {
     (targets: string[]) => void commitLangPick(targets).catch((e) => console.error("lang pick commit failed:", e)),
     [],
   );
-  const dismiss = useCallback(() => void cancelLangPick().catch((e) => console.error("lang pick dismiss failed:", e)), []);
+  const abort = useCallback(() => void abortLangPick().catch((e) => console.error("lang pick abort failed:", e)), []);
   // Keep the keyboard highlight on screen: arrows/digits move `active`, the list scrolls.
   const listRef = useRef<HTMLUListElement>(null);
   useEffect(() => {
@@ -163,8 +175,8 @@ export default function LangPick() {
   const onKeyDown = useCallback((e: KeyboardEvent) => {
     const typing = document.activeElement === inputRef.current && query.length > 0;
     if (e.key === "Escape") {
-      // Dismiss ≠ "translate nothing": the session falls back to the Profile's targets.
-      dismiss();
+      // Abort the whole action (don't start / don't insert) — see the header comment.
+      abort();
     } else if (e.key === "Enter") {
       commit(chosen);
     } else if (e.key === "ArrowDown") {
@@ -174,8 +186,8 @@ export default function LangPick() {
     } else if (e.key === " " && !typing) {
       if (rows[active]) toggle(rows[active].code);
     } else if (e.key === "0" && !typing) {
-      // Insert the original only — an explicit answer, distinct from Esc's "use the
-      // profile's". Commits immediately: there is nothing left to choose.
+      // Insert the original only — an explicit answer, distinct from Esc's abort.
+      // Commits immediately: there is nothing left to choose.
       commit([]);
     } else if (/^[1-9]$/.test(e.key) && !typing) {
       const row = rows.find((r) => r.digit === Number(e.key));
@@ -189,7 +201,7 @@ export default function LangPick() {
       return; // let the field handle ordinary typing
     }
     e.preventDefault();
-  }, [rows, active, chosen, query, commit, dismiss, toggle]);
+  }, [rows, active, chosen, query, commit, abort, toggle]);
 
   // Esc/Enter/digits must work from anywhere in the window, not only while the filter
   // field is focused: clicking a row moves focus to <body>, an ancestor of the React root,
@@ -227,9 +239,16 @@ export default function LangPick() {
           →
         </span>
         {chosen.length === 0 ? (
-          <span className="text-[12.5px] text-faint">
-            no translation — your words land as spoken
-          </span>
+          // The chip's own "undecided" glyph, so the two surfaces say the same thing.
+          <>
+            <span
+              className="animate-chip-breathe rounded-pill border border-dashed border-line-strong px-2.5 py-1 font-mono text-[12px] text-faint"
+              aria-hidden
+            >
+              ?
+            </span>
+            <span className="text-[12.5px] text-faint">pick, or 0 for the original</span>
+          </>
         ) : (
           chosen.map((c) => (
             <button
@@ -237,7 +256,7 @@ export default function LangPick() {
               type="button"
               onClick={() => toggle(c)}
               title={`Remove ${languageLabel(c)}`}
-              className="ring-signal inline-flex items-center gap-1.5 rounded-pill border border-[color:var(--c-translate)]/50 px-2.5 py-1 font-mono text-[12px] text-[color:var(--c-translate)]"
+              className="ring-signal inline-flex items-center gap-1.5 rounded-pill border border-accent/50 px-2.5 py-1 font-mono text-[12px] text-accent"
             >
               {c.toUpperCase()}
               <span aria-hidden className="opacity-60">
@@ -307,7 +326,7 @@ export default function LangPick() {
                       className={cn(
                         "grid size-[18px] shrink-0 place-items-center rounded-md border font-mono text-[10.5px]",
                         on
-                          ? "border-[color:var(--c-translate)] bg-[color:var(--c-translate)] text-accent-ink"
+                          ? "border-accent bg-accent text-accent-ink"
                           : "border-line-strong text-faint",
                       )}
                     >
@@ -317,7 +336,7 @@ export default function LangPick() {
                     <span
                       className={cn(
                         "ml-auto font-mono text-[11px]",
-                        on ? "text-[color:var(--c-translate)]" : "text-faint",
+                        on ? "text-accent" : "text-faint",
                       )}
                     >
                       {code.toUpperCase()}
@@ -330,16 +349,58 @@ export default function LangPick() {
         ))}
       </ul>
 
-      <div className="flex flex-wrap items-center gap-3 border-t border-line bg-surface px-4 py-2.5 text-[11.5px] text-faint">
+      {/* The three answers as real buttons (mouse users), each carrying the key that gives
+          the same answer. The abort is red-tinted: it is the one that throws work away
+          (hands-free: nothing starts; push-to-talk: the transcript is not inserted). */}
+      <div className="flex flex-wrap items-center gap-2 border-t border-line bg-surface px-4 py-2.5 text-[11.5px] text-faint">
         <Hint k="1–9">pick</Hint>
-        <Hint k="0">original only</Hint>
-        <Hint k="↵">{verb.toLowerCase()}</Hint>
-        <Hint k="esc">profile default</Hint>
-        {chosen.length >= MAX_TARGETS && (
-          <span className="ml-auto text-warn">max {MAX_TARGETS}</span>
-        )}
+        {chosen.length >= MAX_TARGETS && <span className="text-warn">max {MAX_TARGETS}</span>}
+        <span className="flex-1" aria-hidden />
+        <FooterButton tone="danger" k="esc" onClick={abort}>
+          {seed.when === "after" ? "Don’t insert" : "Cancel"}
+        </FooterButton>
+        <FooterButton tone="neutral" k="0" onClick={() => commit([])}>
+          {seed.when === "after" ? "Original" : "Original only"}
+        </FooterButton>
+        <FooterButton tone="primary" k="↵" onClick={() => commit(chosen)}>
+          {verb}
+        </FooterButton>
       </div>
     </div>
+  );
+}
+
+/** One of the footer's three answers. `onMouseDown` swallows the press so focus stays in the
+ *  filter field: a click that moved focus to the button would drop the next typed digit
+ *  (the window-level keydown still fires, but the field no longer receives the text). */
+function FooterButton({
+  tone,
+  k,
+  onClick,
+  children,
+}: {
+  tone: "danger" | "neutral" | "primary";
+  k: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      className={cn(
+        "ring-signal inline-flex items-center gap-1.5 rounded-pill border px-3 py-1 text-[12px] font-medium",
+        tone === "danger" && "border-rec/45 text-rec",
+        tone === "neutral" && "border-line-strong text-dim",
+        tone === "primary" && "border-accent bg-accent font-semibold text-accent-ink",
+      )}
+    >
+      {children}
+      <span className="font-mono text-[10px] opacity-70" aria-hidden>
+        {k}
+      </span>
+    </button>
   );
 }
 

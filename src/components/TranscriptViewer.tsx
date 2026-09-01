@@ -194,10 +194,11 @@ const SegmentRow = memo(function SegmentRow({
   // toward --c-faint, NOT transparent — WebKitGTK's unpremultiplied transparent
   // mix muddies text, see app.css) and set one step smaller, so a translation
   // never reads as a transcribed line. The language TAG keeps the full accent,
-  // which is what tells stacked targets apart. Teal stays reserved for run
-  // chrome (progress card, frontier, chips) and is the accent with colors off /
-  // no speaker.
-  const mtAccent = colorize && seg.speaker ? colorOf(seg.speaker) : "var(--c-translate)";
+  // which is what tells stacked targets apart. With colors off / no speaker the
+  // line takes the app accent (mixed toward faint, as LangTag does); teal stays
+  // reserved for the translating STAGE itself (progress card, frontier, pulse).
+  const mtAccent =
+    colorize && seg.speaker ? colorOf(seg.speaker) : "color-mix(in srgb, var(--c-accent) 65%, var(--c-faint))";
   const mtColor = `color-mix(in srgb, ${mtAccent} 30%, var(--c-faint))`;
   const visLangs = visLangsKey ? visLangsKey.split(",") : [];
   return (
@@ -2352,7 +2353,7 @@ export function TranscriptViewer({
               className={cn(
                 "ring-signal inline-flex h-7 items-center gap-1 rounded-pill border px-3 font-mono text-[11.5px] font-medium transition-colors",
                 visibleTracks.includes(lang)
-                  ? "border-[color:var(--c-translate)]/45 text-[color:var(--c-translate)]"
+                  ? "border-accent/45 text-accent"
                   : "border-line bg-surface-2 text-dim hover:text-text",
               )}
             >
@@ -2395,7 +2396,7 @@ export function TranscriptViewer({
                 className={cn(
                   "ring-signal inline-flex h-7 items-center gap-1.5 rounded-pill border px-3 text-[12px] transition-colors",
                   showTranslate
-                    ? "border-[color:var(--c-translate)]/45 text-[color:var(--c-translate)]"
+                    ? "border-accent/45 text-accent"
                     : "border-dashed border-line-strong text-dim hover:text-text",
                 )}
                 title="Translate this transcript (server-side MT)"
@@ -2625,7 +2626,7 @@ export function TranscriptViewer({
                       on
                         ? t === "orig"
                           ? "border-accent/35 bg-accent-soft text-accent"
-                          : "border-[color:var(--c-translate)]/45 text-[color:var(--c-translate)]"
+                          : "border-accent/45 text-accent"
                         : "border-line bg-surface-2 text-dim hover:text-text",
                     )}
                   >

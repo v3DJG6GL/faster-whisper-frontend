@@ -11,7 +11,7 @@ import { onTrigger, onSystemResumed, onOverlayAction, onAppNavigate } from "@/li
 import { dictate, runOverlayAction } from "@/lib/dictation";
 import { cancelLive, requestStopIfStarting } from "@/lib/streaming";
 import { SCREEN_PATH } from "@/lib/screens";
-import { applyTheme, watchSystemTheme } from "@/lib/theme";
+import { applyTheme, setAccentHue, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
 import { initLogStatus, openLogsPrefiltered } from "@/lib/logs";
 import { flushRecordWrites } from "@/lib/transcriptHistory";
 import { tryNavigate } from "@/lib/navGuard";
@@ -178,6 +178,7 @@ function LogsDoorwayBanner() {
 
 export default function App() {
   const theme = useApp((s) => s.settings.theme);
+  const accentHue = useApp((s) => s.settings.accentHue);
   // First-run gate: a LOADED config with no backends AND no profiles (fresh
   // install — seeds are gone) and no prior skip mounts the onboarding flow
   // instead of the shell. Latched locally so the flow survives its own store
@@ -239,10 +240,13 @@ export default function App() {
   );
 
   useEffect(() => {
+    // The Signal colour must be set before the stamp: applyTheme derives its tokens for
+    // the resolved theme, and the OS-flip watcher below re-derives them the same way.
+    setAccentHue(accentHue ?? DEFAULT_ACCENT_HUE);
     applyTheme(theme);
     // While on "auto", track live OS scheme flips (Windows app-mode / desktop setting).
     return watchSystemTheme(() => useApp.getState().settings.theme);
-  }, [theme]);
+  }, [theme, accentHue]);
 
   if (onboarding) {
     return (

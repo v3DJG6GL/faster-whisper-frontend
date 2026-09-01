@@ -44,7 +44,11 @@ export interface ExportOptions {
  *  apart on the dark theme (the old 5-tone cycle put two near-identical
  *  ambers next to each other and repeated from speaker 6 on). Coral stays
  *  reserved for the live-recording pulse. Shared with the speaker chips on
- *  the Transcribe screen. */
+ *  the Transcribe screen.
+ *
+ *  These stay the stock amber/teal hexes even when the Signal colour
+ *  (settings.accentHue) re-tints --spk-1/--spk-6 on screen: an export is a
+ *  document, not chrome, and must read the same on every machine it lands on. */
 export const DEFAULT_SPEAKER_COLORS = [
   "#ff9e2c", // amber (accent)
   "#6faed9", // sky (think)

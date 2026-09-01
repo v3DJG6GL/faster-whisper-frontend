@@ -42,6 +42,8 @@ import { METHOD_OPTIONS } from "@/components/DictationFields";
 // Row titles come from the settings manifest — the single source both this
 // screen and the Sync list render from, so their labels can never drift.
 import { SETTING } from "@/lib/settingsManifest";
+import { ACCENT_PRESETS, DEFAULT_ACCENT_HUE, accentCollision, deriveAccent, resolvedTheme } from "@/lib/theme";
+import type { ThemeName } from "@/lib/types";
 import { SyncTab } from "@/screens/SettingsSync";
 
 /** "1.2 GB" / "84 MB" for the audio-copy usage readout. */
@@ -565,6 +567,168 @@ function LoggingSection() {
   );
 }
 
+/* ── Appearance ────────────────────────────────────────────────────────── */
+
+/** The slider's rainbow track: fixed OKLCH lightness/chroma, hue sweeping 0→360 —
+ *  the same cut the swatches are derived from, so the track predicts the result. */
+const HUE_TRACK = `linear-gradient(90deg, ${[0, 60, 120, 180, 240, 300, 360]
+  .map((h) => `oklch(0.7 0.15 ${h})`)
+  .join(", ")})`;
+const HUE_WHEEL = `conic-gradient(${[0, 60, 120, 180, 240, 300, 360]
+  .map((h) => `oklch(0.7 0.15 ${h})`)
+  .join(", ")})`;
+
+/** How long slider drags coalesce before reaching the store. Every store write
+ *  re-derives and restamps the theme tokens (App.tsx's effect), so a raw
+ *  `input` stream would repaint the whole app per pixel of drag. */
+const HUE_WRITE_DEBOUNCE_MS = 60;
+
+/** Theme + Signal colour. The theme row binds the same setting the sidebar
+ *  button cycles; the colour rows are hue-only (theme.ts fixes L and C). */
+function AppearanceRows() {
+  const theme = useApp((st) => st.settings.theme);
+  const setTheme = useApp((st) => st.setTheme);
+  const storedHue = useApp((st) => st.settings.accentHue ?? DEFAULT_ACCENT_HUE);
+  const updateSettings = useApp((st) => st.updateSettings);
+  const dark = resolvedTheme(theme) === "dark";
+
+  // Local mirror of the hue so the slider tracks the pointer while store writes
+  // are debounced; a store change from elsewhere (sync pull, reset) wins once no
+  // write is pending.
+  const [hue, setHue] = useState(storedHue);
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (pending.current === null) setHue(storedHue);
+  }, [storedHue]);
+  useEffect(
+    () => () => {
+      if (pending.current !== null) clearTimeout(pending.current);
+    },
+    [],
+  );
+  const sliderRef = useRef<HTMLInputElement>(null);
+
+  const commit = useCallback(
+    (h: number) => {
+      updateSettings({ accentHue: h });
+    },
+    [updateSettings],
+  );
+  const pick = (h: number) => {
+    if (pending.current !== null) {
+      clearTimeout(pending.current);
+      pending.current = null;
+    }
+    setHue(h);
+    commit(h);
+  };
+  const drag = (h: number) => {
+    setHue(h);
+    if (pending.current !== null) clearTimeout(pending.current);
+    pending.current = setTimeout(() => {
+      pending.current = null;
+      commit(h);
+    }, HUE_WRITE_DEBOUNCE_MS);
+  };
+
+  const preset = ACCENT_PRESETS.find(([, h]) => h === hue);
+  const collision = accentCollision(hue);
+
+  return (
+    <>
+      <SectionLabel className="mb-1 mt-7">Appearance</SectionLabel>
+      <SettingRow
+        title={SETTING.theme.label}
+        desc="Auto follows the system scheme. The sidebar button cycles the same setting."
+      >
+        <Segmented<ThemeName>
+          value={theme}
+          onChange={setTheme}
+          ariaLabel={SETTING.theme.label}
+          options={[
+            { value: "dark", label: "Dark" },
+            { value: "light", label: "Light" },
+            { value: "auto", label: "Auto" },
+          ]}
+        />
+      </SettingRow>
+      <SettingRow
+        title={SETTING.accentHue.label}
+        desc="The accent for buttons, selection, the armed chip and charts. Recording red, live green and the working hues never change."
+      >
+        <div role="radiogroup" aria-label={SETTING.accentHue.label} className="flex items-center gap-2">
+          {ACCENT_PRESETS.map(([name, h]) => {
+            const on = h === hue;
+            return (
+              <button
+                key={name}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                aria-label={name}
+                title={name}
+                onClick={() => pick(h)}
+                className={cn(
+                  "ring-signal size-[26px] rounded-full transition-shadow",
+                  on && "ring-2 ring-text ring-offset-[3px] ring-offset-[color:var(--c-panel)]",
+                )}
+                style={{ background: deriveAccent(h, dark).accent }}
+              />
+            );
+          })}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={!preset}
+            aria-label="Custom"
+            title="Custom hue"
+            // Focusing the slider IS the selection: the custom swatch has no hue of its own.
+            onClick={() => sliderRef.current?.focus()}
+            className={cn(
+              "ring-signal size-[26px] rounded-full transition-shadow",
+              !preset && "ring-2 ring-text ring-offset-[3px] ring-offset-[color:var(--c-panel)]",
+            )}
+            style={{ background: HUE_WHEEL }}
+          />
+        </div>
+      </SettingRow>
+      <div className="pl-5">
+        <SettingRow title="Custom hue" desc="Lightness and chroma are fixed per theme; only the hue is yours.">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-3">
+              <input
+                ref={sliderRef}
+                type="range"
+                min={0}
+                max={360}
+                step={1}
+                value={hue}
+                aria-label="Custom hue"
+                onChange={(e) => drag(Number(e.target.value))}
+                className="ring-signal h-2 w-full min-w-[160px] cursor-pointer appearance-none rounded-pill"
+                style={{ background: HUE_TRACK }}
+              />
+              <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-dim">
+                {hue}° · {preset ? preset[0].toLowerCase() : "custom"}
+              </span>
+            </div>
+            {collision === "translate" && (
+              <span className="text-[12px] text-warn">
+                Close to the translating stage’s teal — that stage rotates to violet so the chip’s dot stays unambiguous.
+              </span>
+            )}
+            {collision === "think" && (
+              <span className="text-[12px] text-warn">
+                Close to the thinking blue — armed and finalizing will differ by motion and fill only.
+              </span>
+            )}
+          </div>
+        </SettingRow>
+      </div>
+    </>
+  );
+}
+
 export default function Settings() {
   const [tab, setTab] = useState<Tab>("General");
   const s = useApp((st) => st.settings);
@@ -781,6 +945,7 @@ export default function Settings() {
               <Toggle checked={s.general.soundEffects} onChange={(v) => updateGeneral({ soundEffects: v })} />
             </SettingRow>
             {/* The quick-add shortcut moved to the Dictionary screen, next to the pinned list. */}
+            <AppearanceRows />
             <LoggingSection />
           </Card>
         )}

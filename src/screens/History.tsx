@@ -622,7 +622,12 @@ export default function History() {
              block — but result.text is NOT repeated beneath it any more, which
              was the duplicate the user saw. */
           <div className="mt-3 max-h-56 overflow-y-auto">
-            <span className="font-mono text-[10px] uppercase tracking-wider text-translate">
+            <span
+              className="font-mono text-[10px] uppercase tracking-wider"
+              // The same accent-mixed tone LangTag gives an MT track with no speaker
+              // colour, so this pre-track blob reads as one of them (teal is the STAGE).
+              style={{ color: "color-mix(in srgb, var(--c-accent) 65%, var(--c-faint))" }}
+            >
               {/* No "injected / not injected" claim: `translationInjected` is derived
                   from the same value as `translatedText` (streaming.ts), so it carries
                   nothing about whether the text reached the field — a label that could

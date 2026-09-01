@@ -26,6 +26,8 @@ import type {
  *  the device's local value for anything absent. */
 export interface SyncGeneral {
   theme?: ThemeName;
+  /** Signal colour hue, 0–360. Absent in blobs written before it existed (2026-09-02). */
+  accentHue?: number;
   startMinimized?: boolean;
   /** Absent in blobs/exports written before it became syncable (2026-07-13). */
   openAtLogin?: boolean;

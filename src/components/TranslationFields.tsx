@@ -82,7 +82,8 @@ export function TranslationTargetChips({
           title={`Remove ${languageLabel(code)}`}
           className={cn(
             "ring-signal inline-flex h-7 items-center gap-1.5 rounded-pill border px-2.5 font-mono text-[11.5px]",
-            "border-[color:var(--c-translate)]/50 text-[color:var(--c-translate)]",
+            // Selection chrome takes the accent; teal is reserved for the translating STAGE.
+            "border-accent/50 text-accent",
             disabled && "opacity-50",
           )}
         >

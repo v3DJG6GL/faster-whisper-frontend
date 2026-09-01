@@ -2,7 +2,7 @@
 // store or the cross-window payload it normally rides in.
 
 import { describe, expect, it } from "vitest";
-import { chipRouteMore, chipRouteTargets, configuredRouteTargets } from "./overlay";
+import { chipRouteMore, chipRoutePending, chipRouteTargets, configuredRouteTargets } from "./overlay";
 
 describe("configuredRouteTargets", () => {
   // The Backend's translation defaults under the Profile's overrides — the session's merge.
@@ -74,5 +74,41 @@ describe("chipRouteTargets", () => {
 
   it("trims surrounding whitespace, matching how streaming.ts resolves the same list", () => {
     expect(chipRouteTargets(null, [" fr ", "it "])).toEqual(["fr", "it"]);
+  });
+});
+
+describe("chipRoutePending", () => {
+  // The stand-in for the route when there is none to promise. Paired with chipRouteTargets
+  // the way chipPayload pairs them: an "ask" preview hides the configured targets.
+  it("is empty for a running session that resolved its targets", () => {
+    expect(chipRoutePending(null, "listening", true)).toBe("");
+    expect(chipRouteTargets(["fr"], ["it"])).toEqual(["fr"]);
+  });
+
+  it("says 'ask' on the standby dock for a Profile that asks, and hides the preview", () => {
+    // The configured targets are only the picker's preselection; previewing them as the
+    // route promised what the next chord press would first ask about.
+    const pending = chipRoutePending(null, "idle", true);
+    expect(pending).toBe("ask");
+    const targets = pending === "ask" ? [] : chipRouteTargets(null, ["it", "es"]);
+    expect(targets).toEqual([]);
+  });
+
+  it("previews the configured route for a Profile that does not ask", () => {
+    expect(chipRoutePending(null, "idle", false)).toBe("");
+    expect(chipRoutePending(null, "idle", undefined)).toBe("");
+    expect(chipRouteTargets(null, ["it", "es"])).toEqual(["it", "es"]);
+  });
+
+  it("does not say 'ask' while a session runs, even under an asking Profile", () => {
+    // Push-to-talk under an ask-Profile publishes "undecided" itself; a session that has
+    // already resolved its targets must show them, not the standby glyph.
+    expect(chipRoutePending(null, "translating", true)).toBe("");
+  });
+
+  it("forwards the session's own pending value ahead of everything", () => {
+    expect(chipRoutePending("undecided", "listening", true)).toBe("undecided");
+    expect(chipRoutePending("choosing", "idle", true)).toBe("choosing");
+    expect(chipRoutePending("original", "listening", false)).toBe("original");
   });
 });

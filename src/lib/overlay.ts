@@ -67,6 +67,24 @@ export function chipRouteMore(
   return Math.max(0, validRouteTargets(sessionTargets, profileTargets).length - max);
 }
 
+/** What the chip shows in the route slot INSTEAD of a promise, when there is none to make.
+ *
+ *  A running session's own `routePending` wins ("undecided" / "choosing" / "original" — see
+ *  the store docs). With no session and no pending value, a standby dock previewing a
+ *  Profile that ASKS for its targets says "ask": the configured targets are only the picker's
+ *  preselection, and previewing them as the route promised what the user had not decided
+ *  yet. Everything else is "" — the route (session or configured preview) is the truth.
+ *  Pure, so it is unit-tested without the store or the cross-window payload. */
+export function chipRoutePending(
+  routePending: "undecided" | "choosing" | "original" | null,
+  status: string,
+  profileAsks: boolean | undefined,
+): "" | "ask" | "undecided" | "choosing" | "original" {
+  if (routePending) return routePending;
+  if (status === "idle" && profileAsks) return "ask";
+  return "";
+}
+
 function validRouteTargets(sessionTargets: string[] | null, profileTargets: string[] | undefined): string[] {
   return (sessionTargets ?? profileTargets ?? []).filter(
     (t): t is string => typeof t === "string" && t.trim().length > 0,
@@ -79,10 +97,15 @@ function validRouteTargets(sessionTargets: string[] | null, profileTargets: stri
  *  the only piece the session state doesn't already carry. */
 function trayRoute(state: ReturnType<typeof useApp.getState>): string {
   const targets = state.sessionTargets ?? [];
-  if (targets.length === 0) return "";
+  // A push-to-talk session that asks at release has no targets yet, but it does have a
+  // route — an undecided one, "DE → ?" — and the tray is the only surface on a chip-less
+  // desktop. Ask-standby (no session) stays empty, like every other idle tooltip.
+  const undecided = state.routePending === "undecided";
+  if (targets.length === 0 && !undecided) return "";
   const profile = state.activeProfile ? state.profiles.find((p) => p.id === state.activeProfile) : undefined;
   const backend = backendForProfile(profile, state.backends);
   const src = (profile?.language?.trim() ? profile.language : backend?.language) ?? "";
+  if (targets.length === 0) return `${src.toUpperCase() || "AUTO"} → ?`;
   const shown = targets.slice(0, CHIP_ROUTE_TARGETS).map((t) => t.toUpperCase());
   const more = targets.length - shown.length;
   return `${src.toUpperCase() || "AUTO"} → ${shown.join(" ")}${more > 0 ? ` +${more}` : ""}`;
@@ -115,6 +138,7 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     mode?: "stream" | "batch";
     translateTo?: string[];
     translateMore?: number;
+    routePending?: "" | "ask" | "undecided" | "choosing" | "original";
   } = {};
   // The Profile to label the chip with: the one dictating, or — for a persistent
   // idle dock — the home target it would launch (so standby previews that Profile).
@@ -140,8 +164,14 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   // resolution order and why both inputs need bounding.
   if (rec.showRouteOnOverlay) {
     const configured = configuredRouteTargets(chipProfile, chipBackend);
-    chip.translateTo = chipRouteTargets(state.sessionTargets, configured);
-    chip.translateMore = chipRouteMore(state.sessionTargets, configured);
+    // What stands in for the route while there is none to promise (see chipRoutePending).
+    // An ask-Profile's standby preview sends NO targets: its configured list is only the
+    // picker's preselection, and "→ FR IT" on the dock promised a route the next chord press
+    // would first ask about — the false promise this field replaces.
+    chip.routePending = chipRoutePending(state.routePending, state.status, chipProfile?.askTranslationTargets);
+    const previewHidden = chip.routePending === "ask";
+    chip.translateTo = previewHidden ? [] : chipRouteTargets(state.sessionTargets, configured);
+    chip.translateMore = previewHidden ? 0 : chipRouteMore(state.sessionTargets, configured);
   }
   // P28: a tiny usage readout (today's words/minutes) for the chip, gated by the
   // setting. Scoped to the same backend the stats controller tracks; omitted when
@@ -175,6 +205,8 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     position: rec.indicatorPosition,
     // So the chip can follow the app's dark/light theme.
     theme: state.settings.theme,
+    // …and the Signal colour, derived per window (theme.ts) — the chip cannot read the store.
+    accentHue: state.settings.accentHue,
     // Overlay-chip behaviour (persistent dock / edge-peek / quick-launch). The ?? fallbacks
     // mirror the store defaults (hydrate fills missing fields, so they're belt-and-braces).
     persistentDock: rec.persistentDock ?? true,
@@ -199,6 +231,10 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // UNGATED by ACTIVE — the done marker must reach the chip on the idle transition.
     lastInsert: state.lastInsert,
     sessionOutcome: state.sessionOutcome,
+    // "none" that was NOT a cancel: the picker was aborted after release, so the transcript
+    // was kept (and, "-saved", recorded) but nothing was inserted. Ungated like the outcome
+    // it qualifies — it lands on the same idle transition.
+    sessionNote: state.sessionNote,
     // Why the translation didn't land, so the done marker can qualify itself instead of
     // showing an unearned "typed" over text that was inserted in the ORIGINAL language.
     // Sent ungated by ACTIVE for the same reason as sessionOutcome — it must reach the
@@ -267,6 +303,8 @@ export async function initOverlayController(): Promise<void> {
       state.lastInsert !== prev.lastInsert || // per-phrase "inserted" pulse trigger
       state.sessionOutcome !== prev.sessionOutcome || // end-of-session done marker
       state.sessionTargets !== prev.sessionTargets || // the session's resolved translation route
+      state.routePending !== prev.routePending || // undecided / choosing / original stand-ins for it
+      state.sessionNote !== prev.sessionNote || // "not inserted" qualifier for a "none" outcome
       state.translateFailure !== prev.translateFailure || // qualifies the done marker
       state.usage !== prev.usage || // P28: refreshed usage stats → update the chip readout
       state.settings !== prev.settings) // theme / position / preview / show-profile toggles
@@ -287,6 +325,7 @@ export async function initOverlayController(): Promise<void> {
       state.status !== prev.status ||
       state.warming !== prev.warming ||
       state.sessionTargets !== prev.sessionTargets ||
+      state.routePending !== prev.routePending || // "DE → ?" while a push-to-talk session is undecided
       state.activeProfile !== prev.activeProfile ||
       state.profiles !== prev.profiles ||
       state.backends !== prev.backends // the inherited source language lives on the Backend

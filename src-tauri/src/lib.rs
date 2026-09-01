@@ -99,14 +99,16 @@ pub fn run() {
                     use tauri::Emitter;
                     let _ = window.emit("quickadd://closing", ());
                 }
-                // Same for the language picker: its asker in the main webview awaits either
-                // `langpick://commit` or `langpick://cancel` and nothing else settles it. An
-                // Alt+F4 that only hid the window left that promise pending for the rest of the
-                // process — hands-free latched its "picker open" gate and refused every later
-                // dictation; push-to-talk stalled the inject queue and never inserted the text.
+                // Same for the language picker: its asker in the main webview awaits
+                // `langpick://commit`, `langpick://abort` or `langpick://unavailable` and nothing
+                // else settles it. An Alt+F4 that only hid the window left that promise pending
+                // for the rest of the process — hands-free latched its "picker open" gate and
+                // refused every later dictation; push-to-talk stalled the inject queue and never
+                // inserted the text. A closed window means the same as Esc: abort the action
+                // (don't start / don't insert), not "quietly use the Profile's preset".
                 if window.label() == "langpick" {
                     use tauri::{Emitter, Manager};
-                    let _ = window.app_handle().emit("langpick://cancel", ());
+                    let _ = window.app_handle().emit("langpick://abort", ());
                 }
             }
         })
@@ -247,7 +249,7 @@ pub fn run() {
             overlay::chip_pointer_over,
             langpick::show_lang_pick,
             langpick::commit_lang_pick,
-            langpick::cancel_lang_pick,
+            langpick::abort_lang_pick,
             quickadd::show_quick_add,
             quickadd::hide_quick_add,
             sound::play_cue,

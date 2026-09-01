@@ -299,6 +299,7 @@ function extractGeneral(settings: AppSettings): SyncGeneral {
   const g = settings.general;
   return {
     theme: settings.theme,
+    accentHue: settings.accentHue,
     startMinimized: g.startMinimized,
     insertTiming: g.insertTiming,
     typeAsISpeak: g.typeAsISpeak,
@@ -1336,7 +1337,7 @@ export async function applyBlob(
     // applied to the two containers it never reached, on a pull that runs unattended at startup
     // and on every window focus.
     if (cats.general && isPlainObject(blob.general)) {
-      const { theme, ...incoming } = blob.general as SyncGeneral;
+      const { theme, accentHue, ...incoming } = blob.general as SyncGeneral;
       // Machine-local fields are excluded from SyncGeneral by TYPE only, which stops us sending
       // them but not a peer (or a hand-authored import file) from sending them to us — and the
       // import dialog promises the user "evdev is never imported". Enforce it on the way in.
@@ -1357,6 +1358,12 @@ export async function applyBlob(
       nextSettings = {
         ...nextSettings,
         theme: oneOf<ThemeName>(theme, THEMES, nextSettings.theme),
+        // A hue is a finite degree in [0, 360]; anything else (a pre-hue blob, a hand-edited
+        // string) keeps the current one — theme.ts would otherwise stamp NaN-derived hexes.
+        accentHue:
+          typeof accentHue === "number" && Number.isFinite(accentHue) && accentHue >= 0 && accentHue <= 360
+            ? accentHue
+            : nextSettings.accentHue,
         general: {
           ...nextSettings.general,
           ...typedLike(general as Partial<typeof nextSettings.general>, nextSettings.general),

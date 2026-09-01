@@ -589,14 +589,16 @@ async function translatePhrase(
 
 /** Save the finished session to History — the settleIdle hook. Skips: empty
  *  sessions, App-rules-blocked targets, and the "Keep dictation history" off
- *  switch. Runs once per session (capturedRecordId latch). */
-function captureDictationHistory(): void {
+ *  switch. Runs once per session (capturedRecordId latch). Returns whether a record
+ *  was written by THIS call — the chip's "not inserted · saved to History" note must
+ *  only promise a record that exists. */
+function captureDictationHistory(): boolean {
   const meta = sessionMeta;
-  if (!meta || capturedRecordId) return;
-  if (meta.blocked) return; // blocked apps are never recorded (the setting's promise)
-  if (useApp.getState().settings.transcribe?.keepDictationHistory === false) return;
+  if (!meta || capturedRecordId) return false;
+  if (meta.blocked) return false; // blocked apps are never recorded (the setting's promise)
+  if (useApp.getState().settings.transcribe?.keepDictationHistory === false) return false;
   const text = (bankedDoc + committedDoc).trim();
-  if (!text) return;
+  if (!text) return false;
   try {
     capturedRecordId = recordDictation({
       text,
@@ -630,9 +632,11 @@ function captureDictationHistory(): void {
       translationAttempted: sessionTranslation != null,
       translationFailure: sessionTranslateFailure ?? undefined,
     });
+    return true;
   } catch (e) {
     // History is a convenience — it must never break the session settle.
     console.error("dictation history capture failed:", e);
+    return false;
   }
 }
 // Whether we've taken at least one clipboard snapshot this session (live paste) — set the first
@@ -1069,7 +1073,7 @@ function settleIdle(): void {
   //
   // Before the state flip: the capture reads the session docs (reset only by
   // the NEXT startLiveInner / cancelLive) and must run while they're intact.
-  captureDictationHistory();
+  const saved = captureDictationHistory();
   // `dictationPhase` is cleared in the SAME call as the status move — a phase
   // published for a status that no longer exists would keep a cold-translate
   // card on screen over an idle chip.
@@ -1082,12 +1086,17 @@ function settleIdle(): void {
     status: "idle",
     sessionOutcome: endOutcome(),
     translateFailure: sessionTranslateFailure,
+    // A push-to-talk session whose picker was aborted ends with outcome "none" like a
+    // cancel — but it is NOT a cancel: the transcript was kept. The note rides the same
+    // call as the outcome so the chip can tell the two apart on the very edge it reads.
+    sessionNote: sessionInsertSkipped ? (saved ? "not-inserted-saved" : "not-inserted") : null,
     activeProfile: null,
     dictationPhase: null,
     // The session's resolved route dies with the session — otherwise the standby dock
     // previews the finished run's targets under the home Profile's own tag, and the tray
     // tooltip keeps them with no source language to pair them with.
     sessionTargets: null,
+    routePending: null,
   });
   // The settle picker is armed per session by dictation.ts; a consumed or unused arming
   // must not survive into a session started by a path that doesn't arm (overlay, Home).
@@ -1095,14 +1104,38 @@ function settleIdle(): void {
   consumePendingHoldStart();
 }
 
+/** The translate-to picker's answer (dictation.ts `askTranslationTargets`):
+ *   • `picked`      — the chosen targets, `[]` meaning "insert the original only";
+ *   • `aborted`     — Esc / Cancel / a closed window: abandon the action (hands-free never
+ *                     starts; push-to-talk keeps the transcript but does NOT insert it);
+ *   • `unavailable` — no picker could be shown: not a gesture, the configured targets stand. */
+export type TargetPick =
+  | { kind: "picked"; targets: string[] }
+  | { kind: "aborted" }
+  | { kind: "unavailable" };
+
 /** Set by dictation.ts when the running Profile asks for its targets after release (the
- *  push-to-talk path). Returns the chosen list, or `null` if the user dismissed — in which
- *  case the Profile's configured targets stand. Injected rather than imported: dictation.ts
- *  already imports this module, so the dependency can only go this way. */
-let askTargetsAtSettle: (() => Promise<string[] | null>) | null = null;
-export function setSettleTargetPicker(fn: (() => Promise<string[] | null>) | null): void {
+ *  push-to-talk path). Injected rather than imported: dictation.ts already imports this
+ *  module, so the dependency can only go this way. Armed BEFORE startLive, which is how
+ *  startLiveInner knows to publish the route as "undecided" (`routePending`). */
+let askTargetsAtSettle: (() => Promise<TargetPick>) | null = null;
+export function setSettleTargetPicker(fn: (() => Promise<TargetPick>) | null): void {
   askTargetsAtSettle = fn;
 }
+
+/** One-shot hint for the NEXT session's `routePending`, set by dictation.ts when the
+ *  hands-free picker answered "0" (insert the original only). A session that merely has no
+ *  targets configured must not be acknowledged as a decision, and startLiveInner republishes
+ *  `sessionTargets` itself a tick after any store write dictation.ts could make — so the
+ *  hint travels on this seam and is consumed exactly once, by the session it was set for. */
+let routeHint: "original" | null = null;
+export function setRouteHint(hint: "original" | null): void {
+  routeHint = hint;
+}
+
+/** True when this session's end-of-session insert was skipped because the user aborted the
+ *  translate-to picker. Read by settleIdle to stamp `sessionNote`; reset per session. */
+let sessionInsertSkipped = false;
 
 /** Replace this session's translation targets with the user's pick.
  *
@@ -1128,7 +1161,9 @@ function applySessionTargets(targets: string[]): void {
   // `[]`, not null, while the session lives: null means "no session" (the chip then previews
   // the Profile's configured route), and an EMPTY pick is a real answer — publishing null for it
   // made the chip advertise "→ FR IT" for a session that inserts the original untranslated.
-  useApp.getState().setDictation({ sessionTargets: clean });
+  // The pick settles the "undecided" route: a real target list clears the pending glyph, an
+  // empty one becomes the brief "· original" acknowledgement.
+  useApp.getState().setDictation({ sessionTargets: clean, routePending: clean.length ? null : "original" });
 }
 
 /** A stream-event handler should fold in / act on a late emit only while genuinely busy — a
@@ -1996,10 +2031,30 @@ async function ensureListeners(): Promise<void> {
           // the preload plan, the warm lease, the capability probe and `translateExpect`
           // were all made with the Profile's CONFIGURED targets. Those are preselected, so
           // they are usually the answer; a differently-picked target just pays a cold load.
+          //
+          // An ABORTED picker (Esc / "Don’t insert" / a closed window) skips the translate AND
+          // the insert, but the session still settles like a landed one: the transcript is
+          // recorded to History, the chip settles to idle with outcome "none" and a
+          // "not inserted" note (settleIdle reads `sessionInsertSkipped`). Nothing is
+          // inserted, so there is no outcome to book and no clipboard fallback to offer.
           if (askTargetsAtSettle) {
-            const picked = await askTargetsAtSettle();
+            const pick = await askTargetsAtSettle();
             if (insertCfg !== cfg) return;
-            if (picked !== null) applySessionTargets(picked);
+            if (pick.kind === "picked") applySessionTargets(pick.targets);
+            else if (pick.kind === "aborted") {
+              sessionInsertSkipped = true;
+              // Settle NOW rather than flashing "inserting…" for MIN_INJECT_VISIBLE_MS over a
+              // session that inserts nothing. Safe from inside the task: settleIdle only
+              // flips state + releases the lease, and `settleToIdleAfterInjection` (attached
+              // to this same chain) then finds status "idle" and does nothing. The queued
+              // hold-start it may fire resets `injectChain` for its own session; this task
+              // returns right after and never touches the chain again.
+              // Route: this session translates nothing now, and its "→ ?" is answered.
+              setDictation({ sessionTargets: [], routePending: null });
+              settleIdle();
+              return;
+            }
+            // "unavailable": no picker could be shown → the configured targets stand.
           }
           if (sessionTranslation) {
             const one = await maybeTranslate(text, cfg, { oneShot: true });
@@ -2490,8 +2545,14 @@ async function startLiveInner(
     // from the Profile: the two are the same only until something can change the targets
     // for one session (a per-session picker). Cleared alongside the rest of the session's
     // state, so the standby dock falls back to previewing the home Profile's own route.
+    // `routePending` says what the chip may NOT promise yet: a push-to-talk session with the
+    // picker armed has no route until release ("undecided" → the chip's dashed "→ ?"), and a
+    // hands-free "0" is acknowledged once as "original" (the one-shot hint from dictation.ts).
+    const hint = routeHint;
+    routeHint = null;
     useApp.getState().setDictation({
       sessionTargets: trTargets, // `[]` = this session translates nothing (see applySessionTargets)
+      routePending: askTargetsAtSettle ? "undecided" : hint,
       translateFailure: null,
     });
 
@@ -2603,6 +2664,7 @@ async function startLiveInner(
   beganInjection = false;
   sessionTyped = false;
   sessionClipboard = false;
+  sessionInsertSkipped = false;
   clearPhraseEnd();
   injectChain = Promise.resolve();
   clearStuckWatchdog(); // fresh session — drop any leftover backstop
@@ -2622,9 +2684,10 @@ async function startLiveInner(
     overridesIgnored: [],
     targetApp: insertCfg.targetApp,
     targetSkip,
-    // Clear any prior session's done marker / pulse so the fresh session starts clean.
+    // Clear any prior session's done marker / pulse / note so the fresh session starts clean.
     lastInsert: null,
     sessionOutcome: null,
+    sessionNote: null,
   });
   // Warm-up gate: hold "warming up…" until real audio actually flows (a cold/Bluetooth
   // mic is silent for ~1–2s first). The level handler clears it on sustained real audio
@@ -2908,15 +2971,17 @@ export async function cancelLive(): Promise<void> {
   // CANCELLED session. Reset here so endOutcome() returns "none" and the late re-stamp is a no-op.
   sessionTyped = false;
   sessionClipboard = false;
+  sessionInsertSkipped = false;
   clearPhraseEnd();
   insertCfg = null;
   injectChain = Promise.resolve();
   askTargetsAtSettle = null; // see settleIdle
+  routeHint = null;
   useApp
     .getState()
     // Cancelled → no done marker (outcome "none"); clear any pending per-phrase pulse.
     // `warming: false` so a cancel during warm-up doesn't strand the chip on "warming up…".
-    .setDictation({ status: "idle", warming: false, partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", lastInsert: null, activeProfile: null, dictationPhase: null, sessionTargets: null, translateFailure: null });
+    .setDictation({ status: "idle", warming: false, partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", sessionNote: null, lastInsert: null, activeProfile: null, dictationPhase: null, sessionTargets: null, routePending: null, translateFailure: null });
   const endpoint = activeEndpoint;
   activeEndpoint = null;
   capturing = false;

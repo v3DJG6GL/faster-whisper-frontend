@@ -485,8 +485,8 @@ function Editor({
             </Labeled>
             <div className="mt-1.5 text-[12px] text-dim">
               {p.activation === "hold"
-                ? "Asks after you release the shortcut, before the text is inserted — a prompt while the chord is held would swallow the keys. The targets below are preselected; Esc uses them unchanged."
-                : "Asks before the microphone opens. The targets below are preselected, so pressing Enter does exactly what this profile does today; Esc the same."}
+                ? "Asks after you release the shortcut, before the text is inserted — a prompt while the chord is held would swallow the keys. The targets below are preselected, so Enter inserts as this profile would; 0 inserts the original only; Esc inserts nothing and keeps the transcript in History."
+                : "Asks before the microphone opens. The targets below are preselected, so pressing Enter does exactly what this profile does today; 0 starts without translating; Esc cancels and nothing starts."}
             </div>
           </div>
           <TranslationDefaultsEditor

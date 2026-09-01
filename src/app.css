@@ -40,6 +40,11 @@
   --radius-pill: 999px;
 }
 
+/* The accent family (--c-accent, -ink, -soft, the three glow stops), --c-translate and
+   the two speaker tones that ARE those hues (--spk-1, --spk-6) are hand-tuned here for
+   the stock amber. For any other Signal colour, src/lib/theme.ts derives the same set
+   in OKLCH per resolved theme and stamps it inline on <html>, which wins over both
+   blocks below; the default hue stamps nothing, so these values apply untouched. */
 :root,
 [data-theme="dark"] {
   --c-bg: #0e0d0b;

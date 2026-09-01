@@ -887,7 +887,7 @@ export default function Transcribe() {
                 {isSourceUrl(path) ? (
                   <Link2 className="size-5 shrink-0 text-accent" />
                 ) : isTextSourcePath(path) ? (
-                  <FileText className="size-5 shrink-0 text-[color:var(--c-translate)]" />
+                  <FileText className="size-5 shrink-0 text-accent" />
                 ) : (
                   <FileAudio className="size-5 shrink-0 text-accent" />
                 )}

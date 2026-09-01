@@ -39,9 +39,11 @@ pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
     // Callable from the trigger path (any thread) — hop to the main thread for GTK.
     let hop = app.run_on_main_thread(move || {
         let Some(win) = handle.get_webview_window("langpick") else {
-            // No window to ask → answer "dismissed" so the caller's await settles (see the
-            // CloseRequested arm in lib.rs for what a pending asker costs).
-            let _ = handle.emit("langpick://cancel", ());
+            // No window to ask → answer "unavailable" so the caller's await settles (see the
+            // CloseRequested arm in lib.rs for what a pending asker costs). NOT `abort`: the
+            // user never saw a picker, so this must not cancel their dictation — the asker
+            // falls back to the Profile's configured targets instead.
+            let _ = handle.emit("langpick://unavailable", ());
             return;
         };
         crate::winpos::center_on_monitor(&win, LP_W, LP_H);
@@ -66,17 +68,18 @@ pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
         // that ever matters here.
         let _ = handle.emit("langpick://shown", seed);
     });
-    // "A dismissed picker always answers": if the main-thread hop itself failed (event loop
-    // gone / not yet running) the closure never ran, so nothing above could emit — answer
-    // here, or the asker's promise pends forever and hands-free latches its picker gate.
+    // "A dismissed or failed picker always answers": if the main-thread hop itself failed
+    // (event loop gone / not yet running) the closure never ran, so nothing above could emit
+    // — answer here, or the asker's promise pends forever and hands-free latches its picker
+    // gate. `unavailable`, not `abort`: no user gesture happened, so the dictation goes on.
     if hop.is_err() {
-        let _ = app.emit("langpick://cancel", ());
+        let _ = app.emit("langpick://unavailable", ());
     }
 }
 
 /// Hide the picker. It stays alive (prewarmed) for the next summon — the close-to-hide
 /// guard in `lib.rs` keeps it from being destroyed. Not an IPC command: nothing in the
-/// webview calls it, and commit/cancel are the only ways a picker should close.
+/// webview calls it, and commit/abort are the only ways a picker should close.
 pub fn hide_lang_pick(app: AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -96,12 +99,19 @@ pub fn commit_lang_pick(app: AppHandle, targets: Vec<String>) {
     hide_lang_pick(app);
 }
 
-/// Dismiss without choosing — the session falls back to the Profile's configured targets.
-/// A SEPARATE event from commit, deliberately: "no answer" and "answered with nothing"
-/// are different, and conflating them would make Esc mean "translate nothing".
+/// Abort the whole action — Esc, the "Cancel"/"Don’t insert" button, or a closed window.
+/// Hands-free: the session is not started. Push-to-talk: the finished transcript is NOT
+/// inserted (it still goes to History). A SEPARATE event from commit, deliberately: "stop
+/// this" and "answered with nothing" (an empty commit = insert the original only) are
+/// different answers, and conflating them would make Esc mean "translate nothing".
+///
+/// There is deliberately no "dismiss → use the Profile's preset" command any more: a
+/// picker that is on screen always ends in a real answer. The only "no answer" left is
+/// `langpick://unavailable`, emitted by `show_lang_pick` itself when it could not show a
+/// window — that one is not a user gesture, so the asker treats it as the preset.
 #[tauri::command]
-pub fn cancel_lang_pick(app: AppHandle) {
-    let _ = app.emit("langpick://cancel", ());
+pub fn abort_lang_pick(app: AppHandle) {
+    let _ = app.emit("langpick://abort", ());
     hide_lang_pick(app);
 }
 

@@ -249,27 +249,29 @@ export function Badge({ children, tone }: { children: ReactNode; tone?: "accent"
 /* ── LangTag ──────────────────────────────────────────────────────────── */
 
 /** Leading language tag on a track line (original neutral; MT takes the
- *  line's resolved color — dimmed speaker accent, or teal fallback).
+ *  line's resolved color — dimmed speaker accent, or an accent-mixed fallback:
+ *  teal belongs to the translating STAGE, not to translated text).
  *
  *  Lives here rather than in the viewer because History renders the same
  *  per-language tracks and the two must not drift: a track's code has to
  *  look identical whether you are reading a transcript or a dictation. */
 export function LangTag({ code, orig, color }: { code: string; orig?: boolean; color?: string }) {
+  // No speaker colour: the accent pulled 35% toward --c-faint, so the tag is
+  // recognisably "ours" without competing with a selected chip.
+  const mt = color ?? "color-mix(in srgb, var(--c-accent) 65%, var(--c-faint))";
   return (
     <span
       className={cn(
         "mr-1.5 inline-block translate-y-[-1px] rounded border px-1 font-mono text-[9.5px] uppercase tracking-wider",
-        orig
-          ? "border-line-strong text-dim"
-          : !color && "border-[color:var(--c-translate)]/40 text-[color:var(--c-translate)]",
+        orig && "border-line-strong text-dim",
       )}
       style={
-        !orig && color
+        !orig
           ? {
-              color,
+              color: mt,
               // A 40%-alpha border is fine to mix toward transparent — the
               // WebKitGTK gradient caveat only bites large text/fill areas.
-              borderColor: `color-mix(in srgb, ${color} 40%, transparent)`,
+              borderColor: `color-mix(in srgb, ${mt} 40%, transparent)`,
             }
           : undefined
       }

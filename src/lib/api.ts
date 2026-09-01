@@ -893,11 +893,12 @@ export async function commitLangPick(targets: string[]): Promise<void> {
   await invoke("commit_lang_pick", { targets });
 }
 
-/** Dismiss the picker — the session falls back to the Profile's configured targets.
- *  Deliberately distinct from committing an empty list, which means "no translation". */
-export async function cancelLangPick(): Promise<void> {
+/** Abort the whole action from the picker (Esc / the Cancel button / a closed window):
+ *  hands-free does not start, push-to-talk does not insert. Deliberately distinct from
+ *  committing an empty list, which means "insert the original only". */
+export async function abortLangPick(): Promise<void> {
   if (!isTauri) return;
-  await invoke("cancel_lang_pick");
+  await invoke("abort_lang_pick");
 }
 
 /** Read the user's current text selection from the source app to pre-fill Quick-Add's
