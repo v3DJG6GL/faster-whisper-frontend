@@ -1,4 +1,4 @@
-import { useApp } from "./store";
+import { useApp, CONFIG_VERSION } from "./store";
 import { isTauri, loadConfig, saveConfig, reregisterShortcutsUnlessCapturing, evdevStatus } from "./api";
 import { conflicts, quickAddPeer } from "./conflicts";
 import { IS_WINDOWS } from "./platform";
@@ -137,7 +137,7 @@ export async function initConfig(): Promise<void> {
       }
       const reReg = pendingBindingChange;
       pendingBindingChange = false;
-      saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules, version: 2 })
+      saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules, version: CONFIG_VERSION })
         .then(
           () => {
             // The write landed — clear any prior failure banner, THEN re-register. Re-registration

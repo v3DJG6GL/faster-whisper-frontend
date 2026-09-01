@@ -225,12 +225,16 @@ function isReservedId(id: unknown): boolean {
  *
  * Every EXISTING profile is seeded from the old global. Defaulting them instead would
  * hand a "stop" user live typing, which is the same class of surprise in the other
- * direction. New profiles get `true` from `blankProfile`, matching the old default.
+ * direction. New profiles leave the field undefined and inherit `general.typeAsISpeak`.
  *
- * Keyed on the field being PRESENT, so it runs exactly once: the next save writes a
- * config without it. `insertTiming` itself is kept in the type (deprecated) and in the
- * Rust struct — see the note there — so a rollback to an older build still reads a
- * conservative value rather than defaulting itself back to "live".
+ * Runs exactly once, gated by `migrateConfig` on the config's schema version being
+ * below `CONFIG_VERSION`. Presence of the field cannot be the key: Rust's
+ * `GeneralSettings.insert_timing` is a non-Option `#[serde(default)]` field, so every
+ * config that has passed through `load_config`/`save_config` carries it — a presence
+ * gate re-ran this on every launch and reset `typeAsISpeak` to the write-back value.
+ * `insertTiming` itself is kept in the type (deprecated) and in the Rust struct — see
+ * the note there — so a rollback to an older build still reads a conservative value
+ * rather than defaulting itself back to "live".
  */
 export function migrateInsertTiming(settings: AppSettings, profiles: Profile[]): { settings: AppSettings; profiles: Profile[] } {
   const timing = settings.general.insertTiming;
@@ -257,7 +261,15 @@ export function migrateInsertTiming(settings: AppSettings, profiles: Profile[]):
 }
 
 /**
- * Normalize a loaded config to the v2 shape. The Rust `load()` already migrates,
+ * Schema version written into every saved config. Bumped when a one-shot migration is
+ * added to `migrateConfig`; the migration runs for configs below it and never again.
+ *   2 — backends/profiles split (legacy v1 had `modes`)
+ *   3 — `insertTiming` retired onto `typeAsISpeak` (`migrateInsertTiming`)
+ */
+export const CONFIG_VERSION = 3;
+
+/**
+ * Normalize a loaded config to the current shape. The Rust `load()` already migrates,
  * but this guards the no-Rust `pnpm dev` path and any version skew during dev.
  */
 function migrateConfig(raw: unknown): Config {
@@ -269,13 +281,16 @@ function migrateConfig(raw: unknown): Config {
   }
   // Already v2 (has `backends`).
   if (Array.isArray((c as { backends?: unknown }).backends)) {
-    const migrated = migrateInsertTiming(withSettingsDefaults(c.settings), wellFormedProfiles(c.profiles));
+    const version = typeof c.version === "number" ? c.version : 0;
+    const settings = withSettingsDefaults(c.settings);
+    const profiles = wellFormedProfiles(c.profiles);
+    const migrated = version < 3 ? migrateInsertTiming(settings, profiles) : { settings, profiles };
     return {
       settings: migrated.settings,
       backends: wellFormedBackends(c.backends),
       profiles: migrated.profiles,
       appRules: wellFormedAppRules((c as { appRules?: unknown }).appRules),
-      version: c.version as number | undefined,
+      version: CONFIG_VERSION,
     };
   }
   // Legacy v1: `profiles` were Backends; `modes` were ModeBindings. A legacy config
@@ -295,7 +310,8 @@ function migrateConfig(raw: unknown): Config {
       backendId: (m.profileId as string | null) ?? null,
     };
   });
-  return { settings: withSettingsDefaults(c.settings), backends, profiles, version: 2 };
+  const migrated = migrateInsertTiming(withSettingsDefaults(c.settings), profiles);
+  return { settings: migrated.settings, backends, profiles: migrated.profiles, version: CONFIG_VERSION };
 }
 
 interface AppState {

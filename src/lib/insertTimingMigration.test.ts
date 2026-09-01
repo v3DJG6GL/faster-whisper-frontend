@@ -6,7 +6,7 @@
 // them — a "stop" user must not come back as a live-typing one.
 
 import { describe, expect, it } from "vitest";
-import { migrateInsertTiming } from "./store";
+import { CONFIG_VERSION, migrateInsertTiming, useApp } from "./store";
 import { DEFAULT_SETTINGS } from "./defaults";
 import type { AppSettings, InsertTiming, Profile } from "./types";
 
@@ -72,12 +72,30 @@ describe("migrateInsertTiming", () => {
     expect(r.profiles[0].typeAsISpeak).toBe(false);
   });
 
-  it("is a no-op once the field is gone", () => {
-    const settings = settingsWith("live");
-    delete (settings.general as { insertTiming?: unknown }).insertTiming;
-    const profiles = [profile()];
-    const r = migrateInsertTiming(settings, profiles);
-    expect(r.profiles).toBe(profiles);
-    expect(r.settings).toBe(settings);
+  it("runs once per config: a second launch on the config it wrote keeps typeAsISpeak", () => {
+    // `insertTiming` is never absent (Rust always writes it back), so the gate lives in
+    // `migrateConfig` on the schema version, not on the field. Load a v2 config, flip the
+    // new toggle on, save-shape it as the app would, load again: the migration must not
+    // re-run and reset the toggle to the conservative write-back value.
+    const store = useApp.getState();
+    store.hydrate({ settings: settingsWith("stop"), backends: [], profiles: [profile()], version: 2 });
+    expect(useApp.getState().settings.general.typeAsISpeak).toBe(false);
+
+    const s1 = useApp.getState();
+    const saved = {
+      settings: { ...s1.settings, general: { ...s1.settings.general, typeAsISpeak: true } },
+      backends: s1.backends,
+      profiles: s1.profiles.map((p) => ({ ...p, typeAsISpeak: undefined })),
+      version: CONFIG_VERSION,
+    };
+    useApp.getState().hydrate(saved);
+    expect(useApp.getState().settings.general.typeAsISpeak).toBe(true);
+    expect(useApp.getState().profiles[0].typeAsISpeak).toBeUndefined();
+  });
+
+  it("still migrates a config that predates the version stamp", () => {
+    useApp.getState().hydrate({ settings: settingsWith("live"), backends: [], profiles: [profile()] });
+    expect(useApp.getState().settings.general.typeAsISpeak).toBe(true);
+    expect(useApp.getState().profiles[0].typeAsISpeak).toBe(true);
   });
 });

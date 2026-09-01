@@ -17,7 +17,7 @@
 //    surfaces in the Sync tab's conflict dialog. appRules sub-merge per-OS
 //    bucket, so two machines editing different OSes' rules never conflict.
 
-import { useApp } from "./store";
+import { useApp, CONFIG_VERSION } from "./store";
 import {
   deleteBackendKey,
   isTauri,
@@ -1591,7 +1591,9 @@ export async function applyBlob(
       backends: nextBackends,
       profiles: nextProfiles,
       appRules: nextAppRules,
-      version: 2,
+      // The blob's `general` block was validated field-by-field above (including the
+      // retired `insertTiming`), so no schema migration must run on it here.
+      version: CONFIG_VERSION,
     });
 
     // Side effects hydrate() doesn't cover: deep-field detection is pushed to
