@@ -57,6 +57,15 @@ describe("txt", () => {
 });
 
 describe("srt", () => {
+  it("a rounding carry rolls into the second instead of a 4-digit millisecond field", () => {
+    const edge: BatchResult = {
+      text: "x",
+      segments: [{ start: 1.9996, end: 3.0, text: "x" }],
+    };
+    const out = generateExport(edge, { format: "srt" });
+    expect(out).toContain("00:00:02,000 --> ");
+    expect(out).not.toContain(",1000");
+  });
   it("numbered cues with comma-millisecond clock times", () => {
     const out = generateExport(RESULT, { format: "srt" });
     expect(out).toContain("1\n00:00:00,400 --> 00:00:02,000\nSpeaker 1: Hello there.");
@@ -112,9 +121,30 @@ describe("lrc", () => {
     expect(out).toContain("[00:00.40]Speaker 1: <00:00.40>Hello <00:00.90>there.");
   });
   it("falls back to line level when no words cover a segment", () => {
+    // Words exist, but none land in the first segment's window — the branch
+    // the cursor merge in segmentWordRanges has to get right.
+    const partial: BatchResult = {
+      ...RESULT,
+      words: [
+        { word: " General", start: 2.1, end: 2.7 },
+        { word: " greeting.", start: 2.7, end: 3.4 },
+      ],
+    };
+    const out = generateExport(partial, { format: "lrc", wordTimestamps: true });
+    expect(out).toContain("[00:00.40]Speaker 1: Hello there.");
+    expect(out).toContain("[00:02.10]Speaker 2: <00:02.10>General <00:02.70>greeting.");
+  });
+  it("with no words at all every line is line-level", () => {
     const noWords: BatchResult = { ...RESULT, words: [] };
     const out = generateExport(noWords, { format: "lrc", wordTimestamps: true });
     expect(out).toContain("[00:00.40]Speaker 1: Hello there.");
+  });
+  it("a rounding carry rolls into the minute instead of printing 60 seconds", () => {
+    const edge: BatchResult = {
+      text: "x",
+      segments: [{ start: 59.999, end: 61.0, text: "x" }],
+    };
+    expect(generateExport(edge, { format: "lrc" })).toContain("[01:00.00]x");
   });
 });
 
@@ -535,5 +565,14 @@ describe("lrc word tags", () => {
     const out = generateExport(r, { format: "lrc", wordTimestamps: true });
     expect(out.split("<00:01.00>").length - 1).toBe(1);
     expect(out).toContain("[00:01.00]<00:01.00>b");
+  });
+  it("a rename made only of format characters falls back to the speaker label", () => {
+    const out = generateExport(RESULT, {
+      format: "txt",
+      renames: { SPEAKER_00: "\u202e\u200b" },
+    });
+    expect(out.startsWith("Speaker 1: Hello there.")).toBe(true);
+    const vtt = generateExport(RESULT, { format: "vtt", renames: { SPEAKER_00: "\u202e" } });
+    expect(vtt).not.toContain("<v >");
   });
 });

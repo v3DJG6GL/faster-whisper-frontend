@@ -117,6 +117,7 @@ function isRecord(v: unknown): v is TranscriptRecord {
     typeof r.id === "string" &&
     typeof r.createdAt === "string" &&
     typeof r.sourcePath === "string" &&
+    typeof r.sourceName === "string" &&
     (r.status === "done" || r.status === "failed")
   );
 }

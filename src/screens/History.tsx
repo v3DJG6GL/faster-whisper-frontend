@@ -677,6 +677,10 @@ export default function History() {
       tabIndex={0}
       onClick={() => setExpandedId(rec.id)}
       onKeyDown={(e) => {
+        // Keys aimed at the nested Copy/Delete buttons must reach them: their
+        // activation IS this keydown's default action, so cancelling it here
+        // would swallow the action and expand the row instead.
+        if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           setExpandedId(rec.id);

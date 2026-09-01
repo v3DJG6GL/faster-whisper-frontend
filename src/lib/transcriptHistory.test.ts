@@ -101,6 +101,9 @@ describe("loadHistory", () => {
       "not an object",
       { id: "no-status", createdAt: "2026-01-01T00:00:00.000Z", sourcePath: "" },
       { schemaVersion: 1, id: 7, createdAt: "2026-01-01T00:00:00.000Z", sourcePath: "", status: "done" },
+      // Otherwise valid but no sourceName: every consumer calls .toLowerCase()/.replace() on it.
+      { schemaVersion: 1, id: "no-name", createdAt: "2026-01-01T00:00:00.000Z", sourcePath: "", status: "done" },
+      { schemaVersion: 1, id: "num-name", createdAt: "2026-01-01T00:00:00.000Z", sourcePath: "", sourceName: 3, status: "done" },
     ]);
     await loadHistory(true);
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["keep-me"]);

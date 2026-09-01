@@ -118,20 +118,20 @@ const pad3 = (n: number) => String(n).padStart(3, "0");
 
 /** 3661.24 → "01:01:01,240" (SRT) / "01:01:01.240" (VTT). */
 function clockTime(seconds: number, sep: "," | "."): string {
-  const s = Math.max(0, seconds);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = Math.floor(s % 60);
-  const ms = Math.round((s - Math.floor(s)) * 1000);
-  return `${pad2(h)}:${pad2(m)}:${pad2(sec)}${sep}${pad3(ms)}`;
+  // Round to the emitted resolution FIRST, so a carry increments the unit
+  // above instead of overflowing the sub-unit field (1.9996 → "01,1000").
+  const total = Math.round(Math.max(0, seconds) * 1000);
+  const ms = total % 1000;
+  const t = Math.floor(total / 1000);
+  return `${pad2(Math.floor(t / 3600))}:${pad2(Math.floor((t % 3600) / 60))}:${pad2(t % 60)}${sep}${pad3(ms)}`;
 }
 
 /** 61.24 → "01:01.24" (LRC line/word tags use minutes + centiseconds). */
 function lrcTime(seconds: number): string {
-  const s = Math.max(0, seconds);
-  const m = Math.floor(s / 60);
-  const cs = Math.round((s - m * 60) * 100);
-  return `${pad2(m)}:${(cs / 100).toFixed(2).padStart(5, "0")}`;
+  const total = Math.round(Math.max(0, seconds) * 100);
+  const m = Math.floor(total / 6000);
+  const rest = total % 6000;
+  return `${pad2(m)}:${pad2(Math.floor(rest / 100))}.${pad2(rest % 100)}`;
 }
 
 interface Ctx {
@@ -204,8 +204,10 @@ function cueLines(
 }
 
 function nameOf(ctx: Ctx, label: string): string {
-  const renamed = ctx.opts.renames?.[label]?.trim();
-  return clean(renamed || prettySpeaker(label));
+  // Sanitize BEFORE choosing: a rename made only of bidi/format characters is
+  // truthy but cleans to "", which would blank the name for the whole export.
+  const renamed = clean(ctx.opts.renames?.[label] ?? "");
+  return renamed || clean(prettySpeaker(label));
 }
 
 function colorOf(ctx: Ctx, label: string): string {
