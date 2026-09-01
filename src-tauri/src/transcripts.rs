@@ -109,7 +109,7 @@ pub(crate) fn rewrite_media_paths(
             let Ok(out) = serde_json::to_string(&v) else {
                 continue;
             };
-            if crate::config::write_private(&path, &out).is_ok() {
+            if write_record_atomic(&path, &out).is_ok() {
                 rewritten += 1;
             }
         }
@@ -123,8 +123,26 @@ pub(crate) fn rewrite_media_paths(
 /// lives under one of the audio-base subfolders (same basename). Heals
 /// records a past move rewrote incompletely — earlier builds only rewrote
 /// `mediaPath`, stranding every dictation record's `sourcePath` when the
-/// layout migration moved the files into `<base>/dictations`. Idempotent
-/// and cheap: one stat per stored path, rewrites only on a hit.
+/// layout migration moved the files into `<base>/dictations`. Idempotent, but
+/// NOT cheap — it reads and parses every record — so the caller runs it after a
+/// migration that moved something and once per install, not every launch.
+/// Replace one record file atomically (tmp + rename), owner-only, tmp cleaned up on
+/// either failure path. `read_records_into` silently skips a file that fails to parse,
+/// so no record may ever be written in place: a crash between truncate and write would
+/// make it vanish from History.
+fn write_record_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+    let tmp = path.with_extension("json.tmp");
+    if let Err(e) = crate::config::write_private(&tmp, contents) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
+}
+
 pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
     let subs = ["dictations", "files", "links"];
     let dirs = [transcripts_dir(app), dictations_dir(app)];
@@ -136,6 +154,11 @@ pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            // Same size guard as `read_records_into`: an oversized record is skipped
+            // there too, so parsing it here would be work for a record nobody loads.
+            if entry.metadata().map(|m| m.len() > MAX_RECORD_BYTES).unwrap_or(true) {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&path) else {
@@ -173,7 +196,7 @@ pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
             let Ok(out) = serde_json::to_string(&v) else {
                 continue;
             };
-            if crate::config::write_private(&path, &out).is_ok() {
+            if write_record_atomic(&path, &out).is_ok() {
                 healed += 1;
             }
         }
@@ -403,10 +426,13 @@ pub fn delete_all_dictations(app: AppHandle, audio_base: Option<String>) -> Resu
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                let ext = path.extension().and_then(|e| e.to_str());
-                if matches!(ext, Some("wav") | Some("txt"))
-                    && std::fs::remove_file(&path).is_ok()
-                {
+                // Only the app's own files (same invariant as prune): a user-chosen
+                // folder may hold other people's .wav/.txt.
+                let own = path
+                    .file_name()
+                    .map(|n| crate::audio::is_dictation_file(&n.to_string_lossy()))
+                    .unwrap_or(false);
+                if own && std::fs::remove_file(&path).is_ok() {
                     removed += 1;
                 }
             }
@@ -587,6 +613,22 @@ fn wipe_records(dir: &Path) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_rewrite_is_atomic_and_leaves_no_tmp() {
+        let dir = std::env::temp_dir().join(format!("fwf-atomic-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("r.json");
+        std::fs::write(&path, "{\"a\":1}").unwrap();
+        write_record_atomic(&path, "{\"a\":2}").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"a\":2}");
+        assert!(!dir.join("r.json.tmp").exists());
+        // A missing parent fails without touching anything and leaves no tmp behind.
+        let bad = dir.join("missing").join("r.json");
+        assert!(write_record_atomic(&bad, "{}").is_err());
+        assert!(!dir.join("missing").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn id_validation() {

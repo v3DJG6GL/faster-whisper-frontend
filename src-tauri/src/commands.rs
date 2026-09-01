@@ -93,9 +93,9 @@ fn move_file(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<(
 }
 
 /// Move every regular file from `from` into `to`, recording old→new paths.
-/// Stops on the first error (already-moved files stay moved — the layout
-/// remains readable because path resolution follows the settings, which only
-/// change after the whole move succeeds).
+/// Stops on the first error; already-moved files stay moved and are in `map`,
+/// which the caller rewrites into the records even on failure (they store
+/// absolute paths, so nothing else would re-point them).
 fn move_dir_contents(
     from: &std::path::Path,
     to: &std::path::Path,
@@ -161,11 +161,13 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
         if let Ok(entries) = std::fs::read_dir(&legacy_rec) {
             for entry in entries.flatten() {
                 let src = entry.path();
-                let ext = src.extension().and_then(|e| e.to_str());
-                if !src.is_file() || !matches!(ext, Some("wav") | Some("txt")) {
+                let Some(name) = src.file_name() else { continue };
+                // Only the app's own files: the legacy folder is a free user pick (~/Music,
+                // a shared Documents folder…), and relocating every .wav/.txt in it moved
+                // foreign files under a folder "Delete all dictations" then wipes.
+                if !src.is_file() || !crate::audio::is_dictation_file(&name.to_string_lossy()) {
                     continue;
                 }
-                let Some(name) = src.file_name() else { continue };
                 let dest = dict.join(name);
                 if dest.exists() {
                     continue; // never clobber
@@ -220,10 +222,15 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
         tracing::info!("[audio] layout migration moved {} file(s) under {}", map.len(), base.display());
         rewrite_media_paths(app, &map);
     }
-    // Repair records a past (incomplete) rewrite left pointing at moved
-    // files — runs every startup, rewrites only records whose path is gone
-    // but whose file sits under one of the subfolders.
-    crate::transcripts::heal_media_paths(app, &base);
+    // Repair records a past (incomplete) rewrite left pointing at moved files. One
+    // full read+parse of every record, so NOT every launch: after a migration that
+    // moved something, and once per install (the stamp); `move_audio_base` heals
+    // directly through its own rewrite.
+    let stamp = base.join(".heal-v1");
+    if !map.is_empty() || !stamp.exists() {
+        crate::transcripts::heal_media_paths(app, &base);
+        let _ = std::fs::write(&stamp, b"");
+    }
 }
 
 /// Relocate the whole audio store: move the three subfolders from the current
@@ -248,13 +255,20 @@ pub async fn move_audio_base(
         crate::audio::create_dir_private(&to)
             .map_err(|e| format!("could not create the folder: {e}"))?;
         let mut map: Vec<(String, String)> = Vec::new();
+        let mut res: Result<(), String> = Ok(());
         for sub in AUDIO_SUBDIRS {
-            move_dir_contents(&from.join(sub), &to.join(sub), &mut map)?;
+            if let Err(e) = move_dir_contents(&from.join(sub), &to.join(sub), &mut map) {
+                res = Err(e);
+                break;
+            }
         }
         let _ = std::fs::remove_dir(&from); // only if empty
+        // Always re-point what actually moved: records store ABSOLUTE paths, and a
+        // partial move leaves the preference on the old base, which the startup heal
+        // then searches — so an unrewritten record would stay broken for good.
         rewrite_media_paths(&app, &map);
         tracing::info!("[audio] base moved: {} file(s) → {}", map.len(), to.display());
-        Ok(())
+        res
     })
     .await
     .map_err(|e| e.to_string())?

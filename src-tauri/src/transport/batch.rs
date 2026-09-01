@@ -461,7 +461,16 @@ async fn post(
         // the explicit ask — so word timestamps work against both kinds.
         .text("timestamp_granularities[]", "word");
 
-    if translate && !use_translations_route {
+    // T2T wins over translate-to-EN: with targets present the whisper `task` field is
+    // never sent (the UI enforces the exclusivity too — this is the belt-and-braces the
+    // comment on the `translate_to` block below promises).
+    let has_targets = opts
+        .translate_to
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .any(|t| is_lang_code(t));
+    if translate && !use_translations_route && !has_targets {
         form = form.text("task", "translate");
     }
     if let Some(d) = opts.diarize {

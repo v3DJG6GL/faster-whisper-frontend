@@ -119,6 +119,13 @@ pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32, channels: u16) -> Vec<u8> {
     wav
 }
 
+/// The two file names this app writes into the dictations folder — `dictation-*.wav`
+/// and its `.txt` sidecar. Everything else in a user-chosen folder is somebody else's
+/// data: never moved by the layout migration, never deleted by prune or delete-all.
+pub fn is_dictation_file(name: &str) -> bool {
+    name.starts_with("dictation-") && (name.ends_with(".wav") || name.ends_with(".txt"))
+}
+
 /// Delete saved recordings and their transcript sidecars older than `days` (0 = keep forever).
 /// Best-effort and silent on I/O errors: retention is housekeeping, and a failure here must
 /// never interrupt a dictation. Only touches the files this app writes — `dictation-*.wav` and
@@ -145,7 +152,7 @@ pub fn prune_recordings(dir: &Path, days: u32) -> usize {
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if !name.starts_with("dictation-") || !(name.ends_with(".wav") || name.ends_with(".txt")) {
+        if !is_dictation_file(&name) {
             continue;
         }
         let old = entry
