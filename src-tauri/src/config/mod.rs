@@ -184,7 +184,19 @@ pub struct Backend {
     pub model: String,
     pub endpoint: EndpointKind,
     pub language: String,
+    /// Default vocabulary / initial_prompt. Stays a REQUIRED string so a config
+    /// written by this build still parses in one that predates the tri-state below
+    /// (a missing field fails the typed parse, and `load_outcome`'s answer to that is
+    /// to rename config.json → .bak and load defaults — a downgrade would wipe the
+    /// user's backends, profiles and hotkeys).
     pub prompt: String,
+    /// The explicit-clear half of the prompt's tri-state: `prompt` empty + this set
+    /// means "send an empty prompt" (suppress the server's DEFAULT_PROMPT), while
+    /// `prompt` empty on its own keeps meaning "inherit". Additive and skipped when
+    /// None, so existing configs round-trip byte-stable and an older build — which
+    /// ignores the unknown key — reads the "" as the inherit it always meant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cleared: Option<bool>,
     pub response_format: ResponseFormat,
     /// Phase-B placeholder: per-Backend decode-param defaults. Skipped when None
     /// so Phase-A configs round-trip byte-stable and the frontend need not send it.

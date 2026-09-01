@@ -181,6 +181,55 @@ fn is_lang_code(s: &str) -> bool {
         && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
+/// The `translate_to` form value, as the three states the server distinguishes:
+/// `None` = omit the field (the server inherits its override-profile's TRANSLATE_TO),
+/// `Some("")` = an empty value, i.e. NO targets, which overrides that inherited list,
+/// `Some(csv)` = translate into exactly these (screened, at most 8).
+///
+/// The client's target list is authoritative — an empty one means the user switched the
+/// stage off — so it has to be said out loud. Omitting it (what an empty list used to do)
+/// let the server put the stage back.
+fn translate_to_field(requested: Option<&[String]>) -> Option<String> {
+    let requested = requested?;
+    let targets: Vec<&str> = requested
+        .iter()
+        .map(String::as_str)
+        .filter(|t| is_lang_code(t))
+        .take(8)
+        .collect();
+    Some(targets.join(","))
+}
+
+#[cfg(test)]
+mod wire_field_tests {
+    use super::translate_to_field;
+
+    #[test]
+    fn absent_is_omitted_but_an_empty_list_is_sent_empty() {
+        // The distinction the whole change exists for: absent = inherit the server
+        // profile's TRANSLATE_TO, empty = explicitly no translation.
+        assert_eq!(translate_to_field(None), None);
+        assert_eq!(translate_to_field(Some(&[])), Some(String::new()));
+    }
+
+    #[test]
+    fn targets_are_screened_and_capped_at_eight() {
+        let list: Vec<String> = ["de", "fr/x", "pt-BR"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(translate_to_field(Some(&list)), Some("de,pt-BR".to_string()));
+        let many: Vec<String> = (0..12).map(|i| format!("l{i}")).collect();
+        assert_eq!(translate_to_field(Some(&many)).unwrap().split(',').count(), 8);
+    }
+
+    #[test]
+    fn a_list_screened_down_to_nothing_still_sends_empty() {
+        // It reached us as "the user asked for targets", but none survived the screen;
+        // sending "" keeps the run's behaviour (no translating stage) rather than
+        // handing the decision back to the server's inherited list.
+        let junk: Vec<String> = vec!["!".to_string()];
+        assert_eq!(translate_to_field(Some(&junk)), Some(String::new()));
+    }
+}
+
 /// Progress ids are client-generated lowercase hex (a UUID without dashes) —
 /// validated before they reach a form field or, critically, a URL path.
 fn is_progress_id(s: &str) -> bool {
@@ -495,25 +544,28 @@ async fn post(
     // T2T targets as a CSV of screened language codes. When present, the
     // whisper `task` field is never sent (T2T wins over translate-to-EN —
     // the UI enforces the exclusivity, this is the belt-and-braces).
-    let targets: Vec<&str> = opts
-        .translate_to
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .map(String::as_str)
-        .filter(|t| is_lang_code(t))
-        .take(8)
-        .collect();
-    if !targets.is_empty() {
-        form = form.text("translate_to", targets.join(","));
-        if let Some(m) = opts.translation_model.as_deref().filter(|m| !m.is_empty()) {
-            form = form.text("translation_model", m.to_string());
-        }
-        if let Some(m) = opts.translation_mode.as_deref().filter(|m| !m.is_empty()) {
-            form = form.text("translation_mode", m.to_string());
-        }
-        if let Some(g) = opts.translation_glossary.as_deref().filter(|g| !g.trim().is_empty()) {
-            form = form.text("translation_glossary", g.to_string());
+    //
+    // translate_to sentinel: None → omit the field, so the server inherits its
+    // override-profile's TRANSLATE_TO; Some(_) → send it, where an EMPTY value means
+    // "no targets" and overrides that inherited list. The client's chip list is
+    // authoritative, so an empty one has to be said out loud — omitting it let the
+    // server put back the stage the user had switched off.
+    if let Some(csv) = translate_to_field(opts.translate_to.as_deref()) {
+        let has_any = !csv.is_empty();
+        form = form.text("translate_to", csv);
+        // The per-run translation knobs only mean anything alongside real targets.
+        if has_any {
+            if let Some(m) = opts.translation_model.as_deref().filter(|m| !m.is_empty()) {
+                form = form.text("translation_model", m.to_string());
+            }
+            if let Some(m) = opts.translation_mode.as_deref().filter(|m| !m.is_empty()) {
+                form = form.text("translation_mode", m.to_string());
+            }
+            // Same sentinel as `prompt`: None → omit (inherit the server's
+            // TRANSLATION_GLOSSARY); Some (incl. "") → send it, where "" CLEARS it.
+            if let Some(g) = opts.translation_glossary.as_deref() {
+                form = form.text("translation_glossary", g.to_string());
+            }
         }
     }
     if let Some(m) = opts.diarization_model.as_deref().filter(|m| !m.is_empty()) {
@@ -530,8 +582,17 @@ async fn post(
 
     // /v1/audio/translations auto-detects the source and always outputs
     // English — `language` is undefined there.
-    if !use_translations_route && !language.is_empty() && language != "auto" {
-        form = form.text("language", language.to_string());
+    //
+    // language sentinel: "" (nothing resolved) → omit the field, so the server
+    // inherits its override-profile's DEFAULT_LANGUAGE; "auto" → send an EMPTY value,
+    // which is auto-detect stated explicitly and overrides that inherited language.
+    // Every picker feeding this offers "auto" as a CHOICE (the inherit row, where one
+    // exists, is the empty value), so mapping auto onto "omit" took the user's pick
+    // for a silence and let the profile's language win.
+    if !use_translations_route {
+        if let Some(wire) = super::wire_language(language) {
+            form = form.text("language", wire.to_string());
+        }
     }
     // prompt sentinel: None → omit the field (server inherits DEFAULT_PROMPT);
     // Some (incl. "") → send it, where "" CLEARS the prompt (reqwest transmits an

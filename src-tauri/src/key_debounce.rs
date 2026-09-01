@@ -79,6 +79,17 @@ impl Debouncer {
         due
     }
 
+    /// Take EVERY deferred release, due or not — the backend's teardown flush. A release
+    /// parked here is a key the user has physically let go of; if the listener dies with it
+    /// parked, the engine still lists that hold as active and the teardown manufactures a
+    /// stop for a chord that is no longer down (and arms the loss latch on it). Committing
+    /// the parked releases first turns them into the real stops they were about to become.
+    pub fn drain(&mut self) -> Vec<u16> {
+        let mut due: Vec<u16> = self.pending.drain().map(|(k, _)| k).collect();
+        due.sort_unstable();
+        due
+    }
+
     /// Earliest pending deadline, driving the backend's timed wait
     /// (`recv_timeout` / `timeout_at`). `None` = nothing pending, wait forever.
     pub fn next_deadline(&self) -> Option<Instant> {
@@ -153,6 +164,19 @@ mod tests {
         let mut d = Debouncer::new(RELEASE_DEBOUNCE);
         assert_eq!(d.on_event(K, false, false, t), Some((K, false)));
         assert_eq!(d.on_event(K, true, false, t), Some((K, true))); // next press commits
+    }
+
+    #[test]
+    fn drain_takes_every_pending_release_regardless_of_deadline() {
+        let t = Instant::now();
+        let mut d = Debouncer::new(RELEASE_DEBOUNCE);
+        d.on_event(K, true, false, t);
+        d.on_event(J, true, false, t);
+        d.on_event(K, false, true, t);
+        d.on_event(J, false, true, at(t, 1)); // neither window has elapsed
+        assert_eq!(d.drain(), vec![J, K]);
+        assert_eq!(d.next_deadline(), None);
+        assert!(d.expire(at(t, 1000)).is_empty());
     }
 
     #[test]

@@ -53,7 +53,10 @@ pub enum StreamEvent {
 pub struct StreamParams {
     pub ws_url: String,
     pub model: String,
-    pub language: String, // "" / "auto" → omit (server auto-detects)
+    /// "" → omit the handshake field (inherit the server's DEFAULT_LANGUAGE);
+    /// "auto" → send "" (explicit auto-detect, overriding an inherited language);
+    /// a code → send it.
+    pub language: String,
     pub response_format: String, // "json" | "verbose_json"
     // None = omit the field (inherit DEFAULT_PROMPT); Some("") = explicit clear
     // (send no initial_prompt); Some(v) = use v.
@@ -262,18 +265,20 @@ pub async fn run<F>(
     let (mut write, mut read) = ws.split();
     tracing::info!("[stream] ws connected");
 
-    let lang = if params.language.is_empty() || params.language == "auto" {
-        String::new()
-    } else {
-        params.language.clone()
-    };
     let mut config = json!({
         "type": "config",
         "model": params.model,
-        "language": lang,
         "response_format": params.response_format,
         "audio": { "format": "pcm_s16le", "sample_rate": 16000 }
     });
+    // language sentinel, the same three states the batch form uses: "" (nothing
+    // resolved) → omit the key, so the server inherits its override-profile's
+    // DEFAULT_LANGUAGE; "auto" → send "", which is auto-detect stated explicitly and
+    // OVERRIDES that inherited language; a code → send it. Sending "" for both states
+    // meant a profile could never fall back to the server's language.
+    if let Some(wire) = super::wire_language(&params.language) {
+        config["language"] = json!(wire);
+    }
     // prompt sentinel: omit the field entirely → server inherits DEFAULT_PROMPT;
     // send it (incl. "") → server uses it verbatim, where "" CLEARS the prompt.
     if let Some(p) = &params.prompt {

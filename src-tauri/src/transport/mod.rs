@@ -341,6 +341,41 @@ pub fn bounded_server_text(s: &str, n: usize) -> String {
     }
 }
 
+/// The `language` a request should carry, as the three states the server distinguishes:
+/// `None` = omit the field (the server inherits its override-profile's DEFAULT_LANGUAGE),
+/// `Some("")` = send an empty value (auto-detect, stated explicitly, which OVERRIDES that
+/// inherited language), `Some(code)` = that language.
+///
+/// Every picker that feeds this offers "auto" as a CHOICE — the inherit row, where a screen
+/// has one, is the EMPTY value, not "auto". So "auto" must be said on the wire; folding it
+/// onto "omit" (which both transports did) meant a user picking auto-detect on a backend
+/// bound to a server profile silently got that profile's language instead.
+pub fn wire_language(language: &str) -> Option<&str> {
+    match language {
+        "" => None,
+        "auto" => Some(""),
+        code => Some(code),
+    }
+}
+
+#[cfg(test)]
+mod wire_language_tests {
+    use super::wire_language;
+
+    #[test]
+    fn auto_is_sent_as_empty_and_unset_is_omitted() {
+        // The whole point: these two used to be the same request.
+        assert_eq!(wire_language("auto"), Some(""));
+        assert_eq!(wire_language(""), None);
+    }
+
+    #[test]
+    fn a_real_code_rides_through_untouched() {
+        assert_eq!(wire_language("de"), Some("de"));
+        assert_eq!(wire_language("pt-BR"), Some("pt-BR"));
+    }
+}
+
 /// Buffer a response body with an explicit ceiling, giving up once it passes the limit instead of
 /// growing without bound. Every caller now names its own ceiling: an error arm that only wants a
 /// `detail` string takes [`MAX_ERROR_BODY`], a sync payload takes `sync::SYNC_MAX_BODY`, and only a

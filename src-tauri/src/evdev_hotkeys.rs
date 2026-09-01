@@ -279,15 +279,46 @@ mod imp {
     // key-release matches no chord and emits no "stop". Tracked here so the teardown can emit those
     // stops itself (see stop_held_sessions). Vec so the static is const-initializable; entries are
     // deduped on insert and dictate("stop") is a no-op when idle, so any staleness is harmless.
-    static ACTIVE_HOLDS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    // Each entry carries the evdev codes of the chord that started the hold, so the teardown can
+    // ask the kernel whether that chord is STILL physically down before arming the loss latch.
+    static ACTIVE_HOLDS: std::sync::Mutex<Vec<(String, Vec<u16>)>> = std::sync::Mutex::new(Vec::new());
 
-    fn note_hold(profile_id: &str, active: bool) {
+    fn note_hold(profile_id: &str, keys: &[u16], active: bool) {
         if let Ok(mut h) = ACTIVE_HOLDS.lock() {
-            h.retain(|p| p != profile_id);
+            h.retain(|(p, _)| p != profile_id);
             if active {
-                h.push(profile_id.to_string());
+                h.push((profile_id.to_string(), keys.to_vec()));
             }
         }
+    }
+
+    /// Is the whole chord physically down on SOME keyboard right now, per the kernel?
+    /// `EVIOCGKEY` on each keyboard — the authoritative state, independent of our readers (which
+    /// may be aborted by the very teardown asking). A chord lives on one device (each reader has
+    /// its own engine), so "all keys on one device" is the right question. Empty = no.
+    fn chord_physically_down(codes: &[u16]) -> bool {
+        if codes.is_empty() {
+            return false;
+        }
+        evdev::enumerate().any(|(_, dev)| {
+            is_keyboard(&dev)
+                && dev
+                    .get_key_state()
+                    .is_ok_and(|ks| codes.iter().all(|&c| ks.contains(Key::new(c))))
+        })
+    }
+
+    /// The manufactured-stop rule, shared by both teardown sites — the twin of
+    /// `win_hotkeys::manufactured_stop`, see there. Emit the stop; arm the loss latch ONLY if the
+    /// chord is still physically down. A chord the kernel reports released is safe to type into,
+    /// and arming on it diverted the next phrase to the clipboard for nothing.
+    fn manufactured_stop(app: &AppHandle, profile_id: &str, keys: &[u16]) {
+        if chord_physically_down(keys) {
+            crate::held_keys::arm_chord_lost();
+        } else {
+            tracing::info!("[evdev] teardown stop for a chord the kernel reports released; not arming the loss latch");
+        }
+        emit(app, profile_id, "stop", None);
     }
 
     /// Remove `profile_id` from ACTIVE_HOLDS, reporting whether it was present — the twin of
@@ -298,8 +329,8 @@ mod imp {
         let Ok(mut h) = ACTIVE_HOLDS.lock() else {
             return false;
         };
-        let had = h.iter().any(|p| p == profile_id);
-        h.retain(|p| p != profile_id);
+        let had = h.iter().any(|(p, _)| p == profile_id);
+        h.retain(|(p, _)| p != profile_id);
         had
     }
 
@@ -311,14 +342,10 @@ mod imp {
             .lock()
             .map(|mut h| std::mem::take(&mut *h))
             .unwrap_or_default();
-        for profile_id in stuck {
-            // A stop we MANUFACTURED for a chord that is still physically down — `None` marks
-            // exactly that, and nothing else passes it. The listener teardown that follows
-            // empties the transition-fed held-key map, and what it empties never comes back, so
-            // record the loss now: the injection this stop is about to produce would otherwise
-            // read an empty map and type into the live chord.
-            crate::held_keys::arm_chord_lost();
-            emit(app, &profile_id, "stop", None);
+        for (profile_id, keys) in stuck {
+            // `None` chord mods = a stop we MANUFACTURED, not a user chord release; the loss
+            // latch is armed only when the chord is genuinely still down — see manufactured_stop.
+            manufactured_stop(app, &profile_id, &keys);
         }
     }
 
@@ -356,15 +383,15 @@ mod imp {
                     // works normally for it and any pending loss latch is now a dud.
                     crate::held_keys::clear_chord_lost();
                     emit(app, &pid, "start", Some(&chord_mods(&pid)));
-                    note_hold(&pid, true);
+                    note_hold(&pid, &engine.keys_for_profile(&pid), true);
                 }
                 Fire::Stop(pid) => {
                     emit(app, &pid, "stop", Some(&chord_mods(&pid)));
-                    note_hold(&pid, false);
+                    note_hold(&pid, &[], false);
                 }
                 // Handoff: the hold's session lives on under the superset —
                 // release the teardown bookkeeping, emit no "stop".
-                Fire::ReleaseHold(pid) => note_hold(&pid, false),
+                Fire::ReleaseHold(pid) => note_hold(&pid, &[], false),
                 Fire::Toggle(pid) => {
                     // A fresh rising edge: this press IS in the map, so the still-held check
                     // works normally for it and any pending loss latch is now a dud.
@@ -434,11 +461,14 @@ mod imp {
                 commit(&app, &held_keys, &mut held, &mut engine, k, d);
             }
         }
-        // NOTE: pending deferred releases are deliberately NOT flushed here — they are
-        // by construction keys still in `held`, and the cleanup below already releases
-        // every held key's HeldKeys contribution and emits the owed stops.
-        // The device stream ended (unplugged / read error) while keys were still
-        // held — drop our contribution so a stale modifier can't wedge the gate.
+        // The device stream ended (unplugged / read error). First commit every release still
+        // parked in the debouncer — those keys ARE released, and a hold whose release is parked
+        // would otherwise still read as active below and get a manufactured stop with the loss
+        // latch armed on a chord the user let go of (see the win_hotkeys twin).
+        for key in deb.drain() {
+            commit(&app, &held_keys, &mut held, &mut engine, key, false);
+        }
+        // Keys still held — drop our contribution so a stale modifier can't wedge the gate.
         for &code in &held {
             held_keys.set(code, false);
         }
@@ -461,13 +491,7 @@ mod imp {
             if !take_hold(&pid) {
                 continue;
             }
-            // A stop we MANUFACTURED for a chord that is still physically down — `None` marks
-            // exactly that, and nothing else passes it. The listener teardown that follows
-            // empties the transition-fed held-key map, and what it empties never comes back, so
-            // record the loss now: the injection this stop is about to produce would otherwise
-            // read an empty map and type into the live chord.
-            crate::held_keys::arm_chord_lost();
-            emit(&app, &pid, "stop", None);
+            manufactured_stop(&app, &pid, &engine.keys_for_profile(&pid));
         }
     }
 
