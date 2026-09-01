@@ -25,9 +25,12 @@ describe("describeTransportError", () => {
     ).toContain("while transcribing");
   });
 
-  it("HTTP 403 on a translate job reads as translation-disabled", () => {
-    const d = describeTransportError("translate", new Error("HTTP 403: forbidden"), "GPU box");
-    expect(d.title).toBe("Translation is turned off on GPU box.");
+  it("a translate 403 is 'turned off' only when the body says so; a bare one is the key", () => {
+    const off = describeTransportError("translate", new Error("HTTP 403: translation disabled"), "GPU box");
+    expect(off.title).toBe("Translation is turned off on GPU box.");
+    const key = describeTransportError("translate", new Error("HTTP 403: forbidden"), "GPU box");
+    expect(key.title).toContain("rejected the request (HTTP 403)");
+    expect(key.hint).toContain("API key");
   });
 
   it("strips bidi and bounds a peer-authored backend name", () => {

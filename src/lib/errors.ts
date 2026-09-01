@@ -69,7 +69,10 @@ export function describeTransportError(
   const http = /HTTP (\d{3})/.exec(msg);
   if (http) {
     const code = Number(http[1]);
-    if (kind === "translate" && (code === 403 || /\bdisabled\b/i.test(msg))) {
+    // Only a body that SAYS so is "turned off": a bare 403 on a translate job is the
+    // server refusing the key (missing, wrong, or without translate permission), and
+    // telling that user to "enable translation" sent them after the wrong problem.
+    if (kind === "translate" && /\bdisabled\b/i.test(msg)) {
       return {
         title: `Translation is turned off on ${label}.`,
         hint: "Enable it there, or pick another backend.",
@@ -79,7 +82,10 @@ export function describeTransportError(
     if (code === 401 || code === 403) {
       return {
         title: `${label} rejected the request (HTTP ${code}).`,
-        hint: "Check the backend's API key.",
+        hint:
+          kind === "translate"
+            ? "Check the backend's API key — a key without translate access is refused the same way."
+            : "Check the backend's API key.",
         showLogs: true,
       };
     }

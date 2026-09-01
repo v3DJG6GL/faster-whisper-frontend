@@ -61,9 +61,9 @@ enum SeedState {
 /// What `show` should do for this summon, decided atomically under the cell lock.
 #[cfg_attr(not(windows), allow(dead_code))]
 enum Summon {
-    /// The current generation's grab is still running — just (re)show the window; the
-    /// frontend's seed fetch will rendezvous with that grab's own result.
-    AlreadyInFlight,
+    /// The current generation's grab is still running: show once IT settles (or is
+    /// superseded), never before its copy chord went out — carries that generation.
+    AlreadyInFlight(u64),
     /// A foreign grab (the correct-on-close re-grab) owns the copy chord; this summon
     /// gets no seed, already settled as such.
     NoSeed,
@@ -79,7 +79,7 @@ impl SeedRendezvous {
             return Summon::NoSeed;
         };
         if matches!(cell.state, SeedState::InFlight) {
-            return Summon::AlreadyInFlight;
+            return Summon::AlreadyInFlight(cell.generation);
         }
         cell.generation += 1;
         // Checked under the SAME lock as the state transition so a summon landing while
@@ -188,11 +188,23 @@ pub fn show(app: &AppHandle) {
     {
         let rdv = app.state::<SeedRendezvous>().inner().clone();
         match rdv.summon() {
-            // A summon grab is already running (second press while the first still waits on
-            // the modifier gate / clipboard). Re-show so the press never feels dead; the
-            // frontend's fetch rendezvouses with the in-flight grab's own result.
-            Summon::AlreadyInFlight | Summon::NoSeed => {
+            Summon::NoSeed => {
                 show_now(app);
+                return;
+            }
+            // A summon grab is already running (second press while the first still waits on
+            // the modifier gate / clipboard). Showing at once put the window up BEFORE that
+            // grab's copy chord went out, with a stale or empty seed; wait for it to settle
+            // instead — normally milliseconds after the first press's own show, the 5 s only
+            // backstops a wedged clipboard. Skipped if the window was hidden meanwhile.
+            Summon::AlreadyInFlight(generation) => {
+                let handle = app.clone();
+                std::thread::spawn(move || {
+                    let _ = rdv.wait(std::time::Duration::from_millis(5000));
+                    if rdv.is_current(generation) {
+                        show_now(&handle);
+                    }
+                });
                 return;
             }
             Summon::Grab(generation) => {
