@@ -562,7 +562,9 @@ export default function History() {
           <div className="mt-3 max-h-56 overflow-y-auto">
             {tracks.map(({ lang, text, orig }, i) => (
               <div
-                key={lang}
+                // A profile may translate INTO its own source language (nothing excludes it),
+                // which would give the original track and a target the same code.
+                key={`${i}:${lang}`}
                 className={cn(
                   "grid grid-cols-[2.5rem_1fr] gap-2 py-2",
                   i > 0 && "border-t border-line",
@@ -599,12 +601,11 @@ export default function History() {
              was the duplicate the user saw. */
           <div className="mt-3 max-h-56 overflow-y-auto">
             <span className="font-mono text-[10px] uppercase tracking-wider text-translate">
-              {/* Never hard-code "injected": the record already carries whether the
-                  translation actually reached the field (stop-timing can produce a
-                  translation that the session then failed to insert), and a label that
-                  can lie about where the user's words went is worse than none. */}
+              {/* No "injected / not injected" claim: `translationInjected` is derived
+                  from the same value as `translatedText` (streaming.ts), so it carries
+                  nothing about whether the text reached the field — a label that could
+                  only ever read "injected" is a claim, not a record. */}
               {safeDisplayText(rec.translationTarget ?? "translated", 24)}
-              {rec.translationInjected ? " · injected" : " · not injected"}
             </span>
             <div className="select-text whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
               {stripControlChars(rec.translatedText)}

@@ -10,6 +10,7 @@ import homeSrc from "../screens/Home.tsx?raw";
 // COMPLETENESS is exactly what a missing entry breaks (a tone with no fill/glow renders
 // as `undefined`, i.e. an invisible dot), so read them out of the source instead.
 import overlaySrc from "../Overlay.tsx?raw";
+import uiSrc from "../components/ui.tsx?raw";
 import {
   dictationVisual, isActiveDictation, isGracefulStop, isProcessing, type DictationTone,
 } from "./dictationVisual";
@@ -119,13 +120,21 @@ describe("isGracefulStop", () => {
 });
 
 describe("the chip's tone maps", () => {
-  // A tone with no entry yields `undefined` — an unstyled (invisible) dot with no glow,
-  // and TS can't catch it because the maps live in a file the union doesn't import.
+  // Overlay's TONE_BG/TONE_GLOW are `Record<DictationTone, string>`, so tsc already
+  // rejects a missing key there; these stay as documentation of the contract.
   for (const name of ["TONE_BG", "TONE_GLOW"]) {
     it(`${name} covers every DictationTone`, () => {
       expect(mapKeys(name).sort()).toEqual([...TONES].sort());
     });
   }
+  it("the sidebar dot's DOT_BG (typed Record<string, string>) covers every DictationTone", () => {
+    // The one map TS cannot check: a tone added to the union would compile and render
+    // an unstyled dot in the sidebar.
+    const m = /const DOT_BG: Record<string, string> = \{([^}]*)\}/.exec(uiSrc);
+    if (!m) throw new Error("DOT_BG not found in ui.tsx");
+    const keys = [...m[1].matchAll(/^\s*([a-z]+):/gm)].map((k) => k[1]);
+    for (const t of TONES) expect(keys, `DOT_BG lacks ${t}`).toContain(t);
+  });
 });
 
 describe("Home hero follows the tone, not only the state", () => {

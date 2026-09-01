@@ -430,6 +430,11 @@ async function maybeTranslate(
   const abort = newAbortHandle();
   activeTranslateAbort = abort;
   const oneShot = opts?.oneShot === true;
+  // This request's progress id, so the `finally` below only drops ITS OWN cancel handle:
+  // a translate abandoned by a teardown outlives its session (up to the cold budget), and
+  // an unconditional clear here nulled the NEXT session's handle — leaving that translate
+  // un-cancellable on the server and wiping its progress card.
+  let myProgressId: string | null = null;
   try {
     // Pair this phrase with ITS OWN capture row before the request goes out.
     // The one-shot claims nothing: it translates the whole transcript in one
@@ -476,6 +481,7 @@ async function maybeTranslate(
         queued: opts?.queued ?? 0,
         abort,
         onStart: ({ progressId, cold }) => {
+          myProgressId = progressId;
           activeTranslateCancel = { serverUrl: tr.serverUrl, backendId: tr.backendId, progressId };
           // Only the one-shot waits long enough for the silence to read as a
           // hang; a live phrase's 20 s cap lands while the user is still
@@ -521,7 +527,9 @@ async function maybeTranslate(
     }
     sessionTranslateFailure = r.cause ?? "error";
     console.error("dictation translation failed:", r.error ?? r.cause);
-    if (!sessionTranslateWarned) {
+    // The chip's ✕ ("Insert the original now") is the only producer of "cancelled": the
+    // user asked for exactly this outcome, so it is not reported back as a failure.
+    if (r.cause !== "cancelled" && !sessionTranslateWarned) {
       sessionTranslateWarned = true;
       // Keep the dictation-specific promise ("your words still landed") but
       // name the cause instead of leaving it a mystery (truthful-toast rule).
@@ -531,10 +539,13 @@ async function maybeTranslate(
   } finally {
     if (activeTranslateAbort === abort) activeTranslateAbort = null;
     // The request is over either way — drop the cancel handle so a later
-    // teardown can't cancel a progress id that already completed.
-    activeTranslateCancel = null;
-    if (useApp.getState().dictationPhase) {
-      useApp.getState().setDictation({ dictationPhase: null });
+    // teardown can't cancel a progress id that already completed. Identity-checked,
+    // like the abort handle above: never drop a newer session's.
+    if (activeTranslateCancel && activeTranslateCancel.progressId === myProgressId) {
+      activeTranslateCancel = null;
+      if (useApp.getState().dictationPhase) {
+        useApp.getState().setDictation({ dictationPhase: null });
+      }
     }
   }
 }
@@ -2635,6 +2646,9 @@ async function startLiveInner(
     stopTargetPoll();
     activeEndpoint = null;
     capturing = false;
+    // The lease was acquired before the start invoke; every other exit releases it, and a
+    // leaked one pings the server that just refused us every two minutes (preload.ts).
+    releaseWarmLease();
     console.error("start dictation failed:", e);
     flashError(String(e));
   }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RENEW_MS, acquireWarm, preloadPlanFor, setPreloadTransport } from "./preload";
+import { RENEW_MS, acquireWarm, preloadPlanFor, resetWarmDebounceForTests, setPreloadTransport } from "./preload";
 
 describe("preloadPlanFor", () => {
   it("maps each rail stage onto its model family", () => {
@@ -53,6 +53,7 @@ describe("acquireWarm", () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    resetWarmDebounceForTests();
     calls = 0;
     setPreloadTransport(async () => {
       calls += 1;
@@ -89,6 +90,22 @@ describe("acquireWarm", () => {
     b.release();
     vi.advanceTimersByTime(RENEW_MS * 3);
     expect(calls).toBe(3);
+  });
+
+  it("a release followed by a re-acquire of the same plan does not re-POST", () => {
+    // The shape every React caller has: effect cleanup (release) runs before the effect
+    // re-runs (acquire) on any dep change, e.g. an unrelated option click.
+    const a = acquireWarm("k", spec);
+    expect(calls).toBe(1);
+    a.release();
+    const b = acquireWarm("k", spec);
+    expect(calls).toBe(1);
+    b.release();
+    // …but the renew window still refreshes it.
+    vi.advanceTimersByTime(RENEW_MS + 1);
+    const c = acquireWarm("k", spec);
+    expect(calls).toBe(2);
+    c.release();
   });
 
   it("stops the timer on release", () => {

@@ -375,10 +375,9 @@ const SegmentRow = memo(function SegmentRow({
           trCur = activeWordIdx >= 0
             ? Math.min(trWords.length - 1, Math.floor(frac * trWords.length))
             : -1;
-          trPassed = Math.min(
-            trWords.length - 1,
-            Math.floor(frac * trWords.length) - (activeWordIdx >= 0 ? 1 : 0),
-          );
+          // `frac * len` is a COUNT of translated words passed; the last passed index is
+          // one less in both branches (at a segment's start that is -1, not word 0).
+          trPassed = Math.min(trWords.length - 1, Math.floor(frac * trWords.length) - 1);
         }
         return (
           <span

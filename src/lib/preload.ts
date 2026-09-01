@@ -54,7 +54,13 @@ export function setPreloadTransport(fn?: Transport): void {
   transport = fn ?? ((args) => (isTauri ? preloadModels(args) : Promise.resolve(false)));
 }
 
+/** Test seam: forget every "last sent" memory, so one test's send can't debounce the next. */
+export function resetWarmDebounceForTests(): void {
+  lastSent.clear();
+}
+
 interface Entry {
+  key: string;
   spec: PreloadSpec;
   timer: ReturnType<typeof setInterval>;
   refs: number;
@@ -65,6 +71,11 @@ interface Entry {
 }
 
 const leases = new Map<string, Entry>();
+/** The last hint sent under a key, remembered ACROSS release → re-acquire: React runs an
+ *  effect's cleanup before re-running it, so every dep change on a warm-holding effect is
+ *  a release (entry deleted) followed by a fresh acquire — which, with the memory on the
+ *  entry alone, was an immediate POST of a byte-identical plan on every option click. */
+const lastSent = new Map<string, { sentKey: string; sentAt: number }>();
 
 /** Map a run's rail stages onto the model families the server should warm.
  *  Pure — this is the part worth testing. Stages with no known model id are
@@ -125,6 +136,7 @@ function fire(entry: Entry, force: boolean): void {
   if (!worthSending(entry.spec)) return;
   entry.sentKey = key;
   entry.sentAt = now;
+  lastSent.set(entry.key, { sentKey: key, sentAt: now });
   // Fire-and-forget, and the catch is the whole error policy: nothing about a
   // failed hint is the user's problem, and an unhandled rejection here would
   // surface as a console error on a timer.
@@ -145,11 +157,13 @@ export function acquireWarm(key: string, spec: PreloadSpec): WarmLease {
     entry.spec = spec;
     fire(entry, false);
   } else {
+    const prev = lastSent.get(key);
     entry = {
+      key,
       spec,
       refs: 1,
-      sentKey: "",
-      sentAt: 0,
+      sentKey: prev?.sentKey ?? "",
+      sentAt: prev?.sentAt ?? 0,
       timer: setInterval(() => {
         const e = leases.get(key);
         // Force: the renew tick is exactly the case the debounce must not eat.
