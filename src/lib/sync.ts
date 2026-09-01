@@ -1253,14 +1253,22 @@ export async function applyBlob(
   /** `ignoreGates`: an explicit one-shot restore (file import, Restore from server,
    *  onboarding) — see the gate step below. */
   opts: { ignoreGates?: boolean } = {},
-): Promise<void> {
+): Promise<boolean> {
   const st = useApp.getState();
   if (st.status !== "idle") {
+    // Deferred, not applied: the caller must NOT adopt the server's version as
+    // the new base (pendingApply is memory-only and dies on quit/supersede), or
+    // the peer's change is recorded as applied and never re-offered.
     pendingApply = { blob, cats, opts };
-    return;
+    return false;
   }
   applyingRemote = true;
   let staleRestart = false;
+  let staleAbort = false;
+  // A thrown sentinel (not `return`) is the only way to leave the try AND still
+  // reach the retry tail below — `return` inside the try skips it, which is
+  // exactly how the documented stale-restart retry sat dead until now.
+  const STALE = Symbol("stale-restart");
   try {
     const settings = st.settings;
     const sub = settings.sync?.sub ?? { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: false };
@@ -1503,7 +1511,8 @@ export async function applyBlob(
       const live = useApp.getState();
       if (live.settings !== settings || live.profiles !== st.profiles || live.appRules !== st.appRules) {
         staleRestart = retries > 0;
-        return;
+        staleAbort = true;
+        throw STALE;
       }
     }
     if (cats.profiles && blob.profiles) {
@@ -1675,10 +1684,18 @@ export async function applyBlob(
     if (cats.general && blob.general) {
       void setDeepFieldDetection(blob.general.deepFieldDetection).catch(() => {});
     }
+  } catch (e) {
+    if (e !== STALE) throw e;
   } finally {
     applyingRemote = false;
   }
-  if (staleRestart) await applyBlob(blob, cats, retries - 1, opts);
+  // The retry runs OUTSIDE the try so `applyingRemote` is false around it (the
+  // recursive call manages its own flag).
+  if (staleRestart) return applyBlob(blob, cats, retries - 1, opts);
+  // Retries exhausted: the apply was dropped stale, so report "not applied" —
+  // the caller must leave the base alone and let the next pull re-offer it.
+  if (staleAbort) return false;
+  return true;
 }
 
 // ── engine state ─────────────────────────────────────────────────────────────
@@ -2140,7 +2157,12 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     });
     return;
   }
-  await applyBlob(merged, applyCats);
+  if (!(await applyBlob(merged, applyCats))) {
+    // Deferred (dictation live). Persist no base so the next pull re-offers the
+    // blob — the same rule the held-back-review path documents above.
+    setRuntime({ syncStatus: "ok" });
+    return;
+  }
   // Persist what the SERVER holds (remote), not the merge result: snapshot is
   // the 3-way base for the NEXT sync and hash is the did-anything-change gate
   // for pushes. Recording `merged` here would make the follow-up push compose
@@ -2403,7 +2425,12 @@ export async function approvePendingReview(): Promise<void> {
   const r = pendingReview;
   if (!r) return;
   pendingReview = null;
-  await applyBlob(r.blob, r.cats);
+  if (!(await applyBlob(r.blob, r.cats))) {
+    // Deferred (dictation live): put the review back so the approval isn't
+    // consumed by an apply that never happened.
+    pendingReview = r;
+    return;
+  }
   await persistState({
     version: r.version,
     updatedAt: r.updatedAt,
@@ -2470,7 +2497,12 @@ export async function resolveSyncConflicts(
     });
     return;
   }
-  await applyBlob(final, applyCats);
+  if (!(await applyBlob(final, applyCats))) {
+    // Deferred (dictation live): restore the conflict so the user's picks are
+    // re-offered instead of silently adopting a base that was never applied.
+    pendingConflict = c;
+    return;
+  }
   // Same server-truth rule as reconcileRemote: the server still holds
   // c.remote at remoteVersion — record THAT, so if the follow-up push fails,
   // later automatic pushes still see a difference and retry.
@@ -2522,6 +2554,10 @@ export async function initSync(): Promise<void> {
     await persistState({});
   }
   device = await syncDeviceInfo();
+  // Rust seeds `deviceId` into sync-state.json, but persistState writes
+  // `{...state, ...patch}` — carry the id into the in-memory state or the very
+  // next save strips it and every launch regenerates (and re-writes) a new one.
+  if (device?.deviceId && state.deviceId !== device.deviceId) state.deviceId = device.deviceId;
 
   // Migrate pre-serverBackendId state files: they were only ever written for
   // the currently configured sync server, so stamp that identity instead of
@@ -2577,15 +2613,19 @@ export async function initSync(): Promise<void> {
       setRuntime({ syncStatus: "idle", syncError: null });
       return;
     }
-    // A category toggled ON adopts the server's state for it before pushing.
-    if (
-      nowSync?.enabled &&
-      prevSync?.categories &&
-      ALL_CATEGORIES.some((c) => nowSync.categories[c] && !prevSync.categories[c])
-    ) {
-      supersede();
-      void pullNow(true);
-      return;
+    // A category toggled ON (via the per-setting gates) adopts the server's
+    // state for it before pushing. Keyed on the DERIVED cats: `sync.categories`
+    // has had no writer since the manifest list replaced the category rows, so
+    // comparing the raw map was permanently false and a re-enabled setting
+    // pushed this device's value over the peer's.
+    if (nowSync?.enabled && prevSync?.enabled) {
+      const prevCats = catsFromGates(completeGates(prevSync.sub, prevSync.categories));
+      const nowCats = catsFromGates(completeGates(nowSync.sub, nowSync.categories));
+      if (ALL_CATEGORIES.some((c) => nowCats[c] && !prevCats[c])) {
+        supersede();
+        void pullNow(true);
+        return;
+      }
     }
     schedulePush();
   });

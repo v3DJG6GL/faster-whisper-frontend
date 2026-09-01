@@ -208,6 +208,19 @@ describe("applyBlob keep-local (baseline)", () => {
     });
   });
 
+  it("defers (returns false, applies nothing) while dictation is live", async () => {
+    useApp.setState({ status: "recording" as never });
+    const before = useApp.getState().settings;
+    const applied = await applyBlob(
+      { chip: { indicatorPosition: "bottom" } as never },
+      CATS_ALL,
+    );
+    expect(applied).toBe(false);
+    expect(useApp.getState().settings).toBe(before); // untouched — stashed for later
+    useApp.setState({ status: "idle" });
+    expect(await applyBlob({ chip: { indicatorPosition: "bottom" } as never }, CATS_ALL)).toBe(true);
+  });
+
   it("audio-folder gate off: inbound paths never overwrite local", async () => {
     const s = settings();
     s.recording.audioBaseDir = "/home/me/mine";

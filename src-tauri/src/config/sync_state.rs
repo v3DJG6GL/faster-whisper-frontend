@@ -1,11 +1,12 @@
 //! Local sync bookkeeping: `<app_config_dir>/sync-state.json`.
 //!
 //! Holds what the TS sync engine needs to remember BETWEEN runs but must never
-//! sync or export: this device's identity (`deviceId`/`deviceLabel`), the last
+//! sync or export: this device's identity (`deviceId`), the last
 //! server `version`/`hash` we hold, and the last-synced blob `snapshot` (the
 //! 3-way merge base). Rust treats the whole document as opaque JSON — all merge
 //! logic lives in TS — except for the `deviceId` key, which [`device_info`]
-//! seeds on first use so every later save preserves it.
+//! seeds on first use; `initSync` copies it into the in-memory state so every
+//! later save preserves it (persistState spreads that state over the file).
 //!
 //! Kept OUT of config.json on purpose: the snapshot duplicates the whole config
 //! (would double every 400ms auto-save write) and the config itself is what
