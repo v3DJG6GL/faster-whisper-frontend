@@ -1,7 +1,8 @@
 //! Shared KDE-Plasma-on-Wayland KConfig/KWin helpers for installing window rules — the dictation
-//! chip's keep-above / skip-taskbar / no-focus rule (see `overlay::kwin`) and the quick-add
-//! window's keep-above rule (see `quickadd::kwin`). The generic KConfig primitives live here so the
-//! two callers can't drift; each caller keeps its own rule group name, rule body, and install state.
+//! chip's keep-above / skip-taskbar / no-focus rule (see `overlay::kwin`), the quick-add window's
+//! keep-above rule (see `quickadd::kwin`) and the language picker's (see `langpick::kwin`). The
+//! generic KConfig primitives live here so the callers can't drift; each caller keeps its own rule
+//! group name, rule body, and install state.
 
 use std::process::{Command, Stdio};
 

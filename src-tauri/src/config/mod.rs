@@ -258,6 +258,13 @@ pub struct Profile {
     /// Override the Backend's server override-profile reference; None/empty = inherit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub override_profile: Option<String>,
+    /// Ask which target languages to translate into at activation time instead of
+    /// using the Profile's fixed `translationOverrides.translateTo`. Frontend-owned;
+    /// Rust only stores + round-trips it. Skipped when None so configs round-trip
+    /// byte-stable. (Without this field serde dropped the key on every save, so the
+    /// toggle never survived a restart — the same class as `AppSettings::transcribe`.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask_translation_targets: Option<bool>,
 }
 
 /// Canonical rank so a stored chord is order-independent: modifiers (by type then
@@ -670,6 +677,12 @@ pub struct AppSettings {
     /// instead of re-gating every launch. `#[serde(default)]` so older configs load.
     #[serde(default)]
     pub setup_dismissed: bool,
+    /// Most-recently picked dictation translation targets, newest first — seeds the
+    /// picker's "Recent" group. Frontend-owned and machine-local (the sync layer
+    /// excludes it); Rust only stores + round-trips it. Skipped when None so existing
+    /// configs round-trip byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent_translation_targets: Option<Vec<String>>,
 }
 
 impl AppSettings {
@@ -776,6 +789,7 @@ impl Default for Config {
                 transcribe: None,
                 logging: LoggingSettings::default(),
                 setup_dismissed: false,
+                recent_translation_targets: None,
             },
             // Fresh installs start EMPTY — no seeded backend or profiles. The
             // first-run onboarding (gate → restore-or-starters → quick add) or the
@@ -855,6 +869,7 @@ fn migrate_legacy(text: &str) -> Option<Config> {
                 type_as_i_speak: None,
                 insertion_overrides: None,
                 override_profile: None,
+                ask_translation_targets: None,
             }
         })
         .collect();
@@ -1047,5 +1062,29 @@ pub mod keys {
             Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Frontend-owned keys must survive the typed `Config` round-trip that `save_config`
+    /// performs — a field missing from these structs is silently dropped on every save.
+    #[test]
+    fn frontend_owned_fields_round_trip_through_config() {
+        // Start from a real default config so every required field is present, then add
+        // exactly the frontend-written keys the way the UI's `save_config` payload would.
+        let mut json = serde_json::to_value(Config::default()).expect("default serializes");
+        json["settings"]["recentTranslationTargets"] = serde_json::json!(["fr", "de"]);
+        json["profiles"] = serde_json::json!([{
+            "id": "p1", "name": "P", "activation": "hold", "enabled": true, "hotkey": [],
+            "askTranslationTargets": true
+        }]);
+
+        let cfg: Config = serde_json::from_value(json).expect("config parses");
+        let out = serde_json::to_value(&cfg).expect("config serializes");
+        assert_eq!(out["profiles"][0]["askTranslationTargets"], serde_json::json!(true));
+        assert_eq!(out["settings"]["recentTranslationTargets"], serde_json::json!(["fr", "de"]));
     }
 }

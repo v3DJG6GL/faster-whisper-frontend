@@ -110,8 +110,8 @@ fn emit_for_activation(app: &AppHandle, want: ActivationType, action: &str) {
 
 /// Handle CLI args delivered to the running instance, emitting trigger events.
 /// Generic form: `--profile <id> --action <start|stop|toggle>`. Legacy flags
-/// (`--toggle`, `--ptt-down/up`, `--toggle-hold/handsfree`) resolve to the first
-/// enabled Profile of the matching activation.
+/// (`--toggle`, `--ptt-down/up`, `--toggle-hold/handsfree`, and the pre-rename
+/// `--toggle-latch`) resolve to the first enabled Profile of the matching activation.
 pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
     let mut profile: Option<String> = None;
     let mut action: Option<String> = None;
@@ -146,7 +146,10 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
                 recognized = true;
                 i += 1;
             }
-            "--toggle" | "--toggle-handsfree" => {
+            // `--toggle-latch` is the pre-rename spelling. It lives in users' desktop
+            // keyboard-shortcut entries, where nothing migrates it — the CLI keeps the
+            // alias for the same reason the config keeps serde `alias = "latch"`.
+            "--toggle" | "--toggle-handsfree" | "--toggle-latch" => {
                 emit_for_activation(app, ActivationType::HandsFree, "toggle");
                 recognized = true;
                 i += 1;
