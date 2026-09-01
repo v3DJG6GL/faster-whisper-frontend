@@ -132,17 +132,24 @@ mod imp {
         let mut out: Vec<ChordSpec> = Vec::new();
         let mut push = |kind: ChordKind, keys: Vec<u16>, what: &str| {
             // Hard ceiling on the chord set. The dedup below is O(n^2), `Engine::new`'s
-            // superset matrix is another, and `Engine::step` then walks every chord on EVERY
+            // subset matrix is another, and `Engine::step` then walks every chord on EVERY
             // system-wide key transition — so the profile list, which arrives from the sync
             // blob and is persisted, sizes a hot path. This bound is orders of magnitude above
             // any real binding set, so nothing legitimate is dropped.
             if out.len() >= MAX_CHORDS {
                 return;
             }
+            // Compare DISTINCT keys, not Vec lengths. `[Ctrl, Ctrl, Shift]` and `[Ctrl, Shift]`
+            // are the same chord — `Engine` reads both as the two-key set, so both go fully-held
+            // on the same transition — but their Vec lengths differ, so the old test let both
+            // register. Every deserialization path canonicalizes (`config::de_hotkey` sorts and
+            // dedups) so nothing reaches here duplicated today; the guarantee this dedup states
+            // is "one keypress can't fire two actions", and Vec length did not deliver it.
             let set: HashSet<u16> = keys.iter().copied().collect();
-            let dup = out
-                .iter()
-                .any(|c| c.keys.len() == keys.len() && c.keys.iter().all(|k| set.contains(k)));
+            let dup = out.iter().any(|c| {
+                let other: HashSet<u16> = c.keys.iter().copied().collect();
+                other.len() == set.len() && other.iter().all(|k| set.contains(k))
+            });
             if dup {
                 tracing::warn!("[evdev] {what} has the same chord as an earlier one; ignoring the duplicate");
             } else {

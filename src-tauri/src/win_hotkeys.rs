@@ -49,6 +49,21 @@
 //! such chords could be bound but would never fire. The worker also feeds the
 //! shared [`crate::held_keys::HeldKeys`] gate, so `inject_text`'s
 //! wait-for-modifier-release works on Windows exactly as it does under evdev.
+//!
+//! Both feeds report TRANSITIONS, so the worker's held-set is only ever as good as
+//! the events it was handed — and a key-up can be missed outright: an RDP client's
+//! capture hook sits above ours until the next re-arm (≤3 s in steady state) and
+//! swallowed keys reach no raw-input sink either; a desktop switch (Ctrl+Alt+Del,
+//! Win+L, a UAC prompt) takes the release to a desktop neither feed is on; and for
+//! third-party injected chords the hook is the ONLY feed, so its blind windows have
+//! no cover at all. One lost key-up used to strand that key in the held-set for the
+//! rest of the listener's life — silently rewiring which chords match (a stranded Alt
+//! makes the Alt+Super quick-add chord complete on any Super press) and pinning a
+//! phantom modifier in `HeldKeys`, which stalls every injection and can divert every
+//! phrase to the clipboard. So the worker RECONCILES: while it believes anything is
+//! held it asks the OS directly (`GetAsyncKeyState` — the physical state, above the
+//! hook chain and independent of any message queue) and releases what the OS says is
+//! up. See `resync_held`.
 
 /// Live listener: the receiver thread's native id (to post it `WM_QUIT`). Dropping
 /// it stops forwarding (the worker then drains + cleans up) and tears down the
@@ -211,7 +226,7 @@ mod imp {
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, GetKeyState};
     use windows_sys::Win32::UI::Input::{
         GetRawInputData, RegisterRawInputDevices, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE,
         RAWINPUTHEADER, RIDEV_INPUTSINK, RID_INPUT, RIM_TYPEKEYBOARD,
@@ -246,17 +261,24 @@ mod imp {
         let mut out: Vec<ChordSpec> = Vec::new();
         let mut push = |kind: ChordKind, keys: Vec<u16>, what: &str| {
             // Hard ceiling on the chord set. The dedup below is O(n^2), `Engine::new`'s
-            // superset matrix is another, and `Engine::step` then walks every chord on EVERY
+            // subset matrix is another, and `Engine::step` then walks every chord on EVERY
             // system-wide key transition — so the profile list, which arrives from the sync
             // blob and is persisted, sizes a hot path. This bound is orders of magnitude above
             // any real binding set, so nothing legitimate is dropped.
             if out.len() >= MAX_CHORDS {
                 return;
             }
+            // Compare DISTINCT keys, not Vec lengths. `[Ctrl, Ctrl, Shift]` and `[Ctrl, Shift]`
+            // are the same chord — `Engine` reads both as the two-key set, so both go fully-held
+            // on the same transition — but their Vec lengths differ, so the old test let both
+            // register. Every deserialization path canonicalizes (`config::de_hotkey` sorts and
+            // dedups) so nothing reaches here duplicated today; the guarantee this dedup states
+            // is "one keypress can't fire two actions", and Vec length did not deliver it.
             let set: HashSet<u16> = keys.iter().copied().collect();
-            let dup = out
-                .iter()
-                .any(|c| c.keys.len() == keys.len() && c.keys.iter().all(|k| set.contains(k)));
+            let dup = out.iter().any(|c| {
+                let other: HashSet<u16> = c.keys.iter().copied().collect();
+                other.len() == set.len() && other.iter().all(|k| set.contains(k))
+            });
             if dup {
                 tracing::warn!("[winhook] {what} has the same chord as an earlier one; ignoring the duplicate");
             } else {
@@ -428,6 +450,13 @@ mod imp {
                 WINEVENT_OUTOFCONTEXT,
             );
             let timer = SetTimer(std::ptr::null_mut(), 0, TICK_MS, None);
+            if timer == 0 {
+                // Without the tick there is no burst and no watchdog: the hook is armed once,
+                // here, and never re-installed — so the first RDP/VM client to install a
+                // capture hook silences this feed permanently. Nothing recovers it short of a
+                // rebind, so it has to be visible in the support log.
+                tracing::warn!("[winhook] no re-arm timer; the keyboard hook will never be re-installed above a capture hook");
+            }
             let _ = ready.send(Some(GetCurrentThreadId()));
             // WM_INPUT arrives here and is routed to wndproc by DispatchMessageW.
             // Returns 0 on the WM_QUIT posted by shutdown(), -1 on error.
@@ -524,6 +553,15 @@ mod imp {
                 GetModuleHandleW(std::ptr::null()),
                 0,
             );
+            // A FAILED install (desktop switch in flight, hook-table pressure) must not cost
+            // us the hook we already have. The old code stored the null and unhooked the
+            // working one regardless, which took the feed down for a whole watchdog period on
+            // top of whatever caused the failure — the exact blind window this function
+            // exists to close. Keep the incumbent; the next tick tries again.
+            if hook.is_null() {
+                tracing::warn!("[winhook] could not re-arm the keyboard hook; keeping the current one");
+                return;
+            }
             let prev = h.replace(hook as isize);
             if prev != 0 {
                 UnhookWindowsHookEx(prev as HHOOK);
@@ -903,6 +941,58 @@ mod imp {
         }
     }
 
+    /// Is `id` physically down right now, straight from the OS?
+    ///
+    /// `GetAsyncKeyState`'s high bit is the real, current keyboard state: it is maintained
+    /// above the hook chain and independently of any message queue, so it can arbitrate a
+    /// held-set the hook chain may have lied to. `quickadd::win_seed` already leans on the
+    /// same authority for the same reason before it injects.
+    ///
+    /// `id & 0xFF` strips the synthetic extended bit we fold into NumpadEnter: the OS knows
+    /// only `VK_RETURN`, which covers both Enters — and "VK_RETURN is up" is true of each of
+    /// them, which is all this predicate is asked.
+    fn physically_down(id: u16) -> bool {
+        unsafe { GetAsyncKeyState((id & 0x00FF) as i32) as u16 & 0x8000 != 0 }
+    }
+
+    /// How often the worker re-asks the OS about the keys it believes are held. Only ever
+    /// runs while the held-set is non-empty, so an idle app polls nothing.
+    const RESYNC_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+    /// Release every key the held-set still carries that the OS says is UP — the repair for a
+    /// key-up neither feed ever saw (see the module header for how that happens).
+    ///
+    /// Deliberately covers the WHOLE held-set, not just chord keys: a stranded non-chord
+    /// modifier changes no match, but it pins a phantom count in `HeldKeys`, which stalls every
+    /// injection on the release gate and — when it belongs to a bound chord — diverts every
+    /// phrase to the clipboard for the process lifetime.
+    ///
+    /// A key must read UP on TWO consecutive polls before it is released. A genuine release
+    /// commits through the event path within RELEASE_DEBOUNCE, so nothing legitimate ever
+    /// reaches the second poll; the confirmation only costs a repair ≤250 ms, and it keeps a
+    /// single anomalous read (a desktop in mid-switch) from cutting a live push-to-talk
+    /// session short. `up_once` carries that first strike between calls.
+    fn resync_held(
+        app: &AppHandle,
+        held_keys: &crate::held_keys::HeldKeys,
+        held: &mut HashSet<u16>,
+        engine: &mut Engine,
+        up_once: &mut HashSet<u16>,
+    ) {
+        let up_now: HashSet<u16> = held.iter().copied().filter(|&id| !physically_down(id)).collect();
+        // Retain-then-swap: only keys up on BOTH polls are acted on.
+        let confirmed: Vec<u16> = up_once.intersection(&up_now).copied().collect();
+        *up_once = up_now;
+        for id in confirmed {
+            up_once.remove(&id);
+            tracing::warn!(
+                "[winhook] key {id:#06x} is up per the OS but no key-up ever arrived — releasing it \
+                 (a capture hook or a desktop switch ate the release)"
+            );
+            commit(app, held_keys, held, engine, id, false);
+        }
+    }
+
     /// The chord-matching worker — the twin of `evdev_hotkeys::run_device` (one
     /// instance, fed by the hook instead of per-device streams). All chord
     /// semantics (hold edges, hands-free re-arm, family handoff/grace) live in the
@@ -920,9 +1010,20 @@ mod imp {
         // see key_debounce). Downs commit immediately; deferred ups commit via the
         // recv_timeout deadline below.
         let mut deb = crate::key_debounce::Debouncer::new(crate::key_debounce::RELEASE_DEBOUNCE);
+        // First strikes for the held-set reconciler (see resync_held).
+        let mut up_once: HashSet<u16> = HashSet::new();
+        let mut next_resync = std::time::Instant::now() + RESYNC_INTERVAL;
 
         loop {
-            let ev = match deb.next_deadline() {
+            // Wake for whichever comes first: a due deferred release, or the next
+            // reconciliation. The reconciler is scheduled ONLY while we believe something is
+            // held — with an empty held-set there is nothing to repair and the worker goes
+            // back to blocking indefinitely on the channel, exactly as before.
+            let deadline = match (deb.next_deadline(), (!held.is_empty()).then_some(next_resync)) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            let ev = match deadline {
                 None => match rx.recv() {
                     Ok(e) => Some(e),
                     Err(_) => break, // sender dropped (shutdown/restart)
@@ -941,6 +1042,13 @@ mod imp {
             // whatever event (if any) woke us.
             for key in deb.expire(now) {
                 commit(&app, &held_keys, &mut held, &mut engine, key, false);
+            }
+            if now >= next_resync {
+                next_resync = now + RESYNC_INTERVAL;
+                // Called even when nothing is held (an event can wake us before the deadline
+                // we skipped scheduling): it then simply clears any stale first strike, so a
+                // key pressed later always gets its own two polls.
+                resync_held(&app, &held_keys, &mut held, &mut engine, &mut up_once);
             }
             if let Some(ev) = ev {
                 if let Some((k, d)) = deb.on_event(ev.id, ev.down, held.contains(&ev.id), now) {

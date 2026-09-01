@@ -25,6 +25,22 @@
 //     physical completion edge. (The old matcher restarted here — wrong for
 //     the family: releasing Space out of Ctrl+Shift+Space would have begun a
 //     phantom push-to-talk session.)
+//
+// Chords match by CONTAINMENT (`keys ⊆ held`), not by an exact modifier mask —
+// that is what lets the nesting above work at all, and what keeps a hold alive
+// while the user types during dictation. The containment has exactly one guard,
+// `blocked_by_peer`: a chord may not fire while ANOTHER configured chord is also
+// fully held, unless that other chord is one of its own strict subsets (i.e. the
+// designed nesting above). Sequencing therefore decides an overlap — whichever
+// chord completes FIRST fires, and the other is inert until it is released — and
+// a genuinely simultaneous completion fires NOTHING, the same answer every
+// OS-level registrar gives (`RegisterHotKey`, `XGrabKey`, `RegisterEventHotKey`
+// all match an exact mask). Without the guard, chords that merely OVERLAP — a
+// Ctrl+Super hands-free profile beside the factory Alt+Super quick-add, with Alt
+// down for any reason — both went fully-held on the same transition and BOTH
+// fired: dictation started and the quick-add window stole focus off one press.
+// The old guard only consulted configured strict SUPERSETS, which is empty for
+// every overlapping pair, so nothing arbitrated them.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -96,9 +112,9 @@ pub enum Fire {
 
 pub struct Engine {
     chords: Vec<ChordSpec>,
-    /// For each chord, the indices of chords that are a strict superset of it.
-    supersets: Vec<Vec<usize>>,
-    /// Inverse: for each chord, the indices of strict subsets.
+    /// For each chord, the indices of its strict subsets — the ONLY other chords
+    /// allowed to be fully held while it fires (the designed nesting; see the
+    /// module header and `blocked_by_peer`).
     subsets: Vec<Vec<usize>>,
     /// hold: emitted Start; hands-free/quick-add: pressed (rising-edge debounce).
     active: Vec<bool>,
@@ -108,29 +124,30 @@ pub struct Engine {
     started_at: Vec<Option<Instant>>,
     /// Reused per-event scratch (the matchers run on every keystroke system-wide).
     fully: Vec<bool>,
+    /// The indices of `fully` set this event — normally empty or a single entry, so
+    /// `blocked_by_peer` walks that instead of all N chords on every keystroke.
+    fully_now: Vec<usize>,
 }
 
 impl Engine {
     pub fn new(chords: Vec<ChordSpec>) -> Self {
         let sets: Vec<HashSet<u16>> = chords.iter().map(|c| c.keys.iter().copied().collect()).collect();
         let n = chords.len();
-        let mut supersets = vec![Vec::new(); n];
         let mut subsets = vec![Vec::new(); n];
         for i in 0..n {
             for j in 0..n {
                 if i != j && sets[j].len() > sets[i].len() && sets[i].iter().all(|c| sets[j].contains(c)) {
-                    supersets[i].push(j);
                     subsets[j].push(i);
                 }
             }
         }
         Engine {
-            supersets,
             subsets,
             active: vec![false; n],
             fully_prev: vec![false; n],
             started_at: vec![None; n],
             fully: vec![false; n],
+            fully_now: Vec::new(),
             chords,
         }
     }
@@ -158,9 +175,23 @@ impl Engine {
             .max_by_key(|&i| self.started_at[i])
     }
 
-    /// Advance the machine after a key event. `held` is the full set of
-    /// currently-down key codes; `now` timestamps the event (injected so the
-    /// grace window is unit-testable).
+    /// May chord `i` fire right now, given everything else that is fully held?
+    ///
+    /// No, if any OTHER chord is also complete and is not one of `i`'s own strict
+    /// subsets. A strict subset is exempt because that IS the designed nesting: the
+    /// hands-free chord Ctrl+Shift+Space fires while its Ctrl+Shift hold is complete,
+    /// which is the whole handoff. Everything else — a strict SUPERSET (which wins over
+    /// its subset, as before), or a mere OVERLAP like Alt+Super beside Ctrl+Super — makes
+    /// the press ambiguous, and an ambiguous press must do nothing rather than everything.
+    ///
+    /// Gates only the RISING arms. A hold that already started still stops on its own
+    /// falling edge, so a peer chord completing mid-dictation can never strand a session.
+    fn blocked_by_peer(&self, i: usize) -> bool {
+        self.fully_now
+            .iter()
+            .any(|&j| j != i && !self.subsets[i].contains(&j))
+    }
+
     /// The keys of every chord bound to `profile_id`, unioned, in the backend's own code
     /// namespace. The backends use this to snapshot the FIRING chord's own modifiers
     /// (`triggers::snapshot_trigger_mods`) instead of every modifier that happens to be down —
@@ -185,20 +216,25 @@ impl Engine {
         out
     }
 
+    /// Advance the machine after a key event. `held` is the full set of
+    /// currently-down key codes; `now` timestamps the event (injected so the
+    /// grace window is unit-testable).
     pub fn step(&mut self, held: &HashSet<u16>, now: Instant) -> Vec<Fire> {
         let n = self.chords.len();
         for i in 0..n {
             self.fully[i] = self.chords[i].keys.iter().all(|c| held.contains(c));
         }
+        self.fully_now.clear();
+        self.fully_now.extend((0..n).filter(|&i| self.fully[i]));
         let mut out = Vec::new();
         for i in 0..n {
             let fully = self.fully[i];
             let rising = fully && !self.fully_prev[i];
             let falling = !fully && self.fully_prev[i];
-            let sup_fully = self.supersets[i].iter().any(|&j| self.fully[j]);
+            let blocked = self.blocked_by_peer(i);
             match self.chords[i].kind.tag() {
                 KindTag::Hold => {
-                    if rising && !sup_fully && !self.active[i] {
+                    if rising && !blocked && !self.active[i] {
                         self.active[i] = true;
                         self.started_at[i] = Some(now);
                         out.push(Fire::Start(self.chords[i].kind.profile().to_string()));
@@ -207,14 +243,14 @@ impl Engine {
                         self.started_at[i] = None;
                         out.push(Fire::Stop(self.chords[i].kind.profile().to_string()));
                     }
-                    // Suppression by a superset (fully stays true) is NOT a stop,
-                    // and suppression-lift is NOT a start — supersets act through
-                    // their own arms below; the hold reacts only to its own edges.
+                    // Suppression by a peer (fully stays true) is NOT a stop, and
+                    // suppression-lift is NOT a start — a superset acts through its
+                    // own arm below; the hold reacts only to its own edges.
                 }
                 KindTag::HandsFree => {
                     // Edge, not level: a chord that completed while suppressed by a
-                    // strict superset must stay silent — suppression-lift is NOT a start.
-                    let on = rising && !sup_fully;
+                    // peer must stay silent — suppression-lift is NOT a start.
+                    let on = rising && !blocked;
                     if on && !self.active[i] {
                         self.active[i] = true;
                         if let Some(r) = self.active_hold_subset(i) {
@@ -229,13 +265,13 @@ impl Engine {
                             out.push(Fire::Toggle(self.chords[i].kind.profile().to_string()));
                         }
                     } else if !fully {
-                        // Re-arm on a real RELEASE only — not when a superset chord
+                        // Re-arm on a real RELEASE only — not when a peer chord
                         // merely suppresses this one (fully still held, on=false).
                         self.active[i] = false;
                     }
                 }
                 KindTag::QuickAdd => {
-                    let on = rising && !sup_fully;
+                    let on = rising && !blocked;
                     if on && !self.active[i] {
                         self.active[i] = true;
                         match self.active_hold_subset(i) {
@@ -279,12 +315,26 @@ mod tests {
     const SPACE: u16 = 3;
     const CTRL_R: u16 = 4;
     const KEY_H: u16 = 5;
+    const SUPER_L: u16 = 6;
+    const ALT_L: u16 = 7;
 
     fn family() -> Engine {
         Engine::new(vec![
             ChordSpec { keys: vec![CTRL_L, SHIFT_L], kind: ChordKind::Hold { profile_id: "ptt".into() } },
             ChordSpec { keys: vec![CTRL_L, SHIFT_L, SPACE], kind: ChordKind::HandsFree { profile_id: "handsfree".into() } },
             ChordSpec { keys: vec![CTRL_L, SHIFT_L, CTRL_R], kind: ChordKind::QuickAdd },
+        ])
+    }
+
+    /// The factory Windows set as the field report ran it: push-to-talk Ctrl+Shift,
+    /// hands-free Ctrl+Super, quick-add Alt+Super. NOTHING nests here — the chords merely
+    /// OVERLAP on Super, the topology the old superset-only guard could not arbitrate and
+    /// which no other test covers.
+    fn overlapping() -> Engine {
+        Engine::new(vec![
+            ChordSpec { keys: vec![CTRL_L, SHIFT_L], kind: ChordKind::Hold { profile_id: "ptt".into() } },
+            ChordSpec { keys: vec![CTRL_L, SUPER_L], kind: ChordKind::HandsFree { profile_id: "hf".into() } },
+            ChordSpec { keys: vec![ALT_L, SUPER_L], kind: ChordKind::QuickAdd },
         ])
     }
 
@@ -478,6 +528,83 @@ mod tests {
                 Fire::Reclassify("handsfree".into()),
                 Fire::Toggle("handsfree".into()),
             ]
+        );
+    }
+
+    /// The reported bug. Alt is down for any reason (a menu, an Alt+Tab, a key-up the
+    /// Windows hook lost behind an RDP capture hook) and the user presses their hands-free
+    /// chord: Ctrl+Super and Alt+Super complete on the SAME transition. The old matcher
+    /// fired BOTH — dictation started and the quick-add window stole focus off one press.
+    #[test]
+    fn one_press_never_fires_two_overlapping_chords() {
+        let mut e = overlapping();
+        let t = Instant::now();
+        assert_eq!(
+            run(
+                &mut e,
+                &[(&[ALT_L], t), (&[ALT_L, CTRL_L], t), (&[ALT_L, CTRL_L, SUPER_L], t), (&[], t)]
+            ),
+            vec![]
+        );
+    }
+
+    /// Only a SIMULTANEOUS completion is ambiguous. Completed one at a time, the first one
+    /// through fires and the loser stays inert until the keys lift — so the overlap costs
+    /// the user nothing in ordinary sequential use.
+    #[test]
+    fn whichever_overlapping_chord_completes_first_wins() {
+        let t = Instant::now();
+        let mut e = overlapping();
+        assert_eq!(
+            run(
+                &mut e,
+                &[(&[CTRL_L], t), (&[CTRL_L, SUPER_L], t), (&[CTRL_L, SUPER_L, ALT_L], t), (&[], t)]
+            ),
+            vec![Fire::Toggle("hf".into())]
+        );
+        let mut e2 = overlapping();
+        assert_eq!(
+            run(
+                &mut e2,
+                &[(&[ALT_L], t), (&[ALT_L, SUPER_L], t), (&[ALT_L, SUPER_L, CTRL_L], t), (&[], t)]
+            ),
+            vec![Fire::OpenQuickAdd]
+        );
+    }
+
+    /// A tap of Super during push-to-talk completes the hands-free chord — which is NOT a
+    /// superset of the hold, so it is not the designed `Reclassify` upgrade but a plain
+    /// `Toggle`, and the frontend's toggle arm CANCELS a busy session. The hold must ride
+    /// it out and stop on its own release.
+    #[test]
+    fn an_overlapping_chord_cannot_cancel_a_live_hold() {
+        let mut e = overlapping();
+        let t = Instant::now();
+        let fires = run(
+            &mut e,
+            &[
+                (&[CTRL_L, SHIFT_L], t),          // PTT starts
+                (&[CTRL_L, SHIFT_L, SUPER_L], t), // hands-free completes over it — inert
+                (&[CTRL_L, SHIFT_L], t),          // Super up — no phantom toggle
+                (&[], t),                         // real release → stop
+            ],
+        );
+        assert_eq!(fires, vec![Fire::Start("ptt".into()), Fire::Stop("ptt".into())]);
+    }
+
+    /// The guard arbitrates CHORDS, it does not turn matching into an exact modifier mask:
+    /// an unrelated key being down must still leave a chord free to fire, or dictation would
+    /// die the moment the user rests a finger anywhere (and every nested family would break).
+    #[test]
+    fn an_unrelated_held_key_still_lets_a_chord_fire() {
+        let mut e = overlapping();
+        let t = Instant::now();
+        assert_eq!(
+            run(
+                &mut e,
+                &[(&[KEY_H], t), (&[KEY_H, CTRL_L], t), (&[KEY_H, CTRL_L, SHIFT_L], t), (&[KEY_H], t)]
+            ),
+            vec![Fire::Start("ptt".into()), Fire::Stop("ptt".into())]
         );
     }
 
