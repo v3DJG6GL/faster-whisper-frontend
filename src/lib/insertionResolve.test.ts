@@ -17,6 +17,7 @@ const G: GeneralSettings = {
   pasteShortcut: ["ControlLeft", "KeyV"],
   autoEnter: false,
   restoreClipboard: true,
+  typeAsISpeak: true,
   soundEffects: false,
   evdevEnabled: false,
   deepFieldDetection: false,

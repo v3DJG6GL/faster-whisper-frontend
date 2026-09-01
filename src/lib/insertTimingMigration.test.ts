@@ -31,6 +31,14 @@ describe("migrateInsertTiming", () => {
     expect(r.profiles.map((p) => p.typeAsISpeak)).toEqual([true, true]);
   });
 
+  it("seeds the GLOBAL default too, so a profile's Inherit resolves to the old behaviour", () => {
+    // Without this the editor offers "Inherit" with nothing to inherit from, and it
+    // silently means "off" — the defect that shipped in the first cut.
+    expect(migrateInsertTiming(settingsWith("live"), []).settings.general.typeAsISpeak).toBe(true);
+    expect(migrateInsertTiming(settingsWith("stop"), []).settings.general.typeAsISpeak).toBe(false);
+    expect(migrateInsertTiming(settingsWith("off"), []).settings.general.typeAsISpeak).toBe(false);
+  });
+
   it('maps "stop" onto typeAsISpeak=false — NOT the new-profile default', () => {
     // Defaulting instead of seeding would hand a "stop" user live typing.
     const r = migrateInsertTiming(settingsWith("stop"), [profile()]);

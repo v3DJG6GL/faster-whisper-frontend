@@ -431,6 +431,11 @@ pub struct GeneralSettings {
     pub paste_shortcut: Vec<String>,
     pub auto_enter: bool,
     pub restore_clipboard: bool,
+    /// Default for the per-Profile "type as I speak"; carries forward what the retired
+    /// three-way `insert_timing` meant by "live". `#[serde(default)]` so configs written
+    /// before it existed load unchanged (and get it from the frontend migration).
+    #[serde(default = "default_true")]
+    pub type_as_i_speak: bool,
     pub sound_effects: bool,
     /// Opt-in: use the evdev backend (reads /dev/input) for reliable hold-to-talk +
     /// left/right + AltGr on Wayland. `#[serde(default)]` so older configs load.
@@ -733,6 +738,7 @@ impl Default for Config {
                     insert_method: InsertMethod::Paste,
                     paste_shortcut: default_paste_shortcut(),
                     auto_enter: false,
+                    type_as_i_speak: true,
                     restore_clipboard: true,
                     sound_effects: true,
                     evdev_enabled: false,

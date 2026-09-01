@@ -2437,7 +2437,9 @@ async function startLiveInner(
     // nothing, so it can run live in any activation — it just refreshes the clipboard per segment.
     // The user's ask now comes from the PROFILE, not a global three-way. The other two
     // terms are unchanged — see liveAllowed for why the activation must be the runtime one.
-    live: liveAllowed({ wants: pov?.typeAsISpeak === true, endpoint, activation, method }),
+    // Profile override wins; absent = inherit the Dictation-tab default. Without the
+    // fallback the editor's "Inherit" would silently mean "off".
+    live: liveAllowed({ wants: pov?.typeAsISpeak ?? g.typeAsISpeak, endpoint, activation, method }),
   };
   // Freeze the history-capture metadata for this session (see sessionMeta).
   // The profile was stamped into the store synchronously before startLive.
@@ -2628,7 +2630,7 @@ function applyReclassify(profile: Profile): void {
       // startLiveInner does". Equal only because activation is "handsfree" by now; any term
       // added to the derivation would silently not have applied to an upgraded session.
       insertCfg.live = liveAllowed({
-        wants: profile.typeAsISpeak === true,
+        wants: profile.typeAsISpeak ?? useApp.getState().settings.general.typeAsISpeak,
         // `activeEndpoint` is null only with no transport open, and this runs on a live
         // session — but "batch" is the safe read either way (it forbids live typing).
         endpoint: activeEndpoint ?? "batch",

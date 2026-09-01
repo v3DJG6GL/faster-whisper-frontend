@@ -208,6 +208,11 @@ export interface GeneralSettings {
   pasteShortcut: string[];
   autoEnter: boolean;
   restoreClipboard: boolean;
+  /** Default for the per-Profile "Type as I speak" — what a Profile inherits when it sets
+   *  no opinion of its own. Replaced the global three-way `insertTiming`, whose "live"
+   *  value this carries forward. Still only ACTS on a streaming, hands-free session; see
+   *  `liveAllowed`, which is the authority for all three preconditions. */
+  typeAsISpeak: boolean;
   soundEffects: boolean;
   evdevEnabled: boolean; // opt-in evdev backend (reliable hold / L-R / AltGr on Wayland)
   /** Opt-in AT-SPI "deep field detection": skip typing when the focused element isn't a

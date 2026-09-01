@@ -38,6 +38,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     openAtLogin: false,
     startMinimized: false,
     insertTiming: "live",
+    // Matches the old insertTiming default, so a fresh install behaves as it always did.
+    typeAsISpeak: true,
     insertMethod: "paste",
     pasteShortcut: ["ControlLeft", "KeyV"],
     autoEnter: false,

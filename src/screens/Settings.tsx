@@ -748,6 +748,15 @@ export default function Settings() {
                 app (see resolveInjectionTarget for the order). */}
             <SectionLabel className="mb-1 mt-4">Insertion</SectionLabel>
             <SettingRow
+              title={SETTING.typeAsISpeak.label}
+              desc="Insert each phrase as you talk, instead of the whole transcript when the session ends. Only applies to hands-free profiles on a streaming backend — push-to-talk always inserts on release, and batch after transcribing. A profile can override this."
+            >
+              <Toggle
+                checked={s.general.typeAsISpeak}
+                onChange={(v) => updateGeneral({ typeAsISpeak: v })}
+              />
+            </SettingRow>
+            <SettingRow
               title={SETTING.insertMethod.label}
               desc="Clipboard paste is the most reliable. Direct typing never touches the clipboard but can struggle with some layouts. Clipboard only copies the text without typing — you paste it yourself."
             >

@@ -242,6 +242,9 @@ export function migrateInsertTiming(settings: AppSettings, profiles: Profile[]):
       general: {
         ...settings.general,
         insertMethod: timing === "off" ? "clipboard" : settings.general.insertMethod,
+        // The global default a Profile's "Inherit" resolves to. Seeded from the same
+        // old value the profiles are, so inheriting and overriding agree after the move.
+        typeAsISpeak: live,
         // Written back as the conservative value: if this config is later read by a build
         // that still honours the field, insert-on-stop is the choice that can't surprise.
         insertTiming: "stop",
