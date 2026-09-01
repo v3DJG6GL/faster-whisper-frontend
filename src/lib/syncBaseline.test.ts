@@ -342,6 +342,18 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(theirs.insertionOverrides?.autoEnter).toBeUndefined(); // unknown here: nothing to keep
   });
 
+  it("translationMode travels in the transcription block and is clamped on apply", async () => {
+    const cfg = slice();
+    cfg.settings.transcribe = { ...cfg.settings.transcribe, translationMode: "faithful" };
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    expect(blob.transcription?.translationMode).toBe("faithful");
+    useApp.setState({ settings: settings() });
+    await applyBlob({ transcription: { translationMode: "faithful" } as never }, { ...CATS_ALL, backends: false });
+    expect(useApp.getState().settings.transcribe?.translationMode).toBe("faithful");
+    await applyBlob({ transcription: { translationMode: "loose" } as never }, { ...CATS_ALL, backends: false });
+    expect(useApp.getState().settings.transcribe?.translationMode).toBe("faithful"); // bogus value dropped
+  });
+
   it("typeAsISpeak travels in the general block", async () => {
     // It replaced `insertTiming` as the global default every inheriting Profile resolves
     // through; the manifest offers a sync switch for it, so the wire must carry it.

@@ -318,14 +318,21 @@ export async function runDictationTranslate(
         else h.onAbort(() => rej(new Aborted("translation abandoned")));
       }),
     ]);
-    const last = r.results[r.results.length - 1] ?? {};
+    const lastIdx = r.results.length - 1;
+    const last = r.results[lastIdx] ?? {};
+    // A target the server's quality guard KEPT as the source text is not a translation
+    // (text.rs: "the frontend must not present those as translations"). Presenting it as
+    // one typed the untranslated original under the target's label — worse than the
+    // failure path, which at least says so. A kept target reads as a missing one here, so
+    // "every target kept" falls into the EmptyTranslation fallback below.
+    const kept = new Set(r.kept?.[lastIdx] ?? []);
     // Keep the language keys alongside the parts. Same iteration, same
     // drop-a-missing-target rule — the parts array is derived FROM the map so
     // the two can never disagree about which targets came back.
     const byLang: Record<string, string> = {};
     for (const lang of req.targets) {
       const t = last[lang]?.trim();
-      if (t) byLang[lang] = t;
+      if (t && !kept.has(lang)) byLang[lang] = t;
     }
     const parts = Object.values(byLang);
     if (!parts.length) throw new EmptyTranslation("empty translation");

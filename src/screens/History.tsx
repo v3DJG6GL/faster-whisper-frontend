@@ -80,10 +80,13 @@ export function tracksOf(
   // The original is a track like any other, dimmed and carrying its own code.
   // Rendering it as a separate labelled section BELOW the blob is what showed
   // it twice, because the blob already began with it.
-  const head =
-    original && rec.includeOriginal
-      ? [{ lang: rec.language && rec.language !== "auto" ? rec.language : "orig", text: original, orig: true }]
-      : [];
+  // Always a track: `includeOriginal` says what was INJECTED, not what the record should
+  // show — gating on it hid the spoken transcript for the default configuration. The
+  // tracks come from the translations map, which never carries the source, so this
+  // cannot duplicate anything.
+  const head = original
+    ? [{ lang: rec.language && rec.language !== "auto" ? rec.language : "orig", text: original, orig: true }]
+    : [];
   return [...head, ...langs.map((lang) => ({ lang, text: tr[lang] }))];
 }
 

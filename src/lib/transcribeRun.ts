@@ -908,6 +908,7 @@ async function translateTextSource(
   options: TranscribeOptions,
   ctx: RunContext,
   progressId?: string | null,
+  epoch?: number,
 ): Promise<BatchResult> {
   const ext = /\.([A-Za-z0-9]+)$/.exec(path)?.[1] ?? "txt";
   const content = await readTextFile(path);
@@ -917,10 +918,15 @@ async function translateTextSource(
   // easily exceeds it, and each chunk is one server round trip.
   const CHUNK = 400;
   const results: Record<string, string>[] = [];
+  const keptAll: string[][] = [];
   const warnings: string[] = [];
   let model: string | undefined;
   let source: string | undefined;
   for (let at = 0; at < parsed.segments.length; at += CHUNK) {
+    // A cancel or an input change bumps the epoch; the pump only checks it after this
+    // function returns, so without this a feature-length file kept POSTing chunk after
+    // chunk for minutes after Cancel. The partial result is discarded by the pump.
+    if (epoch !== undefined && epoch !== get().epoch) break;
     const r = await translateText({
       serverUrl: ctx.serverUrl,
       backendId: ctx.backendId,
@@ -933,17 +939,14 @@ async function translateTextSource(
       progressId: progressId ?? null,
     });
     results.push(...r.results);
+    // Dense and aligned with results — a chunk from an older backend that omits
+    // `kept` contributes empty arrays, never a shift.
+    for (let k = 0; k < r.results.length; k++) keptAll.push(r.kept?.[k] ?? []);
     if (r.warnings?.length) warnings.push(...r.warnings);
     model = model ?? r.model;
     source = source ?? r.source;
   }
-  const segments = parsed.segments.map((seg, i) => ({
-    start: seg.start ?? i,
-    end: seg.end ?? (seg.start !== undefined ? seg.start : i + 1),
-    text: seg.text,
-    ...(seg.speaker ? { speaker: seg.speaker } : {}),
-    ...(results[i] && Object.keys(results[i]).length ? { translations: results[i] } : {}),
-  }));
+  const segments = assembleTranslatedSegments(parsed.segments, results, keptAll);
   return {
     text: parsed.segments.map((seg) => seg.text).join(" "),
     language: parsed.language ?? source ?? undefined,
@@ -952,11 +955,34 @@ async function translateTextSource(
     translations: Object.fromEntries(
       targets.map((lang) => [
         lang,
-        segments.map((seg) => seg.translations?.[lang] ?? "").filter(Boolean).join(" "),
+        segments
+          .map((seg) => (seg.translationsKept?.includes(lang) ? "" : (seg.translations?.[lang] ?? "")))
+          .filter(Boolean)
+          .join(" "),
       ]),
     ),
     translation: { model, targets, source: source ?? parsed.language },
   } as BatchResult;
+}
+
+/** Pair parsed text-source segments with their translations — and with the targets the
+ *  server's quality guard KEPT as the source text, marked exactly as the audio path's
+ *  `mergeSegmentTranslations` marks them, so the viewer flags them, "Re-translate N
+ *  flagged" finds them and the exports drop them. Without the mark a kept line was stored
+ *  and exported as a genuine translation. */
+export function assembleTranslatedSegments(
+  parsed: { start?: number; end?: number; text: string; speaker?: string }[],
+  results: Record<string, string>[],
+  keptAll: string[][],
+): { start: number; end: number; text: string; speaker?: string; translations?: Record<string, string>; translationsKept?: string[] }[] {
+  return parsed.map((seg, i) => ({
+    start: seg.start ?? i,
+    end: seg.end ?? (seg.start !== undefined ? seg.start : i + 1),
+    text: seg.text,
+    ...(seg.speaker ? { speaker: seg.speaker } : {}),
+    ...(results[i] && Object.keys(results[i]).length ? { translations: results[i] } : {}),
+    ...(keptAll[i]?.length ? { translationsKept: keptAll[i] } : {}),
+  }));
 }
 
 async function pump(
@@ -1045,7 +1071,7 @@ async function pump(
           options: pid ? { ...options, progressId: pid } : options,
         };
         const res = isText
-          ? await translateTextSource(next.path, options!, ctx, pid)
+          ? await translateTextSource(next.path, options!, ctx, pid, epoch)
           : isUrl
             ? await transcribeUrl({ ...common, sourceUrl: next.path })
             : await transcribeFile({ ...common, filePath: next.path });

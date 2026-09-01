@@ -150,6 +150,27 @@ describe("runDictationTranslate", () => {
     expect(d.cancel).not.toHaveBeenCalled();
   });
 
+  it("drops a target the server kept as the source text", async () => {
+    // `kept` is aligned with the full texts array (context + original).
+    const d = deps((a) =>
+      Promise.resolve({
+        results: a.texts.map(() => ({ en: "Hallo", fr: "Salut" })),
+        kept: a.texts.map((_, i) => (i === a.texts.length - 1 ? ["en"] : [])),
+      }),
+    );
+    const r = await runDictationTranslate(req({ text: "Hallo", context: ["prev"], targets: ["en", "fr"] }), d);
+    expect(r.ok).toBe(true);
+    expect(r.byLang).toEqual({ fr: "Salut" });
+    expect(r.text).toBe("Salut");
+  });
+
+  it("every target kept reads as an empty translation, never as success", async () => {
+    const d = deps((a) => Promise.resolve({ results: a.texts.map(() => ({ en: "Hallo" })), kept: [["en"]] }));
+    const r = await runDictationTranslate(req({ text: "Hallo", targets: ["en"] }), d);
+    expect(r.ok).toBe(false);
+    expect(r.cause).toBe("empty");
+  });
+
   it("forwards the capture id so the server can complete its held receipt", async () => {
     let seen: unknown;
     const d = deps((a) => {

@@ -133,6 +133,7 @@ export const TRANSCRIPTION_FIELDS = [
   "translate",
   "translateTo",
   "translationModel",
+  "translationMode",
   "separateBgm",
   "exportFormat",
   "wordTimestamps",

@@ -932,6 +932,9 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
   }
   const mode = ownProp(v, "speakerMode");
   if (mode === "auto" || mode === "count" || mode === "range") out.speakerMode = mode;
+  // Listed under the manifest's Translation row, so the sync switch promises it travels.
+  const trMode = ownProp(v, "translationMode");
+  if (trMode === "fluent" || trMode === "faithful") out.translationMode = trMode;
   for (const k of ["minSpeakers", "maxSpeakers"] as const) {
     const n = ownProp(v, k);
     if (typeof n === "number" && Number.isFinite(n)) {

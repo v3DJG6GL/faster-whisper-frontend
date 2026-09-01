@@ -46,7 +46,9 @@ describe("tracksOf", () => {
     expect(originals).toHaveLength(1);
   });
 
-  it("omits the original track when it was not injected", () => {
+  it("keeps the original track even when it was not injected", () => {
+    // `includeOriginal` is about the injected blob; the record must still show what was
+    // spoken, or a translated dictation's transcript is unreachable in the UI.
     const t = tracksOf(
       rec({
         translations: { en: "Hello" },
@@ -54,7 +56,10 @@ describe("tracksOf", () => {
         includeOriginal: undefined,
       }),
     );
-    expect(t).toEqual([{ lang: "en", text: "Hello" }]);
+    expect(t).toEqual([
+      { lang: "de", text: "Hallo das ist ein Test", orig: true },
+      { lang: "en", text: "Hello" },
+    ]);
   });
 
   it("keeps the configured target ORDER, not object key order", () => {
@@ -64,7 +69,7 @@ describe("tracksOf", () => {
         translationTargets: ["en", "fr"],
       }),
     );
-    expect(t!.map((x) => x.lang)).toEqual(["en", "fr"]);
+    expect(t!.filter((x) => !x.orig).map((x) => x.lang)).toEqual(["en", "fr"]);
   });
 
   it("drops a target that produced no text", () => {
@@ -74,7 +79,7 @@ describe("tracksOf", () => {
         translationTargets: ["en", "fr"],
       }),
     );
-    expect(t!.map((x) => x.lang)).toEqual(["en"]);
+    expect(t!.filter((x) => !x.orig).map((x) => x.lang)).toEqual(["en"]);
   });
 
   it("returns null for a record written before tracks existed", () => {

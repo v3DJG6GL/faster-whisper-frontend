@@ -6,6 +6,7 @@ import {
   activeRailIndex, foldProgress, mergeSegmentTranslations, openHistoryRecord,
   overallFraction, railIndex, railOf, railStages, selectPath, skippedStages,
   stageEstimateMs, stageTimeline, useTranscribeRun, _resetStageRtfForTests,
+  assembleTranslatedSegments,
 } from "./transcribeRun";
 import type { QueueItem } from "./transcribeRun";
 import type { TranscriptRecord } from "./transcriptHistory";
@@ -406,5 +407,23 @@ describe("mergeSegmentTranslations kept-original marks", () => {
     expect(saved().result!.segments![0].translations).toEqual({ de: "A!" });
     // Untouched segment keeps its earlier merge untouched.
     expect(saved().result!.segments![1].translations).toEqual({ de: "B" });
+  });
+});
+
+describe("assembleTranslatedSegments (text-source kept-original marks)", () => {
+  it("marks a target the server kept as the source, like the audio path does", () => {
+    const segs = assembleTranslatedSegments(
+      [{ text: "a" }, { text: "b" }],
+      [{ en: "A" }, { en: "b" }],
+      [[], ["en"]],
+    );
+    expect(segs[0].translationsKept).toBeUndefined();
+    expect(segs[0].translations).toEqual({ en: "A" });
+    expect(segs[1].translationsKept).toEqual(["en"]);
+  });
+
+  it("an older backend that omits kept marks nothing", () => {
+    const segs = assembleTranslatedSegments([{ text: "a" }], [{ en: "A" }], []);
+    expect(segs[0].translationsKept).toBeUndefined();
   });
 });
