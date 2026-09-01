@@ -119,13 +119,6 @@ pub(crate) fn rewrite_media_paths(
     }
 }
 
-/// Repair records whose stored audio path no longer exists but whose file
-/// lives under one of the audio-base subfolders (same basename). Heals
-/// records a past move rewrote incompletely — earlier builds only rewrote
-/// `mediaPath`, stranding every dictation record's `sourcePath` when the
-/// layout migration moved the files into `<base>/dictations`. Idempotent, but
-/// NOT cheap — it reads and parses every record — so the caller runs it after a
-/// migration that moved something and once per install, not every launch.
 /// Replace one record file atomically (tmp + rename), owner-only, tmp cleaned up on
 /// either failure path. `read_records_into` silently skips a file that fails to parse,
 /// so no record may ever be written in place: a crash between truncate and write would
@@ -143,6 +136,13 @@ fn write_record_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Repair records whose stored audio path no longer exists but whose file
+/// lives under one of the audio-base subfolders (same basename). Heals
+/// records a past move rewrote incompletely — earlier builds only rewrote
+/// `mediaPath`, stranding every dictation record's `sourcePath` when the
+/// layout migration moved the files into `<base>/dictations`. Idempotent, but
+/// NOT cheap — it reads and parses every record — so the caller runs it after a
+/// migration that moved something and once per install, not every launch.
 pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
     let subs = ["dictations", "files", "links"];
     let dirs = [transcripts_dir(app), dictations_dir(app)];
@@ -215,6 +215,32 @@ pub(crate) const MAX_MEDIA_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub(crate) fn valid_id(id: &str) -> bool {
     (8..=64).contains(&id.len())
         && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+}
+
+/// Is this a media copy THIS app wrote (`<id>.<ext>`, id from `valid_id`)? The audio
+/// base is a free user pick, so `files/`/`links/` may already hold foreign data — the
+/// sweeps and wipes below must never touch anything else (the dictation twin is
+/// `audio::is_dictation_file`).
+fn is_own_media(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .map(valid_id)
+        .unwrap_or(false)
+}
+
+/// Delete a dictation record's audio (`dictation-*.wav` + its `.txt` sidecar) — only
+/// when the name is one we write and the path is absolute, so a user-chosen folder can
+/// never lose foreign files.
+fn remove_dictation_audio(source_path: &str) {
+    let p = Path::new(source_path);
+    let own = p
+        .file_name()
+        .map(|n| crate::audio::is_dictation_file(&n.to_string_lossy()))
+        .unwrap_or(false);
+    if own && p.is_absolute() {
+        let _ = std::fs::remove_file(p);
+        let _ = std::fs::remove_file(p.with_extension("txt"));
+    }
 }
 
 /// Write (create or replace) one history record. Atomic tmp+rename with
@@ -310,7 +336,19 @@ pub fn delete_transcript_record(
     if file_path.exists() {
         return std::fs::remove_file(file_path).map_err(|e| e.to_string());
     }
-    std::fs::remove_file(dictations_dir(&app)?.join(&name)).map_err(|e| e.to_string())
+    let rec_path = dictations_dir(&app)?.join(&name);
+    // A dictation's audio lives in the recordings folder, not `files/`/`links/`:
+    // take the .wav and its .txt sidecar with the record, or "delete from disk"
+    // leaves a verbatim recording of the user's speech (and the deleted text)
+    // behind with nothing referencing it.
+    if let Some(src) = std::fs::read_to_string(&rec_path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("sourcePath")?.as_str().map(str::to_owned))
+    {
+        remove_dictation_audio(&src);
+    }
+    std::fs::remove_file(rec_path).map_err(|e| e.to_string())
 }
 
 /// Copy a run's input audio next to its record (`media/<id>.<ext>`), so the
@@ -472,7 +510,8 @@ pub fn remove_transcript_media(
     for dir in dirs {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
-                if std::fs::remove_file(entry.path()).is_ok() {
+                let path = entry.path();
+                if is_own_media(&path) && std::fs::remove_file(&path).is_ok() {
                     removed += 1;
                 }
             }
@@ -525,6 +564,9 @@ fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
+            if !is_own_media(&path) {
+                continue;
+            }
             if !records.join(format!("{stem}.json")).exists()
                 && std::fs::remove_file(&path).is_ok()
             {
@@ -634,6 +676,30 @@ mod tests {
         let bad = dir.join("missing").join("r.json");
         assert!(write_record_atomic(&bad, "{}").is_err());
         assert!(!dir.join("missing").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn media_ownership_guard_only_matches_our_ids() {
+        assert!(is_own_media(Path::new("/x/files/9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.m4a")));
+        assert!(!is_own_media(Path::new("/x/files/my-album.mp3")));
+        assert!(!is_own_media(Path::new("/x/links/notes.txt")));
+        assert!(!is_own_media(Path::new("/x/files/holiday video.mp4")));
+    }
+
+    #[test]
+    fn dictation_audio_removal_spares_foreign_files() {
+        let dir = std::env::temp_dir().join(format!("fwf-dict-rm-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        for n in ["dictation-1.wav", "dictation-1.txt", "interview.wav", "interview.txt"] {
+            std::fs::write(dir.join(n), b"x").unwrap();
+        }
+        remove_dictation_audio(dir.join("dictation-1.wav").to_str().unwrap());
+        assert!(!dir.join("dictation-1.wav").exists());
+        assert!(!dir.join("dictation-1.txt").exists());
+        remove_dictation_audio(dir.join("interview.wav").to_str().unwrap());
+        assert!(dir.join("interview.wav").exists());
+        assert!(dir.join("interview.txt").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
