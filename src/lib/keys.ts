@@ -177,6 +177,16 @@ export function collapseModifierSides(codes: string[]): string[] {
 
 /** Canonical order (modifiers by type+side, key last) + de-duped, so a stored
  *  chord is independent of press order and comparable by value. */
+/** Windows/WebView2 synthesizes a phantom `ControlLeft` keydown just before
+ *  `AltRight` on AltGr layouts (German/Swiss). The Windows backend drops that
+ *  phantom in both feeds (scan 0x21D / injected raw input), so a captured
+ *  "Ctrl + AltGr" chord could never match at runtime — drop it whenever AltGr
+ *  is the modifier actually in play. */
+export function dropAltGrPhantom(codes: string[], altGraph: boolean): string[] {
+  if (!altGraph || !codes.includes("AltRight")) return codes;
+  return codes.filter((c) => c !== "ControlLeft");
+}
+
 export function canonicalizeCodes(codes: string[]): string[] {
   return Array.from(new Set(codes)).sort(
     // Rank orders modifiers first (by type+side); equal-rank codes — e.g. two non-modifier

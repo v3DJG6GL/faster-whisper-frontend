@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from "react";
 import { safeDisplayText } from "@/lib/sanitize";
 import { validateCodes, suspendShortcuts, reregisterShortcuts } from "./api";
-import { MODIFIER_CODES, codeToToken, canonicalizeCodes, eventToCode } from "./keys";
+import { MODIFIER_CODES, codeToToken, canonicalizeCodes, eventToCode, dropAltGrPhantom } from "./keys";
 import { learnLetter } from "./keyboardLayout";
 import { findChordConflict, type BindingKind } from "./conflicts";
 import type { Profile } from "./types";
@@ -103,9 +103,14 @@ export function useHotkeyCapture(opts: {
       // eventToCode (not e.code): software-injected chords (SpeechMike-style
       // companion apps) arrive with no scancode, so e.code is ""/"Unidentified".
       const code = eventToCode(e);
+      const altGr = e.getModifierState?.("AltGraph") === true;
       if (MODIFIER_CODES.has(code)) {
         pressed.add(code);
-        const cur = canonicalizeCodes([...pressed]);
+        // Keep `pressed` and the displayed set in sync: once AltGr is in play the
+        // phantom ControlLeft must leave the held set too, or its later keyup
+        // (pressed.delete) would diverge from what the pill showed.
+        if (altGr && code === "AltRight") pressed.delete("ControlLeft");
+        const cur = canonicalizeCodes(dropAltGrPhantom([...pressed], altGr));
         // >= (not >) so a LATER equal-length modifier set wins the tie: on a same-count swap mid-capture
         // (release LeftShift, press LeftAlt while LeftCtrl stays down) peak must track the most-recent
         // maximal set the pill shows (setHeldCodes(cur)), else the keyup fallback commits the abandoned
@@ -133,7 +138,7 @@ export function useHotkeyCapture(opts: {
         return;
       }
       done = true;
-      finalize(canonicalizeCodes([...pressed, code]));
+      finalize(canonicalizeCodes(dropAltGrPhantom([...pressed, code], altGr)));
     };
     const onKeyUp = (e: KeyboardEvent) => {
       e.preventDefault();

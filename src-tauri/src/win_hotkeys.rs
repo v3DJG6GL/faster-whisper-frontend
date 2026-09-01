@@ -322,9 +322,11 @@ mod imp {
             .spawn(move || worker(worker_app, rx, Engine::new(chords)));
 
         let (ready_tx, ready_rx) = channel::<Option<u32>>();
+        let abandoned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let abandoned_thread = abandoned.clone();
         let _ = std::thread::Builder::new()
             .name("win-hotkeys-input".into())
-            .spawn(move || input_thread(&ready_tx));
+            .spawn(move || input_thread(&ready_tx, &abandoned_thread));
         match ready_rx.recv_timeout(std::time::Duration::from_secs(2)) {
             Ok(Some(tid)) => {
                 tracing::info!("[winhook] raw-input listener up ({n_chords} chord(s))");
@@ -332,6 +334,12 @@ mod imp {
             }
             Ok(None) | Err(_) => {
                 tracing::warn!("[winhook] couldn't register for raw keyboard input — hotkeys are OFF");
+                // On the timeout arm no Running was stored, so Running::drop can never
+                // reach the thread — a slow setup would otherwise leave it pumping (and
+                // re-arming a global LL hook) for the process lifetime, one zombie per
+                // apply_bindings. Tell it to tear itself down; the 250 ms re-arm timer
+                // guarantees a wake-up within one tick.
+                abandoned.store(true, std::sync::atomic::Ordering::Relaxed);
                 if let Ok(mut t) = TX.lock() {
                     *t = None; // ends the worker
                 }
@@ -357,7 +365,7 @@ mod imp {
     /// input with `RIDEV_INPUTSINK` (delivery regardless of foreground — this is
     /// what keeps chords alive while an RDP client is focused; see module docs),
     /// pumping messages until shutdown posts WM_QUIT.
-    fn input_thread(ready: &Sender<Option<u32>>) {
+    fn input_thread(ready: &Sender<Option<u32>>, abandoned: &std::sync::atomic::AtomicBool) {
         unsafe {
             let class_name: Vec<u16> = "fwf-raw-input\0".encode_utf16().collect();
             let hinstance = GetModuleHandleW(std::ptr::null());
@@ -425,6 +433,9 @@ mod imp {
             // Returns 0 on the WM_QUIT posted by shutdown(), -1 on error.
             let mut msg: MSG = std::mem::zeroed();
             while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+                if abandoned.load(std::sync::atomic::Ordering::Relaxed) {
+                    break; // start() gave up on us; fall through to the cleanup below
+                }
                 // The re-arm timer targets no window (thread message) — handle it
                 // here; DispatchMessageW would drop it.
                 if msg.message == WM_TIMER && msg.hwnd.is_null() {
