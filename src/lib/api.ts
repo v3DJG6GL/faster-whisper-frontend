@@ -645,10 +645,12 @@ export async function stopStream(): Promise<void> {
 }
 
 /** Hard-abort the stream session WITHOUT draining (no wasted server work; releases the system mute).
- *  Used by cancelLive, and as the closed-handler's idempotent release of a parked session. */
-export async function cancelStream(): Promise<void> {
+ *  Used by cancelLive (`userInitiated: true` — also aborts a transcript already being typed, even
+ *  in stop-timing mode where the session is long gone), and as the closed-handler's idempotent
+ *  release of a parked session (`false`, so the end-of-session insert queued moments later lives). */
+export async function cancelStream(userInitiated = false): Promise<void> {
   if (!isTauri) return;
-  await invoke("cancel_stream");
+  await invoke("cancel_stream", { userInitiated });
 }
 
 export async function startRecord(args: {
@@ -666,6 +668,8 @@ export async function startRecord(args: {
   recordingsDir?: string | null;
   trimSilence?: boolean;
   muteSystem?: boolean;
+  /** Plain OpenAI-compatible server — an "auto" language is omitted, not sent empty. */
+  standard?: boolean;
 }): Promise<void> {
   if (!isTauri) return;
   await invoke("start_record", {
@@ -682,6 +686,7 @@ export async function startRecord(args: {
     recordingsDir: args.recordingsDir ?? null,
     trimSilence: args.trimSilence ?? true,
     muteSystem: args.muteSystem ?? false,
+    standard: args.standard ?? false,
   });
 }
 
@@ -691,10 +696,11 @@ export async function stopRecord(): Promise<void> {
 }
 
 /** Hard-abort the record session WITHOUT transcribing (no wasted server POST; releases the system
- *  mute). Used by cancelLive, and as the closed-handler's idempotent release of a parked session. */
-export async function cancelRecord(): Promise<void> {
+ *  mute). Used by cancelLive (`userInitiated: true`), and as the closed-handler's idempotent
+ *  release of a parked session (`false`) — see `cancelStream` for what the flag decides. */
+export async function cancelRecord(userInitiated = false): Promise<void> {
   if (!isTauri) return;
-  await invoke("cancel_record");
+  await invoke("cancel_record", { userInitiated });
 }
 
 /** Retire the active session epoch WITHOUT draining/aborting — the error/fatal-inject teardown keeps

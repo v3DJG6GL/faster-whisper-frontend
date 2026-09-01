@@ -25,6 +25,7 @@ import { useApp } from "./store";
 import { translateFailureDoorway } from "./errors";
 import { attachRecordingPath, recordDictation } from "./transcriptHistory";
 import { backendPrompt, effectiveServerUrl } from "./backends";
+import { effectiveServerKind } from "./serverKind";
 import { refreshCaps, translationWarm } from "./capabilities";
 import { acquireWarm, preloadPlanFor, type WarmLease } from "./preload";
 import { ownProp } from "./own";
@@ -2610,6 +2611,7 @@ async function startLiveInner(
         recordingsDir: audioBasePref(rec),
         trimSilence: rec.trimSilence,
         muteSystem: rec.muteSystemAudio,
+        standard: effectiveServerKind(backend, useApp.getState().connections[backend.id]) === "standard",
       });
     } else {
       await startStream({
@@ -2861,8 +2863,11 @@ export async function cancelLive(): Promise<void> {
     // ABORT, don't finish: a cancel discards the in-flight session, so skip the drain (streaming) /
     // the transcription POST (batch) — they'd produce a result we immediately throw away. This also
     // releases the system-mute guard right away.
-    if (endpoint === "batch") await cancelRecord();
-    else await cancelStream();
+    // `true`: the user pressed Cancel, so Rust also aborts a transcript that is being typed
+    // right now — in stop-timing mode the session is already gone by then, and the flag is
+    // the only thing that distinguishes this from the closed-handler's release below.
+    if (endpoint === "batch") await cancelRecord(true);
+    else await cancelStream(true);
   } catch (e) {
     console.error("cancelLive: cancel failed:", e);
   }

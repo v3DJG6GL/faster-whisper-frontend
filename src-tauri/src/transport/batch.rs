@@ -1,6 +1,9 @@
 //! Batch transcription: `POST /v1/audio/transcriptions` (multipart).
 
-use super::{base_url, body_capped_to, client, detail_from, friendly_err, json_capped, with_auth, MAX_ERROR_BODY};
+use super::{
+    base_url, body_capped_to, client, detail_from, friendly_err, json_capped, json_capped_to, with_auth,
+    MAX_ERROR_BODY, MAX_META_BODY,
+};
 use anyhow::{bail, Context};
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
@@ -86,6 +89,9 @@ pub struct BatchOptions {
     /// endpoint) instead of the full backend's `task` form field — used when
     /// the backend is a plain OpenAI-compatible server.
     pub use_translations_endpoint: Option<bool>,
+    /// The backend is a plain OpenAI-compatible server (no override profiles, so the
+    /// explicit-empty `language` sentinel buys nothing there and a strict server may 400 it).
+    pub standard: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -174,13 +180,6 @@ struct VerboseJson {
     translation: Option<TranslationInfo>,
 }
 
-/// Target-language codes are short ISO-ish tags ("de", "pt-BR") — screened
-/// before they join a CSV form field.
-fn is_lang_code(s: &str) -> bool {
-    (2..=16).contains(&s.len())
-        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-}
-
 /// The `translate_to` form value, as the three states the server distinguishes:
 /// `None` = omit the field (the server inherits its override-profile's TRANSLATE_TO),
 /// `Some("")` = an empty value, i.e. NO targets, which overrides that inherited list,
@@ -194,8 +193,8 @@ fn translate_to_field(requested: Option<&[String]>) -> Option<String> {
     let targets: Vec<&str> = requested
         .iter()
         .map(String::as_str)
-        .filter(|t| is_lang_code(t))
-        .take(8)
+        .filter(|t| super::is_lang_code(t))
+        .take(super::MAX_TARGETS) // truncates — the text route refuses instead (see MAX_TARGETS)
         .collect();
     Some(targets.join(","))
 }
@@ -279,8 +278,13 @@ pub struct BatchProgress {
     pub total_bytes: Option<u64>,
 }
 
+/// A progress poll fires every second from an unguarded interval, so it must fail well
+/// under the shared client's 120 s default: against a server that accepts and then stalls,
+/// each tick otherwise left a live GET behind — ~120 concurrent sockets per run.
+const PROGRESS_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Poll the server-side progress entry for `progress_id`. Cheap and frequent —
-/// uses the shared client's default timeout.
+/// capped at `PROGRESS_TIMEOUT`, and bounded like every other metadata route.
 pub async fn progress(
     server_url: &str,
     api_key: Option<&str>,
@@ -294,6 +298,7 @@ pub async fn progress(
         client().get(format!("{base}/v1/audio/transcriptions/progress/{progress_id}")),
         api_key,
     )
+    .timeout(PROGRESS_TIMEOUT)
     .send()
     .await
     .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
@@ -301,7 +306,7 @@ pub async fn progress(
     if !status.is_success() {
         bail!("HTTP {}", status.as_u16());
     }
-    let parsed: BatchProgress = json_capped::<BatchProgress>(resp)
+    let parsed: BatchProgress = json_capped_to::<BatchProgress>(resp, MAX_META_BODY)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
     Ok(BatchProgress {
@@ -412,13 +417,16 @@ pub async fn transcribe_wav_bytes(
     prompt: Option<&str>,
     overrides: Option<&serde_json::Value>,
     override_profile: Option<&str>,
+    standard: bool,
     wav: Vec<u8>,
 ) -> anyhow::Result<BatchResult> {
     let part = Part::bytes(wav).file_name("recording.wav").mime_str("audio/wav")?;
     // Dictation batch: short clips; keep the 120 s client default (the record path's only
     // stuck-session backstop, since the streaming-style finalize watchdog is stream-only).
-    // No stage options: dictation never diarizes/translates.
-    post(server_url, api_key, model, language, prompt, overrides, override_profile, SourcePart::File(part), None, None).await
+    // No stage options — dictation never diarizes/translates — only the server-kind flag
+    // that shapes the `language` field for a plain OpenAI-compatible server.
+    let options = BatchOptions { standard: Some(standard), ..Default::default() };
+    post(server_url, api_key, model, language, prompt, overrides, override_profile, SourcePart::File(part), None, Some(options)).await
 }
 
 /// The one client-supplied audio source of a batch request: an uploaded file
@@ -514,15 +522,10 @@ async fn post(
         form = form.text("timestamp_granularities[]", "word");
     }
 
-    // T2T wins over translate-to-EN: with targets present the whisper `task` field is
-    // never sent (the UI enforces the exclusivity too — this is the belt-and-braces the
-    // comment on the `translate_to` block below promises).
-    let has_targets = opts
-        .translate_to
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .any(|t| is_lang_code(t));
+    // Computed once, up here, so the `task` exclusivity below reads the exact value that
+    // goes on the wire instead of a second screening pass that had to agree by hand.
+    let translate_to = translate_to_field(opts.translate_to.as_deref());
+    let has_targets = translate_to.as_deref().is_some_and(|c| !c.is_empty());
     if translate && !use_translations_route && !has_targets {
         form = form.text("task", "translate");
     }
@@ -550,8 +553,8 @@ async fn post(
     // "no targets" and overrides that inherited list. The client's chip list is
     // authoritative, so an empty one has to be said out loud — omitting it let the
     // server put back the stage the user had switched off.
-    if let Some(csv) = translate_to_field(opts.translate_to.as_deref()) {
-        let has_any = !csv.is_empty();
+    if let Some(csv) = translate_to {
+        let has_any = has_targets;
         form = form.text("translate_to", csv);
         // The per-run translation knobs only mean anything alongside real targets.
         if has_any {
@@ -583,14 +586,12 @@ async fn post(
     // /v1/audio/translations auto-detects the source and always outputs
     // English — `language` is undefined there.
     //
-    // language sentinel: "" (nothing resolved) → omit the field, so the server
-    // inherits its override-profile's DEFAULT_LANGUAGE; "auto" → send an EMPTY value,
-    // which is auto-detect stated explicitly and overrides that inherited language.
-    // Every picker feeding this offers "auto" as a CHOICE (the inherit row, where one
-    // exists, is the empty value), so mapping auto onto "omit" took the user's pick
-    // for a silence and let the profile's language win.
+    // language sentinel (see `transport::wire_language` for the three states): "auto" is
+    // said out loud as an EMPTY value on the full backend, where it overrides an override
+    // profile's DEFAULT_LANGUAGE. A STANDARD server has no profile to inherit from, and an
+    // empty `language` is not a valid code there — keep the old omit-on-auto for it.
     if !use_translations_route {
-        if let Some(wire) = super::wire_language(language) {
+        if let Some(wire) = super::wire_language_for(opts.standard.unwrap_or(false), language) {
             form = form.text("language", wire.to_string());
         }
     }
@@ -783,7 +784,7 @@ pub async fn url_preview(
         let body = body_capped_to(resp, MAX_ERROR_BODY).await.unwrap_or_default();
         bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
     }
-    let parsed: UrlPreview = json_capped::<UrlPreview>(resp)
+    let parsed: UrlPreview = json_capped_to::<UrlPreview>(resp, MAX_META_BODY)
         .await
         .map_err(|e| anyhow::anyhow!(e))
         .context("decoding preview")?;
@@ -852,12 +853,18 @@ pub async fn download_result_media(
         Some("audio/x-matroska") | Some("video/x-matroska") => "mka",
         _ => "bin",
     };
-    std::fs::create_dir_all(dest_dir).context("creating the media folder")?;
+    // Owner-only like every other media folder this app creates (`save_transcript_media`,
+    // the layout migration): the base is a user pick that may sit in a shared/synced tree.
+    crate::audio::create_dir_private(dest_dir).context("creating the media folder")?;
     let dest = dest_dir.join(format!("{record_id}.{ext}"));
     let tmp = dest_dir.join(format!("{record_id}.{ext}.tmp"));
     // Async file I/O: up to MAX_MEDIA_BYTES lands here, and a synchronous write per chunk
     // parked a runtime worker (the same contract `save_transcript_media` documents by
     // running on a blocking thread) while the run's progress polls share that runtime.
+    // Typed, not a substring match on the error text: `Ok(None)` ("no local copy, run is
+    // fine") and `Err` ("failed fetch") are opposite outcomes, and a `.context()` added
+    // around the block would have silently flipped the over-cap case into the latter.
+    let mut over_cap = false;
     let write_result: anyhow::Result<()> = async {
         use tokio::io::AsyncWriteExt;
         let mut f = tokio::fs::File::create(&tmp).await.context("creating the media file")?;
@@ -870,6 +877,7 @@ pub async fn download_result_media(
         while let Some(chunk) = resp.chunk().await.map_err(|e| anyhow::anyhow!(friendly_err(&e)))? {
             total += chunk.len() as u64;
             if total > max_bytes {
+                over_cap = true;
                 bail!("media exceeds the local copy cap");
             }
             f.write_all(&chunk).await.context("writing the media file")?;
@@ -888,7 +896,7 @@ pub async fn download_result_media(
         let _ = std::fs::remove_file(&tmp);
         // Over-cap mirrors save_transcript_media's contract: "no copy", not
         // a failed run.
-        if e.to_string().contains("local copy cap") {
+        if over_cap {
             return Ok(None);
         }
         return Err(e);

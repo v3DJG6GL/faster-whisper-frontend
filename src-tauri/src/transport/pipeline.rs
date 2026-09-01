@@ -121,12 +121,13 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
             }
         }
         Err(e) => {
-            tracing::warn!("[pipeline] rules GET failed: {}", friendly_err(&e));
+            let msg = friendly_err(&e);
+            tracing::warn!("[pipeline] rules GET failed: {msg}");
             PipelineFetch {
                 ok: false,
                 status: 0,
                 state: None,
-                error: Some(friendly_err(&e)),
+                error: Some(msg),
             }
         }
     }
@@ -206,12 +207,13 @@ pub async fn save_pipeline_rules(
             }
         }
         Err(e) => {
-            tracing::warn!("[pipeline] rules PATCH failed: {}", friendly_err(&e));
+            let msg = friendly_err(&e);
+            tracing::warn!("[pipeline] rules PATCH failed: {msg}");
             PipelineSave {
                 ok: false,
                 status: 0,
                 conflicts: serde_json::json!([]),
-                detail: Some(friendly_err(&e)),
+                detail: Some(msg),
                 ..Default::default()
             }
         }

@@ -271,11 +271,11 @@ pub async fn run<F>(
         "response_format": params.response_format,
         "audio": { "format": "pcm_s16le", "sample_rate": 16000 }
     });
-    // language sentinel, the same three states the batch form uses: "" (nothing
-    // resolved) → omit the key, so the server inherits its override-profile's
-    // DEFAULT_LANGUAGE; "auto" → send "", which is auto-detect stated explicitly and
-    // OVERRIDES that inherited language; a code → send it. Sending "" for both states
-    // meant a profile could never fall back to the server's language.
+    // language sentinel, the same three states the batch form uses (see
+    // `transport::wire_language`): "auto" → "", auto-detect stated explicitly, which
+    // OVERRIDES an override profile's DEFAULT_LANGUAGE; a code → send it; "" → omit
+    // (reserved: no picker emits it today). This route only ever talks to the full
+    // backend, so no standard-server variant is needed here.
     if let Some(wire) = super::wire_language(&params.language) {
         config["language"] = json!(wire);
     }
@@ -354,13 +354,33 @@ pub async fn run<F>(
         loop {
             match read.next().await {
                 Some(Ok(Message::Text(t))) => {
-                    // Forward each parsed event; stop on the terminal frame.
-                    let terminal =
-                        emit_message(t.as_str(), &|e| {
-                            let _ = evt_tx.send(FromReader::Event(e));
-                        });
-                    if terminal {
-                        break;
+                    // Forward each parsed event; stop on `closing`. The LAST `final` is not
+                    // the end: its `captured` receipt follows it, so give the socket a short
+                    // grace to deliver it (and a `closing` that may come right behind) before
+                    // stopping — bounded, so a server that never says `closing` does not park
+                    // the reader on the drain's idle window.
+                    let forward = |e| {
+                        let _ = evt_tx.send(FromReader::Event(e));
+                    };
+                    match emit_message(t.as_str(), &forward) {
+                        Frame::Continue => {}
+                        Frame::Closing => break,
+                        Frame::LastFinal => {
+                            const LAST_FINAL_GRACE: Duration = Duration::from_millis(300);
+                            let deadline = tokio::time::Instant::now() + LAST_FINAL_GRACE;
+                            loop {
+                                match tokio::time::timeout_at(deadline, read.next()).await {
+                                    Ok(Some(Ok(Message::Text(t)))) => {
+                                        if emit_message(t.as_str(), &forward) == Frame::Closing {
+                                            break;
+                                        }
+                                    }
+                                    Ok(Some(Ok(_))) => continue,
+                                    _ => break, // close / eof / error / grace elapsed
+                                }
+                            }
+                            break;
+                        }
                     }
                 }
                 Some(Ok(Message::Close(_))) | None => {
@@ -474,10 +494,13 @@ pub async fn run<F>(
         }
     }
 
+    // On EVERY exit from the live loop, not only the drain: the counters exist to tell a dead
+    // mic from a server that got audio and answered nothing, and the mid-session socket death
+    // is exactly the case that question is asked about.
+    tracing::info!(
+        "[stream] live phase ended (draining={draining}): sent {frames_sent} frames / {bytes_sent} B, saw {partials_seen} partial(s)"
+    );
     if draining {
-        tracing::info!(
-            "[stream] draining: sent {frames_sent} frames / {bytes_sent} B, saw {partials_seen} partial(s)"
-        );
         // Finalize the current utterance and ask the server to close, then read the
         // remaining finals (delivered by the reader task) so the last words aren't
         // lost. The WHOLE block is bounded by one deadline: the flush/stop writes are
@@ -617,11 +640,23 @@ fn accumulate_transcript(e: &StreamEvent, docs: &mut Vec<String>, current: &mut 
     }
 }
 
-/// Parse one server text frame, emit the matching event, return true if it was the
-/// terminal message (last final / closing).
-fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
+/// What one server text frame means for the reader's lifetime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Frame {
+    Continue,
+    /// The last `final`. NOT terminal for the reader: the `captured` frame for that
+    /// utterance is written AFTER it (see `FromReader`), and a reader that stopped here
+    /// never read the last phrase's receipt — the frontend then parked its inject queue
+    /// for the full CAPTURE_ID_WAIT_MS on every session.
+    LastFinal,
+    /// `closing` — the server is done.
+    Closing,
+}
+
+/// Parse one server text frame, emit the matching event, and classify it.
+fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
-        return false;
+        return Frame::Continue;
     };
     match v.get("type").and_then(|t| t.as_str()) {
         Some("ready") => {
@@ -633,14 +668,14 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
                 // 64 MiB frame limit — one `ready` frame froze the main window.
                 overrides_ignored: bounded_str_vec_field(&v, "overrides_ignored"),
             });
-            false
+            Frame::Continue
         }
         Some("partial") => {
             on_event(StreamEvent::Partial {
                 committed: bounded(&str_field(&v, "committed"), MAX_TRANSCRIPT),
                 pending: bounded(&str_field(&v, "pending"), MAX_TRANSCRIPT),
             });
-            false
+            Frame::Continue
         }
         Some("final") => {
             let last = v.get("last").and_then(|b| b.as_bool()).unwrap_or(false);
@@ -650,13 +685,13 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
                 last,
                 utterance: ordinal_field(&v, "utterance"),
             });
-            last
+            if last { Frame::LastFinal } else { Frame::Continue }
         }
         Some("boundary") => {
             on_event(StreamEvent::Boundary {
                 separator: bounded(&str_field(&v, "separator"), MAX_SEPARATOR),
             });
-            false
+            Frame::Continue
         }
         Some("captured") => {
             // Server-authored id; bounded at the parse boundary like every
@@ -666,7 +701,7 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
             if !id.is_empty() {
                 on_event(StreamEvent::Captured { id, utterance: ordinal_field(&v, "utterance") });
             }
-            false
+            Frame::Continue
         }
         Some("error") => {
             // Defanged, not merely truncated: this string is rendered in the error banner and in
@@ -679,14 +714,14 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
                 &str_field(&v, "message"),
                 MAX_ERROR_MESSAGE,
             )));
-            false
+            Frame::Continue
         }
         Some("loading") => {
             on_event(StreamEvent::Loading);
-            false
+            Frame::Continue
         }
-        Some("closing") => true,
-        _ => false,
+        Some("closing") => Frame::Closing,
+        _ => Frame::Continue,
     }
 }
 

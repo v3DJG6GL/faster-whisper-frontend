@@ -341,21 +341,46 @@ pub fn bounded_server_text(s: &str, n: usize) -> String {
     }
 }
 
+/// Target-language codes are short ISO-ish tags ("de", "pt-BR") — screened before they join
+/// a form field or a JSON body. Shared by the batch form and the T2T text route, which used
+/// to carry two hand-copied versions of this predicate.
+pub(crate) fn is_lang_code(s: &str) -> bool {
+    (2..=16).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// Most target languages one request carries. NOTE the two routes apply it differently and
+/// deliberately so: the batch form TRUNCATES to the first 8 valid codes, the text route
+/// REFUSES a request with more — changing either is a behaviour decision, not a cleanup.
+pub(crate) const MAX_TARGETS: usize = 8;
+
 /// The `language` a request should carry, as the three states the server distinguishes:
 /// `None` = omit the field (the server inherits its override-profile's DEFAULT_LANGUAGE),
 /// `Some("")` = send an empty value (auto-detect, stated explicitly, which OVERRIDES that
 /// inherited language), `Some(code)` = that language.
 ///
-/// Every picker that feeds this offers "auto" as a CHOICE — the inherit row, where a screen
-/// has one, is the EMPTY value, not "auto". So "auto" must be said on the wire; folding it
-/// onto "omit" (which both transports did) meant a user picking auto-detect on a backend
-/// bound to a server profile silently got that profile's language instead.
+/// "auto" must be said on the wire: folding it onto "omit" (which both transports did)
+/// meant a user picking auto-detect on a backend bound to a server profile silently got that
+/// profile's language instead. The three states are the wire contract; today no picker
+/// actually emits `""` (every backend is seeded "auto" and the Backends/Transcribe pickers
+/// have no inherit row — the Profile's inherit row resolves to the backend's language first),
+/// so `None` is reserved for a future inherit row and for a config synced with an empty
+/// `language`.
 pub fn wire_language(language: &str) -> Option<&str> {
     match language {
         "" => None,
         "auto" => Some(""),
         code => Some(code),
     }
+}
+
+/// `wire_language`, but a STANDARD (plain OpenAI-compatible) server keeps the old
+/// omit-on-auto: it has no override profile whose language an empty value would override,
+/// and an empty `language` is not a valid code for a strict server to accept.
+pub fn wire_language_for(standard: bool, language: &str) -> Option<&str> {
+    if standard {
+        return (!language.is_empty() && language != "auto").then_some(language);
+    }
+    wire_language(language)
 }
 
 #[cfg(test)]
@@ -373,6 +398,15 @@ mod wire_language_tests {
     fn a_real_code_rides_through_untouched() {
         assert_eq!(wire_language("de"), Some("de"));
         assert_eq!(wire_language("pt-BR"), Some("pt-BR"));
+    }
+
+    #[test]
+    fn a_standard_server_never_receives_an_empty_language() {
+        use super::wire_language_for;
+        assert_eq!(wire_language_for(true, "auto"), None);
+        assert_eq!(wire_language_for(true, ""), None);
+        assert_eq!(wire_language_for(true, "de"), Some("de"));
+        assert_eq!(wire_language_for(false, "auto"), Some(""));
     }
 }
 

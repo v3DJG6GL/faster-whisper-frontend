@@ -76,7 +76,9 @@ impl SyncRemoteState {
     /// survives restarts. The TS pull path already refuses such a version; the PUSH path (200 and
     /// 409 alike) did not, and the push path is the one that writes it down.
     fn version_representable(&self) -> bool {
-        self.version.abs() <= MAX_SAFE_VERSION
+        // A range test, not `abs()`: `i64::MIN.abs()` overflows (a panic in debug, a wrap back
+        // to i64::MIN in release — which then PASSES `<= MAX_SAFE_VERSION`).
+        (-MAX_SAFE_VERSION..=MAX_SAFE_VERSION).contains(&self.version)
     }
 }
 
@@ -199,8 +201,21 @@ pub async fn push(
         "base_version": base_version,
         "device": device,
     });
+    // SYNC_MAX_BODY bounds BOTH directions. Only the inbound side was capped, so a blob past
+    // 4 MiB pushed fine and then failed every pull, on this and every other device, forever
+    // (the version never advanced; the only recovery was "Delete server copy").
+    let bytes = serde_json::to_vec(&body).unwrap_or_default();
+    if over_wire_limit(bytes.len()) {
+        return SyncPush {
+            ok: false,
+            status: 0,
+            error: Some("Your settings are too large to sync.".into()),
+            ..Default::default()
+        };
+    }
     match with_auth(client().put(url), api_key)
-        .json(&body)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(bytes)
         .timeout(SYNC_TIMEOUT)
         .send()
         .await
@@ -303,5 +318,31 @@ pub async fn delete(server_url: &str, api_key: Option<&str>) -> SyncDelete {
             status: 0,
             error: Some(friendly_err(&e)),
         },
+    }
+}
+
+/// Is a composed push body past the wire ceiling this same module enforces on pulls?
+fn over_wire_limit(body_len: usize) -> bool {
+    body_len > SYNC_MAX_BODY
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_guard_rejects_the_unrepresentable_extremes_without_overflowing() {
+        let state = |version: i64| SyncRemoteState { version, ..Default::default() };
+        assert!(!state(i64::MIN).version_representable());
+        assert!(!state(i64::MAX).version_representable());
+        assert!(state(MAX_SAFE_VERSION).version_representable());
+        assert!(state(-MAX_SAFE_VERSION).version_representable());
+        assert!(state(0).version_representable());
+    }
+
+    #[test]
+    fn the_push_body_is_bounded_like_the_pull_body() {
+        assert!(!over_wire_limit(SYNC_MAX_BODY));
+        assert!(over_wire_limit(SYNC_MAX_BODY + 1));
     }
 }

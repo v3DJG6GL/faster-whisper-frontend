@@ -720,6 +720,10 @@ export interface TranscribeOptions {
   separateBgm?: boolean;
   /** Route translate to POST /v1/audio/translations (standard servers). */
   useTranslationsEndpoint?: boolean;
+  /** The backend is a plain OpenAI-compatible server: no override profiles, so an
+   *  "auto" language is OMITTED on the wire instead of sent as the explicit-empty
+   *  sentinel a strict server would reject. */
+  standard?: boolean;
   /** T2T target language codes — the server runs the translating stage after
    *  diarization. Mutually exclusive with task:"translate" (T2T wins). */
   translateTo?: string[];

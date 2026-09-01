@@ -716,9 +716,12 @@ export default function Transcribe() {
       model: translationModel || backend.translationOverrides?.model,
       glossary: backend.translationOverrides?.glossary,
     });
+    // Always present for a standard server (it carries the wire-shaping `standard` flag
+    // even when no stage is on), else only when a stage asked for something.
     const options: TranscribeOptions | undefined =
-      diarize || translate || separateBgm || t2tOptions.translateTo !== undefined
+      isStandard || diarize || translate || separateBgm || t2tOptions.translateTo !== undefined
         ? {
+            ...(isStandard ? { standard: true } : {}),
             // Belt-and-braces exclusivity: when a sync race left both set,
             // T2T wins and Whisper's task is omitted entirely.
             ...(translate && !t2t

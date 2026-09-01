@@ -10,7 +10,7 @@ use std::time::Duration;
 /// Client-side ceilings — the server has its own (4 MiB JSON body, 200k chars
 /// total); these just keep an accidental monster request from leaving the app.
 const MAX_TEXTS: usize = 512;
-const MAX_TARGETS: usize = 8;
+use super::MAX_TARGETS;
 
 /// Generous per-request ceiling for translation runs — same failure mode as
 /// batch.rs's `FILE_TRANSCRIBE_TIMEOUT`: a 400-segment chunk against a slow /
@@ -99,10 +99,12 @@ pub struct TextTranslationResult {
 /// Assemble the request body, applying each field's own present-vs-absent rule.
 ///
 /// `source` and `translation_glossary` ride through on PRESENCE alone: `None` omits
-/// the key, `Some(s)` sends it verbatim — `""` included. The server distinguishes the
-/// two, resolving an empty glossary through the same knob ladder the batch form uses
-/// ("no glossary", overriding whatever would otherwise be inherited) and an empty
-/// source as auto-detect. Emptiness filters here collapsed both onto "absent", so a
+/// the key, `Some(s)` sends it verbatim — `""` included. For the GLOSSARY the server
+/// really distinguishes the two, resolving an empty one through the same knob ladder the
+/// batch form uses ("no glossary", overriding whatever would otherwise be inherited).
+/// `source` rides through the same way for wire fidelity only: the server collapses `""`
+/// and absent to the same auto-detect (`source_lang=(source or None)`), so do NOT build
+/// another explicit-empty override on it. Emptiness filters here collapsed both onto "absent", so a
 /// glossary the user had explicitly cleared came back from the server's own config on
 /// every dictation settle, retro-translate and subtitle run — the one path the batch
 /// form's fix did not cover.
@@ -165,7 +167,7 @@ mod request_body_tests {
     }
 
     #[test]
-    fn an_empty_source_rides_through_as_auto_detect() {
+    fn an_empty_source_is_sent_verbatim_not_pruned() {
         assert_eq!(body(Some(""), None)["source"], "");
         assert!(body(None, None).get("source").is_none());
         assert_eq!(body(Some("de"), None)["source"], "de");
@@ -216,15 +218,9 @@ pub async fn translate_texts(
     if texts.len() > MAX_TEXTS {
         bail!("too many segments in one request (max {MAX_TEXTS})");
     }
-    // Screen target codes like batch.rs does before they join the wire.
-    let targets: Vec<String> = targets
-        .iter()
-        .filter(|t| {
-            (2..=16).contains(&t.len())
-                && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        })
-        .cloned()
-        .collect();
+    // The same screen the batch form applies; the CAP differs on purpose (refuse, don't
+    // truncate — see `transport::MAX_TARGETS`).
+    let targets: Vec<String> = targets.iter().filter(|t| super::is_lang_code(t)).cloned().collect();
     if targets.is_empty() || targets.len() > MAX_TARGETS {
         bail!("between 1 and {MAX_TARGETS} valid target languages");
     }
