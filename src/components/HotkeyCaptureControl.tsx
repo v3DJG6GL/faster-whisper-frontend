@@ -1,5 +1,6 @@
-// The shortcut-capture control shared by every rebind surface (the Profiles editor
-// and the Dictionary screen's QuickAddShortcutField (was the Settings quick-add row)) so they look and behave identically. It shows the
+// The shortcut-capture control shared by every rebind surface — the Profiles editor
+// and the Dictionary screen's QuickAddShortcutField (formerly the Settings quick-add
+// row) — so they look and behave identically. It shows the
 // bound chord as <kbd> chips, flips to a live "press your shortcut" pill while
 // capturing (held modifiers + a trailing …, with an inline hint or conflict
 // warning), and renders the Set / Change / Cancel toggle plus an optional Clear.

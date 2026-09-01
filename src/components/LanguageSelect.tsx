@@ -10,6 +10,7 @@ export function LanguageSelect({
   inheritLabel,
   ariaLabel = "Language",
   className,
+  disabled,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -17,6 +18,7 @@ export function LanguageSelect({
   inheritLabel?: string;
   ariaLabel?: string;
   className?: string;
+  disabled?: boolean;
 }) {
   return (
     <Select
@@ -24,6 +26,7 @@ export function LanguageSelect({
       onChange={onChange}
       ariaLabel={ariaLabel}
       className={className}
+      disabled={disabled}
       options={inheritLabel ? [{ value: "", label: inheritLabel }, ...LANGUAGES] : LANGUAGES}
     />
   );

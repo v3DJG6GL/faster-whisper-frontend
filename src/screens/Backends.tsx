@@ -551,7 +551,12 @@ function ConnectStep({
     const typedUrl = url;
     const typedKey = key;
     const serverUrl = normalizeUrl(typedUrl);
-    if (!serverUrl.replace(/^https?:\/\//i, "")) return;
+    if (!serverUrl.replace(/^https?:\/\//i, "")) {
+      // Say so — a bare return left the flow's first button dead and silent for
+      // `ftp://host`, `https:/host` or a lone `http://`.
+      setError("Enter an address like http://host:8000 — that scheme isn’t supported.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -663,22 +668,35 @@ function RestoreOffer({
     const target = normalizeUrl(draft.serverUrl);
     let match = s.backends.find((b) => normalizeUrl(b.serverUrl) === target);
     if (!match) {
-      let toAdd = draft;
-      if (keyTyped) {
-        try {
-          await setBackendKey(draft.id, keyTyped);
-        } catch (e) {
-          // Don't lose an applied restore over a keyring failure — save the
-          // backend keyless; the sync tab's no-key warning takes it from there.
-          console.error("saving API key failed:", e);
-          toAdd = { ...draft, hasApiKey: false };
-        }
-      }
-      s.upsertBackend(toAdd);
-      match = toAdd;
+      s.upsertBackend(draft);
+      match = draft;
     }
-    s.setConnection(match.id, info);
-    s.updateSync({ enabled: true, backendId: match.id });
+    // The key the user just typed and proved works belongs to whichever backend is bound —
+    // the restored one for this server included. It used to be written only when a NEW
+    // backend was minted, so the common case (the restore brought one for the same server)
+    // ended with sync enabled against a backend this device held no credential for.
+    if (keyTyped) {
+      try {
+        await setBackendKey(match.id, keyTyped);
+        if (!match.hasApiKey) {
+          const withKey = { ...match, hasApiKey: true };
+          s.upsertBackend(withKey);
+          match = withKey;
+        }
+      } catch (e) {
+        // Don't lose an applied restore over a keyring failure — leave the backend
+        // keyless; the sync tab's no-key warning takes it from there.
+        console.error("saving API key failed:", e);
+        if (!s.backends.some((b) => b.id === match!.id)) s.upsertBackend({ ...match, hasApiKey: false });
+      }
+    }
+    // Cache the connect step's verdict only if the backend really routes to the address it
+    // was tested against: a per-device URL override can send every request to host B while
+    // the canonical address is host A (the invariant handleTest / onSave already keep).
+    if (normalizeUrl(effectiveServerUrl(match, useApp.getState().settings)) === target) {
+      useApp.getState().setConnection(match.id, info);
+    }
+    useApp.getState().updateSync({ enabled: true, backendId: match.id });
     onDone();
   };
 
@@ -894,6 +912,9 @@ export default function Backends() {
           <div className="flex flex-col gap-3">
             {backends.map((b, i) => {
               const conn = ownProp(connections, b.id);
+              // Once per card, not five URL parses per render.
+              const eff = effectiveUrl(b);
+              const auth = authorityOf(eff);
               return (
                 <Card key={b.id} className="flex items-center gap-4 p-5">
                   <ReorderControls
@@ -934,14 +955,13 @@ export default function Backends() {
                           and the Test button beside this line already used it. So the row could
                           name one host while the audio and the bearer key went to another. Show
                           the address actually used, and say so when it isn't the configured one. */}
-                      <span className="truncate" title={safeDisplayText(effectiveUrl(b), 200)}>
-                        {safeIdentityText(authorityOf(effectiveUrl(b))?.host, 80) ||
-                          safeIdentityText(effectiveUrl(b), 80)}
+                      <span className="truncate" title={safeDisplayText(eff, 200)}>
+                        {safeIdentityText(auth?.host, 80) || safeIdentityText(eff, 80)}
                       </span>
-                      {authorityOf(effectiveUrl(b))?.hasUserinfo && (
+                      {auth?.hasUserinfo && (
                         <Badge tone="warn">address hides the real host</Badge>
                       )}
-                      {effectiveUrl(b) !== b.serverUrl && (
+                      {eff !== b.serverUrl && (
                         <span title={`Configured: ${safeDisplayText(b.serverUrl, 200)}`}>
                           <Badge tone="warn">override in use</Badge>
                         </span>

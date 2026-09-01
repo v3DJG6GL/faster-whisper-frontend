@@ -247,8 +247,10 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
             ctx,
             seg,
             `[${txtTime(seg.start)}] ${prefix}${clean(seg.text)}`,
-            (t, _s, lang) =>
-              `        ${ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
+            // The time moves onto the translated line when the original is hidden — a
+            // translations-only TXT with Timestamps on otherwise had no time at all.
+            (t, s, lang) =>
+              `${ctx.origIncluded ? "        " : `[${txtTime(s.start)}] `}${ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
           );
         })
         .join("\n") + "\n"
@@ -304,23 +306,10 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
     return paras.join("\n\n") + "\n";
   }
   if (!ctx.origIncluded && result.segments?.length) {
-    // Translated tracks only. This used to interleave EVERY target into ONE
-    // sentence stream -- "Hello this is Salut voila" -- which is not a
-    // document in any language. One block per language instead, in the
-    // configured order, tagged when there is more than one.
-    const segs = result.segments;
-    const blocks = ctx.visLangs
-      .map((lang) => {
-        const body = segs
-          .map((seg) => trOf(seg, lang))
-          .filter((t): t is string => !!t)
-          .join(" ")
-          .trim();
-        if (!body) return null;
-        return ctx.visLangs.length > 1 ? `[${lang.toUpperCase()}]\n${body}` : body;
-      })
-      .filter((b): b is string => b !== null);
-    return blocks.join("\n\n").trim() + "\n";
+    // Only an EMPTY selection reaches here (any translated track was served by the
+    // speaker-turn branch above): nothing was picked, so nothing is written — falling
+    // through would emit the original text the user deselected.
+    return "\n";
   }
   if (!ctx.names || !result.segments?.length) {
     return stripControlChars(result.text).trim() + "\n";
@@ -508,7 +497,9 @@ function jsonExport(result: BatchResult, ctx: Ctx): string {
       language: result.language ?? null,
       duration: result.duration ?? null,
       speakers: ctx.order.map((label) => ({
-        label,
+        // The raw label is the lookup key; the EMITTED value is defanged like every other
+        // string in this file (the header's promise).
+        label: stripControlChars(label),
         name: nameOf(ctx, label),
         // The user-chosen (or default) chip color — data for downstream
         // renderers, so recoloring in the app survives into the export.
@@ -528,7 +519,7 @@ function jsonExport(result: BatchResult, ctx: Ctx): string {
         start: s.start,
         end: s.end,
         text: stripControlChars(s.text),
-        ...(s.speaker ? { speaker: s.speaker, speakerName: nameOf(ctx, s.speaker) } : {}),
+        ...(s.speaker ? { speaker: stripControlChars(s.speaker), speakerName: nameOf(ctx, s.speaker) } : {}),
         ...(s.translations && Object.keys(s.translations).length
           ? {
               translations: Object.fromEntries(
@@ -618,9 +609,10 @@ export function exportFileNames(opts: ExportOptions): ((stem: string) => string)
   const tracks = exportTrackList(opts);
   if (opts.format === "lrc" && tracks.length > 1) {
     return tracks.map(
-      (track) => (stem: string) =>
-        // The empty-slug guard keeps a hostile code from colliding with the "orig" file.
-        `${stem}${track === "orig" || !trackSlug(track) ? "" : `.${trackSlug(track)}`}.lrc`,
+      (track, i) => (stem: string) =>
+        // Positional fallback for a code whose slug is empty ("!!"): an empty suffix collided
+        // with the "orig" file and every such track overwrote the one before it.
+        track === "orig" ? `${stem}.lrc` : `${stem}.${trackSlug(track) || `t${i}`}.lrc`,
     );
   }
   return [(stem: string) => `${stem}${exportStemSuffix(opts.tracks)}.${EXPORT_EXTENSIONS[opts.format]}`];

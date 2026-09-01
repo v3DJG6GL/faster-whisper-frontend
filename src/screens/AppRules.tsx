@@ -26,6 +26,9 @@ function blankAppRule(): AppRule {
 
 const pruneInherit = (x: AppRule): AppRule => ({
   ...x,
+  // The optional label too: saved blank as `undefined`, so a typed-then-cleared label must
+  // not read as unsaved forever.
+  name: x.name?.trim() ? x.name : undefined,
   insertMethod: x.insertMethod ?? undefined,
   pasteShortcut: x.pasteShortcut ?? undefined,
   autoEnter: x.autoEnter ?? undefined,
@@ -171,7 +174,6 @@ function Editor({
               autoEnter: v.autoEnter ?? null,
               restoreClipboard: v.restoreClipboard ?? null,
             }),
-          sentinel: "null",
           disabled: r.block,
         });
         return (

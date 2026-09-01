@@ -16,7 +16,7 @@ import { transportErrorDoorway } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText } from "./subtitleImport";
 import { useApp } from "./store";
-import { upsertRecord, type TranscriptRecord } from "./transcriptHistory";
+import { setRecordForgetHook, upsertRecord, type TranscriptRecord } from "./transcriptHistory";
 import type {
   BatchProgress, BatchResult, DecodeOverrides, TranscribeOptions,
 } from "./types";
@@ -334,6 +334,9 @@ interface TranscribeRunState {
   files: string[];
   queue: QueueItem[];
   selectedPath: string | null;
+  /** The file the pump ran LAST: the completed run panel's per-file clocks belong to it, so
+   *  the panel is pinned here rather than following the clicked row. */
+  lastRunPath: string | null;
   /** Live server progress of the RUNNING file (null between files). */
   progress: BatchProgress | null;
   /** Wall-clock spans of the RUNNING file's stages (reset per file). */
@@ -382,6 +385,7 @@ export const useTranscribeRun = create<TranscribeRunState>(() => ({
   files: [],
   queue: [],
   selectedPath: null,
+  lastRunPath: null,
   progress: null,
   stageTimes: {},
   stageMeta: {},
@@ -522,6 +526,26 @@ function registerRecord(rec: TranscriptRecord) {
   historyByPath[rec.sourcePath] = rec;
   recordById[rec.id] = rec;
 }
+
+/** Drop a deleted record from the registries (and close it if it is the open one), so a
+ *  later overlay edit or chunk merge cannot re-save it. `null` = every record (bulk wipe). */
+export function forgetRecord(id: string | null): void {
+  if (id === null) {
+    for (const k of Object.keys(recordById)) delete recordById[k];
+    for (const k of Object.keys(historyByPath)) delete historyByPath[k];
+    for (const t of persistTimers.values()) window.clearTimeout(t);
+    persistTimers.clear();
+    set({ openRecordId: null });
+    return;
+  }
+  const rec = recordById[id];
+  delete recordById[id];
+  if (rec && historyByPath[rec.sourcePath]?.id === id) delete historyByPath[rec.sourcePath];
+  window.clearTimeout(persistTimers.get(id));
+  persistTimers.delete(id);
+  if (get().openRecordId === id) set({ openRecordId: null });
+}
+setRecordForgetHook(forgetRecord);
 
 /** Re-save a record with the CURRENT overlays, debounced — every
  *  rename/recolor/correction lands in the history within a second, without a
@@ -812,7 +836,11 @@ export function mergeSegmentTranslations(
   updated.translationsStale = get().translationsStale[key];
   registerRecord(updated);
   upsertRecord(updated);
-  patchItem(rec.sourcePath, { result: updated.result });
+  // The queue row is keyed by PATH, and two records of one URL share it: while record A is
+  // still merging chunks, the user may open record B of the same link from History — patching
+  // by path then swapped the OPEN transcript to A's segments under B's header.
+  const openId = get().openRecordId;
+  if (!openId || openId === rec.id) patchItem(rec.sourcePath, { result: updated.result });
 }
 
 /** Fold a progress poll into the store. "unknown" is the server saying "no
@@ -1065,6 +1093,7 @@ async function pump(
       const fileT0 = Date.now();
       set({
         progress: null,
+        lastRunPath: next.path,
         stageMeta: {},
         stageTimes: { [first]: { start: fileT0 } },
       });
@@ -1172,13 +1201,24 @@ export function startRun(options: TranscribeOptions | undefined,
     queue: s.files.map((path): QueueItem => ({
       path,
       status: "queued",
-      kind: isSourceUrl(path) ? "url" : "file",
+      kind: isSourceUrl(path) ? "url" : isTextSourcePath(path) ? "text" : "file",
       title: s.urlMeta[path]?.title,
     })),
     lastOptions: options,
     lastOverrides: overrides,
   });
   void pump(epoch, options, ctx);
+}
+
+/** The sidebar badge's fraction: the running item's own rail flags (URL → a download stage,
+ *  text → the translating rail alone), exactly as the Transcribe panel derives them. Passing
+ *  the bare store credited a download's fraction to the transcribe weight — 80% while the file
+ *  was still downloading, then back to 0%. */
+export function runBadgeFraction(s: TranscribeRunState): number | null {
+  const it = s.queue.find((q) => q.status === "running") ?? null;
+  const forUrl = it?.kind === "url" || (it ? isSourceUrl(it.path) : false);
+  const forText = it?.kind === "text" || (it && !forUrl ? isTextSourcePath(it.path) : false);
+  return overallFraction({ ...s, forUrl, forText });
 }
 
 /** The item the completed run panel describes: the file the PUMP ran last (it stamps

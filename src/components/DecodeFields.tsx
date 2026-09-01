@@ -236,14 +236,19 @@ export function DecodeFields({
         onToggle={() => setShowAdvanced((v) => !v)}
         title="Advanced decode params"
       >
-        <div className="space-y-5">
-          {SECTIONS.map((s) => (
-            <div key={s.id}>
-              <SectionLabel className="mb-2.5">{s.title}</SectionLabel>
-              {grid(FIELDS.filter((f) => f.section === s.id))}
-            </div>
-          ))}
-        </div>
+        {/* Guarded at the call site: `children` are built before DisclosureCard runs, so the
+            ~19 advanced cells were created on every keystroke in a primary field while
+            collapsed (the default). */}
+        {showAdvanced && (
+          <div className="space-y-5">
+            {SECTIONS.map((s) => (
+              <div key={s.id}>
+                <SectionLabel className="mb-2.5">{s.title}</SectionLabel>
+                {grid(FIELDS.filter((f) => f.section === s.id))}
+              </div>
+            ))}
+          </div>
+        )}
       </DisclosureCard>
     </div>
   );

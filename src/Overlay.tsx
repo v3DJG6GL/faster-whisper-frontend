@@ -686,9 +686,9 @@ export default function Overlay() {
   // The pill's status WORD comes from the SAME SSOT as the dot, so it can't drift from the dot / Home.
   // idle (post-session linger) → "" placeholder, never a stale "listening". Error's vis.label is unused
   // (the error branch renders dictationError instead).
-  // While the "untranslated" done-pulse plays, the label slot carries the REASON. The chip is
-  // idle by then, so the slot is empty anyway — and a warn-coloured dot with nothing to read
-  // asks a question it doesn't answer. `translateFailure` is our own closed vocabulary
+  // While the "untranslated" done-pulse plays, the label slot carries the REASON — with priority
+  // over the retained transcript: settleIdle keeps `partial` for the 2 s collapse linger, so
+  // without that the words held the slot and the pulse's explanation was never painted. `translateFailure` is our own closed vocabulary
   // (dictationTranslate.ts), so it needs no bound; anything unrecognized degrades to the
   // generic phrasing rather than being rendered raw.
   const failureLabel =
@@ -852,7 +852,9 @@ export default function Overlay() {
     expanded,
     standby,
     peeked,
-    state.phase, // a phase arriving mid-tuck can release the hold (chipTuckHold)
+    // A phase arriving mid-tuck can release the hold (chipTuckHold). The stable KEY, not the
+    // payload object: every progress push replaces it, and that re-armed the tuck timer.
+    phaseKey,
   ]);
 
   // Quick-launch: icon buttons shown when hovering the idle/standby chip (never while
@@ -1154,7 +1156,11 @@ export default function Overlay() {
                             and only reveal the words once the chip is hover-revealed. The phase row
                             (below) takes this slot ahead of the words while translating — see phaseRow. */}
                         {phaseRow ??
-                          (partialShown ? (
+                          (pulse === "untranslated" ? (
+                            <div className="whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.14em] text-dim">
+                              {label}
+                            </div>
+                          ) : partialShown ? (
                           // Left-edge fade via a STATIC overlay rather than a CSS mask:
                           // the transcript text/scroll changes several times a second,
                           // and re-evaluating a mask-image each time flickers on

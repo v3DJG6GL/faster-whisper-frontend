@@ -1,6 +1,7 @@
 // Bridge to the Rust core. Every call is guarded so the UI still runs in a plain
 // browser (`pnpm dev`) — outside Tauri the calls no-op or return safe defaults.
 
+import { AUDIO_SOURCE_EXTS, TEXT_SOURCE_EXTS } from "./subtitleImport";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AudioDevice,
@@ -533,11 +534,13 @@ export interface LogTail {
   seq: number;
 }
 
-const EMPTY_TAIL: LogTail = { lines: [], errors: 0, warns: 0, seq: 0 };
+/** A fresh value per call: returned on the non-Tauri path, where a shared mutable
+ *  constant would let one caller's mutation leak into every later call. */
+const emptyTail = (): LogTail => ({ lines: [], errors: 0, warns: 0, seq: 0 });
 
 /** The ring's contents from `sinceSeq` on (0 = everything captured so far). */
 export async function getLogTail(sinceSeq: number): Promise<LogTail> {
-  if (!isTauri) return EMPTY_TAIL;
+  if (!isTauri) return emptyTail();
   return invoke<LogTail>("get_log_tail", { sinceSeq });
 }
 
@@ -549,13 +552,13 @@ export async function setLogStream(active: boolean): Promise<void> {
 
 /** Badge hydration at startup: counters only, no lines. */
 export async function getLogStatus(): Promise<LogTail> {
-  if (!isTauri) return EMPTY_TAIL;
+  if (!isTauri) return emptyTail();
   return invoke<LogTail>("get_log_status");
 }
 
-/** Display path of the log folder (home-relative where possible). */
-/** `custom` = the live log-folder preference (null = default); the command re-reads the
- *  on-disk config otherwise, which lags the debounced save. */
+/** Display path of the log folder (home-relative where possible). `custom` = the live
+ *  log-folder preference (null/blank = the default folder); the on-disk config lags the
+ *  debounced save, so the command never falls back to it. */
 export async function logFolderPath(custom: string | null): Promise<string | null> {
   if (!isTauri) return null;
   return invoke<string>("log_folder_path", { custom }).catch(() => null);
@@ -1019,10 +1022,10 @@ export async function pickAudioFiles(): Promise<string[]> {
     filters: [
       {
         name: "Audio / Video",
-        extensions: ["wav", "mp3", "m4a", "mp4", "aac", "ogg", "opus", "webm", "flac"],
+        extensions: [...AUDIO_SOURCE_EXTS],
       },
       // Text sources: translate-only runs (no audio ever exists for these).
-      { name: "Subtitles / Text", extensions: ["srt", "vtt", "lrc", "txt", "json"] },
+      { name: "Subtitles / Text", extensions: [...TEXT_SOURCE_EXTS] },
     ],
   });
   if (Array.isArray(selected)) return selected.filter((p): p is string => typeof p === "string");

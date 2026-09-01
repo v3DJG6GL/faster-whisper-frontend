@@ -123,15 +123,25 @@ function isRecord(v: unknown): v is TranscriptRecord {
 }
 
 function newestFirst(records: TranscriptRecord[]): TranscriptRecord[] {
-  return [...records].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  // A consistent comparator (equal stamps → 0): two records minted in the same millisecond
+  // are reachable, and an inconsistent comparator's tie order is implementation-defined.
+  return [...records].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
 }
 
 let loading: Promise<void> | null = null;
 
-/** Load the history from disk (once; later calls are no-ops unless forced). */
+/** Load the history from disk (once; later calls are no-ops unless forced). A FORCED call
+ *  chains onto an in-flight listing instead of adopting it: every forced caller just changed
+ *  the files on disk, and the listing already running was taken before that change. */
 export function loadHistory(force = false): Promise<void> {
-  if (loading) return loading;
+  if (loading) {
+    if (!force) return loading;
+    return loading.then(() => loadHistory(true));
+  }
   if (!force && useTranscriptHistory.getState().loaded) return Promise.resolve();
+  // The listing must see the newest content: a coalesced write still parked here would
+  // otherwise revert a just-edited record to its older on-disk text in the UI.
+  flushRecordWrites();
   loading = listTranscriptRecords()
     .then((raw) => {
       useTranscriptHistory.setState({
@@ -166,6 +176,23 @@ function writeNow(rec: TranscriptRecord): void {
   void saveTranscriptRecord(rec.id, JSON.stringify(rec), rec.kind === "dictation").catch((e) =>
     console.error("history save failed:", e),
   );
+}
+
+/** DROP every coalesced write (never land it): the caller is about to move or wipe the
+ *  files the parked records describe, and a write landing after that put the pre-move paths —
+ *  or a record Rust just deleted — straight back on disk. */
+export function dropPendingWrites(): void {
+  for (const t of writeTimers.values()) clearTimeout(t);
+  writeTimers.clear();
+  pendingWrite.clear();
+}
+
+/** The workbench registers records it holds open (transcribeRun); a delete must reach those
+ *  registries too, or the next overlay edit re-saves the deleted record. Registered from
+ *  transcribeRun's module scope (it imports this module, so no back-import). */
+let forgetHook: ((id: string | null) => void) | null = null;
+export function setRecordForgetHook(fn: (id: string | null) => void): void {
+  forgetHook = fn;
 }
 
 /** Write every coalesced record now (app teardown). */
@@ -276,10 +303,13 @@ export function attachRecordingPath(id: string, path: string): void {
 /** Remove one record — mirror and disk. */
 export function deleteRecord(id: string): void {
   // A coalesced write still pending for this record would land AFTER the delete and
-  // resurrect the file on the next load — drop it first.
+  // resurrect the file on the next load — drop it first. The workbench's registries too:
+  // its 800 ms edit debounce and the chunked translate merge re-read the record from there
+  // and called upsertRecord, resurrecting the file (with its media already gone).
   clearTimeout(writeTimers.get(id));
   writeTimers.delete(id);
   pendingWrite.delete(id);
+  forgetHook?.(id);
   useTranscriptHistory.setState((s) => ({
     records: s.records.filter((r) => r.id !== id),
   }));
@@ -289,10 +319,17 @@ export function deleteRecord(id: string): void {
 }
 
 /** The record's transcript text with corrections applied — snippet + search. */
-export function recordText(rec: TranscriptRecord): string {
+export function recordText(rec: TranscriptRecord, max = Infinity): string {
   const segs = rec.result?.segments;
   if (!segs?.length) return rec.result?.text ?? "";
-  return segs.map((s, i) => rec.edits?.[i] ?? s.text).join(" ");
+  if (max === Infinity) return segs.map((s, i) => rec.edits?.[i] ?? s.text).join(" ");
+  // Bounded: a History snippet keeps 160 chars, so joining a 900-segment transcript per row
+  // per keystroke defeated the sanitizer's own output bound.
+  let out = "";
+  for (let i = 0; i < segs.length && out.length < max; i++) {
+    out += (i ? " " : "") + (rec.edits?.[i] ?? segs[i].text);
+  }
+  return out.slice(0, max);
 }
 
 /** The record's result with the stored corrections folded in — the same

@@ -64,6 +64,7 @@ export async function initConfig(): Promise<void> {
     useApp
       .getState()
       .setSaveError("Couldn’t load your saved settings — saving now may overwrite them. Restart to retry.", "load");
+    useApp.getState().setConfigLoadFailed();
   } finally {
     hydrated = true;
   }

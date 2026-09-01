@@ -98,8 +98,18 @@ export default function LangPick() {
     inputRef.current?.focus();
   }, [showSeq]);
 
-  const commit = useCallback((targets: string[]) => void commitLangPick(targets), []);
-  const dismiss = useCallback(() => void cancelLangPick(), []);
+  // Logged, never swallowed: Rust owns the hide + the answer event, so a failed invoke leaves
+  // the picker up AND the asker pending — the console line is the only trace of why.
+  const commit = useCallback(
+    (targets: string[]) => void commitLangPick(targets).catch((e) => console.error("lang pick commit failed:", e)),
+    [],
+  );
+  const dismiss = useCallback(() => void cancelLangPick().catch((e) => console.error("lang pick dismiss failed:", e)), []);
+  // Keep the keyboard highlight on screen: arrows/digits move `active`, the list scrolls.
+  const listRef = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    listRef.current?.querySelector(`[data-row="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active]);
 
   // Candidates: the server's list when it advertises one, else the app's curated set,
   // minus the spoken language (translating a language into itself is a no-op that would
@@ -248,29 +258,42 @@ export default function LangPick() {
         }}
         placeholder="Filter languages…"
         aria-label="Filter languages"
+        role="combobox"
+        aria-expanded="true"
+        aria-controls="langpick-list"
+        aria-autocomplete="list"
+        aria-activedescendant={rows[active] ? `langpick-opt-${active}` : undefined}
         className="w-full border-b border-line bg-transparent px-4 py-2.5 text-[13px] text-text outline-none placeholder:text-faint"
       />
 
-      <ul className="min-h-0 flex-1 overflow-y-auto p-1.5" role="listbox" aria-multiselectable="true">
+      <ul id="langpick-list" ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-1.5" role="listbox" aria-multiselectable="true">
         {rows.length === 0 && (
-          <li className="px-3 py-6 text-center text-[12.5px] text-faint">
+          <li role="presentation" className="px-3 py-6 text-center text-[12.5px] text-faint">
             No language matches “{safeDisplayText(query, 24)}”.
           </li>
         )}
         {groups.map((g) => (
-          <li key={g.label}>
-            <div className="px-2.5 pb-1 pt-2 font-mono text-[9.5px] uppercase tracking-label text-faint">
+          // role="group" owns its options for AT (an `option` must be a child of the listbox or
+          // of a group inside it); the inner list is presentational.
+          <li key={g.label} role="group" aria-label={g.label}>
+            <div aria-hidden className="px-2.5 pb-1 pt-2 font-mono text-[9.5px] uppercase tracking-label text-faint">
               {g.label}
             </div>
-            <ul>
+            <ul role="presentation">
               {g.items.map((code) => {
                 const i = rows.findIndex((r) => r.code === code);
                 const on = chosen.includes(code);
                 return (
                   <li
                     key={code}
+                    id={`langpick-opt-${i}`}
+                    data-row={i}
                     role="option"
                     aria-selected={on}
+                    // Keep focus in the filter field: a click on the non-focusable row otherwise
+                    // moved focus to <body>, so further typing was dropped and Space/digits
+                    // flipped meaning for the same visible state.
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
                       setActive(i);
                       toggle(code);

@@ -58,9 +58,10 @@ export function OverrideProfilePicker({
     void listOverrideProfiles({ serverUrl, backendId, apiKey })
       .then((n) => {
         // Render cap, matching the MAX_SHOWN_* ceilings the Dictionary/QuickAdd siblings use: the
-        // list is server-authored and every entry becomes an <option>. Nothing becomes
-        // unreachable — the free-text "custom name" input covers any name past the cap.
-        if (!cancelled) setNames(n.slice(0, MAX_SHOWN_PROFILES));
+        // list is server-authored and every entry becomes an <option>. De-duplicated first
+        // (options are keyed on the value). A name past the cap stays reachable through the
+        // "Custom name…" row, which the dropdown branch offers too.
+        if (!cancelled) setNames([...new Set(n)].slice(0, MAX_SHOWN_PROFILES));
       })
       .catch(() => {
         // Best-effort, per the doc above: on failure degrade to the free-text input.
@@ -92,17 +93,16 @@ export function OverrideProfilePicker({
   // from inherit/server-default (""), which lets a server-bound profile apply.
   const noneOpt = { value: NO_OVERRIDE_PROFILE, label: "None — no profile" };
 
-  if (names.length > 0) {
-    const options = [{ value: "", label: inheritLabel }, noneOpt, ...names.map((n) => ({ value: n, label: n }))];
-    if (value && value !== NO_OVERRIDE_PROFILE && !names.includes(value))
-      options.push({ value, label: `${value} · not on server` });
-    return <Select value={value} onChange={onChange} options={options} ariaLabel={ariaLabel} />;
-  }
-
-  // Server enumerated no names (not a full backend yet, or empty list): still
-  // offer inherit + None, plus a "custom name…" escape hatch with a text field.
-  const isCustomValue = value !== "" && value !== NO_OVERRIDE_PROFILE;
+  // One code path for both shapes: with names, the custom row is the escape hatch for a
+  // name past the render cap; without, it is the only way to type one at all.
+  const isCustomValue = value !== "" && value !== NO_OVERRIDE_PROFILE && !names.includes(value);
   const custom = showCustom || isCustomValue;
+  const options = [
+    { value: "", label: inheritLabel },
+    noneOpt,
+    ...names.map((n) => ({ value: n, label: n })),
+    { value: CUSTOM, label: "Custom name…" },
+  ];
   return (
     <div className="space-y-2">
       <Select
@@ -117,7 +117,7 @@ export function OverrideProfilePicker({
             onChange(v);
           }
         }}
-        options={[{ value: "", label: inheritLabel }, noneOpt, { value: CUSTOM, label: "Custom name…" }]}
+        options={options}
       />
       {custom && (
         <TextInput

@@ -163,6 +163,28 @@ describe("json", () => {
 });
 
 describe("sanitisation", () => {
+  it("json speaker labels are defanged like every other emitted string", () => {
+    const r: BatchResult = {
+      text: "hi",
+      segments: [{ start: 0, end: 1, text: "hi", speaker: "SPEAKER_\u202e00" }],
+      speakers: ["SPEAKER_\u202e00"],
+    };
+    const parsed = JSON.parse(generateExport(r, { format: "json" }));
+    expect(parsed.speakers[0].label).not.toContain("\u202e");
+    expect(parsed.segments[0].speaker).not.toContain("\u202e");
+  });
+  it("an empty track selection writes nothing — never the deselected original", () => {
+    expect(generateExport(RESULT, { format: "txt", tracks: [] })).toBe("\n");
+  });
+  it("a rename made only of format characters falls back to the speaker label", () => {
+    const out = generateExport(RESULT, {
+      format: "txt",
+      renames: { SPEAKER_00: "\u202e\u200b" },
+    });
+    expect(out.startsWith("Speaker 1: Hello there.")).toBe(true);
+    const vtt = generateExport(RESULT, { format: "vtt", renames: { SPEAKER_00: "\u202e" } });
+    expect(vtt).not.toContain("<v >");
+  });
   it("strips bidi/control characters from text and renames", () => {
     const evil: BatchResult = {
       text: "ok",
@@ -298,8 +320,7 @@ describe("generateExports / filenames / cps", () => {
     }
   });
 
-  it("lrc with two tracks = one file per track, suffixed", async () => {
-    const { generateExports } = await import("./transcriptExport");
+  it("lrc with two tracks = one file per track, suffixed", () => {
     const files = generateExports(TRANSLATED, { format: "lrc", tracks: ["orig", "de"] });
     expect(files).toHaveLength(2);
     expect(files[0].name("talk")).toBe("talk.lrc");
@@ -307,14 +328,12 @@ describe("generateExports / filenames / cps", () => {
     expect(files[1].content).toContain("Hallo zusammen.");
     expect(files[1].content).not.toContain("Hello there.");
   });
-  it("single translated track suffixes the stem; orig included does not", async () => {
-    const { exportStemSuffix } = await import("./transcriptExport");
+  it("single translated track suffixes the stem; orig included does not", () => {
     expect(exportStemSuffix(["de"])).toBe(".de");
     expect(exportStemSuffix(["orig", "de"])).toBe("");
     expect(exportStemSuffix(undefined)).toBe("");
   });
-  it("cps flags only translated cues over 20 chars/sec", async () => {
-    const { cpsWarnings } = await import("./transcriptExport");
+  it("cps flags only translated cues over 20 chars/sec", () => {
     const slow = cpsWarnings(TRANSLATED, ["orig", "de"]);
     expect(slow).toEqual([]); // both cues are comfortably under 20 cps
     const fast: BatchResult = {
@@ -438,6 +457,17 @@ const TWO_TARGETS: BatchResult = {
 };
 
 describe("multi-target language tagging", () => {
+  it("txt with timestamps and translations only carries the time on every line", () => {
+    const out = generateExport(TRANSLATED, { format: "txt", timestamps: true, tracks: ["de"] });
+    for (const line of out.split("\n").filter(Boolean)) expect(line).toMatch(/^\[\d\d:\d\d\] /);
+    const both = generateExport(TRANSLATED, { format: "txt", timestamps: true, tracks: ["orig", "de"] });
+    expect(both.split("\n").filter((l) => l.startsWith("        ")).length).toBeGreaterThan(0);
+  });
+  it("lrc file names stay distinct for codes whose slug is empty", () => {
+    const names = exportFileNames({ format: "lrc", tracks: ["orig", "!!", "??"] }).map((n) => n("out"));
+    expect(new Set(names).size).toBe(3);
+    expect(names[0]).toBe("out.lrc");
+  });
   const two = { tracks: ["orig", "de", "fr"] };
 
   it("srt: tags each translated line, since SRT has no class mechanism", () => {
@@ -527,8 +557,8 @@ describe("multi-target language tagging", () => {
     const out = generateExport(evil, {
       format: "vtt", tracks: ["orig", "de", "x>.<y z"],
     });
-    expect(out).not.toContain("::cue(.mt-x>");
-    expect(out).toContain("::cue(.mt-xy-z)".replace("-z", "z"));
+    expect(out).not.toMatch(/::cue\(\.mt-[^)]*[>.< ]/);
+    expect(out).toContain("::cue(.mt-xyz)");
     expect(exportStemSuffix(["de", "x>.<y z"])).toBe(".de+xyz");
   });
 });
@@ -565,14 +595,5 @@ describe("lrc word tags", () => {
     const out = generateExport(r, { format: "lrc", wordTimestamps: true });
     expect(out.split("<00:01.00>").length - 1).toBe(1);
     expect(out).toContain("[00:01.00]<00:01.00>b");
-  });
-  it("a rename made only of format characters falls back to the speaker label", () => {
-    const out = generateExport(RESULT, {
-      format: "txt",
-      renames: { SPEAKER_00: "\u202e\u200b" },
-    });
-    expect(out.startsWith("Speaker 1: Hello there.")).toBe(true);
-    const vtt = generateExport(RESULT, { format: "vtt", renames: { SPEAKER_00: "\u202e" } });
-    expect(vtt).not.toContain("<v >");
   });
 });

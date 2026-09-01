@@ -3,7 +3,7 @@
 // translate-only run needs: ordered segments with optional timing/speaker.
 // Pure, no Tauri imports; unit-tested round-trip against generateExport.
 
-import { stripControlChars } from "./sanitize";
+import { safeDisplayText, stripControlChars } from "./sanitize";
 
 export interface ImportedText {
   segments: { start?: number; end?: number; text: string; speaker?: string }[];
@@ -11,7 +11,17 @@ export interface ImportedText {
   language?: string;
 }
 
-const TEXT_SOURCE_EXTS = ["srt", "vtt", "lrc", "txt", "json"] as const;
+export const TEXT_SOURCE_EXTS = ["srt", "vtt", "lrc", "txt", "json"] as const;
+/** The audio/video containers the file picker accepts — ONE list for the picker's dialog
+ *  filter and the drag-and-drop accept test, which used to carry separate copies. */
+export const AUDIO_SOURCE_EXTS = ["wav", "mp3", "m4a", "mp4", "aac", "ogg", "opus", "webm", "flac"] as const;
+export const ACCEPTED_EXTS: readonly string[] = [...AUDIO_SOURCE_EXTS, ...TEXT_SOURCE_EXTS];
+
+/** Is this something the Transcribe screen accepts (dropped or picked)? */
+export function isAcceptedSourcePath(path: string): boolean {
+  const m = /\.([A-Za-z0-9]+)$/.exec(path);
+  return !!m && ACCEPTED_EXTS.includes(m[1].toLowerCase());
+}
 
 /** Is this path a text/subtitle source (vs audio/video)? Extension test only —
  *  the pickers filter, this guards drops and retries. */
@@ -23,7 +33,7 @@ export function isTextSourcePath(path: string): boolean {
 /** Parse `content` by extension. Throws with a user-facing message when the
  *  file yields no segments. */
 export function parseImportedText(ext: string, content: string): ImportedText {
-  const body = stripControlChars(content.replace(/^﻿/, ""));
+  const body = stripControlChars(content); // drops a BOM too (isDeceptiveFormatChar)
   let out: ImportedText;
   switch (ext.toLowerCase()) {
     case "srt":
@@ -186,6 +196,8 @@ function parseJsonExport(body: string): ImportedText {
   }
   return {
     segments,
-    language: typeof obj.language === "string" ? obj.language : undefined,
+    // Bounded like Rust bounds a server's `language` (LANGUAGE_MAX = 64): this one comes
+    // from a locally parsed file and otherwise reached the meta line and track chips raw.
+    language: typeof obj.language === "string" ? safeDisplayText(obj.language, 64) || undefined : undefined,
   };
 }

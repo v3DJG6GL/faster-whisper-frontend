@@ -61,8 +61,8 @@ function Editor({
   const globalTypeAsISpeak = useApp((s) => s.settings.general.typeAsISpeak);
   const globalInsertMethod = useApp((s) => s.settings.general.insertMethod);
   // A low-level backend owns the chords when evdev is enabled AND permitted (Linux) or always on
-  // Windows (the hook backend) — same gate as the Dictionary screen's QuickAddShortcutField (was the Settings quick-add row), so both rebind surfaces
-  // accept the same chords (useHotkeyCapture commits modifier-only / AltGr chords ONLY then).
+  // Windows (the hook backend) — same gate as the Dictionary screen's QuickAddShortcutField
+  // (formerly the Settings quick-add row), so both rebind surfaces accept the same chords (useHotkeyCapture commits modifier-only / AltGr chords ONLY then).
   // Gating on `evdevEnabled` alone would let this editor accept a chord that can't fire when
   // evdev is toggled on but not permitted.
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
@@ -200,7 +200,9 @@ function Editor({
         <Labeled label="Chip tag">
           <TextInput
             value={p.tag ?? ""}
-            onChange={(e) => set({ tag: e.target.value })}
+            // `|| undefined`: an empty tag is stored as absent, and a set-then-clear otherwise
+            // read as "unsaved" forever (the same normalisation the sibling controls use).
+            onChange={(e) => set({ tag: e.target.value || undefined })}
             placeholder={deriveChipTag(p.name) || "From name"}
             maxLength={16}
           />
@@ -260,7 +262,7 @@ function Editor({
             <LanguageSelect
               ariaLabel="Language"
               value={p.language ?? ""}
-              onChange={(v) => set({ language: v })}
+              onChange={(v) => set({ language: v || undefined })}
               inheritLabel="Inherit from backend"
             />
           </Labeled>
@@ -440,7 +442,6 @@ function Editor({
               // Same rule as `save`: an empty override object is "inherit everything" and is
               // stored as absent — here too, or set-then-revert reads as unsaved forever.
               onChange: (v) => set({ insertionOverrides: hasInsertionOverrides(v) ? v : undefined }),
-              sentinel: "undefined",
             });
             return (
               <div className="grid grid-cols-2 gap-4">

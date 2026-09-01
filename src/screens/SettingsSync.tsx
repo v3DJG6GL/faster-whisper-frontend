@@ -57,6 +57,12 @@ const OTHER_BUCKET = IS_WINDOWS ? ("linux" as const) : ("windows" as const);
  *  error boundary in the app that unmounts the whole window. */
 const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
+/** The renderable rows of an inbound backend list: an array whose elements are objects.
+ *  Everything else is dropped before the render body dereferences it. */
+export function displayableBackends(list: unknown): Backend[] {
+  return arr<unknown>(list).filter((b): b is Backend => !!b && typeof b === "object");
+}
+
 /** Category descriptions for the import preview and the restore dialog (the Sync
  *  list itself renders per-setting switches from the manifest). */
 const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
@@ -374,7 +380,16 @@ export function RestoreFromServer({
     setApplying(true);
     setError(null);
     try {
-      await applyBlob(blob, sel, 2, { ignoreGates: true });
+      // The boolean matters: false = nothing was applied (a session started between the
+      // check above and applyBlob's own, or the apply was dropped stale after its retries).
+      // Binding sync to the new backend on a state that never landed would then push this
+      // device's pre-restore config over the server copy.
+      const ok = await applyBlob(blob, sel, 2, { ignoreGates: true });
+      if (!ok) {
+        setError("Nothing was restored — stop dictation or avoid changing settings while restoring, then try again.");
+        setApplying(false);
+        return;
+      }
       await onApplied();
     } catch (e) {
       setError(String(e));
@@ -477,7 +492,11 @@ const LOCAL_ARM_LABEL = "This device";
  *  gate in front of them, and disclosed only a COUNT. A URL's real authority is whatever follows
  *  the last `@`, so `http://localhost:8000@evil.tld/v1` reads as loopback until it is parsed. */
 export function IncomingAddresses({ list }: { list: unknown }) {
-  const backends = arr<Backend>(list).slice(0, MAX_SHOWN_ADDRESSES);
+  // ELEMENTS too, not only the container: the pull path hands this the raw server list, and
+  // `sanitizeBackends` runs only inside applyBlob — AFTER consent. A `[null]` element threw
+  // in this render body and unmounted the very dialog that lets the user refuse the blob.
+  const all = displayableBackends(list);
+  const backends = all.slice(0, MAX_SHOWN_ADDRESSES);
   if (backends.length === 0) return null;
   return (
     <Notice>
@@ -505,8 +524,8 @@ export function IncomingAddresses({ list }: { list: unknown }) {
           );
         })}
       </ul>
-      {arr(list).length > backends.length ? (
-        <div className="mt-1">…and {arr(list).length - backends.length} more.</div>
+      {all.length > backends.length ? (
+        <div className="mt-1">…and {all.length - backends.length} more.</div>
       ) : null}
     </Notice>
   );
@@ -521,6 +540,7 @@ const MAX_PREVIEW_PEERS = 500;
 /** A pulled update that would repoint a backend or replace a stored key, held for approval. */
 function SecurityReviewDialog() {
   const pending = getPendingReview();
+  const dictating = useApp((st) => st.status !== "idle");
   const [busy, setBusy] = useState(false);
   if (!pending) return null;
   const LABELS: Record<SecurityChange["kind"], string> = {
@@ -588,6 +608,9 @@ function SecurityReviewDialog() {
         If you did not change this yourself on another device, reject it — your microphone audio and
         everything you dictate would go to the new address.
       </Notice>
+      {dictating && (
+        <Notice className="mt-3">Stop dictation before applying — nothing is queued while a session runs.</Notice>
+      )}
       <div className="mt-5 flex justify-end gap-2">
         <Button variant="ghost" disabled={busy} onClick={rejectPendingReview}>
           Reject
@@ -596,7 +619,7 @@ function SecurityReviewDialog() {
             only then awaits applyBlob's keyring writes, so a click on Reject during that window
             closes the modal as "rejected" after the change has already been committed. */}
         <Button
-          disabled={busy}
+          disabled={busy || dictating}
           onClick={() => {
             setBusy(true);
             void approvePendingReview().finally(() => setBusy(false));

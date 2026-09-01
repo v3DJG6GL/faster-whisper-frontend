@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { Eraser, RotateCcw } from "lucide-react";
 import { LANGUAGES, languageLabel } from "../lib/languages";
 import { cn } from "../lib/cn";
+import { safeDisplayText } from "../lib/sanitize";
 import type { Capabilities, TranscribeOptions, TranslationOverrides } from "../lib/types";
 import { ModelPicker } from "./ModelPicker";
 import { MicroLabel, Segmented, Stepper, TextArea } from "./ui";
@@ -17,6 +18,23 @@ export const TRANSLATION_MAX_TARGETS = 8;
 export function pruneTargets(targets: string[], source: string): string[] {
   if (!source || source === "auto") return targets;
   return targets.filter((c) => c !== source);
+}
+
+/** The renderable codes of a target list. `translationOverrides` is a SYNCED field neither
+ *  sanitizer clamps element-wise, so a peer's `translateTo: [123]` reached `code.toUpperCase()`
+ *  in the render body and — with no error boundary — unmounted the window on every launch.
+ *  Strings only, trimmed, bounded per code and in count, de-duplicated (the chips are keyed on
+ *  the code). Removal still filters the ORIGINAL array, so nothing is lost by rendering less. */
+export function chipCodes(v: unknown, max = 32): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const c of v) {
+    if (typeof c !== "string" || !c.trim()) continue;
+    const code = safeDisplayText(c.trim(), 12);
+    if (code && !out.includes(code)) out.push(code);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 export function TranslationTargetChips({
@@ -45,12 +63,14 @@ export function TranslationTargetChips({
       ? allowed
       : LANGUAGES.filter((l) => l.value !== "auto").map((l) => l.value)
   ).filter((code) => code !== exclude);
-  const remaining = candidates.filter((code) => !value.includes(code));
+  const shown = chipCodes(value);
+  const shownCandidates = chipCodes(candidates, 200);
+  const remaining = shownCandidates.filter((code) => !value.includes(code));
   const atCap = value.length >= max;
 
   return (
     <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={ariaLabel}>
-      {value.map((code) => (
+      {shown.map((code) => (
         <button
           key={code}
           type="button"

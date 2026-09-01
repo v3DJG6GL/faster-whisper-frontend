@@ -148,11 +148,15 @@ function LogsDoorwayBanner() {
         {doorway.showLogs && (
           <button
             type="button"
-            onClick={() => {
-              setLogsDoorway(null);
-              openLogsPrefiltered("warn");
-              navigate("/logs");
-            }}
+            // Through the unsaved-work guard like every other navigation the shell issues: the
+            // doorway is raised asynchronously and can land over an open editor.
+            onClick={() =>
+              tryNavigate(() => {
+                setLogsDoorway(null);
+                openLogsPrefiltered("warn");
+                navigate("/logs");
+              })
+            }
             className="shrink-0 whitespace-nowrap font-semibold text-accent hover:underline"
           >
             View logs
@@ -180,8 +184,12 @@ export default function App() {
   // writes (creating Backend #1 makes backends non-empty mid-flow); it closes
   // only via onDone, and setupDismissed keeps it from ever re-opening.
   const configLoaded = useApp((s) => s.configLoaded);
+  // Not on a FAILED load: the store is then the empty boot state, not an empty config, and
+  // every exit from onboarding ("Skip for now" included) writes the store — which the armed
+  // auto-save would persist over the real config. The load-failure banner says what happened.
   const needsSetup = useApp(
-    (s) => s.backends.length === 0 && s.profiles.length === 0 && !s.settings.setupDismissed,
+    (s) =>
+      !s.configLoadFailed && s.backends.length === 0 && s.profiles.length === 0 && !s.settings.setupDismissed,
   );
   const [onboarding, setOnboarding] = useState(false);
   // Decided ONCE, on the state the config loaded with: a later wipe (last

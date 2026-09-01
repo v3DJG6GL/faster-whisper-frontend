@@ -73,7 +73,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     // Snapshotted alongside the url so the post-await check below compares BOTH terms the test
     // was run with — a corrected key matters as much as a corrected host.
     const keyAtTest = key;
-    if (!serverUrl.replace(/^https?:\/\//i, "")) return;
+    if (!serverUrl.replace(/^https?:\/\//i, "")) {
+      setError("Enter an address like http://host:8000 — that scheme isn’t supported.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {

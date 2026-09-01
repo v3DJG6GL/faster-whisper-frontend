@@ -39,15 +39,9 @@ export const FIELD_LABEL = {
   restoreClipboard: SETTING.restoreClipboard.label,
 } as const;
 
-/** How an override layer stores "inherit": Profile omits the key, AppRule stores `null`.
- *  Both resolve identically through `??`; this only decides what a cleared control writes. */
-export type InheritSentinel = "undefined" | "null";
-
 export interface DictationFieldsProps {
   value: InsertionOverrides;
   onChange: (next: InsertionOverrides) => void;
-  /** What a cleared control writes back — see InheritSentinel. */
-  sentinel?: InheritSentinel;
   /** Disable everything (e.g. an App Rule with "never type into this app" on). */
   disabled?: boolean;
 }
@@ -58,15 +52,13 @@ export interface DictationFieldsProps {
  *  Deliberately NOT a component that renders rows: Settings uses SettingRow, the Profile
  *  editor uses a Labeled grid, and App Rules uses its own flat stack. Returning elements
  *  keeps one definition of each CONTROL while leaving the three layouts alone. */
-export function dictationControls({ value, onChange, sentinel = "undefined", disabled }: DictationFieldsProps) {
-  const cleared = sentinel === "null" ? null : undefined;
-  // The patch is nullable because a cleared control may write AppRule's `null` sentinel;
-  // both spellings are pruned below, so the stored shape stays clean either way.
-  const set = (patch: { [K in keyof InsertionOverrides]?: InsertionOverrides[K] | null }) => {
+export function dictationControls({ value, onChange, disabled }: DictationFieldsProps) {
+  // A cleared control writes `undefined` and the key is PRUNED: "inherit" is the ABSENCE of a
+  // value, which is what makes a later change to the layer below propagate. (App Rules map the
+  // absence onto its stored `null` on the way out — that layer's own concern.) The prune also
+  // drops a `null` that arrives inside `value` from App Rule state.
+  const set = (patch: Partial<InsertionOverrides>) => {
     const next = { ...value, ...patch } as InsertionOverrides;
-    // Prune cleared keys rather than storing a sentinel: "inherit" is the ABSENCE of a
-    // value, which is what makes a later change to the layer below propagate. Storing
-    // `undefined` explicitly would also make `isDirty` see a change on first open.
     for (const k of Object.keys(next) as (keyof InsertionOverrides)[]) {
       if (next[k] === undefined || next[k] === null) delete next[k];
     }
@@ -75,13 +67,15 @@ export function dictationControls({ value, onChange, sentinel = "undefined", dis
 
   // A tri-state boolean, as Inherit / On / Off. Three explicit states, never a checkbox:
   // "not configured" and "explicitly off" are different answers, and a two-state control
-  // cannot tell them apart — the classic scoped-settings bug.
-  const boolControl = (key: "autoEnter" | "restoreClipboard") => (
+  // cannot tell them apart — the classic scoped-settings bug. `methodDisabled` is the same
+  // gate the paste-shortcut control and Settings → Dictation apply: an explicit method on
+  // THIS layer that makes the control moot greys it; a mere inherit does not.
+  const boolControl = (key: "autoEnter" | "restoreClipboard", methodDisabled: boolean) => (
     <Segmented
       ariaLabel={FIELD_LABEL[key]}
-      disabled={disabled}
+      disabled={disabled || methodDisabled}
       value={value[key] === true ? "on" : value[key] === false ? "off" : INHERIT}
-      onChange={(v) => set({ [key]: v === INHERIT ? cleared : v === "on" } as Partial<InsertionOverrides>)}
+      onChange={(v) => set({ [key]: v === INHERIT ? undefined : v === "on" } as Partial<InsertionOverrides>)}
       options={[
         { value: INHERIT, label: "Inherit" },
         { value: "on", label: "On" },
@@ -96,7 +90,7 @@ export function dictationControls({ value, onChange, sentinel = "undefined", dis
         ariaLabel={FIELD_LABEL.insertMethod}
         disabled={disabled}
         value={value.insertMethod ?? INHERIT}
-        onChange={(v) => set({ insertMethod: v === INHERIT ? cleared : (v as InsertMethod) })}
+        onChange={(v) => set({ insertMethod: v === INHERIT ? undefined : (v as InsertMethod) })}
         options={[{ value: INHERIT, label: "Inherit" }, ...METHOD_OPTIONS]}
       />
     ),
@@ -108,17 +102,21 @@ export function dictationControls({ value, onChange, sentinel = "undefined", dis
         // hide that the inherited chord is what will be sent.
         disabled={disabled || value.insertMethod === "direct" || value.insertMethod === "clipboard"}
         value={value.pasteShortcut ? pasteKey(value.pasteShortcut) : INHERIT}
-        onChange={(v) => set({ pasteShortcut: v === INHERIT ? cleared : pasteCodes(v) })}
+        onChange={(v) => set({ pasteShortcut: v === INHERIT ? undefined : pasteCodes(v) })}
         options={[
           { value: INHERIT, label: "Inherit" },
           ...PASTE_PRESETS.map((p) => ({ value: p.value, label: p.label })),
         ]}
       />
     ),
-    // No Enter to send when nothing is typed. Same reasoning as the chord above: an
-    // explicit "Clipboard only" here disables it; a mere inherit does not.
-    autoEnter: boolControl("autoEnter"),
-    restoreClipboard: boolControl("restoreClipboard"),
+    // No Enter to send when nothing is typed; no clipboard to restore unless pasting. Same
+    // reasoning as the chord above: an explicit method on this layer disables them; a mere
+    // inherit does not (mirrors Settings → Dictation's gates).
+    autoEnter: boolControl("autoEnter", value.insertMethod === "clipboard"),
+    restoreClipboard: boolControl(
+      "restoreClipboard",
+      value.insertMethod === "direct" || value.insertMethod === "clipboard",
+    ),
   };
 }
 

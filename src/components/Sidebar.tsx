@@ -8,14 +8,14 @@ import { appVersion } from "@/lib/api";
 import { VISIBLE_SCREENS } from "@/lib/screens";
 import { PRIDE_FLAG_URI } from "@/lib/prideFlag";
 import { dictationVisual } from "@/lib/dictationVisual";
-import { overallFraction, useTranscribeRun } from "@/lib/transcribeRun";
+import { runBadgeFraction, useTranscribeRun } from "@/lib/transcribeRun";
 import { unseenCount, useLogs } from "@/lib/logs";
 import { StatusDot } from "./ui";
 
 /** Live percentage of an in-flight Transcribe run — visible from every tab,
  *  so leaving the screen never means losing sight of the run. */
 function TranscribeRunBadge() {
-  const frac = useTranscribeRun(overallFraction);
+  const frac = useTranscribeRun(runBadgeFraction);
   if (frac === null) return null;
   return (
     <span className="ml-auto font-mono text-[10.5px] tabular-nums text-accent">

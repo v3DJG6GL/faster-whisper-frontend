@@ -36,7 +36,11 @@ describe("routeParts", () => {
   it("bounds every part", () => {
     const long = "x".repeat(200);
     const r = routeParts(long, [long, long]);
-    expect(r.source.length).toBeLessThanOrEqual(24);
+    // Code points, not UTF-16 units — safeDisplayText bounds code points.
+    expect([...r.source].length).toBeLessThanOrEqual(24);
+    const astral = "😀".repeat(200);
+    const a = routeParts(astral, [astral]);
+    expect([...a.source].length).toBeLessThanOrEqual(24);
     for (const t of r.targets) expect(t.length).toBeLessThanOrEqual(24);
   });
 });

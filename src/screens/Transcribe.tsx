@@ -19,7 +19,7 @@ import { useBackendModels } from "@/lib/useBackendModels";
 import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
-  activeRailIndex, addFiles, cancelRun, overallFraction, railStages, stageTimeline,
+  activeRailIndex, addFiles, cancelRun, overallFraction, railStages, runBadgeFraction, stageTimeline,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, skippedStages, startRun, useTranscribeRun,
   type RailStage, type RunContext, type StepState, settledPanelItem, runTotals } from "@/lib/transcribeRun";
@@ -32,7 +32,7 @@ import {
 import { closeRecord, openHistoryRecord } from "@/lib/transcribeRun";
 import { backendOptions, backendPrompt, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { isTextSourcePath } from "@/lib/subtitleImport";
+import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/subtitleImport";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
@@ -398,7 +398,6 @@ export default function Transcribe() {
   // queue exactly like picked ones; anything else is ignored quietly.
   useEffect(() => {
     if (!isTauri) return;
-    const ACCEPT = /\.(wav|mp3|m4a|mp4|aac|ogg|opus|webm|flac|srt|vtt|lrc|txt|json)$/i;
     let stale = false;
     let unlisten: (() => void) | undefined;
     void import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
@@ -408,7 +407,7 @@ export default function Transcribe() {
             setDragOver(true);
           } else if (event.payload.type === "drop") {
             setDragOver(false);
-            const paths = event.payload.paths.filter((f) => ACCEPT.test(f));
+            const paths = event.payload.paths.filter(isAcceptedSourcePath);
             const running = useTranscribeRun
               .getState()
               .queue.some((it) => it.status === "running" || it.status === "queued");
@@ -428,9 +427,11 @@ export default function Transcribe() {
     };
   }, []);
 
-  // The store boots with a seeded backend, then config hydration (and later edits/removals)
-  // can replace the list with different ids. Re-sync the selection when the current id falls
-  // out of the list, so the Backend dropdown and language don't reference a backend that's gone.
+  // The store boots with an EMPTY backend list (store.ts) and config hydration — also how a
+  // sync pull or an import replaces it — fills it in. Re-sync the selection whenever the
+  // current id isn't in the list (on the very first hydration `backendId` is still "", so this
+  // branch also seeds the initial pick), so the Backend dropdown and language don't reference
+  // a backend that's gone.
   // Every pick that names something on ONE server: the per-run whisper model,
   // a server override-profile, and the three stage-model ids. They must all
   // fall away together whenever the backend under the screen changes, or the
@@ -443,13 +444,23 @@ export default function Transcribe() {
     setDiarizationModel("");
     setTranslationModel("");
   };
+  // ONE path for every backend change — the dropdown and the auto-resync above share it, so
+  // they can't drift: the effect used to skip the run reset, the target prune and the language
+  // persist, so a hydrated list left `settings.transcribe.language` on the OLD backend's
+  // language (which snapped back on the next mount).
+  const applyBackendPick = (id: string) => {
+    resetForInputChange();
+    setBackendId(id);
+    clearBackendScopedPicks(); // model, profile and stage models all name ONE server
+    const b = backends.find((x) => x.id === id);
+    const lang = b?.language ?? "auto";
+    setLanguage(lang);
+    const nextT = pruneTargets(translateTo, lang);
+    if (nextT.length !== translateTo.length) setTranslateTo(nextT);
+    persistOptions({ backendId: id, model: "", translationModel: "", language: lang, translateTo: nextT });
+  };
   useEffect(() => {
-    if (backends.length && !backends.some((b) => b.id === backendId)) {
-      setBackendId(backends[0].id);
-      setLanguage(backends[0].language ?? "auto");
-      clearBackendScopedPicks();
-      persistOptions({ backendId: backends[0].id, model: "", translationModel: "" });
-    }
+    if (backends.length && !backends.some((b) => b.id === backendId)) applyBackendPick(backends[0].id);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the resets are stable setters
   }, [backends, backendId]);
 
@@ -501,6 +512,8 @@ export default function Transcribe() {
   const urlMeta = useTranscribeRun((s) => s.urlMeta);
 
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
+  const runningOverall = useTranscribeRun(runBadgeFraction);
+  const lastRunPath = useTranscribeRun((st) => st.lastRunPath);
 
   // Warm the models the pending run will need, while the user is still choosing
   // options. ONE effect rather than a call at each entry point: addFiles lives in
@@ -857,7 +870,13 @@ export default function Transcribe() {
   const configSections = (
     <>
       {files.length ? (
-        <div className="mt-8 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-8">
+        <div
+          className={cn(
+            "mt-8 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-8",
+            // Drops still add files in this state — say so, like the empty dropzone does.
+            dragOver && !busy && "border-accent bg-accent-soft/30",
+          )}
+        >
           <div className="flex max-w-full flex-wrap items-center justify-center gap-3">
             {files.map((path) => (
               <div
@@ -1018,19 +1037,10 @@ export default function Transcribe() {
           <Select
             ariaLabel="Backend"
             value={backendId}
-            onChange={(v) => {
-              // A backend change is an input change: abandon any in-flight run + clear stale
-              // results, else the prior backend's transcript/error shows under the new selection.
-              resetForInputChange();
-              setBackendId(v);
-              clearBackendScopedPicks(); // model, profile and stage models all name ONE server
-              const b = backends.find((x) => x.id === v);
-              const lang = b?.language ?? "auto";
-              if (b) setLanguage(lang);
-              const nextT = pruneTargets(translateTo, lang);
-              if (nextT.length !== translateTo.length) setTranslateTo(nextT);
-              persistOptions({ backendId: v, model: "", translationModel: "", language: lang, translateTo: nextT });
-            }}
+            // A backend change is an input change: abandon any in-flight run + clear stale
+            // results, else the prior backend's transcript/error shows under the new selection.
+            onChange={applyBackendPick}
+            disabled={busy}
             options={backendOptions(backends)}
           />
         </div>
@@ -1045,6 +1055,7 @@ export default function Transcribe() {
                 <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
                 <button
                   type="button"
+                  disabled={busy}
                   onClick={() => {
                     resetForInputChange();
                     setModel("");
@@ -1061,6 +1072,7 @@ export default function Transcribe() {
           <ModelPicker
             ariaLabel="Model"
             value={model}
+            disabled={busy}
             onChange={(v) => {
               resetForInputChange();
               setModel(v);
@@ -1076,6 +1088,7 @@ export default function Transcribe() {
           <LanguageSelect
             ariaLabel="Language"
             value={language}
+            disabled={busy}
             onChange={(v) => {
               resetForInputChange();
               setLanguage(v);
@@ -1512,7 +1525,11 @@ export default function Transcribe() {
         // only ever moves forward; until the first poll answers, the first
         // stage counts as active. After the run it settles into a completed
         // state: every row a receipt, until the input changes.
-        const lastSettled = settledPanelItem(queue, selectedPath);
+        // The COMPLETED panel is pinned to the file whose clocks it shows (the pump's last
+        // file): every instrument below comes from per-file stageTimes/stageMeta, so following
+        // the clicked row relabelled last-file receipts with another file's name and duration
+        // and printed an invented "×realtime". Clicking a row changes only the transcript.
+        const lastSettled = settledPanelItem(queue, lastRunPath ?? selectedPath);
         const complete =
           !busy && lastSettled?.status === "done" && Object.keys(stageTimes).length > 0;
         if (!busy && !complete) return null;
@@ -1564,7 +1581,9 @@ export default function Transcribe() {
             ? "direct link"
             : safeDisplayText(panelUrlMeta.extractor, 24)
           : null;
-        const speakerCount = panelItem?.result?.speakers?.length ?? 0;
+        // Through speakersOf, which falls back to the segments' labels when a backend omits
+        // the top-level list — the queue row counts the same way.
+        const speakerCount = panelItem?.result ? speakersOf(panelItem.result).length : 0;
         const doneItems = queue.filter((it) => it.status === "done");
         const queuedCount = queue.filter((it) => it.status === "queued").length;
         // Whole-run estimate: the current file's projection plus the average
@@ -2234,15 +2253,18 @@ export default function Transcribe() {
                           : fmtDurationExact(it.result.duration)
                         : ""}
                       {it.result.language ? ` · ${it.result.language}` : ""}
-                      {speakersOf(it.result).length
-                        ? ` · ${speakersOf(it.result).length} speakers`
-                        : ""}
+                      {(() => {
+                        const spk = speakersOf(it.result).length;
+                        return spk ? ` · ${spk} ${spk === 1 ? "speaker" : "speakers"}` : "";
+                      })()}
                     </span>
                   )}
                   {it.status === "running" && (
                     <span className="font-mono text-[11px] text-think">
-                      {typeof progress?.progress === "number"
-                        ? `${Math.round(progress.progress * 100)}%`
+                      {/* The whole-pipeline number the panel shows, not the stage-local
+                          fraction: the two are on screen together and disagreed. */}
+                      {typeof runningOverall === "number"
+                        ? `${Math.round(runningOverall * 100)}%`
                         : stageLabel(progress).toLowerCase()}
                     </span>
                   )}

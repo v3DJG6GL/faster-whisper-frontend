@@ -18,7 +18,8 @@ import {
   ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, Labeled, Notice, SectionLabel, Stack, Toggle, TextInput } from "@/components/ui";
+import { useUnsavedGuard } from "@/lib/useUnsavedGuard";
+import { Badge, Button, Card, ConfirmLeave, Labeled, Notice, SectionLabel, Stack, Toggle, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
 import { IS_LINUX } from "@/lib/platform";
@@ -141,6 +142,15 @@ const monoInput = "font-mono text-[12.5px]";
 // RENDER-ONLY, never applied to `edit.pairs` / `edit.entries` — the save path PATCHes those back
 // as the ENTIRE map, so capping the state would delete every server entry past the cap.
 const MAX_SHOWN_RULES = 500;
+
+/** What a collapsed cb:map list can honestly promise: `hidden` = rows the toggle reveals,
+ *  `unshown` = rows past the render cap that nothing on screen can show. */
+export function collapseCounts(total: number, collapseAfter: number, max: number): { hidden: number; unshown: number } {
+  const ceil = Math.min(total, max);
+  const collapsed = Math.min(collapseAfter, max);
+  const hidden = collapseAfter > 0 && ceil > collapsed ? ceil - collapsed : 0;
+  return { hidden, unshown: Math.max(0, total - max) };
+}
 const MAX_SHOWN_MAP_ROWS = 500;
 const MAX_SHOWN_ENTRIES = 500;
 const MAX_RECENT_WORDS = 500;
@@ -209,11 +219,16 @@ function RuleCard({
   );
 
   // cb:map: show the newest N (mapCollapseAfter); collapse the rest behind a toggle.
+  const entriesTotal = edit.entries?.length ?? 0;
+  const shownEntries = (edit.entries ?? []).slice(0, MAX_SHOWN_ENTRIES);
   const mapPairs = edit.pairs ?? [];
-  const mapHidden =
-    rule.type === "callback:map" && mapCollapseAfter > 0 && mapPairs.length > mapCollapseAfter
-      ? mapPairs.length - mapCollapseAfter
-      : 0;
+  // Clamped to what expanding actually reveals (MAX_SHOWN_MAP_ROWS): "▸ Show 4985 older"
+  // over a 5000-pair list promised 4485 rows the cap could never keep.
+  const { hidden: mapHidden, unshown: mapUnshown } = collapseCounts(
+    rule.type === "callback:map" ? mapPairs.length : 0,
+    mapCollapseAfter,
+    MAX_SHOWN_MAP_ROWS,
+  );
   // Even "show all" stays bounded: `mapCollapseAfter` is server-chosen, so it cannot be the only
   // ceiling. Expanding shows at most MAX_SHOWN_MAP_ROWS regardless of what the payload asked for.
   const mapShown =
@@ -288,10 +303,12 @@ function RuleCard({
               <p className="text-[12px] leading-snug text-faint">
                 Ordered find→replace list — entries run top to bottom. An empty replacement deletes the match.
               </p>
-              {(edit.entries ?? []).slice(0, MAX_SHOWN_ENTRIES).map((row, i) => {
+              {shownEntries.map((row, i) => {
                 const hasNote = !!(row.note && row.note.length);
                 const noteShown = noteShow.has(row.id) ? !!noteShow.get(row.id) : hasNote;
-                const last = i === (edit.entries?.length ?? 0) - 1;
+                // Against the SHOWN slice: the down-arrow on the last visible row otherwise
+                // swapped it into the hidden tail, where it vanished with no undo.
+                const last = i === shownEntries.length - 1;
                 const setRow = (patch: Partial<EntryRow>) =>
                   setEntries((rows) => rows.map((r) => (r.id === row.id ? { ...r, ...patch } : r)));
                 return (
@@ -377,8 +394,21 @@ function RuleCard({
                   </div>
                 );
               })}
+              {entriesTotal > MAX_SHOWN_ENTRIES && (
+                <div className="font-mono text-[11px] text-faint">
+                  Showing the first {MAX_SHOWN_ENTRIES} of {entriesTotal} entries — the rest are kept and saved unchanged.
+                </div>
+              )}
               {bodyEditable && (
-                <Button variant="ghost" size="sm" disabled={saving} onClick={() => setEntries((rows) => [...rows, { id: mkId(), pattern: "", replacement: "" }])}>
+                // Disabled past the cap: Add APPENDS, so past 500 it created a dirty, blank,
+                // unfillable row nothing on screen showed.
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={saving || entriesTotal >= MAX_SHOWN_ENTRIES}
+                  title={entriesTotal >= MAX_SHOWN_ENTRIES ? `This screen edits the first ${MAX_SHOWN_ENTRIES} entries` : undefined}
+                  onClick={() => setEntries((rows) => [...rows, { id: mkId(), pattern: "", replacement: "" }])}
+                >
                   <Plus className="size-3.5" /> Add entry
                 </Button>
               )}
@@ -454,6 +484,11 @@ function RuleCard({
                   </div>
                 );
               })}
+              {mapUnshown > 0 && (
+                <div className="font-mono text-[11px] text-faint">
+                  Showing the first {MAX_SHOWN_MAP_ROWS} of {mapPairs.length} mappings — the rest are kept and saved unchanged.
+                </div>
+              )}
               {mapHidden > 0 && (
                 <button type="button" onClick={() => setMapShowAll((v) => !v)}
                   className="ring-signal self-start rounded-md font-mono text-[11.5px] text-dim hover:text-text">
@@ -775,12 +810,17 @@ export default function Dictionary() {
     [edits, base, editableFor],
   );
   const dirty = useMemo(() => rules.filter((r) => Object.keys(patchFor(r)).length > 0), [rules, patchFor]);
+  // The same unsaved-work guard the three list editors register: the sticky bar and the
+  // backend pills already refuse to lose edits, but a sidebar click or the chip's
+  // app://navigate unmounted this screen and threw them away in silence.
+  const guard = useUnsavedGuard(dirty.length > 0);
   const dirtyNames = useMemo(() => new Set(dirty.map((r) => r.name)), [dirty]);
 
   const role = fetchRes?.state?.role;
 
-  async function save() {
-    if (!backend || dirty.length === 0) return;
+  /** Save; `false` when nothing was saved, so the leave guard keeps the user on-screen. */
+  async function save(): Promise<boolean> {
+    if (!backend || dirty.length === 0) return false;
     const rules_patch: Record<string, Record<string, unknown>> = {};
     const fingerprints: Record<string, string> = {};
     for (const r of dirty) {
@@ -800,7 +840,7 @@ export default function Dictionary() {
       });
       // Backend switched while the save was in flight → this result belongs to the
       // old backend; don't reload or flash its banner over the now-selected one.
-      if (backend.id !== selectedIdRef.current) return;
+      if (backend.id !== selectedIdRef.current) return false;
       // On success, re-sync to server truth (fresh fingerprints; conflicted edits
       // are replaced by the server's version) BEFORE showing the banner — load()
       // clears `result`, so set it afterwards. On 422 keep edits so the user can fix.
@@ -808,13 +848,15 @@ export default function Dictionary() {
       // load() awaited above — re-check the selection (mirrors the guard before it): a backend switch
       // during that reload makes load() bail on its own guard (leaving result null), so setting the old
       // backend's banner here would strand a stale "Saved N rules" over the now-selected backend.
-      if (backend.id !== selectedIdRef.current) return;
+      if (backend.id !== selectedIdRef.current) return false;
       setResult(res);
+      return res.ok;
     } catch (e) {
       console.error("save pipeline rules failed:", e);
       if (backend.id === selectedIdRef.current) {
         setResult({ ok: false, status: 0, saved: [], conflicts: [], requires_restart: false, detail: e instanceof Error ? e.message : String(e) });
       }
+      return false;
     } finally {
       setSaving(false);
     }
@@ -959,6 +1001,17 @@ export default function Dictionary() {
         />
       ) : (
         <Stack gap={4}>
+          {guard.asking && (
+            <ConfirmLeave
+              what="dictionary rules"
+              onSaveAndLeave={() => guard.saveAndLeave(save)}
+              onDiscard={() => {
+                discardAll();
+                guard.leave();
+              }}
+              onStay={guard.stay}
+            />
+          )}
           {/* result banner */}
           {result && <SaveBanner result={result} reloadDisabled={dirty.length > 0} onReload={() => backend && load(backend)} />}
 

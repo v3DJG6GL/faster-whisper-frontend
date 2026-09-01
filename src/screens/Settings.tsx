@@ -9,7 +9,8 @@ import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screens
 import { IS_LINUX } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
-import { loadHistory } from "@/lib/transcriptHistory";
+import { dropPendingWrites, loadHistory } from "@/lib/transcriptHistory";
+import { forgetRecord } from "@/lib/transcribeRun";
 import {
   transcriptStoreStats,
   deleteAllDictations,
@@ -580,21 +581,38 @@ export default function Settings() {
   const basePref = audioBasePref(s.recording);
   // Per-type storage readout (the folder row's bar + the action rows' counts).
   const [storeStats, setStoreStats] = useState<TranscriptStoreStats | null>(null);
-  const refreshStoreStats = useCallback(() => {
-    void transcriptStoreStats(basePref)
-      .then(setStoreStats)
-      .catch(() => {});
-  }, [basePref]);
+  // Takes the base to measure: the copy `changeRecDir`/`resetRecDir` close over is built
+  // from the PRE-move base, so calling it bare after a move measured the folder the audio
+  // had just left (all zeros) and could settle after the effect's correct read.
+  const refreshStoreStats = useCallback(
+    (base: string | null = basePref) => {
+      void transcriptStoreStats(base)
+        .then(setStoreStats)
+        .catch(() => {});
+    },
+    [basePref],
+  );
   useEffect(() => {
     if (tab === "Recording & history") refreshStoreStats();
   }, [tab, refreshStoreStats]);
   // Inline two-step confirmation for the destructive store actions — the
   // confirm names the exact count/size (never a bare "are you sure").
   const [confirming, setConfirming] = useState<null | "dict" | "files" | "links" | "clear">(null);
-  const [storeMsg, setStoreMsg] = useState<string | null>(null);
+  const [storeMsg, setStoreMsg] = useState<{ text: string; error?: boolean } | null>(null);
+  const [dirBusy, setDirBusy] = useState(false);
+  // Both die with the tab that owns them: an armed "Delete 214 sessions" confirm must not
+  // survive a trip to another tab, and a stale "Removed N files." must not greet the next visit.
+  useEffect(() => {
+    setConfirming(null);
+    setStoreMsg(null);
+  }, [tab]);
   const runStoreAction = (kind: "dict" | "files" | "links" | "clear") => {
+    // Nothing parked may land after the wipe: a coalesced record write, an 800 ms edit
+    // debounce or a chunk merge otherwise re-created a JSON file Rust just removed.
+    dropPendingWrites();
+    if (kind === "dict" || kind === "clear") forgetRecord(null);
     const done = (n: number, what: string) => {
-      setStoreMsg(`Removed ${n} ${what}.`);
+      setStoreMsg({ text: `Removed ${n} ${what}.` });
       setConfirming(null);
       refreshStoreStats();
       void loadHistory(true).catch(() => {});
@@ -602,19 +620,19 @@ export default function Settings() {
     if (kind === "dict") {
       void deleteAllDictations(basePref)
         .then((n) => done(n, "dictation file(s)"))
-        .catch((e) => setStoreMsg(String(e)));
+        .catch((e) => setStoreMsg({ text: safeDisplayText(String(e), 200), error: true }));
     } else if (kind === "files") {
       void removeTranscriptMedia("file", basePref)
         .then((n) => done(n, "audio cop(y/ies)"))
-        .catch((e) => setStoreMsg(String(e)));
+        .catch((e) => setStoreMsg({ text: safeDisplayText(String(e), 200), error: true }));
     } else if (kind === "links") {
       void removeTranscriptMedia("url", basePref)
         .then((n) => done(n, "downloaded file(s)"))
-        .catch((e) => setStoreMsg(String(e)));
+        .catch((e) => setStoreMsg({ text: safeDisplayText(String(e), 200), error: true }));
     } else {
       void clearFileTranscriptions(basePref)
         .then((n) => done(n, "transcript(s)"))
-        .catch((e) => setStoreMsg(String(e)));
+        .catch((e) => setStoreMsg({ text: safeDisplayText(String(e), 200), error: true }));
     }
   };
   // One dictation clock for text AND audio: display the stricter of the two
@@ -660,26 +678,42 @@ export default function Settings() {
   }, [basePref]);
   const openRecDir = () =>
     void openAudioDir(basePref).catch((e) => console.error("open audio dir:", e));
+  // `dirBusy` gates every folder button while a move runs: the move walks every audio
+  // file and can take minutes, and a second click (Reset during a Change) started a
+  // concurrent move over the same folders with the same stale `current`.
   const changeRecDir = () =>
     void pickRecordingsDir()
       .then(async (picked) => {
-        if (!picked) return;
-        await moveAudioBase(basePref, picked);
-        updateRecording({ audioBaseDir: picked });
-        refreshStoreStats();
-        // Rust rewrote every record's mediaPath/sourcePath on disk; the load-once
-        // mirror still holds the pre-move paths — and would write them back on edit.
-        void loadHistory(true).catch(() => {});
+        if (!picked || dirBusy) return;
+        setDirBusy(true);
+        try {
+          // A coalesced record write captured BEFORE the move would land after it and put
+          // the pre-move paths straight back on disk — drop it, don't flush it.
+          dropPendingWrites();
+          await moveAudioBase(basePref, picked);
+          updateRecording({ audioBaseDir: picked });
+          refreshStoreStats(picked);
+          // Rust rewrote every record's mediaPath/sourcePath on disk; the load-once
+          // mirror still holds the pre-move paths — and would write them back on edit.
+          void loadHistory(true).catch(() => {});
+        } finally {
+          setDirBusy(false);
+        }
       })
-      .catch((e) => setStoreMsg(`Could not move the audio folder: ${e}`));
-  const resetRecDir = () =>
+      .catch((e) => setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true }));
+  const resetRecDir = () => {
+    if (dirBusy) return;
+    setDirBusy(true);
+    dropPendingWrites();
     void moveAudioBase(basePref, null)
       .then(() => {
         updateRecording({ audioBaseDir: null, recordingsDir: null });
-        refreshStoreStats();
+        refreshStoreStats(null);
         void loadHistory(true).catch(() => {});
       })
-      .catch((e) => setStoreMsg(`Could not move the audio folder: ${e}`));
+      .catch((e) => setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true }))
+      .finally(() => setDirBusy(false));
+  };
 
   const runEvdevSetup = () => {
     setEvdevBusy(true);
@@ -728,6 +762,8 @@ export default function Settings() {
             <SettingRow
               title={SETTING.startMinimized.label}
               desc="When launched at login, start hidden; reach it from the system tray. Manual starts always show the window."
+              disabled={!s.general.openAtLogin}
+              disabledReason={`Only applies to launches at login. Turn on “${SETTING.openAtLogin.label}” to use this.`}
             >
               <Toggle
                 checked={s.general.startMinimized}
@@ -879,23 +915,26 @@ export default function Settings() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <Button size="sm" onClick={openRecDir} title="Open in your file manager">
+                  <Button size="sm" onClick={openRecDir} disabled={dirBusy} title="Open in your file manager">
                     <FolderOpen size={14} strokeWidth={2} />
                     Open
                   </Button>
-                  <Button size="sm" onClick={changeRecDir}>
-                    Change…
+                  <Button size="sm" onClick={changeRecDir} disabled={dirBusy}>
+                    {dirBusy ? "Moving…" : "Change…"}
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
                     onClick={resetRecDir}
-                    disabled={!basePref}
+                    disabled={dirBusy || !basePref}
                     title="Move everything back to the default location"
                   >
                     Reset
                   </Button>
                 </div>
+                {storeMsg?.error && (
+                  <div className="mt-2 text-[12px] text-warn">{storeMsg.text}</div>
+                )}
               </div>
               {storeStats && (
                 <>
@@ -979,6 +1018,7 @@ export default function Settings() {
                 title={SETTING.trimSilence.label}
                 desc="Keep only the parts you actually spoke (the same speech detection that drives the chip), so a long hands-free session doesn't store hours of silence."
                 disabled={!s.recording.saveRecordings}
+                disabledReason={`There is no stored audio to trim. Turn on “${SETTING.keepDictationAudio.label}” to use this.`}
               >
                 <Toggle
                   checked={s.recording.trimSilence}
@@ -991,6 +1031,7 @@ export default function Settings() {
               title={SETTING.dictationRetention.label}
               desc="One clock for the whole session — text and audio leave together. Dictations are usually typed into their target and done; a short window is plenty. Old ones are removed on launch and whenever you change this."
               disabled={dictOff}
+              disabledReason={`Nothing is kept, so there is nothing to expire. Turn on “${SETTING.keepDictationHistory.label}” or “${SETTING.keepDictationAudio.label}” to set a clock.`}
             >
               <Select
                 value={String(dictDays)}
@@ -1156,8 +1197,11 @@ export default function Settings() {
                 </Button>
               )}
             </SettingRow>
-            {storeMsg && (
-              <div className="py-2 text-[12px] text-dim">{storeMsg}</div>
+            {storeMsg && !storeMsg.error && (
+              <div className="py-2 text-[12px] text-dim">{storeMsg.text}</div>
+            )}
+            {storeMsg?.error && (
+              <div className="py-2 text-[12px] text-warn">{storeMsg.text}</div>
             )}
 
           </Card>

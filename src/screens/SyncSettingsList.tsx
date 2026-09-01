@@ -325,13 +325,18 @@ function GroupCard({
       : `${on.length} synced · ${off.length} off${changedDefs.length ? ` · ${changedDefs.length} changed` : ""}`;
 
   const panelId = `sync-group-${group}`;
+  // What the toggle CLAIMS must match what is on screen: in "changed & default-off" mode the
+  // panel shows exceptions while `expanded` is false, and a collapsed group has no panel node
+  // for `aria-controls` to point at. In that mode the toggle does not drive the panel, so it
+  // owns none.
+  const panelOpen = visible.length > 0;
   return (
     <div className="mb-2.5 rounded-xl border border-line bg-surface px-4">
       <div className="flex items-center gap-3 py-2.5">
         <DisclosureToggle
-          open={expanded}
+          open={panelOpen}
           onToggle={onToggleExpand}
-          ariaControls={panelId}
+          ariaControls={!changedOnly && panelOpen ? panelId : undefined}
           className="text-[13px] font-semibold text-text"
         >
           {SYNC_GROUP_LABEL[group]}

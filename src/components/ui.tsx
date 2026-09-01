@@ -429,7 +429,7 @@ export function DisclosureCard({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        aria-controls={panelId}
+        aria-controls={open ? panelId : undefined} // the panel node exists only while open (Combobox rule)
         className={cn(
           "ring-signal flex w-full items-center gap-2 text-left font-medium text-dim hover:text-text",
           nested ? "bg-surface-2/70 px-3.5 py-2.5 text-[12px]" : "bg-surface-2/60 px-4 py-3 text-[12.5px]",

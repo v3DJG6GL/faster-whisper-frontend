@@ -181,12 +181,18 @@ export default function QuickAdd() {
    *  `rows`, so unlike the rows re-sync it cannot clobber an unsaved edit — same reasoning that
    *  already split out `fetchRecent`. */
   const refreshLocalConfig = useCallback(async () => {
-    const cfg = (await loadConfig())?.config ?? null;
-    if (!cfg) return;
-    themeRef.current = cfg.settings.theme;
-    applyTheme(cfg.settings.theme);
-    generalRef.current = cfg.settings.general;
-    appRulesRef.current = normalizedAppRules(cfg.appRules);
+    try {
+      const cfg = (await loadConfig())?.config ?? null;
+      if (!cfg) return;
+      themeRef.current = cfg.settings.theme;
+      applyTheme(cfg.settings.theme);
+      generalRef.current = cfg.settings.general;
+      appRulesRef.current = normalizedAppRules(cfg.appRules);
+    } catch (e) {
+      // loadConfig() is a bare IPC invoke; a plumbing failure must not be an unhandled
+      // rejection on a hotkey-summoned window (the refs keep their last good read).
+      console.error("quick-add local config refresh failed:", e);
+    }
   }, []);
 
   const refresh = useCallback(async () => {
