@@ -131,6 +131,10 @@ jobs:
       # tsc + vite; tauri::generate_context! embeds dist/, so cargo needs this first.
       - run: pnpm build
 
+      # The frontend unit suite (vitest) — platform-neutral and a few seconds,
+      # so both legs run it; without this step a red suite merged silently.
+      - run: pnpm test
+
       # --locked also protects the time-0.3.47 pin (see Cargo.toml) from drifting.
       - name: cargo check
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml

@@ -146,8 +146,9 @@ atspi-connection = { version = "0.14", default-features = false, features = ["wr
 # re-armed observation hook, so modifier-only/L-R/N-key chords work and survive a
 # focused RDP client's keyboard capture) and the foreground-app tracker
 # (win_focus.rs — per-app rules + the chip's target readout; Accessibility is
-# where SetWinEventHook lives). windows-sys 0.60 is already in the dependency
-# tree (via Tauri), so this adds no new crate version.
+# where SetWinEventHook lives). windows-sys 0.61 is already in the dependency
+# tree (mio, muda, socket2, rustls-platform-verifier …; 0.60 too, via arboard/
+# keyring/rfd), so this adds no new crate version.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",

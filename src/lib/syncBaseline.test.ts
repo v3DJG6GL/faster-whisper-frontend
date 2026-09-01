@@ -63,7 +63,7 @@ function profile(over: Partial<Profile> = {}): Profile {
   return {
     id: "p1",
     name: "Default",
-    activation: "toggle",
+    activation: "hold",
     enabled: true,
     hotkey: ["ControlLeft", "Space"],
     backendId: "b1",

@@ -34,13 +34,6 @@
       "groupName": "github-actions"
     },
     {
-      "description": "The github-actions manager also extracts `node-version: 22` from actions/setup-node and wants to rewrite it to the exact current patch (22.23.1). That pin is deliberately floating - the runner should pick up 22.x security patches on its own - so suppress everything below a major. A move to Node 24 still surfaces on the Dependency Dashboard via the major rule at the bottom.",
-      "matchManagers": ["github-actions"],
-      "matchDepNames": ["node"],
-      "matchUpdateTypes": ["pin", "pinDigest", "digest", "patch", "minor"],
-      "enabled": false
-    },
-    {
       "description": "Cargo.toml declares loose requirements on purpose (`tauri = \"2\"`, `cpal = \"0.15\"`). The global `bump` strategy would rewrite each of those to an exact minor on every release, churning the manifest for no gain. `update-lockfile` instead moves Cargo.lock for in-range updates and only edits Cargo.toml when the new version falls outside the existing requirement. ci.yml runs `cargo check --locked`, so the refreshed lock is exactly what gets verified.",
       "matchManagers": ["cargo"],
       "rangeStrategy": "update-lockfile"

@@ -54,11 +54,12 @@ documented degradations) and Windows 10/11. x64 only.
 pnpm install          # JS deps (also installs the OFL fonts + Tauri plugins)
 pnpm build            # type-check + build the web UI
 pnpm tauri:dev        # run the desktop app (requires the Rust toolchain)
-pnpm tauri:build      # produce installers (.msi / .deb / AppImage)
+pnpm tauri:build      # produce installers (.msi + .exe NSIS / .deb / AppImage)
 ```
 
 Requires Node + pnpm, the Rust toolchain, and (on Linux) `libwebkit2gtk-4.1-dev`,
-`libayatana-appindicator3-dev`, `librsvg2-dev`.
+`libayatana-appindicator3-dev`, `librsvg2-dev`, `libasound2-dev` (audio capture) and
+`libxkbcommon-dev` (Wayland keystroke injection) — the same set `.forgejo/workflows/ci.yml` installs.
 
 ## License
 
