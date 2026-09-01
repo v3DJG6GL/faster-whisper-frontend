@@ -95,26 +95,37 @@ pub struct MicTestClip(pub Arc<Mutex<MicClip>>);
 #[derive(Default)]
 pub struct MicPlayback(pub Arc<AtomicU64>);
 
-/// Wrap interleaved 16-bit little-endian PCM in a minimal WAV container.
-pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32, channels: u16) -> Vec<u8> {
+/// The 44-byte canonical PCM WAV header for `data_len` bytes of 16-bit samples.
+pub fn wav_header(data_len: u32, sample_rate: u32, channels: u16) -> [u8; 44] {
     let bits: u16 = 16;
     let byte_rate = sample_rate * channels as u32 * (bits as u32 / 8);
     let block_align = channels * (bits / 8);
-    let data_len = pcm.len() as u32;
+    let mut h = [0u8; 44];
+    let mut at = 0usize;
+    let mut put = |b: &[u8]| {
+        h[at..at + b.len()].copy_from_slice(b);
+        at += b.len();
+    };
+    put(b"RIFF");
+    put(&(36 + data_len).to_le_bytes());
+    put(b"WAVE");
+    put(b"fmt ");
+    put(&16u32.to_le_bytes());
+    put(&1u16.to_le_bytes()); // PCM
+    put(&channels.to_le_bytes());
+    put(&sample_rate.to_le_bytes());
+    put(&byte_rate.to_le_bytes());
+    put(&block_align.to_le_bytes());
+    put(&bits.to_le_bytes());
+    put(b"data");
+    put(&data_len.to_le_bytes());
+    h
+}
+
+/// Wrap interleaved 16-bit little-endian PCM in a minimal WAV container.
+pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32, channels: u16) -> Vec<u8> {
     let mut wav = Vec::with_capacity(44 + pcm.len());
-    wav.extend_from_slice(b"RIFF");
-    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
-    wav.extend_from_slice(b"WAVE");
-    wav.extend_from_slice(b"fmt ");
-    wav.extend_from_slice(&16u32.to_le_bytes());
-    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
-    wav.extend_from_slice(&channels.to_le_bytes());
-    wav.extend_from_slice(&sample_rate.to_le_bytes());
-    wav.extend_from_slice(&byte_rate.to_le_bytes());
-    wav.extend_from_slice(&block_align.to_le_bytes());
-    wav.extend_from_slice(&bits.to_le_bytes());
-    wav.extend_from_slice(b"data");
-    wav.extend_from_slice(&data_len.to_le_bytes());
+    wav.extend_from_slice(&wav_header(pcm.len() as u32, sample_rate, channels));
     wav.extend_from_slice(pcm);
     wav
 }
@@ -477,6 +488,16 @@ pub fn save_transcript_sidecar(wav_path: &Path, text: &str) {
 #[cfg(test)]
 mod retention_tests {
     use super::*;
+
+    #[test]
+    fn wav_header_matches_the_full_wrapper() {
+        let n = 1000usize;
+        let full = wav_from_pcm16(&vec![0u8; n], 44_100, 2);
+        assert_eq!(full.len(), 44 + n);
+        assert_eq!(&full[..44], &wav_header(n as u32, 44_100, 2)[..]);
+        assert_eq!(&full[..4], b"RIFF");
+        assert_eq!(&full[36..40], b"data");
+    }
 
     /// Write `name` into `dir` with an mtime `age_days` in the past.
     fn seed(dir: &Path, name: &str, age_days: u64) {

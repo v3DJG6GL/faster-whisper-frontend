@@ -137,7 +137,10 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
         .as_ref()
         .map(|c| c.count() as u16)
         .unwrap_or(2);
-    let mut pcm: Vec<u8> = Vec::new();
+    // Header space reserved up front and patched in at the end: wrapping a
+    // full PCM buffer afterwards doubled the peak (two ~640 MiB buffers live
+    // at once) on the very path that exists to keep big decodes off the heap.
+    let mut pcm: Vec<u8> = vec![0u8; 44];
     let mut interleaved: Vec<i16> = Vec::new();
     loop {
         let packet = match format.next_packet() {
@@ -163,12 +166,14 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
         for s in &interleaved {
             pcm.extend_from_slice(&s.to_le_bytes());
         }
-        if pcm.len() > MAX_PCM_BYTES {
+        if pcm.len() - 44 > MAX_PCM_BYTES {
             return Err("audio too long to decode for playback".into());
         }
     }
-    if pcm.is_empty() {
+    if pcm.len() == 44 {
         return Err("no decodable audio in the file".into());
     }
-    Ok(crate::audio::wav_from_pcm16(&pcm, sample_rate, channels))
+    let data_len = (pcm.len() - 44) as u32;
+    pcm[..44].copy_from_slice(&crate::audio::wav_header(data_len, sample_rate, channels));
+    Ok(pcm)
 }
