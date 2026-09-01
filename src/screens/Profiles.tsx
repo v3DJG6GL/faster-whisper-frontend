@@ -16,7 +16,7 @@ import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
 import { languageLabel } from "@/lib/languages";
 import { useBackendModels } from "@/lib/useBackendModels";
-import { conflictsByProfile, quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/conflicts";
+import { conflicts as chordConflicts, conflictsByProfile, quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/conflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
@@ -787,7 +787,16 @@ export default function Profiles() {
                 <div className="mt-4 flex items-center gap-2.5">
                   <Button
                     variant="accent"
-                    onClick={() => starterProfiles(backends[0]?.id ?? null).forEach(upsertProfile)}
+                    onClick={() => {
+                      // The suggestion's chords are fixed; the quick-add chord is not.
+                      // Commit a colliding starter UNBOUND rather than writing a
+                      // conflict that freezes every save on the persistence gate.
+                      const qa = quickAddHotkey.length > 0 ? [quickAddPeer(quickAddHotkey)] : [];
+                      for (const p of starterProfiles(backends[0]?.id ?? null)) {
+                        const clash = chordConflicts([...qa, p], !lowLevelActive).length > 0;
+                        upsertProfile(clash ? { ...p, hotkey: [] } : p);
+                      }
+                    }}
                   >
                     Keep these
                   </Button>

@@ -50,9 +50,14 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // Every exit marks setup handled so the gate never re-opens; later gaps
   // (deleted backends, skipped steps) fall to the Home checklist instead.
   const finish = () => {
+    // The component unmounts, but an in-flight testAndContinue keeps running —
+    // without this latch it would still mint the backend, write the keyring and
+    // pull sync against a server the user explicitly walked away from.
+    abandoned.current = true;
     st.getState().updateSettings({ setupDismissed: true });
     onDone();
   };
+  const abandoned = useRef(false);
 
   // The backend created at the connect gate, kept so the restore can put it back if the applied
   // blob's list does not contain it (see restoreEverything).
@@ -81,7 +86,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // the keyring under it, `syncPull` run against it, and its restore offer presented while the
       // on-screen field showed the corrected host. Accepting that restore runs
       // `applyBlob(blob, ALL_ON)` and binds sync to that server.
-      if (normalizeUrl(url) !== serverUrl || key !== keyAtTest) {
+      if (abandoned.current || normalizeUrl(url) !== serverUrl || key !== keyAtTest) {
         return;
       }
       if (!res.ok) {
@@ -102,6 +107,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // Full backend → this account may have synced settings; discover, don't ask.
       if (res.bootId) {
         const p = await syncPull({ serverUrl, apiKey: key || null });
+        if (abandoned.current) return; // the user left during the pull
         if (p.ok && p.state?.blob) {
           setPull(p);
           setStep("restore");
@@ -219,12 +225,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             </div>
             <div className="mt-7 flex w-full max-w-[430px] items-center justify-between">
               <button
-                className="ring-signal rounded text-[12px] text-dim underline decoration-line underline-offset-2 hover:text-text"
+                className="ring-signal rounded text-[12px] text-dim underline decoration-line underline-offset-2 hover:text-text disabled:opacity-50"
                 onClick={() => void doImport()}
+                disabled={busy}
               >
                 Have a settings file? Import it instead
               </button>
-              <Button variant="ghost" onClick={finish}>
+              <Button variant="ghost" onClick={finish} disabled={busy}>
                 Skip for now
               </Button>
             </div>

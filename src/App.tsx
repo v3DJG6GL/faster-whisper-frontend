@@ -1,4 +1,4 @@
-import { useEffect, useState, type DependencyList } from "react";
+import { useEffect, useState, type DependencyList, useRef } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
@@ -184,8 +184,14 @@ export default function App() {
     (s) => s.backends.length === 0 && s.profiles.length === 0 && !s.settings.setupDismissed,
   );
   const [onboarding, setOnboarding] = useState(false);
+  // Decided ONCE, on the state the config loaded with: a later wipe (last
+  // backend deleted, a sync pull that lands an empty list) is the Home
+  // checklist's case, not a mid-session full-screen gate over the running shell.
+  const gateDecided = useRef(false);
   useEffect(() => {
-    if (configLoaded && needsSetup) setOnboarding(true);
+    if (!configLoaded || gateDecided.current) return;
+    gateDecided.current = true;
+    if (needsSetup) setOnboarding(true);
   }, [configLoaded, needsSetup]);
 
   useEffect(() => {

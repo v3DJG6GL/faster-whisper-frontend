@@ -130,7 +130,7 @@ export function SetupChecklist() {
         </button>
         <button
           className="ring-signal rounded text-accent underline decoration-line underline-offset-2"
-          onClick={() => navigate("/settings")}
+          onClick={() => navigate("/settings?tab=Sync")}
         >
           Restore via settings sync
         </button>
