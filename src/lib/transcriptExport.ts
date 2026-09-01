@@ -5,7 +5,8 @@
 // and both end up in files that get opened elsewhere.
 
 import { stripControlChars } from "./sanitize";
-import type { BatchResult, TranscriptSegment, TranscriptWord } from "./types";
+import { segmentWordRanges } from "./wordAlign";
+import type { BatchResult, TranscriptSegment } from "./types";
 
 export type ExportFormat = "txt" | "srt" | "vtt" | "lrc" | "json";
 /** How speaker identity is styled in subtitle formats:
@@ -464,25 +465,27 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
   return out.join("\n");
 }
 
-/** Words inside a segment's time window (tolerant to boundary rounding). */
-function wordsFor(words: TranscriptWord[], seg: TranscriptSegment): TranscriptWord[] {
-  return words.filter((w) => w.start >= seg.start - 0.05 && w.start < seg.end + 0.05);
-}
-
 function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): string {
   const words = result.words ?? [];
   // Word timing never survives translation — enhanced tags are original-only.
   const useWords = track === "orig" && !!ctx.opts.wordTimestamps && words.length > 0;
+  const segs = result.segments ?? [];
+  // One linear pass over `words` for the whole document (both arrays are time-ordered)
+  // instead of a full scan per segment; the same cursor merge the viewer uses, so a word
+  // on an exact segment boundary lands in one line, not two.
+  const ranges = useWords ? segmentWordRanges(segs, words) : null;
   const out: string[] = [];
-  for (const seg of result.segments ?? []) {
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i];
     const prefix = seg.speaker && ctx.names ? `${nameOf(ctx, seg.speaker)}: ` : "";
     if (track !== "orig") {
       const t = trOf(seg, track);
       if (t) out.push(`[${lrcTime(seg.start)}]${prefix}${t}`);
       continue;
     }
-    if (useWords) {
-      const ws = wordsFor(words, seg);
+    if (ranges) {
+      const [from, to] = ranges[i];
+      const ws = words.slice(from, to);
       if (ws.length) {
         // Enhanced LRC (A2): inline <mm:ss.xx> tags, each marking the start
         // of the following word — the karaoke convention.
@@ -592,22 +595,33 @@ export function generateExports(
   opts: ExportOptions,
 ): { name: (stem: string) => string; content: string }[] {
   const ctx = ctxOf(result, opts);
-  const trackList = [...(ctx.origIncluded ? ["orig"] : []), ...ctx.visLangs];
-  if (opts.format === "lrc" && trackList.length > 1) {
-    return trackList.map((track) => ({
-      // The empty-slug guard keeps a hostile code from colliding with the "orig" file.
-      name: (stem: string) =>
-        `${stem}${track === "orig" || !trackSlug(track) ? "" : `.${trackSlug(track)}`}.lrc`,
-      content: lrcExport(result, ctx, track),
-    }));
+  const tracks = exportTrackList(opts);
+  const names = exportFileNames(opts);
+  if (opts.format === "lrc" && tracks.length > 1) {
+    return tracks.map((track, i) => ({ name: names[i], content: lrcExport(result, ctx, track) }));
   }
-  return [
-    {
-      name: (stem: string) =>
-        `${stem}${exportStemSuffix(opts.tracks)}.${EXPORT_EXTENSIONS[opts.format]}`,
-      content: generateExport(result, opts),
-    },
-  ];
+  return [{ name: names[0], content: generateExport(result, opts) }];
+}
+
+/** The tracks an export writes, in file order — the same list `generateExports` walks. */
+function exportTrackList(opts: ExportOptions): string[] {
+  const visLangs = opts.format === "json" ? [] : (opts.tracks?.filter((t) => t !== "orig") ?? []);
+  return [...(!opts.tracks || opts.tracks.includes("orig") ? ["orig"] : []), ...visLangs];
+}
+
+/** The file names an export would write — NO content serialized, so the export panel can
+ *  show them in a render path (generateExports rendered the whole document per repaint).
+ *  Names depend only on format + tracks. */
+export function exportFileNames(opts: ExportOptions): ((stem: string) => string)[] {
+  const tracks = exportTrackList(opts);
+  if (opts.format === "lrc" && tracks.length > 1) {
+    return tracks.map(
+      (track) => (stem: string) =>
+        // The empty-slug guard keeps a hostile code from colliding with the "orig" file.
+        `${stem}${track === "orig" || !trackSlug(track) ? "" : `.${trackSlug(track)}`}.lrc`,
+    );
+  }
+  return [(stem: string) => `${stem}${exportStemSuffix(opts.tracks)}.${EXPORT_EXTENSIONS[opts.format]}`];
 }
 
 /** ".de" when exactly one translated track (and not the original) is picked —

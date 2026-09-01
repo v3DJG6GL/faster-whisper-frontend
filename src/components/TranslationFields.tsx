@@ -158,7 +158,6 @@ export function TranslationOptionsFields({
                 models={caps?.translation_models ?? []}
                 defaultLabel={`Default · ${caps?.translation_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
                 ariaLabel="Translation model"
-                hideReset
               />
             </div>
           )}
@@ -226,7 +225,6 @@ export function TranslationDefaultsEditor({
             models={caps?.translation_models ?? []}
             defaultLabel={`Inherit · ${inheritLabel}`}
             ariaLabel="Translation model"
-            hideReset
           />
         </div>
         <div>

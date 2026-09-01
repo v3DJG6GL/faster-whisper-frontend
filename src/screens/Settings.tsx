@@ -666,6 +666,9 @@ export default function Settings() {
         await moveAudioBase(basePref, picked);
         updateRecording({ audioBaseDir: picked });
         refreshStoreStats();
+        // Rust rewrote every record's mediaPath/sourcePath on disk; the load-once
+        // mirror still holds the pre-move paths — and would write them back on edit.
+        void loadHistory(true).catch(() => {});
       })
       .catch((e) => setStoreMsg(`Could not move the audio folder: ${e}`));
   const resetRecDir = () =>
@@ -673,6 +676,7 @@ export default function Settings() {
       .then(() => {
         updateRecording({ audioBaseDir: null, recordingsDir: null });
         refreshStoreStats();
+        void loadHistory(true).catch(() => {});
       })
       .catch((e) => setStoreMsg(`Could not move the audio folder: ${e}`));
 

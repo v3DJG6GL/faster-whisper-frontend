@@ -508,7 +508,9 @@ const historyByPath: Record<string, TranscriptRecord> = {};
 // Overlay slots and edit persistence are keyed by RECORD ID — the path
 // can't do it, two records of the same URL share theirs.
 const recordById: Record<string, TranscriptRecord> = {};
-let persistTimer: number | undefined;
+// One timer PER overlay key: a single handle let an edit to record B (opened from
+// History inside the debounce window) cancel a pending write for record A.
+const persistTimers = new Map<string, number>();
 
 function registerRecord(rec: TranscriptRecord) {
   historyByPath[rec.sourcePath] = rec;
@@ -521,8 +523,9 @@ function registerRecord(rec: TranscriptRecord) {
  *  (legacy path keys still resolve through historyByPath). */
 function schedulePersistEdits(key: string) {
   if (!recordById[key] && !historyByPath[key]) return;
-  window.clearTimeout(persistTimer);
-  persistTimer = window.setTimeout(() => {
+  window.clearTimeout(persistTimers.get(key));
+  persistTimers.set(key, window.setTimeout(() => {
+    persistTimers.delete(key);
     const rec = recordById[key] ?? historyByPath[key];
     if (!rec) return;
     const s = get();
@@ -536,7 +539,7 @@ function schedulePersistEdits(key: string) {
     };
     registerRecord(updated);
     upsertRecord(updated);
-  }, 800);
+  }, 800));
 }
 
 /** Every settled run — success or failure — becomes a history record the
@@ -593,10 +596,14 @@ function copyRunMedia(path: string, rec: TranscriptRecord) {
     .then((mediaPath) => {
       if (!mediaPath) return;
       patchItem(path, { mediaPath });
-      const cur = historyByPath[path];
+      // Re-resolve by ID and register under BOTH maps: every persist path reads the id
+      // map first, so a path-only write left the record's mediaPath to be dropped by the
+      // next rename / recolor / edit — permanently, for a URL run whose copy is the only
+      // playable source.
+      const cur = recordById[rec.id] ?? historyByPath[path];
       if (cur && cur.id === rec.id) {
         const updated = { ...cur, mediaPath };
-        historyByPath[path] = updated;
+        registerRecord(updated);
         upsertRecord(updated);
       }
     })
@@ -621,10 +628,14 @@ function fetchRunUrlMedia(path: string, rec: TranscriptRecord, ctx: RunContext, 
     .then((mediaPath) => {
       if (!mediaPath) return;
       patchItem(path, { mediaPath });
-      const cur = historyByPath[path];
+      // Re-resolve by ID and register under BOTH maps: every persist path reads the id
+      // map first, so a path-only write left the record's mediaPath to be dropped by the
+      // next rename / recolor / edit — permanently, for a URL run whose copy is the only
+      // playable source.
+      const cur = recordById[rec.id] ?? historyByPath[path];
       if (cur && cur.id === rec.id) {
         const updated = { ...cur, mediaPath };
-        historyByPath[path] = updated;
+        registerRecord(updated);
         upsertRecord(updated);
       }
     })
@@ -1154,9 +1165,38 @@ export function startRun(options: TranscribeOptions | undefined,
   void pump(epoch, options, ctx);
 }
 
-export function retryFile(path: string, ctx: RunContext) {
+/** The item the completed run panel describes: the file the PUMP ran last (it stamps
+ *  `selectedPath` on finish), not the last row in queue order — a retry of a non-final
+ *  file makes those diverge, and the rail's clocks belong to the retried one. */
+export function settledPanelItem(queue: QueueItem[], selectedPath: string | null): QueueItem | null {
+  const settled = (it: QueueItem) => it.status === "done" || it.status === "failed";
+  return (
+    queue.find((it) => it.path === selectedPath && settled(it)) ??
+    [...queue].reverse().find(settled) ??
+    null
+  );
+}
+
+/** Whole-run totals for the completed footer: the rail's clocks are per-file (the pump
+ *  resets them between files), so a multi-file run sums the finished items instead of
+ *  reporting the last file's wall time as the run's. */
+export function runTotals(queue: QueueItem[]): { tookMs: number; audioSec: number } {
+  let tookMs = 0;
+  let audioSec = 0;
+  for (const it of queue) {
+    if (it.status !== "done") continue;
+    tookMs += it.tookMs ?? 0;
+    audioSec += it.result?.duration ?? 0;
+  }
+  return { tookMs, audioSec };
+}
+
+export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverrides) {
   const s = get();
   if (s.running) return;
+  // A retry may carry NEW decode overrides (the VAD one-click fix); the rail's honesty
+  // line reads the store, so the store must learn them too.
+  if (overrides) set({ lastOverrides: overrides });
   patchItem(path, { status: "queued", error: undefined });
   void pump(s.epoch, s.lastOptions, ctx);
 }

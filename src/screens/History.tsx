@@ -325,15 +325,10 @@ export default function History() {
     return out;
   }, [searched, fileMatches, linkMatches, textMatches, dictMatches, segment, appFilter]);
 
-  // Matches the active segment hides (never silently — NN/g scoped search).
-  const hiddenMatches =
-    query.trim() && segment !== "all"
-      ? searched.length -
-        (segment === "file" ? fileMatches.length
-          : segment === "url" ? linkMatches.length
-          : segment === "text" ? textMatches.length
-            : dictMatches.length)
-      : 0;
+  // Matches the active facets hide (never silently — NN/g scoped search). Derived from
+  // `visible`, so the app chip counts too: the banner's two numbers always add up to
+  // `searched.length`.
+  const hiddenMatches = query.trim() ? searched.length - visible.length : 0;
 
   const buckets = useMemo(() => {
     const out: { label: string; items: TranscriptRecord[] }[] = [];
@@ -708,7 +703,7 @@ export default function History() {
           <span className="shrink-0 font-mono text-[11px] text-faint">{dictMeta(rec)}</span>
         </div>
         <div className="truncate text-[12px] text-faint">
-          {stripControlChars(recordText(rec)).slice(0, 160)}
+          {stripControlChars(recordText(rec), 160)}
         </div>
       </div>
       {/* Action clicks must not also expand the row (the whole row is a button). */}
@@ -726,8 +721,8 @@ export default function History() {
     const edited =
       !!Object.keys(rec.edits ?? {}).length || !!Object.keys(rec.speakerEdits ?? {}).length;
     const snippet = ok
-      ? stripControlChars(recordText(rec)).slice(0, 160)
-      : stripControlChars(rec.error ?? "failed").slice(0, 160);
+      ? stripControlChars(recordText(rec), 160)
+      : stripControlChars(rec.error ?? "failed", 160);
     return (
       <div key={rec.id} className={cn("flex items-center gap-3 py-3", !last && "border-b border-line")}>
         {glyph(rec)}

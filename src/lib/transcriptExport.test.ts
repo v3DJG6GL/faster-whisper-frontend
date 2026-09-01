@@ -3,8 +3,9 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  cpsWarnings, DEFAULT_SPEAKER_COLORS, exportStemSuffix, generateExport, generateExports,
+  cpsWarnings, DEFAULT_SPEAKER_COLORS, exportFileNames, exportStemSuffix, generateExport, generateExports,
   prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
+  type ExportOptions,
 } from "./transcriptExport";
 import type { BatchResult } from "./types";
 
@@ -499,5 +500,40 @@ describe("multi-target language tagging", () => {
     expect(out).not.toContain("::cue(.mt-x>");
     expect(out).toContain("::cue(.mt-xy-z)".replace("-z", "z"));
     expect(exportStemSuffix(["de", "x>.<y z"])).toBe(".de+xyz");
+  });
+});
+
+describe("exportFileNames (names without content)", () => {
+  it("matches generateExports' names for every shape", () => {
+    const shapes: ExportOptions[] = [
+      { format: "lrc", tracks: ["orig", "de"] },
+      { format: "lrc", tracks: ["de"] },
+      { format: "srt", tracks: ["orig", "de"] },
+      { format: "json" },
+    ];
+    for (const opts of shapes) {
+      expect(exportFileNames(opts).map((n) => n("clip"))).toEqual(
+        generateExports(TRANSLATED, opts).map((f) => f.name("clip")),
+      );
+    }
+  });
+});
+
+describe("lrc word tags", () => {
+  it("a word on an exact segment boundary is tagged once, on the segment it starts", () => {
+    const r: BatchResult = {
+      text: "a b",
+      segments: [
+        { start: 0, end: 1, text: "a" },
+        { start: 1, end: 2, text: "b" },
+      ],
+      words: [
+        { word: "a", start: 0, end: 1 },
+        { word: "b", start: 1, end: 2 },
+      ],
+    };
+    const out = generateExport(r, { format: "lrc", wordTimestamps: true });
+    expect(out.split("<00:01.00>").length - 1).toBe(1);
+    expect(out).toContain("[00:01.00]<00:01.00>b");
   });
 });

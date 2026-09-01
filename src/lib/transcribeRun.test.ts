@@ -7,6 +7,7 @@ import {
   overallFraction, railIndex, railOf, railStages, selectPath, skippedStages,
   stageEstimateMs, stageTimeline, useTranscribeRun, _resetStageRtfForTests,
   assembleTranslatedSegments,
+  cancelRun, retryFile, runTotals, settledPanelItem,
 } from "./transcribeRun";
 import type { QueueItem } from "./transcribeRun";
 import type { TranscriptRecord } from "./transcriptHistory";
@@ -425,5 +426,47 @@ describe("assembleTranslatedSegments (text-source kept-original marks)", () => {
   it("an older backend that omits kept marks nothing", () => {
     const segs = assembleTranslatedSegments([{ text: "a" }], [{ en: "A" }], []);
     expect(segs[0].translationsKept).toBeUndefined();
+  });
+});
+
+describe("settledPanelItem (the completed panel's identity)", () => {
+  const q = [
+    { path: "A", status: "done" },
+    { path: "B", status: "done" },
+  ] as QueueItem[];
+  it("follows the file the pump ran last, not the last queue row", () => {
+    expect(settledPanelItem(q, "A")?.path).toBe("A");
+  });
+  it("falls back to the last settled row when nothing is selected", () => {
+    expect(settledPanelItem(q, null)?.path).toBe("B");
+    expect(settledPanelItem([{ path: "A", status: "queued" }] as QueueItem[], null)).toBeNull();
+  });
+});
+
+describe("runTotals (whole-run footer figures)", () => {
+  it("sums the finished items only", () => {
+    const q = [
+      { path: "A", status: "done", tookMs: 20_000, result: { text: "", duration: 60 } },
+      { path: "B", status: "done", tookMs: 25_000, result: { text: "", duration: 90 } },
+      { path: "C", status: "failed", tookMs: 5_000 },
+    ] as unknown as QueueItem[];
+    expect(runTotals(q)).toEqual({ tookMs: 45_000, audioSec: 150 });
+  });
+});
+
+describe("retryFile carries new decode overrides into the store", () => {
+  it("the rail's honesty line reads the store, so a VAD-off retry must update it", () => {
+    useTranscribeRun.setState({
+      queue: [{ path: "A", status: "failed" }] as QueueItem[],
+      lastOverrides: { vad_filter: true },
+      running: false,
+    });
+    retryFile(
+      "A",
+      { serverUrl: "http://x", backendId: "b", standard: true } as never,
+      { vad_filter: false },
+    );
+    expect(useTranscribeRun.getState().lastOverrides.vad_filter).toBe(false);
+    cancelRun();
   });
 });

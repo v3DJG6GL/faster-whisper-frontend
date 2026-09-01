@@ -39,8 +39,7 @@ import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
   cpsWarnings, DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExports,
   speakerColorIndex, speakerHex, speakerOrder,
-  type ExportFormat, type ExportOptions,
-} from "@/lib/transcriptExport";
+  type ExportFormat, type ExportOptions, exportFileNames } from "@/lib/transcriptExport";
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
@@ -83,9 +82,10 @@ function mediaMime(path: string): string {
  *  truncation: `result.text` is untouched, and Copy still writes the FULL text. */
 const TRANSCRIPT_PREVIEW_CHARS = 50_000;
 
-/** Segment cap for the Timestamps/Speakers views — same renderer-stall reasoning as the
- *  character preview above (each segment is a DOM row; an hour of speech is ~1-2k rows,
- *  fine; a hostile response could carry far more). */
+/** Segment cap for the Timestamps/Speakers views — a HARD cap (each segment is a DOM row;
+ *  an hour of speech is ~1-2k rows, fine; a hostile response could carry far more),
+ *  disclosed in a footer line. Unlike the character preview it cannot be lifted: the
+ *  un-capped render is exactly the stall it guards. Copy and exports carry everything. */
 const MAX_SEGMENT_ROWS = 5_000;
 
 /** Chip styling from a speaker's CSS color (a --spk-N token, so it follows
@@ -1271,7 +1271,10 @@ export function TranscriptViewer({
     wavTriedRef.current = false;
     decodePendingRef.current = false;
     setBlobSrc(null);
-  }, [path]);
+    // mediaPath, not just path: two same-URL records share a path but each holds its OWN
+    // copy (keyed on the record id), so a record switch that changes only mediaPath must
+    // still clear the previous record's broken/blob/fallback state.
+  }, [path, mediaPath]);
   useEffect(
     () => () => {
       if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
@@ -1913,10 +1916,10 @@ export function TranscriptViewer({
 
   const exportFileName = () => {
     const stem = basename(path).replace(/\.[^.]+$/, "");
-    const opts = exportOpts();
-    const files = generateExports(editedResult(), opts);
-    if (files.length > 1) return `${files.length} files · ${files.map((f) => f.name(stem)).join(" · ")}`;
-    return files[0].name(stem);
+    // Names only — generateExports serializes every file's content, in a render path.
+    const names = exportFileNames(exportOpts()).map((n) => n(stem));
+    if (names.length > 1) return `${names.length} files · ${names.join(" · ")}`;
+    return names[0];
   };
 
   const doExport = async () => {
@@ -2793,6 +2796,12 @@ export function TranscriptViewer({
         </div>
       )}
 
+      {hasSegments && effSegments.length > MAX_SEGMENT_ROWS && (
+        <div className={cn("mt-3 text-[12px] text-faint", focus && "flex-none px-6 pb-4")}>
+          Showing the first {MAX_SEGMENT_ROWS.toLocaleString()} of {effSegments.length.toLocaleString()}{" "}
+          lines. Copy and every export write all of them.
+        </div>
+      )}
       {audioSrc && !audioBroken && hasSegments && !editMode && (
         <div
           className={cn(

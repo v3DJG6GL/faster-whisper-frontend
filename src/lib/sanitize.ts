@@ -154,9 +154,14 @@ export function safeIdentityText(s: unknown, max = 80): string {
   return chars.length > max ? chars.slice(0, max).join("") + "…" : t;
 }
 
-export function stripControlChars(text: string): string {
+/** `max` bounds the OUTPUT: the result is the unbounded result's first `max` chars, so a
+ *  160-char snippet never walks a whole transcript (History renders one per row per
+ *  keystroke). Bounding the input instead would not be equivalent — this only ever drops
+ *  characters, and an input slice can split a surrogate pair. */
+export function stripControlChars(text: string, max = Infinity): string {
   const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   let out = "";
+  if (max <= 0) return out;
   for (const ch of normalized) {
     const code = ch.codePointAt(0) ?? 0;
     // Drop the Unicode Cc set (matches Rust char::is_control): C0 0x00-0x1F, DEL 0x7F, C1 0x80-0x9F.
@@ -164,6 +169,8 @@ export function stripControlChars(text: string): string {
     const isControl = code < 0x20 || (code >= 0x7f && code <= 0x9f);
     if (isControl && code !== 0x09 && code !== 0x0a) continue;
     if (isDeceptiveFormatChar(code)) continue;
+    // Never split a surrogate pair to hit the bound exactly.
+    if (out.length + ch.length > max) break;
     out += ch;
   }
   return out;

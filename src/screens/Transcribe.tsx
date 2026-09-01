@@ -22,8 +22,7 @@ import {
   activeRailIndex, addFiles, cancelRun, overallFraction, railStages, stageTimeline,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, skippedStages, startRun, useTranscribeRun,
-  type RailStage, type RunContext, type StepState,
-} from "@/lib/transcribeRun";
+  type RailStage, type RunContext, type StepState, settledPanelItem, runTotals } from "@/lib/transcribeRun";
 import {
   displayLabel, formatLabel, isSourceUrl, normalizeMediaUrl, urlHost, type UrlPreview,
 } from "@/lib/urlSource";
@@ -717,7 +716,7 @@ export default function Transcribe() {
     const next: DecodeOverrides = { ...runOverrides, vad_filter: false };
     setRunOverrides(next);
     const ctx = buildCtx(next);
-    if (ctx) retryFile(path, ctx);
+    if (ctx) retryFile(path, ctx, next);
   };
 
   // Opening a transcript (a history pick, or a run that just finished) lands
@@ -1096,7 +1095,6 @@ export default function Transcribe() {
                               models={caps?.separation_models ?? []}
                               defaultLabel={`Default · ${caps?.separation_models?.[0]?.id ?? "server model"}`}
                               ariaLabel="Separation model"
-                              hideReset
                             />
                           </div>
                         </div>
@@ -1283,7 +1281,6 @@ export default function Transcribe() {
                                 models={caps?.diarization_models ?? []}
                                 defaultLabel={`Default · ${caps?.diarization_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
                                 ariaLabel="Diarization model"
-                                hideReset
                               />
                             </div>
                           </div>
@@ -1467,8 +1464,7 @@ export default function Transcribe() {
         // only ever moves forward; until the first poll answers, the first
         // stage counts as active. After the run it settles into a completed
         // state: every row a receipt, until the input changes.
-        const lastSettled =
-          [...queue].reverse().find((it) => it.status === "done" || it.status === "failed") ?? null;
+        const lastSettled = settledPanelItem(queue, selectedPath);
         const complete =
           !busy && lastSettled?.status === "done" && Object.keys(stageTimes).length > 0;
         if (!busy && !complete) return null;
@@ -1506,11 +1502,14 @@ export default function Transcribe() {
           panelItem?.result?.duration ??
           (panelItem ? urlMeta[panelItem.path]?.durationSec : undefined) ??
           null;
-        // Whole-run realtime factor for the completed header's story line.
+        // Whole-run figures for the completed footer: sum the finished items when the run
+        // had several files (the rail's clocks describe only the last one).
+        const totals = runTotals(queue);
+        const multi = queue.length > 1;
+        const shownElapsed = complete && multi && totals.tookMs > 0 ? totals.tookMs : runElapsed;
+        const shownAudio = complete && multi && totals.audioSec > 0 ? totals.audioSec : audioDur;
         const overallRt =
-          complete && audioDur && runElapsed > 0
-            ? audioDur / (runElapsed / 1000)
-            : null;
+          complete && shownAudio && shownElapsed > 0 ? shownAudio / (shownElapsed / 1000) : null;
         const panelUrlMeta = panelItem ? urlMeta[panelItem.path] : undefined;
         const extractorLabel = panelUrlMeta?.extractor
           ? panelUrlMeta.extractor === "Generic"
@@ -1702,9 +1701,9 @@ export default function Transcribe() {
               <span>
                 {complete ? (
                   <span className="text-dim">
-                    {audioDur
-                      ? `${fmtDurationExact(audioDur)} audio → transcript in ${fmtElapsed(runElapsed)}`
-                      : `finished in ${fmtElapsed(runElapsed)}`}
+                    {shownAudio
+                      ? `${fmtDurationExact(shownAudio)} audio → transcript in ${fmtElapsed(shownElapsed)}`
+                      : `finished in ${fmtElapsed(shownElapsed)}`}
                     {overallRt ? (
                       <> · <span className="text-text">{overallRt.toFixed(1)}× realtime overall</span></>
                     ) : null}
@@ -2101,6 +2100,11 @@ export default function Transcribe() {
                   ? doneItems[Math.min(doneItems.length - 1, idx + 1)]
                   : doneItems[Math.max(0, (idx < 0 ? doneItems.length : idx) - 1)];
               selectPath(next.path);
+              // role="listbox" with roving tabIndex: the active option must own DOM focus,
+              // or the ring and the screen reader stay on the row the user left.
+              e.currentTarget
+                .querySelector<HTMLElement>(`[data-qpath="${CSS.escape(next.path)}"]`)
+                ?.focus();
             }}
           >
             {queue.map((it, i) => {
@@ -2110,6 +2114,7 @@ export default function Transcribe() {
               return (
                 <div
                   key={it.path}
+                  data-qpath={it.path}
                   role="option"
                   aria-selected={viewable ? isSel : undefined}
                   aria-disabled={!viewable || undefined}
