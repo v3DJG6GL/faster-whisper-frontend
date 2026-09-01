@@ -24,6 +24,14 @@ function blankAppRule(): AppRule {
   return { id: crypto.randomUUID(), appId: "", name: "", block: false };
 }
 
+const pruneInherit = (x: AppRule): AppRule => ({
+  ...x,
+  insertMethod: x.insertMethod ?? undefined,
+  pasteShortcut: x.pasteShortcut ?? undefined,
+  autoEnter: x.autoEnter ?? undefined,
+  restoreClipboard: x.restoreClipboard ?? undefined,
+});
+
 function Editor({
   initial,
   onSave,
@@ -77,13 +85,17 @@ function Editor({
   const canSave = normalizeAppId(r.appId).length > 0;
 
   const save = () => {
-    if (!canSave) return;
+    if (!canSave) return false; // nothing persisted — "Save and leave" must stay
     onSave({ ...r, appId: normalizeAppId(r.appId), name: r.name?.trim() ? r.name.trim() : undefined });
+    return true;
   };
 
   // Unsaved-work guard, shared with the Profiles and Backends editors: a
   // sidebar click used to discard a half-written rule in silence.
-  const dirty = isDirty(r, initial);
+  // `null` and absent both mean "inherit" for the four override keys (types.ts), and the
+  // controls write `null` on every change — so compare with both spellings pruned, or a
+  // set-then-revert reads as unsaved forever.
+  const dirty = isDirty(pruneInherit(r), pruneInherit(initial));
   const guard = useUnsavedGuard(dirty);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -185,10 +197,11 @@ function Editor({
 }
 
 function RuleRow({ r, onEdit, onRemove }: { r: AppRule; onEdit: () => void; onRemove: () => void }) {
-  const globalMethod = useApp((s) => s.settings.general.insertMethod);
-  // Mirror the editor's `pasteRelevant`: a saved paste shortcut only fires when paste is the
-  // effective method, so don't list it for a rule that resolves to direct/clipboard typing.
-  const pasteRelevant = !r.block && (r.insertMethod ?? globalMethod) === "paste";
+  // Only the rule's OWN method can be judged here: the cascade is constraint > rule >
+  // profile > global, and which Profile is active differs per session — so a rule that
+  // inherits its method may well resolve to paste, and its saved chord is listed. Hidden
+  // only when this rule itself forces direct/clipboard typing (or blocks).
+  const pasteRelevant = !r.block && r.insertMethod !== "direct" && r.insertMethod !== "clipboard";
   const summary = r.block
     ? "Blocked — never typed here"
     : [

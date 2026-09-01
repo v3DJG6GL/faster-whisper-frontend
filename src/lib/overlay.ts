@@ -40,10 +40,26 @@ export function chipRouteTargets(
   profileTargets: string[] | undefined,
   max = CHIP_ROUTE_TARGETS,
 ): string[] {
-  return (sessionTargets ?? profileTargets ?? [])
-    .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+  return validRouteTargets(sessionTargets, profileTargets)
     .slice(0, max)
     .map((t) => t.trim().slice(0, 12));
+}
+
+/** How many targets `chipRouteTargets` left out. A route is a promise about what will be
+ *  typed, so a three-target session must not read as a two-target one: the chip shows
+ *  "→ FR IT +1", as the tray tooltip and the Profile card already do. */
+export function chipRouteMore(
+  sessionTargets: string[] | null,
+  profileTargets: string[] | undefined,
+  max = CHIP_ROUTE_TARGETS,
+): number {
+  return Math.max(0, validRouteTargets(sessionTargets, profileTargets).length - max);
+}
+
+function validRouteTargets(sessionTargets: string[] | null, profileTargets: string[] | undefined): string[] {
+  return (sessionTargets ?? profileTargets ?? []).filter(
+    (t): t is string => typeof t === "string" && t.trim().length > 0,
+  );
 }
 
 /** The running session's route as one string ("DE → FR IT") for the tray tooltip, or "" when
@@ -87,6 +103,7 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     language?: string;
     mode?: "stream" | "batch";
     translateTo?: string[];
+    translateMore?: number;
   } = {};
   // The Profile to label the chip with: the one dictating, or — for a persistent
   // idle dock — the home target it would launch (so standby previews that Profile).
@@ -106,6 +123,10 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
       // The translation ROUTE's targets — see chipRouteTargets for the resolution order
       // and why both inputs need bounding.
       translateTo: chipRouteTargets(
+        state.sessionTargets,
+        { ...backend?.translationOverrides, ...chipProfile.translationOverrides }.translateTo,
+      ),
+      translateMore: chipRouteMore(
         state.sessionTargets,
         { ...backend?.translationOverrides, ...chipProfile.translationOverrides }.translateTo,
       ),
@@ -244,10 +265,15 @@ export async function initOverlayController(): Promise<void> {
     // Also re-fires on a route change, so a session that resolved its targets after the
     // status settled still reaches the tray — on a chip-less desktop this tooltip is the
     // ONLY place the route can appear.
+    // …and on the identity inputs `trayRoute` reads for the SOURCE language: `activeProfile`
+    // is published AFTER status/targets at session start, so without these the tooltip
+    // rendered "AUTO → …" and only self-corrected on the next status flip.
     if (
       state.status !== prev.status ||
       state.warming !== prev.warming ||
-      state.sessionTargets !== prev.sessionTargets
+      state.sessionTargets !== prev.sessionTargets ||
+      state.activeProfile !== prev.activeProfile ||
+      state.profiles !== prev.profiles
     ) {
       void setTrayState(
         state.warming && state.status === "listening" ? "warming" : state.status,

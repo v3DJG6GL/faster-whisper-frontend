@@ -24,6 +24,7 @@ import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import { backendForProfile } from "@/lib/dictation";
+import { liveAllowed } from "@/lib/streaming";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import type { Profile } from "@/lib/types";
 import { cn } from "@/lib/cn";
@@ -57,6 +58,7 @@ function Editor({
   const connections = useApp((s) => s.connections);
   const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
   const globalTypeAsISpeak = useApp((s) => s.settings.general.typeAsISpeak);
+  const globalInsertMethod = useApp((s) => s.settings.general.insertMethod);
   // A low-level backend owns the chords when evdev is enabled AND permitted (Linux) or always on
   // Windows (the hook backend) — same gate as the Settings quick-add row, so both rebind surfaces
   // accept the same chords (useHotkeyCapture commits modifier-only / AltGr chords ONLY then).
@@ -79,8 +81,12 @@ function Editor({
   const [showInsertion, setShowInsertion] = useState(
     () => hasInsertionOverrides(initial.insertionOverrides) || initial.typeAsISpeak !== undefined,
   );
+  // "Ask for target languages" lives inside this disclosure too — a profile whose only
+  // translation setting is that toggle must open with it visible and read as "set".
   const [showTranslation, setShowTranslation] = useState(
-    () => !!initial.translationOverrides && Object.keys(initial.translationOverrides).length > 0,
+    () =>
+      (!!initial.translationOverrides && Object.keys(initial.translationOverrides).length > 0) ||
+      initial.askTranslationTargets !== undefined,
   );
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
   // Resolve the target backend so the decode editor can show its defaults as the
@@ -425,7 +431,9 @@ function Editor({
           {(() => {
             const c = dictationControls({
               value: p.insertionOverrides ?? {},
-              onChange: (v) => set({ insertionOverrides: v }),
+              // Same rule as `save`: an empty override object is "inherit everything" and is
+              // stored as absent — here too, or set-then-revert reads as unsaved forever.
+              onChange: (v) => set({ insertionOverrides: hasInsertionOverrides(v) ? v : undefined }),
               sentinel: "undefined",
             });
             return (
@@ -447,7 +455,8 @@ function Editor({
           title={
             <>
               Translation overrides{" "}
-              {p.translationOverrides && Object.keys(p.translationOverrides).length ? (
+              {(p.translationOverrides && Object.keys(p.translationOverrides).length) ||
+              p.askTranslationTargets !== undefined ? (
                 <span className="text-accent">· set</span>
               ) : (
                 <span className="text-faint">· inherit backend</span>
@@ -477,13 +486,18 @@ function Editor({
               value={p.translationOverrides}
               onChange={(v) => set({ translationOverrides: v })}
               caps={caps}
-              // Resolved the same way the session will resolve it: the profile's own
-              // opinion, else the Dictation-tab default — and only on a streaming
-              // endpoint, since batch has no live phrases to translate one at a time.
-              liveInsert={
-                (p.typeAsISpeak ?? globalTypeAsISpeak) &&
-                (p.endpoint ?? backend?.endpoint) !== "batch"
-              }
+              // Resolved with the SAME predicate the session uses (`liveAllowed`): the
+              // profile's own opinion else the Dictation-tab default, a streaming endpoint,
+              // and a delivery that is safe while the chord may still be held — a push-to-talk
+              // profile typing via paste/direct inserts on release, so its Mode is honoured.
+              // (An app rule can still override the method per window; the editor can't
+              // know the window, so profile-else-global is the closest honest read.)
+              liveInsert={liveAllowed({
+                wants: p.typeAsISpeak ?? globalTypeAsISpeak,
+                endpoint: p.endpoint ?? backend?.endpoint ?? "stream",
+                activation: p.activation,
+                method: p.insertionOverrides?.insertMethod ?? globalInsertMethod,
+              })}
               inheritLabel={
                 backend?.translationOverrides?.model
                   ? backend.translationOverrides.model

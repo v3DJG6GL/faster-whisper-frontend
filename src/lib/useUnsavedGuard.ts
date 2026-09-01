@@ -16,6 +16,20 @@ export function isDirty(draft: unknown, initial: unknown): boolean {
   return stableStringify(draft) !== stableStringify(initial);
 }
 
+/** `false` = the save aborted and nothing was persisted; anything else = saved. */
+export type SaveResult = boolean | void;
+
+/** Run the pending navigation after a save — unless the save reported it did not persist. */
+export function afterSave(result: SaveResult | Promise<SaveResult>, go: () => void): void {
+  if (result && typeof (result as Promise<SaveResult>).then === "function") {
+    void (result as Promise<SaveResult>).then((ok) => {
+      if (ok !== false) go();
+    });
+  } else if (result !== false) {
+    go();
+  }
+}
+
 export interface UnsavedGuard {
   /** A navigation (or an Esc / back press) is waiting on an answer. */
   asking: boolean;
@@ -28,8 +42,11 @@ export interface UnsavedGuard {
   stay: () => void;
   /** Save first, then go. Pass the editor's own save; an async one (the
    *  Backends editor writes the API key to the keyring first) is awaited, so
-   *  the navigation can't tear the editor down mid-write. */
-  saveAndLeave: (save: () => void | Promise<void>) => void;
+   *  the navigation can't tear the editor down mid-write. A save that returns
+   *  `false` did NOT persist (a rule with no app id, a keyring write that
+   *  failed) — the editor stays, with its error visible, instead of leaving
+   *  and discarding the draft the button promised to keep. */
+  saveAndLeave: (save: () => SaveResult | Promise<SaveResult>) => void;
 }
 
 export function useUnsavedGuard(dirty: boolean): UnsavedGuard {
@@ -75,9 +92,7 @@ export function useUnsavedGuard(dirty: boolean): UnsavedGuard {
     stay: () => setPending(null),
     saveAndLeave: (save) => {
       const p = take();
-      const done = save();
-      if (done && typeof done.then === "function") void done.then(() => p?.run());
-      else p?.run();
+      afterSave(save(), () => p?.run());
     },
   };
 }

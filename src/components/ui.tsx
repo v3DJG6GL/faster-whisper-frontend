@@ -1086,22 +1086,16 @@ export function Stack({
 /* ── Setting row ──────────────────────────────────────────────────────── */
 export function SettingRow({
   title,
-  titleText,
   desc,
   children,
   last,
   disabled,
   disabledReason,
-  badge,
   expand,
 }: {
-  /** Plain text in every existing call site. `ReactNode` only so a row can carry a
-   *  trailing badge; the auto-labelling below needs a STRING, so pass `titleText`
-   *  alongside whenever this isn't one. */
-  title: ReactNode;
-  /** The title as plain text, for the accessible name. Required when `title` is not a
-   *  string — otherwise a Toggle/Select child would be announced as "[object Object]". */
-  titleText?: string;
+  /** A string, deliberately: it doubles as the accessible name auto-cloned onto a
+   *  Toggle/Select child below, which a node could not provide. */
+  title: string;
   desc?: string;
   children: ReactNode;
   last?: boolean;
@@ -1119,9 +1113,6 @@ export function SettingRow({
    *  that must stay readable, and WCAG's contrast exemption for inactive controls makes
    *  a dim explanation conformant but useless. */
   disabledReason?: string;
-  /** Trailing chip after the title — provenance ("Overridden by Konsole"), never a
-   *  second control. Kept out of `title` so the accessible name stays the title alone. */
-  badge?: ReactNode;
   /** Sub-panel rendered INSIDE the row, below the header flex line — the
    *  row's border-b stays underneath it, so an expanded row reads as one
    *  unit instead of the panel floating between two rows. */
@@ -1132,14 +1123,10 @@ export function SettingRow({
   // title so a screen reader announces what it controls; respects an explicit ariaLabel and leaves
   // other control types untouched. (A control wrapped in its own <div> — e.g. the mic select with its
   // Refresh button — isn't a direct child, so those pass ariaLabel at the call site instead.)
-  // `title` may now be a node (a label plus a provenance badge), which would clone in as
-  // "[object Object]". Fall back to `titleText`, then to the title only when it really is
-  // a string — never to a node.
-  const accessibleName = titleText ?? (typeof title === "string" ? title : undefined);
   const control =
     isValidElement(children) && (children.type === Toggle || children.type === Select)
       ? cloneElement(children as ReactElement<{ ariaLabel?: string }>, {
-          ariaLabel: (children.props as { ariaLabel?: string }).ariaLabel ?? accessibleName,
+          ariaLabel: (children.props as { ariaLabel?: string }).ariaLabel ?? title,
         })
       : children;
   // Grid, not flex: the control used to take whatever width it wanted and hand
@@ -1163,7 +1150,6 @@ export function SettingRow({
             )}
           >
             {title}
-            {badge}
           </div>
           {/* The reason REPLACES the description and keeps full contrast — see the prop's
               doc. When there's no reason, the description dims with the rest of the row. */}

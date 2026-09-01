@@ -761,6 +761,7 @@ export default function Settings() {
               desc="Clipboard paste is the most reliable. Direct typing never touches the clipboard but can struggle with some layouts. Clipboard only copies the text without typing — you paste it yourself."
             >
               <Segmented
+                ariaLabel={SETTING.insertMethod.label}
                 value={s.general.insertMethod}
                 onChange={(v) => updateGeneral({ insertMethod: v })}
                 options={METHOD_OPTIONS}

@@ -42,6 +42,9 @@ interface ChipState {
   // another language. Empty/absent = no translation, and the identity row reads exactly as
   // it always did. Already bounded by chipPayload (count and per-code length).
   translateTo?: string[];
+  // How many further targets `translateTo` left out (rendered as "+N"), so a bounded route
+  // never reads as the whole route.
+  translateMore?: number;
   // Why the session's translation didn't land ("timeout" | "cancelled" | "error" | "empty").
   // Qualifies the done marker: without it, text inserted in the ORIGINAL because the
   // translate failed is indistinguishable from a translation that succeeded.
@@ -208,6 +211,7 @@ export default function Overlay() {
             profileOnHover: e.payload.profileOnHover ?? false,
             previewOnHover: e.payload.previewOnHover ?? false,
             translateTo: e.payload.translateTo ?? [],
+            translateMore: e.payload.translateMore ?? 0,
             translateFailure: e.payload.translateFailure ?? "",
           });
         });
@@ -437,6 +441,9 @@ export default function Overlay() {
     .map((t) => safeDisplayText(t, 12).toUpperCase())
     .filter(Boolean);
   const hasRoute = routeTargets.length > 0;
+  // A bounded number from our own overlay.ts, but it rides the peer-adjacent payload: clamp.
+  const routeMore = Math.min(99, Math.max(0, Math.floor(Number(state.translateMore) || 0)));
+  const routeText = routeMore > 0 ? `${routeTargets.join(" ")} +${routeMore}` : routeTargets.join(" ");
   // "On hover" mode for the Profile tag: only surface it once the chip is hover-revealed;
   // "always" (profileOnHover false) shows it whenever a tag was sent. A ROUTE overrides that
   // gate — see above; the tag comes with it, since a bare "→ FR IT" names no owner.
@@ -754,7 +761,7 @@ export default function Overlay() {
               row: the same two codes promised at rest are the ones now running, so a long wait
               is legibly the wait for THAT, not an unexplained pause. */}
           {phase.kind === "translating" && hasRoute && (
-            <span className="shrink-0 text-translate/70">→ {routeTargets.join(" ")}</span>
+            <span className="shrink-0 text-translate/70">→ {routeText}</span>
           )}
           <span className="tabular-nums text-faint">{phaseClock(phaseElapsedMs(phase, Date.now()))}</span>
         </div>
@@ -894,7 +901,7 @@ export default function Overlay() {
             <span className="text-faint" aria-hidden>
               →
             </span>
-            <span className="ml-1 text-translate">{routeTargets.join(" ")}</span>
+            <span className="ml-1 text-translate">{routeText}</span>
           </span>
         )}
         <AnimatePresence>

@@ -215,7 +215,10 @@ export default function Logs() {
     // Height measurements must follow the LINE, not the list position —
     // filters/clear shift which line sits at an index, and a stale by-index
     // height makes wrapped rows overlap their neighbors.
-    getItemKey: (index) => rows[index].line.seq,
+    // Keyed on the run's FIRST seq, not `line.seq`: a merged row's `line` is its newest
+    // occurrence and changes on every repeat, which remounted the row (dropping focus from
+    // its ×N button) and invalidated its measured height on every live duplicate.
+    getItemKey: (index) => rows[index].firstSeq,
   });
 
   // Follow: on new content, keep the tail pinned (after paint — wrapped rows
@@ -398,7 +401,7 @@ export default function Logs() {
                 const r = rows[v.index];
                 return (
                   <div
-                    key={r.line.seq}
+                    key={r.firstSeq}
                     ref={virtualizer.measureElement}
                     data-index={v.index}
                     style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${v.start}px)` }}

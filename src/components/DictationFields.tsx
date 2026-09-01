@@ -1,11 +1,13 @@
-// The insertion controls, rendered identically on all three surfaces that own a layer of
-// the cascade: Settings → Dictation (the global default), the Profile editor (per task),
-// and App Rules (per target app).
+// The insertion controls for the two OVERRIDE layers of the cascade — the Profile editor
+// (per task) and App Rules (per target app) — which share the tri-state "Inherit" shape.
+// Settings → Dictation, the global default the two inherit from, has no inherit state and
+// keeps its own two-state rows; it imports `METHOD_OPTIONS` so the method's labels and
+// order are pinned there too, and takes its row labels from the same manifest entries.
 //
-// One component because the three had already drifted: App Rules called the method
+// One module because the surfaces had already drifted: App Rules called the method
 // "Insert method" while Settings called it "Insertion method", and listed the same three
 // options in a DIFFERENT order, with nothing pinning either. Labels now come from the
-// settings manifest, so a rename reaches all three by construction.
+// settings manifest, so a rename reaches every surface by construction.
 //
 // Two structural rules, both learned from DecodeFields:
 //  1. The cells are plain FUNCTIONS called inline, never nested components. Rendering them

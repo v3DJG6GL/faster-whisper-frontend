@@ -170,7 +170,7 @@ function Editor({
       } catch (e) {
         console.error("saving API key failed:", e);
         setKeyError("Couldn't save the API key to the system keyring — the key was not stored. Try again.");
-        return;
+        return false; // nothing persisted — "Save and leave" must stay so the error is seen
       } finally {
         setSavingKey(false);
       }
@@ -189,6 +189,7 @@ function Editor({
       model: b.model.trim(),
       overrideProfile: b.overrideProfile?.trim() ? b.overrideProfile.trim() : undefined,
     });
+    return true;
   };
 
   // Unsaved-work guard, shared with the Profiles and Per-app rules editors. A

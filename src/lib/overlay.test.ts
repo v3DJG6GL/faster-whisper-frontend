@@ -2,7 +2,7 @@
 // store or the cross-window payload it normally rides in.
 
 import { describe, expect, it } from "vitest";
-import { chipRouteTargets } from "./overlay";
+import { chipRouteMore, chipRouteTargets } from "./overlay";
 
 describe("chipRouteTargets", () => {
   it("prefers the running session's resolved targets over the Profile's config", () => {
@@ -39,6 +39,13 @@ describe("chipRouteTargets", () => {
     // The row shares one line with the live transcript — the surface the user actually
     // reads to supervise what is about to be typed.
     expect(chipRouteTargets(null, ["fr", "it", "es", "pt"], 2)).toEqual(["fr", "it"]);
+  });
+
+  it("reports how many targets the cap left out, so the chip can say +N", () => {
+    expect(chipRouteMore(null, ["fr", "it", "es", "pt"], 2)).toBe(2);
+    expect(chipRouteMore(["fr", "it"], ["es", "pt", "de"], 2)).toBe(0);
+    expect(chipRouteMore(null, ["fr", "", "it", "es"], 2)).toBe(1); // blanks don't count
+    expect(chipRouteMore(null, undefined, 2)).toBe(0);
   });
 
   it("caps the length of a single code", () => {
