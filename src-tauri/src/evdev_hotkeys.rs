@@ -138,21 +138,21 @@ mod imp {
             if out.len() >= MAX_CHORDS {
                 return;
             }
-            // Compare DISTINCT keys, not Vec lengths. `[Ctrl, Ctrl, Shift]` and `[Ctrl, Shift]`
-            // are the same chord — `Engine` reads both as the two-key set, so both go fully-held
-            // on the same transition — but their Vec lengths differ, so the old test let both
-            // register. Every deserialization path canonicalizes (`config::de_hotkey` sorts and
-            // dedups) so nothing reaches here duplicated today; the guarantee this dedup states
-            // is "one keypress can't fire two actions", and Vec length did not deliver it.
-            let set: HashSet<u16> = keys.iter().copied().collect();
-            let dup = out.iter().any(|c| {
-                let other: HashSet<u16> = c.keys.iter().copied().collect();
-                other.len() == set.len() && other.iter().all(|k| set.contains(k))
-            });
-            if dup {
-                tracing::warn!("[evdev] {what} has the same chord as an earlier one; ignoring the duplicate");
-            } else {
-                out.push(ChordSpec { keys, kind });
+            // The registration filter: duplicates, and every nesting except the designed
+            // hold ⊂ hands-free upgrade, are dropped — first in config order wins. The Settings
+            // UI refuses to save these (`conflicts.ts`); this is the same rule for the lists
+            // that never pass through it (a sync pull, an import), because the engine cannot
+            // make sense of them: two nested holds run two sessions at once, and the inner
+            // hold's release then stops the OUTER session at the wrong key.
+            let candidate = ChordSpec { keys, kind };
+            let clash = out
+                .iter()
+                .find_map(|c| crate::chord_engine::registration_conflict(c, &candidate));
+            match clash {
+                Some(why) => tracing::warn!(
+                    "[evdev] {what} {why}; ignoring it (the Profiles screen flags this as a conflict)"
+                ),
+                None => out.push(candidate),
             }
         };
         for p in profiles.iter().filter(|p| p.enabled) {

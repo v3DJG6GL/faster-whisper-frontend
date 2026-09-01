@@ -82,10 +82,63 @@ impl ChordKind {
     }
 }
 
+impl ChordKind {
+    /// May a chord of this kind be a strict SUBSET of one of kind `sup`? True for exactly
+    /// the designed nesting — a hold inside a hands-free superset (the in-place upgrade).
+    /// Every other nesting is a shadow: the shorter chord would fire on the way into the
+    /// longer one, or two sessions would run at once. `src/lib/conflicts.ts` enforces the
+    /// same rule in the Settings UI; this is its twin for the profile lists that never pass
+    /// through the UI (a sync pull, an import), applied by both backends' `chords_from`.
+    pub fn may_nest_in(&self, sup: &ChordKind) -> bool {
+        matches!((self, sup), (ChordKind::Hold { .. }, ChordKind::HandsFree { .. }))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ChordSpec {
     pub keys: Vec<u16>,
     pub kind: ChordKind,
+}
+
+/// How two chords' key SETS relate (duplicates inside a `keys` Vec are ignored).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Relation {
+    Same,
+    /// The first is a strict subset of the second.
+    Inside,
+    /// The first strictly contains the second.
+    Contains,
+    Independent,
+}
+
+pub fn relation(a: &[u16], b: &[u16]) -> Relation {
+    let a: HashSet<u16> = a.iter().copied().collect();
+    let b: HashSet<u16> = b.iter().copied().collect();
+    if a == b {
+        Relation::Same
+    } else if a.is_subset(&b) {
+        Relation::Inside
+    } else if b.is_subset(&a) {
+        Relation::Contains
+    } else {
+        Relation::Independent
+    }
+}
+
+/// Why `candidate` may not register beside an already-accepted `existing` chord — None when
+/// the pair is fine. The backends run every candidate through this against each accepted
+/// chord (first in config order wins, so the LATER one is the one dropped) and log the reason.
+pub fn registration_conflict(existing: &ChordSpec, candidate: &ChordSpec) -> Option<&'static str> {
+    match relation(&candidate.keys, &existing.keys) {
+        Relation::Same => Some("has the same chord as an earlier one"),
+        Relation::Inside if !candidate.kind.may_nest_in(&existing.kind) => {
+            Some("is contained in an earlier chord and is not its push-to-talk root")
+        }
+        Relation::Contains if !existing.kind.may_nest_in(&candidate.kind) => {
+            Some("contains an earlier chord and is not its hands-free upgrade")
+        }
+        _ => None,
+    }
 }
 
 /// What the backend must do after a key event, in order.
@@ -553,6 +606,31 @@ mod tests {
             ),
             vec![Fire::Start("ptt".into()), Fire::Stop("ptt".into())]
         );
+    }
+
+    /// The registration filter is the UI conflict rule (`conflicts.ts`) for lists that skip
+    /// the UI: exactly one nesting is allowed, a hold inside a hands-free superset.
+    #[test]
+    fn registration_allows_only_the_hold_in_handsfree_nesting() {
+        let hold = |k: &[u16]| ChordSpec { keys: k.to_vec(), kind: ChordKind::Hold { profile_id: "h".into() } };
+        let hf = |k: &[u16]| ChordSpec { keys: k.to_vec(), kind: ChordKind::HandsFree { profile_id: "f".into() } };
+        let qa = |k: &[u16]| ChordSpec { keys: k.to_vec(), kind: ChordKind::QuickAdd };
+        // The designed family, in either config order.
+        assert_eq!(registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &hf(&[CTRL_L, SHIFT_L, SPACE])), None);
+        assert_eq!(registration_conflict(&hf(&[CTRL_L, SHIFT_L, SPACE]), &hold(&[CTRL_L, SHIFT_L])), None);
+        // Directional: hands-free inside a hold is a shadow.
+        assert!(registration_conflict(&hf(&[CTRL_L, SHIFT_L]), &hold(&[CTRL_L, SHIFT_L, SPACE])).is_some());
+        // hold ⊂ hold — two sessions would run at once.
+        assert!(registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &hold(&[CTRL_L, SHIFT_L, SPACE])).is_some());
+        // hands-free ⊂ hands-free, and quick-add nested either way.
+        assert!(registration_conflict(&hf(&[CTRL_L, SHIFT_L]), &hf(&[CTRL_L, SHIFT_L, SPACE])).is_some());
+        assert!(registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &qa(&[CTRL_L, SHIFT_L, KEY_H])).is_some());
+        assert!(registration_conflict(&qa(&[ALT_L, SUPER_L]), &hf(&[ALT_L, SUPER_L, KEY_H])).is_some());
+        // Same set, duplicates inside the Vec notwithstanding.
+        assert!(registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &hf(&[CTRL_L, CTRL_L, SHIFT_L])).is_some());
+        // Overlap and disjoint are not registration conflicts (the peer guard arbitrates them).
+        assert_eq!(registration_conflict(&hf(&[CTRL_L, SUPER_L]), &qa(&[ALT_L, SUPER_L])), None);
+        assert_eq!(registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &qa(&[ALT_L, SUPER_L])), None);
     }
 
     #[test]
