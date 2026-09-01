@@ -418,9 +418,16 @@ describe("multi-target language tagging", () => {
     expect(out).toContain("Speaker 1: Hello there.");
   });
 
-  it("srt: a single target stays untagged and byte-identical", () => {
+  it("srt: a single target stays untagged, and its original lines are byte-identical", () => {
     const one = generateExport(TRANSLATED, { format: "srt", tracks: ["orig", "de"] });
     expect(one).not.toContain("[DE]");
+    // Strip the (untagged) translated lines: what remains must be the untranslated render.
+    const de = TRANSLATED.segments!.map((s) => s.translations!.de);
+    const origOnly = one
+      .split("\n")
+      .filter((l) => !de.some((t) => l.endsWith(t)))
+      .join("\n");
+    expect(origOnly).toBe(generateExport(RESULT, { format: "srt" }));
   });
 
   it("vtt: emits a distinct cue class per language", () => {

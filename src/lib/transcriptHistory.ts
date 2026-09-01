@@ -274,6 +274,11 @@ export function attachRecordingPath(id: string, path: string): void {
 
 /** Remove one record — mirror and disk. */
 export function deleteRecord(id: string): void {
+  // A coalesced write still pending for this record would land AFTER the delete and
+  // resurrect the file on the next load — drop it first.
+  clearTimeout(writeTimers.get(id));
+  writeTimers.delete(id);
+  pendingWrite.delete(id);
   useTranscriptHistory.setState((s) => ({
     records: s.records.filter((r) => r.id !== id),
   }));

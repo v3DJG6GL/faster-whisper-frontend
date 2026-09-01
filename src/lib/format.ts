@@ -43,7 +43,9 @@ export function fmtDurationExact(seconds: number): string {
 
 /** Seconds → segment timestamp: `0:05.2` · `1:23.4` · `1:02:05.0`. */
 export function fmtTimestamp(seconds: number): string {
-  const s = Math.max(0, seconds);
+  // Round to the tenth ONCE, then split — otherwise a remainder that rounds to 60.0
+  // renders as "1:60.0" while the minute field was already floored (fmtDuration's rule).
+  const s = Math.round(Math.max(0, seconds) * 10) / 10;
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
@@ -95,8 +97,10 @@ export function localTodayDay(): number {
 /** Human byte size for download progress readouts ("41.2 MB", "980 KB"). */
 export function fmtBytes(n: number): string {
   if (!Number.isFinite(n) || n < 0) return "";
-  if (n < 1024) return `${Math.round(n)} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  // Classify on the ROUNDED mantissa, or a value just under a boundary saturates into
+  // the next unit's territory ("1024 KB" — the same slip fmtCompact guards against).
+  if (Math.round(n) < 1024) return `${Math.round(n)} B`;
+  if (Math.round(n / 1024) < 1024) return `${Math.round(n / 1024)} KB`;
+  if (Number((n / (1024 * 1024)).toFixed(1)) < 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }

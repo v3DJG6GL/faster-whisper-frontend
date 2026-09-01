@@ -24,7 +24,7 @@ import {
   TextInput,
 } from "@/components/ui";
 import { useApp } from "@/lib/store";
-import { fmtDuration } from "@/lib/format";
+import { fmtDuration, fmtTimestamp } from "@/lib/format";
 import { pickExportPath, readMediaFile, saveTextFile } from "@/lib/api";
 import {
   deleteRecord, loadHistory, recordEditedResult, recordText,
@@ -188,7 +188,9 @@ function RecordingPlayer({ path }: { path: string }) {
       >
         {playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
       </button>
-      <span className="font-mono text-[11px] text-dim">{fmtDuration(cur)}</span>
+      {/* A clock beside a seek bar: fmtDuration rounds to whole minutes above 60 s and
+          read AHEAD of the audio ("4m" at 3:31); the workbench transport's format instead. */}
+      <span className="font-mono text-[11px] text-dim">{fmtTimestamp(cur)}</span>
       <div
         role="slider"
         aria-label="Seek"
@@ -221,7 +223,7 @@ function RecordingPlayer({ path }: { path: string }) {
           style={{ left: `${len ? (cur / len) * 100 : 0}%` }}
         />
       </div>
-      <span className="font-mono text-[11px] text-faint">{fmtDuration(len)}</span>
+      <span className="font-mono text-[11px] text-faint">{fmtTimestamp(len)}</span>
       <button
         type="button"
         onClick={cycleRate}
