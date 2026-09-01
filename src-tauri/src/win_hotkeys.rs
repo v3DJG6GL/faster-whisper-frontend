@@ -114,8 +114,10 @@ const NUMPAD_ENTER: u16 = 0x0D | 0x0100;
 /// AltGr, which arrives as `VK_RMENU`). None if the code isn't mappable. Must cover
 /// the same bindable set as `evdev_hotkeys::code_to_key` / keys.ts `codeToToken` —
 /// pinned by the test below. One known corner: numpad digits match only with
-/// NumLock ON (NumLock-off numpad presses report navigation VKs, just as browsers
-/// report the navigation `event.code`s during capture — the two stay consistent).
+/// NumLock ON. The capture UI records the PHYSICAL `event.code` ("Numpad4") in either
+/// NumLock state, so such a chord binds and validates but stays inert on Windows while
+/// NumLock is off (the raw feed then reports the nav VK) — a known Windows-only gap
+/// versus evdev, which fires KEY_KP4 regardless.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn code_to_vk(code: &str) -> Option<u16> {
     let vk = match code {
@@ -358,13 +360,25 @@ mod imp {
                 tracing::info!("[winhook] raw-input listener up ({n_chords} chord(s))");
                 *g = Some(Running { input_thread_id: tid });
             }
-            Ok(None) | Err(_) => {
-                tracing::warn!("[winhook] couldn't register for raw keyboard input — hotkeys are OFF");
+            ready => {
+                // Two different investigations share one teardown: a refused raw-input
+                // registration (driver / permission) vs. a setup that HUNG (CreateWindowExW /
+                // SetWinEventHook wedged). Name them apart in the support log.
+                match ready {
+                    Ok(None) => tracing::warn!(
+                        "[winhook] raw keyboard input setup failed (message window or RegisterRawInputDevices) — hotkeys are OFF"
+                    ),
+                    _ => tracing::warn!(
+                        "[winhook] raw-input listener didn't report ready within 2 s — abandoning it; hotkeys are OFF"
+                    ),
+                }
                 // On the timeout arm no Running was stored, so Running::drop can never
                 // reach the thread — a slow setup would otherwise leave it pumping (and
                 // re-arming a global LL hook) for the process lifetime, one zombie per
-                // apply_bindings. Tell it to tear itself down; the 250 ms re-arm timer
-                // guarantees a wake-up within one tick.
+                // apply_bindings. Tell it to tear itself down: the 250 ms re-arm timer wakes
+                // it within one tick, or — if SetTimer failed (warned in input_thread) — the
+                // next raw-input message does, so on a fully idle machine the teardown can be
+                // deferred until someone presses a key.
                 abandoned.store(true, std::sync::atomic::Ordering::Relaxed);
                 if let Ok(mut t) = TX.lock() {
                     *t = None; // ends the worker
@@ -511,6 +525,10 @@ mod imp {
         static BURST: Cell<u32> = const { Cell::new(0) };
         /// Ticks since the last steady-state re-arm.
         static TICKS: Cell<u32> = const { Cell::new(0) };
+        /// Whether the last install attempt failed — the WARN is logged once per transition
+        /// into that state, not once per 250 ms tick (a persistent failure otherwise wrote
+        /// ~1200 lines an hour into the support log).
+        static HOOK_FAILED: Cell<bool> = const { Cell::new(false) };
     }
 
     /// One timer tick: burst re-arm after a recent foreground change, else the
@@ -563,8 +581,13 @@ mod imp {
             // top of whatever caused the failure — the exact blind window this function
             // exists to close. Keep the incumbent; the next tick tries again.
             if hook.is_null() {
-                tracing::warn!("[winhook] could not re-arm the keyboard hook; keeping the current one");
+                if !HOOK_FAILED.replace(true) {
+                    tracing::warn!("[winhook] could not re-arm the keyboard hook; keeping the current one (retrying every tick, logged once)");
+                }
                 return;
+            }
+            if HOOK_FAILED.replace(false) {
+                tracing::info!("[winhook] keyboard hook re-armed after a failed attempt");
             }
             let prev = h.replace(hook as isize);
             if prev != 0 {
@@ -772,8 +795,8 @@ mod imp {
             // is physically on the numpad — map it to VK_NUMPADx / VK_DECIMAL when
             // NumLock is on, so a "Numpad4" binding fires like it does under a browser
             // capture. E0 set = the dedicated nav key — keep it. NumLock off keeps the
-            // nav VKey (numpad digits are then unbindable-by-design; the capture UI
-            // records the same nav code).
+            // nav VKey: a saved Numpad-digit chord (the capture UI records the physical
+            // "Numpad4" regardless of NumLock) is then inert until NumLock comes back on.
             0x0C | 0x21..=0x28 | 0x2D | 0x2E if !e0 && numlock_on() => numpad_from_scan(make_code)?,
             other => other,
         })
@@ -842,20 +865,23 @@ mod imp {
         }
     }
 
-    /// Is the whole chord physically down right now, per the OS? Empty = no.
-    fn chord_physically_down(keys: &[u16]) -> bool {
-        !keys.is_empty() && keys.iter().all(|&k| physically_down(k))
+    /// Is any shortcut MODIFIER of the chord still physically down, per the OS? Empty = no.
+    /// See `chord_engine::any_chord_mod_down` for why it is "any modifier", not "all keys".
+    fn chord_mod_still_down(keys: &[u16]) -> bool {
+        crate::chord_engine::any_chord_mod_down(keys, |k| vk_to_evdev_mod(k).is_some(), physically_down)
     }
 
     /// The manufactured-stop rule, shared by both teardown sites: emit the stop, and arm the
-    /// loss latch ONLY if the chord is still physically down. The latch exists for exactly one
-    /// situation — the teardown is about to wipe the map that proves the chord is held, and the
-    /// injection that follows must not type into it. A chord the OS reports UP is not that
-    /// situation: the user released it (its key-up was parked in the debouncer, or lost outright),
-    /// so the injection is safe to type — and arming anyway diverted the next phrase to the
-    /// clipboard, silently, on a control that is designed never to produce a false positive.
+    /// loss latch ONLY if a modifier of the chord is still physically down. The latch exists for
+    /// exactly one situation — the teardown is about to wipe the map that proves the chord is
+    /// held, and the injection that follows must not type into it. A chord the OS reports fully
+    /// UP is not that situation: the user released it (its key-up was parked in the debouncer,
+    /// or lost outright), so the injection is safe to type — and arming anyway diverted the next
+    /// phrase to the clipboard, silently, on a control that is designed never to produce a false
+    /// positive. A chord with ONE modifier still down IS that situation (a staggered release),
+    /// so the predicate fails toward arming.
     fn manufactured_stop(app: &AppHandle, profile_id: &str, keys: &[u16]) {
-        if chord_physically_down(keys) {
+        if chord_mod_still_down(keys) {
             crate::held_keys::arm_chord_lost();
         } else {
             tracing::info!("[winhook] teardown stop for a chord the OS reports released; not arming the loss latch");
@@ -894,6 +920,12 @@ mod imp {
     /// Commit one debounced key transition: update the held-set + the HeldKeys
     /// mirror, step the engine, dispatch its fires. (The pre-debounce body of the
     /// worker loop, factored out so deferred releases commit through the same path.)
+    ///
+    /// `teardown`: the post-loop drain of parked releases. `stop_held_sessions` may already have
+    /// manufactured (and CLAIMED, via `take_hold`) the stop for a hold this release ends —
+    /// `apply_bindings` calls it before the old listener is dropped — so a teardown Stop is
+    /// emitted only if the hold is still unclaimed, and with no chord mods: HeldKeys was wiped by
+    /// the successor's start, so a snapshot taken here would clear a fresh session's trigger mods.
     fn commit(
         app: &AppHandle,
         held_keys: &crate::held_keys::HeldKeysWriter,
@@ -901,6 +933,7 @@ mod imp {
         engine: &mut Engine,
         id: u16,
         down: bool,
+        teardown: bool,
     ) {
         // Windows auto-repeats WM_KEYDOWN while a key is held; the held-set
         // insert dedups them (mirrors evdev skipping value == 2 autorepeat).
@@ -932,8 +965,14 @@ mod imp {
                     note_hold(&pid, &engine.keys_for_profile(&pid), true);
                 }
                 Fire::Stop(pid) => {
-                    emit(app, &pid, "stop", Some(&chord_mods(&pid)));
-                    note_hold(&pid, &[], false);
+                    if teardown {
+                        if take_hold(&pid) {
+                            emit(app, &pid, "stop", None);
+                        }
+                    } else {
+                        emit(app, &pid, "stop", Some(&chord_mods(&pid)));
+                        note_hold(&pid, &[], false);
+                    }
                 }
                 // Handoff: the hold's session lives on under the superset —
                 // release the teardown bookkeeping, emit no "stop".
@@ -972,13 +1011,18 @@ mod imp {
     ///
     /// `id & 0xFF` strips the synthetic extended bit we fold into NumpadEnter: the OS knows
     /// only `VK_RETURN`, which covers both Enters — and "VK_RETURN is up" is true of each of
-    /// them, which is all this predicate is asked.
+    /// them, which is all `resync_held` asks. The other caller, `chord_mod_still_down`, asks
+    /// the opposite question but only about MODIFIERS, which carry no synthetic bit, so the
+    /// aliasing (an Enter-bound chord reading "down" because the OTHER Enter is held) never
+    /// reaches an arm/don't-arm decision.
     fn physically_down(id: u16) -> bool {
         unsafe { GetAsyncKeyState((id & 0x00FF) as i32) as u16 & 0x8000 != 0 }
     }
 
-    /// How often the worker re-asks the OS about the keys it believes are held. Only ever
-    /// runs while the held-set is non-empty, so an idle app polls nothing.
+    /// How often the worker re-asks the OS about the keys it believes are held. Only
+    /// *scheduled* while the held-set is non-empty — an idle worker blocks in `rx.recv()` with
+    /// no deadline and polls nothing; a wake-up past the deadline still calls it once with an
+    /// empty held-set to clear stale first strikes.
     const RESYNC_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
     /// Release every key the held-set still carries that the OS says is UP — the repair for a
@@ -991,9 +1035,12 @@ mod imp {
     ///
     /// A key must read UP on TWO consecutive polls before it is released. A genuine release
     /// commits through the event path within RELEASE_DEBOUNCE, so nothing legitimate ever
-    /// reaches the second poll; the confirmation only costs a repair ≤250 ms, and it keeps a
-    /// single anomalous read (a desktop in mid-switch) from cutting a live push-to-talk
-    /// session short. `up_once` carries that first strike between calls.
+    /// reaches the second poll; the confirmation only costs a repair ≤250 ms, and it buys one
+    /// poll of slack against a transient bad read. Known gap: while the process is off the
+    /// input desktop (secure desktop, lock screen, a UAC prompt) `GetAsyncKeyState` may read
+    /// every key UP for the whole switch, which outlasts two polls — a chord held across such a
+    /// switch is released, ending its push-to-talk session. `up_once` carries the first strike
+    /// between calls.
     fn resync_held(
         app: &AppHandle,
         held_keys: &crate::held_keys::HeldKeysWriter,
@@ -1011,7 +1058,7 @@ mod imp {
                 "[winhook] key {id:#06x} is up per the OS but no key-up ever arrived — releasing it \
                  (a capture hook or a desktop switch ate the release)"
             );
-            commit(app, held_keys, held, engine, id, false);
+            commit(app, held_keys, held, engine, id, false, false);
         }
     }
 
@@ -1070,7 +1117,7 @@ mod imp {
             // Due deferred releases first, so a real release always commits before
             // whatever event (if any) woke us.
             for key in deb.expire(now) {
-                commit(&app, &held_keys, &mut held, &mut engine, key, false);
+                commit(&app, &held_keys, &mut held, &mut engine, key, false, false);
             }
             if now >= next_resync {
                 next_resync = now + RESYNC_INTERVAL;
@@ -1081,7 +1128,7 @@ mod imp {
             }
             if let Some(ev) = ev {
                 if let Some((k, d)) = deb.on_event(ev.id, ev.down, held.contains(&ev.id), now) {
-                    commit(&app, &held_keys, &mut held, &mut engine, k, d);
+                    commit(&app, &held_keys, &mut held, &mut engine, k, d, false);
                 }
             }
         }
@@ -1089,10 +1136,12 @@ mod imp {
         // in the debouncer: those keys ARE released, and a hold whose release is parked here
         // would otherwise still read as active below and get a manufactured stop — with the loss
         // latch armed on a chord the user let go of, which diverted the next phrase to the
-        // clipboard. Through `commit`, so it is the real `Stop` (claimed via note_hold) and the
-        // HeldKeys decrement, exactly as if the window had elapsed a moment earlier.
+        // clipboard. Through `commit` in teardown mode: the HeldKeys decrement and the engine
+        // step happen exactly as if the window had elapsed a moment earlier, and the Stop is
+        // CLAIMED via take_hold — stop_held_sessions runs before this listener is dropped on the
+        // rebind/sync-pull path and may already have emitted it.
         for key in deb.drain() {
-            commit(&app, &held_keys, &mut held, &mut engine, key, false);
+            commit(&app, &held_keys, &mut held, &mut engine, key, false, true);
         }
         // Release our remaining HeldKeys contributions so a stale modifier can't wedge the
         // inject gate…

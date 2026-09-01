@@ -266,6 +266,24 @@ impl Engine {
         out
     }
 
+    }
+
+/// The teardown-latch predicate both backends share: does any key of `keys` that is a
+/// shortcut MODIFIER (`is_mod`) still read as down (`down`)? Only modifiers matter — they are
+/// the keys the injection gate folds into, and a chord's non-modifier member (Space, a letter)
+/// held alone cannot make the next phrase type into a live shortcut. `any`, not `all`: a
+/// staggered release parks the first key-up in the debouncer while the second modifier is
+/// still physically down, and a latch that read that as "released" let the transcript be typed
+/// into a live Ctrl. It fails toward arming; the empty chord reads as released.
+pub fn any_chord_mod_down(
+    keys: &[u16],
+    is_mod: impl Fn(u16) -> bool,
+    down: impl Fn(u16) -> bool,
+) -> bool {
+    keys.iter().copied().filter(|&k| is_mod(k)).any(down)
+}
+
+impl Engine {
     /// Advance the machine after a key event. `held` is the full set of
     /// currently-down key codes; `now` stamps a new hold's `started_at`, which
     /// `active_hold_subset` uses to pick the most recent hold as the handoff donor
@@ -596,6 +614,22 @@ mod tests {
     /// The guard arbitrates CHORDS, it does not turn matching into an exact modifier mask:
     /// an unrelated key being down must still leave a chord free to fire, or dictation would
     /// die the moment the user rests a finger anywhere (and every nested family would break).
+    #[test]
+    fn the_teardown_latch_arms_on_any_modifier_still_down_and_never_on_a_plain_key() {
+        // Modifiers 1 and 2, plain key 9.
+        let is_mod = |k: u16| k == 1 || k == 2;
+        let chord = [1u16, 2, 9];
+        let down_all = |_k: u16| true;
+        let down_none = |_k: u16| false;
+        let down_second_mod = |k: u16| k == 2;
+        let down_plain_only = |k: u16| k == 9;
+        assert!(any_chord_mod_down(&chord, is_mod, down_all), "fully held ⇒ arm");
+        assert!(!any_chord_mod_down(&chord, is_mod, down_none), "fully released ⇒ don't arm");
+        assert!(any_chord_mod_down(&chord, is_mod, down_second_mod), "staggered release ⇒ arm");
+        assert!(!any_chord_mod_down(&chord, is_mod, down_plain_only), "only the plain key ⇒ don't arm");
+        assert!(!any_chord_mod_down(&[], is_mod, down_all), "empty chord ⇒ don't arm");
+    }
+
     #[test]
     fn an_unrelated_held_key_still_lets_a_chord_fire() {
         let mut e = overlapping();

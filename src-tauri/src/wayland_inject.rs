@@ -681,15 +681,20 @@ mod imp {
                     // The already-typed prefix stays: re-sending it would duplicate text on screen
                     // (hazard P16), so the untyped tail is dropped and this reports `Yes` — the
                     // same trade Q32 settled for the mid-typing cancel right above.
+                    //
+                    // Below the `key_spec_for` lookup, not above it: an unreachable character
+                    // `continue`s without advancing `typed`, so a probe placed above re-fired on
+                    // every character of an unreachable run (curly quotes, an em dash, emoji) —
+                    // back to back, with no sleep between them — instead of once per 32 typed.
+                    let Some(spec) = key_spec_for(c, &charmap) else {
+                        continue; // char not reachable on this layout — skip
+                    };
                     if typed % 32 == 0 && typed > 0 && own_window_focused(app) {
                         tracing::info!(
                             "[wayland-inject] stopped mid-typing: our own window took focus ({typed} chars in)"
                         );
                         return Ok(crate::inject::Landed::Yes);
                     }
-                    let Some(spec) = key_spec_for(c, &charmap) else {
-                        continue; // char not reachable on this layout — skip
-                    };
                     // Counted HERE, the moment this character is committed to being typed — not at
                     // the bottom of the body. The `spec.lock` branch below (a capital reachable only
                     // via a Caps Lock bracket: Swiss-German Ü/Ä/Ö, French È/É/À) ends in its own
@@ -804,11 +809,12 @@ mod imp {
                     }
                     tokio::time::sleep(Duration::from_millis(6)).await;
                 }
-                // Same missing third check as the paste branch above. The in-loop guard is
-                // `&& emitted`, so for a bare-Enter job (`order == ["Return"]`) it is
-                // short-circuited at the only iteration — a cancel arriving during the keymap
-                // upload and its compositor round-trip, the widest gap on this path, still
-                // pressed Return.
+                // Same missing third check as the paste branch above. For a bare auto-Enter
+                // job `job.text` is empty, so the per-character cancel check in the loop above
+                // ran zero times and the pre-job check was the only earlier one — the charmap
+                // build plus the portal keycode round trips sit in the gap it cannot cover, so
+                // a cancel arriving there still pressed Return. (`virtual_keyboard.rs` closes the
+                // same gap with its `&& emitted` short-circuit.)
                 // The focus term is the sibling of the cancel term: the loop above probes every 32
                 // characters, so up to 32 characters plus this Enter can still follow a focus
                 // change — and an Enter is the one keystroke that ACTS rather than inserts, firing

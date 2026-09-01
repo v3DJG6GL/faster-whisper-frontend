@@ -255,6 +255,13 @@ mod imp {
 
     type Guarded = Arc<parking_lot::Mutex<super::Snapshot>>;
 
+    /// The reconnect counter after one connection ended: reset when it pumped ≥60 s (a healthy
+    /// long-lived connection means a NEW incident, whichever way it ended), then count this end.
+    pub(super) fn next_failures(failures: u32, pumped_60s: bool) -> u32 {
+        let base = if pumped_60s { 0 } else { failures };
+        base.saturating_add(1)
+    }
+
     /// First + every 30th — the shared dedup gate for both reconnect outcomes, so
     /// neither a fast-ending stream nor an Err/Ok alternation can flood the ring
     /// at the 2 s retry cadence.
@@ -297,16 +304,16 @@ mod imp {
                 }
             }
             let started = std::time::Instant::now();
-            match run_once(snapshot.clone(), deep.clone()).await {
+            let outcome = run_once(snapshot.clone(), deep.clone()).await;
+            // A stream that ENDS is a failure shape too (bus restart): count it, and clear
+            // the counter only after a connection that actually pumped for a while — a fast
+            // end (or an Err/Ok alternation) would otherwise reset past the gate and flood at
+            // one warn per 2 s retry. Both outcomes: a long-lived connection that finally dies
+            // with an ERROR opens a new incident whose first warn must not be swallowed by a
+            // counter an earlier outage left at 45.
+            failures = next_failures(failures, started.elapsed() >= std::time::Duration::from_secs(60));
+            match outcome {
                 Ok(()) => {
-                    // A stream that ENDS is a failure shape too (bus restart): count it,
-                    // and clear the counter only after a connection that actually pumped
-                    // for a while — a fast end (or an Err/Ok alternation) would otherwise
-                    // reset past the gate and flood at one warn per 2 s retry.
-                    if started.elapsed() >= std::time::Duration::from_secs(60) {
-                        failures = 0;
-                    }
-                    failures = failures.saturating_add(1);
                     if should_log(failures) {
                         tracing::warn!(
                             "[atspi] event stream ended — reconnecting (failure #{failures}, logging first + every 30th)"
@@ -314,7 +321,6 @@ mod imp {
                     }
                 }
                 Err(e) => {
-                    failures = failures.saturating_add(1);
                     if should_log(failures) {
                         tracing::warn!(
                             "[atspi] listener error: {e} — reconnecting (failure #{failures}, logging first + every 30th)"
@@ -563,9 +569,6 @@ mod imp {
             .name()
             .await
             .ok()?;
-        if app_id.is_empty() {
-            return None;
-        }
         // This is the focused application's OWN name, over the session a11y bus — any app can
         // choose it freely, so it is untrusted input on a par with a server string. It reaches
         // three sinks unbounded: the overlay payload rebuilt on every level tick and rendered as
@@ -575,6 +578,13 @@ mod imp {
         // real application name — or an existing rule keyed on one — is affected.
         let app_id =
             crate::transport::bounded_server_text(&app_id, crate::atspi_guard::APP_ID_MAX);
+        // Emptiness is judged on the BOUNDED value: a name made only of format controls (ZWJ,
+        // bidi overrides) is non-empty raw and empty after the bound, and an empty id must
+        // read as "no focus" — `is_noise("")` is false, so it would otherwise be installed as
+        // the current app, render a blank chip target and be capturable as an AppRule key.
+        if app_id.trim().is_empty() {
+            return None;
+        }
         Some((app_id, editable, active))
     }
 
@@ -807,7 +817,14 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::imp::should_log;
+    use super::imp::{next_failures, should_log};
+
+    #[test]
+    fn a_long_lived_connection_resets_the_counter_for_either_outcome() {
+        assert_eq!(next_failures(45, true), 1);
+        assert_eq!(next_failures(45, false), 46);
+        assert_eq!(next_failures(0, false), 1);
+    }
 
     #[test]
     fn reconnect_log_gate_is_first_plus_every_30th() {

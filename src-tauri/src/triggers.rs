@@ -329,6 +329,13 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
                 continue;
             }
         };
+        // First in config order wins a duplicate chord — the same policy the evdev and Windows
+        // backends apply in `chords_from` (via `chord_engine::registration_conflict`), so the
+        // same config fires the same profile whichever backend is live.
+        if map.contains_key(&shortcut) {
+            tracing::warn!("[hotkey] '{accel_log}' has the same chord as an earlier profile; ignoring it (the Profiles screen flags this as a conflict)");
+            continue;
+        }
         match gs.register(shortcut.clone()) {
             Ok(()) => {
                 tracing::info!(
@@ -336,18 +343,13 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
                     crate::transport::bounded_server_text(&p.id, 120),
                     p.activation
                 );
-                if map
-                    .insert(
-                        shortcut,
-                        ShortcutTarget::Dictate {
-                            profile_id: p.id.clone(),
-                            activation: p.activation,
-                        },
-                    )
-                    .is_some()
-                {
-                    tracing::warn!("[hotkey] '{accel_log}' is bound by more than one profile; last wins");
-                }
+                map.insert(
+                    shortcut,
+                    ShortcutTarget::Dictate {
+                        profile_id: p.id.clone(),
+                        activation: p.activation,
+                    },
+                );
             }
             Err(e) => tracing::warn!("[hotkey] could not register '{accel_log}' (X11 only): {e}"),
         }
@@ -358,6 +360,11 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
         match crate::config::codes_to_accelerator(quick_add_hotkey) {
             // Same defang: `quickAddHotkey` is a synced code list with the same passthrough.
             Some(accel) => match Shortcut::from_str(&accel) {
+                // A profile registered first keeps the chord (it used to be silently replaced).
+                Ok(shortcut) if map.contains_key(&shortcut) => tracing::warn!(
+                    "[hotkey] quick-add '{}' has the same chord as a profile; ignoring it",
+                    crate::transport::bounded_server_text(&accel, 120)
+                ),
                 Ok(shortcut) => match gs.register(shortcut.clone()) {
                     Ok(()) => {
                         tracing::info!("[hotkey] registered '{}' → quick-add", crate::transport::bounded_server_text(&accel, 120));

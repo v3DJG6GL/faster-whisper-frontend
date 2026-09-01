@@ -78,14 +78,27 @@ mod imp {
 
     /// The login name of the real uid, read from the passwd database.
     fn current_username() -> Option<String> {
-        // SAFETY: getpwuid returns a pointer into a static buffer owned by libc; we copy the name
-        // out immediately and never retain the pointer, and this runs on one thread from setup().
+        // getpwuid_r, not getpwuid: `setup()` is an async command on a multi-threaded runtime and
+        // can run twice at once (a double-clicked Setup button), and the plain variant hands back
+        // a process-wide static buffer any other passwd lookup in the process may refill between
+        // the read and the copy — and this string becomes the `usermod -aG input <user>` argument.
+        let mut passwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut buf = [0 as libc::c_char; 1024];
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        // SAFETY: every pointer is to caller-owned storage that outlives the call; the result
+        // pointer (into `passwd`/`buf`) is read once and never retained.
         unsafe {
-            let pw = libc::getpwuid(libc::getuid());
-            if pw.is_null() {
+            let rc = libc::getpwuid_r(
+                libc::getuid(),
+                &mut passwd,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut result,
+            );
+            if rc != 0 || result.is_null() {
                 return None;
             }
-            let name = (*pw).pw_name;
+            let name = (*result).pw_name;
             if name.is_null() {
                 return None;
             }
@@ -297,19 +310,26 @@ mod imp {
         }
     }
 
-    /// Is the whole chord physically down on SOME keyboard right now, per the kernel?
-    /// `EVIOCGKEY` on each keyboard — the authoritative state, independent of our readers (which
-    /// may be aborted by the very teardown asking). A chord lives on one device (each reader has
-    /// its own engine), so "all keys on one device" is the right question. Empty = no.
-    fn chord_physically_down(codes: &[u16]) -> bool {
+    /// Is any shortcut MODIFIER of the chord still physically down on SOME keyboard, per the
+    /// kernel? `EVIOCGKEY` on each keyboard — the authoritative state, independent of our readers
+    /// (which may be aborted by the very teardown asking). A chord lives on one device (each
+    /// reader has its own engine), so "on one device" is the right scope; "any modifier", not
+    /// "all keys", for the reason `chord_engine::any_chord_mod_down` gives. Empty = no. An
+    /// unreadable key state deliberately reads as "not held": failing toward arming there would
+    /// divert a phrase to the clipboard on every teardown for anyone whose enumeration fails.
+    fn chord_mod_still_down(codes: &[u16]) -> bool {
         if codes.is_empty() {
             return false;
         }
         evdev::enumerate().any(|(_, dev)| {
             is_keyboard(&dev)
-                && dev
-                    .get_key_state()
-                    .is_ok_and(|ks| codes.iter().all(|&c| ks.contains(Key::new(c))))
+                && dev.get_key_state().is_ok_and(|ks| {
+                    crate::chord_engine::any_chord_mod_down(
+                        codes,
+                        |c| crate::held_keys::SHORTCUT_MOD_CODES.contains(&c),
+                        |c| ks.contains(Key::new(c)),
+                    )
+                })
         })
     }
 
@@ -318,7 +338,7 @@ mod imp {
     /// chord is still physically down. A chord the kernel reports released is safe to type into,
     /// and arming on it diverted the next phrase to the clipboard for nothing.
     fn manufactured_stop(app: &AppHandle, profile_id: &str, keys: &[u16]) {
-        if chord_physically_down(keys) {
+        if chord_mod_still_down(keys) {
             crate::held_keys::arm_chord_lost();
         } else {
             tracing::info!("[evdev] teardown stop for a chord the kernel reports released; not arming the loss latch");
@@ -358,6 +378,10 @@ mod imp {
     /// mirror, step the engine, dispatch its fires. (The pre-debounce body of the
     /// run_device loop, factored out so deferred releases commit through the same
     /// path — the shared engine owns all chord semantics; this just tracks keys.)
+    ///
+    /// `teardown`: the post-loop drain of parked releases — a Stop is then emitted only if the
+    /// hold is still unclaimed (`take_hold`), since `stop_held_sessions` may already have
+    /// manufactured it; see the win_hotkeys twin.
     fn commit(
         app: &AppHandle,
         held_keys: &crate::held_keys::HeldKeysWriter,
@@ -365,6 +389,7 @@ mod imp {
         engine: &mut Engine,
         code: u16,
         down: bool,
+        teardown: bool,
     ) {
         let changed = if down { held.insert(code) } else { held.remove(&code) };
         if !changed {
@@ -391,8 +416,14 @@ mod imp {
                     note_hold(&pid, &engine.keys_for_profile(&pid), true);
                 }
                 Fire::Stop(pid) => {
-                    emit(app, &pid, "stop", Some(&chord_mods(&pid)));
-                    note_hold(&pid, &[], false);
+                    if teardown {
+                        if take_hold(&pid) {
+                            emit(app, &pid, "stop", None);
+                        }
+                    } else {
+                        emit(app, &pid, "stop", Some(&chord_mods(&pid)));
+                        note_hold(&pid, &[], false);
+                    }
                 }
                 // Handoff: the hold's session lives on under the superset —
                 // release the teardown bookkeeping, emit no "stop".
@@ -456,7 +487,7 @@ mod imp {
             // Due deferred releases first, so a real release always commits before
             // whatever event (if any) woke us.
             for key in deb.expire(now) {
-                commit(&app, &held_keys, &mut held, &mut engine, key, false);
+                commit(&app, &held_keys, &mut held, &mut engine, key, false, false);
             }
             let Some(ev) = ev else { continue };
             if ev.event_type() != EventType::KEY {
@@ -468,15 +499,16 @@ mod imp {
                 _ => continue, // 2 = autorepeat
             };
             if let Some((k, d)) = deb.on_event(ev.code(), down, held.contains(&ev.code()), now) {
-                commit(&app, &held_keys, &mut held, &mut engine, k, d);
+                commit(&app, &held_keys, &mut held, &mut engine, k, d, false);
             }
         }
         // The device stream ended (unplugged / read error). First commit every release still
         // parked in the debouncer — those keys ARE released, and a hold whose release is parked
         // would otherwise still read as active below and get a manufactured stop with the loss
-        // latch armed on a chord the user let go of (see the win_hotkeys twin).
+        // latch armed on a chord the user let go of (see the win_hotkeys twin). Teardown mode:
+        // the Stop is claimed via take_hold, since stop_held_sessions may have emitted it.
         for key in deb.drain() {
-            commit(&app, &held_keys, &mut held, &mut engine, key, false);
+            commit(&app, &held_keys, &mut held, &mut engine, key, false, true);
         }
         // Keys still held — drop our contribution so a stale modifier can't wedge the gate.
         for &code in &held {
