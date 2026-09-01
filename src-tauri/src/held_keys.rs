@@ -71,8 +71,8 @@ pub fn arm_chord_lost() {
 /// as an edge is a press this map is tracking correctly, and the still-held check works normally
 /// for it. Without this the latch is a dud that the NEXT, unrelated session drains.
 ///
-/// It exists because arming is unconditional at the manufactured stop, and a manufactured stop does
-/// not guarantee an injection follows: a live-mode hold profile coerces every per-phrase insert to
+/// It exists because a manufactured stop arms the latch whenever the OS still reports the chord
+/// down, and a manufactured stop does not guarantee an injection follows: a live-mode hold profile coerces every per-phrase insert to
 /// clipboard-only (which returns before the consume), and a stop with no speech yet returns without
 /// injecting at all. Either leaves the latch set for the whole TTL, and the user's very next
 /// reflex — release, re-press, dictate — would have had its first phrase diverted.

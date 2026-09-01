@@ -418,10 +418,9 @@ fn rms(samples: &[f32]) -> f32 {
 /// that one passes through chip_level's clamp and a 0-seeded EMA against a threshold
 /// (streaming.ts MIC_LIVE_LEVEL) that quiet mics only hover AT, which held "warming up…" until the
 /// user actually spoke (the "~2s until the chip turns amber" complaint).
+const MIC_LIVE_RMS: f32 = 1.0e-5;
 /// Server-supplied "ignored override" notices are rendered one per row; bound how many arrive.
 const MAX_OVERRIDE_NOTICES: usize = 50;
-
-const MIC_LIVE_RMS: f32 = 1.0e-5;
 /// Consecutive above-floor callbacks required before the mic counts as live (~30 ms), so the
 /// single open-click/DC blip a warming device can emit doesn't end the warm-up gate early.
 const MIC_LIVE_CONFIRM: u8 = 3;
@@ -978,9 +977,10 @@ fn restore_mute(mode: &MuteMode) {
 }
 
 /// A single worker thread that runs the (blocking) pactl/wpctl mute shell-outs OFF the UI thread.
-/// SystemMuteGuard::new / Drop only SEND a Mute / Unmute message — they never block — because they
-/// run inside the SYNC Tauri commands start_stream / start_record, which execute on the GTK/UI
-/// thread: a wedged PulseAudio/PipeWire socket would otherwise freeze the whole app (overlay.rs
+/// SystemMuteGuard::new / Drop only SEND a Mute / Unmute message — they never block. They run
+/// inside start_stream / start_record (async commands on the blocking pool since d960783) and in
+/// session Drop, which can land on any thread including the GTK/UI one: a wedged PulseAudio/
+/// PipeWire socket must never stall whichever thread holds the guard (overlay.rs
 /// makes the same off-thread move for its KWin shell-outs). Processing in FIFO order also means a
 /// session's Unmute always runs before the next session's Mute, so the per-app muted set can't race.
 fn mute_worker() -> &'static std::sync::mpsc::Sender<MuteCmd> {

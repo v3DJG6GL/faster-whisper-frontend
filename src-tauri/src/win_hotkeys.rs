@@ -1017,7 +1017,7 @@ mod imp {
 
     /// The chord-matching worker — the twin of `evdev_hotkeys::run_device` (one
     /// instance, fed by the hook instead of per-device streams). All chord
-    /// semantics (hold edges, hands-free re-arm, family handoff/grace) live in the
+    /// semantics (hold edges, hands-free re-arm, family handoff, peer arbitration) live in the
     /// shared crate::chord_engine. Runs until the sender is dropped (shutdown/
     /// restart), then releases its HeldKeys contributions and stops any live
     /// Hold session.

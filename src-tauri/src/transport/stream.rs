@@ -493,7 +493,7 @@ pub async fn run<F>(
             // one-shot try_recv) keeps draining until the channel CLOSES, so we also catch the chunks
             // the capture callback enqueues during its own shutdown: finish()/Drop set capture_stop
             // BEFORE ws_stop, so the capture thread is already exiting and drops its sender within
-            // ~one buffer; the whole block is bounded by DRAIN_DEADLINE regardless. Saved (when
+            // ~one buffer; the writes are bounded by DRAIN_WRITE_DEADLINE regardless. Saved (when
             // recording) like the flush tail below: the end-of-stream sliver isn't speech-gated.
             while let Some(chunk) = pcm_rx.recv().await {
                 let bytes = resampler.push(&chunk);
@@ -690,8 +690,6 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
     }
 }
 
-/// A `boundary` separator is a delimiter — " ", "\n", "\n\n", ". ". The frontend types it as
-/// keystrokes into the focused window, so the server does not get to make it a payload.
 /// Ceiling on ONE transcript field. These four were the last fields on this socket with no bound
 /// at all — their neighbours (`separator`, `message`, `overrides_ignored`) are all capped here —
 /// and tungstenite's 64 MiB limit is PER MESSAGE, so it bounds nothing cumulative. They reach two
@@ -709,6 +707,8 @@ pub(crate) const MAX_TRANSCRIPT: usize = 4 * 1024 * 1024;
 /// in the Transcribe tab, which takes a different path and writes no sidecar.
 const MAX_SIDECAR_BYTES: usize = 8 * 1024 * 1024;
 
+/// A `boundary` separator is a delimiter — " ", "\n", "\n\n", ". ". The frontend types it as
+/// keystrokes into the focused window, so the server does not get to make it a payload.
 const MAX_SEPARATOR: usize = 32;
 
 /// An `error` message is surfaced in the UI and written to the log file users are asked to send

@@ -266,8 +266,8 @@ pub fn friendly_err(e: &reqwest::Error) -> String {
     }
 }
 
-/// Cap for the transport's own error text. Matches the ceiling the server-supplied `detail`
-/// strings already carry — an error line is a single-line banner, not a document.
+/// Cap for the transport's own error text (server-supplied `detail` strings are bounded tighter,
+/// at [`MAX_ERROR_TEXT`]) — an error line is a single-line banner, not a document.
 const MAX_ERR: usize = 300;
 
 /// Pull FastAPI's `detail` string from an error body, falling back to the raw text.

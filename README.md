@@ -13,7 +13,8 @@ Hold a hotkey (or toggle hands-free), speak into the focused field of **any**
 application, and your words are transcribed by your own server and inserted in
 place — with a floating "chip" overlay showing live voice activity.
 
-> Status: **early development.** Whisper-only, no AI/LLM features, no paywall.
+> Status: **early development.** Runs against your own faster-whisper-backend; no paywall.
+> Optional text translation uses the server's llama.cpp models — nothing leaves your infrastructure.
 
 ## Highlights
 
@@ -27,6 +28,13 @@ place — with a floating "chip" overlay showing live voice activity.
   with Auto-Enter and clipboard restore.
 - **Floating chip overlay** with a live audio-level visualizer (Windows + X11;
   degrades to tray + sound on GNOME Wayland).
+- **Transcribe tab** — file, link and batch transcription with speaker
+  diarization, exports (SRT/VTT/LRC/…), and a searchable transcript history.
+- **Translation** — dictate in one language, insert in another; re-translate
+  saved transcripts through the server's text-translation models.
+- **Settings sync** — per-setting switches decide what travels between devices
+  through the server; the rest stays local.
+- **In-app log viewer** for the session log the support flow asks for.
 - Secure by design: API keys live in the OS secret store, not on disk.
 
 ## Tech stack

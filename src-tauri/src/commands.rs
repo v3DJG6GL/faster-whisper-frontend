@@ -548,7 +548,7 @@ pub async fn url_preview(
 }
 
 /// Pull the server-retained audio of a finished URL run into the local media
-/// store (`media/<record_id>.<ext>`), so playback works like any file run.
+/// store (`<base>/links/<record_id>.<ext>`), so playback works like any file run.
 /// `Ok(None)` = the server no longer has it (expired/restarted) — the
 /// transcript stays usable without playback.
 #[tauri::command]

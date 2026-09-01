@@ -754,7 +754,7 @@ pub struct Config {
     /// never interprets it. `#[serde(default, skip…)]` so older configs load.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub app_rules: Vec<serde_json::Value>,
-    /// Schema version (absent/legacy ⇒ 1; current ⇒ 2). Orders future migrations.
+    /// Schema version (absent/legacy ⇒ 1; current ⇒ 3, see `CONFIG_VERSION` in store.ts). Orders future migrations.
     #[serde(default)]
     pub version: Option<u32>,
 }

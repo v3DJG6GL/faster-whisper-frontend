@@ -267,8 +267,9 @@ impl Engine {
     }
 
     /// Advance the machine after a key event. `held` is the full set of
-    /// currently-down key codes; `now` timestamps the event (injected so the
-    /// grace window is unit-testable).
+    /// currently-down key codes; `now` stamps a new hold's `started_at`, which
+    /// `active_hold_subset` uses to pick the most recent hold as the handoff donor
+    /// (injected so tests can order holds deterministically).
     pub fn step(&mut self, held: &HashSet<u16>, now: Instant) -> Vec<Fire> {
         let n = self.chords.len();
         for i in 0..n {

@@ -124,8 +124,9 @@ mod imp {
     /// Build chord specs for every enabled Profile whose hotkey maps cleanly,
     /// plus the quick-add window chord. Equal chords are de-duped (first by config
     /// order wins) so one keypress can't fire two actions. Unmappable / empty skipped.
-    /// Nesting (a chord strictly containing another) is NOT deduped — the shared
-    /// chord engine implements the designed hold ⊂ hands-free ⊂ quick-add family.
+    /// Nesting is filtered by `chord_engine::registration_conflict` (the twin of the
+    /// Settings screen's conflicts.ts): only a hold strictly inside a hands-free chord
+    /// registers; every other nesting is dropped with a WARN, first in config order wins.
     fn chords_from(profiles: &[Profile], quick_add_hotkey: &[String]) -> Vec<ChordSpec> {
         const MAX_CHORDS: usize = 256;
         let mut out: Vec<ChordSpec> = Vec::new();
