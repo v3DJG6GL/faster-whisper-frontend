@@ -3,13 +3,19 @@
 // (React) and the chip readout (the separate overlay webview, fed via
 // overlay.ts) can read it. Like overlay.ts it's a store-subscribed singleton.
 //
-// One fetch pulls today + lifetime totals AND a 90-day daily series; the Home
-// chart slices 7/30/90 days from that series client-side, so changing the range
-// never refetches. Best-effort throughout: a standard/old server (no /v1/usage)
-// or any error yields null and the stats surfaces simply hide.
+// One fetch pulls the whole usage document — per-kind today/total, a 90-day
+// per-kind daily series, stages, dictation facets, apps, the activity calendar and
+// streak; the charts slice 7/30/90 days from the series client-side, so changing
+// the range never refetches. Best-effort throughout: a standard/old server (no
+// /v1/usage) or any error yields null and the stats surfaces simply hide.
+//
+// The outcome queue (lib/usageOutcome.ts) is flushed from here too: at launch, on
+// every poll, and — crucially — BEFORE the post-session refetch, so the numbers
+// that refetch brings back already include the session that just ended.
 
 import { useApp } from "./store";
 import { isTauri, getUsageStats } from "./api";
+import { flushOutcomes, initOutcomeQueue } from "./usageOutcome";
 import { backendForProfile, homeTargetProfile } from "./dictation";
 import { effectiveServerKind } from "./serverKind";
 import { effectiveServerUrl } from "./backends";
@@ -34,10 +40,16 @@ export function activeStatsBackend(s = useApp.getState()): Backend | undefined {
   return backendForProfile(profile, s.backends);
 }
 
-/** The client's local-midnight epoch (seconds) — the server's "today" boundary. */
-function localMidnightEpoch(): number {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+/** The viewer's IANA zone ("Europe/Zurich"), so the server reckons days — and the DST
+ *  change a 90-day window crosses — the way the viewer's calendar does. Undefined when the
+ *  runtime cannot name one; the server then falls back to its own local zone. */
+export function viewerTimeZone(): string | undefined {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return tz && tz.length <= 64 ? tz : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function refreshOne(backend: Backend): Promise<void> {
@@ -58,9 +70,8 @@ async function refreshOne(backend: Backend): Promise<void> {
   const stats = await getUsageStats({
     serverUrl: target,
     backendId: backend.id,
-    tzMidnight: localMidnightEpoch(),
     days: TREND_DAYS,
-    bucket: "day",
+    tz: viewerTimeZone(),
   });
   // Mirror the Backends connection-test guard (+ upsertBackend's invalidation): a slow fetch against
   // the OLD server can resolve AFTER the user edited this backend's URL/key (store dropped the stale
@@ -75,7 +86,7 @@ async function refreshOne(backend: Backend): Promise<void> {
   // already in flight against the old address resolve afterwards and re-install its counters
   // under a backend that now points somewhere else — undoing the invalidation that just ran.
   if (effectiveServerUrl(cur, st.settings) !== target) return;
-  // `series` is server-supplied and unbounded on the wire. We asked for TREND_DAYS buckets, so
+  // `series` is server-supplied (Rust caps it at 366). We asked for TREND_DAYS buckets, so
   // anything past that is not data we can use — but it WOULD be stored and then re-serialized by
   // setUsage's two stringify passes on the main thread, every 30s, for every backend, forever.
   if (stats?.series && stats.series.length > TREND_DAYS) {
@@ -102,6 +113,9 @@ async function refreshAll(): Promise<void> {
   }
   pollingAll = true;
   try {
+    // Outcomes first, so a session that ended while the server was unreachable lands
+    // before the numbers are re-read (the server folds it into the same document).
+    await flushOutcomes();
     do {
       rerunRequested = false;
       for (const b of useApp.getState().backends) {
@@ -121,7 +135,9 @@ export function initUsageController(): void {
   if (!isTauri || started) return;
   started = true;
 
-  void refreshAll();
+  // The persisted queue loads before the first pass, so a restart posts what the
+  // previous run could not — refreshAll flushes again on every pass.
+  void initOutcomeQueue().finally(() => void refreshAll());
   setInterval(() => void refreshAll(), POLL_MS);
 
   let afterTimer: ReturnType<typeof setTimeout> | undefined;
@@ -132,7 +148,8 @@ export function initUsageController(): void {
       void refreshAll();
     }
     // Refetch shortly after a dictation session ends (idle transition) — the server
-    // records usage in its post-request finally, so today's totals just moved.
+    // records usage in its post-request finally, so today's totals just moved. The
+    // outcome settleIdle enqueued is flushed at the head of that pass (refreshAll).
     if (prev.status !== "idle" && state.status === "idle") {
       clearTimeout(afterTimer);
       afterTimer = setTimeout(() => void refreshAll(), AFTER_SESSION_MS);

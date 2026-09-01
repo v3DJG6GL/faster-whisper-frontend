@@ -249,6 +249,7 @@ export interface RecordingSettings {
   recordingsRetentionDays: number; // delete saved recordings older than N days (0 = keep forever)
   muteSystemAudio: boolean;
   handsFreeAutoStopMin: number; // auto-stop a hands-free session after N min of silence (0 = never)
+  reportTargetApp: boolean; // send the dictated-into app id (never the window title) with each session's usage outcome
   realtimePreview: boolean; // show live words on the chip as you speak (streaming backends)
   realtimePreviewOnHover: boolean; // when on, reveal the live words only while hovering the chip (else always)
   showProfileOnOverlay: boolean; // show the active Profile's tag on the chip
@@ -653,31 +654,104 @@ export interface RecentWords {
 }
 
 // P28: per-user usage stats (GET /v1/usage). snake_case mirrors the backend
-// JSON 1:1 — it passes straight through the Rust IPC boundary unchanged.
-export type UsageBucket = "day" | "week";
+// JSON 1:1 — it passes straight through the Rust IPC boundary unchanged
+// (`transport::UsageStats`, which also bounds every list and string).
 
-/** One usage bucket's counters (the four metrics the backend rolls up). */
-export interface UsageTotals {
+/** The job kinds the server rolls usage up by. */
+export type UsageKind = "dictation" | "file" | "url" | "text";
+
+/** One usage bucket's counters for one kind (or `all`). */
+export interface UsageKindTotals {
+  /** Runs: dictation SESSIONS (not utterances), file / url / text jobs. */
+  sessions: number;
   requests: number;
   errors: number;
   words: number;
   /** Seconds of audio (render as minutes/hours). */
   audio_s: number;
+  /** Seconds of server processing time. */
+  proc_s: number;
 }
 
-/** One trend point: a server-local day (days-since-epoch; ×86 400 000 → a JS
- *  Date) plus that day's (or week's) summed counters. */
-export interface UsageSeriesPoint extends UsageTotals {
+/** The per-kind split attached to today / total / every series day. */
+export type UsageKinds = Record<"all" | UsageKind, UsageKindTotals>;
+
+/** One trend point: a caller-local day (days-since-epoch; ×86 400 000 → a JS
+ *  Date) plus that day's per-kind counters. Sparse — only days with usage. */
+export interface UsageSeriesPoint extends UsageKinds {
   day: number;
 }
 
-/** The caller's own usage: today + lifetime totals + a self-scoped trend. */
+/** One optional pipeline stage's usage over the window. `of_runs` = the jobs
+ *  the stage could have applied to (translating: all kinds; the audio stages:
+ *  file + url). */
+export interface UsageStage {
+  stage: string;
+  runs: number;
+  of_runs: number;
+  audio_s: number;
+  secs: number;
+  speakers_avg?: number | null;
+  retained_avg?: number | null;
+  kept_original?: number | null;
+  targets: { code: string; runs: number }[];
+}
+
+/** The dictation facets the client reports after each session. */
+export interface UsageDictation {
+  sessions: number;
+  words: number;
+  audio_s: number;
+  wpm: number;
+  activation: { hold: number; handsfree: number };
+  delivery: { typed: number; clipboard: number; none: number; unreported: number };
+  translation: {
+    translated: number;
+    kept_original: number;
+    not_asked: number;
+    aborted: number;
+    unreported: number;
+  };
+}
+
+/** The caller's own usage document — one fetch feeds Home, Statistics and the chip. */
 export interface UsageStats {
   username: string;
-  today: UsageTotals;
-  total: UsageTotals;
-  range: { days: number; bucket: UsageBucket };
+  /** The IANA zone the server reckoned days in. */
+  tz: string;
+  range: { days: number; calendar_days: number };
+  today: UsageKinds;
+  total: UsageKinds;
   series: UsageSeriesPoint[];
+  stages: UsageStage[];
+  dictation: UsageDictation;
+  /** Top apps dictated into over the window (app id, never a window title). */
+  apps: { app_id: string; sessions: number; words: number }[];
+  /** Sparse words-per-day over `range.calendar_days`. */
+  calendar: { day: number; words: number }[];
+  streak: { current: number; best: number };
+  /** Window: words / 40 wpm − audio_s, dictation only (seconds). */
+  time_saved_s: number;
+}
+
+/** One dictation session's end-of-session facts (POST /v1/usage/outcome item).
+ *  Words / audio seconds are NOT sent — the server has them from its own rows. */
+export interface UsageOutcome {
+  /** The client-minted session id (32 hex) sent as the stream handshake's `client_job`. */
+  job_id: string;
+  activation: "hold" | "handsfree";
+  delivery: "typed" | "clipboard" | "none";
+  translation: "translated" | "kept_original" | "not_asked" | "aborted";
+  /** Platform app id (≤64 chars) — only with "Report the app I dictate into" on. */
+  app_id?: string;
+}
+
+/** Mirror of Rust transport::usage::UsageOutcomePost. `status` 0 = unreachable. */
+export interface UsageOutcomePostResult {
+  ok: boolean;
+  status: number;
+  error?: string;
+  results: { job_id: string; status: string }[];
 }
 
 /** The persisted config blob (mirrors the Rust `Config`). */

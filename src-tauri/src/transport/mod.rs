@@ -15,6 +15,7 @@ pub mod preload;
 pub mod stream;
 pub mod sync;
 pub mod text;
+pub mod usage;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -124,9 +125,14 @@ pub struct ResolvedOverrideProfile {
 
 // P28: per-user usage stats (`GET /v1/usage`). snake_case passthrough like
 // Capabilities — mirrors the backend JSON 1:1 and reaches the TS side unchanged.
-/// One usage bucket's counters (the four metrics the backend rolls up).
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct UsageTotals {
+// Every field defaults so a server that omits a block (or a later one that adds a
+// facet) still deserializes; the bounding in `discovery::get_usage_stats` caps the lists.
+/// One usage bucket's counters for one job kind (or `all`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct UsageKindTotals {
+    /// Runs: dictation SESSIONS (not utterances), file/url/text jobs.
+    #[serde(default)]
+    pub sessions: i64,
     #[serde(default)]
     pub requests: i64,
     #[serde(default)]
@@ -136,46 +142,189 @@ pub struct UsageTotals {
     /// Seconds of audio (the client renders minutes/hours).
     #[serde(default)]
     pub audio_s: f64,
+    /// Seconds of server processing time.
+    #[serde(default)]
+    pub proc_s: f64,
 }
 
-/// One point in the trend series — a server-local day (days-since-epoch) plus
-/// that day's (or week's) summed counters.
+/// The per-kind split the server attaches to today / total / every series day.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct UsageKinds {
+    #[serde(default)]
+    pub all: UsageKindTotals,
+    #[serde(default)]
+    pub dictation: UsageKindTotals,
+    #[serde(default)]
+    pub file: UsageKindTotals,
+    #[serde(default)]
+    pub url: UsageKindTotals,
+    #[serde(default)]
+    pub text: UsageKindTotals,
+}
+
+/// One point in the trend series — a caller-local day (days-since-epoch) plus that
+/// day's per-kind counters. Sparse: only days with usage are sent.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UsageSeriesPoint {
     #[serde(default)]
     pub day: i64,
+    #[serde(default, flatten)]
+    pub kinds: UsageKinds,
+}
+
+/// A translation target's share of a stage's runs.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageStageTarget {
     #[serde(default)]
-    pub requests: i64,
+    pub code: String,
     #[serde(default)]
-    pub errors: i64,
+    pub runs: i64,
+}
+
+/// One optional pipeline stage's usage across the window (translating, diarizing,
+/// separating, vad, …). `of_runs` = the jobs the stage could have applied to.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageStage {
+    #[serde(default)]
+    pub stage: String,
+    #[serde(default)]
+    pub runs: i64,
+    #[serde(default)]
+    pub of_runs: i64,
+    #[serde(default)]
+    pub audio_s: f64,
+    #[serde(default)]
+    pub secs: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speakers_avg: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_avg: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_original: Option<i64>,
+    #[serde(default)]
+    pub targets: Vec<UsageStageTarget>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageActivation {
+    #[serde(default)]
+    pub hold: i64,
+    #[serde(default)]
+    pub handsfree: i64,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageDelivery {
+    #[serde(default)]
+    pub typed: i64,
+    #[serde(default)]
+    pub clipboard: i64,
+    #[serde(default)]
+    pub none: i64,
+    #[serde(default)]
+    pub unreported: i64,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageTranslationOutcome {
+    #[serde(default)]
+    pub translated: i64,
+    #[serde(default)]
+    pub kept_original: i64,
+    #[serde(default)]
+    pub not_asked: i64,
+    #[serde(default)]
+    pub aborted: i64,
+    #[serde(default)]
+    pub unreported: i64,
+}
+
+/// The dictation facets the client reports after each session (`POST /v1/usage/outcome`).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageDictation {
+    #[serde(default)]
+    pub sessions: i64,
     #[serde(default)]
     pub words: i64,
     #[serde(default)]
     pub audio_s: f64,
+    #[serde(default)]
+    pub wpm: f64,
+    #[serde(default)]
+    pub activation: UsageActivation,
+    #[serde(default)]
+    pub delivery: UsageDelivery,
+    #[serde(default)]
+    pub translation: UsageTranslationOutcome,
 }
 
-/// Echo of the trend window the server applied (`days` 0 = lifetime).
+/// One app the user dictated into (top-N over the window).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageApp {
+    #[serde(default)]
+    pub app_id: String,
+    #[serde(default)]
+    pub sessions: i64,
+    #[serde(default)]
+    pub words: i64,
+}
+
+/// One calendar day's words (sparse over `range.calendar_days`).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageCalendarDay {
+    #[serde(default)]
+    pub day: i64,
+    #[serde(default)]
+    pub words: i64,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageStreak {
+    #[serde(default)]
+    pub current: i64,
+    #[serde(default)]
+    pub best: i64,
+}
+
+/// Echo of the windows the server applied.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UsageWindow {
     #[serde(default)]
     pub days: i64,
     #[serde(default)]
-    pub bucket: String,
+    pub calendar_days: i64,
 }
 
-/// The caller's own usage: today + lifetime totals + a self-scoped trend series.
+/// The caller's own usage document — one fetch feeds the Home strip, the Statistics
+/// page and the chip readout.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UsageStats {
     #[serde(default)]
     pub username: String,
+    /// The IANA zone the server reckoned days in.
     #[serde(default)]
-    pub today: UsageTotals,
-    #[serde(default)]
-    pub total: UsageTotals,
+    pub tz: String,
     #[serde(default)]
     pub range: UsageWindow,
     #[serde(default)]
+    pub today: UsageKinds,
+    #[serde(default)]
+    pub total: UsageKinds,
+    #[serde(default)]
     pub series: Vec<UsageSeriesPoint>,
+    #[serde(default)]
+    pub stages: Vec<UsageStage>,
+    #[serde(default)]
+    pub dictation: UsageDictation,
+    #[serde(default)]
+    pub apps: Vec<UsageApp>,
+    #[serde(default)]
+    pub calendar: Vec<UsageCalendarDay>,
+    #[serde(default)]
+    pub streak: UsageStreak,
+    /// Window: words / 40 wpm − audio_s, dictation only (seconds).
+    #[serde(default)]
+    pub time_saved_s: f64,
 }
 
 /// Trim a trailing slash so we can join `/v1/...` paths cleanly.

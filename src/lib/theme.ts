@@ -114,8 +114,8 @@ export interface DerivedAccent {
   glow0: string;
   /** The translating stage's colour for this accent (rotated away on a collision). */
   translate: string;
-  /** A slightly deeper cut of the accent for chart marks — reserved for the upcoming
-   *  statistics work; nothing reads it yet. */
+  /** A slightly deeper cut of the accent for chart marks: the dictation series and the
+   *  activity calendar (`--c-chart-dict`), so they retint with the Signal colour. */
   chart: string;
 }
 
@@ -145,6 +145,7 @@ const ACCENT_VARS = [
   "--c-glow-b",
   "--c-glow-0",
   "--c-translate",
+  "--c-chart-dict",
   "--spk-1",
   "--spk-6",
 ] as const;
@@ -173,6 +174,7 @@ function applyAccent(dark: boolean): void {
   style.setProperty("--c-glow-b", d.glowB);
   style.setProperty("--c-glow-0", d.glow0);
   style.setProperty("--c-translate", d.translate);
+  style.setProperty("--c-chart-dict", d.chart);
   style.setProperty("--spk-1", d.accent); // speaker 1 IS the accent
   style.setProperty("--spk-6", d.translate); // speaker 6 IS the translate hue
 }

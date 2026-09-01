@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 pub mod sync_state;
+pub mod usage_queue;
 
 const KEYRING_SERVICE: &str = "faster-whisper-frontend";
 

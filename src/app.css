@@ -31,6 +31,11 @@
      alias existed. The overlay's tone→class maps need a class NAME, not an
      inline style, so the alias stops being optional here. */
   --color-translate: var(--c-translate);
+  /* Usage-chart series colours (Statistics + the Home strip), one per job kind. */
+  --color-chart-dict: var(--c-chart-dict);
+  --color-chart-file: var(--c-chart-file);
+  --color-chart-link: var(--c-chart-link);
+  --color-chart-text: var(--c-chart-text);
 
   --font-display: "Hubot Sans Variable", system-ui, sans-serif;
   --font-sans: "Mona Sans Variable", system-ui, sans-serif;
@@ -74,6 +79,16 @@
   --c-separate: #6faed9; /* music source separation (shares the think blue) */
   --c-diarize: #c68fb4;  /* speaker diarization */
   --c-download: #d9a45b; /* fetching a URL's media */
+  /* Usage-chart categorical palette, one colour per job kind (validated 2026-09-01 for
+     both themes against the surface and each other). Dictation is the accent's CHART
+     step — a deeper cut of the Signal colour, re-derived by theme.ts for a custom hue
+     so it retints with the rest; files and links are fixed hues no stage uses; text
+     imports are the faint neutral, hatched, because they are rare and never a volume
+     story. Text on these surfaces always uses the text tokens, never a series colour. */
+  --c-chart-dict: #cf7b00;
+  --c-chart-file: #3e96ea;
+  --c-chart-link: #d76797;
+  --c-chart-text: #6f675c;
   /* Speaker-chip palette (Transcribe screen): eight hue-separated tones at
      matched brightness, indexed — exports resolve the same indexes to the
      DEFAULT_SPEAKER_COLORS hexes in transcriptExport.ts. Coral stays
@@ -118,6 +133,11 @@
   --c-separate: #33719f;  /* stage hues, darkened for cream backgrounds */
   --c-diarize: #9a5a84;
   --c-download: #a06f22;
+  /* Usage-chart palette, darkened for cream backgrounds (same hue order). */
+  --c-chart-dict: #ab5a00;
+  --c-chart-file: #0f74c5;
+  --c-chart-link: #b14576;
+  --c-chart-text: #9a9082;
   /* Speaker-chip palette, darkened for cream backgrounds (same hue order). */
   --spk-1: #bf6f12;
   --spk-2: #33719f;

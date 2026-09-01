@@ -18,7 +18,8 @@ import type {
   RecentWords,
   ResolvedOverrideProfile,
   TranscribeOptions,
-  UsageBucket,
+  UsageOutcome,
+  UsageOutcomePostResult,
   UsageStats,
 } from "./types";
 import type { UrlPreview } from "./urlSource";
@@ -411,29 +412,56 @@ export async function getRecentWords(args: {
   });
 }
 
-/** P28: the caller's own usage (GET /v1/usage) — today + lifetime totals + a
- *  self-scoped daily/weekly trend series, for the Home stats section and the
- *  optional chip readout. Best-effort: null outside Tauri or on any error
- *  (endpoint absent / standard server / unreachable) — callers hide the stats
- *  surfaces when null. `tzMidnight` is the client's local-midnight epoch
- *  (seconds) for a viewer-local "today"; `days` <= 0 = lifetime series. */
+/** P28: the caller's own usage document (GET /v1/usage) — per-kind today/total,
+ *  the daily series, stages, dictation facets, apps, calendar and streak — for the
+ *  Home strip, the Statistics page and the optional chip readout. Best-effort: null
+ *  outside Tauri or on any error (endpoint absent / standard server / unreachable) —
+ *  callers hide the stats surfaces when null. `tz` is the viewer's IANA zone so the
+ *  server reckons "today" (and DST) the way the viewer does; `days` = the window. */
 export async function getUsageStats(args: {
   serverUrl: string;
   backendId?: string | null;
   apiKey?: string | null;
-  tzMidnight?: number | null;
   days?: number | null;
-  bucket?: UsageBucket | null;
+  tz?: string | null;
 }): Promise<UsageStats | null> {
   if (!isTauri) return null;
   return invoke<UsageStats | null>("get_usage_stats", {
     serverUrl: args.serverUrl,
     backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
-    tzMidnight: args.tzMidnight ?? null,
     days: args.days ?? null,
-    bucket: args.bucket ?? null,
+    tz: args.tz ?? null,
   });
+}
+
+/** Report end-of-dictation outcomes (POST /v1/usage/outcome). Never throws — a
+ *  structured result whose `status` (0 = unreachable) drives the queue's retry/drop
+ *  decision (lib/usageOutcome.ts). */
+export async function postUsageOutcomes(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  outcomes: UsageOutcome[];
+}): Promise<UsageOutcomePostResult> {
+  if (!isTauri) return { ok: false, status: 0, error: "Not running in the desktop app.", results: [] };
+  return invoke<UsageOutcomePostResult>("post_usage_outcomes", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    outcomes: args.outcomes,
+  });
+}
+
+/** The on-disk outcome queue (opaque to Rust; shape owned by lib/usageOutcome.ts). */
+export async function loadUsageOutcomes(): Promise<unknown> {
+  if (!isTauri) return null;
+  return invoke<unknown>("load_usage_outcomes");
+}
+
+export async function saveUsageOutcomes(queue: unknown): Promise<void> {
+  if (!isTauri) return;
+  await invoke("save_usage_outcomes", { queue });
 }
 
 /** P17: apply a per-rule patch (PATCH /v1/pipeline-rules). `patch` is the
@@ -616,6 +644,9 @@ export async function startStream(args: {
      *  because that is what it already did. */
     per_utterance: boolean;
   } | null;
+  /** Client-minted session id (32 hex) → the handshake's `client_job`, so the server
+   *  counts this session as ONE run and the post-session outcome can name it. */
+  clientJob?: string | null;
   deviceId?: string | null;
   save?: boolean;
   recordingsDir?: string | null;
@@ -634,6 +665,7 @@ export async function startStream(args: {
     decodeOverrides: args.decodeOverrides ?? null,
     overrideProfile: args.overrideProfile ?? null,
     translateExpect: args.translateExpect ?? null,
+    clientJob: args.clientJob ?? null,
     deviceId: args.deviceId ?? null,
     save: args.save ?? false,
     recordingsDir: args.recordingsDir ?? null,

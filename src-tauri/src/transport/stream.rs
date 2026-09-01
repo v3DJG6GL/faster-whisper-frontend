@@ -70,6 +70,11 @@ pub struct StreamParams {
     // transport's business. Omitted → the server logs immediately, exactly as
     // it always has.
     pub translate_expect: Option<serde_json::Value>,
+    /// Client-minted session id (32 hex) → handshake `client_job`, so every utterance
+    /// row on the server links to ONE dictation session (usage counts sessions, not
+    /// phrases) and the post-session outcome report can name it. None → omitted; the
+    /// server then keys the job on its own session id.
+    pub client_job: Option<String>,
     pub api_key: Option<String>,
     pub in_rate: u32,
     pub save_dir: Option<PathBuf>, // Some → save the streamed 16 kHz audio as .wav
@@ -300,6 +305,12 @@ pub async fn run<F>(
     if let Some(v) = &params.translate_expect {
         if v.as_object().map_or(false, |m| !m.is_empty()) {
             config["translate_expect"] = v.clone();
+        }
+    }
+    // Forward the client-minted session id (only when set).
+    if let Some(j) = &params.client_job {
+        if !j.is_empty() {
+            config["client_job"] = json!(j);
         }
     }
     if let Err(e) = write.send(text_msg(config.to_string())).await {

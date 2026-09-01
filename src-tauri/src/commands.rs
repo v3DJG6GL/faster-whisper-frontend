@@ -747,29 +747,49 @@ pub async fn get_recent_words(
     transport::pipeline::get_recent_words(&server_url, key.as_deref()).await
 }
 
-/// P28: the caller's own usage (`GET /v1/usage`) — today + lifetime totals +
-/// a self-scoped trend series, for the Home stats section and the optional chip
-/// readout. Best-effort — null on any error so the UI hides the feature on a
-/// standard/old server or when unreachable. `tz_midnight` is the client's local
-/// midnight (epoch seconds) for a viewer-local "today".
+/// P28: the caller's own usage document (`GET /v1/usage`) — per-kind today/total, the
+/// daily series, stages, dictation facets, apps, calendar and streak — for the Home strip,
+/// the Statistics page and the optional chip readout. Best-effort — null on any error so
+/// the UI hides the feature on a standard/old server or when unreachable. `tz` is the
+/// caller's IANA zone so the server reckons days (and DST) the way the viewer does.
 #[tauri::command]
 pub async fn get_usage_stats(
     server_url: String,
     backend_id: Option<String>,
     api_key: Option<String>,
-    tz_midnight: Option<f64>,
     days: Option<i64>,
-    bucket: Option<String>,
+    tz: Option<String>,
 ) -> Option<transport::UsageStats> {
     let key = resolve_key_async(api_key, backend_id).await;
-    transport::discovery::get_usage_stats(
-        &server_url,
-        key.as_deref(),
-        tz_midnight,
-        days,
-        bucket.as_deref(),
-    )
-    .await
+    transport::discovery::get_usage_stats(&server_url, key.as_deref(), days, tz.as_deref()).await
+}
+
+/// Report end-of-dictation outcomes (`POST /v1/usage/outcome`). Structured result
+/// (never throws) so the TS queue can tell retry-later (0 / 5xx / 408 / 429) from
+/// drop-it (other 4xx) — see lib/usageOutcome.ts.
+#[tauri::command]
+pub async fn post_usage_outcomes(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    outcomes: Vec<transport::usage::UsageOutcome>,
+) -> transport::usage::UsageOutcomePost {
+    let key = resolve_key_async(api_key, backend_id).await;
+    transport::usage::post_usage_outcomes(&server_url, key.as_deref(), outcomes).await
+}
+
+/// The on-disk outcome queue (`<app_data_dir>/usage-outcomes.json`): outcomes that could
+/// not be posted yet (server down mid-session) survive a restart here. Opaque JSON to
+/// Rust; the queue logic lives in TS.
+#[tauri::command]
+pub fn load_usage_outcomes(app: AppHandle) -> Option<serde_json::Value> {
+    app.path().app_data_dir().ok().and_then(|d| config::usage_queue::load(&d))
+}
+
+#[tauri::command]
+pub fn save_usage_outcomes(app: AppHandle, queue: serde_json::Value) -> Result<(), String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    config::usage_queue::save(&dir, &queue).map_err(|e| e.to_string())
 }
 
 // ── P30: settings export/import + server sync ──────────────────────────────
@@ -1336,6 +1356,8 @@ pub async fn start_stream(
     // translate on a separate request, so it holds each utterance's log
     // receipt open rather than logging two unlinked halves.
     translate_expect: Option<serde_json::Value>,
+    // Client-minted session id (32 hex) → handshake `client_job`; None = server-keyed.
+    client_job: Option<String>,
     device_id: Option<String>,
     save: bool,
     recordings_dir: Option<String>,
@@ -1364,6 +1386,7 @@ pub async fn start_stream(
                 decode_overrides,
                 translate_expect,
                 override_profile,
+                client_job,
                 device_id,
                 save_dir,
                 trim_silence,

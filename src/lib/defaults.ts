@@ -63,6 +63,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     recordingsRetentionDays: 0,
     muteSystemAudio: true,
     handsFreeAutoStopMin: 30,
+    // App id only (never the window title); the Statistics page's "Typed into" facet.
+    reportTargetApp: true,
     realtimePreview: true,
     realtimePreviewOnHover: false,
     showProfileOnOverlay: true,

@@ -113,9 +113,11 @@ function trayRoute(state: ReturnType<typeof useApp.getState>): string {
 
 /** Build the chip's tiny usage readout (today's value) for the chosen metric. */
 function chipStatsLine(u: UsageStats, metric: OverlayStatsMetric): string {
-  if (metric === "audio") return `${fmtDuration(u.today.audio_s)} today`;
-  if (metric === "both") return `${fmtCompact(u.today.words)}w · ${fmtDuration(u.today.audio_s)}`;
-  return `${fmtCompact(u.today.words)} words`;
+  // `today.all` — every kind, like the Words tile; the per-kind split is a Statistics matter.
+  const t = u.today.all;
+  if (metric === "audio") return `${fmtDuration(t.audio_s)} today`;
+  if (metric === "both") return `${fmtCompact(t.words)}w · ${fmtDuration(t.audio_s)}`;
+  return `${fmtCompact(t.words)} words`;
 }
 
 let started = false;

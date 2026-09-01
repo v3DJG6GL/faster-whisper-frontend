@@ -2311,7 +2311,8 @@ export interface SecurityChange {
     | "save-recordings"
     | "history-retention"
     | "dictation-retention"
-    | "dictation-history";
+    | "dictation-history"
+    | "report-target-app";
   /** The backend a `backends`-category change applies to; the recording kinds have no backend and
    *  set this to an empty string (the dialog omits it). */
   backend: string;
@@ -2330,7 +2331,8 @@ function catOf(kind: SecurityChange["kind"]): SyncCategory {
     kind === "recording-retention" ||
     kind === "save-recordings" ||
     kind === "dictation-retention" ||
-    kind === "dictation-history"
+    kind === "dictation-history" ||
+    kind === "report-target-app"
   ) {
     return "recording";
   }
@@ -2396,6 +2398,16 @@ export function securityChanges(
     }
     // Strictly more destructive than the retention clock beside it: Rust's retention sweep
     // wipes EVERY dictation record the moment this reads false, on the next config save.
+    // Incoming `false` wins silently (a peer's opt-OUT tightens privacy and applies at once);
+    // an incoming `true` would start sending the app id of every dictation to the server
+    // from this device, so it is held for review like `saveRecordings`.
+    if (incoming.recording.reportTargetApp === true && local.recording?.reportTargetApp === false) {
+      out.push({
+        kind: "report-target-app",
+        backend: "",
+        detail: "the name of the app you dictate into would be reported to the server with every dictation",
+      });
+    }
     if (
       incoming.recording.keepDictationHistory === false &&
       local.recording?.keepDictationHistory !== false

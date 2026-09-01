@@ -1199,6 +1199,15 @@ export default function Settings() {
               </SettingRow>
             </div>
             <SettingRow
+              title={SETTING.reportTargetApp.label}
+              desc="Sends the program name — never the window title — with each dictation so Statistics can show where you dictate. Off keeps that to yourself."
+            >
+              <Toggle
+                checked={s.recording.reportTargetApp ?? true}
+                onChange={(v) => updateRecording({ reportTargetApp: v })}
+              />
+            </SettingRow>
+            <SettingRow
               title={SETTING.dictationRetention.label}
               desc="One clock for the whole session — text and audio leave together. Dictations are usually typed into their target and done; a short window is plenty. Old ones are removed on launch and whenever you change this."
               disabled={dictOff}

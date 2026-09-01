@@ -24,6 +24,7 @@
 import { useApp } from "./store";
 import { translateFailureDoorway } from "./errors";
 import { attachRecordingPath, recordDictation } from "./transcriptHistory";
+import { enqueueOutcome } from "./usageOutcome";
 import { backendPrompt, effectiveServerUrl } from "./backends";
 import { effectiveServerKind } from "./serverKind";
 import { refreshCaps, translationWarm } from "./capabilities";
@@ -222,6 +223,12 @@ function endOutcome(): "typed" | "clipboard" | "none" {
 let sessionMeta: {
   startedAt: number;
   backendId: string;
+  /** The address the session talked to (per-device override applied) — the outcome
+   *  post must go to the same server that holds the job. */
+  serverUrl: string;
+  /** The client-minted session id sent as the stream handshake's `client_job`; null for
+   *  a batch-endpoint session, which the server keys itself (no outcome is posted). */
+  clientJob: string | null;
   model: string;
   language: string;
   profileName?: string;
@@ -231,6 +238,35 @@ let sessionMeta: {
   appTitle?: string;
   blocked: boolean;
 } | null = null;
+/** Set once the session's outcome has been queued (settle OR cancel — never both). */
+let sessionOutcomeReported = false;
+
+/** Queue this session's end-of-session facts for `POST /v1/usage/outcome` (lib/usageOutcome.ts).
+ *  Once per session: settleIdle reports the truthful delivery, cancelLive reports "none".
+ *  The app id goes only with "Report the app I dictate into" on and never for a target an
+ *  App rule blocked (the same promise the history capture keeps). Words and audio seconds
+ *  are the server's own — it counted the utterances. */
+function reportSessionOutcome(delivery: "typed" | "clipboard" | "none"): void {
+  const meta = sessionMeta;
+  if (!meta || !meta.clientJob || sessionOutcomeReported) return;
+  sessionOutcomeReported = true;
+  const translation = sessionInsertSkipped
+    ? "aborted"
+    : sessionTranslation == null
+      ? "not_asked"
+      : sessionTranslatedText != null
+        ? "translated"
+        : "kept_original";
+  const reportApp = useApp.getState().settings.recording.reportTargetApp !== false;
+  const appId = reportApp && !meta.blocked ? meta.appId?.trim().slice(0, 64) : undefined;
+  enqueueOutcome(meta.backendId, meta.serverUrl, {
+    job_id: meta.clientJob,
+    activation: meta.activation ?? "hold",
+    delivery,
+    translation,
+    ...(appId ? { app_id: appId } : {}),
+  });
+}
 // The saved .wav's path (Rust `stream://recording`, epoch-gated). Usually lands
 // BEFORE settle (both save sites run before the terminal closed/final) — but a
 // slow disk can invert that, so a late arrival patches the already-saved record.
@@ -1074,6 +1110,9 @@ function settleIdle(): void {
   // Before the state flip: the capture reads the session docs (reset only by
   // the NEXT startLiveInner / cancelLive) and must run while they're intact.
   const saved = captureDictationHistory();
+  // The outcome post reads the same session docs (translation state, insert-skipped)
+  // and the delivery flags — all intact until the next start — so it rides right after.
+  reportSessionOutcome(endOutcome());
   // `dictationPhase` is cleared in the SAME call as the status move — a phase
   // published for a status that no longer exists would keep a cold-translate
   // card on screen over an idle chip.
@@ -2641,6 +2680,9 @@ async function startLiveInner(
     sessionMeta = {
       startedAt: Date.now(),
       backendId: backend.id,
+      serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+      // 32 hex, the shape the server validates (`^[0-9a-f]{8,64}$`).
+      clientJob: endpoint === "batch" ? null : crypto.randomUUID().replace(/-/g, ""),
       model,
       language,
       profileName: prof?.name,
@@ -2652,6 +2694,7 @@ async function startLiveInner(
     };
     sessionRecordingPath = null;
     capturedRecordId = null;
+    sessionOutcomeReported = false;
   }
   committedDoc = "";
   injectedText = "";
@@ -2764,6 +2807,8 @@ async function startLiveInner(
             }
           : null,
         responseFormat: backend.responseFormat,
+        // Session id for the server's usage rollup (one run per session) + the outcome post.
+        clientJob: sessionMeta?.clientJob ?? null,
         deviceId,
         save: rec.saveRecordings,
         recordingsDir: audioBasePref(rec),
@@ -2935,6 +2980,9 @@ export async function cancelLive(): Promise<void> {
   clearWarmTimer();
   clearStuckWatchdog();
   stopTargetPoll();
+  // A cancelled session still happened on the server (its utterances are counted); tell it
+  // nothing landed, so the Dictation panel shows "Nothing" rather than "unreported".
+  reportSessionOutcome("none");
   sessionMeta = null; // a cancelled session is never recorded to History
   // A translate may be in flight for a phrase this cancel just discarded. Tell
   // the server to stop: dropping our end leaves it generating tokens for text

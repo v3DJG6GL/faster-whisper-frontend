@@ -179,7 +179,10 @@ pub fn run() {
             commands::get_pipeline_rules, // P17: GET /v1/pipeline-rules
             commands::save_pipeline_rules, // P17: PATCH /v1/pipeline-rules
             commands::get_recent_words,   // P18: GET /v1/recent-words (key suggestions)
-            commands::get_usage_stats,    // P28: GET /v1/usage (per-user stats + trend)
+            commands::get_usage_stats,    // P28: GET /v1/usage (per-user usage document)
+            commands::post_usage_outcomes, // POST /v1/usage/outcome (end-of-dictation facets)
+            commands::load_usage_outcomes, // on-disk outcome queue (survives restarts)
+            commands::save_usage_outcomes,
             commands::sync_pull,          // P30: GET /v1/client-settings
             commands::sync_push,          // P30: PUT /v1/client-settings
             commands::sync_delete,        // P30: DELETE /v1/client-settings

@@ -48,9 +48,9 @@ const MAX_NAME: usize = 120;
 const PROMPT_MAX: usize = 2000;
 /// The decode-values map is a handful of scalars; anything past this is not a real profile.
 const VALUES_MAX_BYTES: usize = 64 * 1024;
-/// Ceiling on the usage trend points kept. The client asks for 90 and renders the tail, so
-/// this is far above any window the UI can request while removing the 32 MiB body headroom.
-const MAX_SERIES: usize = 400;
+/// Ceiling on the usage trend points kept. The server clamps `days` to 366 and the client
+/// renders the tail, so this removes the 32 MiB body headroom without clipping a real window.
+const MAX_SERIES: usize = 366;
 
 fn bounded_name(s: &str) -> String {
     super::bounded_server_text(s, MAX_NAME)
@@ -231,29 +231,43 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     Some(caps)
 }
 
-/// The caller's own usage (`GET /v1/usage`, full backend only): today + total
-/// + a self-scoped daily/weekly trend series. Best-effort: any error (endpoint
-/// absent on a standard/old server, unauthorized, unreachable) → None, so the
-/// UI simply hides the stats surfaces (Home section + chip line). Query params
-/// are omitted when None so the server applies its own defaults.
+/// Ceiling on the list blocks of the usage document (stages / targets-per-stage / apps).
+const MAX_USAGE_LIST: usize = 16;
+/// Ceiling on the calendar days kept (the client asks for 90).
+const MAX_CALENDAR: usize = 400;
+
+/// An IANA zone name is `Area/City`-shaped ASCII (`Europe/Zurich`, `America/Argentina/
+/// Buenos_Aires`, `Etc/GMT+2`). Anything else is not a zone the server could resolve, and
+/// pasting it raw into the query could break URL parsing — so it is simply omitted (the
+/// server then falls back to its local zone, as it does when the param is absent).
+fn iana_zone_ok(tz: &str) -> bool {
+    !tz.is_empty()
+        && tz.len() <= 64
+        && tz
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-' | b'+'))
+}
+
+/// The caller's own usage document (`GET /v1/usage`, full backend only): today + total
+/// per kind, the per-kind daily series, stage usage, dictation facets, apps, the
+/// activity calendar and streak. Best-effort: any error (endpoint absent on a
+/// standard/old server, unauthorized, unreachable) → None, so the UI simply hides the
+/// stats surfaces (Home section + chip line). Query params are omitted when None so the
+/// server applies its own defaults.
 pub async fn get_usage_stats(
     server_url: &str,
     api_key: Option<&str>,
-    tz_midnight: Option<f64>,
     days: Option<i64>,
-    bucket: Option<&str>,
+    tz: Option<&str>,
 ) -> Option<UsageStats> {
     let base = base_url(server_url);
     let mut q: Vec<String> = Vec::new();
-    if let Some(tz) = tz_midnight {
-        q.push(format!("tz_midnight={tz}"));
-    }
     if let Some(d) = days {
         q.push(format!("days={d}"));
     }
-    if let Some(b) = bucket {
-        if !b.is_empty() {
-            q.push(format!("bucket={b}"));
+    if let Some(z) = tz {
+        if iana_zone_ok(z) {
+            q.push(format!("tz={z}"));
         }
     }
     let url = if q.is_empty() {
@@ -261,19 +275,31 @@ pub async fn get_usage_stats(
     } else {
         format!("{base}/v1/usage?{}", q.join("&"))
     };
-    // `username` and `range.bucket` ride in a struct the store re-serializes with TWO
+    // Every string and list here rides in a struct the store re-serializes with TWO
     // JSON.stringify passes on the main thread every 30s for every backend — the same reason
-    // `series` is already sliced client-side. The `test_connection` sibling caps `username`.
+    // `series` is sliced client-side. The `test_connection` sibling caps `username`.
     let mut u: UsageStats = get_json(url, api_key).await?;
     u.username = bounded_name(&u.username);
-    u.range.bucket = bounded_name(&u.range.bucket);
-    // `series` was bounded at the CONSUMER (usage.ts slices to 90) — i.e. after the whole cost
-    // had already been paid: the webview parses the full list off the IPC on the main thread
-    // before that slice runs, on an unattended 30s poll, once per backend. Keep the NEWEST
-    // points: the client renders the tail, so truncating from the front would show a long-lived
-    // server's oldest window instead of its current one.
+    u.tz = bounded_name(&u.tz);
+    // Keep the NEWEST points: the client renders the tail, so truncating from the front
+    // would show a long-lived server's oldest window instead of its current one.
     if u.series.len() > MAX_SERIES {
         u.series.drain(..u.series.len() - MAX_SERIES);
+    }
+    if u.calendar.len() > MAX_CALENDAR {
+        u.calendar.drain(..u.calendar.len() - MAX_CALENDAR);
+    }
+    u.stages.truncate(MAX_USAGE_LIST);
+    for st in &mut u.stages {
+        st.stage = super::bounded_server_text(&st.stage, 32);
+        st.targets.truncate(MAX_USAGE_LIST);
+        for t in &mut st.targets {
+            t.code = super::bounded_server_text(&t.code, 16);
+        }
+    }
+    u.apps.truncate(MAX_USAGE_LIST);
+    for a in &mut u.apps {
+        a.app_id = super::bounded_server_text(&a.app_id, 64);
     }
     Some(u)
 }

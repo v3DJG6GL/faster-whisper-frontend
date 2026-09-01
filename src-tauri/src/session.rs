@@ -123,6 +123,8 @@ pub struct StartParams {
     /// Declares that this session will translate on a separate request, so the
     /// server keeps each utterance's log receipt open until it lands.
     pub translate_expect: Option<serde_json::Value>,
+    /// Client-minted session id forwarded as the handshake's `client_job`.
+    pub client_job: Option<String>,
     pub device_id: Option<String>,
     pub save_dir: Option<PathBuf>,
     pub trim_silence: bool,
@@ -228,6 +230,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         translate_expect: p.translate_expect,
         decode_overrides: p.decode_overrides,
         override_profile: p.override_profile,
+        client_job: p.client_job,
         api_key: p.api_key,
         in_rate,
         save_dir: p.save_dir,
