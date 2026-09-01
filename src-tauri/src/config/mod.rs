@@ -1008,9 +1008,19 @@ pub mod keys {
     /// round trip — tens of ms each, and on flaky Secret Service daemons every
     /// read is another chance to fail. The store is only ever written through
     /// `set`/`delete` below, so the cache cannot go stale within the process.
-    fn cache() -> &'static Mutex<HashMap<String, String>> {
-        static CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    /// Values are `Option`: a `None` memoizes "no entry stored" — a keyless backend
+    /// is a normal configuration and must not cost a D-Bus round trip per call.
+    fn cache() -> &'static Mutex<HashMap<String, Option<String>>> {
+        static CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
         CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Whether a failed keyring read is worth exactly one more attempt. Only a
+    /// platform/D-Bus flake is: `Ambiguous`, `Invalid`, `TooLong` and `BadEncoding`
+    /// are deterministic, and `NoStorageAccess` (a locked KWallet / Secret Service)
+    /// parks behind a password prompt — retrying it prompts the user a second time.
+    pub(crate) fn retryable(e: &keyring::Error) -> bool {
+        matches!(e, keyring::Error::PlatformFailure(_))
     }
 
     fn entry(backend_id: &str) -> keyring::Result<keyring::Entry> {
@@ -1022,13 +1032,13 @@ pub mod keys {
         cache()
             .lock()
             .unwrap()
-            .insert(backend_id.to_string(), secret.to_string());
+            .insert(backend_id.to_string(), Some(secret.to_string()));
         Ok(())
     }
 
     pub fn get(backend_id: &str) -> Option<String> {
         if let Some(k) = cache().lock().unwrap().get(backend_id) {
-            return Some(k.clone());
+            return k.clone();
         }
         // One extra attempt on a transient platform error: each try opens a
         // fresh D-Bus connection (and, with an encrypted session, a fresh DH
@@ -1042,16 +1052,20 @@ pub mod keys {
                     cache()
                         .lock()
                         .unwrap()
-                        .insert(backend_id.to_string(), k.clone());
+                        .insert(backend_id.to_string(), Some(k.clone()));
                     return Some(k);
                 }
-                // Simply not stored — the caller treats the backend as keyless.
-                Err(keyring::Error::NoEntry) => return None,
+                // Simply not stored — the caller treats the backend as keyless. Memoized
+                // like a hit: `set`/`delete` write through, so it cannot go stale in-process.
+                Err(keyring::Error::NoEntry) => {
+                    cache().lock().unwrap().insert(backend_id.to_string(), None);
+                    return None;
+                }
                 // Anything else (Ambiguous duplicate items, a store/platform failure) means a
                 // key may EXIST but cannot be read — the visible symptom is an opaque 403 on
                 // connect, so say what actually happened.
                 Err(e) => {
-                    if attempt == 0 {
+                    if attempt == 0 && retryable(&e) {
                         continue;
                     }
                     // Debug-format the id, like `resolve_key`'s sibling log: it is a sync/import-supplied
@@ -1077,6 +1091,15 @@ pub mod keys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_platform_failures_are_retried() {
+        use super::keys::retryable;
+        assert!(retryable(&keyring::Error::PlatformFailure("dbus".into())));
+        assert!(!retryable(&keyring::Error::NoStorageAccess("locked".into())));
+        assert!(!retryable(&keyring::Error::Ambiguous(vec![])));
+        assert!(!retryable(&keyring::Error::Invalid("attr".into(), "why".into())));
+    }
 
     /// Frontend-owned keys must survive the typed `Config` round-trip that `save_config`
     /// performs — a field missing from these structs is silently dropped on every save.

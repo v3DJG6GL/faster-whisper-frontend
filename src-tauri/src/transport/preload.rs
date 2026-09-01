@@ -28,21 +28,15 @@ pub struct PreloadModel {
 #[derive(Serialize)]
 struct PreloadReq {
     models: Vec<PreloadModel>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    plan_id: Option<String>,
     stage_ahead: bool,
 }
 
-/// Only the plan id is read back. The per-model `state`/`reason` fields are
-/// deliberately NOT surfaced: `deferred` is the backend's answer for a
-/// disallowed model, a disabled stage and a disabled feature alike, and none of
-/// those is something the user asked for or can act on here.
-#[derive(Deserialize)]
-struct PreloadResp {
-    #[serde(default)]
-    #[allow(dead_code)]
-    plan_id: Option<String>,
-}
+// Nothing in the response is surfaced. The per-model `state`/`reason` fields are
+// deliberately NOT read: `deferred` is the backend's answer for a disallowed model,
+// a disabled stage and a disabled feature alike, and none of those is something the
+// user asked for or can act on here. The plan id is not read back either — the
+// client re-POSTs the whole plan on each renew tick (preload.ts), and a `plan_id`
+// that nothing could ever supply was dead plumbing across four layers.
 
 /// Ask the server to start warming the models a job is about to need.
 ///
@@ -53,7 +47,6 @@ pub async fn preload_models(
     server_url: &str,
     api_key: Option<&str>,
     models: Vec<PreloadModel>,
-    plan_id: Option<String>,
 ) -> bool {
     if models.is_empty() {
         return false;
@@ -67,7 +60,6 @@ pub async fn preload_models(
                 id: super::bounded_server_text(&m.id, MAX_ID),
             })
             .collect(),
-        plan_id,
         // Server-driven stage-ahead: the backend walks the plan forward on its
         // own as stages complete, so the client never has to re-POST mid-run.
         stage_ahead: true,
@@ -86,7 +78,7 @@ pub async fn preload_models(
         Ok(r) if r.status().is_success() => {
             // Drained (capped) rather than dropped so the connection returns to
             // the pool. A body we can't parse still means the hint landed.
-            let _ = json_capped_to::<PreloadResp>(r, super::MAX_META_BODY).await;
+            let _ = json_capped_to::<serde::de::IgnoredAny>(r, super::MAX_META_BODY).await;
             true
         }
         _ => false,

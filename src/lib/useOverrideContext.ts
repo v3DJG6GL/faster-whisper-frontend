@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { getOverrideProfile } from "@/lib/api";
+import { getCapabilities, getOverrideProfile } from "@/lib/api";
+import { effectiveServerUrl, normalizeUrl } from "@/lib/backends";
 import { refreshCaps } from "@/lib/capabilities";
 import { useApp } from "@/lib/store";
 import { hasOwn, ownProp } from "@/lib/own";
@@ -37,17 +38,45 @@ export function useOverrideContext(args: {
   // trigger a refresh; present-null ⇒ fetched and unsupported, don't refetch.
   const caps = useApp((s) => (backendId ? (ownProp(s.caps, backendId) ?? null) : null));
   const capsFetched = useApp((s) => (backendId ? hasOwn(s.caps, backendId) : false));
+  // The store cache is keyed on the SAVED backend. A draft (not in the store yet) or a
+  // target being typed into the Backends editor is not that backend: fetch the typed
+  // target directly, into local state, so the capability gate and the translation
+  // model/language lists describe the server being configured, not the one saved.
+  const [liveCaps, setLiveCaps] = useState<Capabilities | null>(null);
+  const [live, setLive] = useState(false);
   const [resolved, setResolved] = useState<InheritedValues | undefined>(undefined);
   const [resolvedPrompt, setResolvedPrompt] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    if (serverKind === "standard" || !backendId || capsFetched) return;
-    // Absent ⇒ never fetched for this backend; the store is invalidated at the four
-    // sites that repoint or drop a backend, so a stale entry can't survive an edit
-    // and there is nothing to clear here. refreshCaps is best-effort and coalesces.
-    const backend = useApp.getState().backends.find((b) => b.id === backendId);
-    if (backend) void refreshCaps(backend);
-  }, [backendId, serverKind, capsFetched]);
+    if (serverKind === "standard" || !backendId) return;
+    const st = useApp.getState();
+    const backend = st.backends.find((b) => b.id === backendId);
+    const savedTarget = backend ? effectiveServerUrl(backend, st.settings) : null;
+    const typedTarget = serverUrl.trim();
+    const editing =
+      !backend ||
+      (!!typedTarget && normalizeUrl(typedTarget) !== normalizeUrl(savedTarget ?? "")) ||
+      (!!apiKey && !backend.hasApiKey);
+    if (!editing) {
+      setLive(false);
+      // Absent ⇒ never fetched; the store is invalidated at the sites that repoint or
+      // drop a backend. A cached NULL is NOT terminal: refreshCaps cannot tell "server
+      // said no" from "the probe failed" (both arrive as null), so one blip pinned the
+      // panels to empty lists for the session — retry on mount; refreshCaps coalesces.
+      if (!capsFetched || !caps) void refreshCaps(backend);
+      return;
+    }
+    setLive(true);
+    let cancelled = false;
+    void getCapabilities({ serverUrl: typedTarget, backendId, apiKey })
+      .catch(() => null)
+      .then((c) => {
+        if (!cancelled) setLiveCaps(c);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [serverUrl, apiKey, backendId, serverKind, capsFetched, caps]);
 
   useEffect(() => {
     const name = profileName?.trim();
@@ -79,5 +108,5 @@ export function useOverrideContext(args: {
     };
   }, [serverUrl, backendId, apiKey, profileName, serverKind]);
 
-  return { caps, resolved, resolvedPrompt };
+  return { caps: live ? liveCaps : caps, resolved, resolvedPrompt };
 }

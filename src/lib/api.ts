@@ -348,7 +348,6 @@ export async function preloadModels(args: {
   backendId?: string | null;
   apiKey?: string | null;
   models: { family: PreloadFamily; id: string }[];
-  planId?: string | null;
 }): Promise<boolean> {
   if (!isTauri) return false;
   return invoke<boolean>("preload_models", {
@@ -356,7 +355,6 @@ export async function preloadModels(args: {
     backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
     models: args.models,
-    planId: args.planId ?? null,
   });
 }
 

@@ -639,10 +639,9 @@ pub async fn preload_models(
     backend_id: Option<String>,
     api_key: Option<String>,
     models: Vec<transport::preload::PreloadModel>,
-    plan_id: Option<String>,
 ) -> bool {
     let key = resolve_key(api_key, backend_id);
-    transport::preload::preload_models(&server_url, key.as_deref(), models, plan_id).await
+    transport::preload::preload_models(&server_url, key.as_deref(), models).await
 }
 
 /// One override-profile's decode values + locked client keys, for previewing
