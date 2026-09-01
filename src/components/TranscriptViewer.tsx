@@ -20,6 +20,7 @@ import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { Button, LangTag } from "@/components/ui";
 import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
+import { seekKeyTarget } from "@/lib/seekKeys";
 import {
   cancelTextTranslation, decodeMediaFile, getTranscribeProgress, openSourceUrl,
   pickExportPath, readMediaFile, saveTextFile, isTauri, translateText,
@@ -140,7 +141,7 @@ type EffSegment = {
  *  shallow prop compare, which is what makes the frame-rate clock affordable. */
 const SegmentRow = memo(function SegmentRow({
   seg, i, isActive, passed, activeWordIdx, passedWordIdx, range, words, showTs,
-  showNames, colorize, editMode, reassignOpen, speakers, canSeek, origText,
+  showNames, colorize, editMode, reassignOpen, speakers, canSeek,
   translations, translationsKept, visLangsKey, origVisible, origLang, stale,
   isFrontier,
   colorOf, displayName, seekTo, onToggleReassign, onReassign, onCommitEdit,
@@ -163,7 +164,6 @@ const SegmentRow = memo(function SegmentRow({
   reassignOpen: boolean;
   speakers: string[];
   canSeek: boolean;
-  origText: string;
   /** This segment's translations (server result — corrections don't touch them). */
   translations: Record<string, string> | undefined;
   /** Targets whose translation KEPT the source text (server quality guard) —
@@ -288,7 +288,10 @@ const SegmentRow = memo(function SegmentRow({
               e.preventDefault();
               e.currentTarget.blur();
             } else if (e.key === "Escape") {
-              e.currentTarget.textContent = origText.trim();
+              // Revert to the last SAVED text (seg.text = fileEdits[i] ?? server
+              // text), not the raw server text: the blur commit compares to the
+              // original and would delete an earlier saved correction.
+              e.currentTarget.textContent = seg.text.trim();
               e.currentTarget.blur();
             }
           }}
@@ -1284,11 +1287,26 @@ export function TranscriptViewer({
 
   // A newly selected (possibly huge) transcript starts collapsed again — and
   // export track picks reset (they belong to the previous file's tracks).
+  // Keyed on record identity, not `result`: every retro-translate chunk merge
+  // hands in a fresh result object, and resetting on those wiped the export
+  // panel's track picks mid-selection every few seconds.
   useEffect(() => {
     setShowFullText(false);
     setExportTracks(null);
     setLineOrder("orig-first");
-  }, [path, result]);
+  }, [path, okey]);
+
+  // Translate-panel state belongs to the PREVIOUS record's backend — a record
+  // switch must re-seed it from the new record's backend defaults, or B's
+  // panel sends A's mode/model/targets (including B's own source language,
+  // which the seed exists to exclude).
+  useEffect(() => {
+    setShowTranslate(false);
+    setTrTargets(null);
+    setTrMode(trBackend?.translationOverrides?.mode ?? "fluent");
+    setTrModel(trBackend?.translationOverrides?.model ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-seed on record/backend switch only
+  }, [path, okey, trBackend?.id]);
 
   /** The <audio> errored on the asset URL — resolve through the fallback
    *  chain ONCE per step: (1) buffer the original bytes through Rust (asset
@@ -2124,7 +2142,7 @@ export function TranscriptViewer({
               : "click a sentence to correct it · click a speaker chip to reassign"}
           </span>
           <span className="flex-1" />
-          {flaggedIdxs.length > 0 && (
+          {flaggedIdxs.length > 0 && isTauri && retroTranslateAvailable && (
             <Button
               variant="ghost"
               size="sm"
@@ -2230,6 +2248,20 @@ export function TranscriptViewer({
               const rect = e.currentTarget.getBoundingClientRect();
               const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
               seekTo(frac * (audioLen || 0));
+            }}
+            // The window key handler concedes Space/arrows to a focused slider,
+            // so this one has to own them — a focusable ARIA slider without
+            // keyboard seeking was dead on exactly the control built for it.
+            onKeyDown={(e) => {
+              const next = seekKeyTarget(e.key, curTime, audioLen || 0, e.shiftKey);
+              if (next === "toggle") {
+                e.preventDefault();
+                togglePlay();
+                return;
+              }
+              if (next === null) return;
+              e.preventDefault();
+              seekTo(next);
             }}
           >
             <div className="absolute inset-x-0 top-1/2 h-[5px] -translate-y-1/2 overflow-hidden rounded-pill bg-surface-2">
@@ -2791,7 +2823,6 @@ export function TranscriptViewer({
                 reassignOpen={reassignRow === i}
                 speakers={speakers}
                 canSeek={canSeek}
-                origText={result.segments?.[i]?.text ?? ""}
                 translations={result.segments?.[i]?.translations}
                 translationsKept={result.segments?.[i]?.translationsKept}
                 visLangsKey={visLangsKey}
