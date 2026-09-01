@@ -74,7 +74,7 @@ jobs:
       # and `cargo update --workspace` below needs one.
       - uses: actions/setup-node@v7
         with:
-          node-version: 24.18.0
+          node-version: 24.20.0
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -166,7 +166,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 24.18.0
+          node-version: 24.20.0
           cache: pnpm
 
       # ci.yml's list + librsvg/patchelf/xdg-utils, which only the AppImage
