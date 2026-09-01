@@ -139,7 +139,7 @@ export function dictate(profileId: string, action: TriggerAction): void {
   // its wrongly-seeded prompt then popped at the NEXT session's one-shot translate.)
   setSettleTargetPicker(null);
   if (profile.askTranslationTargets && profile.activation !== "hold") {
-    void startWithPickedTargets(profile, backend, s.settings.microphoneId);
+    void startWithPickedTargets(profile, backend, s.settings.microphoneId, profile.activation);
     return;
   }
 
@@ -189,6 +189,7 @@ async function startWithPickedTargets(
   profile: Profile,
   backend: Backend,
   micId: string | null,
+  activation: Profile["activation"],
 ): Promise<void> {
   if (pickerOpen) return;
   pickerOpen = true;
@@ -214,7 +215,7 @@ async function startWithPickedTargets(
     void startLive(
       backend,
       micId,
-      profile.activation,
+      activation,
       {
         ...profile,
         translationOverrides: { ...profile.translationOverrides, translateTo: targets },
@@ -224,6 +225,21 @@ async function startWithPickedTargets(
   } finally {
     pickerOpen = false;
   }
+}
+
+/** Start a hands-free session from a surface that is not the Profile's own hotkey — the
+ *  Home button and the chip's toggle. Honours the Profile's "Ask for target languages" the
+ *  way `dictate()` does (the toggle's own help text promises a prompt before the mic opens),
+ *  and begins with the settle picker disarmed like every other start path. `profile` may be
+ *  undefined when only a Backend is targeted. */
+export function startHandsFree(backend: Backend, micId: string | null, profile: Profile | undefined): void {
+  setSettleTargetPicker(null);
+  useApp.getState().setDictation({ activeProfile: profile?.id ?? null });
+  if (profile?.askTranslationTargets) {
+    void startWithPickedTargets(profile, backend, micId, "handsfree");
+    return;
+  }
+  void startLive(backend, micId, "handsfree", profile);
 }
 
 /** Show the picker and resolve with the chosen targets, or `null` if dismissed. */
@@ -328,8 +344,7 @@ export function runOverlayAction(kind: string): void {
     const target = homeTargetProfile(s.profiles, s.settings.homeProfileId);
     const backend = backendForProfile(target, s.backends);
     if (!backend) return;
-    s.setDictation({ activeProfile: target?.id ?? null });
-    void startLive(backend, s.settings.microphoneId, "handsfree", target);
+    startHandsFree(backend, s.settings.microphoneId, target);
     return;
   }
   if (kind === "cycle-active-profile") {

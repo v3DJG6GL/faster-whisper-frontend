@@ -255,6 +255,28 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(g.autoEnter).toBe(false); // ditto (post-paste Return is armed locally only)
   });
 
+  it("a non-boolean askTranslationTargets is clamped before it can wedge save_config", async () => {
+    // Rust parses it as `Option<bool>` with no fallback; one bad leaf fails every later save.
+    useApp.setState({ settings: settings(), profiles: [] });
+    await applyBlob(
+      {
+        profiles: {
+          list: [
+            { id: "p1", name: "A", activation: "handsfree", enabled: true, hotkey: ["F5"], backendId: null,
+              askTranslationTargets: "yes" },
+            { id: "p2", name: "B", activation: "handsfree", enabled: true, hotkey: ["F6"], backendId: null,
+              askTranslationTargets: true },
+          ],
+          homeProfileId: null,
+        } as never,
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    const byId = Object.fromEntries(useApp.getState().profiles.map((p) => [p.id, p]));
+    expect(byId.p1.askTranslationTargets).toBe(false);
+    expect(byId.p2.askTranslationTargets).toBe(true);
+  });
+
   it("a peer cannot arm the post-paste Return through a PROFILE override either", async () => {
     // The twin of the `general` strip above. `autoEnter` moved onto Profile and AppRule as
     // an override, and `sanitizeProfiles` carries unlisted leaves through by reference — so

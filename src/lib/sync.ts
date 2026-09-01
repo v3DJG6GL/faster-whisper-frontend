@@ -719,6 +719,9 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       name: typeof p.name === "string" ? p.name : "",
       tag: typeof p.tag === "string" ? p.tag : undefined,
       typeAsISpeak: p.typeAsISpeak == null ? undefined : p.typeAsISpeak === true,
+      // Typed `Option<bool>` in Rust like its sibling above: a non-boolean would fail the
+      // whole `save_config` parse.
+      askTranslationTargets: p.askTranslationTargets == null ? undefined : p.askTranslationTargets === true,
       // Per-Profile insertion overrides get the same clamps their per-app twins do —
       // `save_config` parses into a typed Rust struct with no serde fallback, so ONE bad
       // enum here wedges every later save for the session. Everything not listed rides the

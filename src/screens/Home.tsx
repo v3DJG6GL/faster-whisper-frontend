@@ -9,9 +9,9 @@ import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/UsageStats";
 import { SetupChecklist } from "@/components/SetupChecklist";
-import { startLive, stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/streaming";
+import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/streaming";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
-import { backendForProfile, homeTargetProfile } from "@/lib/dictation";
+import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation";
 import { languageLabel } from "@/lib/languages";
 import type { Backend, Profile } from "@/lib/types";
 
@@ -103,7 +103,6 @@ export default function Home() {
   const homeProfileId = useApp((s) => s.settings.homeProfileId);
   const activeProfile = useApp((s) => s.activeProfile);
   const updateSettings = useApp((s) => s.updateSettings);
-  const setDictation = useApp((s) => s.setDictation);
 
   const enabled = profiles.filter((p) => p.enabled);
   // The hero button has no held chord (you click it), so it always dictates hands-free
@@ -187,12 +186,10 @@ export default function Home() {
     if (requestStopIfStarting()) return;
     // idle or error → start fresh (startLive clears any prior error).
     if (!headerBackend) return;
-    // Tell the overlay chip which Profile is dictating (the hotkey path does this in
-    // dictate(); the button bypasses it). null when only a backend is targeted.
-    setDictation({ activeProfile: target?.id ?? null });
-    // startLive resolves effective language / prompt / decode (target over backend);
-    // target may be undefined → the backend's own defaults are used.
-    void startLive(headerBackend, micId, "handsfree", target);
+    // Stamps the active Profile for the chip, honours "Ask for target languages", and
+    // resolves effective language / prompt / decode (target over backend); target may be
+    // undefined → the backend's own defaults are used.
+    startHandsFree(headerBackend, micId, target);
   };
 
   return (

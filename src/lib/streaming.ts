@@ -241,6 +241,10 @@ let capturedRecordId: string | null = null;
  *  can create a translation the Profile didn't configure (`applySessionTargets`). Set at
  *  every session start, even when `sessionTranslation` itself is null. */
 let sessionTranslationBase: Omit<NonNullable<typeof sessionTranslation>, "targets"> | null = null;
+/** What `translateExpect.per_utterance` told the server at session start — the only time it
+ *  can be said. Read by `maybeTranslate` so a phrase waits for a capture id only when one was
+ *  asked for; `applyReclassify` can flip `insertCfg.live` later, but not this. */
+let sessionPerUtteranceDeclared = false;
 let sessionTranslation: {
   targets: string[];
   includeOriginal?: boolean;
@@ -424,7 +428,7 @@ function foldTranslatePhase(p: BatchProgress): void {
 async function maybeTranslate(
   text: string,
   cfg: InsertCfg | null,
-  opts?: { oneShot?: boolean; queued?: number; utterance?: number },
+  opts?: { oneShot?: boolean; queued?: number; utterance?: number | null },
 ): Promise<PhraseOut> {
   const tr = sessionTranslation;
   if (!tr || !text.trim()) return { text, translated: false };
@@ -438,7 +442,14 @@ async function maybeTranslate(
     // call, so there is no single utterance whose receipt it completes — and
     // taking "the most recent id" (what it used to do) meant stealing the last
     // live phrase's receipt.
-    const capturedId = await captureIds.take(oneShot ? null : (opts?.utterance ?? null));
+    // …and only when this session TOLD the server to hold per-utterance receipts. A hold
+    // session opens with `live` off and declares `per_utterance: false`; when its hands-free
+    // superset upgrades it in place (`applyReclassify`) the phrases take the live path, but
+    // the server was never asked for receipts and sends no `captured` frame — waiting for
+    // one would park every phrase for the full timeout.
+    const capturedId = await captureIds.take(
+      oneShot || !sessionPerUtteranceDeclared ? null : (opts?.utterance ?? null),
+    );
     const r = await runDictationTranslate(
       {
         text,
@@ -550,7 +561,7 @@ async function maybeTranslate(
 async function translatePhrase(
   text: string,
   cfg: InsertCfg | null,
-  opts?: { queued?: number; utterance?: number },
+  opts?: { queued?: number; utterance?: number | null },
 ): Promise<PhraseOut> {
   if (!sessionTranslation) return { text, translated: false };
   const before = useApp.getState().status;
@@ -1334,7 +1345,7 @@ async function ensureListeners(): Promise<void> {
     if (insertCfg?.live && capturing) bumpPhraseEnd();
   });
 
-  type FinalFrame = { committed: string; tail: string; last: boolean; utterance: number };
+  type FinalFrame = { committed: string; tail: string; last: boolean; utterance: number | null };
   await reg<FinalFrame>("stream://final", (e) => {
     // A cancelled/errored session's detached drain can still emit a late `final` on the
     // un-advanced epoch (cancelLive/stopRecord don't bump ACTIVE_EPOCH, so emit_if_active
@@ -1397,7 +1408,9 @@ async function ensureListeners(): Promise<void> {
       // everything else the queued task needs. It is how the phrase finds its
       // own capture id (and so its own held log receipt) instead of taking
       // whichever id happened to arrive last.
-      const utterance = e.payload.utterance ?? 0;
+      // `null` from a server that predates the ordinal: pair nothing, rather than
+      // keying every phrase of the session onto ordinal 0.
+      const utterance = typeof e.payload.utterance === "number" ? e.payload.utterance : null;
       enqueueInject(async () => {
         const t = await resolveTarget(cfg);
         // Discard a cancelled/superseded session's phrase — don't inject it into the new/refocused
@@ -1658,12 +1671,14 @@ async function ensureListeners(): Promise<void> {
     if (capturedRecordId) attachRecordingPath(capturedRecordId, e.payload);
   });
 
-  await reg<{ id: string; utterance: number }>("stream://captured", (e) => {
+  await reg<{ id: string; utterance: number | null }>("stream://captured", (e) => {
     // Epoch-gated in Rust, so a cancelled session's id never lands here and
     // gets attached to whatever session started next.
     const id = e.payload?.id;
     if (!id) return;
-    captureIds.resolve(e.payload.utterance ?? 0, id);
+    // No ordinal = nothing to pair it with (an older server): the receipt stays unclaimed.
+    if (typeof e.payload.utterance !== "number") return;
+    captureIds.resolve(e.payload.utterance, id);
   });
 
   await reg<string>("stream://boundary", (e) => {
@@ -2380,6 +2395,7 @@ async function startLiveInner(
     sessionTranslation = trTargets.length ? { ...sessionTranslationBase, targets: trTargets } : null;
     sessionTranslatedText = null;
     sessionByLang = {};
+    sessionPerUtteranceDeclared = false;
     captureIds.reset();
     sessionTranslateWarned = false;
     sessionTranslateFailure = null;
@@ -2595,7 +2611,7 @@ async function startLiveInner(
               // end, so there is no per-utterance translation to wait for and
               // holding a receipt per utterance would strand every one of them
               // until the server's idle sweep.
-              per_utterance: !!insertCfg?.live,
+              per_utterance: (sessionPerUtteranceDeclared = !!insertCfg?.live),
             }
           : null,
         responseFormat: backend.responseFormat,
