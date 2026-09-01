@@ -384,6 +384,13 @@ mod win_hover {
     static VISIBLE: AtomicBool = AtomicBool::new(false);
     /// One poller thread for the app's lifetime (spawned on the first show).
     static POLLER: AtomicBool = AtomicBool::new(false);
+    /// Mirror of the window's ACTUAL click-through state (= !ignore_cursor_events).
+    /// Module-level, not a poller local: `show_overlay` forces
+    /// `set_ignore_cursor_events(true)` on every (re)show, so the poller's belief
+    /// must be reset with it — or a re-show while the cursor rests on the chip
+    /// leaves `want == cached` and the chip permanently click-through. Linux's
+    /// twin of this reset is `reapply_last_hit_region`.
+    static INTERACTIVE: AtomicBool = AtomicBool::new(false);
     /// Latest webview-reported hit rect (window-logical px), INCLUDING transient
     /// persist=false hover holds, and the persistent rect a (re)show resets to —
     /// mirroring LAST_HIT_REGION's persist semantics on Linux.
@@ -408,6 +415,8 @@ mod win_hover {
         if let (Ok(mut r), Ok(p)) = (REGION.lock(), PERSIST.lock()) {
             *r = *p;
         }
+        // show_overlay just called ignore_cursor() → the window IS click-through again.
+        INTERACTIVE.store(false, Ordering::SeqCst);
         VISIBLE.store(true, Ordering::SeqCst);
         if !POLLER.swap(true, Ordering::SeqCst) {
             let app = app.clone();
@@ -423,23 +432,29 @@ mod win_hover {
 
     fn run(app: AppHandle) {
         // Whether the window currently RECEIVES cursor events (= !ignore_cursor_events).
-        let mut interactive = false;
         loop {
             let visible = VISIBLE.load(Ordering::SeqCst);
             // 50 ms tracks hover-enter/leave comfortably (GetCursorPos + GetWindowRect
             // are cheap syscalls); idle slowly while hidden.
             std::thread::sleep(std::time::Duration::from_millis(if visible { 50 } else { 250 }));
             let want = visible && cursor_in_chip(&app).unwrap_or(false);
-            if want != interactive {
-                interactive = want;
+            if want != INTERACTIVE.load(Ordering::SeqCst) {
+                INTERACTIVE.store(want, Ordering::SeqCst);
                 // Window mutations go through the main thread, matching the rest of
                 // the codebase (show_overlay's own GTK-hazard note).
                 let handle = app.clone();
-                let _ = app.run_on_main_thread(move || {
-                    if let Some(win) = handle.get_webview_window("overlay") {
-                        let _ = win.set_ignore_cursor_events(!want);
-                    }
-                });
+                if app
+                    .run_on_main_thread(move || {
+                        if let Some(win) = handle.get_webview_window("overlay") {
+                            let _ = win.set_ignore_cursor_events(!want);
+                        }
+                    })
+                    .is_err()
+                {
+                    // The hop never ran, so the window state did not change —
+                    // un-lie the flag instead of leaving it permanently desynced.
+                    INTERACTIVE.store(!want, Ordering::SeqCst);
+                }
             }
         }
     }

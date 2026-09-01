@@ -587,8 +587,18 @@ fn paste(
         tracing::info!("[clip] paste: skipped at the clipboard write — our own window took focus");
         return Ok(Landed::NothingWritten);
     }
-    clipboard.set_text(text.to_string()).map_err(|e| e.to_string())?;
-    note_injected(text);
+    // A remote target's clipboard fetch is DEFERRED: the client requests the data only when
+    // the remote app actually pastes — after the forwarded chord, i.e. after this function
+    // returns and the local `clipboard` binding is dropped. On X11 with no clipboard manager,
+    // arboard tears the selection down on that drop, so the remote would paste nothing AND the
+    // "transcript stays on the clipboard" consolation above would be false. Same rule as the
+    // chord-divert guard: data that must outlive the call goes through the live owner.
+    if remote_target {
+        set_clipboard_persistent(text)?; // note_injected's for us
+    } else {
+        clipboard.set_text(text.to_string()).map_err(|e| e.to_string())?;
+        note_injected(text);
+    }
     // Let the new clipboard owner settle before pasting. A remote-desktop client additionally
     // needs the new content to cross the network (format-list announcement) before the forwarded
     // Ctrl+V lands, or the remote pastes its previously-synced clipboard — give it a longer window.
