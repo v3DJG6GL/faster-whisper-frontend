@@ -1,7 +1,13 @@
 // Round-trip guards: what generateExport writes, parseImportedText reads back.
 import { describe, expect, it } from "vitest";
 import { generateExport } from "./transcriptExport";
-import { isTextSourcePath, parseImportedText } from "./subtitleImport";
+import {
+  ACCEPTED_EXTS,
+  TEXT_SOURCE_EXTS,
+  isAcceptedSourcePath,
+  isTextSourcePath,
+  parseImportedText,
+} from "./subtitleImport";
 import type { BatchResult } from "./types";
 
 const RESULT: BatchResult = {
@@ -83,5 +89,24 @@ describe("plain text + errors", () => {
   it("empty input throws a user-facing message", () => {
     expect(() => parseImportedText("srt", "")).toThrow(/No text found/);
     expect(() => parseImportedText("json", "not json")).toThrow(/Not valid JSON/);
+  });
+});
+
+// The picker's dialog filter and the drag-and-drop accept test read ONE list;
+// a text source the parser handles must never be droppable-but-rejected.
+describe("isAcceptedSourcePath", () => {
+  it("accepts audio and text sources regardless of extension case", () => {
+    expect(isAcceptedSourcePath("/tmp/a.mp3")).toBe(true);
+    expect(isAcceptedSourcePath("/tmp/a.MP3")).toBe(true);
+    expect(isAcceptedSourcePath("/tmp/a.srt")).toBe(true);
+    expect(isAcceptedSourcePath("/tmp/a.SRT")).toBe(true);
+  });
+  it("rejects containers we cannot decode, documents, and extensionless paths", () => {
+    expect(isAcceptedSourcePath("/tmp/a.mkv")).toBe(false);
+    expect(isAcceptedSourcePath("/tmp/a.doc")).toBe(false);
+    expect(isAcceptedSourcePath("/tmp/README")).toBe(false);
+  });
+  it("accepts every text source the parser handles", () => {
+    for (const ext of TEXT_SOURCE_EXTS) expect(ACCEPTED_EXTS).toContain(ext);
   });
 });

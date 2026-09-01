@@ -2,12 +2,22 @@
 // "downloading" stage (railOf folding, ordering, weighting). The store/pump
 // side is exercised through the app; these guard the math.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// The only Tauri command these tests care about is the history write: a record the
+// workbench must NOT re-save has to be observable. The rest of api.ts is no-op outside
+// Tauri (each command guards on `isTauri`), so the original module is kept.
+const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: boolean) => Promise.resolve());
+vi.mock("./api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./api")>()),
+  saveTranscriptRecord: (id: string, json: string, d: boolean) => saveTranscriptRecord(id, json, d),
+}));
+
 import {
-  activeRailIndex, foldProgress, mergeSegmentTranslations, openHistoryRecord,
-  overallFraction, railIndex, railOf, railStages, selectPath, skippedStages,
+  activeRailIndex, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
+  overallFraction, railIndex, railOf, railStages, selectPath, setRename, skippedStages,
   stageEstimateMs, stageTimeline, useTranscribeRun, _resetStageRtfForTests,
   assembleTranslatedSegments,
-  cancelRun, retryFile, runTotals, settledPanelItem,
+  cancelRun, retryFile, runBadgeFraction, runTotals, settledPanelItem,
 } from "./transcribeRun";
 import type { QueueItem } from "./transcribeRun";
 import type { TranscriptRecord } from "./transcriptHistory";
@@ -440,6 +450,34 @@ describe("mergeSegmentTranslations kept-original marks", () => {
   });
 });
 
+describe("mergeSegmentTranslations respects the OPEN record", () => {
+  it("a background merge of record A never repaints the open record B of the same source", async () => {
+    const { useTranscriptHistory } = await import("./transcriptHistory");
+    const of = (id: string, text: string): TranscriptRecord => ({
+      schemaVersion: 1,
+      kind: "file",
+      id,
+      createdAt: "2026-08-30T12:00:00Z",
+      // The SAME source: the queue row is keyed by path, so both records share it.
+      sourcePath: "/same.mp3",
+      sourceName: "same.mp3",
+      status: "done",
+      result: { text, segments: [{ start: 0, end: 1, text }] },
+    });
+    const a = of("open-a", "a");
+    const b = of("open-b", "b");
+    openHistoryRecord(a);
+    openHistoryRecord(b); // the user moved on to B while A's chunks are still merging
+    mergeSegmentTranslations("open-a", { 0: { de: "A-de" } }, { targets: ["de"] });
+    // The viewer still shows B's transcript...
+    expect(useTranscribeRun.getState().openRecordId).toBe("open-b");
+    expect(useTranscribeRun.getState().queue[0].result).toEqual(b.result);
+    // ...while A's merge did land in the persisted record.
+    const savedA = useTranscriptHistory.getState().records.find((r) => r.id === "open-a")!;
+    expect(savedA.result!.segments![0].translations).toEqual({ de: "A-de" });
+  });
+});
+
 describe("assembleTranslatedSegments (text-source kept-original marks)", () => {
   it("marks a target the server kept as the source, like the audio path does", () => {
     const segs = assembleTranslatedSegments(
@@ -497,5 +535,78 @@ describe("retryFile carries new decode overrides into the store", () => {
     );
     expect(useTranscribeRun.getState().lastOverrides.vad_filter).toBe(false);
     cancelRun();
+  });
+});
+
+describe("runBadgeFraction (the sidebar badge)", () => {
+  const state = (over: Partial<ReturnType<typeof useTranscribeRun.getState>>) => {
+    useTranscribeRun.setState({
+      queue: [], progress: null, stageTimes: {}, stageMeta: {}, lastOptions: undefined,
+      ...over,
+    });
+    return useTranscribeRun.getState();
+  };
+  afterEach(() => {
+    useTranscribeRun.setState({ queue: [], progress: null, stageTimes: {}, stageMeta: {} });
+  });
+
+  it("derives the running item's own rail — nothing running is null, a URL keeps its download row", () => {
+    // Nothing running or queued: there is no run to describe.
+    expect(runBadgeFraction(state({ queue: [{ path: "/a.mp3", status: "done" }] as QueueItem[] }))).toBeNull();
+
+    // A plain file: the transcribe row is the whole rail, so the badge is the stage fraction.
+    expect(runBadgeFraction(state({
+      queue: [{ path: "/a.mp3", status: "running" }] as QueueItem[],
+      progress: { stage: "transcribing", progress: 0.25 },
+    }))).toBeCloseTo(0.25, 5);
+
+    // A URL item mid-download: the download row is its OWN weight (15 of 75), which is the
+    // bug this exists for — passing the bare store credited it to transcribing (80% → 0%).
+    expect(runBadgeFraction(state({
+      queue: [{ path: "https://x/v", status: "running", kind: "url" }] as QueueItem[],
+      progress: { stage: "downloading", progress: 0.5 },
+    }))).toBeCloseTo(0.1, 5);
+
+    // A text source runs the translating rail alone, so its stage fraction IS the badge.
+    expect(runBadgeFraction(state({
+      queue: [{ path: "/s.srt", status: "running", kind: "text" }] as QueueItem[],
+      progress: { stage: "translating", progress: 0.5 },
+      lastOptions: { translateTo: ["de"] },
+    }))).toBeCloseTo(0.5, 5);
+  });
+});
+
+describe("forgetRecord (a deleted record must stay deleted)", () => {
+  it("a later overlay edit cannot re-save a forgotten record", async () => {
+    const { useTranscriptHistory } = await import("./transcriptHistory");
+    vi.useFakeTimers();
+    // The workbench's persist debounce runs on window timers (it lives in a webview);
+    // the test env is `node`, so point `window` at the (faked) globals.
+    vi.stubGlobal("window", globalThis);
+    try {
+      useTranscriptHistory.setState({ records: [], loaded: false });
+      saveTranscriptRecord.mockClear();
+      const rec: TranscriptRecord = {
+        schemaVersion: 1,
+        kind: "file",
+        id: "gone-1",
+        createdAt: "2026-08-30T12:00:00Z",
+        sourcePath: "/gone.mp3",
+        sourceName: "gone.mp3",
+        status: "done",
+        result: { text: "a", segments: [{ start: 0, end: 1, text: "a", speaker: "SPEAKER_00" }] },
+      };
+      openHistoryRecord(rec);
+      forgetRecord(rec.id); // History deleted it out from under the open workbench
+      setRename(rec.id, "SPEAKER_00", "Kate"); // the 800 ms persist debounce
+      vi.advanceTimersByTime(900);
+      expect(saveTranscriptRecord).not.toHaveBeenCalled();
+      expect(useTranscriptHistory.getState().records).toEqual([]);
+      expect(useTranscribeRun.getState().openRecordId).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      forgetRecord(null);
+      vi.unstubAllGlobals();
+    }
   });
 });

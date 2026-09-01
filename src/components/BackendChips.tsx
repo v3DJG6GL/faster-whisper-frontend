@@ -1,13 +1,13 @@
 // Pill chips for choosing which backend a view is scoped to (e.g. whose usage
-// statistics to show). Mirrors the Dictionary page's backend picker. With a single
-// backend it renders one static name label — no pointless toggle; with several, an
-// interactive selector (amber = active). Always shows the backend NAME, never the URL.
-// The name is sync-authored and a rename raises no consent prompt, so it is defanged like
-// every other remote-authored label: `truncate` bounds the WIDTH, not the bidi marks that
-// let two servers render identically, and the `title` tooltip had no bound at all.
+// statistics to show). With a single backend it renders one static name label — no
+// pointless toggle; with several, an interactive selector (amber = active). Always
+// shows the backend NAME, never the URL. Labels come from `backendOptions`, the same
+// resolver every other backend picker uses: identity-safe text (invisible and bidi
+// code points removed, not just width-truncated) plus a collision suffix, so two
+// backends whose names draw identically are still told apart here too.
 
+import { backendOptions } from "@/lib/backends";
 import { cn } from "@/lib/cn";
-import { safeDisplayText } from "@/lib/sanitize";
 import type { Backend } from "@/lib/types";
 
 export function BackendChips({
@@ -22,6 +22,9 @@ export function BackendChips({
   className?: string;
 }) {
   if (backends.length === 0) return null;
+  // One pass for the whole list — the collision suffix needs every name at once.
+  const labels = new Map(backendOptions(backends).map((o) => [o.value, o.label]));
+  const labelOf = (b: Backend) => labels.get(b.id) ?? "";
   if (backends.length === 1) {
     return (
       <span
@@ -29,9 +32,9 @@ export function BackendChips({
           "max-w-[180px] truncate rounded-pill border border-line bg-surface-2 px-3 py-1 text-[12px] text-dim",
           className,
         )}
-        title={safeDisplayText(backends[0].name, 80)}
+        title={labelOf(backends[0])}
       >
-        {safeDisplayText(backends[0].name, 80)}
+        {labelOf(backends[0])}
       </span>
     );
   }
@@ -45,7 +48,7 @@ export function BackendChips({
             type="button"
             aria-pressed={active}
             onClick={() => onSelect(b.id)}
-            title={safeDisplayText(b.name, 80)}
+            title={labelOf(b)}
             className={cn(
               "ring-signal max-w-[180px] truncate rounded-pill border px-3 py-1 text-[12px] font-medium transition-colors",
               active
@@ -53,7 +56,7 @@ export function BackendChips({
                 : "border-line bg-surface-2 text-dim hover:text-text",
             )}
           >
-            {safeDisplayText(b.name, 80)}
+            {labelOf(b)}
           </button>
         );
       })}

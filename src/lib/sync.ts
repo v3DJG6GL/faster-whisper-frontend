@@ -2552,7 +2552,7 @@ export function reviewApplyBlocked(): boolean {
 
 /** Test seam: raise a minimal conflict so the id contract is pinnable without
  *  a transport (mirrors resetWarmDebounceForTests in preload.ts). */
-export function raiseConflictForTests(): void {
+export function raiseConflictForTests(over: Partial<PendingConflict> = {}): void {
   raiseConflict({
     categories: ["general"],
     remoteDevice: null,
@@ -2560,6 +2560,7 @@ export function raiseConflictForTests(): void {
     remote: {},
     merged: {},
     remoteVersion: 0,
+    ...over,
   } as unknown as PendingConflict);
 }
 

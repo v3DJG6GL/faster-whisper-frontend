@@ -72,8 +72,12 @@ export function tracksOf(
 ): { lang: string; text: string; orig?: boolean }[] | null {
   const tr = rec.translations;
   if (!tr || typeof tr !== "object") return null;
-  const langs = (rec.translationTargets ?? Object.keys(tr)).filter(
-    (l) => typeof l === "string" && tr[l]?.trim(),
+  // Both fields are file-borne and unvalidated on load: a string where the
+  // target list belongs, or a number where a track belongs, must not throw.
+  const targets = Array.isArray(rec.translationTargets) ? rec.translationTargets : Object.keys(tr);
+  const map = tr as Record<string, unknown>;
+  const langs = targets.filter(
+    (l): l is string => typeof l === "string" && typeof map[l] === "string" && (map[l] as string).trim() !== "",
   );
   if (!langs.length) return null;
   const original = recordText(rec).trim();
@@ -87,7 +91,7 @@ export function tracksOf(
   const head = original
     ? [{ lang: rec.language && rec.language !== "auto" ? rec.language : "orig", text: original, orig: true }]
     : [];
-  return [...head, ...langs.map((lang) => ({ lang, text: tr[lang] }))];
+  return [...head, ...langs.map((lang) => ({ lang, text: map[lang] as string }))];
 }
 
 /** Human app label from a dictation record — the stored window title, else the
@@ -96,6 +100,15 @@ function appLabel(r: TranscriptRecord): string {
   if (r.sourceName && r.sourceName !== "Dictation") return r.sourceName;
   const seg = r.appId?.split(".").pop()?.trim();
   return seg ? seg.charAt(0).toUpperCase() + seg.slice(1) : "Dictation";
+}
+
+/** Label for the "dictated into" chip. The chip groups by app id, so it must
+ *  name the APP ("Thunderbird"), not the first grouped session's window title
+ *  ("Re: invoice — Mozilla Thunderbird"), which is what `appLabel` returns for a
+ *  row heading and which changed as newer sessions arrived. */
+export function appChipLabel(r: Pick<TranscriptRecord, "appId" | "sourceName">): string {
+  const seg = r.appId?.split(".").pop()?.trim();
+  return seg ? seg.charAt(0).toUpperCase() + seg.slice(1) : appLabel(r as TranscriptRecord);
 }
 
 type Segment = "all" | "file" | "url" | "text" | "dictation";
@@ -251,6 +264,9 @@ export default function History() {
   // Two-step delete: first click arms the row, second click deletes.
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // Quick export's failure, per record — the dialog already confirmed a save,
+  // so a silent no-op (or a half-written multi-file set) must not look like one.
+  const [exportError, setExportError] = useState<{ id: string; msg: string } | null>(null);
   const copyTimer = useRef<number | undefined>(undefined);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -304,7 +320,7 @@ export default function History() {
       const key = r.appId ?? appLabel(r);
       const cur = counts.get(key);
       if (cur) cur.n++;
-      else counts.set(key, { label: appLabel(r), n: 1 });
+      else counts.set(key, { label: appChipLabel(r), n: 1 });
     }
     return [...counts.entries()]
       .map(([id, v]) => ({ id, ...v }))
@@ -390,6 +406,7 @@ export default function History() {
   };
 
   const quickExport = async (rec: TranscriptRecord) => {
+    setExportError(null);
     const t = settings.transcribe ?? {};
     const format = (t.exportFormat ?? "srt") as ExportFormat;
     const ext = EXPORT_EXTENSIONS[format];
@@ -402,6 +419,7 @@ export default function History() {
       path = await pickExportPath(`${stem}.${ext}`, format.toUpperCase(), ext);
     } catch (e) {
       console.error("history export dialog failed:", e);
+      setExportError({ id: rec.id, msg: String(e) });
       return;
     }
     if (!path) return;
@@ -443,6 +461,7 @@ export default function History() {
       }
     } catch (e) {
       console.error("history export failed:", e);
+      setExportError({ id: rec.id, msg: String(e) });
     }
   };
 
@@ -568,7 +587,7 @@ export default function History() {
                 )}
               >
                 <div className="pt-[3px]">
-                  <LangTag code={lang} orig={orig} />
+                  <LangTag code={safeDisplayText(lang, 8)} orig={orig} />
                 </div>
                 <div className="group/track relative">
                   <div
@@ -583,7 +602,7 @@ export default function History() {
                     type="button"
                     onClick={() => copyTrack(rec, lang, text)}
                     className="absolute right-0 top-0 rounded px-1.5 py-0.5 font-mono text-[10px] text-faint opacity-0 transition hover:text-text focus-visible:opacity-100 group-hover/track:opacity-100"
-                    title={`Copy the ${lang.toUpperCase()} track`}
+                    title={`Copy the ${safeDisplayText(lang, 8).toUpperCase()} track`}
                   >
                     {copiedId === `${rec.id}:${lang}` ? "copied" : "copy"}
                   </button>
@@ -707,7 +726,7 @@ export default function History() {
           <span className="shrink-0 font-mono text-[11px] text-faint">{dictMeta(rec)}</span>
         </div>
         <div className="truncate text-[12px] text-faint">
-          {stripControlChars(recordText(rec), 160)}
+          {stripControlChars(recordText(rec, 200), 160)}
         </div>
       </div>
       {/* Action clicks must not also expand the row (the whole row is a button). */}
@@ -725,7 +744,7 @@ export default function History() {
     const edited =
       !!Object.keys(rec.edits ?? {}).length || !!Object.keys(rec.speakerEdits ?? {}).length;
     const snippet = ok
-      ? stripControlChars(recordText(rec), 160)
+      ? stripControlChars(recordText(rec, 200), 160)
       : stripControlChars(rec.error ?? "failed", 160);
     return (
       <div key={rec.id} className={cn("flex items-center gap-3 py-3", !last && "border-b border-line")}>
@@ -759,6 +778,11 @@ export default function History() {
           >
             <Download className="size-3.5" />
           </Button>
+        )}
+        {exportError?.id === rec.id && (
+          <span className="text-[11px] text-warn" role="alert">
+            Export failed: {safeDisplayText(exportError.msg, 120)}
+          </span>
         )}
         <Button
           variant="ghost"

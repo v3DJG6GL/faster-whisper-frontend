@@ -3,7 +3,7 @@
 // proof. Outside Tauri every api call no-ops, so composeBlob/applyBlob run
 // as pure-ish functions over the store.
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ALL_CATEGORIES,
   applyBlob,
@@ -17,6 +17,17 @@ import { DEFAULT_SETTINGS } from "./defaults";
 import { IS_WINDOWS } from "./platform";
 import type { SyncBlob } from "./syncTypes";
 import type { AppSettings, Backend, Profile, SyncCategory, SyncSubSettings } from "./types";
+
+/** Test seam for the ONE await inside applyBlob (the keyring reconciliation): while it is
+ *  parked, the store is live and the user can keep editing. Default is passthrough. */
+const keyring = vi.hoisted(() => ({ park: null as null | Promise<Record<string, string>> }));
+vi.mock("./api", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("./api")>();
+  return {
+    ...orig,
+    readBackendKeys: (ids: string[]) => keyring.park ?? orig.readBackendKeys(ids),
+  };
+});
 
 const CATS_ALL = Object.fromEntries(ALL_CATEGORIES.map((c) => [c, true])) as Record<
   SyncCategory,
@@ -488,6 +499,70 @@ describe("applyBlob keep-local (baseline)", () => {
     const r = useApp.getState().appRules.find((x) => x.id === "r1")!;
     expect(r.autoEnter ?? undefined).toBeUndefined(); // stripped + re-pinned to local (unset)
     expect(r.insertMethod).toBe("direct"); // the rest still applies
+  });
+
+  it("a malformed category container is skipped whole, never spread", async () => {
+    // `"backends": []` / a string / a number are all truthy: without the isPlainObject
+    // guard `sanitizeBackends(undefined)` returned [] and the dangling-reference scrub
+    // then read that as "every profile's backend is gone".
+    useApp.setState({ profiles: [profile({ activation: "hold" })] }); // "toggle" is not a valid kind
+    const before = useApp.getState();
+    await applyBlob(
+      { backends: [] as never, profiles: "x" as never, appRules: 5 as never },
+      CATS_ALL,
+    );
+    const after = useApp.getState();
+    expect(after.backends).toEqual(before.backends);
+    expect(after.profiles).toEqual(before.profiles);
+    expect(after.appRules).toEqual(before.appRules);
+    expect(after.settings.quickAddList).toEqual(before.settings.quickAddList);
+  });
+
+  it("a store edit made while the keyring wait is parked is not hydrated away", async () => {
+    // Everything applyBlob computes is derived from a PRE-wait snapshot, and hydrate replaces
+    // the slices wholesale — so the staleness check must cover `backends` too, not just
+    // `settings` (upsertBackend returns only `{backends}`). Retries exhausted → drop the
+    // apply; the next pull re-offers it.
+    let release: (v: Record<string, string>) => void = () => {};
+    keyring.park = new Promise((r) => (release = r));
+    try {
+      const applying = applyBlob(
+        { backends: { list: [backend({ name: "from-peer" })] } },
+        { ...CATS_ALL, profiles: false },
+        0,
+      );
+      await Promise.resolve();
+      useApp.getState().upsertBackend(backend({ id: "b2", name: "added-meanwhile" }));
+      release({});
+      expect(await applying).toBe(false); // dropped stale, nothing hydrated
+    } finally {
+      keyring.park = null;
+    }
+    const byId = new Map(useApp.getState().backends.map((b) => [b.id, b]));
+    expect(byId.get("b2")?.name).toBe("added-meanwhile"); // the user's edit survived
+    expect(byId.get("b1")!.name).toBe("local"); // and the blob did not land
+  });
+
+  it("side-differing inbound chords are only collapsed where the registrar collapses them", async () => {
+    // The sanitizer calls `conflicts(peers, !IS_WINDOWS)` and switches the later member of
+    // each collision off. Windows' low-level hook registers LCtrl+Space and RCtrl+Space as
+    // distinct chords, so collapsing there disabled a WORKING pair on every pull.
+    useApp.setState({ settings: settings(), profiles: [] });
+    await applyBlob(
+      {
+        profiles: {
+          list: [
+            profile({ id: "p1", activation: "hold", hotkey: ["ControlLeft", "Space"] }),
+            profile({ id: "p2", activation: "hold", hotkey: ["ControlRight", "Space"] }),
+          ],
+          homeProfileId: null,
+        },
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    const byId = new Map(useApp.getState().profiles.map((p) => [p.id, p]));
+    expect(byId.get("p1")!.enabled).toBe(true);
+    expect(byId.get("p2")!.enabled).toBe(IS_WINDOWS);
   });
 
   it("an omitted field keeps the local value (merge-over-current, no default refill)", async () => {

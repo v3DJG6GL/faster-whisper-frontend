@@ -172,6 +172,7 @@ export default function Logs() {
   // the run keeps growing (the row's own `line.seq` is not).
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const [follow, setFollow] = useState<FollowState>({ follow: true, pendingNew: 0 });
 
   // Attach the stream for the screen's lifetime; badge clears on open & close.
@@ -196,7 +197,9 @@ export default function Logs() {
   }, []);
 
   const all = visibleLines();
-  const cleared = clearedCount();
+  // `version` is bumped by every append and by Clear view — the only writes to
+  // the ring or the clear floor — so the full-buffer scan need not repeat per keystroke.
+  const cleared = useMemo(() => clearedCount(), [version]);
   // Union with the SELECTED tags: a tag whose lines have left the buffer (Clear view,
   // roll-over) still filters, so its chip must stay on-screen to be switchable off.
   const chips = useMemo(() => [...new Set([...collectTags(all), ...tags])], [all, tags]);
@@ -258,8 +261,10 @@ export default function Logs() {
     } else if (added > 0) {
       setFollow((f) => followReduce(f, { kind: "appended", count: added }));
     }
+    // `rows` and not just `lines`: the merge toggle changes the row count (and
+    // so where the tail is) without changing `lines`, and the tail must re-pin.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version, lines, follow.follow]);
+  }, [version, lines, rows, follow.follow]);
 
   // Wrap toggles every row's height at once — drop all cached measurements.
   useEffect(() => {
@@ -314,7 +319,18 @@ export default function Logs() {
       // knows the paste is a subset).
       lines,
     );
-    await navigator.clipboard.writeText(report);
+    // The clipboard is the only thing this report has: a rejected write (denied
+    // permission, unfocused webview) must not leave the button saying nothing,
+    // or the user pastes whatever was on the clipboard before into a bug report.
+    setCopyError(false);
+    try {
+      await navigator.clipboard.writeText(report);
+    } catch (e) {
+      console.error("bug report copy failed:", e);
+      setCopyError(true);
+      window.setTimeout(() => setCopyError(false), 1600);
+      return;
+    }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
   }
@@ -327,7 +343,7 @@ export default function Logs() {
           <StatusDot tone="live" pulse title="Streaming" /> Streaming
         </span>
         <span className="ml-auto font-mono text-[12px] tabular-nums text-faint">
-          {all.length.toLocaleString()} lines this session
+          {(all.length + cleared).toLocaleString()} lines this session
         </span>
       </div>
 
@@ -440,7 +456,7 @@ export default function Logs() {
       <div className="flex items-center gap-2 border-t border-line py-3">
         <Button variant="accent" size="sm" onClick={() => void copyBugReport()}>
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-          {copied ? "Copied" : "Copy for bug report"}
+          {copyError ? "Copy failed" : copied ? "Copied" : "Copy for bug report"}
         </Button>
         <Button
           variant="ghost"
@@ -455,7 +471,7 @@ export default function Logs() {
           <Eraser className="h-3.5 w-3.5" /> Clear view
         </Button>
         <span className="ml-auto font-mono text-[11px] tabular-nums text-faint">
-          buffer {all.length.toLocaleString()} / {LOG_BUFFER_CAP.toLocaleString()}
+          buffer {(all.length + cleared).toLocaleString()} / {LOG_BUFFER_CAP.toLocaleString()}
         </span>
       </div>
     </div>

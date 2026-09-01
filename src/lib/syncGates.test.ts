@@ -225,6 +225,29 @@ describe("apply: keep-local per gate", () => {
     expect(byId.get("b2")!.serverUrl).toBe("http://new:2");
   });
 
+  it("an inbound scheme-less address is stored the way the keyboard path stores it", async () => {
+    // Bare "host:8000" reached the transport scheme-less (opaque URL-parse error on every
+    // request) while every display helper re-normalised it; a scheme this app does not speak
+    // still blanks, and a well-formed address is stored cleaned/verbatim.
+    gateOff();
+    await applyBlob(
+      {
+        backends: {
+          list: [
+            backend({ id: "b7", serverUrl: "192.168.1.5:8000" }),
+            backend({ id: "b8", serverUrl: "https:/evil.tld" }),
+            backend({ id: "b9", serverUrl: "https://host:1/" }),
+          ],
+        },
+      },
+      { ...CATS_ALL, profiles: false },
+    );
+    const byId = new Map(useApp.getState().backends.map((b) => [b.id, b]));
+    expect(byId.get("b7")!.serverUrl).toBe("http://192.168.1.5:8000");
+    expect(byId.get("b8")!.serverUrl).toBe(""); // unspoken scheme → blanked, id (and keyring tie) kept
+    expect(byId.get("b9")!.serverUrl).toBe("https://host:1/");
+  });
+
   it("homeProfile off: this device's pick survives the blob", async () => {
     gateOff("homeProfile");
     const s = useApp.getState().settings;

@@ -281,6 +281,28 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
   );
 }
 
+
+/** The disclosure contract for one group, in one place: which rows render,
+ *  whether the panel is open, and whether the toggle honestly OWNS that panel.
+ *  Filter on → the group's exceptions (changed OR switch off), expansion
+ *  ignored, and the toggle drives nothing so it claims no `aria-controls`;
+ *  filter off → all rows when expanded, none when collapsed (the header +
+ *  summary IS the collapsed view). The header always renders so the group
+ *  master stays reachable in every mode. */
+export function groupPanelState(
+  defs: SettingDef[],
+  gates: Record<SettingId, boolean>,
+  changed: ReadonlySet<SettingId>,
+  expanded: boolean,
+  changedOnly: boolean,
+): { visible: SettingDef[]; panelOpen: boolean; owns: boolean } {
+  const isException = (d: SettingDef) =>
+    !gates[d.id as SettingId] || changed.has(d.id as SettingId);
+  const visible = changedOnly ? defs.filter(isException) : expanded ? defs : [];
+  const panelOpen = visible.length > 0;
+  return { visible, panelOpen, owns: !changedOnly && panelOpen };
+}
+
 function GroupCard({
   group,
   gates,
@@ -315,9 +337,7 @@ function GroupCard({
   // ignored; filter off → all rows when expanded, none when collapsed (the
   // header + summary IS the collapsed view). The header always renders so the
   // group master stays reachable in every mode.
-  const isException = (d: SettingDef) =>
-    !gates[d.id as SettingId] || changed.has(d.id as SettingId);
-  const visible = changedOnly ? defs.filter(isException) : expanded ? defs : [];
+  const { visible, panelOpen, owns } = groupPanelState(defs, gates, changed, expanded, changedOnly);
 
   const summary =
     off.length === 0
@@ -329,14 +349,13 @@ function GroupCard({
   // panel shows exceptions while `expanded` is false, and a collapsed group has no panel node
   // for `aria-controls` to point at. In that mode the toggle does not drive the panel, so it
   // owns none.
-  const panelOpen = visible.length > 0;
   return (
     <div className="mb-2.5 rounded-xl border border-line bg-surface px-4">
       <div className="flex items-center gap-3 py-2.5">
         <DisclosureToggle
           open={panelOpen}
           onToggle={onToggleExpand}
-          ariaControls={!changedOnly && panelOpen ? panelId : undefined}
+          ariaControls={owns ? panelId : undefined}
           className="text-[13px] font-semibold text-text"
         >
           {SYNC_GROUP_LABEL[group]}

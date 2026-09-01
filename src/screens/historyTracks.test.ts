@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { tracksOf } from "./History";
+import { appChipLabel, tracksOf } from "./History";
 type TranscriptRecord = import("@/lib/transcriptHistory").TranscriptRecord;
 
 const base = {
@@ -95,6 +95,11 @@ describe("tracksOf", () => {
     // optional field on load.
     expect(tracksOf(rec({ translations: "nope" as never }))).toBeNull();
     expect(tracksOf(rec({ translations: {} }))).toBeNull();
+    // A string where the target list belongs, a number where a track belongs.
+    expect(() => tracksOf(rec({ translations: { en: "hi" }, translationTargets: "en" as never }))).not.toThrow();
+    const t = tracksOf(rec({ translations: { en: "hi" }, translationTargets: "en" as never }));
+    expect(t![t!.length - 1]).toEqual({ lang: "en", text: "hi" });
+    expect(tracksOf(rec({ translations: { en: 5 } as never, translationTargets: ["en"] }))).toBeNull();
   });
 
   it("falls back to a neutral code when the language is unknown", () => {
@@ -107,5 +112,17 @@ describe("tracksOf", () => {
       }),
     );
     expect(t![0]).toEqual({ lang: "orig", text: base.result.text, orig: true });
+  });
+});
+
+describe("appChipLabel", () => {
+  it("names the app, never the grouped session's window title", () => {
+    expect(
+      appChipLabel({ appId: "org.mozilla.thunderbird", sourceName: "Re: invoice — Mozilla Thunderbird" }),
+    ).toBe("Thunderbird");
+  });
+  it("falls back to the stored name when there is no app id", () => {
+    expect(appChipLabel({ appId: undefined, sourceName: "Notes" })).toBe("Notes");
+    expect(appChipLabel({ appId: undefined, sourceName: "Dictation" })).toBe("Dictation");
   });
 });

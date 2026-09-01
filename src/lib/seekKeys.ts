@@ -19,3 +19,20 @@ export function seekKeyTarget(
   if (next === null) return null;
   return Math.min(audioLen, Math.max(0, next));
 }
+
+/** Index of the last item whose `start` is <= t, or -1 when none has started.
+ *  Binary search — items must be time-ordered (segments and words both are).
+ *  Shared by the playhead sync (per animation frame) and line stepping. */
+export function lastStartedAt(items: readonly { start: number }[], t: number): number {
+  let lo = 0;
+  let hi = items.length - 1;
+  let best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (items[mid].start <= t) {
+      best = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return best;
+}

@@ -16,7 +16,8 @@ vi.mock("./api", async (importOriginal) => ({
   saveTranscriptRecord: (id: string, json: string, d: boolean) => saveTranscriptRecord(id, json, d),
 }));
 
-const { loadHistory, recordDictation, upsertRecord, useTranscriptHistory } = await import("./transcriptHistory");
+const { deleteRecord, dropPendingWrites, loadHistory, recordDictation, upsertRecord, useTranscriptHistory } =
+  await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
 
 const CAPTURE = {
@@ -183,5 +184,111 @@ describe("upsertRecord coalesces the disk write, not the mirror", () => {
     expect(saveTranscriptRecord).toHaveBeenCalledTimes(2);
     expect(String(saveTranscriptRecord.mock.calls[1][1])).toContain("v10");
     vi.useRealTimers();
+  });
+});
+
+describe("newest-first ordering", () => {
+  // Equal `createdAt` stamps are reachable (two records minted in the same millisecond),
+  // and the mirror's order is what History renders — so the tie order has to be pinned.
+  it("floats a re-upserted record to the front of its tie group, newest group first", () => {
+    const at = (id: string, createdAt: string): TranscriptRecord => ({
+      schemaVersion: 1, kind: "file", id, createdAt,
+      sourcePath: `/${id}.mp3`, sourceName: `${id}.mp3`, status: "done",
+    });
+    const TIE = "2026-08-30T12:00:00.000Z";
+    upsertRecord(at("a", TIE));
+    upsertRecord(at("mid", TIE));
+    upsertRecord(at("c", TIE));
+    // Newest-first: the last upsert leads. (Ties keep insertion order, newest first.)
+    expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["c", "mid", "a"]);
+    upsertRecord({ ...at("mid", TIE), sourceName: "renamed" });
+    expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["mid", "c", "a"]);
+    // A genuinely newer stamp still wins over the whole tie group.
+    upsertRecord(at("newer", "2026-08-30T12:00:01.000Z"));
+    expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(
+      ["newer", "mid", "c", "a"],
+    );
+  });
+});
+
+describe("pending writes are droppable and flushable", () => {
+  it("dropPendingWrites lands nothing (leading edge only); loadHistory flushes first", async () => {
+    vi.useFakeTimers();
+    try {
+      saveTranscriptRecord.mockClear();
+      const base: TranscriptRecord = {
+        schemaVersion: 1, kind: "file", id: "drop-1", createdAt: "2026-08-30T12:00:00Z",
+        sourcePath: "/d.mp3", sourceName: "d.mp3", status: "done", result: { text: "v0" },
+      };
+      upsertRecord({ ...base, result: { text: "v1" } }); // leading edge → 1 write
+      upsertRecord({ ...base, result: { text: "v2" } }); // parked in the window
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
+      dropPendingWrites();
+      vi.advanceTimersByTime(2_100);
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
+
+      // A forced load flushes what is still parked BEFORE the listing is taken —
+      // otherwise the listing (older on disk) reverts the just-edited record.
+      saveTranscriptRecord.mockClear();
+      upsertRecord({ ...base, id: "flush-1", result: { text: "w1" } });
+      upsertRecord({ ...base, id: "flush-1", result: { text: "w2" } });
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
+      let resolveList: (v: unknown[]) => void = () => {};
+      listTranscriptRecords.mockReturnValue(new Promise((r) => { resolveList = r; }));
+      const load = loadHistory(true);
+      // Flushed synchronously, while the listing is still in flight.
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(2);
+      expect(String(saveTranscriptRecord.mock.calls[1][1])).toContain("w2");
+      resolveList([]);
+      await load;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("loadHistory(force) chains onto an in-flight listing", () => {
+  it("the forced listing wins: it was taken after the files changed", async () => {
+    const deferred = () => {
+      let resolve: (v: unknown[]) => void = () => {};
+      const promise = new Promise<unknown[]>((r) => { resolve = r; });
+      return { promise, resolve };
+    };
+    const d1 = deferred();
+    const d2 = deferred();
+    listTranscriptRecords.mockReturnValueOnce(d1.promise).mockReturnValueOnce(d2.promise);
+    const first = loadHistory();
+    const forced = loadHistory(true); // chains, does NOT adopt the in-flight listing
+    d1.resolve([{
+      schemaVersion: 1, kind: "file", id: "A", createdAt: "2026-08-30T12:00:00Z",
+      sourcePath: "/a.mp3", sourceName: "a.mp3", status: "done",
+    }]);
+    await first;
+    d2.resolve([]); // the caller deleted A before forcing
+    await forced;
+    expect(useTranscriptHistory.getState().records).toEqual([]);
+    expect(listTranscriptRecords).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("deleteRecord", () => {
+  it("cancels a coalesced write so the deleted record cannot come back", () => {
+    vi.useFakeTimers();
+    try {
+      saveTranscriptRecord.mockClear();
+      const base: TranscriptRecord = {
+        schemaVersion: 1, kind: "file", id: "del-1", createdAt: "2026-08-30T12:00:00Z",
+        sourcePath: "/x.mp3", sourceName: "x.mp3", status: "done", result: { text: "v0" },
+      };
+      upsertRecord({ ...base, result: { text: "v1" } });
+      upsertRecord({ ...base, result: { text: "v2" } });
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
+      deleteRecord("del-1");
+      vi.advanceTimersByTime(2_100);
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
+      expect(useTranscriptHistory.getState().records.find((r) => r.id === "del-1")).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

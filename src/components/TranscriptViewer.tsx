@@ -20,7 +20,7 @@ import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { Button, LangTag } from "@/components/ui";
 import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
-import { seekKeyTarget } from "@/lib/seekKeys";
+import { lastStartedAt, seekKeyTarget } from "@/lib/seekKeys";
 import {
   cancelTextTranslation, decodeMediaFile, getTranscribeProgress, openSourceUrl,
   pickExportPath, readMediaFile, saveTextFile, isTauri, translateText,
@@ -133,7 +133,6 @@ type EffSegment = {
   text: string;
   speaker?: string;
   edited: boolean;
-  textEdited: boolean;
 };
 
 /** One transcript row, memoized: during playback only the row entering and the
@@ -843,11 +842,10 @@ export function TranscriptViewer({
         ...seg,
         text: fileEdits[i] ?? seg.text,
         speaker: fileSpkEdits[i] ?? seg.speaker,
-        // The combined flag drives the "edited" markers; only a TEXT edit
-        // matters to word timing (a speaker reassignment leaves the words
-        // exactly as valid as before, so it must not disable karaoke).
+        // Drives the "edited" row markers — a speaker reassignment counts too.
+        // (Karaoke is unaffected by either kind: SegmentRow reads `effWords`,
+        // which is re-aligned for text edits, so no separate text-edit flag.)
         edited: fileEdits[i] !== undefined || fileSpkEdits[i] !== undefined,
-        textEdited: fileEdits[i] !== undefined,
       })),
     [result, fileEdits, fileSpkEdits],
   );
@@ -865,16 +863,18 @@ export function TranscriptViewer({
   /** The result with corrections applied — what Save writes. An edited
    *  segment's words are substituted with their aligned equivalents, so
    *  JSON/LRC keep word timing through corrections. */
-  const editedResult = (): BatchResult => {
+  const editedResult = useMemo((): BatchResult => {
     if (!editCount) return result;
-    const segs = effSegments.map(({ edited: _e, textEdited: _t, ...seg }) => seg);
+    const segs = effSegments.map(({ edited: _e, ...seg }) => seg);
     return {
       ...result,
       text: segs.map((seg) => seg.text.trim()).join(" "),
       segments: segs,
       words: effWords,
     };
-  };
+    // Memoized: the export panel's contract + preview read it from JSX, and
+    // the component re-renders at playhead cadence while audio plays.
+  }, [editCount, result, effSegments, effWords]);
 
   // ── language tracks (which lines each segment row renders) ───────────────
   const allTracks = useMemo(() => ["orig", ...langs], [langs]);
@@ -1207,26 +1207,10 @@ export function TranscriptViewer({
     // Last segment already started; from it, the active one (inside its window
     // + grace) and the read position (last segment fully behind the playhead —
     // rows up to it render dimmed as "spoken").
-    let li = -1;
-    for (let i = segs.length - 1; i >= 0; i--) {
-      if (t >= segs[i].start) {
-        li = i;
-        break;
-      }
-    }
+    const li = lastStartedAt(segs, t);
     setActiveSegIdx(li >= 0 && t < segs[li].end + 0.3 ? li : -1);
     setPassedSegIdx(li >= 0 ? (t >= segs[li].end ? li : li - 1) : -1);
-    // Binary search: last word with start <= t (words are time-ordered).
-    let lo = 0;
-    let hi = words.length - 1;
-    let best = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (words[mid].start <= t) {
-        best = mid;
-        lo = mid + 1;
-      } else hi = mid - 1;
-    }
+    const best = lastStartedAt(words, t);
     setActiveWordIdx(best >= 0 && t < (words[best].end ?? 0) + 0.4 ? best : -1);
     setPassedWordIdx(best >= 0 && t >= (words[best].end ?? 0) ? best : best - 1);
     if (force || Math.abs(t - shownTimeRef.current) >= 0.24) {
@@ -1294,6 +1278,10 @@ export function TranscriptViewer({
     setShowFullText(false);
     setExportTracks(null);
     setLineOrder("orig-first");
+    // The export outcome belongs to the previous record too: a "permission
+    // denied" line (or a still-ticking "Saved") must not sit next to B's button.
+    setSaveError(null);
+    setSaved(false);
   }, [path, okey]);
 
   // Translate-panel state belongs to the PREVIOUS record's backend — a record
@@ -1528,8 +1516,10 @@ export function TranscriptViewer({
       clear();
     };
     // editMode/showFullText remount the box node, result changes its natural
-    // height — re-grab and re-measure.
-  }, [fill, focus, editMode, showFullText, hasSegments, result]);
+    // height, the export/translate panels above the box move its flow position
+    // and the row-content toggles change its natural height — re-grab and
+    // re-measure on each.
+  }, [fill, focus, editMode, showFullText, hasSegments, result, showExport, showTranslate, visLangsKey, showTs, showNames, colorize]);
 
   // Follow: keep the active row centred while playing. Primarily by scrolling
   // the transcript BOX (its own scroll container); only when the box alone
@@ -1661,13 +1651,7 @@ export function TranscriptViewer({
       const segs = dataRef.current.segs ?? [];
       if (!segs.length) return;
       const t = audioRef.current?.currentTime ?? 0;
-      let li = -1;
-      for (let i = segs.length - 1; i >= 0; i--) {
-        if (t >= segs[i].start) {
-          li = i;
-          break;
-        }
-      }
+      const li = lastStartedAt(segs, t);
       const next = Math.max(0, Math.min(segs.length - 1, li + dir));
       seekTo(segs[next].start);
     };
@@ -1793,6 +1777,21 @@ export function TranscriptViewer({
       : {}),
   });
 
+  /** Tracks the export actually carries (the picker, else the visible ones). */
+  const effTracks = useMemo(
+    () => (langs.length ? (exportTracks ?? visibleTracks) : []),
+    [langs, exportTracks, visibleTracks],
+  );
+  /** Reading-speed scan over every translated cue — memoized so the contract
+   *  rows in JSX don't re-walk the transcript at playhead cadence. */
+  const cpsWarn = useMemo(
+    () =>
+      effTracks.some((t) => t !== "orig") && exportFormat !== "json"
+        ? cpsWarnings(editedResult, effTracks)
+        : [],
+    [editedResult, effTracks, exportFormat],
+  );
+
   /** The "in this file" rows for the selected format (see ContractRow). */
   const exportContract = (): ContractRow[] => {
     const hasWords = !!effWords.length;
@@ -1826,8 +1825,7 @@ export function TranscriptViewer({
       state: "na",
       why,
     });
-    const effTracksEarly = langs.length ? (exportTracks ?? visibleTracks) : [];
-    const origInExport = !effTracksEarly.length || effTracksEarly.includes("orig");
+    const origInExport = !effTracks.length || effTracks.includes("orig");
     const rows: (ContractRow | null)[] = (() => {
       switch (exportFormat) {
         case "srt":
@@ -1876,7 +1874,7 @@ export function TranscriptViewer({
                     label: "Word timestamps",
                     state: (wordTs ? "on" : "off") as ContractRow["state"],
                     why: wordTs
-                      ? effTracksEarly.some((t) => t !== "orig")
+                      ? effTracks.some((t) => t !== "orig")
                         ? "on — enhanced-LRC word tags in the original-track file (translated files carry line timing)"
                         : "on — enhanced-LRC <mm:ss.xx> word tags (karaoke players)"
                       : "off — click to include",
@@ -1898,7 +1896,6 @@ export function TranscriptViewer({
           ];
       }
     })();
-    const effTracks = langs.length ? (exportTracks ?? visibleTracks) : [];
     const mtLangs = effTracks.filter((t) => t !== "orig");
     if (mtLangs.length && exportFormat !== "json") {
       rows.push({
@@ -1906,7 +1903,7 @@ export function TranscriptViewer({
         state: "always",
         why: `machine-translated${result.translation?.model ? ` (${result.translation.model.split("/").pop()})` : ""} · timing from the original`,
       });
-      const warns = cpsWarnings(editedResult(), effTracks);
+      const warns = cpsWarn;
       if (warns.length) {
         rows.push({
           label: "Reading speed",
@@ -1940,7 +1937,7 @@ export function TranscriptViewer({
    *  change — the panel's answer to "what am I getting?". */
   const exportPreview = (): string | null => {
     if (!result.segments?.length) return null;
-    const full = editedResult();
+    const full = editedResult;
     const segs = (full.segments ?? []).slice(0, PREVIEW_CUES);
     const lastEnd = segs[segs.length - 1]?.end ?? 0;
     const sample: BatchResult = {
@@ -1968,7 +1965,7 @@ export function TranscriptViewer({
     const ext = EXPORT_EXTENSIONS[exportFormat];
     const stem = basename(path).replace(/\.[^.]+$/, "");
     const opts = exportOpts();
-    const files = generateExports(editedResult(), opts);
+    const files = generateExports(editedResult, opts);
     let target: string | null;
     try {
       target = await pickExportPath(files[0].name(stem), exportFormat.toUpperCase(), ext);
@@ -2764,7 +2761,7 @@ export function TranscriptViewer({
               </span>
             )}
             {saveError && (
-              <span className="text-[12px] text-warn">{stripControlChars(saveError)}</span>
+              <span className="text-[12px] text-warn">{safeDisplayText(saveError, 300)}</span>
             )}
             <Button variant="accent" size="sm" onClick={doExport}>
               {saved ? <Check className="size-4" /> : <Download className="size-4" />}

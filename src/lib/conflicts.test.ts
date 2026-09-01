@@ -57,6 +57,17 @@ describe("conflicts — collapseSides", () => {
   it("and distinct when a low-level backend can tell sides apart", () => {
     expect(conflicts(sides, false)).toEqual([]);
   });
+
+  // The inbound-blob sanitizer calls `conflicts(peers, !IS_WINDOWS)` and turns the later
+  // member of every collision OFF. Both flag values are pinned here so the Windows side
+  // (side-distinct chords the low-level hook really registers) cannot regress into a
+  // silent mass-disable on every pull.
+  it("LCtrl+Space vs RCtrl+Space: a duplicate only where sides collapse", () => {
+    const pair = [prof(["ControlLeft", "Space"]), prof(["ControlRight", "Space"])];
+    expect(conflicts(pair, true).every((c) => c.kind === "duplicate")).toBe(true);
+    expect(conflicts(pair, true)).toHaveLength(2);
+    expect(conflicts(pair, false)).toEqual([]);
+  });
 });
 
 describe("findChordConflict — capture-time twin", () => {
