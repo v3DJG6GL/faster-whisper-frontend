@@ -830,12 +830,6 @@ mod imp {
         }
     }
 
-    /// The chord-matching worker — the twin of `evdev_hotkeys::run_device` (one
-    /// instance, fed by the hook instead of per-device streams). All chord
-    /// semantics (hold edges, hands-free re-arm, family handoff/grace) live in the
-    /// shared crate::chord_engine. Runs until the sender is dropped (shutdown/
-    /// restart), then releases its HeldKeys contributions and stops any live
-    /// Hold session.
     /// Commit one debounced key transition: update the held-set + the HeldKeys
     /// mirror, step the engine, dispatch its fires. (The pre-debounce body of the
     /// worker loop, factored out so deferred releases commit through the same path.)
@@ -909,6 +903,12 @@ mod imp {
         }
     }
 
+    /// The chord-matching worker — the twin of `evdev_hotkeys::run_device` (one
+    /// instance, fed by the hook instead of per-device streams). All chord
+    /// semantics (hold edges, hands-free re-arm, family handoff/grace) live in the
+    /// shared crate::chord_engine. Runs until the sender is dropped (shutdown/
+    /// restart), then releases its HeldKeys contributions and stops any live
+    /// Hold session.
     fn worker(app: AppHandle, rx: Receiver<KeyEv>, mut engine: Engine) {
         // Mirror physical modifier state into the shared signal `inject_text` reads,
         // so we never type into a still-held trigger modifier (see crate::held_keys).

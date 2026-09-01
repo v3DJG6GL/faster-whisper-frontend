@@ -1593,7 +1593,7 @@ pub fn apply_bindings(app: &AppHandle) {
     let cfg = config::load(&dir);
     // The quick-add chord stays INERT until a word-mapping list is designated
     // (settings.quickAddList) — the window would have nothing to add to. This
-    // keeps the Ctrl+Shift+RightCtrl factory default harmless out of the box;
+    // keeps the Super+Alt factory default harmless out of the box;
     // designating a list (onboarding step 3 / the Dictionary screen) arms it.
     let no_quick_add: Vec<String> = Vec::new();
     let quick_add = if cfg.settings.quick_add_list.is_some() {

@@ -454,7 +454,7 @@ pub struct GeneralSettings {
     #[serde(default)]
     pub deep_field_detection: bool,
     /// Global chord (KeyboardEvent.code list) that opens the quick-add window. Empty =
-    /// unset. Factory default = the chord family's Ctrl+Shift+RightCtrl (inert until a
+    /// unset. Factory default = Super+Alt (`default_quick_add_hotkey`) (inert until a
     /// quick-add list is designated — see apply_bindings). `#[serde(default = …)]` so
     /// configs missing the field get the factory value. Registered via the same paths
     /// as Profile hotkeys (evdev / plugin / the `--quick-add` CLI flag).
@@ -530,7 +530,7 @@ pub struct RecordingSettings {
     /// `#[serde(default)]` so older configs default to always-shown.
     #[serde(default)]
     pub overlay_stats_on_hover: bool,
-    /// Which usage figure the chip shows. `#[serde(default = …)]` (words) so older
+    /// Which usage figure the chip shows. `#[serde(default = …)]` (both) so older
     /// configs load with a sensible metric.
     #[serde(default = "default_stats_metric")]
     pub overlay_stats_metric: OverlayStatsMetric,

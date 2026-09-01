@@ -87,10 +87,14 @@ export function BrandMark() {
  *  both vanish once a backend AND a profile exist (mirrors the Home checklist). */
 function setupDot(screenId: string, backendCount: number, profileCount: number) {
   if (backendCount > 0 && profileCount > 0) return null;
+  // sr-only twin of each dot: StatusDot is a bare colour span with no accessible
+  // name, and these two are the only uses without a visible text sibling.
   if (screenId === "backends") {
+    const label = backendCount === 0 ? "Set up: connect a backend" : "Backend connected";
     return (
       <span className="ml-auto">
-        <StatusDot tone={backendCount === 0 ? "accent" : "live"} title={backendCount === 0 ? "Set up: connect a backend" : "Backend connected"} />
+        <StatusDot tone={backendCount === 0 ? "accent" : "live"} title={label} />
+        <span className="sr-only">{label}</span>
       </span>
     );
   }
@@ -98,6 +102,7 @@ function setupDot(screenId: string, backendCount: number, profileCount: number) 
     return (
       <span className="ml-auto">
         <StatusDot tone="accent" title="Set up: confirm your hotkeys" />
+        <span className="sr-only">Set up: confirm your hotkeys</span>
       </span>
     );
   }

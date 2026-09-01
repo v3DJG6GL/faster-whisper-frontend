@@ -32,10 +32,11 @@ export async function initConfig(): Promise<void> {
   if (started) return;
   started = true;
 
-  // Arm auto-save ONLY after the initial load resolves. The store boots with seeded
-  // defaults ("Local server" + two default profiles); persisting before (or instead
-  // of) a successful load — e.g. a change landing during the load window — would
-  // overwrite the real on-disk config with those defaults. (In dev, editing store.ts
+  // Arm auto-save ONLY after the initial load resolves. The store boots EMPTY
+  // (no backends, no profiles — the first-run gate keys on that); persisting
+  // before (or instead of) a successful load — e.g. a change landing during the
+  // load window — would overwrite the real on-disk config with that empty
+  // state. (In dev, editing store.ts
   // hot-reloads it back to defaults; this guard plus the post-load subscribe keep the
   // saved config safe, but you still must restart the app to see your config again.)
   let hydrated = false;
@@ -58,8 +59,8 @@ export async function initConfig(): Promise<void> {
   } catch (e) {
     console.error("loadConfig failed", e);
     // The load failed at the IPC level (Rust load() itself returns a valid config and backs up an
-    // unreadable one). Auto-save is still armed below holding the seeded defaults, so warn that the
-    // saved settings couldn't be loaded and saving now may overwrite them.
+    // unreadable one). Auto-save is still armed below holding the EMPTY boot state — a save now
+    // would wipe the on-disk config (and re-open the first-run gate on the next launch), so warn.
     useApp
       .getState()
       .setSaveError("Couldn’t load your saved settings — saving now may overwrite them. Restart to retry.", "load");

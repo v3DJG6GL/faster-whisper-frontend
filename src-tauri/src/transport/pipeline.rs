@@ -19,9 +19,6 @@ const MAX_RECENT_WORDS: usize = 500;
 /// A single dictated word or short phrase.
 const WORD_MAX: usize = 120;
 
-/// First `n` chars of `s` for a log line. Error bodies can be huge, and a 422's body embeds
-/// the submitted rule contents — logs get the status + a short detail, never the payload.
-
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
 /// caller may view + edit, their role, and the per-type editable-field allow-list.
 #[derive(Debug, Serialize, Deserialize, Default)]
