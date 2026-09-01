@@ -6,7 +6,7 @@
 import { useApp } from "./store";
 import {
   startLive, stopLive, cancelLive, requestStopIfStarting, cancelStopIfStarting, isStarting,
-  queuePendingHoldStart, registerPendingStartRunner, reclassifyLive, abortDictationTranslate,
+  queuePendingHoldStart, voidPendingHoldStart, registerPendingStartRunner, reclassifyLive, abortDictationTranslate,
   isCapturing, setSettleTargetPicker,
 } from "./streaming";
 import { getFocusedApp, isTauri, showLangPick, showQuickAdd } from "./api";
@@ -43,7 +43,13 @@ function stopOrCancel(hard: boolean): void {
   // idle/error but a session may be mid-START (its status not yet "listening", e.g. a fast PTT tap
   // whose chord-release "stop" landed during the start prologue) → mark it to tear down on go-live,
   // else it would wedge "listening" with the chord already released. No-op when nothing is starting.
-  else requestStopIfStarting();
+  // The release also voids any queued fast re-press start — including one whose
+  // held-check IPC is mid-flight, which would otherwise resume a hold session
+  // for a chord that is already up (nothing left to release = stuck listening).
+  else {
+    requestStopIfStarting();
+    voidPendingHoldStart();
+  }
 }
 
 export function dictate(profileId: string, action: TriggerAction): void {

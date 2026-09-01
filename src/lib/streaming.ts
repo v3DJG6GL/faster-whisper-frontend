@@ -995,6 +995,18 @@ const MIN_INJECT_VISIBLE_MS = 450;
 const PENDING_START_MAX_AGE_MS = 15_000;
 let pendingHoldStart: { profileId: string; at: number } | null = null;
 let pendingStartRunner: ((profileId: string) => void) | null = null;
+// Bumped by every void: the consume's held-check is an async IPC round-trip, and a
+// chord RELEASE landing during that flight has no other handle (pendingHoldStart is
+// already nulled) — without this, the resolved "held" starts a hold session for a
+// chord that is up, and nothing ever stops it.
+let pendingStartGen = 0;
+
+/** A chord release (or anything that makes a queued start wrong) voids it — including
+ *  one whose held-check IPC is currently in flight. */
+export function voidPendingHoldStart(): void {
+  pendingHoldStart = null;
+  pendingStartGen++;
+}
 
 export function queuePendingHoldStart(profileId: string): void {
   pendingHoldStart = { profileId, at: performance.now() };
@@ -1016,8 +1028,10 @@ function consumePendingHoldStart(): void {
   // specific chord, not "any modifier", keeps an unrelated held Shift from starting a
   // hold session whose release would never come.
   const chord = useApp.getState().profiles.find((p) => p.id === pending.profileId)?.hotkey ?? [];
+  const gen = pendingStartGen;
   void shortcutModsHeld(chord)
     .then((held) => {
+      if (gen !== pendingStartGen) return; // released while the check was in flight
       if (held && useApp.getState().status === "idle") run(pending.profileId);
     })
     .catch(() => {}); // plugin-only backend / IPC failure → treat as released
@@ -2239,7 +2253,7 @@ function teardownAfterFatalInject(): void {
 /** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
  *  Guarded: if a new session starts first (status leaves "error"), the pending clear is a no-op. */
 function flashError(message: string): void {
-  pendingHoldStart = null; // don't chain a queued start onto a failed session
+  voidPendingHoldStart(); // don't chain a queued start onto a failed session (in-flight check included)
   // Clear the live preview too (like level:0 freezes the meter): the error supersedes it, and
   // otherwise the stale `partial` lingers in the store — when the error auto-clears to idle the
   // Home transcript card (which lingers longer than the error) would flip from the red message to
@@ -2790,7 +2804,7 @@ export async function stopLive(): Promise<void> {
  *  recovers both the recording state AND the shortcuts. */
 export async function cancelLive(): Promise<void> {
   autoStopMs = 0; // disarm hands-free auto-stop
-  pendingHoldStart = null; // a deliberate cancel also voids a queued fast re-press
+  voidPendingHoldStart(); // a deliberate cancel also voids a queued fast re-press (in-flight check included)
   pendingReclassify = null; // …and a queued chord-family upgrade
   clearWarmTimer();
   clearStuckWatchdog();
