@@ -34,7 +34,7 @@ const GERUND: Record<TransportErrorKind, string> = {
 export function shortCause(e: unknown): string {
   const msg = String(e ?? "");
   if (msg.includes("Could not connect")) return "could not connect";
-  if (msg.includes("Timed out") || /timed out/i.test(msg)) return "timed out";
+  if (/timed out/i.test(msg)) return "timed out";
   const http = /HTTP (\d{3})/.exec(msg);
   if (http) return `HTTP ${http[1]}`;
   return "see the log";
@@ -54,7 +54,7 @@ export function describeTransportError(
       showLogs: false,
     };
   }
-  if (msg.includes("Timed out") || /timed out/i.test(msg)) {
+  if (/timed out/i.test(msg)) {
     return {
       title: `Lost contact with ${backendLabel} while ${GERUND[kind]}.`,
       hint: "The server may still be working — check it, then try again.",

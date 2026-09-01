@@ -31,9 +31,6 @@
      alias existed. The overlay's tone→class maps need a class NAME, not an
      inline style, so the alias stops being optional here. */
   --color-translate: var(--c-translate);
-  --color-separate: var(--c-separate);
-  --color-diarize: var(--c-diarize);
-  --color-download: var(--c-download);
 
   --font-display: "Hubot Sans Variable", system-ui, sans-serif;
   --font-sans: "Mona Sans Variable", system-ui, sans-serif;

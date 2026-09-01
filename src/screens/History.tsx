@@ -522,6 +522,7 @@ export default function History() {
 
   const dictationExpanded = (rec: TranscriptRecord) => {
     const backendName = backends.find((b) => b.id === rec.backendId)?.name;
+    const tracks = tracksOf(rec);
     return (
       <div key={rec.id} className="my-2 rounded-xl border border-accent/25 bg-accent-soft/30 px-4 py-3">
         <div className="flex items-center gap-2.5">
@@ -547,7 +548,7 @@ export default function History() {
             No recording linked — “Keep audio recordings” was off for this session.
           </div>
         )}
-        {tracksOf(rec) ? (
+        {tracks ? (
           /* One track per language, the original included as a track of its
              own. Previously this rendered the INJECTED blob (which, with
              "include original" on, already begins with the original) and then
@@ -557,7 +558,7 @@ export default function History() {
              transcript contains its own line breaks and a blank line does not
              read as a language boundary. */
           <div className="mt-3 max-h-56 overflow-y-auto">
-            {tracksOf(rec)!.map(({ lang, text, orig }, i) => (
+            {tracks.map(({ lang, text, orig }, i) => (
               <div
                 key={lang}
                 className={cn(

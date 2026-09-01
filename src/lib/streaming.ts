@@ -318,12 +318,6 @@ let sessionTranslateWarned = false;
  *  readout (a timeout on a cold model reads very differently from a refused
  *  request). Reset per session alongside sessionTranslateWarned. */
 let sessionTranslateFailure: TranslateFailure | null = null;
-/** Read-only view of the above. Exported rather than left module-private
- *  because the session-end readout that consumes it is a later commit, and
- *  `noUnusedLocals` would otherwise delete the record before its reader lands. */
-export function dictationTranslateFailure(): TranslateFailure | null {
-  return sessionTranslateFailure;
-}
 /** What a running dictation translate would need to abort SERVER-side: a lost
  *  race leaves the GPU working on text nobody will read (Rust waits on the
  *  request for TEXT_TRANSLATE_TIMEOUT = 1 h). Module-level for the same reason

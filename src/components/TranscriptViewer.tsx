@@ -19,7 +19,7 @@ import { effectiveServerUrl } from "@/lib/backends";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { Button, LangTag } from "@/components/ui";
-import { fmtDurationExact, fmtTimestamp } from "@/lib/format";
+import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import {
   cancelTextTranslation, decodeMediaFile, getTranscribeProgress, openSourceUrl,
   pickExportPath, readMediaFile, saveTextFile, isTauri, translateText,
@@ -31,7 +31,6 @@ import {
 import { transportErrorDoorway } from "@/lib/errors";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
-import { fmtBytes } from "@/lib/format";
 import {
   clearEdits, mergeSegmentTranslations, setRename, setSegmentEdit, setSegmentSpeaker,
   setSpeakerColor as setSpeakerColorAction, useTranscribeRun,
@@ -999,7 +998,7 @@ export function TranscriptViewer({
   // Re-entry gate that survives remounts: a ctl exists ⇔ the loop is live.
   const translating = trCtls.has(trKey) && trRun != null;
 
-  /** Translate the given segment indexes into `targets` in 400-segment
+  /** Translate the given segment indexes into `targets` in `TRANSLATE_CHUNK`-segment
    *  chunks, merging each chunk back into the record as it lands (track
    *  chips appear on the first merge). Uses the record's backend (else the
    *  first); explicit `opts` (the panel's picks) override its stored

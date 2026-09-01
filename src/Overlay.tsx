@@ -1154,7 +1154,7 @@ export default function Overlay() {
                             and only reveal the words once the chip is hover-revealed. The phase row
                             (below) takes this slot ahead of the words while translating — see phaseRow. */}
                         {phaseRow ??
-                          (state.partial && (!state.previewOnHover || hoverReveal) ? (
+                          (partialShown ? (
                           // Left-edge fade via a STATIC overlay rather than a CSS mask:
                           // the transcript text/scroll changes several times a second,
                           // and re-evaluating a mask-image each time flickers on

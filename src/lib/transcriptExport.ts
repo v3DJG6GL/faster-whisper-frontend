@@ -178,8 +178,8 @@ function vttClass(lang: string): string {
 }
 
 /** Cue text lines for one segment across the included tracks, in lineOrder.
- *  `mt` renders a translated line (plain, name-prefixed like the "off" color
- *  mode — the color modes stay original-only).
+ *  `mt` renders a translated line; the speaker is language-independent, so the
+ *  color modes style it exactly as they style the original.
  *
  *  `lang` reaches `mt` because it used to be dropped between two maps here:
  *  the language was known, iterated over, and then thrown away before the
