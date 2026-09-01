@@ -65,6 +65,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     realtimePreviewOnHover: false,
     showProfileOnOverlay: true,
     showProfileOnHover: false,
+    // A route is a promise about what will be typed, so it defaults to always-visible.
+    showRouteOnOverlay: true,
+    showRouteOnHover: false,
     showStatsOnOverlay: true,
     overlayStatsOnHover: false,
     overlayStatsMetric: "both",

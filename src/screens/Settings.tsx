@@ -1265,6 +1265,18 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
+              title={SETTING.showTranslationRoute.label}
+              desc="Show which languages dictation is being translated into (→ FR IT) on the chip — always, or only while you hover it. Shown on its own when the profile tag is off."
+              disabled={chipOff}
+            >
+              <HoverModeSegmented
+                ariaLabel="Translation-route visibility"
+                visibleKey="showRouteOnOverlay"
+                hoverKey="showRouteOnHover"
+                disabled={chipOff}
+              />
+            </SettingRow>
+            <SettingRow
               title={SETTING.showUsageOnChip.label}
               desc="Add a tiny usage readout (today's totals) to the chip — always, or only while you hover it. Needs the faster-whisper-backend; hidden on a standard server."
               disabled={chipOff}

@@ -515,6 +515,13 @@ pub struct RecordingSettings {
     /// `#[serde(default)]` so older configs default to always-shown.
     #[serde(default)]
     pub show_profile_on_hover: bool,
+    /// Show the translation route ("→ FR IT") on the chip, independent of the Profile
+    /// tag. `#[serde(default = …)]` so older configs keep the route they had.
+    #[serde(default = "default_true")]
+    pub show_route_on_overlay: bool,
+    /// When the route is shown, reveal it only while hovering the chip (vs. always).
+    #[serde(default)]
+    pub show_route_on_hover: bool,
     /// Show a tiny usage readout (today's words/minutes) on the chip. Default on;
     /// `#[serde(default = …)]` so configs missing the field get the factory value.
     #[serde(default = "default_true")]
@@ -771,6 +778,8 @@ impl Default for Config {
                     realtime_preview_on_hover: false,
                     show_profile_on_overlay: true,
                     show_profile_on_hover: false,
+                    show_route_on_overlay: true,
+                    show_route_on_hover: false,
                     show_stats_on_overlay: true,
                     overlay_stats_on_hover: false,
                     overlay_stats_metric: OverlayStatsMetric::Both,

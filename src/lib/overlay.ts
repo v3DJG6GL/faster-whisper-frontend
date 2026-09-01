@@ -112,25 +112,25 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     : rec.persistentDock
       ? homeTargetProfile(state.profiles, state.settings.homeProfileId)
       : undefined;
-  if (rec.showProfileOnOverlay && chipProfile) {
+  if (chipProfile) {
     const backend = backendForProfile(chipProfile, state.backends);
-    chip = {
-      profileTag: chipTagFor(chipProfile),
-      // Effective language: a set per-Profile override wins; else the Backend's.
-      language: chipProfile.language?.trim() ? chipProfile.language : backend?.language,
-      // Effective endpoint likewise (a Profile may override stream/batch).
-      mode: chipProfile.endpoint ?? backend?.endpoint,
-      // The translation ROUTE's targets — see chipRouteTargets for the resolution order
-      // and why both inputs need bounding.
-      translateTo: chipRouteTargets(
-        state.sessionTargets,
-        { ...backend?.translationOverrides, ...chipProfile.translationOverrides }.translateTo,
-      ),
-      translateMore: chipRouteMore(
-        state.sessionTargets,
-        { ...backend?.translationOverrides, ...chipProfile.translationOverrides }.translateTo,
-      ),
-    };
+    if (rec.showProfileOnOverlay) {
+      chip = {
+        profileTag: chipTagFor(chipProfile),
+        // Effective language: a set per-Profile override wins; else the Backend's.
+        language: chipProfile.language?.trim() ? chipProfile.language : backend?.language,
+        // Effective endpoint likewise (a Profile may override stream/batch).
+        mode: chipProfile.endpoint ?? backend?.endpoint,
+      };
+    }
+    // The translation ROUTE has its own switch: it is a promise about what will be typed,
+    // so it must not disappear with the tag. See chipRouteTargets for the resolution order
+    // and why both inputs need bounding.
+    if (rec.showRouteOnOverlay) {
+      const configured = { ...backend?.translationOverrides, ...chipProfile.translationOverrides }.translateTo;
+      chip.translateTo = chipRouteTargets(state.sessionTargets, configured);
+      chip.translateMore = chipRouteMore(state.sessionTargets, configured);
+    }
   }
   // P28: a tiny usage readout (today's words/minutes) for the chip, gated by the
   // setting. Scoped to the same backend the stats controller tracks; omitted when
@@ -198,6 +198,8 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     statsOnHover: rec.showStatsOnOverlay && rec.overlayStatsOnHover,
     // When on, the chip reveals the Profile tag only while hovered (vs. always shown).
     profileOnHover: rec.showProfileOnOverlay && rec.showProfileOnHover,
+    // Likewise for the route.
+    routeOnHover: rec.showRouteOnOverlay && rec.showRouteOnHover,
     ...chip,
   };
 }

@@ -35,6 +35,7 @@ interface ChipState {
   profileTag?: string;
   // When true, the Profile tag is revealed only while the chip is hover-revealed (else always).
   profileOnHover?: boolean;
+  routeOnHover?: boolean;
   language?: string;
   mode?: "stream" | "batch";
   // The translation route's targets (ISO codes). Present whenever this session — or, on the
@@ -209,6 +210,7 @@ export default function Overlay() {
             sessionOutcome: e.payload.sessionOutcome ?? null,
             statsOnHover: e.payload.statsOnHover ?? false,
             profileOnHover: e.payload.profileOnHover ?? false,
+            routeOnHover: e.payload.routeOnHover ?? false,
             previewOnHover: e.payload.previewOnHover ?? false,
             translateTo: e.payload.translateTo ?? [],
             translateMore: e.payload.translateMore ?? 0,
@@ -444,10 +446,12 @@ export default function Overlay() {
   // A bounded number from our own overlay.ts, but it rides the peer-adjacent payload: clamp.
   const routeMore = Math.min(99, Math.max(0, Math.floor(Number(state.translateMore) || 0)));
   const routeText = routeMore > 0 ? `${routeTargets.join(" ")} +${routeMore}` : routeTargets.join(" ");
+  // The route has its own visibility setting ("Show translation route"), sent only when on.
+  const showRoute = hasRoute && (!state.routeOnHover || hoverReveal);
   // "On hover" mode for the Profile tag: only surface it once the chip is hover-revealed;
-  // "always" (profileOnHover false) shows it whenever a tag was sent. A ROUTE overrides that
-  // gate — see above; the tag comes with it, since a bare "→ FR IT" names no owner.
-  const showProfile = !!state.profileTag && (!state.profileOnHover || hoverReveal || hasRoute);
+  // "always" (profileOnHover false) shows it whenever a tag was sent. A visible ROUTE
+  // overrides that gate — the tag names the route's owner, so it comes along.
+  const showProfile = !!state.profileTag && (!state.profileOnHover || hoverReveal || showRoute);
   // P16/D target readout: overlay.ts only sends `targetTitle` while a session is active AND the
   // "Show injection target" setting is on, so its presence alone gates the chip's "→ app" segment.
   // A `targetSkip` reason means injection was coerced to the clipboard → tint the readout warn.
@@ -760,7 +764,7 @@ export default function Overlay() {
           {/* Name the targets the stage is working towards. Closes the loop with the identity
               row: the same two codes promised at rest are the ones now running, so a long wait
               is legibly the wait for THAT, not an unexplained pause. */}
-          {phase.kind === "translating" && hasRoute && (
+          {phase.kind === "translating" && showRoute && (
             <span className="shrink-0 text-translate/70">→ {routeText}</span>
           )}
           <span className="tabular-nums text-faint">{phaseClock(phaseElapsedMs(phase, Date.now()))}</span>
@@ -896,7 +900,7 @@ export default function Overlay() {
             viewer's MT lines use — so the promise made here and the work reported later are
             visibly the same thing. `→` is aria-hidden: it is punctuation between two codes,
             and a screen reader saying "right arrow" adds nothing. */}
-        {hasRoute && (
+        {showRoute && (
           <span className="ml-1.5 flex items-center whitespace-nowrap">
             <span className="text-faint" aria-hidden>
               →
@@ -924,6 +928,18 @@ export default function Overlay() {
           )}
         </AnimatePresence>
       </div>,
+    );
+  }
+  // The route on its own, when the Profile tag is off: "→ FR IT" with no owner named is
+  // still the promise the user chose to see (the tag has its own switch).
+  if (showRoute && !showProfile) {
+    idGroups.push(
+      <span key="route" className="flex items-center whitespace-nowrap">
+        <span className="text-faint" aria-hidden>
+          →
+        </span>
+        <span className="ml-1 text-translate">{routeText}</span>
+      </span>,
     );
   }
   // "On hover" mode: only surface the usage readout once the chip is hover-revealed;

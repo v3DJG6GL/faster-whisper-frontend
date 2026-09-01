@@ -56,6 +56,8 @@ export const CHIP_FIELDS = [
   "realtimePreviewOnHover",
   "showProfileOnOverlay",
   "showProfileOnHover",
+  "showRouteOnOverlay",
+  "showRouteOnHover",
   "showStatsOnOverlay",
   "overlayStatsOnHover",
   "overlayStatsMetric",
