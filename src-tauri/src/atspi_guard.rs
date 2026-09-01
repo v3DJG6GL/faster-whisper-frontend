@@ -255,6 +255,13 @@ mod imp {
 
     type Guarded = Arc<parking_lot::Mutex<super::Snapshot>>;
 
+    /// First + every 30th — the shared dedup gate for both reconnect outcomes, so
+    /// neither a fast-ending stream nor an Err/Ok alternation can flood the ring
+    /// at the 2 s retry cadence.
+    pub(super) fn should_log(failures: u32) -> bool {
+        failures == 1 || failures % 30 == 0
+    }
+
     pub(super) async fn run(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String> {
         // Reconnect loop: the a11y connection can die — registry daemon restart, or (the big
         // one for long sessions) suspend/resume drops the bus. If we just returned, the task
@@ -289,14 +296,26 @@ mod imp {
                     _ => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
                 }
             }
+            let started = std::time::Instant::now();
             match run_once(snapshot.clone(), deep.clone()).await {
                 Ok(()) => {
-                    failures = 0;
-                    tracing::warn!("[atspi] event stream ended — reconnecting");
+                    // A stream that ENDS is a failure shape too (bus restart): count it,
+                    // and clear the counter only after a connection that actually pumped
+                    // for a while — a fast end (or an Err/Ok alternation) would otherwise
+                    // reset past the gate and flood at one warn per 2 s retry.
+                    if started.elapsed() >= std::time::Duration::from_secs(60) {
+                        failures = 0;
+                    }
+                    failures = failures.saturating_add(1);
+                    if should_log(failures) {
+                        tracing::warn!(
+                            "[atspi] event stream ended — reconnecting (failure #{failures}, logging first + every 30th)"
+                        );
+                    }
                 }
                 Err(e) => {
                     failures = failures.saturating_add(1);
-                    if failures == 1 || failures % 30 == 0 {
+                    if should_log(failures) {
                         tracing::warn!(
                             "[atspi] listener error: {e} — reconnecting (failure #{failures}, logging first + every 30th)"
                         );
@@ -784,4 +803,19 @@ mod imp {
         })
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::imp::should_log;
+
+    #[test]
+    fn reconnect_log_gate_is_first_plus_every_30th() {
+        assert!(should_log(1));
+        assert!(!should_log(2));
+        assert!(!should_log(29));
+        assert!(should_log(30));
+        assert!(!should_log(31));
+        assert!(should_log(60));
+    }
 }

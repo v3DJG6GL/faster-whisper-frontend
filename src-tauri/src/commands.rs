@@ -284,10 +284,11 @@ fn resolve_key(explicit: Option<String>, backend_id: Option<String>) -> Option<S
     }
     let key = backend_id.as_deref().and_then(config::keys::get);
     if key.is_none() {
-        // A keyless backend is legal, but when the server DOES require a key the
-        // failure mode is an opaque 403 on connect — make "we are about to go out
-        // without an Authorization header" visible in the log.
-        tracing::warn!(
+        // A keyless backend is the factory-normal case (newBackendDraft seeds
+        // hasApiKey:false) and this runs on the 30 s usage poll for every backend,
+        // so WARN here floods the capture ring forever. DEBUG keeps the "we went
+        // out without an Authorization header" breadcrumb for an opaque-403 chase.
+        tracing::debug!(
             "[keys] no API key resolved (backend_id={backend_id:?}) — connecting unauthenticated"
         );
     }
