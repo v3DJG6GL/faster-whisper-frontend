@@ -21,7 +21,7 @@ pub enum StreamEvent {
     /// server refused because the field is admin-locked (empty otherwise).
     Ready { overrides_ignored: Vec<String> },
     Partial { committed: String, pending: String },
-    Final { committed: String, tail: String, last: bool, utterance: u32 },
+    Final { committed: String, tail: String, last: bool, utterance: Option<u32> },
     /// Long-silence hard break: the server reset its document. The client should
     /// reset its injection baseline and optionally type `separator` between docs.
     Boundary { separator: String },
@@ -34,7 +34,9 @@ pub enum StreamEvent {
     /// produced it: a single "most recent id" slot mis-attributes the id to the
     /// next phrase whenever an utterance produces no capture row (the server
     /// samples and rate-limits them) or the inject queue drains slowly.
-    Captured { id: String, utterance: u32 },
+    /// `utterance` is None when the server predates the ordinal: the client then
+    /// pairs nothing rather than keying every phrase on ordinal 0.
+    Captured { id: String, utterance: Option<u32> },
     /// The session's audio was saved to this path ("Keep audio recordings" on).
     /// Emitted before `Closed` so the client can link its history record to the
     /// file. Epoch-gated like every other event — a cancelled session's save
@@ -641,7 +643,7 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
                 committed: bounded(&str_field(&v, "committed"), MAX_TRANSCRIPT),
                 tail: bounded(&str_field(&v, "tail"), MAX_TRANSCRIPT),
                 last,
-                utterance: u32_field(&v, "utterance"),
+                utterance: ordinal_field(&v, "utterance"),
             });
             last
         }
@@ -657,7 +659,7 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
             // opaque field on the next translate request.
             let id = bounded(&str_field(&v, "id"), 64);
             if !id.is_empty() {
-                on_event(StreamEvent::Captured { id, utterance: u32_field(&v, "utterance") });
+                on_event(StreamEvent::Captured { id, utterance: ordinal_field(&v, "utterance") });
             }
             false
         }
@@ -717,11 +719,14 @@ pub(crate) fn bounded(s: &str, n: usize) -> String {
     }
 }
 
-/// A server-supplied non-negative ordinal. Absent, negative or oversized reads
-/// as 0 — the pairing then degrades to "no capture id", which is the same
-/// best-effort behaviour an older backend already gets.
-fn u32_field(v: &serde_json::Value, key: &str) -> u32 {
-    v.get(key).and_then(|x| x.as_u64()).unwrap_or(0).min(u32::MAX as u64) as u32
+/// A server-supplied non-negative ordinal, or None when absent, negative or
+/// oversized. Absence is kept EXPLICIT: 0 is a real ordinal (the first
+/// utterance), so mapping "no field" onto it would key every phrase of an older
+/// backend onto one slot — the positional mis-pairing the ordinal exists to end.
+/// The client pairs nothing for None, which is the best-effort behaviour an
+/// older backend already gets.
+fn ordinal_field(v: &serde_json::Value, key: &str) -> Option<u32> {
+    v.get(key).and_then(|x| x.as_u64()).and_then(|n| u32::try_from(n).ok())
 }
 
 fn str_field(v: &serde_json::Value, key: &str) -> String {

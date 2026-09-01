@@ -77,6 +77,34 @@ describe("newCaptureIdBook", () => {
       expect(await other).toBeNull();
     });
 
+    it("an ordinal the server has already passed does not park the queue", async () => {
+      // The server samples captures and writes rows in utterance order: an id for
+      // utterance 1 proves utterance 0 got none, so its phrase must not wait.
+      const b = newCaptureIdBook();
+      b.resolve(1, "cap-1");
+      const p = b.take(0);
+      await Promise.resolve();
+      expect(await p).toBeNull();
+    });
+
+    it("a phrase parked on an ordinal is unparked when a later id lands", async () => {
+      const b = newCaptureIdBook();
+      const p = b.take(0);
+      b.resolve(1, "cap-1");
+      expect(await p).toBeNull();
+      expect(await b.take(1)).toBe("cap-1");
+    });
+
+    it("a backend that sends no ordinal pays the wait at most once", async () => {
+      // Every phrase reports ordinal 0 and no `captured` frame ever comes.
+      const b = newCaptureIdBook();
+      const first = b.take(0);
+      await vi.advanceTimersByTimeAsync(CAPTURE_ID_WAIT_MS + 1);
+      expect(await first).toBeNull();
+      const second = b.take(0);
+      expect(await second).toBeNull(); // no timer advance needed
+    });
+
     it("reset unparks a waiting phrase instead of leaving it hanging", async () => {
       const b = newCaptureIdBook();
       const p = b.take(0);

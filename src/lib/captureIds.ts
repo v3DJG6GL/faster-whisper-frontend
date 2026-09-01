@@ -27,8 +27,10 @@
 /** How long a phrase waits for its own capture id before giving up on the
  *  receipt. The frame is normally already here — the queue's `resolveTarget`
  *  hop costs tens of milliseconds — so this only covers a server that writes
- *  the capture row slowly, and giving up costs nothing but one unclaimed
- *  receipt on the server side. */
+ *  the capture row slowly. The wait sits INSIDE the serial inject queue, ahead
+ *  of this phrase's injection and every later phrase's, so it is paid only
+ *  when an id may still be coming: the book answers immediately for an
+ *  ordinal it knows is id-less (see `spent` / `highWater`). */
 export const CAPTURE_ID_WAIT_MS = 1_500;
 
 export interface CaptureIdBook {
@@ -58,10 +60,27 @@ export function newCaptureIdBook(
   const arrived = new Map<number, string>();
   /** Phrases parked on an id that hasn't arrived, by ordinal. */
   const waiters = new Map<number, Array<(id: string | null) => void>>();
+  /** Ordinals that will never yield an id again: one already handed out, or
+   *  one already waited out. An older backend reports EVERY utterance as
+   *  ordinal 0 and sends no `captured` frame at all — without this each phrase
+   *  after the first re-paid the full wait. */
+  const spent = new Set<number>();
+  /** Highest ordinal the server has minted a row for. Rows are written in
+   *  utterance order, so an id for a higher ordinal proves the lower ones got
+   *  none (the server samples): answer them now instead of parking the queue. */
+  let highWater = -1;
 
   return {
     resolve(utterance, id) {
       if (!id) return;
+      if (utterance > highWater) highWater = utterance;
+      // Anything still parked on a LOWER ordinal is now known to be id-less.
+      for (const [ord, list] of [...waiters]) {
+        if (ord >= utterance) continue;
+        waiters.delete(ord);
+        spent.add(ord);
+        for (const cb of list) cb(null);
+      }
       const waiting = waiters.get(utterance);
       if (waiting?.length) {
         waiters.delete(utterance);
@@ -81,8 +100,12 @@ export function newCaptureIdBook(
       const have = arrived.get(utterance);
       if (have !== undefined) {
         arrived.delete(utterance);
+        spent.add(utterance);
         return Promise.resolve(have);
       }
+      // Known-hopeless: already claimed or waited out, or the server has moved
+      // past this ordinal. Never park the inject queue for these.
+      if (spent.has(utterance) || utterance < highWater) return Promise.resolve(null);
       return new Promise((resolve) => {
         let settled = false;
         let handle: unknown;
@@ -96,6 +119,7 @@ export function newCaptureIdBook(
         list.push(settle);
         waiters.set(utterance, list);
         handle = setTimer(() => {
+          spent.add(utterance);
           // Drop OUR waiter only — a second phrase parked on the same ordinal
           // must not lose its callback to our timeout.
           const cur = waiters.get(utterance);
@@ -111,6 +135,8 @@ export function newCaptureIdBook(
 
     reset() {
       arrived.clear();
+      spent.clear();
+      highWater = -1;
       // Unpark before clearing, so a phrase still awaiting an id resolves
       // (with null) instead of hanging until its own timeout — a session
       // teardown must not leave the inject queue blocked.

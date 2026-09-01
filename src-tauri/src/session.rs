@@ -186,15 +186,16 @@ struct FinalPayload {
     tail: String,
     last: bool,
     /// The server's utterance ordinal, forwarded so the client can pair this
-    /// phrase with the `stream://captured` frame that follows it.
-    utterance: u32,
+    /// phrase with the `stream://captured` frame that follows it. `null` when the
+    /// server sent none (older backends) — then the client pairs nothing.
+    utterance: Option<u32>,
 }
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CapturedPayload {
     id: String,
-    utterance: u32,
+    utterance: Option<u32>,
 }
 
 pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
@@ -887,7 +888,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
                     // The batch sibling produces ONE final for the whole
                     // recording — there are no utterances to pair with, and no
                     // `captured` frame ever follows on this path.
-                    utterance: 0,
+                    utterance: None,
                 },
             );
             emit_if_active(&app, epoch, "stream://status", "closed");
