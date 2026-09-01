@@ -7,8 +7,8 @@
 //! react to the configured chords, and never persist or transmit scancodes.
 //!
 //! Each keyboard runs an async event loop tracking a held-key set; chord
-//! semantics (hold start/stop edges, latch toggle + re-arm, and the designed
-//! hold ⊂ latch ⊂ quick-add chord family: in-place reclassify, grace-window
+//! semantics (hold start/stop edges, hands-free toggle + re-arm, and the designed
+//! hold ⊂ hands-free ⊂ quick-add chord family: in-place reclassify, grace-window
 //! quick-add abort, "most-specific chord wins" suppression) live in the shared
 //! [`crate::chord_engine`], and each completion emits the same `trigger` event
 //! the CLI/plugin paths use — so it plugs straight into the existing controller.
@@ -126,7 +126,7 @@ mod imp {
     /// plus the quick-add window chord. Equal chords are de-duped (first by config
     /// order wins) so one keypress can't fire two actions. Unmappable / empty skipped.
     /// Nesting (a chord strictly containing another) is NOT deduped — the shared
-    /// chord engine implements the designed hold ⊂ latch ⊂ quick-add family.
+    /// chord engine implements the designed hold ⊂ hands-free ⊂ quick-add family.
     fn chords_from(profiles: &[Profile], quick_add_hotkey: &[String]) -> Vec<ChordSpec> {
         const MAX_CHORDS: usize = 256;
         let mut out: Vec<ChordSpec> = Vec::new();
@@ -159,7 +159,7 @@ mod imp {
             let keys: Vec<u16> = keys.iter().map(|k| k.code()).collect();
             let kind = match p.activation {
                 ActivationType::Hold => ChordKind::Hold { profile_id: p.id.clone() },
-                ActivationType::Latch => ChordKind::Latch { profile_id: p.id.clone() },
+                ActivationType::HandsFree => ChordKind::HandsFree { profile_id: p.id.clone() },
             };
             // `what` is interpolated into the duplicate-chord warning below, so the untrusted id
             // is defanged here rather than at the log line — same reason as `emit`'s. This one
@@ -366,14 +366,14 @@ mod imp {
                 }
                 Fire::Reclassify(pid) => {
                     // Same rising edge, same reason as Start/Toggle above: the engine fires
-                    // Reclassify only on the latch chord's own physical completion (`on &&
+                    // Reclassify only on the hands-free chord's own physical completion (`on &&
                     // !active[i]`), so this press IS in the map and the still-held check works
                     // normally for it — which makes any pending loss latch a dud. It was the one
                     // fire of the three that did not clear it, and it CONTINUES a live session
                     // into hands-free mode, so an injection follows it. Reachable on the ordinary
                     // multi-keyboard setup: keyboard A's stream dies with a hold active and its
                     // post-loop arms the latch, keyboard B's separate engine still has that hold,
-                    // and completing the latch superset on B otherwise consumed the stale latch
+                    // and completing the hands-free superset on B otherwise consumed the stale latch
                     // (TTL 130s) and diverted the phrase to the clipboard.
                     crate::held_keys::clear_chord_lost();
                     emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))
@@ -437,7 +437,7 @@ mod imp {
         }
         // Stop any push-to-talk session this keyboard had active: its key-release (which
         // normally emits "stop") can never arrive now the device is gone, so without this a
-        // hold-to-talk dictation started here would stay stuck running. Latch/quick-add are
+        // hold-to-talk dictation started here would stay stuck running. Hands-free/quick-add are
         // rising-edge, so their dangling state dies with the task — only Hold leaks.
         for pid in engine.active_holds() {
             // CLAIM the hold before manufacturing its stop. `stop_held_sessions` drains the same

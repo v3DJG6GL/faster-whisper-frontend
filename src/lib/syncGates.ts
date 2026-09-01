@@ -179,9 +179,17 @@ export const BACKEND_DEFAULTS_FIELDS = [
   "overrideProfile",
 ] as const;
 
-/** The per-rule fields the App-rules field switches govern. */
-export const APP_RULE_OVERRIDE_FIELDS = ["insertMethod"] as const;
+/** The per-rule fields the App-rules field switches govern.
+ *
+ *  `autoEnter` is deliberately ABSENT: it is never accepted from a peer at all (the
+ *  sanitizers drop it, and the apply arm re-pins it unconditionally), so gating it would
+ *  imply a choice the user does not have. See `sanitizeAppRules`. */
+export const APP_RULE_OVERRIDE_FIELDS = ["insertMethod", "restoreClipboard"] as const;
 export const APP_RULE_PASTE_FIELDS = ["pasteShortcut"] as const;
+/** Fields forced back to this device's value on EVERY inbound path, gate or no gate. */
+export const APP_RULE_LOCAL_ONLY_FIELDS = ["autoEnter"] as const;
+/** The per-Profile insertion overrides the Profiles field switch governs. */
+export const PROFILE_INSERTION_FIELDS = ["typeAsISpeak", "insertionOverrides"] as const;
 
 /** Sanity guard used by tests: every non-custom manifest field of a scalar
  *  category must be gateable (its def id present in Gates). */

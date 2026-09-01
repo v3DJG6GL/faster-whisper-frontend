@@ -1835,7 +1835,7 @@ pub fn end_injection(snap: State<ClipboardSnapshot>, guard: State<crate::atspi_g
 }
 
 /// Restore the `begin_injection` snapshot WITHOUT consuming it, so the user's original
-/// clipboard can be put back after EACH pasted phrase in an ongoing latch session (the
+/// clipboard can be put back after EACH pasted phrase in an ongoing hands-free session (the
 /// snapshot stays for the next phrase to restore again). Served from a live owner so it
 /// persists on Wayland; no-op when no snapshot was taken (restore off / non-paste session).
 #[tauri::command]
@@ -2222,7 +2222,7 @@ pub async fn inject_text(
     // Resolved at the SINK, below, from the same focus read the per-app re-check uses — see there.
     // Wait briefly for the trigger chord's shortcut modifiers (Ctrl/Alt/Meta) to be
     // physically released before typing — otherwise the injected keys fold into the
-    // still-held modifier and fire shortcuts in the focused app (worst with a latch
+    // still-held modifier and fire shortcuts in the focused app (worst with a hands-free
     // stop, which triggers on the second chord press with every key still down). Only
     // the evdev backend can observe physical release on Wayland; when it isn't running
     // the held set is empty so this is a no-op. Capped so we never drop the text.
@@ -2273,7 +2273,7 @@ pub async fn inject_text(
     // The own-window guard at the top of this command has the same decided-at-T/applied-at-T+n
     // problem the per-app re-check below was written to fix, and it was left at the entry: the
     // held-modifier wait, the focus IPC and the bounded clipboard read can take a second, and in a
-    // live or latch session the user is expected to be moving between windows. Clicking our own
+    // live or hands-free session the user is expected to be moving between windows. Clicking our own
     // window in that gap landed the keys in the app's own settings/dictionary fields — and on the
     // paste path the clipboard was clobbered first, regardless.
     //
@@ -2318,7 +2318,7 @@ pub async fn inject_text(
     }
     // The per-app rule — including "never type into this app" — was resolved against the window
     // focused when this insert was QUEUED, and getting here takes real time: a focus IPC, up to
-    // 400ms of clipboard read, and the 500ms modifier wait just above. In a live or latch session
+    // 400ms of clipboard read, and the 500ms modifier wait just above. In a live or hands-free session
     // the user is expected to be switching windows, so the window that receives the keys may not
     // be the one the decision was made for. Re-check now, at the sink.
     //

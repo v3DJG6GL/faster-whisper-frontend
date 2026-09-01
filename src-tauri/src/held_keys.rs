@@ -3,7 +3,7 @@
 //! Populated by the evdev hotkey backend (the only component that can observe real
 //! key state on Wayland) and read by `inject_text`, so we never type into a still-
 //! held modifier from the trigger chord — otherwise our injected keystrokes fold
-//! into that Ctrl/Alt/Meta and fire shortcuts in the focused app (e.g. a latch
+//! into that Ctrl/Alt/Meta and fire shortcuts in the focused app (e.g. a hands-free
 //! profile's stop fires on the *second* chord press, with every key still down).
 //!
 //! Refcounted by keycode so multiple keyboards compose correctly. When the backend isn't running

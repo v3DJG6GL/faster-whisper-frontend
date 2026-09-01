@@ -53,7 +53,7 @@ export interface TranscriptRecord {
   appId?: string;
   profileName?: string;
   profileTag?: string;
-  activation?: "hold" | "latch";
+  activation?: "hold" | "handsfree";
   /** What actually happened to the text (endOutcome). */
   insertMethod?: "typed" | "clipboard" | "none";
   wordCount?: number;
@@ -171,7 +171,7 @@ export interface DictationCapture {
   appTitle?: string;
   profileName?: string;
   profileTag?: string;
-  activation?: "hold" | "latch";
+  activation?: "hold" | "handsfree";
   insertMethod: "typed" | "clipboard" | "none";
   recordingPath?: string;
   translatedText?: string;

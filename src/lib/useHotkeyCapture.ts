@@ -24,7 +24,7 @@ export function useHotkeyCapture(opts: {
   lowLevelActive: boolean;
   others: Profile[];
   /** What the chord being bound will behave as — decides whether a nesting with
-   *  another binding is the designed hold ⊂ latch ⊂ quick-add family (allowed)
+   *  another binding is the designed hold ⊂ hands-free ⊂ quick-add family (allowed)
    *  or a real shadow conflict. */
   selfKind: BindingKind;
   onCommit: (codes: string[]) => void;

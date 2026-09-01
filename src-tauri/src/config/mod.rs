@@ -106,7 +106,7 @@ fn default_true() -> bool {
 }
 
 /// Quick-add default: Super+Alt (user-set 2026-07-13; canonical order per
-/// `code_rank`). Independent of the push-to-talk/latch defaults — no chord
+/// `code_rank`). Independent of the push-to-talk/hands-free defaults — no chord
 /// nesting, so chord_engine.rs's grace-window abort never applies between the
 /// defaults (it still works for user-configured superset chords).
 fn default_quick_add_hotkey() -> Vec<String> {
@@ -125,7 +125,7 @@ fn default_hover_reveal() -> u32 {
     500
 }
 
-fn default_latch_auto_stop() -> f64 {
+fn default_hands_free_auto_stop() -> f64 {
     30.0
 }
 
@@ -165,7 +165,11 @@ fn default_stats_metric() -> OverlayStatsMetric {
 #[serde(rename_all = "lowercase")]
 pub enum ActivationType {
     Hold,
-    Latch,
+    /// Tap once to start, tap again to stop. `alias` keeps configs written while
+    /// this was called "latch" loading unchanged — the variant renamed, the stored
+    /// value did not have to, and a config that still says `latch` is valid forever.
+    #[serde(alias = "latch")]
+    HandsFree,
 }
 
 /// A faster-whisper backend connection (server + model + decode defaults). The
@@ -241,6 +245,16 @@ pub struct Profile {
     /// is the injection target. Opaque to Rust; skipped when None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub translation_overrides: Option<serde_json::Value>,
+    /// Insert each phrase as the user speaks, rather than the whole transcript at the
+    /// end. Replaced the global three-way `insertTiming`. None = off; skipped when None
+    /// so existing configs round-trip byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_as_i_speak: Option<bool>,
+    /// Per-Profile insertion overrides (method / paste chord / Enter / clipboard restore).
+    /// Frontend-owned opaque JSON like `decode_overrides`: Rust stores and round-trips it
+    /// but never interprets it. Skipped when None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub insertion_overrides: Option<serde_json::Value>,
     /// Override the Backend's server override-profile reference; None/empty = inherit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub override_profile: Option<String>,
@@ -457,7 +471,7 @@ pub struct RecordingSettings {
     /// recordings folder keeps working after the upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_base_dir: Option<String>,
-    /// When saving: keep only the spoken spans (drop silence) in the .wav, so a long latch
+    /// When saving: keep only the spoken spans (drop silence) in the .wav, so a long hands-free
     /// session doesn't store hours of quiet. `#[serde(default)]` (true) so older configs load.
     #[serde(default = "default_true")]
     pub trim_silence: bool,
@@ -468,10 +482,14 @@ pub struct RecordingSettings {
     #[serde(default)]
     pub recordings_retention_days: u32,
     pub mute_system_audio: bool,
-    /// Auto-stop a hands-free (latch) session after this many minutes of continuous silence
+    /// Auto-stop a hands-free session after this many minutes of continuous silence
     /// (0 = never). Prevents multi-hour runaway sessions and frees the mic/connection.
-    #[serde(default = "default_latch_auto_stop")]
-    pub latch_auto_stop_min: f64,
+    ///
+    /// `alias` accepts the pre-rename `latchAutoStopMin` key, so a config written before
+    /// hands-free was called hands-free keeps the user's configured timeout instead of
+    /// silently resetting to the 30-minute default.
+    #[serde(default = "default_hands_free_auto_stop", alias = "latchAutoStopMin")]
+    pub hands_free_auto_stop_min: f64,
     pub realtime_preview: bool,
     /// When the live preview is on, reveal the words only while hovering the chip (vs. always).
     /// `#[serde(default)]` so older configs default to always-shown.
@@ -729,7 +747,7 @@ impl Default for Config {
                     trim_silence: true,
                     recordings_retention_days: 0,
                     mute_system_audio: true,
-                    latch_auto_stop_min: 30.0,
+                    hands_free_auto_stop_min: 30.0,
                     realtime_preview: true,
                     realtime_preview_on_hover: false,
                     show_profile_on_overlay: true,
@@ -812,7 +830,7 @@ fn migrate_legacy(text: &str) -> Option<Config> {
         .map(|m| {
             let (id, name, activation) = match m.mode {
                 LegacyModeId::Hold => ("hold", "Push-to-talk", ActivationType::Hold),
-                LegacyModeId::Handsfree => ("handsfree", "Latch", ActivationType::Latch),
+                LegacyModeId::Handsfree => ("handsfree", "Hands-free", ActivationType::HandsFree),
             };
             Profile {
                 id: id.into(),
@@ -828,6 +846,8 @@ fn migrate_legacy(text: &str) -> Option<Config> {
                 prompt: None,
                 decode_overrides: None,
                 translation_overrides: None,
+                type_as_i_speak: None,
+                insertion_overrides: None,
                 override_profile: None,
             }
         })

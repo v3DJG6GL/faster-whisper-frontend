@@ -317,7 +317,7 @@ pub async fn run<F>(
     let mut transcript_docs: Vec<String> = Vec::new();
     let mut transcript_cur = String::new();
     // Speech-gate for the SAVED recording (NOT what's streamed to the server): keep only the spans
-    // the chip shows as "speaking" + a short lead-in, so a long latch session doesn't store hours
+    // the chip shows as "speaking" + a short lead-in, so a long hands-free session doesn't store hours
     // of silence. The detector itself lives in `crate::audio::SpeechGate` (shared with the batch
     // record save so both paths trim identically); here it's fed chunk-by-chunk as audio arrives.
     let mut gate = crate::audio::SpeechGate::new();
@@ -694,7 +694,7 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> bool {
 /// `bounded` and NOT `bounded_server_text`: a transcript legitimately contains newlines, and
 /// folding controls to spaces would destroy every hard break. Sized for headroom rather than
 /// thrift — an hour of continuous dictation is roughly 50 KB, and `final.committed` is the whole
-/// document so far and grows across a latch session, so 4 MiB is a whole working week of speech.
+/// document so far and grows across a hands-free session, so 4 MiB is a whole working week of speech.
 pub(crate) const MAX_TRANSCRIPT: usize = 4 * 1024 * 1024;
 
 /// Ceiling on the whole saved-transcript sidecar for one session. Applies ONLY to the `.txt`

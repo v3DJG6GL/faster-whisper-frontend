@@ -17,6 +17,50 @@ import { ownProp } from "./own";
 import { isActiveDictation } from "./dictationVisual";
 import type { OverlayStatsMetric, UsageStats } from "./types";
 
+/** How many translation targets the chip spells out before the rest become "+N". Two, not
+ *  `routeParts`' three: the chip's identity row shares one line with the live transcript,
+ *  which is the surface the user actually reads to supervise what is about to be typed. */
+const CHIP_ROUTE_TARGETS = 2;
+
+/** The translation targets the chip should show, resolved and bounded.
+ *
+ *  A RUNNING session wins: it publishes what it actually resolved, which is the only
+ *  authority once anything can change the targets for one session. The Profile's own
+ *  config is the fallback, and it is what the idle standby dock previews — "what happens
+ *  if I press the chord" — so `null` (no session) and `[]` (a session that doesn't
+ *  translate) must stay distinguishable, and they are: `??` only takes the fallback for
+ *  the former.
+ *
+ *  Both inputs are peer-authored — a synced Backend's or Profile's `translateTo`, which
+ *  `sanitizeProfiles` type-checks but does not bound — and the result rides the ~30Hz
+ *  level payload into a `shrink-0` row beside the live transcript. Bounded on both axes:
+ *  how many, and how long each. */
+export function chipRouteTargets(
+  sessionTargets: string[] | null,
+  profileTargets: string[] | undefined,
+  max = CHIP_ROUTE_TARGETS,
+): string[] {
+  return (sessionTargets ?? profileTargets ?? [])
+    .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+    .slice(0, max)
+    .map((t) => t.trim().slice(0, 12));
+}
+
+/** The running session's route as one string ("DE → FR IT") for the tray tooltip, or "" when
+ *  this session doesn't translate. Reads the SAME resolved `sessionTargets` the chip does, so
+ *  the two surfaces can't disagree — and the spoken language from the active Profile, which is
+ *  the only piece the session state doesn't already carry. */
+function trayRoute(state: ReturnType<typeof useApp.getState>): string {
+  const targets = state.sessionTargets ?? [];
+  if (targets.length === 0) return "";
+  const profile = state.activeProfile ? state.profiles.find((p) => p.id === state.activeProfile) : undefined;
+  const backend = backendForProfile(profile, state.backends);
+  const src = (profile?.language?.trim() ? profile.language : backend?.language) ?? "";
+  const shown = targets.slice(0, CHIP_ROUTE_TARGETS).map((t) => t.toUpperCase());
+  const more = targets.length - shown.length;
+  return `${src.toUpperCase() || "AUTO"} → ${shown.join(" ")}${more > 0 ? ` +${more}` : ""}`;
+}
+
 /** Build the chip's tiny usage readout (today's value) for the chosen metric. */
 function chipStatsLine(u: UsageStats, metric: OverlayStatsMetric): string {
   if (metric === "audio") return `${fmtDuration(u.today.audio_s)} today`;
@@ -38,7 +82,12 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   const rec = state.settings.recording;
   // Which Profile is dictating, for the chip's identity tag (+ its language /
   // stream-vs-batch mode). Omitted entirely when the feature is off or no Profile is active.
-  let chip: { profileTag?: string; language?: string; mode?: "stream" | "batch" } = {};
+  let chip: {
+    profileTag?: string;
+    language?: string;
+    mode?: "stream" | "batch";
+    translateTo?: string[];
+  } = {};
   // The Profile to label the chip with: the one dictating, or — for a persistent
   // idle dock — the home target it would launch (so standby previews that Profile).
   const chipProfile = state.activeProfile
@@ -54,6 +103,12 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
       language: chipProfile.language?.trim() ? chipProfile.language : backend?.language,
       // Effective endpoint likewise (a Profile may override stream/batch).
       mode: chipProfile.endpoint ?? backend?.endpoint,
+      // The translation ROUTE's targets — see chipRouteTargets for the resolution order
+      // and why both inputs need bounding.
+      translateTo: chipRouteTargets(
+        state.sessionTargets,
+        { ...backend?.translationOverrides, ...chipProfile.translationOverrides }.translateTo,
+      ),
     };
   }
   // P28: a tiny usage readout (today's words/minutes) for the chip, gated by the
@@ -112,6 +167,11 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // UNGATED by ACTIVE — the done marker must reach the chip on the idle transition.
     lastInsert: state.lastInsert,
     sessionOutcome: state.sessionOutcome,
+    // Why the translation didn't land, so the done marker can qualify itself instead of
+    // showing an unearned "typed" over text that was inserted in the ORIGINAL language.
+    // Sent ungated by ACTIVE for the same reason as sessionOutcome — it must reach the
+    // chip on the idle transition, which is exactly when the marker is drawn.
+    translateFailure: state.translateFailure ?? "",
     statsLine: statsLine ?? "",
     // When on, the chip reveals the readout only while hovered (vs. always shown).
     statsOnHover: rec.showStatsOnOverlay && rec.overlayStatsOnHover,
@@ -170,6 +230,8 @@ export async function initOverlayController(): Promise<void> {
       state.targetSkip !== prev.targetSkip ||
       state.lastInsert !== prev.lastInsert || // per-phrase "inserted" pulse trigger
       state.sessionOutcome !== prev.sessionOutcome || // end-of-session done marker
+      state.sessionTargets !== prev.sessionTargets || // the session's resolved translation route
+      state.translateFailure !== prev.translateFailure || // qualifies the done marker
       state.usage !== prev.usage || // P28: refreshed usage stats → update the chip readout
       state.settings !== prev.settings) // theme / position / preview / show-profile toggles
     ) {
@@ -179,10 +241,18 @@ export async function initOverlayController(): Promise<void> {
     // Reflect status in the tray tooltip — the reliable status cue on chip-less platforms
     // (GNOME / non-KDE Wayland). Fire on a warming change too so the cold-mic warm-up reads
     // "warming up…" there like every other surface, instead of falsely claiming "recording…".
-    if (state.status !== prev.status || state.warming !== prev.warming) {
-      void setTrayState(state.warming && state.status === "listening" ? "warming" : state.status).catch((e) =>
-        console.error("setTrayState failed:", e),
-      );
+    // Also re-fires on a route change, so a session that resolved its targets after the
+    // status settled still reaches the tray — on a chip-less desktop this tooltip is the
+    // ONLY place the route can appear.
+    if (
+      state.status !== prev.status ||
+      state.warming !== prev.warming ||
+      state.sessionTargets !== prev.sessionTargets
+    ) {
+      void setTrayState(
+        state.warming && state.status === "listening" ? "warming" : state.status,
+        trayRoute(state),
+      ).catch((e) => console.error("setTrayState failed:", e));
     }
     // Cues stay keyed on status TRANSITIONS only (not warming), so a warm-up flip can't re-fire them.
     if (state.status !== prev.status) {

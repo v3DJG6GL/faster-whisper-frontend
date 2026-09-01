@@ -7,9 +7,10 @@ import { useApp } from "./store";
 import {
   startLive, stopLive, cancelLive, requestStopIfStarting, cancelStopIfStarting, isStarting,
   queuePendingHoldStart, registerPendingStartRunner, reclassifyLive, abortDictationTranslate,
-  isCapturing,
+  isCapturing, setSettleTargetPicker,
 } from "./streaming";
-import { showQuickAdd } from "./api";
+import { getFocusedApp, isTauri, showLangPick, showQuickAdd } from "./api";
+import { ownProp } from "./own";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
 import type { Backend, Profile } from "./types";
 
@@ -24,7 +25,7 @@ function isBusy(): boolean {
 // Graceful stop while still capturing ("listening"). During the post-speech states
 // ("finalizing…"/"inserting…") the transcript is pending but not yet delivered, so what
 // happens there depends on the gesture:
-//   • `hard` (a deliberate latch TOGGLE — a re-press saying "kill it"): cancel, the
+//   • `hard` (a deliberate hands-free TOGGLE — a re-press saying "kill it"): cancel, the
 //     explicit recovery for a wedged session, same as the in-app button.
 //   • not `hard` (a HOLD chord release): do NOTHING. A release lands here only in the
 //     fast re-press flow — its matching press was swallowed by the busy gate (and
@@ -77,15 +78,15 @@ export function dictate(profileId: string, action: TriggerAction): void {
   }
   // Chord family: the latch superset completed over the hold root. Three meanings:
   //   • session running under ANOTHER profile → upgrade it in place (hold → hands-free);
-  //   • session running under THIS latch profile → the user pressed the family again:
+  //   • session running under THIS hands-free profile → the user pressed the family again:
   //     toggle off (the root's own "start" was the busy-gate no-op just before this);
   //   • idle → the keys arrived (near-)simultaneously and the root never started, or
-  //     the session already ended — behave like a plain latch toggle-on (fall through).
+  //     the session already ended — behave like a plain hands-free toggle-on (fall through).
   if (action === "reclassify") {
     if (isBusy() || isStarting()) {
-      const latch = s.profiles.find((p) => p.id === profileId);
+      const handsFree = s.profiles.find((p) => p.id === profileId);
       if (s.activeProfile === profileId) stopOrCancel(true);
-      else if (latch && latch.enabled) reclassifyLive(latch);
+      else if (handsFree && handsFree.enabled) reclassifyLive(handsFree);
       return;
     }
   }
@@ -101,7 +102,10 @@ export function dictate(profileId: string, action: TriggerAction): void {
   // the in-flight session's activeProfile — mislabeling its chip identity + usage attribution — and
   // then silently no-op on startLive's startingSession guard. The toggle entry-points already guard
   // the prologue via requestStopIfStarting; this is the START path's equivalent.
-  if (isBusy() || isStarting()) {
+  // A picker being open counts as busy: the await that precedes startLive sits IN FRONT
+  // of `startingSession`, so without this a second chord press would open a second picker
+  // and then start a second session behind it.
+  if (isBusy() || isStarting() || pickerOpen) {
     // Key chatter: a re-press of the SAME chord during its own start prologue supersedes the
     // phantom release recorded milliseconds earlier — the chord is still physically held, so
     // honoring the stale stop would kill the just-started session with 0 audio (the sub-30ms
@@ -123,10 +127,130 @@ export function dictate(profileId: string, action: TriggerAction): void {
     return;
   }
 
+  // "Ask for target languages", hands-free: the picker has to resolve BEFORE startLive.
+  // Session start makes four commitments the answer could not amend afterwards — the
+  // preload plan, the warm lease, the forced capability probe, and the `translateExpect`
+  // sent inside the startStream invoke. Push-to-talk asks later instead (at the one-shot
+  // translate), because a prompt during a held chord would swallow the keystrokes.
+  if (profile.askTranslationTargets && profile.activation !== "hold") {
+    void startWithPickedTargets(profile, backend, s.settings.microphoneId);
+    return;
+  }
+
+  // Push-to-talk with "ask": arm the settle-time picker instead. The chord is held for the
+  // whole dictation, so the prompt has to wait for release — streaming.ts calls this back at
+  // the one-shot translate, the last moment the answer can still change what is inserted.
+  setSettleTargetPicker(
+    profile.askTranslationTargets && profile.activation === "hold"
+      ? () =>
+          askTranslationTargets({
+            source: profile.language?.trim() ? profile.language : backend.language,
+            preset: profile.translationOverrides?.translateTo ?? [],
+            recent: useApp.getState().settings.recentTranslationTargets ?? [],
+            tag: profile.tag?.trim() || profile.name,
+            when: "after",
+            theme: useApp.getState().settings.theme,
+            allowed: ownProp(useApp.getState().caps, backend.id)?.translation_languages ?? undefined,
+          }).then((picked) => {
+            if (picked) rememberTranslationTargets(picked);
+            return picked;
+          })
+      : null,
+  );
+
   s.setDictation({ activeProfile: profileId });
   // startLive resolves the effective language / prompt / decode overrides
   // (the Profile's set fields win over the Backend's defaults).
   void startLive(backend, s.settings.microphoneId, profile.activation, profile);
+}
+
+/** True while the picker is open, so a second chord press can't open a second one (and
+ *  then start a second session behind it). The START path's equivalent of
+ *  `startingSession` — which can't cover this, because the await sits IN FRONT of it. */
+let pickerOpen = false;
+export function isPickerOpen(): boolean {
+  return pickerOpen;
+}
+
+/** Ask for this session's translation targets, then start with them merged in.
+ *
+ *  Two things the picker must not break, both handled here rather than in the window:
+ *   • FOCUS. `startLive` resolves the injection target from the focused app, and a focused
+ *     picker makes that OUR OWN window — dictation would refuse to type. The target is
+ *     captured before the picker shows and handed to the session as its own app.
+ *   • DISMISSAL. Esc and a closed window fall back to the Profile's configured targets, so
+ *     ignoring the prompt reproduces exactly today's behaviour. An empty COMMIT is
+ *     different — that means "insert the original only" — which is why the two arrive on
+ *     separate events. */
+async function startWithPickedTargets(
+  profile: Profile,
+  backend: Backend,
+  micId: string | null,
+): Promise<void> {
+  if (pickerOpen) return;
+  pickerOpen = true;
+  const s = useApp.getState();
+  const preset = profile.translationOverrides?.translateTo ?? [];
+  const backendLang = backend.language;
+  try {
+    // Resolve the injection target BEFORE taking focus — see the docblock.
+    const targetApp = await getFocusedApp();
+    const picked = await askTranslationTargets({
+      source: profile.language?.trim() ? profile.language : backendLang,
+      preset,
+      recent: s.settings.recentTranslationTargets ?? [],
+      tag: profile.tag?.trim() || profile.name,
+      when: "before",
+      theme: s.settings.theme,
+      allowed: ownProp(s.caps, backend.id)?.translation_languages ?? undefined,
+    });
+    // `null` = dismissed → the Profile's own targets, i.e. unchanged behaviour.
+    const targets = picked ?? preset;
+    if (picked) rememberTranslationTargets(picked);
+    useApp.getState().setDictation({ activeProfile: profile.id });
+    void startLive(
+      backend,
+      micId,
+      profile.activation,
+      {
+        ...profile,
+        translationOverrides: { ...profile.translationOverrides, translateTo: targets },
+      },
+      targetApp,
+    );
+  } finally {
+    pickerOpen = false;
+  }
+}
+
+/** Show the picker and resolve with the chosen targets, or `null` if dismissed. */
+function askTranslationTargets(seed: Record<string, unknown>): Promise<string[] | null> {
+  if (!isTauri) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v: string[] | null) => {
+      if (done) return;
+      done = true;
+      unlisten.forEach((un) => un());
+      resolve(v);
+    };
+    const unlisten: (() => void)[] = [];
+    void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      unlisten.push(await listen<string[]>("langpick://commit", (e) => finish(e.payload ?? [])));
+      unlisten.push(await listen("langpick://cancel", () => finish(null)));
+      await showLangPick(seed);
+    });
+  });
+}
+
+/** Keep the most recent picks for the picker's "Recent" group, newest first. */
+function rememberTranslationTargets(picked: string[]): void {
+  if (picked.length === 0) return;
+  const st = useApp.getState();
+  const prev = st.settings.recentTranslationTargets ?? [];
+  st.updateSettings({
+    recentTranslationTargets: [...picked, ...prev.filter((c) => !picked.includes(c))].slice(0, 12),
+  });
 }
 
 // Wire the queued-start consumer: streaming.ts owns settleIdle but can't import us
@@ -145,7 +269,7 @@ export function backendForProfile(
 }
 
 /** The Profile the Home button + the overlay quick-launch target: the configured
- *  home Profile, else the first enabled latch Profile, else any enabled one. */
+ *  home Profile, else the first enabled hands-free Profile, else any enabled one. */
 export function homeTargetProfile(
   profiles: Profile[],
   homeProfileId?: string | null,
@@ -153,14 +277,14 @@ export function homeTargetProfile(
   const enabled = profiles.filter((p) => p.enabled);
   return (
     enabled.find((p) => p.id === homeProfileId) ??
-    enabled.find((p) => p.activation === "latch") ??
+    enabled.find((p) => p.activation === "handsfree") ??
     enabled[0]
   );
 }
 
 /** Run a dictation action requested from the overlay chip. The chip is a separate
  *  window, so the request arrives via the `overlay://action` event (see api.ts /
- *  App.tsx). Mirrors the Home hero button's latch-toggle semantics. */
+ *  App.tsx). Mirrors the Home hero button's hands-free-toggle semantics. */
 export function runOverlayAction(kind: string): void {
   if (kind === "cancel-dictation") {
     void cancelLive();
@@ -191,13 +315,13 @@ export function runOverlayAction(kind: string): void {
     // A chip toggle landing during the start prologue (status still "idle", session
     // mid-start) must tear it down like the hero/hotkey toggle do — else it falls
     // through to startLive and is swallowed by the startingSession guard, wedging the
-    // just-started latch with the user's intended OFF lost. Mirrors dictate()'s toggle.
+    // just-started hands-free session with the user's intended OFF lost. Mirrors dictate()'s toggle.
     if (requestStopIfStarting()) return;
     const target = homeTargetProfile(s.profiles, s.settings.homeProfileId);
     const backend = backendForProfile(target, s.backends);
     if (!backend) return;
     s.setDictation({ activeProfile: target?.id ?? null });
-    void startLive(backend, s.settings.microphoneId, "latch", target);
+    void startLive(backend, s.settings.microphoneId, "handsfree", target);
     return;
   }
   if (kind === "cycle-active-profile") {

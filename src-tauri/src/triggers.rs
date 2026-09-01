@@ -4,7 +4,7 @@
 //!   * CLI flags routed to the running instance (single-instance) — the portable
 //!     path, esp. for Wayland where a DE shortcut runs
 //!     `app --profile <id> --action toggle` (or the zero-arg `app --toggle`,
-//!     which targets the first enabled latch Profile).
+//!     which targets the first enabled hands-free Profile).
 //!   * In-app global hotkeys — the plugin below (Linux-X11), the evdev backend
 //!     (Linux, opt-in), or the win_hotkeys hook backend (Windows, always on).
 
@@ -110,7 +110,7 @@ fn emit_for_activation(app: &AppHandle, want: ActivationType, action: &str) {
 
 /// Handle CLI args delivered to the running instance, emitting trigger events.
 /// Generic form: `--profile <id> --action <start|stop|toggle>`. Legacy flags
-/// (`--toggle`, `--ptt-down/up`, `--toggle-hold/latch`) resolve to the first
+/// (`--toggle`, `--ptt-down/up`, `--toggle-hold/handsfree`) resolve to the first
 /// enabled Profile of the matching activation.
 pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
     let mut profile: Option<String> = None;
@@ -146,8 +146,8 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
                 recognized = true;
                 i += 1;
             }
-            "--toggle" | "--toggle-latch" => {
-                emit_for_activation(app, ActivationType::Latch, "toggle");
+            "--toggle" | "--toggle-handsfree" => {
+                emit_for_activation(app, ActivationType::HandsFree, "toggle");
                 recognized = true;
                 i += 1;
             }
@@ -228,7 +228,7 @@ fn stop_held_sessions(app: &AppHandle) {
 }
 
 /// Plugin handler: map a fired shortcut back to its Profile and emit a trigger.
-/// Hold → start on press / stop on release; latch → toggle on press.
+/// Hold → start on press / stop on release; hands-free → toggle on press.
 pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
     let target = app
         .state::<ShortcutRegistry>()
@@ -244,7 +244,7 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
             let action = match (activation, event.state()) {
                 (ActivationType::Hold, ShortcutState::Pressed) => "start",
                 (ActivationType::Hold, ShortcutState::Released) => "stop",
-                (ActivationType::Latch, ShortcutState::Pressed) => "toggle",
+                (ActivationType::HandsFree, ShortcutState::Pressed) => "toggle",
                 _ => return,
             };
             // Track a held PTT chord so a registration teardown can emit its "stop" (stop_held_sessions).

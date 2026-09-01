@@ -7,7 +7,7 @@
 //   • "stop" — insert the whole transcript once, when dictation stops (uses the
 //              chosen Insertion-method: clipboard paste or direct typing).
 //   • "live" — insert each phrase AS YOU FINISH IT (streaming backends only, and
-//              only when the Profile's activation is latch — never hold; see below).
+//              only when the Profile's activation is hands-free — never hold; see below).
 //
 // Live insert is NOT possible in HOLD/push-to-talk mode: the activation chord is
 // physically held for the entire dictation, so the compositor folds that held
@@ -57,14 +57,14 @@ import {
   type TranslateFailure,
 } from "./dictationTranslate";
 import { newCaptureIdBook } from "./captureIds";
-import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertMethod, Profile, TranslationOverrides } from "./types";
+import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertionOverrides, InsertMethod, Profile } from "./types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
 import { normalizeAppId } from "./sanitize";
 
 let wired = false;
 
-// Auto-stop a hands-free (latch) session after a configured stretch of continuous silence (0 = off).
+// Auto-stop a hands-free session after a configured stretch of continuous silence (0 = off).
 // Reuses the SAME speaking detector as the chip (lib/speaking), so "silence" means exactly what the
 // chip shows as not-green; fires the normal stop (which drains the last phrase). Armed per session in
 // startLive, disarmed on any stop/cancel.
@@ -153,7 +153,7 @@ function flushPartial(): void {
 let injectedText = "";
 // The last final's document (advanced synchronously per final), used ONLY for the "did the document
 // grow" guard — distinguishes a real new phrase from a re-sent `final` (the flush final emitted at
-// latch end), independent of whether/where it was typed. Separate from `injectedText` so the typed
+// hands-free end), independent of whether/where it was typed. Separate from `injectedText` so the typed
 // baseline can be type-time/own-window-aware without breaking re-sent-final detection.
 let seenDoc = "";
 // Documents completed before a hard break, accumulated for the "stop"-timing single
@@ -170,12 +170,22 @@ const MAX_BANKED_DOC = 8 * 1024 * 1024;
 let clipBaseline = "";
 // Insertion config captured at dictation start.
 interface InsertCfg {
+  /** Whether the session inserts at all. "off" is gone from the UI; it survives here only
+   *  so a config mid-migration still reads as it did. */
   timing: "off" | "stop" | "live";
   method: "paste" | "direct" | "clipboard";
   pasteShortcut: string[]; // chord for the paste method (KeyboardEvent.code list)
-  autoEnter: boolean;
-  restoreClipboard: boolean;
-  live: boolean; // timing === "live" on a streaming backend (latch, or clipboard in any mode)
+  /** The Profile's insertion overrides, frozen for the session — the one layer that CAN'T
+   *  be re-read live (see resolveTarget). The app-rule layer above it stays live per phrase,
+   *  which is the whole point: rules follow window switches, the profile does not change
+   *  mid-session.
+   *
+   *  `autoEnter`/`restoreClipboard` deliberately do NOT live here as resolved values any
+   *  more. They used to be frozen at start, which meant an app rule could not govern them —
+   *  two controls on one App Rules screen with opposite semantics. They now come off
+   *  `resolveTarget`'s result at each site, like `method` always has. */
+  profileInsertion?: InsertionOverrides;
+  live: boolean; // timing === "live" on a streaming backend (hands-free, or clipboard in any mode)
   targetApp: FocusedApp | null; // focused app at start (per-app rules + chip + field guard)
   blocked: boolean; // a per-app rule blocks typing here → coerced to clipboard-only
   notEditable: boolean; // deep detection: focused element isn't a text field → coerced to clipboard-only
@@ -209,7 +219,7 @@ let sessionMeta: {
   language: string;
   profileName?: string;
   profileTag?: string;
-  activation?: "hold" | "latch";
+  activation?: "hold" | "handsfree";
   appId?: string;
   appTitle?: string;
   blocked: boolean;
@@ -596,7 +606,7 @@ let phraseDirty = false;
 // Live PASTE only: the clipboard currently holds a pasted phrase (the transcript), so it owes a
 // restore back to the user's snapshot. Set when a phrase is actually pasted, cleared once we put
 // the original back. Drives per-phrase restore so the clipboard is the user's between phrases —
-// not just once at stop (which an ongoing latch session never reaches).
+// not just once at stop (which an ongoing hands-free session never reaches).
 let clipDirty = false;
 // Whether the clipboard currently holds OUR dictated transcript (vs the user's original). Distinct
 // from clipDirty (= restore-debt): a clipboard-only phrase clears the debt yet still leaves our text
@@ -605,7 +615,7 @@ let clipDirty = false;
 let clipHoldsOurs = false;
 let phraseEndTimer: ReturnType<typeof setTimeout> | null = null;
 const PHRASE_END_QUIET_MS = 1200;
-// Chord family: a latch superset completed during the start prologue (insertCfg not
+// Chord family: a hands-free superset completed during the start prologue (insertCfg not
 // built yet) — startLiveInner applies the upgrade right after it exists. Cleared on
 // every fresh start and on cancel so a stale flip can't latch an unrelated session.
 let pendingReclassify: Profile | null = null;
@@ -652,12 +662,15 @@ function enqueueAutoEnter(): void {
   // Enter still fires.
   const cfg = insertCfg;
   enqueueInject(async () => {
-    const t = await resolveTarget();
+    const t = await resolveTarget(cfg);
     if (insertCfg !== cfg) return;
     // Never fire a real keystroke for a HOLD session, even after focus moved to a paste/direct window:
     // the PTT chord is still physically held, so the Enter would fold into the held modifier (mirrors
     // the live-final useClipboard guard). A hold session is clipboard-coerced, so nothing was typed here.
-    if (t.method === "clipboard" || cfg?.activation === "hold") return;
+    if (holdCoerced(cfg?.activation, t.method)) return;
+    // The target decides: an app rule can turn Enter off for this window even when the
+    // profile/global has it on (a chat client submits, an editor must not).
+    if (!t.autoEnter) return;
     await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
   });
 }
@@ -687,7 +700,9 @@ function bumpPhraseEnd(): void {
   phraseEndTimer = setTimeout(() => {
     phraseEndTimer = null;
     // Press Enter for the just-finished phrase — only if new text landed since the last Enter.
-    if (insertCfg?.autoEnter && phraseDirty) {
+    // No autoEnter gate here: it is a property of the WINDOW being typed into, which only
+    // resolveTarget knows. enqueueAutoEnter tests it after resolving and returns if unwanted.
+    if (phraseDirty) {
       phraseDirty = false;
       enqueueAutoEnter();
     }
@@ -732,11 +747,95 @@ function clearPhraseEnd(): void {
  *  global settings apply. Opt-in deep detection is positive-only (only editable===false coerces) and
  *  an explicit per-app insert method opts out — the user already decided how to inject here (e.g.
  *  "konsole → paste": a terminal isn't an editable AT-SPI field, yet the user told us to paste). */
+/** Must this injection go to the CLIPBOARD rather than the keyboard?
+ *
+ *  Two independent reasons, and both have to be checked at every keystroke site:
+ *   • the resolved method really is clipboard-only, or
+ *   • this is a HOLD session, whose trigger chord is physically held for its whole
+ *     duration — so any injected key folds into the held Ctrl/Alt/Super and fires a
+ *     shortcut in the focused app instead of typing. Live-in-hold is therefore allowed
+ *     only for clipboard; that is enforced at session start, but focus can move
+ *     mid-session to a window whose rule resolves to paste/direct, so the check has to
+ *     repeat per phrase.
+ *
+ *  Extracted because it was written out five times across three files. Four of those
+ *  were the same expression; the fifth (`applyReclassify`) had silently dropped a term
+ *  while its comment claimed it recomputed the others "exactly". */
+export function holdCoerced(activation: ActivationKind | undefined, method: InsertMethod): boolean {
+  return method === "clipboard" || activation === "hold";
+}
+
+/** May this session deliver phrase-by-phrase as the user speaks?
+ *
+ *  Three independent preconditions, all of which have to hold:
+ *   • the user asked for it (per-Profile "Type as I speak");
+ *   • the transport can deliver partial results at all — batch sends the audio once and
+ *     answers once, so there are no live phrases to insert;
+ *   • per-phrase delivery is SAFE, which is not the same question as `holdCoerced`.
+ *
+ *  That last term is the subtle one, and inverting `holdCoerced` gets it wrong. The two
+ *  ask different things:
+ *
+ *    holdCoerced  — "must THIS keystroke go to the clipboard?"  clipboard OR hold
+ *    liveAllowed  — "is per-phrase delivery safe at all?"       clipboard OR not-hold
+ *
+ *  Clipboard-only is a live-ENABLER, not a blocker: it types nothing, so it is safe under
+ *  a held chord and may run live in any activation — it just refreshes the clipboard per
+ *  phrase. `!holdCoerced` would forbid exactly that, and would also forbid the ordinary
+ *  hands-free + clipboard-only session. (Caught by insertionResolve.test.ts, which is why
+ *  the two predicates are stated separately rather than one defined from the other.)
+ *
+ *  `activation` is the RUNTIME value, not the Profile's: the Home button and the chip's
+ *  quick-launch both start a hold Profile hands-free, so a Profile-only test would be
+ *  wrong for exactly those two entry points. */
+export function liveAllowed(args: {
+  /** Did the user ask for it? (Item 6 moves this from the global insert-timing to a
+   *  per-Profile "Type as I speak"; the other two terms are unaffected either way.) */
+  wants: boolean;
+  endpoint: EndpointKind;
+  activation: ActivationKind;
+  method: InsertMethod;
+}): boolean {
+  const deliverySafe = args.method === "clipboard" || args.activation !== "hold";
+  return args.wants && args.endpoint === "stream" && deliverySafe;
+}
+
 export function resolveInjectionTarget(
   targetApp: FocusedApp | null,
   appRules: AppRule[],
   g: GeneralSettings,
-): { rule: AppRule | undefined; notEditable: boolean; method: InsertMethod; pasteShortcut: string[] } {
+  /** The running Profile's overrides, FROZEN at session start. Absent for callers with no
+   *  session context (QuickAdd's correct-on-close paste), which then resolve global ← rule
+   *  exactly as they always did. */
+  prof?: InsertionOverrides,
+): {
+  rule: AppRule | undefined;
+  notEditable: boolean;
+  method: InsertMethod;
+  pasteShortcut: string[];
+  autoEnter: boolean;
+  restoreClipboard: boolean;
+  /** Our own window is focused — nothing is typed here, and no app rule matched. */
+  isSelf: boolean;
+} {
+  // Our own window is focused → dictation won't type here (the Rust injection guard skips it).
+  // Don't match an app rule or the field guard, and don't coerce to clipboard-only.
+  //
+  // Folded IN here rather than left at the two call sites that used to open-code it. Both
+  // read `g.insertMethod`/`g.pasteShortcut` directly, which was already the cause of one
+  // documented divergence — and with a Profile layer they would have silently ignored it.
+  // This function's own docblock forbids exactly that duplication.
+  if (targetApp?.isSelf) {
+    return {
+      rule: undefined,
+      notEditable: false,
+      method: prof?.insertMethod ?? g.insertMethod,
+      pasteShortcut: prof?.pasteShortcut ?? g.pasteShortcut,
+      autoEnter: prof?.autoEnter ?? g.autoEnter,
+      restoreClipboard: prof?.restoreClipboard ?? g.restoreClipboard,
+      isSelf: true,
+    };
+  }
   // Normalize BOTH sides, not just the stored key. The rule floors already run `normalizeAppId`,
   // but the live id comes from Rust's `bounded_server_text`, whose character class is not the same
   // one — so an app naming itself with an invisible character (a variation selector, U+2800, the
@@ -757,20 +856,32 @@ export function resolveInjectionTarget(
   );
   // A blocked app OR a non-editable target is coerced to clipboard-only: nothing is typed there, but
   // the text isn't lost — it lands on the clipboard for the user to paste.
+  //
+  // Precedence for the four preference fields: constraint > app rule > profile > global.
+  // The CONSTRAINT (block / notEditable) applies to `method` only — a blocked app is already
+  // clipboard-only, and the `holdCoerced` guards downstream suppress the Enter from there.
+  // Below it the app rule wins over the profile because it expresses what the TARGET can
+  // accept, and an unachievable preference is not satisfiable.
   const method: InsertCfg["method"] =
-    rule?.block || notEditable ? "clipboard" : rule?.insertMethod ?? g.insertMethod;
-  const pasteShortcut = rule?.pasteShortcut ?? g.pasteShortcut;
-  return { rule, notEditable, method, pasteShortcut };
+    rule?.block || notEditable
+      ? "clipboard"
+      : rule?.insertMethod ?? prof?.insertMethod ?? g.insertMethod;
+  const pasteShortcut = rule?.pasteShortcut ?? prof?.pasteShortcut ?? g.pasteShortcut;
+  const autoEnter = rule?.autoEnter ?? prof?.autoEnter ?? g.autoEnter;
+  const restoreClipboard = rule?.restoreClipboard ?? prof?.restoreClipboard ?? g.restoreClipboard;
+  return { rule, notEditable, method, pasteShortcut, autoEnter, restoreClipboard, isSelf: false };
 }
 
 /** Resolve the CURRENT injection target (focused app → per-app rule) into the method +
  *  paste-shortcut to use RIGHT NOW. Called per injection — NOT once at dictation start — so
- *  per-app rules follow window switches mid-session: a latched/live dictation that moves
+ *  per-app rules follow window switches mid-session: a hands-free/live dictation that moves
  *  from Konsole to another app picks up each window's own rule instead of being frozen to
  *  whatever was focused when dictation began. Shares resolveInjectionTarget with startLive. */
-async function resolveTarget(): Promise<{
+async function resolveTarget(cfg: InsertCfg | null): Promise<{
   method: InsertCfg["method"];
   pasteShortcut: string[];
+  autoEnter: boolean;
+  restoreClipboard: boolean;
   isSelf: boolean;
   /** The app the rule below was resolved against, handed to Rust so it can confirm focus hasn't
    *  moved by the time the keys actually go out. */
@@ -779,29 +890,30 @@ async function resolveTarget(): Promise<{
   const g = useApp.getState().settings.general;
   const appRules = useApp.getState().appRules;
   const targetApp = await getFocusedApp();
-  // Our own window is focused → dictation won't type here (the Rust injection guard skips it).
-  // Show it as "→ this app" (neutral, no warn hint) and don't match an app rule / field guard.
-  if (targetApp?.isSelf) {
-    publishTarget(targetApp, null);
-    // Still hand Rust the app we resolved against. `null` is the value that DISABLES the
-    // sink-side focus re-check, so a null here meant: if the user alt-tabbed between this
-    // resolve and the keys going out, the global method was used with no re-check and no
-    // per-app rule — including `block`. Passing our own id makes that move a mismatch,
-    // which degrades to clipboard-only. Our own window still short-circuits earlier in
-    // Rust, so the "dictate into our own window" case is unchanged.
-    return {
-      method: g.insertMethod,
-      pasteShortcut: g.pasteShortcut,
-      isSelf: true,
-      appId: targetApp.appId ?? null,
-    };
-  }
-  const { rule, notEditable, method, pasteShortcut } = resolveInjectionTarget(targetApp ?? null, appRules, g);
+  // The Profile layer comes from the SESSION TOKEN, never from a store lookup. This runs from
+  // the 700ms focus poll and from tail tasks queued behind a slow paste, both of which can
+  // outlive `activeProfile` (settleIdle clears it) — and a cancel-then-restart could otherwise
+  // have session A's queued task resolve against session B's profile. Every task already
+  // re-checks `insertCfg !== cfg` AFTER its await, but publishTarget below fires BEFORE that
+  // check, so the token is what makes the wrong-session read structurally impossible.
+  const {
+    rule,
+    notEditable,
+    method,
+    pasteShortcut,
+    autoEnter,
+    restoreClipboard,
+    isSelf,
+  } = resolveInjectionTarget(targetApp ?? null, appRules, g, cfg?.profileInsertion);
   // Keep the chip's "→ app" readout + skip hint live as focus moves mid-session: this resolves
   // the CURRENT window on every call, so it's the chip's source of truth — not the frozen
-  // start-of-session value.
-  publishTarget(targetApp ?? null, rule?.block ? "blocked" : notEditable ? "notEditable" : null);
-  return { method, pasteShortcut, isSelf: false, appId: targetApp?.appId ?? null };
+  // start-of-session value. Our own window shows as "→ this app": neutral, no warn hint.
+  publishTarget(targetApp ?? null, isSelf ? null : rule?.block ? "blocked" : notEditable ? "notEditable" : null);
+  // Always hand Rust the app we resolved against, our own window included. `null` DISABLES the
+  // sink-side focus re-check, so a null here meant: alt-tab between this resolve and the keys
+  // going out and the resolved method was used with no re-check and no per-app rule — `block`
+  // included. A real id makes that move a mismatch, which degrades to clipboard-only.
+  return { method, pasteShortcut, autoEnter, restoreClipboard, isSelf, appId: targetApp?.appId ?? null };
 }
 
 /** Push the resolved injection target into the store (deduped) so the chip's "→ app" readout +
@@ -826,7 +938,7 @@ function startTargetPoll(): void {
   // resolveTarget awaits getFocusedApp(), which (unlike the seed reads) does NOT swallow IPC
   // errors. In this fire-and-forget poll there's no caller to surface them, so attach .catch here
   // to avoid an unhandled rejection on each tick — matching every other void-ed IPC in this file.
-  const poll = () => void resolveTarget().catch((e) => console.error("target poll failed:", e));
+  const poll = () => void resolveTarget(insertCfg).catch((e) => console.error("target poll failed:", e));
   poll(); // resolve once immediately, then keep it fresh
   targetPollTimer = setInterval(poll, TARGET_POLL_MS);
 }
@@ -904,8 +1016,45 @@ function settleIdle(): void {
   // `dictationPhase` is cleared in the SAME call as the status move — a phase
   // published for a status that no longer exists would keep a cold-translate
   // card on screen over an idle chip.
-  useApp.getState().setDictation({ status: "idle", sessionOutcome: endOutcome(), activeProfile: null, dictationPhase: null });
+  // `translateFailure` rides the SAME call as `sessionOutcome`, for the same reason
+  // `dictationPhase` does: the chip's done marker is edge-triggered on the outcome, so a
+  // cause published a tick later would arrive after the marker it is meant to qualify.
+  // Without it a session that inserted the ORIGINAL because the translate timed out shows
+  // an unqualified "typed" — indistinguishable from one that translated successfully.
+  useApp.getState().setDictation({
+    status: "idle",
+    sessionOutcome: endOutcome(),
+    translateFailure: sessionTranslateFailure,
+    activeProfile: null,
+    dictationPhase: null,
+  });
   consumePendingHoldStart();
+}
+
+/** Set by dictation.ts when the running Profile asks for its targets after release (the
+ *  push-to-talk path). Returns the chosen list, or `null` if the user dismissed — in which
+ *  case the Profile's configured targets stand. Injected rather than imported: dictation.ts
+ *  already imports this module, so the dependency can only go this way. */
+let askTargetsAtSettle: (() => Promise<string[] | null>) | null = null;
+export function setSettleTargetPicker(fn: (() => Promise<string[] | null>) | null): void {
+  askTargetsAtSettle = fn;
+}
+
+/** Replace this session's translation targets with the user's pick.
+ *
+ *  Mutates the frozen `sessionTranslation` in place rather than rebuilding it, so the
+ *  server/model/glossary/mode this session already resolved (and warmed) are kept — only
+ *  the targets change. An EMPTY list is a real answer ("insert the original only") and
+ *  clears translation for the session, which is why it isn't treated as "no opinion". */
+function applySessionTargets(targets: string[]): void {
+  const clean = targets.map((t) => t.trim()).filter(Boolean);
+  if (clean.length === 0) {
+    sessionTranslation = null;
+  } else if (sessionTranslation) {
+    sessionTranslation.targets = clean;
+  }
+  // Republish so the chip's route matches what will actually be injected.
+  useApp.getState().setDictation({ sessionTargets: clean.length ? clean : null });
 }
 
 /** A stream-event handler should fold in / act on a late emit only while genuinely busy — a
@@ -966,6 +1115,9 @@ function armStuckWatchdog(): void {
       // cancelLive) is a no-op in stop mode (nothing snapshotted), so there's no clobber race, and
       // cancelLive sets status "idle" synchronously and never re-touches it, so the flashError wins.
       const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
+      // Captured BEFORE cancelLive() below, which nulls insertCfg — by the time the async
+      // recovery runs there is no session left to read the target from.
+      const pendingAppId = insertCfg?.targetApp?.appId ?? null;
       void cancelLive();
       if (pending) {
         void (async () => {
@@ -976,7 +1128,11 @@ function armStuckWatchdog(): void {
             // "it's on the clipboard" made on "the invoke didn't throw" can be false — and these
             // recovery paths fire exactly when the user is most likely looking at (or clicking
             // into) our own window. No re-send is introduced, so this cannot duplicate text.
-            ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [] }));
+            //
+            // `expectAppId` was omitted here, which DISABLES Rust's sink-side focus re-check —
+            // the one guard that stops a recovery resolved for one window from writing after
+            // focus moved to another. Every other inject site passes it; this one now does too.
+            ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [], expectAppId: pendingAppId }));
           } catch (err) {
             console.error("clipboard recovery after stuck-finalize failed:", err);
           }
@@ -1042,7 +1198,7 @@ async function ensureListeners(): Promise<void> {
         micLiveHits = 0;
       }
     }
-    // Latch auto-stop (when armed): track silence via the shared speaking detector and end the
+    // Hands-free auto-stop (when armed): track silence via the shared speaking detector and end the
     // session after the configured quiet stretch. Fires once, then disarms itself.
     if (autoStopMs > 0) {
       const tNow = performance.now();
@@ -1051,7 +1207,7 @@ async function ensureListeners(): Promise<void> {
         lastSpokeAt = tNow;
       } else if (listening && tNow - lastSpokeAt >= autoStopMs) {
         autoStopMs = 0;
-        console.info("[dictation] latch auto-stop: silence threshold reached");
+        console.info("[dictation] hands-free auto-stop: silence threshold reached");
         void stopLive();
       }
     }
@@ -1085,7 +1241,7 @@ async function ensureListeners(): Promise<void> {
   // session.rs LiveDetect). This is the PRIMARY go-live signal: the smoothed+gained level gate
   // below starts from a 0-seeded EMA against a threshold a quiet mic's noise floor only hovers
   // AT, so on such mics it held "warming up…" until the user actually spoke (~2s of grey chip
-  // after the latch press). The level gate stays as a fallback (it can only fire later, and the
+  // after the hands-free press). The level gate stays as a fallback (it can only fire later, and the
   // warmTimer guard makes whichever lands first the only one that acts). Same stale-emit safety
   // as level events: the capture thread is joined before the next session starts, and a post-stop
   // arrival no-ops because stopLive/cancelLive already cleared the warm timer.
@@ -1181,7 +1337,7 @@ async function ensureListeners(): Promise<void> {
       const phraseClip = committedDoc.slice(commonPrefixLen(clipBaseline, committedDoc)).trim();
       const target = committedDoc.replace(/^\s+/, "");
       // Did the document GROW vs the last final? Distinguishes a real new phrase from a re-sent
-      // `final` (the flush final the drain emits at latch end). Advanced synchronously per final and
+      // `final` (the flush final the drain emits at hands-free end). Advanced synchronously per final and
       // kept SEPARATE from the typed baseline (injectedText), so re-sent-final detection stays correct
       // regardless of whether/where the phrase actually typed.
       const grew = commonPrefixLen(seenDoc, target) < target.length;
@@ -1211,7 +1367,7 @@ async function ensureListeners(): Promise<void> {
       // whichever id happened to arrive last.
       const utterance = e.payload.utterance ?? 0;
       enqueueInject(async () => {
-        const t = await resolveTarget();
+        const t = await resolveTarget(cfg);
         // Discard a cancelled/superseded session's phrase — don't inject it into the new/refocused
         // window, and don't let the bookkeeping/catches below touch the next session (insertCfg!==cfg
         // catches both a cancel→null and a cancel-then-restart→new object; stopLive keeps cfg, so a
@@ -1222,14 +1378,14 @@ async function ensureListeners(): Promise<void> {
         // when the method is clipboard. At start that's enforced; but focus can move mid-session to a
         // window that resolves to paste/direct, so for a hold session copy the phrase to the clipboard
         // instead (types nothing, recoverable) rather than typing with the chord down.
-        const useClipboard = t.method === "clipboard" || insertCfg?.activation === "hold";
+        const useClipboard = holdCoerced(insertCfg?.activation, t.method);
         if (useClipboard) {
           // Clipboard: copy just the current hard-break window (everything since your last pause) —
           // never the whole session — so the clipboard doesn't pile up. Each copy flashes the chip's
-          // clipboard glyph PER PHRASE (mirroring the typed green pulse) so a latch session shows
+          // clipboard glyph PER PHRASE (mirroring the typed green pulse) so a hands-free session shows
           // confirmation continuously. Skip our own window (the injection guard copies nothing there →
           // would be a false confirmation). `grew` is the document-grew guard: false for a re-sent
-          // final (the flush final the drain emits at latch end), so a clipboard latch that ends
+          // final (the flush final the drain emits at hands-free end), so a clipboard hands-free session that ends
           // mid-speech doesn't re-copy + re-pulse the last phrase on the re-sent final.
           if (phraseClip.length > 0 && grew) {
             // T2T live: translate the outbound copy only; clipBaseline and the
@@ -1323,7 +1479,7 @@ async function ensureListeners(): Promise<void> {
             // (clipHoldsOurs false), so we never capture our own transcript. Gating on clipHoldsOurs (not
             // clipDirty) covers the clipboard-only→paste case: a clipboard-only phrase clears clipDirty
             // but leaves our text on the clipboard, which !clipDirty would wrongly re-snapshot.
-            if (t.method === "paste" && insertCfg?.restoreClipboard && !clipHoldsOurs && !t.isSelf) {
+            if (t.method === "paste" && t.restoreClipboard && !clipHoldsOurs && !t.isSelf) {
               // !t.isSelf: when our own window is focused the Rust guard skips the paste, so there's
               // nothing to snapshot/restore — and latching beganInjection/clipDirty here would flash a
               // spurious "injecting" tail AND pin the stale own-window clipboard over a later real paste.
@@ -1368,18 +1524,28 @@ async function ensureListeners(): Promise<void> {
               } else {
                 // Paste failed, but the Rust paste path leaves the transcript on the clipboard on
                 // failure (skip-restore-on-failed-paste) AND the teardown below drops the snapshot
-                // WITHOUT restoring, so it stays recoverable — surface that (mirrors the direct
-                // fallback above and the end-of-session insert), instead of claiming nothing landed.
+                // WITHOUT restoring, so it should still be recoverable — ASK, don't assert.
                 //
-                // NOT "verified" by re-issuing a clipboard insert. That looks like an upgrade and
-                // is a downgrade: `inject_text` short-circuits `method == "clipboard"` and returns
-                // `landed: true` UNCONDITIONALLY (`set_clipboard_persistent` is `-> ()` and merely
-                // spawns a thread, discarding any error), so the answer is a constant — `true` in
-                // exactly the broken-clipboard environment that motivates the doubt. Worse, the
-                // one input that CAN make it false is the own-window focus guard ahead of that
-                // branch, which would report a recoverable transcript as lost. A real fix needs
-                // Rust to report whether the clipboard write landed; recorded in the notes.
-                flashError("Couldn’t paste the text — it’s on the clipboard to paste manually.");
+                // The comment that used to sit here claimed `inject_text` returns `landed: true`
+                // unconditionally for the clipboard method, so asking was pointless. That stopped
+                // being true: `set_clipboard_persistent` now returns a Result and the clipboard
+                // branch reports `landed: false` on a write failure. Asserting therefore promised
+                // a clipboard recovery in exactly the broken-clipboard environment where there
+                // isn't one. Re-issuing the copy cannot duplicate text — the paste already failed.
+                let recoverable = false;
+                try {
+                  ({ landed: recoverable } = await injectText({
+                    text: typeOut, method: "clipboard", autoEnter: false, restoreClipboard: false,
+                    pasteShortcut: t.pasteShortcut, expectAppId: t.appId,
+                  }));
+                } catch (e2) {
+                  console.error("clipboard fallback after failed paste failed:", e2);
+                }
+                flashError(
+                  recoverable
+                    ? "Couldn’t paste the text — it’s on the clipboard to paste manually."
+                    : "Couldn’t insert the text.",
+                );
               }
               teardownAfterFatalInject();
               return;
@@ -1421,13 +1587,13 @@ async function ensureListeners(): Promise<void> {
               // way. The user saw a success confirmation and no text, with nothing to explain it.
               if (diverted) {
                 // The chip's clipboard glyph IS the signal here — the same one the clipboard-only
-                // phrase path uses, for the same reason: it repeats per phrase, so a latch session
+                // phrase path uses, for the same reason: it repeats per phrase, so a hands-free session
                 // shows it continuously. Deliberately NOT flashError: that sets status "error",
                 // which drops out of `isActiveDictation`, so every later frame of a session that is
                 // still capturing would be discarded while Rust holds the mic and the system mute —
                 // a session-killer in exchange for a message. And this fires on the routine
                 // focus-moved-to-another-app divert too, which the sink comment expects in any live
-                // or latch session.
+                // or hands-free session.
                 sessionClipboard = true;
                 signalInsert("clipboard");
               } else {
@@ -1439,13 +1605,15 @@ async function ensureListeners(): Promise<void> {
         }
       });
       // A phrase's text just landed AND the document actually GREW (`grew` is false for a re-sent
-      // final — e.g. the flush `final` the drain emits when you end latch — so we must NOT re-arm
-      // for text that was already typed + Entered; doing so is what fired a second Enter at latch
+      // final — e.g. the flush `final` the drain emits when you end a hands-free session — so we must NOT re-arm
+      // for text that was already typed + Entered; doing so is what fired a second Enter at hands-free
       // end). (Re)start the quiet timer so the per-phrase Enter + clipboard restore fire
       // ~PHRASE_END_QUIET_MS after you stop speaking (not at the ~20s hard break). Ongoing speech
       // keeps bumping the timer via stream://partial.
       if (grew) {
-        if (insertCfg.autoEnter) phraseDirty = true;
+        // Unconditional: this flag means "text landed since the last Enter", not "Enter is
+        // armed" — whether an Enter is actually wanted is resolved per target, later.
+        phraseDirty = true;
         bumpPhraseEnd();
       }
     }
@@ -1501,7 +1669,7 @@ async function ensureListeners(): Promise<void> {
     // A hard break = a finished phrase. In live mode, emit (into the window focused NOW)
     // any configured separator AND — when "Press Enter after" is on — a REAL Enter, so each
     // phrase is submitted/newlined as you speak. This is what makes "Press Enter after" work
-    // in latch/ongoing dictation, which never reaches the stop-time tail. A "\n" is always a
+    // in hands-free/ongoing dictation, which never reaches the stop-time tail. A "\n" is always a
     // real Enter (a pasted newline gets swallowed by some apps); clipboard-only types nothing
     // (the full transcript is already on the clipboard via bankedDoc).
     // The phrase ended (hard break). The per-phrase Enter is normally driven by the quiet
@@ -1510,19 +1678,32 @@ async function ensureListeners(): Promise<void> {
     // somehow hasn't. When auto-enter is off, fall back to the configured separator behavior.
     clearPhraseEndTimer();
     if (insertCfg?.live) {
-      if (insertCfg.autoEnter) {
-        if (phraseDirty) enqueueAutoEnter();
-      } else if (sep) {
+      // Enter-vs-separator is now decided INSIDE the queued task, after the target resolves.
+      // It used to fork synchronously on the frozen `insertCfg.autoEnter`, which is precisely
+      // what stopped an app rule from governing Enter: the branch was taken before anyone
+      // asked which window the text was going to. Costs one extra focus round-trip per hard
+      // break (~20s), the cost already noted for this path.
+      if (phraseDirty || sep) {
         // Capture the session token synchronously (mirrors the live/stop tasks) so a cancel-then-restart
         // during resolveTarget OR the paste below bails — don't fire a stray separator/Enter into the
         // new/refocused window, nor stamp the old session's clipboard bookkeeping onto session B.
         const cfg = insertCfg;
+        const dirtyAtBreak = phraseDirty;
         enqueueInject(async () => {
-          const t = await resolveTarget();
+          const t = await resolveTarget(cfg);
           if (insertCfg !== cfg) return;
           // Hold session: same as enqueueAutoEnter — never emit a keystroke while the PTT chord is held
           // (the held modifier would fold into the separator/Enter once focus moved to a typing window).
-          if (t.method === "clipboard" || insertCfg?.activation === "hold") return;
+          if (holdCoerced(insertCfg?.activation, t.method)) return;
+          // Enter wins over the separator when this target wants it — the same precedence the
+          // synchronous fork had, just evaluated against the window actually being typed into.
+          if (t.autoEnter) {
+            if (dirtyAtBreak) {
+              await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+            }
+            return;
+          }
+          if (!sep) return;
           if (sep.includes("\n")) {
             await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
           } else {
@@ -1536,7 +1717,7 @@ async function ensureListeners(): Promise<void> {
             // `landed` for the same reason as the phrase task: a sink-side own-window skip wrote
             // nothing, so there is no clobber to restore and setting clipHoldsOurs would suppress the
             // NEXT real paste's snapshot — leaving a later paste with nothing recorded to put back.
-            if (t.method === "paste" && insertCfg?.restoreClipboard && !t.isSelf && landed) {
+            if (t.method === "paste" && t.restoreClipboard && !t.isSelf && landed) {
               if (beganInjection) {
                 // A prior paste snapshotted the user's clipboard — put it back (mirrors the per-phrase
                 // restore contract); the snapshot survives in Rust and isn't consumed.
@@ -1637,13 +1818,19 @@ async function ensureListeners(): Promise<void> {
       if (cfg.live) {
         // Phrases were written + Enter'd + clipboard-restored live (per phrase, off the quiet
         // timer) as you spoke. The tail handles only what's left when the session ends: a real
-        // Enter for the LAST, in-progress phrase — one you ended latch on before pausing, so its
+        // Enter for the LAST, in-progress phrase — one you ended a hands-free session on before pausing, so its
         // quiet-timer Enter never fired — plus a FINAL clipboard restore that also clears the
         // snapshot. `phraseDirty` is true only if that last Enter hasn't already fired (the quiet
         // timer / boundary clear it), and crucially we only set it for a final that GREW the
         // document — so the drain's re-sent flush `final` can't resurrect it into a double Enter.
         // Skip the "injecting" flash when there's no tail work.
-        const enterTail = cfg.autoEnter && phraseDirty;
+        // `phraseDirty` alone here, deliberately. Whether an Enter is actually wanted is now
+        // the TARGET's decision, and this runs outside the queue — there is no resolved target
+        // yet. So the tail is armed on "is there an un-Entered phrase", and enqueueAutoEnter
+        // resolves and drops it if the window doesn't want one. The only cost of arming
+        // optimistically is the brief "injecting" flash below on a session that then sends
+        // nothing; the cost of the reverse would be a missed Enter, which loses a submit.
+        const enterTail = phraseDirty;
         phraseDirty = false;
         // The final clipboard action is decided once the inject queue has DRAINED (finalClip, run
         // below), reading the LIVE clipDirty: restore the user's clipboard only if it still holds
@@ -1702,6 +1889,20 @@ async function ensureListeners(): Promise<void> {
           // and inserting the original. That is why the long wait is scoped
           // HERE and not given to live phrases, which block the next phrase.
           let outText = text;
+          // Push-to-talk asks for its targets HERE, not at session start: the chord is held
+          // for the whole dictation, so a prompt then would have eaten the keystrokes. The
+          // transcript is finished and nothing has been typed yet, which makes this the one
+          // seam where the answer can still change the outcome.
+          //
+          // Unlike the hands-free path this misses the four session-start commitments —
+          // the preload plan, the warm lease, the capability probe and `translateExpect`
+          // were all made with the Profile's CONFIGURED targets. Those are preselected, so
+          // they are usually the answer; a differently-picked target just pays a cold load.
+          if (askTargetsAtSettle) {
+            const picked = await askTargetsAtSettle();
+            if (insertCfg !== cfg) return;
+            if (picked !== null) applySessionTargets(picked);
+          }
           if (sessionTranslation) {
             const one = await maybeTranslate(text, cfg, { oneShot: true });
             if (insertCfg !== cfg) return;
@@ -1709,7 +1910,7 @@ async function ensureListeners(): Promise<void> {
             if (one.translated) sessionTranslatedText = one.text;
             setDictation({ status: "injecting" });
           }
-          const t = await resolveTarget();
+          const t = await resolveTarget(cfg);
           // A cancel (insertCfg→null) OR a cancel-then-fresh-session (insertCfg→a new object) landing
           // during the awaited resolve must not paste the OLD session's whole transcript into the new/
           // refocused window. Identity-check, mirroring the post-inject guard below + the live tasks;
@@ -1721,8 +1922,8 @@ async function ensureListeners(): Promise<void> {
             ({ landed, diverted } = await injectText({
               text: outText,
               method: t.method,
-              autoEnter: cfg.autoEnter,
-              restoreClipboard: cfg.restoreClipboard,
+              autoEnter: t.autoEnter,
+              restoreClipboard: t.restoreClipboard,
               pasteShortcut: t.pasteShortcut, expectAppId: t.appId,
             }));
           } catch (e) {
@@ -1737,22 +1938,17 @@ async function ensureListeners(): Promise<void> {
             // the awaited injectText must not recover this discarded session's transcript to the
             // clipboard nor flash its error onto the idled/next session (mirrors the success guard below).
             if (insertCfg !== cfg) return;
-            // Did the transcript actually end up on the clipboard? paste leaves it there on a failed
-            // paste (Rust skip-restore-on-failed-paste) and clipboard-only already put it there; only
-            // direct typing needs an explicit copy — and that copy can ALSO fail. Tell the truth
-            // either way (mirrors the per-phrase handler), so a double failure doesn't promise a
-            // clipboard recovery that isn't there.
-            // See the per-phrase twin for why the non-direct arm ASSERTS rather than asking:
-            // a clipboard-method `inject_text` returns `landed: true` unconditionally, so
-            // "verifying" here would replace a documented assumption with a constant — and would
-            // report a recoverable transcript as lost whenever the own-window guard fires.
-            let onClipboard = t.method !== "direct";
-            if (t.method === "direct") {
-              try {
-                ({ landed: onClipboard } = await injectText({ text: outText, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
-              } catch (e2) {
-                console.error("clipboard fallback after failed insert failed:", e2);
-              }
+            // Did the transcript actually end up on the clipboard? Ask on EVERY method, not just
+            // direct. The clipboard branch used to be asserted on the premise that a
+            // clipboard-method `inject_text` always returns `landed: true`; it now reports a real
+            // write failure, so the assertion promised a recovery that may not exist. Asking costs
+            // one extra clipboard write on a path that has already failed, and cannot duplicate
+            // text (nothing was inserted).
+            let onClipboard = false;
+            try {
+              ({ landed: onClipboard } = await injectText({ text: outText, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
+            } catch (e2) {
+              console.error("clipboard fallback after failed insert failed:", e2);
             }
             flashError(
               onClipboard
@@ -2065,7 +2261,11 @@ export async function startLive(
   backend: Backend,
   deviceId: string | null,
   activation: ActivationKind,
-  pov?: { model?: string; language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; translationOverrides?: TranslationOverrides; overrideProfile?: string; endpoint?: EndpointKind },
+  pov?: Pick<Profile, "model" | "language" | "prompt" | "decodeOverrides" | "translationOverrides" | "overrideProfile" | "endpoint" | "typeAsISpeak" | "insertionOverrides">,
+  /** The app focused BEFORE the caller took focus for a prompt (the translation-target
+   *  picker). Without it, `startLiveInner`'s own `getFocusedApp` would resolve to OUR
+   *  window and dictation would refuse to type. Absent = resolve normally. */
+  preresolvedTarget?: FocusedApp | null,
 ): Promise<void> {
   if (startingSession) return;
   startingSession = true;
@@ -2081,7 +2281,7 @@ export async function startLive(
     errorClearTimer = null;
   }
   try {
-    await startLiveInner(backend, deviceId, activation, pov);
+    await startLiveInner(backend, deviceId, activation, pov, preresolvedTarget);
   } catch (e) {
     // startLiveInner awaits ensureListeners() + getFocusedApp() BEFORE its own try/catch, so a
     // reject there (e.g. an AT-SPI error out of get_focused_app) escapes to here. Surface it and
@@ -2099,18 +2299,19 @@ async function startLiveInner(
   backend: Backend,
   deviceId: string | null,
   activation: ActivationKind,
-  pov?: { model?: string; language?: string; prompt?: string; decodeOverrides?: DecodeOverrides; translationOverrides?: TranslationOverrides; overrideProfile?: string; endpoint?: EndpointKind },
+  pov?: Pick<Profile, "model" | "language" | "prompt" | "decodeOverrides" | "translationOverrides" | "overrideProfile" | "endpoint" | "typeAsISpeak" | "insertionOverrides">,
+  preresolvedTarget?: FocusedApp | null,
 ): Promise<void> {
   await ensureListeners();
   const setDictation = useApp.getState().setDictation;
   const s = useApp.getState().settings;
   const g = s.general;
   const rec = s.recording;
-  // Arm latch auto-stop (0 = off): end a hands-free session after N min of continuous silence.
-  // Hold/push-to-talk ends on key-release, so this is latch-only. Disarmed by stopLive/cancelLive.
+  // Arm hands-free auto-stop (0 = off): end a hands-free session after N min of continuous silence.
+  // Hold/push-to-talk ends on key-release, so this is hands-free-only. Disarmed by stopLive/cancelLive.
   autoStopMemo = newSpeakMemo();
   lastSpokeAt = performance.now();
-  autoStopMs = activation !== "hold" && rec.latchAutoStopMin > 0 ? rec.latchAutoStopMin * 60_000 : 0;
+  autoStopMs = activation !== "hold" && rec.handsFreeAutoStopMin > 0 ? rec.handsFreeAutoStopMin * 60_000 : 0;
   // Effective values: a set per-Profile override wins; else inherit the Backend.
   const model = pov?.model?.trim() ? pov.model.trim() : backend.model;
   const language = pov?.language?.trim() ? pov.language.trim() : backend.language;
@@ -2153,6 +2354,15 @@ async function startLiveInner(
     sessionTranslateWarned = false;
     sessionTranslateFailure = null;
     sessionPhraseContext = [];
+    // Publish the RESOLVED route so the chip can show it. `sessionTranslation` is module
+    // state the overlay's own webview can never read, and the chip must not re-derive it
+    // from the Profile: the two are the same only until something can change the targets
+    // for one session (a per-session picker). Cleared alongside the rest of the session's
+    // state, so the standby dock falls back to previewing the home Profile's own route.
+    useApp.getState().setDictation({
+      sessionTargets: trTargets.length ? trTargets : null,
+      translateFailure: null,
+    });
 
     // Warm the models this session will need before the first phrase arrives.
     // Best-effort and silent: a server that doesn't know the endpoint is
@@ -2196,21 +2406,28 @@ async function startLiveInner(
   // Per-app rule (P16): the focused app at start decides block/method/paste-shortcut. Resolved
   // once here — you dictate into the app you triggered from — via the shared resolveInjectionTarget
   // (same policy resolveTarget re-runs per phrase, so the frozen start value can't diverge).
-  const targetApp = await getFocusedApp();
-  // Our own window is focused at start → dictation won't type here (the Rust injection guard skips
-  // it), so don't match an app rule or field guard and don't coerce to clipboard-only / flash a
-  // "not a text field" skip on our own window. Mirror resolveTarget's isSelf short-circuit, which
-  // the per-phrase path already applies — without this the start-of-session resolution diverged.
-  const { rule, notEditable, method, pasteShortcut } = targetApp?.isSelf
-    ? { rule: undefined, notEditable: false, method: g.insertMethod, pasteShortcut: g.pasteShortcut }
-    : resolveInjectionTarget(targetApp ?? null, useApp.getState().appRules, g);
+  // A caller that had to take focus first (the picker) already read this — using its
+  // value keeps the session aimed at the app the user was actually in.
+  const targetApp = preresolvedTarget !== undefined ? preresolvedTarget : await getFocusedApp();
+  // The own-window short-circuit now lives INSIDE resolveInjectionTarget, so this and the
+  // per-phrase path share it by construction rather than by two hand-copied literals — which
+  // is what diverged once already, and what a Profile layer would have silently bypassed.
+  // The Profile's own overrides, frozen for the session. `resolveTarget` re-reads the
+  // app-rule layer per phrase but never this one — a profile does not change mid-session,
+  // and the poll can outlive `activeProfile`.
+  const profileInsertion: InsertionOverrides = pov?.insertionOverrides ?? {};
+  const { rule, notEditable, method, pasteShortcut } = resolveInjectionTarget(
+    targetApp ?? null,
+    useApp.getState().appRules,
+    g,
+    profileInsertion,
+  );
 
   insertCfg = {
     timing: g.insertTiming,
     method,
     pasteShortcut,
-    autoEnter: g.autoEnter,
-    restoreClipboard: g.restoreClipboard,
+    profileInsertion,
     targetApp: targetApp ?? null,
     blocked: rule?.block ?? false,
     notEditable,
@@ -2218,10 +2435,9 @@ async function startLiveInner(
     // Hold/PTT holds the chord the whole time → live TYPING collides with the held modifier,
     // so paste/direct fall back to the single insert-on-release ("stop"). Clipboard-only types
     // nothing, so it can run live in any activation — it just refreshes the clipboard per segment.
-    live:
-      g.insertTiming === "live" &&
-      endpoint === "stream" &&
-      (method === "clipboard" || activation !== "hold"),
+    // The user's ask now comes from the PROFILE, not a global three-way. The other two
+    // terms are unchanged — see liveAllowed for why the activation must be the runtime one.
+    live: liveAllowed({ wants: pov?.typeAsISpeak === true, endpoint, activation, method }),
   };
   // Freeze the history-capture metadata for this session (see sessionMeta).
   // The profile was stamped into the store synchronously before startLive.
@@ -2379,10 +2595,10 @@ async function startLiveInner(
 }
 
 /** Chord family: upgrade the RUNNING hold session to hands-free in place — no
- *  restart, the capture/transport keep going. Flips what "latch" changes:
+ *  restart, the capture/transport keep going. Flips what hands-free changes:
  *  the auto-stop timer arms, live TYPING becomes allowed once the chord is
- *  released (recomputed below), and the chip/usage relabel to the latch
- *  Profile. The latch Profile's own backend/language/prompt overrides do NOT
+ *  released (recomputed below), and the chip/usage relabel to the hands-free
+ *  Profile. That Profile's own backend/language/prompt overrides do NOT
  *  apply — the transport was opened for the hold's backend and stays there.
  *  Mid-prologue (insertCfg not built yet) the flip is queued and applied by
  *  startLiveInner the moment the session context exists. */
@@ -2398,7 +2614,7 @@ export function reclassifyLive(profile: Profile): void {
 function applyReclassify(profile: Profile): void {
   const st = useApp.getState();
   if (insertCfg) {
-    insertCfg.activation = "latch";
+    insertCfg.activation = "handsfree";
     // The chord gets released now the session is hands-free, so live TYPING becomes
     // safe — recompute `live` exactly as startLiveInner does (activation is no longer
     // "hold"). The append-only delta insert catches up anything committed before the
@@ -2406,19 +2622,31 @@ function applyReclassify(profile: Profile): void {
     // the live path never re-reads bankedDoc, so flipping `live` would drop it at stop
     // — keep the session in its started insert mode in that rare case.
     if (bankedDoc === "") {
-      insertCfg.live = insertCfg.timing === "live" && activeEndpoint === "stream";
+      // Through the SAME helper as startLiveInner, which is the point of extracting it: this
+      // site used to open-code the expression and had already drifted — it dropped the
+      // hold/clipboard term while its comment above claimed it recomputed "exactly as
+      // startLiveInner does". Equal only because activation is "handsfree" by now; any term
+      // added to the derivation would silently not have applied to an upgraded session.
+      insertCfg.live = liveAllowed({
+        wants: profile.typeAsISpeak === true,
+        // `activeEndpoint` is null only with no transport open, and this runs on a live
+        // session — but "batch" is the safe read either way (it forbids live typing).
+        endpoint: activeEndpoint ?? "batch",
+        activation: insertCfg.activation ?? "handsfree",
+        method: insertCfg.method,
+      });
     }
   }
-  // Arm the latch auto-stop (a hold session leaves it off — key-release ends it).
+  // Arm the hands-free auto-stop (a hold session leaves it off — key-release ends it).
   const rec = st.settings.recording;
   autoStopMemo = newSpeakMemo();
   lastSpokeAt = performance.now();
-  autoStopMs = rec.latchAutoStopMin > 0 ? rec.latchAutoStopMin * 60_000 : 0;
+  autoStopMs = rec.handsFreeAutoStopMin > 0 ? rec.handsFreeAutoStopMin * 60_000 : 0;
   st.setDictation({ activeProfile: profile.id });
 }
 
 export async function stopLive(): Promise<void> {
-  autoStopMs = 0; // disarm latch auto-stop — we're stopping now
+  autoStopMs = 0; // disarm hands-free auto-stop — we're stopping now
   // The mic closes with this call, not with the `closed` that follows it: from here a
   // second stop gesture is a CANCEL again (the recovery for a wedged finalize), even if a
   // per-phrase translate still has the status on "translating".
@@ -2501,7 +2729,7 @@ export async function stopLive(): Promise<void> {
  *  stuck "down" in the evdev backend (a dropped key-release) — so the one action
  *  recovers both the recording state AND the shortcuts. */
 export async function cancelLive(): Promise<void> {
-  autoStopMs = 0; // disarm latch auto-stop
+  autoStopMs = 0; // disarm hands-free auto-stop
   pendingHoldStart = null; // a deliberate cancel also voids a queued fast re-press
   pendingReclassify = null; // …and a queued chord-family upgrade
   clearWarmTimer();
@@ -2550,7 +2778,7 @@ export async function cancelLive(): Promise<void> {
     .getState()
     // Cancelled → no done marker (outcome "none"); clear any pending per-phrase pulse.
     // `warming: false` so a cancel during warm-up doesn't strand the chip on "warming up…".
-    .setDictation({ status: "idle", warming: false, partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", lastInsert: null, activeProfile: null, dictationPhase: null });
+    .setDictation({ status: "idle", warming: false, partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", lastInsert: null, activeProfile: null, dictationPhase: null, sessionTargets: null, translateFailure: null });
   const endpoint = activeEndpoint;
   activeEndpoint = null;
   capturing = false;

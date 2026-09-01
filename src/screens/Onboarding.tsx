@@ -374,7 +374,7 @@ function StarterCard({
     capturing,
     lowLevelActive,
     others,
-    selfKind: p.activation === "latch" ? "latch" : "hold",
+    selfKind: p.activation === "handsfree" ? "handsfree" : "hold",
     onCommit: (codes) => {
       onPatch({ hotkey: codes });
       setCapturing(false);
@@ -393,8 +393,8 @@ function StarterCard({
         value={p.activation}
         onChange={(v) => onPatch({ activation: v })}
         options={[
-          { value: "hold", label: "Hold" },
-          { value: "latch", label: "Toggle" },
+          { value: "hold", label: "Push-to-talk" },
+          { value: "handsfree", label: "Hands-free" },
         ]}
       />
       <div className="mt-3">

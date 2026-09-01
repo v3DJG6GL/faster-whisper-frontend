@@ -12,6 +12,7 @@ mod kwin;
 mod logging;
 mod media_decode;
 mod overlay;
+mod langpick;
 mod quickadd;
 mod session;
 mod sound;
@@ -85,7 +86,7 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // main: keep the dictation state machine + listeners alive (see above).
                 // quickadd: keep it prewarmed so the next summon is instant.
-                if matches!(window.label(), "main" | "quickadd") {
+                if matches!(window.label(), "main" | "quickadd" | "langpick") {
                     api.prevent_close();
                     let _ = window.hide();
                 }
@@ -234,6 +235,10 @@ pub fn run() {
             overlay::hide_overlay,
             overlay::set_chip_hit_region,
             overlay::chip_pointer_over,
+            langpick::show_lang_pick,
+            langpick::hide_lang_pick,
+            langpick::commit_lang_pick,
+            langpick::cancel_lang_pick,
             quickadd::show_quick_add,
             quickadd::hide_quick_add,
             sound::play_cue,

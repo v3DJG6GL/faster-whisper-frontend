@@ -13,6 +13,7 @@ import {
 } from "./sync";
 import { useApp } from "./store";
 import { DEFAULT_SETTINGS } from "./defaults";
+import { IS_WINDOWS } from "./platform";
 import type { SyncBlob } from "./syncTypes";
 import type { AppSettings, Backend, Profile, SyncCategory, SyncSubSettings } from "./types";
 
@@ -252,6 +253,60 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(g.soundEffects).toBe(false);
     expect(g.evdevEnabled).toBe(false); // stripped on the way in
     expect(g.autoEnter).toBe(false); // ditto (post-paste Return is armed locally only)
+  });
+
+  it("a peer cannot arm the post-paste Return through a PROFILE override either", async () => {
+    // The twin of the `general` strip above. `autoEnter` moved onto Profile and AppRule as
+    // an override, and `sanitizeProfiles` carries unlisted leaves through by reference — so
+    // without an explicit drop this is a way around the very defense the general strip is.
+    useApp.setState({
+      settings: settings(),
+      profiles: [
+        { id: "p1", name: "Mine", activation: "handsfree", enabled: true, hotkey: ["F5"], backendId: null },
+      ],
+    });
+    await applyBlob(
+      {
+        profiles: {
+          list: [
+            {
+              id: "p1",
+              name: "Mine",
+              activation: "handsfree",
+              enabled: true,
+              hotkey: ["F5"],
+              backendId: null,
+              insertionOverrides: { autoEnter: true, insertMethod: "direct" },
+            },
+          ],
+          homeProfileId: null,
+        } as never,
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    const p = useApp.getState().profiles.find((x) => x.id === "p1")!;
+    expect(p.insertionOverrides?.autoEnter).toBeUndefined(); // stripped
+    expect(p.insertionOverrides?.insertMethod).toBe("direct"); // the rest still applies
+  });
+
+  it("a peer cannot arm the post-paste Return through an APP RULE override either", async () => {
+    useApp.setState({
+      settings: settings(),
+      appRules: [{ id: "r1", appId: "konsole", block: false }],
+    });
+    await applyBlob(
+      {
+        appRules: {
+          [IS_WINDOWS ? "windows" : "linux"]: [
+            { id: "r1", appId: "konsole", block: false, autoEnter: true, insertMethod: "direct" },
+          ],
+        } as never,
+      },
+      { ...CATS_ALL, backends: false, profiles: false },
+    );
+    const r = useApp.getState().appRules.find((x) => x.id === "r1")!;
+    expect(r.autoEnter ?? undefined).toBeUndefined(); // stripped + re-pinned to local (unset)
+    expect(r.insertMethod).toBe("direct"); // the rest still applies
   });
 
   it("an omitted field keeps the local value (merge-over-current, no default refill)", async () => {

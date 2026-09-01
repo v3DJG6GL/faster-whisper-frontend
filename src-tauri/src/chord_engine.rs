@@ -9,7 +9,7 @@
 //   • A HOLD chord fires `Start` the instant its keys complete — zero added
 //     latency — unless a strict-superset chord is already fully held (keys
 //     arrived superset-first: the superset wins, the subset stays silent).
-//   • A LATCH chord that strictly contains an actively-holding HOLD chord
+//   • A HANDS-FREE chord that strictly contains an actively-holding HOLD chord
 //     fires `Reclassify` instead of `Toggle`: the running session upgrades
 //     in place (hold → hands-free) — the hold is released WITHOUT a `Stop`.
 //     Allowed at ANY time during the hold: an upgrade keeps the session, so
@@ -36,7 +36,7 @@ pub const QUICK_ADD_GRACE: Duration = Duration::from_millis(500);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChordKind {
     Hold { profile_id: String },
-    Latch { profile_id: String },
+    HandsFree { profile_id: String },
     QuickAdd,
 }
 
@@ -55,10 +55,10 @@ pub enum Fire {
     Stop(String),
     /// Hold handed its session to a superset — note_hold(false), NO "stop".
     ReleaseHold(String),
-    /// Latch chord pressed with no hold to upgrade — emit "toggle".
+    /// Hands-free chord pressed with no hold to upgrade — emit "toggle".
     Toggle(String),
-    /// Latch chord completed over a live hold — emit "reclassify" (the
-    /// frontend upgrades in place, or toggles off when it's already latched).
+    /// Hands-free chord completed over a live hold — emit "reclassify" (the
+    /// frontend upgrades in place, or toggles off when it's already hands-free).
     Reclassify(String),
     /// Quick-add aborted a nascent hold — emit "cancel" for the hold's profile.
     Cancel(String),
@@ -72,7 +72,7 @@ pub struct Engine {
     supersets: Vec<Vec<usize>>,
     /// Inverse: for each chord, the indices of strict subsets.
     subsets: Vec<Vec<usize>>,
-    /// hold: emitted Start; latch/quick-add: pressed (rising-edge debounce).
+    /// hold: emitted Start; hands-free/quick-add: pressed (rising-edge debounce).
     active: Vec<bool>,
     /// Physical completion last event — edge detection for holds.
     fully_prev: Vec<bool>,
@@ -121,7 +121,7 @@ impl Engine {
     }
 
     /// The most recently started, still-active HOLD strictly contained in chord
-    /// `j` — the handoff donor for a latch upgrade / quick-add abort.
+    /// `j` — the handoff donor for a hands-free upgrade / quick-add abort.
     fn active_hold_subset(&self, j: usize) -> Option<usize> {
         self.subsets[j]
             .iter()
@@ -141,7 +141,7 @@ impl Engine {
         let mut out: Vec<u16> = Vec::new();
         for c in &self.chords {
             let owner = match &c.kind {
-                ChordKind::Hold { profile_id } | ChordKind::Latch { profile_id } => {
+                ChordKind::Hold { profile_id } | ChordKind::HandsFree { profile_id } => {
                     Some(profile_id.as_str())
                 }
                 ChordKind::QuickAdd => None,
@@ -183,7 +183,7 @@ impl Engine {
                     // and suppression-lift is NOT a start — supersets act through
                     // their own arms below; the hold reacts only to its own edges.
                 }
-                ChordKind::Latch { profile_id } => {
+                ChordKind::HandsFree { profile_id } => {
                     let on = fully && !sup_fully;
                     if on && !self.active[i] {
                         self.active[i] = true;
@@ -253,7 +253,7 @@ mod tests {
     fn family() -> Engine {
         Engine::new(vec![
             ChordSpec { keys: vec![CTRL_L, SHIFT_L], kind: ChordKind::Hold { profile_id: "ptt".into() } },
-            ChordSpec { keys: vec![CTRL_L, SHIFT_L, SPACE], kind: ChordKind::Latch { profile_id: "latch".into() } },
+            ChordSpec { keys: vec![CTRL_L, SHIFT_L, SPACE], kind: ChordKind::HandsFree { profile_id: "handsfree".into() } },
             ChordSpec { keys: vec![CTRL_L, SHIFT_L, CTRL_R], kind: ChordKind::QuickAdd },
         ])
     }
@@ -279,10 +279,10 @@ mod tests {
     }
 
     #[test]
-    fn plain_latch_toggle_and_rearm() {
+    fn plain_handsfree_toggle_and_rearm() {
         let mut e = Engine::new(vec![ChordSpec {
             keys: vec![CTRL_L, KEY_H],
-            kind: ChordKind::Latch { profile_id: "l".into() },
+            kind: ChordKind::HandsFree { profile_id: "l".into() },
         }]);
         let t = Instant::now();
         let fires = run(
@@ -299,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn latch_upgrade_hands_off_the_hold() {
+    fn handsfree_upgrade_hands_off_the_hold() {
         let mut e = family();
         let t = Instant::now();
         let fires = run(
@@ -313,27 +313,27 @@ mod tests {
         );
         assert_eq!(
             fires,
-            vec![Fire::Start("ptt".into()), Fire::ReleaseHold("ptt".into()), Fire::Reclassify("latch".into())]
+            vec![Fire::Start("ptt".into()), Fire::ReleaseHold("ptt".into()), Fire::Reclassify("handsfree".into())]
         );
     }
 
     #[test]
-    fn latch_pressed_all_at_once_is_a_plain_toggle() {
+    fn handsfree_pressed_all_at_once_is_a_plain_toggle() {
         // Keys arriving Space-first: the hold completes already-suppressed, so
-        // there is no session to hand off — the latch is a normal toggle.
+        // there is no session to hand off — the hands-free chord is a normal toggle.
         let mut e = family();
         let t = Instant::now();
         let fires = run(
             &mut e,
             &[(&[SPACE], t), (&[SPACE, CTRL_L], t), (&[SPACE, CTRL_L, SHIFT_L], t), (&[], t)],
         );
-        assert_eq!(fires, vec![Fire::Toggle("latch".into())]);
+        assert_eq!(fires, vec![Fire::Toggle("handsfree".into())]);
     }
 
     #[test]
     fn second_family_press_reclassifies_again_for_toggle_off() {
-        // While latched, pressing the family again: the root's Start is the
-        // frontend's no-op (busy), and the latch completion must reclassify —
+        // While hands-free, pressing the family again: the root's Start is the
+        // frontend's no-op (busy), and the hands-free completion must reclassify —
         // the frontend reads same-profile as toggle-off.
         let mut e = family();
         let t = Instant::now();
@@ -341,7 +341,7 @@ mod tests {
         let fires = run(&mut e, &[(&[CTRL_L, SHIFT_L], t), (&[CTRL_L, SHIFT_L, SPACE], t), (&[], t)]);
         assert_eq!(
             fires,
-            vec![Fire::Start("ptt".into()), Fire::ReleaseHold("ptt".into()), Fire::Reclassify("latch".into())]
+            vec![Fire::Start("ptt".into()), Fire::ReleaseHold("ptt".into()), Fire::Reclassify("handsfree".into())]
         );
     }
 
@@ -409,7 +409,7 @@ mod tests {
                 (&[CTRL_L, SHIFT_L], t),
                 (&[CTRL_L, SHIFT_L, SPACE], t), // handoff
                 (&[CTRL_L, SHIFT_L], t),        // lift — silent
-                (&[CTRL_L, SHIFT_L, SPACE], t), // re-press: latch re-armed → reclassify (no active hold → toggle)
+                (&[CTRL_L, SHIFT_L, SPACE], t), // re-press: hands-free re-armed → reclassify (no active hold → toggle)
                 (&[], t),
             ],
         );
@@ -418,8 +418,8 @@ mod tests {
             vec![
                 Fire::Start("ptt".into()),
                 Fire::ReleaseHold("ptt".into()),
-                Fire::Reclassify("latch".into()),
-                Fire::Toggle("latch".into()),
+                Fire::Reclassify("handsfree".into()),
+                Fire::Toggle("handsfree".into()),
             ]
         );
     }

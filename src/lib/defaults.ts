@@ -58,7 +58,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     trimSilence: true,
     recordingsRetentionDays: 0,
     muteSystemAudio: true,
-    latchAutoStopMin: 30,
+    handsFreeAutoStopMin: 30,
     realtimePreview: true,
     realtimePreviewOnHover: false,
     showProfileOnOverlay: true,

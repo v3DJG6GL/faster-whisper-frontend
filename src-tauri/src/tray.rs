@@ -65,13 +65,20 @@ pub fn show_main_at_screen(app: AppHandle, screen: String) {
 }
 
 /// Reflect the live dictation status in the tray tooltip. This is the reliable
-/// status cue where the overlay chip can't be pinned (GNOME / non-KDE Wayland).
+/// status cue where the overlay chip can't be pinned (GNOME / non-KDE Wayland) —
+/// which is why it carries the translation ROUTE too: on those desktops there is no
+/// other surface that can tell the user their German is about to arrive as French.
+///
+/// `route` is the pre-rendered "DE → FR IT" the chip shows, or empty for a session
+/// that doesn't translate. It is built from peer-authored language codes, so it
+/// arrives already bounded by `chipPayload`; bound it again here rather than trust
+/// a caller, since the value goes straight into a shell-drawn tooltip.
 #[tauri::command]
-pub fn set_tray_state(app: AppHandle, status: String) {
+pub fn set_tray_state(app: AppHandle, status: String, route: Option<String>) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;
     };
-    let tip = match status.as_str() {
+    let base = match status.as_str() {
         "warming" => "faster-whisper — warming up…",
         "listening" => "faster-whisper — recording…",
         "transcribing" => "faster-whisper — transcribing…",
@@ -80,5 +87,13 @@ pub fn set_tray_state(app: AppHandle, status: String) {
         "error" => "faster-whisper — error",
         _ => "faster-whisper-frontend",
     };
-    let _ = tray.set_tooltip(Some(tip));
+    // Only while something is actually happening: an idle tray naming a route would be
+    // advertising a session that isn't running.
+    let route = route.unwrap_or_default();
+    let tip = if route.is_empty() || status == "idle" {
+        base.to_string()
+    } else {
+        format!("{base}  ·  {}", route.chars().take(64).collect::<String>())
+    };
+    let _ = tray.set_tooltip(Some(tip.as_str()));
 }

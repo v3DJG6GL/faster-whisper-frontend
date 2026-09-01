@@ -15,7 +15,7 @@ import { backendForProfile, homeTargetProfile } from "@/lib/dictation";
 import { languageLabel } from "@/lib/languages";
 import type { Backend, Profile } from "@/lib/types";
 
-const GLYPH = { hold: Mic, latch: Hand } as const;
+const GLYPH = { hold: Mic, handsfree: Hand } as const;
 
 /** Subscribes to the high-frequency dictation `level` (~30Hz) on its own, so a level tick
  *  re-renders just this leaf — not all of Home + every ProfileCard. Waveform reads the level
@@ -106,9 +106,9 @@ export default function Home() {
   const setDictation = useApp((s) => s.setDictation);
 
   const enabled = profiles.filter((p) => p.enabled);
-  // The hero button has no held chord (you click it), so it always dictates in latch
+  // The hero button has no held chord (you click it), so it always dictates hands-free
   // style. It targets the profile picked below — falling back to the first enabled
-  // latch profile, then any enabled — and uses that profile's backend + overrides.
+  // hands-free profile, then any enabled — and uses that profile's backend + overrides.
   const target = homeTargetProfile(profiles, homeProfileId);
   const headerBackend: Backend | undefined = backendForProfile(target, backends);
   // While a session is live, the hero READOUTS (model / endpoint / language) describe the
@@ -192,7 +192,7 @@ export default function Home() {
     setDictation({ activeProfile: target?.id ?? null });
     // startLive resolves effective language / prompt / decode (target over backend);
     // target may be undefined → the backend's own defaults are used.
-    void startLive(headerBackend, micId, "latch", target);
+    void startLive(headerBackend, micId, "handsfree", target);
   };
 
   return (
@@ -204,7 +204,7 @@ export default function Home() {
             Speak into any field.
           </h1>
           <p className="mt-3 max-w-md text-[14px] text-dim">
-            Push-to-talk or latch it on. Audio streams to your own faster-whisper backend and the text appears wherever your cursor is.
+            Push-to-talk or hands-free. Audio streams to your own faster-whisper backend and the text appears wherever your cursor is.
           </p>
         </div>
       </div>
@@ -252,7 +252,7 @@ export default function Home() {
                 <div key={p.id} className="flex items-center gap-2 text-[15px] text-text">
                   <span className="text-dim">{p.activation === "hold" ? "Hold" : "Tap"}</span>
                   <HotkeyChips codes={p.hotkey} />
-                  <span className="text-dim">{p.activation === "hold" ? "to talk" : "to latch"}</span>
+                  <span className="text-dim">{p.activation === "hold" ? "to talk" : "to start and stop"}</span>
                   <span className="truncate text-[12.5px] text-faint">· {safeDisplayText(p.name, 80)}</span>
                 </div>
               ))

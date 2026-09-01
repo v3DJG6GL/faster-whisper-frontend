@@ -37,6 +37,15 @@ interface ChipState {
   profileOnHover?: boolean;
   language?: string;
   mode?: "stream" | "batch";
+  // The translation route's targets (ISO codes). Present whenever this session — or, on the
+  // standby dock, the Profile the next chord press would run — turns the spoken words into
+  // another language. Empty/absent = no translation, and the identity row reads exactly as
+  // it always did. Already bounded by chipPayload (count and per-code length).
+  translateTo?: string[];
+  // Why the session's translation didn't land ("timeout" | "cancelled" | "error" | "empty").
+  // Qualifies the done marker: without it, text inserted in the ORIGINAL because the
+  // translate failed is indistinguishable from a translation that succeeded.
+  translateFailure?: string;
   // P28: a tiny preformatted usage readout (e.g. "1.2k words"), absent unless the
   // chip-stats setting is on and the backend supports it. Neutral grey — never amber.
   statsLine?: string;
@@ -198,6 +207,8 @@ export default function Overlay() {
             statsOnHover: e.payload.statsOnHover ?? false,
             profileOnHover: e.payload.profileOnHover ?? false,
             previewOnHover: e.payload.previewOnHover ?? false,
+            translateTo: e.payload.translateTo ?? [],
+            translateFailure: e.payload.translateFailure ?? "",
           });
         });
         return registered.then((un) => {
@@ -418,9 +429,18 @@ export default function Overlay() {
   // squeezes out the very surface the user reads to supervise what is about to be typed. Same
   // treatment as its `targetTitle` neighbour.
   const detail = [safeDisplayText(state.language, 40), state.mode].filter(Boolean).join(" · ");
+  // The translation route, shown BESIDE the tag rather than inside the hover-revealed detail.
+  // A route is a promise about what will be typed — that your German comes out as French — so
+  // it cannot be a thing you have to hover to discover. Codes, not names: this shares a line
+  // with the live transcript, and "German → French, Italian" is 26 characters of it.
+  const routeTargets = (state.translateTo ?? [])
+    .map((t) => safeDisplayText(t, 12).toUpperCase())
+    .filter(Boolean);
+  const hasRoute = routeTargets.length > 0;
   // "On hover" mode for the Profile tag: only surface it once the chip is hover-revealed;
-  // "always" (profileOnHover false) shows it whenever a tag was sent.
-  const showProfile = !!state.profileTag && (!state.profileOnHover || hoverReveal);
+  // "always" (profileOnHover false) shows it whenever a tag was sent. A ROUTE overrides that
+  // gate — see above; the tag comes with it, since a bare "→ FR IT" names no owner.
+  const showProfile = !!state.profileTag && (!state.profileOnHover || hoverReveal || hasRoute);
   // P16/D target readout: overlay.ts only sends `targetTitle` while a session is active AND the
   // "Show injection target" setting is on, so its presence alone gates the chip's "→ app" segment.
   // A `targetSkip` reason means injection was coerced to the clipboard → tint the readout warn.
@@ -602,8 +622,13 @@ export default function Overlay() {
   //     slightly longer confirming pulse. This is the ONLY feedback HOLD/PTT, "stop"-timing and
   //     batch modes get (they emit no per-phrase pulses), so it must stay.
   // "none"/cancel and the fresh-session null reset clear any lingering pulse.
+  //
+  // A third kind, "untranslated": the words DID land, but in the language they were spoken
+  // because the translate failed. Green would be a lie by omission — the session did what it
+  // promised right up until the part the user configured it for — so it pulses warn, the same
+  // hue the clipboard divert uses for "delivered, but not the way you asked".
   const lastOutcome = useRef(state.sessionOutcome);
-  const [pulse, setPulse] = useState<"typed" | "clipboard" | null>(null);
+  const [pulse, setPulse] = useState<"typed" | "clipboard" | "untranslated" | null>(null);
   const pulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Per-phrase pulse: keyed on the monotonic `seq` so identical consecutive kinds retrigger.
@@ -626,15 +651,19 @@ export default function Overlay() {
     lastOutcome.current = o;
     if (o === prev) return;
     if (o === "typed" || o === "clipboard") {
-      setPulse(o);
+      // A translation that was configured and didn't land outranks the delivery kind: the
+      // text arrived, but not in the language the user asked for, and that is the more
+      // surprising half. Held longer still, because it carries a reason to read.
+      const failed = !!state.translateFailure;
+      setPulse(failed ? "untranslated" : o);
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
-      pulseTimer.current = setTimeout(() => setPulse(null), 1100);
+      pulseTimer.current = setTimeout(() => setPulse(null), failed ? 2600 : 1100);
     } else {
       // null (fresh session) or "none" (cancelled / nothing landed) → clear any lingering pulse.
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
       setPulse(null);
     }
-  }, [state.sessionOutcome]);
+  }, [state.sessionOutcome, state.translateFailure]);
 
   // Status dot colour (NEVER red while listening) via the SHARED dictationVisual()
   // mapping — so the chip, sidebar dot, Home button + waveforms all agree. The chip
@@ -646,7 +675,21 @@ export default function Overlay() {
   // The pill's status WORD comes from the SAME SSOT as the dot, so it can't drift from the dot / Home.
   // idle (post-session linger) → "" placeholder, never a stale "listening". Error's vis.label is unused
   // (the error branch renders dictationError instead).
-  const label = state.status === "idle" ? "" : vis.label;
+  // While the "untranslated" done-pulse plays, the label slot carries the REASON. The chip is
+  // idle by then, so the slot is empty anyway — and a warn-coloured dot with nothing to read
+  // asks a question it doesn't answer. `translateFailure` is our own closed vocabulary
+  // (dictationTranslate.ts), so it needs no bound; anything unrecognized degrades to the
+  // generic phrasing rather than being rendered raw.
+  const failureLabel =
+    { timeout: "timed out", cancelled: "cancelled", error: "failed", empty: "came back empty" }[
+      state.translateFailure ?? ""
+    ] ?? "failed";
+  const label =
+    pulse === "untranslated"
+      ? `inserted as spoken — translation ${failureLabel}`
+      : state.status === "idle"
+        ? ""
+        : vis.label;
   const dotColorClass =
     vis.state === "error" || vis.state === "speaking" || vis.state === "processing"
       ? TONE_BG[vis.tone]
@@ -707,6 +750,12 @@ export default function Overlay() {
           {/* Our own literal (streaming.ts's stage vocabulary), but it rides the same
               cross-window payload as the peer-authored fields around it. */}
           <span className="truncate text-translate">{safeDisplayText(phase.label, 60)}</span>
+          {/* Name the targets the stage is working towards. Closes the loop with the identity
+              row: the same two codes promised at rest are the ones now running, so a long wait
+              is legibly the wait for THAT, not an unexplained pause. */}
+          {phase.kind === "translating" && hasRoute && (
+            <span className="shrink-0 text-translate/70">→ {routeTargets.join(" ")}</span>
+          )}
           <span className="tabular-nums text-faint">{phaseClock(phaseElapsedMs(phase, Date.now()))}</span>
         </div>
         {/* A 2px rule under the row: a real fraction when the server reported one, else
@@ -836,6 +885,18 @@ export default function Overlay() {
         <span className="max-w-[140px] truncate uppercase text-dim">
           {safeDisplayText(state.profileTag, 40)}
         </span>
+        {/* The route, at rest, in the same teal `--c-translate` the translating STAGE and the
+            viewer's MT lines use — so the promise made here and the work reported later are
+            visibly the same thing. `→` is aria-hidden: it is punctuation between two codes,
+            and a screen reader saying "right arrow" adds nothing. */}
+        {hasRoute && (
+          <span className="ml-1.5 flex items-center whitespace-nowrap">
+            <span className="text-faint" aria-hidden>
+              →
+            </span>
+            <span className="ml-1 text-translate">{routeTargets.join(" ")}</span>
+          </span>
+        )}
         <AnimatePresence>
           {hoverReveal && detail && (
             <motion.span
@@ -924,7 +985,13 @@ export default function Overlay() {
         {/* Screen-reader announcement of the insert outcome — present empty up-front so AT
             speaks the change; non-urgent → polite. */}
         <span role="status" aria-live="polite" className="sr-only">
-          {pulse === "typed" ? "Inserted" : pulse === "clipboard" ? "Copied to clipboard" : ""}
+          {pulse === "typed"
+            ? "Inserted"
+            : pulse === "clipboard"
+              ? "Copied to clipboard"
+              : pulse === "untranslated"
+                ? "Inserted untranslated — the translation did not finish"
+                : ""}
         </span>
         <motion.div
           ref={chipRef}
@@ -965,10 +1032,11 @@ export default function Overlay() {
             style={{ boxShadow: dotGlow }}
             className={cn(
               "size-2.5 shrink-0 rounded-full transition-colors duration-300",
-              // A landed phrase / session end flashes the dot: green = typed, amber = clipboard.
+              // A landed phrase / session end flashes the dot: green = typed, amber = clipboard,
+              // amber = landed untranslated (the words arrived, just not in the asked-for language).
               pulse === "typed"
                 ? "animate-insert-pulse bg-live"
-                : pulse === "clipboard"
+                : pulse === "clipboard" || pulse === "untranslated"
                   ? "animate-insert-pulse-warn bg-warn"
                   : dotColorClass,
               // Gentle breathing while a calm chip rests, AND while tucked-and-speaking (the

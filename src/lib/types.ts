@@ -57,8 +57,18 @@ export interface Backend {
   overrideProfile?: string;
 }
 
-/** How a Profile is activated — first-class, decoupled from its identity. */
-export type ActivationKind = "hold" | "latch";
+/** How a Profile is activated — first-class, decoupled from its identity.
+ *
+ *  `"handsfree"` was called `"latch"` between two earlier versions, so configs and
+ *  sync blobs in the wild still carry that spelling. Rust's `ActivationType` accepts
+ *  it via `#[serde(alias = "latch")]` and re-serializes the new one, so anything that
+ *  reaches us through `loadConfig` is already normalized; the inbound-sync path
+ *  normalizes it explicitly (see `sanitizeProfiles`), because there a stale value
+ *  would otherwise fall back to "hold" and silently turn a hands-free profile into
+ *  push-to-talk. */
+export type ActivationKind = "hold" | "handsfree";
+/** The pre-rename spelling of `"handsfree"`, accepted on every inbound path. */
+export const LEGACY_HANDSFREE = "latch";
 
 /** A user-defined dictation setup: activation + chord + a target Backend + overrides. */
 export interface Profile {
@@ -75,6 +85,27 @@ export interface Profile {
   prompt?: string; // override Backend.prompt; tri-state: undefined = inherit, "" = explicit clear (suppress the inherited prompt, send no initial_prompt), value = override
   decodeOverrides?: DecodeOverrides; // Phase-B: per-Profile decode overrides
   translationOverrides?: TranslationOverrides; // T2T overrides; for dictation, ALL translateTo targets are injected (blank-line separated)
+  /** Insert each phrase as you speak, instead of the whole transcript when the session ends.
+   *
+   *  Replaced the global three-way "Auto-insert", which produced a distinct outcome in only
+   *  one of its twelve timing x endpoint x activation combinations. Only meaningful on a
+   *  STREAMING profile run HANDS-FREE: batch has no live phrases to insert, and a held
+   *  push-to-talk chord folds into every injected keystroke. `liveAllowed` is the authority
+   *  — it tests the RUNTIME activation, because the Home button and the chip's quick-launch
+   *  both start a hold profile hands-free. undefined = off. */
+  typeAsISpeak?: boolean;
+  /** Ask which languages to translate into at the start of each session, instead of
+   *  always using `translationOverrides.translateTo`.
+   *
+   *  Hands-free asks BEFORE the mic opens — session start commits to a warm-up plan, a
+   *  model lease and a `translateExpect` the picker could not amend afterwards. Push-to-talk
+   *  asks AFTER the chord is released, at the one-shot translate: a prompt during a held
+   *  chord would eat the keystrokes. undefined = off (use the configured targets). */
+  askTranslationTargets?: boolean;
+  /** Per-Profile insertion overrides — the same four fields an AppRule can override, at
+   *  the layer below it. Absent field = inherit the global default. `undefined` is the
+   *  inherit sentinel here (AppRule uses `null`; both read through `??` identically). */
+  insertionOverrides?: InsertionOverrides;
   // Override Backend.overrideProfile: a profile name, NO_OVERRIDE_PROFILE =
   // force no profile (plain defaults), undefined = inherit the backend.
   overrideProfile?: string;
@@ -110,8 +141,16 @@ export interface AppRule {
   appId: string; // matches the focused window's app_id (case-insensitive)
   name?: string; // friendly label; defaults to appId
   block: boolean; // never inject into this app
-  insertMethod?: InsertMethod | null; // override global; null/undefined = inherit
-  pasteShortcut?: string[] | null; // override global; null/undefined = inherit
+  // Overrides, all `null`/undefined = inherit. NOTE the sentinel differs from Profile's,
+  // which uses plain `undefined`: both are read with `??` so resolution is identical, but
+  // changing this one would churn the stored JSON of every existing rule.
+  insertMethod?: InsertMethod | null; // override profile/global; null/undefined = inherit
+  pasteShortcut?: string[] | null; // override profile/global; null/undefined = inherit
+  /** Send Return after inserting, for THIS app. A chat client wants it, an editor does not,
+   *  and that is a property of where the text lands — not of the profile that spoke it. */
+  autoEnter?: boolean | null;
+  /** Put the user's clipboard back after pasting, for THIS app. */
+  restoreClipboard?: boolean | null;
 }
 
 /** The focused app as reported by AT-SPI: its id/title plus — when "deep field detection"
@@ -127,7 +166,20 @@ export interface FocusedApp {
 }
 
 export type InsertMethod = "paste" | "direct" | "clipboard";
-/** When the transcription is inserted: never / once on stop / live as you speak. */
+
+/** The insertion fields a Profile may override. Every one optional: absent = inherit the
+ *  layer below. Its own shape rather than `Partial<Profile>`, because the SAME four are
+ *  what an AppRule overrides — `resolveInjectionTarget` layers both identically. */
+export interface InsertionOverrides {
+  insertMethod?: InsertMethod;
+  pasteShortcut?: string[];
+  autoEnter?: boolean;
+  restoreClipboard?: boolean;
+}
+/** @deprecated Retired in favour of the per-Profile `typeAsISpeak`; see `migrateInsertTiming`.
+ *  The field is still declared, still written (as the conservative "stop"), and still clamped
+ *  on the sync path — deleting it would make an older build reading a new config fall back to
+ *  its own "live" default, turning live typing ON for someone who had it off. */
 export type InsertTiming = "off" | "stop" | "live";
 export type IndicatorPosition = "top" | "bottom" | "off";
 /** "auto" follows the OS scheme (prefers-color-scheme); see lib/theme.ts. */
@@ -173,7 +225,7 @@ export interface RecordingSettings {
   trimSilence: boolean; // when saving: keep only spoken spans (drop silence) in the .wav
   recordingsRetentionDays: number; // delete saved recordings older than N days (0 = keep forever)
   muteSystemAudio: boolean;
-  latchAutoStopMin: number; // auto-stop a hands-free (latch) session after N min of silence (0 = never)
+  handsFreeAutoStopMin: number; // auto-stop a hands-free session after N min of silence (0 = never)
   realtimePreview: boolean; // show live words on the chip as you speak (streaming backends)
   realtimePreviewOnHover: boolean; // when on, reveal the live words only while hovering the chip (else always)
   showProfileOnOverlay: boolean; // show the active Profile's tag on the chip
@@ -231,6 +283,8 @@ export type SyncCategory =
 export type SyncSubSettings = {
   /** LEGACY: pre-manifest name for the audio-folder gate (both path fields). */
   recordingsDir: boolean;
+  /** LEGACY: pre-rename id of `handsFreeAutoStop`, remapped by `completeGates`. */
+  latchAutoStop?: boolean;
   /** Sync each profile's hotkey chord. OFF = chords stay per-machine. */
   profileHotkeys: boolean;
   /** Sync the quick-add shortcut chord. OFF = per-machine. */
@@ -353,6 +407,10 @@ export interface AppSettings {
   sync?: SyncSettings; // machine-local sync meta; excluded from blobs/exports
   logging?: LoggingSettings; // in-app logging preferences (logDir machine-local)
   setupDismissed?: boolean; // "Skip for now" on the first-run gate — fall back to the Home checklist
+  /** Most-recently picked translation targets, newest first — the picker's "Recent" group.
+   *  A per-machine convenience, not a setting: it has no Settings row and no manifest entry,
+   *  so it never syncs (the manifest's coverage map is what decides that). */
+  recentTranslationTargets?: string[];
 }
 
 /** Runtime dictation status — mirrors the Rust state machine, surfaced to the chip. */

@@ -37,6 +37,7 @@ import { IS_WINDOWS } from "./platform";
 import { hasOwn, ownProp } from "./own";
 import { normalizeAppId } from "./sanitize";
 import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./conflicts";
+import { LEGACY_HANDSFREE } from "./types";
 import type {
   ActivationKind,
   AppRule,
@@ -81,6 +82,8 @@ import { completeGates } from "./settingsManifest";
 import {
   APP_RULE_OVERRIDE_FIELDS,
   APP_RULE_PASTE_FIELDS,
+  APP_RULE_LOCAL_ONLY_FIELDS,
+  PROFILE_INSERTION_FIELDS,
   BACKEND_DEFAULTS_FIELDS,
   gateApplyScalar,
   gateComposeScalar,
@@ -517,6 +520,11 @@ export async function composeBlob(
       let list = blob.profiles.list;
       if (!gates.enabledPerProfile)
         list = substituteElementFields(list, snapshot?.profiles?.list, ["enabled"]);
+      // `exact` so ABSENCE travels: an override the user cleared has to reach the peer as
+      // "not set", not as "unchanged" — which is what makes "Inherit" a real state rather
+      // than a value that can only ever be added.
+      if (!gates.profileInsertion)
+        list = substituteElementFields(list, snapshot?.profiles?.list, PROFILE_INSERTION_FIELDS, true);
       const homeProfileId =
         gates.homeProfile || !snapshot?.profiles
           ? blob.profiles.homeProfileId
@@ -690,13 +698,50 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       // is a two-variant serde enum with no fallback, so the same value makes `save_config`'s
       // typed parse reject the WHOLE config and every later save fails for the session.
       // "hold" is the fail-safe fallback: push-to-talk never live-types.
-      activation: oneOf<ActivationKind>((p as Profile).activation, ACTIVATIONS, "hold"),
+      //
+      // `"handsfree"` was spelled `"latch"` between two earlier versions, so a peer that
+      // hasn't updated still sends that. It must be NORMALIZED, not merely rejected: falling
+      // through to the "hold" fallback would silently demote every hands-free profile on the
+      // receiving device to push-to-talk — a behavior change from a spelling change. Rust's
+      // `#[serde(alias = "latch")]` covers the config-file path; this covers the sync one.
+      activation: oneOf<ActivationKind>(
+        ((p as Profile).activation as string) === LEGACY_HANDSFREE
+          ? "handsfree"
+          : (p as Profile).activation,
+        ACTIVATIONS,
+        "hold",
+      ),
       // Rendered as React CHILDREN (`<Badge>{p.endpoint}</Badge>`, `languageLabel(p.language)`,
       // which returns its argument unchanged when the code is unknown) — an object leaf throws
       // "Objects are not valid as a React child" — and `endpoint` is another fallback-less enum.
       endpoint: p.endpoint == null ? p.endpoint : oneOf<EndpointKind>(p.endpoint, ENDPOINT_KINDS, "stream"),
       name: typeof p.name === "string" ? p.name : "",
       tag: typeof p.tag === "string" ? p.tag : undefined,
+      typeAsISpeak: p.typeAsISpeak == null ? undefined : p.typeAsISpeak === true,
+      // Per-Profile insertion overrides get the same clamps their per-app twins do —
+      // `save_config` parses into a typed Rust struct with no serde fallback, so ONE bad
+      // enum here wedges every later save for the session. Everything not listed rides the
+      // `...p` spread unvalidated, which is exactly the gap this closes.
+      //
+      // `autoEnter` is dropped rather than clamped, for the same reason as the app-rule
+      // twin above: a peer must not be able to arm a post-paste Return.
+      insertionOverrides: p.insertionOverrides
+        ? {
+            insertMethod:
+              p.insertionOverrides.insertMethod == null
+                ? undefined
+                : oneOf<InsertMethod>(p.insertionOverrides.insertMethod, INSERT_METHODS, "paste"),
+            pasteShortcut:
+              p.insertionOverrides.pasteShortcut == null
+                ? undefined
+                : safePasteShortcut(p.insertionOverrides.pasteShortcut, DEFAULT_PASTE_SHORTCUT),
+            restoreClipboard:
+              p.insertionOverrides.restoreClipboard == null
+                ? undefined
+                : p.insertionOverrides.restoreClipboard === true,
+            autoEnter: undefined,
+          }
+        : undefined,
       model: typeof p.model === "string" ? p.model : undefined,
       language: typeof p.language === "string" ? p.language : undefined,
       prompt: typeof p.prompt === "string" ? p.prompt : undefined,
@@ -963,7 +1008,7 @@ const THEMES = ["dark", "light", "auto"] as const;
 const LOG_LEVELS = ["error", "warn", "info", "debug"] as const;
 const INDICATOR_POSITIONS = ["top", "bottom", "off"] as const;
 const OVERLAY_STATS_METRICS = ["words", "audio", "both"] as const;
-const ACTIVATIONS = ["hold", "latch"] as const;
+const ACTIVATIONS = ["hold", "handsfree"] as const;
 const ENDPOINT_KINDS = ["stream", "batch"] as const;
 const RESPONSE_FORMATS = ["json", "verbose_json"] as const;
 const BACKEND_KINDS = ["auto", "full", "standard"] as const;
@@ -1053,6 +1098,14 @@ function sanitizeAppRules(rules: unknown): AppRule[] {
         r.insertMethod == null
           ? r.insertMethod
           : oneOf<InsertMethod>(r.insertMethod, INSERT_METHODS, "paste"),
+      restoreClipboard: r.restoreClipboard == null ? r.restoreClipboard : r.restoreClipboard === true,
+      // `autoEnter` is FORCED OFF on every inbound path, never merely type-checked — the
+      // same treatment the `general` block gets in applyBlob, and for the same reason: the
+      // synthesized Return is sent AFTER the paste, outside the bracketed-paste region, so
+      // it SUBMITS whatever the server-authored transcript put in the buffer. A peer must
+      // not be able to arm that. Clamping the type would still let `true` through, so this
+      // drops the field entirely and lets the local value stand (see repin below).
+      autoEnter: undefined,
     }))
     // An all-invisible appId normalizes to "", which matches nothing and displays as nothing —
     // a zombie row on the audit screen. Drop it rather than store it.
@@ -1258,7 +1311,7 @@ export async function applyBlob(
           // `saveRecordings` is true. So a blob that simply left the field out raised no
           // security change (undefined is falsy), applied silently, and turned permanent
           // plaintext archiving back on for a user who had deliberately turned it off; the same
-          // omission silently reset trimSilence / muteSystemAudio / latchAutoStopMin too.
+          // omission silently reset trimSilence / muteSystemAudio / handsFreeAutoStopMin too.
           // A peer that genuinely wants it off still sends the literal `false`.
           ...settings.recording,
           ...typedLike(rec as Partial<typeof settings.recording>, settings.recording),
@@ -1420,6 +1473,10 @@ export async function applyBlob(
           return mine !== undefined && mine !== p.enabled ? { ...p, enabled: mine } : p;
         });
       }
+      // Per-Profile insertion overrides gate off: re-pin each known profile to ITS local
+      // values, absence included (`exact`) — same contract as the per-app twins.
+      if (!gates.profileInsertion)
+        nextProfiles = repinElementFields(nextProfiles, st.profiles, PROFILE_INSERTION_FIELDS, true);
       // `??` only replaces null/undefined, so a JSON `0` or `false` survived it — and the scrub
       // below is gated on truthiness, so a falsy non-string skipped that too and reached Rust's
       // `Option<String>`. Same wedge as `quickAddList`. "Home profile" gate
@@ -1467,6 +1524,13 @@ export async function applyBlob(
         rules = repinElementFields(rules, st.appRules, APP_RULE_OVERRIDE_FIELDS, true);
       if (!gates.perAppPasteShortcuts)
         rules = repinElementFields(rules, st.appRules, APP_RULE_PASTE_FIELDS, true);
+      // UNGATED, unlike the two above: `autoEnter` is forced back to this device's value on
+      // every inbound path, because a post-paste Return submits whatever the server-authored
+      // transcript put in the buffer. `sanitizeAppRules` already drops the field; this is the
+      // second half — without it, a rule the peer knows and we don't would arrive with no
+      // local value to inherit and the field would simply be absent, which is the right
+      // outcome, while a rule we DO know keeps ours. Same contract as the `general` strip.
+      rules = repinElementFields(rules, st.appRules, APP_RULE_LOCAL_ONLY_FIELDS, true);
       nextAppRules = rules;
     }
 

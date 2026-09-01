@@ -348,7 +348,7 @@ pub fn save_recording(dir: &Path, pcm: &[u8], sample_rate: u32) -> Option<PathBu
 /// Speech gate for the SAVED recording, shared by the streaming save path
 /// (`transport/stream.rs`, fed chunk-by-chunk as audio arrives) and the batch record
 /// save (`trim_silence_16k` below, fed the finished buffer). Keeps only the spans the
-/// chip shows as "speaking" plus a short lead-in, so a long latch session doesn't store
+/// chip shows as "speaking" plus a short lead-in, so a long hands-free session doesn't store
 /// hours of silence and the file matches the indicator. Ported from the frontend
 /// detector (`lib/speaking.ts`): a two-stage smoothed RMS with hysteresis (enter
 /// >`SPEAK_HIGH`, leave <`SPEAK_LOW` after ~900 ms quiet) feeding a 250 ms pre-roll ring

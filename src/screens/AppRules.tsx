@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { AppWindow, Ban, Crosshair, Pencil, Trash2 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, ConfirmLeave, EditorHeader, Labeled, ListScreenHeader, SectionLabel, Select, TextInput, Toggle } from "@/components/ui";
+import { Button, Card, ConfirmLeave, EditorHeader, Labeled, ListScreenHeader, SectionLabel, TextInput, Toggle } from "@/components/ui";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { getFocusedOtherApp } from "@/lib/api";
-import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
+import { pasteLabel } from "@/lib/paste";
+import { dictationControls, FIELD_LABEL, METHOD_OPTIONS } from "@/components/DictationFields";
 import { IS_WINDOWS } from "@/lib/platform";
-import type { AppRule, InsertMethod } from "@/lib/types";
+import type { AppRule } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { normalizeAppId, safeIdentityText } from "@/lib/sanitize";
 
@@ -18,17 +19,6 @@ const APP_ID_PLACEHOLDER = IS_WINDOWS
 const DETECT_FAILED_MSG = IS_WINDOWS
   ? "Couldn’t detect a focused app yet. Click into the target app once, come back, and retry — or type the id manually."
   : "Couldn’t detect a focused app (needs KWin/Plasma). Type the id manually.";
-
-const METHOD_OPTIONS: { value: string; label: string }[] = [
-  { value: "inherit", label: "Inherit global" },
-  { value: "direct", label: "Direct typing" },
-  { value: "paste", label: "Clipboard paste" },
-  { value: "clipboard", label: "Clipboard only" },
-];
-const PASTE_OPTIONS: { value: string; label: string }[] = [
-  { value: "inherit", label: "Inherit global" },
-  ...PASTE_PRESETS.map((p) => ({ value: p.value, label: p.label })),
-];
 
 function blankAppRule(): AppRule {
   return { id: crypto.randomUUID(), appId: "", name: "", block: false };
@@ -43,7 +33,6 @@ function Editor({
   onSave: (r: AppRule) => void;
   onCancel: () => void;
 }) {
-  const globalMethod = useApp((s) => s.settings.general.insertMethod);
   const [r, setR] = useState<AppRule>(initial);
   const [capturing, setCapturing] = useState(false);
   const [captureMsg, setCaptureMsg] = useState<string | null>(null);
@@ -82,8 +71,6 @@ function Editor({
     }
   };
 
-  const effectiveMethod = (r.insertMethod ?? globalMethod) as InsertMethod;
-  const pasteRelevant = !r.block && effectiveMethod === "paste";
   // Same normalizer the two inbound floors use, so all three agree on what the stored key is.
   // `trim()` alone was not enough: an invisible character survives it, and this screen renders the
   // id through a filter that deletes such characters — so the rule read armed and matched nothing.
@@ -149,23 +136,41 @@ function Editor({
         <Toggle ariaLabel="Never type into this app" checked={r.block} onChange={(v) => set({ block: v })} />
       </div>
 
-      <Labeled label="Insert method" className="mt-4">
-        <Select
-          value={r.insertMethod ?? "inherit"}
-          disabled={r.block}
-          onChange={(v) => set({ insertMethod: v === "inherit" ? null : (v as InsertMethod) })}
-          options={METHOD_OPTIONS}
-        />
-      </Labeled>
+      {/* The same four controls Settings → Dictation and the Profile editor render. This
+          screen used to hand-roll two of them, with a different label for the method and
+          its three options in a different order — pinned by nothing.
 
-      <Labeled label="Paste shortcut" className="mt-4">
-        <Select
-          value={r.pasteShortcut ? pasteKey(r.pasteShortcut) : "inherit"}
-          disabled={!pasteRelevant}
-          onChange={(v) => set({ pasteShortcut: v === "inherit" ? null : pasteCodes(v) })}
-          options={PASTE_OPTIONS}
-        />
-      </Labeled>
+          "Inherit" here means the ACTIVE PROFILE's value, or the global default when the
+          profile doesn't override it either. No resolved value is shown beside it, unlike
+          the Profile editor's: which profile is active differs per session, so there is no
+          single answer to show. */}
+      {(() => {
+        const c = dictationControls({
+          value: {
+            insertMethod: r.insertMethod ?? undefined,
+            pasteShortcut: r.pasteShortcut ?? undefined,
+            autoEnter: r.autoEnter ?? undefined,
+            restoreClipboard: r.restoreClipboard ?? undefined,
+          },
+          onChange: (v: import("@/lib/types").InsertionOverrides) =>
+            set({
+              insertMethod: v.insertMethod ?? null,
+              pasteShortcut: v.pasteShortcut ?? null,
+              autoEnter: v.autoEnter ?? null,
+              restoreClipboard: v.restoreClipboard ?? null,
+            }),
+          sentinel: "null",
+          disabled: r.block,
+        });
+        return (
+          <>
+            <Labeled label={FIELD_LABEL.insertMethod} className="mt-4">{c.insertMethod}</Labeled>
+            <Labeled label={FIELD_LABEL.pasteShortcut} className="mt-4">{c.pasteShortcut}</Labeled>
+            <Labeled label={FIELD_LABEL.autoEnter} className="mt-4">{c.autoEnter}</Labeled>
+            <Labeled label={FIELD_LABEL.restoreClipboard} className="mt-4">{c.restoreClipboard}</Labeled>
+          </>
+        );
+      })()}
 
       <div className="mt-6 flex items-center justify-between">
         <Button variant="ghost" onClick={() => guard.guardExit(onCancel)}>
@@ -189,6 +194,9 @@ function RuleRow({ r, onEdit, onRemove }: { r: AppRule; onEdit: () => void; onRe
     : [
         r.insertMethod ? METHOD_OPTIONS.find((m) => m.value === r.insertMethod)?.label : "Inherit method",
         pasteRelevant && r.pasteShortcut ? pasteLabel(r.pasteShortcut) : null,
+        // Only when overridden — an inherited value would just repeat the default on every row.
+        r.autoEnter == null ? null : r.autoEnter ? "Enter" : "no Enter",
+        r.restoreClipboard == null ? null : r.restoreClipboard ? "restore clipboard" : "keep clipboard",
       ]
         .filter(Boolean)
         .join(" · ");

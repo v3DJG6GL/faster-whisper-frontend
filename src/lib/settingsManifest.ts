@@ -41,6 +41,7 @@ export type FieldRef =
 /** The Sync tab's group cards, in display order. */
 export const SYNC_GROUPS = [
   "general",
+  "dictation",
   "recordingHistory",
   "transcribeDefaults",
   "chip",
@@ -54,6 +55,7 @@ export type SyncGroup = (typeof SYNC_GROUPS)[number];
 
 export const SYNC_GROUP_LABEL: Record<SyncGroup, string> = {
   general: "General",
+  dictation: "Dictation",
   recordingHistory: "Recording & history",
   transcribeDefaults: "Transcribe defaults",
   chip: "Chip",
@@ -78,7 +80,8 @@ export type CustomArm =
   | "quickAddPin"
   | "appRulesOs"
   | "appRuleOverrides"
-  | "appPasteShortcuts";
+  | "appPasteShortcuts"
+  | "profileInsertion";
 
 /** The wire category a setting's data rides in. */
 export type WireCategory = SyncCategory;
@@ -125,28 +128,28 @@ export const MANIFEST = [
     fields: [g("startMinimized")] },
   { id: "autoInsert", label: "Auto-insert", group: "general", category: "general",
     fields: [g("insertTiming")] },
-  { id: "insertMethod", label: "Insertion method", group: "general", category: "general",
+  { id: "insertMethod", section: "Insertion", label: "Insertion method", group: "dictation", category: "general",
     fields: [g("insertMethod")] },
-  { id: "pasteShortcut", label: "Paste shortcut", group: "general", category: "general",
+  { id: "pasteShortcut", section: "Insertion", label: "Paste shortcut", group: "dictation", category: "general",
     desc: "A keyboard chord; terminals differ per machine.",
     machineSpecific: true, fields: [g("pasteShortcut")] },
-  { id: "deepFieldDetection", label: "Deep field detection", group: "general", category: "general",
+  { id: "deepFieldDetection", section: "Insertion", label: "Deep field detection", group: "dictation", category: "general",
     fields: [g("deepFieldDetection")] },
-  { id: "pressEnterAfter", label: "Press Enter after", group: "general", category: "general",
+  { id: "pressEnterAfter", section: "Insertion", label: "Press Enter after", group: "dictation", category: "general",
     fields: [g("autoEnter")] },
-  { id: "restoreClipboard", label: "Restore clipboard afterward", group: "general", category: "general",
+  { id: "restoreClipboard", section: "Insertion", label: "Restore clipboard afterward", group: "dictation", category: "general",
     fields: [g("restoreClipboard")] },
   { id: "soundCues", label: "Sound cues", group: "general", category: "general",
     fields: [g("soundEffects")] },
 
   // ── Recording & history (sections mirror the tab) ────────────────────
-  { id: "keepDictationHistory", label: "Keep dictations in History",
+  { id: "keepDictationHistory", label: "Save dictations to History",
     group: "recordingHistory", section: "Dictations", category: "recording",
     fields: [t("keepDictationHistory")] },
   { id: "keepDictationAudio", label: "Keep dictation audio",
     group: "recordingHistory", section: "Dictations", category: "recording",
     fields: [r("saveRecordings")] },
-  { id: "trimSilence", label: "Trim silence", parent: "keepDictationAudio",
+  { id: "trimSilence", label: "Trim silence from saved audio", parent: "keepDictationAudio",
     group: "recordingHistory", section: "Dictations", category: "recording",
     fields: [r("trimSilence")] },
   { id: "dictationRetention", label: "Delete dictations after",
@@ -167,11 +170,11 @@ export const MANIFEST = [
     desc: "One folder for everything recorded or copied (dictations, files, links). A machine-specific path.",
     machineSpecific: true, fields: [r("audioBaseDir"), r("recordingsDir")] },
   { id: "muteSystemAudio", label: "Silence other apps",
-    group: "recordingHistory", section: "While recording", category: "recording",
+    group: "dictation", section: "While recording", category: "recording",
     fields: [r("muteSystemAudio")] },
-  { id: "latchAutoStop", label: "Auto-stop hands-free after silence",
-    group: "recordingHistory", section: "While recording", category: "recording",
-    fields: [r("latchAutoStopMin")] },
+  { id: "handsFreeAutoStop", label: "Auto-stop hands-free after silence",
+    group: "dictation", section: "While recording", category: "recording",
+    fields: [r("handsFreeAutoStopMin")] },
 
   // ── Transcribe defaults (controls live on the Transcribe screen) ─────
   { id: "diarize", label: "Speaker diarization", group: "transcribeDefaults", category: "transcription",
@@ -259,6 +262,9 @@ export const MANIFEST = [
   { id: "enabledPerProfile", label: "Enabled per profile", group: "profiles", category: "profiles",
     desc: "Off = each machine picks which profiles are active.",
     custom: "profileEnabled", fields: [] },
+  { id: "profileInsertion", label: "Profile insertion overrides", group: "profiles", category: "profiles",
+    desc: "Type-as-you-speak, and per-profile method / chord / clipboard restore.",
+    custom: "profileInsertion", fields: [] },
   { id: "homeProfile", label: "Home profile", group: "profiles", category: "profiles",
     desc: "Which profile the Home button targets.",
     custom: "homeProfile", fields: [{ slice: "settings", key: "homeProfileId" }] },
@@ -276,7 +282,7 @@ export const MANIFEST = [
     desc: "Blocklist and per-app behavior; other-OS rules pass through untouched.",
     custom: "appRulesOs", fields: [] },
   { id: "perAppOverrides", label: "Per-app insertion overrides", group: "appRules", category: "appRules",
-    desc: "Insertion method per app.",
+    desc: "Insertion method and clipboard restore, per app.",
     custom: "appRuleOverrides", fields: [] },
   { id: "perAppPasteShortcuts", label: "Per-app paste shortcuts", group: "appRules", category: "appRules",
     desc: "Chords, like the global paste shortcut.",
@@ -337,7 +343,7 @@ export const RECORDING_COVERAGE = {
   trimSilence: "trimSilence",
   recordingsRetentionDays: "dictationRetention",
   muteSystemAudio: "muteSystemAudio",
-  latchAutoStopMin: "latchAutoStop",
+  handsFreeAutoStopMin: "handsFreeAutoStop",
   realtimePreview: "liveTranscript",
   realtimePreviewOnHover: "liveTranscript",
   showProfileOnOverlay: "showActiveProfile",
@@ -400,6 +406,7 @@ export const TOP_COVERAGE = {
   homeProfileId: "homeProfile",
   quickAddList: "pinnedMappings",
   setupDismissed: LOCAL, // first-run gate bookkeeping
+  recentTranslationTargets: LOCAL, // picker MRU — a convenience, not a setting
 } as const satisfies Record<
   Exclude<keyof AppSettings, "general" | "recording" | "transcribe" | "sync" | "logging">,
   Covered
@@ -508,7 +515,8 @@ export function patchFor(defs: readonly SettingDef[]): ResetPatch {
  *     seeds every member OFF, so nothing silently starts syncing after the
  *     upgrade to per-setting gates;
  *  3. legacy sub-toggle keys mapped onto their new ids (recordingsDir →
- *     audioFolder; the other three kept their names);
+ *     audioFolder, latchAutoStop → handsFreeAutoStop; the others kept their
+ *     names);
  *  4. explicitly saved per-setting values. */
 export function completeGates(
   saved?: Partial<Record<string, boolean>>,
@@ -524,6 +532,10 @@ export function completeGates(
   }
   if (saved) {
     if (typeof saved.recordingsDir === "boolean") gates.audioFolder = saved.recordingsDir;
+    // `latchAutoStop` is the pre-rename id of `handsFreeAutoStop`. Without this remap a
+    // user who had deliberately switched that row's sync OFF would have it silently come
+    // back ON at the next launch, because the saved key no longer matches any manifest id.
+    if (typeof saved.latchAutoStop === "boolean") gates.handsFreeAutoStop = saved.latchAutoStop;
     for (const d of DEFS) {
       const v = saved[d.id];
       if (typeof v === "boolean") gates[d.id as SettingId] = v;

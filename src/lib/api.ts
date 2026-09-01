@@ -872,6 +872,25 @@ export async function hideQuickAdd(): Promise<void> {
   await invoke("hide_quick_add");
 }
 
+/** Show the translation-target picker, carrying the seed it renders from. */
+export async function showLangPick(seed: unknown): Promise<void> {
+  if (!isTauri) return;
+  await invoke("show_lang_pick", { seed });
+}
+
+/** Answer the picker: the chosen targets ([] = insert the original only). */
+export async function commitLangPick(targets: string[]): Promise<void> {
+  if (!isTauri) return;
+  await invoke("commit_lang_pick", { targets });
+}
+
+/** Dismiss the picker — the session falls back to the Profile's configured targets.
+ *  Deliberately distinct from committing an empty list, which means "no translation". */
+export async function cancelLangPick(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("cancel_lang_pick");
+}
+
 /** Read the user's current text selection from the source app to pre-fill Quick-Add's
  *  "When you say" field on summon. null when nothing usable is selected (leave it empty +
  *  show the recent-words dropdown). Best-effort: any error → null. */
@@ -928,9 +947,9 @@ export async function chipPointerOver(): Promise<boolean> {
 }
 
 /** Reflect the dictation status in the tray tooltip. */
-export async function setTrayState(status: string): Promise<void> {
+export async function setTrayState(status: string, route?: string): Promise<void> {
   if (!isTauri) return;
-  await invoke("set_tray_state", { status });
+  await invoke("set_tray_state", { status, route: route ?? null });
 }
 
 /** Play a short start/stop/error cue (no-op outside Tauri). */
@@ -941,7 +960,7 @@ export async function playCue(kind: "start" | "stop" | "error"): Promise<void> {
 
 export interface TriggerEvent {
   profileId: string; // the fired Profile's id (resolved to a Backend by the controller)
-  // reclassify = chord family: a latch superset completed over a live hold (upgrade in
+  // reclassify = chord family: a hands-free superset completed over a live hold (upgrade in
   // place / toggle off); cancel = quick-add superset aborted a nascent hold in-grace.
   action: "start" | "stop" | "toggle" | "reclassify" | "cancel";
 }

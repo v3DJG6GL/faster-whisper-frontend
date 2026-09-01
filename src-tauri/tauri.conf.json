@@ -49,6 +49,20 @@
         "focus": true,
         "shadow": false,
         "visible": false
+      },
+      {
+        "label": "langpick",
+        "title": "Translate to",
+        "width": 460,
+        "height": 460,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": true,
+        "shadow": false,
+        "visible": false
       }
     ],
     "security": {

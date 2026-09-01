@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { LEGACY_HANDSFREE } from "./types";
 import type {
   AppRule,
   AppSettings,
@@ -17,6 +18,7 @@ import type {
   UsageStats,
 } from "./types";
 import type { TranslateRunUi } from "./retroTranslate";
+import type { TranslateFailure } from "./dictationTranslate";
 import { newSpeakMemo, stepSpeaking } from "./speaking";
 import { swap } from "./arr";
 import { hasOwn } from "./own";
@@ -142,16 +144,25 @@ function completeCategories(
  *  rejected anyway. */
 function wellFormedProfiles(v: unknown): Profile[] {
   if (!Array.isArray(v)) return [];
-  return v.filter(
-    (p): p is Profile =>
-      !!p && typeof p === "object" &&
-      typeof (p as Profile).id === "string" &&
-      typeof (p as Profile).name === "string" &&
-      // The ELEMENTS, not just the container — the sync sanitizer's floor. A numeric code throws
-      // in `canonicalizeCodes`' localeCompare tie-break, which runs in a component body and in
-      // the debounced save.
-      isStringList((p as Profile).hotkey),
-  );
+  return v
+    .filter(
+      (p): p is Profile =>
+        !!p && typeof p === "object" &&
+        typeof (p as Profile).id === "string" &&
+        typeof (p as Profile).name === "string" &&
+        // The ELEMENTS, not just the container — the sync sanitizer's floor. A numeric code throws
+        // in `canonicalizeCodes`' localeCompare tie-break, which runs in a component body and in
+        // the debounced save.
+        isStringList((p as Profile).hotkey),
+    )
+    // Normalize the pre-rename `"latch"` spelling of `"handsfree"`. Rust's `#[serde(alias)]`
+    // already does this for every config it parses, so this only covers the paths that skip
+    // Rust — the browser dev path and a hand-edited config.json. Worth doing anyway: the
+    // value indexes `GLYPH[p.activation]` in Home, which is rendered AS A COMPONENT, so an
+    // unmatched key is `React.createElement(undefined)` and unmounts the main window.
+    .map((p) =>
+      (p.activation as string) === LEGACY_HANDSFREE ? { ...p, activation: "handsfree" as const } : p,
+    );
 }
 
 function wellFormedBackends(v: unknown): Backend[] {
@@ -195,6 +206,54 @@ function isReservedId(id: unknown): boolean {
 }
 
 /**
+ * Retire the global three-way `insertTiming` (off / stop / live) onto the per-Profile
+ * `typeAsISpeak` boolean that replaced it.
+ *
+ * The three-way only ever produced a distinct outcome in ONE of its twelve
+ * timing × endpoint × activation combinations — "live" on a streaming, hands-free
+ * profile. Everywhere else it silently degraded to insert-on-stop, while the UI kept
+ * offering it as if it were a live choice.
+ *
+ * The dangerous value is `"off"`, which meant *transcribe but never insert anywhere*.
+ * Dropping it without a mapping would start typing into the focused app, on the next
+ * dictation, for anyone who had deliberately turned insertion off — so it maps onto the
+ * insert method that types nothing rather than onto the boolean:
+ *
+ *   "off"   → insertMethod "clipboard" (text reaches the clipboard, no keystrokes) + false
+ *   "stop"  → false
+ *   "live"  → true
+ *
+ * Every EXISTING profile is seeded from the old global. Defaulting them instead would
+ * hand a "stop" user live typing, which is the same class of surprise in the other
+ * direction. New profiles get `true` from `blankProfile`, matching the old default.
+ *
+ * Keyed on the field being PRESENT, so it runs exactly once: the next save writes a
+ * config without it. `insertTiming` itself is kept in the type (deprecated) and in the
+ * Rust struct — see the note there — so a rollback to an older build still reads a
+ * conservative value rather than defaulting itself back to "live".
+ */
+export function migrateInsertTiming(settings: AppSettings, profiles: Profile[]): { settings: AppSettings; profiles: Profile[] } {
+  const timing = settings.general.insertTiming;
+  if (timing !== "off" && timing !== "stop" && timing !== "live") return { settings, profiles };
+  const live = timing === "live";
+  return {
+    settings: {
+      ...settings,
+      general: {
+        ...settings.general,
+        insertMethod: timing === "off" ? "clipboard" : settings.general.insertMethod,
+        // Written back as the conservative value: if this config is later read by a build
+        // that still honours the field, insert-on-stop is the choice that can't surprise.
+        insertTiming: "stop",
+      },
+    },
+    // Only seed profiles that haven't been given an explicit value already (a config
+    // written by a newer build and then re-read by this path).
+    profiles: profiles.map((p) => (p.typeAsISpeak === undefined ? { ...p, typeAsISpeak: live } : p)),
+  };
+}
+
+/**
  * Normalize a loaded config to the v2 shape. The Rust `load()` already migrates,
  * but this guards the no-Rust `pnpm dev` path and any version skew during dev.
  */
@@ -207,10 +266,11 @@ function migrateConfig(raw: unknown): Config {
   }
   // Already v2 (has `backends`).
   if (Array.isArray((c as { backends?: unknown }).backends)) {
+    const migrated = migrateInsertTiming(withSettingsDefaults(c.settings), wellFormedProfiles(c.profiles));
     return {
-      settings: withSettingsDefaults(c.settings),
+      settings: migrated.settings,
       backends: wellFormedBackends(c.backends),
-      profiles: wellFormedProfiles(c.profiles),
+      profiles: migrated.profiles,
       appRules: wellFormedAppRules((c as { appRules?: unknown }).appRules),
       version: c.version as number | undefined,
     };
@@ -225,8 +285,8 @@ function migrateConfig(raw: unknown): Config {
     const isHold = m.mode === "hold";
     return {
       id: isHold ? "hold" : "handsfree",
-      name: isHold ? "Push-to-talk" : "Latch",
-      activation: isHold ? "hold" : "latch",
+      name: isHold ? "Push-to-talk" : "Hands-free",
+      activation: isHold ? "hold" : "handsfree",
       enabled: !!m.enabled,
       hotkey: isStringList(m.hotkey) ? m.hotkey : [],
       backendId: (m.profileId as string | null) ?? null,
@@ -269,6 +329,17 @@ interface AppState {
   /** Truthful end-of-session insert result, set WITH the idle transition — drives the chip's
    *  done marker (✓ typed / clipboard glyph / nothing). null = no session finished yet. */
   sessionOutcome: "typed" | "clipboard" | "none" | null;
+  /** The RESOLVED translation targets of the active session — what will actually be injected,
+   *  not what the Profile is configured with. The two diverge once a per-session picker can
+   *  change them, and the authoritative value (`sessionTranslation` in streaming.ts) lives in
+   *  module scope the chip's window can never read. Empty/null = this session doesn't translate;
+   *  the chip then falls back to the home Profile's configured targets for its standby preview. */
+  sessionTargets: string[] | null;
+  /** Why this session's translation didn't land, set WITH the idle transition alongside
+   *  `sessionOutcome`. Drives the chip's truthful done marker: without it a session that
+   *  inserted the ORIGINAL after a failed translate is indistinguishable from one that
+   *  translated successfully. null = no failure (or no translation configured). */
+  translateFailure: TranslateFailure | null;
   /** What the current status is waiting on, when the wait is long enough that
    *  the status word alone reads as a hang (the cold translate). Cleared in the
    *  SAME setDictation call as every transition to idle/error, so a stale phase
@@ -403,6 +474,8 @@ interface AppState {
       targetSkip: "blocked" | "notEditable" | null;
       lastInsert: { kind: "typed" | "clipboard"; seq: number } | null;
       sessionOutcome: "typed" | "clipboard" | "none" | null;
+      sessionTargets: string[] | null;
+      translateFailure: TranslateFailure | null;
       dictationPhase: DictationPhase | null;
     }>,
   ) => void;
@@ -469,6 +542,8 @@ export const useApp = create<AppState>((set) => ({
   targetSkip: null,
   lastInsert: null,
   sessionOutcome: null,
+  sessionTargets: null,
+  translateFailure: null,
   dictationPhase: null,
 
   connections: {},

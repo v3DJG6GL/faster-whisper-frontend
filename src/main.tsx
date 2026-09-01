@@ -10,10 +10,11 @@ import "./app.css";
 import App from "./App";
 import Overlay from "./Overlay";
 import QuickAdd from "./QuickAdd";
+import LangPick from "./LangPick";
 import { initKeyboardLayout } from "./lib/keyboardLayout";
 import { applyTheme } from "./lib/theme";
 
-type WindowLabel = "main" | "overlay" | "quickadd";
+type WindowLabel = "main" | "overlay" | "quickadd" | "langpick";
 
 /** Which Tauri window is this document running in? Falls back to "main" outside Tauri. */
 function detectWindowLabel(): WindowLabel {
@@ -22,11 +23,12 @@ function detectWindowLabel(): WindowLabel {
     __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } };
   }).__TAURI_INTERNALS__;
   const label = internals?.metadata?.currentWindow?.label;
-  if (label === "overlay" || label === "quickadd") return label;
+  if (label === "overlay" || label === "quickadd" || label === "langpick") return label;
   if (label) return "main";
   // Browser preview: allow forcing a secondary window via the hash.
   if (window.location.hash.includes("overlay")) return "overlay";
   if (window.location.hash.includes("quickadd")) return "quickadd";
+  if (window.location.hash.includes("langpick")) return "langpick";
   return "main";
 }
 
@@ -35,7 +37,7 @@ document.body.dataset.window = label;
 // Learn the user's keyboard layout (QWERTZ etc.) so shortcut chips show the keys on
 // their keycaps, not the physical US-QWERTY positions event.code reports.
 initKeyboardLayout();
-if (label === "overlay" || label === "quickadd") {
+if (label === "overlay" || label === "quickadd" || label === "langpick") {
   // Initial guess before any data arrives: resolve "auto" against the OS scheme (the
   // config isn't loaded yet). The chip then follows the theme broadcast on
   // `dictation://update` (Overlay.tsx); the quick-add window applies the loaded
@@ -43,7 +45,11 @@ if (label === "overlay" || label === "quickadd") {
   applyTheme("auto");
 }
 
-const Root = label === "overlay" ? <Overlay /> : label === "quickadd" ? <QuickAdd /> : <App />;
+const Root =
+  label === "overlay" ? <Overlay />
+  : label === "quickadd" ? <QuickAdd />
+  : label === "langpick" ? <LangPick />
+  : <App />;
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>{Root}</React.StrictMode>,
 );

@@ -8,6 +8,7 @@ import { HotkeyChips } from "@/components/HotkeyChips";
 import { starterProfiles } from "@/lib/starters";
 import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
 import { DecodeFields } from "@/components/DecodeFields";
+import { dictationControls, hasInsertionOverrides, FIELD_LABEL } from "@/components/DictationFields";
 import { TranslationDefaultsEditor } from "@/components/TranslationFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -31,7 +32,7 @@ import { ownProp } from "@/lib/own";
 
 const ACTIVATION = {
   hold: { icon: Mic, label: "Push-to-talk", hint: "Hold the hotkey while you speak; release to stop." },
-  latch: { icon: Hand, label: "Latch", hint: "Tap once to start, tap again to stop." },
+  handsfree: { icon: Hand, label: "Hands-free", hint: "Tap once to start, tap again to stop." },
 } as const;
 
 function blankProfile(backendId: string | null): Profile {
@@ -74,6 +75,9 @@ function Editor({
   const [showDecode, setShowDecode] = useState(
     () => !!initial.decodeOverrides && Object.keys(initial.decodeOverrides).length > 0,
   );
+  const [showInsertion, setShowInsertion] = useState(
+    () => hasInsertionOverrides(initial.insertionOverrides) || initial.typeAsISpeak !== undefined,
+  );
   const [showTranslation, setShowTranslation] = useState(
     () => !!initial.translationOverrides && Object.keys(initial.translationOverrides).length > 0,
   );
@@ -109,7 +113,7 @@ function Editor({
     capturing,
     lowLevelActive,
     others,
-    selfKind: p.activation === "latch" ? "latch" : "hold",
+    selfKind: p.activation === "handsfree" ? "handsfree" : "hold",
     onCommit: (codes) => {
       set({ hotkey: codes });
       setCapturing(false);
@@ -147,6 +151,9 @@ function Editor({
       // undefined, or "clear" would silently become "inherit".
       prompt: p.prompt,
       overrideProfile: p.overrideProfile?.trim() ? p.overrideProfile.trim() : undefined,
+      // An override object with nothing in it is "inherit everything" — store it as absent,
+      // or `isDirty` reports a change the moment the disclosure is opened.
+      insertionOverrides: hasInsertionOverrides(p.insertionOverrides) ? p.insertionOverrides : undefined,
     });
 
   return (
@@ -191,7 +198,7 @@ function Editor({
             onChange={(v) => set({ activation: v })}
             options={[
               { value: "hold", label: "Push-to-talk" },
-              { value: "latch", label: "Latch" },
+              { value: "handsfree", label: "Hands-free" },
             ]}
           />
         </Labeled>
@@ -354,6 +361,86 @@ function Editor({
 
       <div className="mt-5">
         <DisclosureCard
+          open={showInsertion}
+          onToggle={() => setShowInsertion((v) => !v)}
+          title={
+            <>
+              Insertion overrides{" "}
+              {hasInsertionOverrides(p.insertionOverrides) || p.typeAsISpeak !== undefined ? (
+                <span className="text-accent">· set</span>
+              ) : (
+                <span className="text-faint">· inherit global</span>
+              )}
+            </>
+          }
+        >
+          <p className="mb-3 text-[12px] text-dim">
+            Only for this profile. Inherit takes the Settings → Dictation default; an app rule
+            still wins over both for the app you dictate into.
+          </p>
+
+          {/* "Type as I speak" is the profile-scoped replacement for the old global
+              three-way. It only produces a distinct outcome on a STREAMING, HANDS-FREE
+              profile, so the other combinations say why rather than silently doing nothing.
+              Note the gate is on the PROFILE's activation for display only — the runtime
+              value is what liveAllowed tests, because the Home button and the chip's
+              quick-launch both start a hold profile hands-free. */}
+          {(() => {
+            const effEndpoint = p.endpoint ?? backend?.endpoint;
+            const batch = effEndpoint === "batch";
+            const hold = p.activation === "hold";
+            const why = batch
+              ? "Not available with a Batch endpoint: the audio is sent once, after you stop, so there are no live phrases to insert. Switch this profile's endpoint to Streaming to enable it."
+              : hold
+                ? "Push-to-talk holds the chord for the whole dictation, so injected keys would fold into it — these profiles always insert on release. The Home button and the chip's quick-launch run any profile hands-free, and this setting applies there."
+                : undefined;
+            return (
+              <div className="mb-4">
+                <Labeled label="Type as I speak">
+                  <Segmented
+                    ariaLabel="Type as I speak"
+                    disabled={batch}
+                    value={p.typeAsISpeak === true ? "on" : p.typeAsISpeak === false ? "off" : "inherit"}
+                    onChange={(v) =>
+                      set({ typeAsISpeak: v === "inherit" ? undefined : v === "on" })
+                    }
+                    options={[
+                      { value: "inherit", label: "Inherit" },
+                      { value: "on", label: "On" },
+                      { value: "off", label: "Off" },
+                    ]}
+                  />
+                </Labeled>
+                <div className={cn("mt-1.5 text-[12px]", why ? "text-warn" : "text-dim")}>
+                  {why ??
+                    "Insert each phrase into the focused field as you talk, instead of waiting until the session ends."}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* The same four controls the Dictation tab and App Rules render — one component,
+              so the labels and the option order can't drift apart again. */}
+          {(() => {
+            const c = dictationControls({
+              value: p.insertionOverrides ?? {},
+              onChange: (v) => set({ insertionOverrides: v }),
+              sentinel: "undefined",
+            });
+            return (
+              <div className="grid grid-cols-2 gap-4">
+                <Labeled label={FIELD_LABEL.insertMethod}>{c.insertMethod}</Labeled>
+                <Labeled label={FIELD_LABEL.pasteShortcut}>{c.pasteShortcut}</Labeled>
+                <Labeled label={FIELD_LABEL.autoEnter}>{c.autoEnter}</Labeled>
+                <Labeled label={FIELD_LABEL.restoreClipboard}>{c.restoreClipboard}</Labeled>
+              </div>
+            );
+          })()}
+        </DisclosureCard>
+      </div>
+
+      <div className="mt-5">
+        <DisclosureCard
           open={showTranslation}
           onToggle={() => setShowTranslation((v) => !v)}
           title={
@@ -371,6 +458,20 @@ function Editor({
             Only for this profile. Empty inherits the bound backend&apos;s defaults;
             dictation injects every target.
           </p>
+          <div className="mb-4 rounded-xl border border-line bg-surface-2/40 p-3.5">
+            <Labeled label="Ask for target languages">
+              <Toggle
+                ariaLabel="Ask for target languages"
+                checked={p.askTranslationTargets === true}
+                onChange={(v) => set({ askTranslationTargets: v || undefined })}
+              />
+            </Labeled>
+            <div className="mt-1.5 text-[12px] text-dim">
+              {p.activation === "hold"
+                ? "Asks after you release the shortcut, before the text is inserted — a prompt while the chord is held would swallow the keys. The targets below are preselected; Esc uses them unchanged."
+                : "Asks before the microphone opens. The targets below are preselected, so pressing Enter does exactly what this profile does today; Esc the same."}
+            </div>
+          </div>
           <TranslationDefaultsEditor
               value={p.translationOverrides}
               onChange={(v) => set({ translationOverrides: v })}
@@ -410,11 +511,11 @@ function Editor({
         {IS_LINUX ? (
           <>
             On Wayland, push-to-talk (and modifier-only / AltGr chords) need the evdev backend (Settings →
-            Permissions). Latch works everywhere; you can also bind it in your desktop’s shortcut settings.
+            Permissions). Hands-free works everywhere; you can also bind it in your desktop’s shortcut settings.
           </>
         ) : (
           <>
-            Every chord type works globally on Windows — push-to-talk, latch, modifier-only (like
+            Every chord type works globally on Windows — push-to-talk, hands-free, modifier-only (like
             Ctrl+Shift), and left/right-specific modifiers.
           </>
         )}
@@ -472,7 +573,7 @@ function ProfileRow({
         <div
           className={cn(
             "grid size-10 place-items-center rounded-xl",
-            p.activation === "latch" ? "bg-accent-soft text-accent" : "bg-surface-2 text-accent",
+            p.activation === "handsfree" ? "bg-accent-soft text-accent" : "bg-surface-2 text-accent",
           )}
         >
           <Glyph className="size-[18px]" />
@@ -615,7 +716,7 @@ export default function Profiles() {
         addLabel="Add profile"
         onAdd={startAdd}
       >
-        Each profile is a way to dictate: push-to-talk or latch, its own shortcut and backend,
+        Each profile is a way to dictate: push-to-talk or hands-free, its own shortcut and backend,
         with optional per-profile language and prompt.
       </ListScreenHeader>
 
@@ -650,8 +751,8 @@ export default function Profiles() {
               <Card className="border-accent/40 p-5">
                 <div className="text-[13.5px] font-semibold text-text">Suggested starters</div>
                 <div className="mt-0.5 text-[12.5px] text-dim">
-                  Push-to-talk (hold <HotkeyChips codes={["ControlLeft", "ShiftLeft"]} />) and Latch
-                  (tap <HotkeyChips codes={["ControlLeft", "MetaLeft"]} /> for hands-free). Keep them,
+                  Push-to-talk (hold <HotkeyChips codes={["ControlLeft", "ShiftLeft"]} />) and Hands-free
+                  (tap <HotkeyChips codes={["ControlLeft", "MetaLeft"]} /> to start and stop). Keep them,
                   then edit anything.
                 </div>
                 <div className="mt-4 flex items-center gap-2.5">

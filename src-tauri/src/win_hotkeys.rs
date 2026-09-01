@@ -272,7 +272,7 @@ mod imp {
             }
             let kind = match p.activation {
                 ActivationType::Hold => ChordKind::Hold { profile_id: p.id.clone() },
-                ActivationType::Latch => ChordKind::Latch { profile_id: p.id.clone() },
+                ActivationType::HandsFree => ChordKind::HandsFree { profile_id: p.id.clone() },
             };
             // `what` is interpolated into the duplicate-chord warning below, so the untrusted id
             // is defanged here rather than at the log line — same reason as `emit`'s.
@@ -821,7 +821,7 @@ mod imp {
 
     /// The chord-matching worker — the twin of `evdev_hotkeys::run_device` (one
     /// instance, fed by the hook instead of per-device streams). All chord
-    /// semantics (hold edges, latch re-arm, family handoff/grace) live in the
+    /// semantics (hold edges, hands-free re-arm, family handoff/grace) live in the
     /// shared crate::chord_engine. Runs until the sender is dropped (shutdown/
     /// restart), then releases its HeldKeys contributions and stops any live
     /// Hold session.
@@ -880,14 +880,14 @@ mod imp {
                 }
                 Fire::Reclassify(pid) => {
                     // Same rising edge, same reason as Start/Toggle above: the engine fires
-                    // Reclassify only on the latch chord's own physical completion (`on &&
+                    // Reclassify only on the hands-free chord's own physical completion (`on &&
                     // !active[i]`), so this press IS in the map and the still-held check works
                     // normally for it — which makes any pending loss latch a dud. It was the one
                     // fire of the three that did not clear it, and it CONTINUES a live session
                     // into hands-free mode, so an injection follows it. Reachable on the ordinary
                     // multi-keyboard setup: keyboard A's stream dies with a hold active and its
                     // post-loop arms the latch, keyboard B's separate engine still has that hold,
-                    // and completing the latch superset on B otherwise consumed the stale latch
+                    // and completing the hands-free superset on B otherwise consumed the stale latch
                     // (TTL 130s) and diverted the phrase to the clipboard.
                     crate::held_keys::clear_chord_lost();
                     emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))

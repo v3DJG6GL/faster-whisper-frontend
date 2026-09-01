@@ -37,6 +37,7 @@ import {
 } from "@/lib/api";
 import type { AudioDevice, OverlayQuickAction, RecordingSettings } from "@/lib/types";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
+import { METHOD_OPTIONS } from "@/components/DictationFields";
 // Row titles come from the settings manifest — the single source both this
 // screen and the Sync list render from, so their labels can never drift.
 import { SETTING } from "@/lib/settingsManifest";
@@ -49,7 +50,7 @@ function fmtBytes(n: number): string {
   return `${Math.max(1, Math.round(n / 1024))} KB`;
 }
 
-const TABS = ["General", "Audio", "Recording & history", "Chip", "Sync", "Permissions"] as const;
+const TABS = ["General", "Audio", "Dictation", "Recording & history", "Chip", "Sync", "Permissions"] as const;
 
 /** The audio store's per-type identity: subfolder, legend label, and the hue
  *  shared by the split bar, its legend and the subfolder chips. */
@@ -729,50 +730,44 @@ export default function Settings() {
                 disabled={!s.general.openAtLogin}
               />
             </SettingRow>
-            <SettingRow
-              title={SETTING.autoInsert.label}
-              desc="When to place the transcription into the focused field. “Live” inserts each finished phrase as you speak (streaming backends; batch inserts on stop)."
-            >
-              <Segmented
-                value={s.general.insertTiming}
-                onChange={(v) => updateGeneral({ insertTiming: v })}
-                options={[
-                  { value: "off", label: "Off" },
-                  { value: "stop", label: "When I stop" },
-                  { value: "live", label: "Live" },
-                ]}
-              />
+            <SettingRow title={SETTING.soundCues.label} desc="A short tone when dictation starts and stops.">
+              <Toggle checked={s.general.soundEffects} onChange={(v) => updateGeneral({ soundEffects: v })} />
             </SettingRow>
+            {/* The quick-add shortcut moved to the Dictionary screen, next to the pinned list. */}
+            <LoggingSection />
+          </Card>
+        )}
+
+        {tab === "Audio" && <AudioTab />}
+
+        {tab === "Dictation" && (
+          <Card className="px-6">
+            {/* The insertion chain, moved here from General — which mixed launch behaviour
+                with what happens to your words. These are the GLOBAL defaults: a Profile
+                overrides them for one task, and an App rule overrides both for one target
+                app (see resolveInjectionTarget for the order). */}
+            <SectionLabel className="mb-1 mt-4">Insertion</SectionLabel>
             <SettingRow
               title={SETTING.insertMethod.label}
-              desc={
-                s.general.insertTiming === "live"
-                  ? "Clipboard paste is the most reliable. Direct typing never touches the clipboard but can struggle with some layouts. Clipboard only copies each phrase for you to paste. Live only ever appends as you speak — it never goes back to revise earlier words."
-                  : "Clipboard paste is the most reliable. Direct typing never touches the clipboard but can struggle with some layouts. Clipboard only copies the text without typing — you paste it yourself."
-              }
-              disabled={s.general.insertTiming === "off"}
+              desc="Clipboard paste is the most reliable. Direct typing never touches the clipboard but can struggle with some layouts. Clipboard only copies the text without typing — you paste it yourself."
             >
               <Segmented
                 value={s.general.insertMethod}
                 onChange={(v) => updateGeneral({ insertMethod: v })}
-                disabled={s.general.insertTiming === "off"}
-                options={[
-                  { value: "paste", label: "Clipboard paste" },
-                  { value: "direct", label: "Direct typing" },
-                  { value: "clipboard", label: "Clipboard only" },
-                ]}
+                options={METHOD_OPTIONS}
               />
             </SettingRow>
             <SettingRow
               title={SETTING.pasteShortcut.label}
               desc="The keys sent for “Clipboard paste”. Terminals (Konsole, kitty…) need Ctrl + Shift + V."
-              disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
+              disabled={s.general.insertMethod !== "paste"}
+              disabledReason={`Only used by “Clipboard paste”. Set ${SETTING.insertMethod.label} to Clipboard paste to choose a chord.`}
             >
               <Select
                 value={pasteKey(s.general.pasteShortcut)}
                 onChange={(v) => updateGeneral({ pasteShortcut: pasteCodes(v) })}
                 options={PASTE_PRESETS.map((p) => ({ value: p.value, label: p.label }))}
-                disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
+                disabled={s.general.insertMethod !== "paste"}
               />
             </SettingRow>
             {IS_LINUX && (
@@ -793,34 +788,57 @@ export default function Settings() {
             <SettingRow
               title={SETTING.pressEnterAfter.label}
               desc="Send a Return key once the text is inserted."
-              disabled={s.general.insertTiming === "off" || s.general.insertMethod === "clipboard"}
+              disabled={s.general.insertMethod === "clipboard"}
+              disabledReason={`Nothing is typed with “Clipboard only”, so there is no Return to send. Change ${SETTING.insertMethod.label} to send one.`}
             >
               <Toggle
                 checked={s.general.autoEnter}
                 onChange={(v) => updateGeneral({ autoEnter: v })}
-                disabled={s.general.insertTiming === "off" || s.general.insertMethod === "clipboard"}
+                disabled={s.general.insertMethod === "clipboard"}
               />
             </SettingRow>
             <SettingRow
               title={SETTING.restoreClipboard.label}
-              desc="Put your previous clipboard contents back once the paste is done."
-              disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
+              desc="Put your previous clipboard contents back once the paste is done. Skipped inside remote-desktop clients (mstsc, Citrix, AnyDesk…), where the clipboard reaches the remote host asynchronously and a restore can be what the remote actually pastes."
+              disabled={s.general.insertMethod !== "paste"}
+              disabledReason={`Only “Clipboard paste” replaces your clipboard, so only it has anything to put back. Set ${SETTING.insertMethod.label} to Clipboard paste to use this.`}
+              last
             >
               <Toggle
                 checked={s.general.restoreClipboard}
                 onChange={(v) => updateGeneral({ restoreClipboard: v })}
-                disabled={s.general.insertTiming === "off" || s.general.insertMethod !== "paste"}
+                disabled={s.general.insertMethod !== "paste"}
               />
             </SettingRow>
-            <SettingRow title={SETTING.soundCues.label} desc="A short tone when dictation starts and stops.">
-              <Toggle checked={s.general.soundEffects} onChange={(v) => updateGeneral({ soundEffects: v })} />
+
+            {/* Moved from Recording & history, which mixed audio RETENTION with controls
+                that only matter while a session is live. */}
+            <SectionLabel className="mb-1 mt-7">While recording</SectionLabel>
+            <SettingRow
+              title={SETTING.muteSystemAudio.label}
+              desc="Mute system audio for the duration of a dictation."
+            >
+              <Toggle checked={s.recording.muteSystemAudio} onChange={(v) => updateRecording({ muteSystemAudio: v })} />
             </SettingRow>
-            {/* The quick-add shortcut moved to the Dictionary screen, next to the pinned list. */}
-            <LoggingSection />
+            <SettingRow
+              title={SETTING.handsFreeAutoStop.label}
+              desc="End a hands-free session after this long with no speech, so it can't run for hours. Set to Never to keep it open until you stop it yourself. Push-to-talk ends on key release, so this doesn't apply to it."
+              last
+            >
+              <Stepper
+                ariaLabel="auto-stop hands-free after silence"
+                value={s.recording.handsFreeAutoStopMin}
+                onChange={(v) => updateRecording({ handsFreeAutoStopMin: v })}
+                min={0}
+                max={120}
+                step={1}
+                decimals={0}
+                unit="min"
+                zeroLabel="Never"
+              />
+            </SettingRow>
           </Card>
         )}
-
-        {tab === "Audio" && <AudioTab />}
 
         {tab === "Recording & history" && (
           <>
@@ -1122,30 +1140,6 @@ export default function Settings() {
               <div className="py-2 text-[12px] text-dim">{storeMsg}</div>
             )}
 
-            <SectionLabel className="mb-1 mt-4">While recording</SectionLabel>
-            <SettingRow
-              title={SETTING.muteSystemAudio.label}
-              desc="Mute system audio for the duration of a dictation."
-            >
-              <Toggle checked={s.recording.muteSystemAudio} onChange={(v) => updateRecording({ muteSystemAudio: v })} />
-            </SettingRow>
-            <SettingRow
-              title={SETTING.latchAutoStop.label}
-              desc="End a hands-free (latch) session after this long with no speech, so it can't run for hours. Set to Never to keep it open until you stop it yourself."
-              last
-            >
-              <Stepper
-                ariaLabel="auto-stop hands-free after silence"
-                value={s.recording.latchAutoStopMin}
-                onChange={(v) => updateRecording({ latchAutoStopMin: v })}
-                min={0}
-                max={120}
-                step={1}
-                decimals={0}
-                unit="min"
-                zeroLabel="Never"
-              />
-            </SettingRow>
           </Card>
           </>
         )}

@@ -1086,17 +1086,42 @@ export function Stack({
 /* ── Setting row ──────────────────────────────────────────────────────── */
 export function SettingRow({
   title,
+  titleText,
   desc,
   children,
   last,
   disabled,
+  disabledReason,
+  badge,
   expand,
 }: {
-  title: string;
+  /** Plain text in every existing call site. `ReactNode` only so a row can carry a
+   *  trailing badge; the auto-labelling below needs a STRING, so pass `titleText`
+   *  alongside whenever this isn't one. */
+  title: ReactNode;
+  /** The title as plain text, for the accessible name. Required when `title` is not a
+   *  string — otherwise a Toggle/Select child would be announced as "[object Object]". */
+  titleText?: string;
   desc?: string;
   children: ReactNode;
   last?: boolean;
   disabled?: boolean;
+  /** WHY this row is inactive, shown at full contrast IN PLACE OF `desc`.
+   *
+   *  A dimmed row with no explanation is the defect this exists to fix: the reader can
+   *  see that a control is unavailable and has no way to learn what would make it
+   *  available. Greying is kept — Microsoft's guidance endorses disabling subordinate
+   *  controls, and GNOME/elementary both prefer insensitive over hidden for "available
+   *  once a condition is met" — but greying ALONE is what fails. Two sentences, in the
+   *  shape Microsoft's balloon guidance recommends: the condition, then how to change it.
+   *
+   *  Not dimmed with the rest of the block: the reason is the one thing on a dead row
+   *  that must stay readable, and WCAG's contrast exemption for inactive controls makes
+   *  a dim explanation conformant but useless. */
+  disabledReason?: string;
+  /** Trailing chip after the title — provenance ("Overridden by Konsole"), never a
+   *  second control. Kept out of `title` so the accessible name stays the title alone. */
+  badge?: ReactNode;
   /** Sub-panel rendered INSIDE the row, below the header flex line — the
    *  row's border-b stays underneath it, so an expanded row reads as one
    *  unit instead of the panel floating between two rows. */
@@ -1107,10 +1132,14 @@ export function SettingRow({
   // title so a screen reader announces what it controls; respects an explicit ariaLabel and leaves
   // other control types untouched. (A control wrapped in its own <div> — e.g. the mic select with its
   // Refresh button — isn't a direct child, so those pass ariaLabel at the call site instead.)
+  // `title` may now be a node (a label plus a provenance badge), which would clone in as
+  // "[object Object]". Fall back to `titleText`, then to the title only when it really is
+  // a string — never to a node.
+  const accessibleName = titleText ?? (typeof title === "string" ? title : undefined);
   const control =
     isValidElement(children) && (children.type === Toggle || children.type === Select)
       ? cloneElement(children as ReactElement<{ ariaLabel?: string }>, {
-          ariaLabel: (children.props as { ariaLabel?: string }).ariaLabel ?? title,
+          ariaLabel: (children.props as { ariaLabel?: string }).ariaLabel ?? accessibleName,
         })
       : children;
   // Grid, not flex: the control used to take whatever width it wanted and hand
@@ -1126,9 +1155,32 @@ export function SettingRow({
   return (
     <div className={cn("@container py-4", !last && "border-b border-line")}>
       <div className="flex flex-col gap-3 @[640px]:grid @[640px]:grid-cols-[minmax(0,1fr)_minmax(0,max-content)] @[640px]:items-center @[640px]:gap-6">
-        <div className={cn("min-w-0 transition-opacity", disabled && "opacity-50")}>
-          <div className="text-[14px] font-medium text-text">{title}</div>
-          {desc && <div className="mt-0.5 text-[12.5px] leading-snug text-dim">{desc}</div>}
+        <div className="min-w-0">
+          <div
+            className={cn(
+              "flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px] font-medium text-text transition-opacity",
+              disabled && "opacity-50",
+            )}
+          >
+            {title}
+            {badge}
+          </div>
+          {/* The reason REPLACES the description and keeps full contrast — see the prop's
+              doc. When there's no reason, the description dims with the rest of the row. */}
+          {disabled && disabledReason ? (
+            <div className="mt-0.5 text-[12.5px] leading-snug text-warn">{disabledReason}</div>
+          ) : (
+            desc && (
+              <div
+                className={cn(
+                  "mt-0.5 text-[12.5px] leading-snug text-dim transition-opacity",
+                  disabled && "opacity-50",
+                )}
+              >
+                {desc}
+              </div>
+            )
+          )}
         </div>
         <div className="flex min-w-0 justify-start @[640px]:justify-end">{control}</div>
       </div>

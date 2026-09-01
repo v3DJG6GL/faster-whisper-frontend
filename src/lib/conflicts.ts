@@ -8,7 +8,7 @@
 //
 // DESIGNED NESTINGS are exempt from "shadow" — the chord family the matcher
 // implements on purpose (src-tauri/src/chord_engine.rs):
-//   • a HOLD chord ⊂ a LATCH chord  — completing the superset UPGRADES the
+//   • a HOLD chord ⊂ a HANDS-FREE chord  — completing the superset UPGRADES the
 //     running push-to-talk session to hands-free (reclassify, no restart);
 //   • a HOLD chord ⊂ the QUICK-ADD chord — completing the superset within the
 //     grace window aborts the nascent blip and opens quick add.
@@ -53,16 +53,16 @@ function isStrictSubset(a: string[], b: string[]): boolean {
 /** How a binding behaves in the chord engine — the axis the designed-nesting
  *  exemption turns on. The quick-add peer is its own kind (its Profile shell
  *  says "hold", but the engine treats it as the abort-and-open superset). */
-export type BindingKind = "hold" | "latch" | "quickadd";
+export type BindingKind = "hold" | "handsfree" | "quickadd";
 
 function kindOf(p: Profile): BindingKind {
   if (p.id === QUICK_ADD_PEER_ID) return "quickadd";
-  return p.activation === "latch" ? "latch" : "hold";
+  return p.activation === "handsfree" ? "handsfree" : "hold";
 }
 
 /** The nestings the chord engine implements on purpose (see header comment). */
 function isDesignedNesting(subKind: BindingKind, supKind: BindingKind): boolean {
-  return subKind === "hold" && (supKind === "latch" || supKind === "quickadd");
+  return subKind === "hold" && (supKind === "handsfree" || supKind === "quickadd");
 }
 
 /** Find every chord conflict among the given profiles. `collapseSides` (= plugin backend / evdev off)

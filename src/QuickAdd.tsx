@@ -668,7 +668,11 @@ async function replaceSelectionAfterClose(
   // paste/type would misfire; the resolver coerces those to clipboard-only.)
   const [current, app] = await Promise.all([getFocusedSelection(), getFocusedApp()]);
   if (current == null || current.trim() !== original) return;
-  const { rule, method, pasteShortcut } = resolveInjectionTarget(app ?? null, appRules, general);
+  // No profile layer, deliberately: this window has no dictation session and no active
+  // Profile — the correction is a Quick-Add action, not a dictation — so it resolves
+  // app-rule ← global exactly as it always has. Passing `undefined` states that rather
+  // than leaving it to argument order.
+  const { rule, method, pasteShortcut } = resolveInjectionTarget(app ?? null, appRules, general, undefined);
   if (rule?.block) return; // the user marked this app "never type into" — don't correct into it at all (not even clipboard)
   // Clipboard-only (explicit per-app, or coerced for a non-editable target) puts the correction on the
   // clipboard with no keystroke; restore the prior clipboard only for a real paste.
