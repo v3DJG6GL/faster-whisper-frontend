@@ -8,7 +8,10 @@ import type { DictationStatus } from "./types";
  *
  * It mirrors the overlay chip's long-standing palette, which is the design intent:
  *   • green  (live)   — actively speaking
- *   • amber  (accent) — armed but silent ("ready to speak"; the OS mic-in-use cue)
+ *   • amber  (armed)  — armed but silent ("ready to speak"; the OS mic-in-use cue). Its
+ *                       own fixed token (--c-armed): it used to borrow the accent, but the
+ *                       Signal colour is now any hue the user picks and may drift with the
+ *                       clock, and a state colour must not (D13′).
  *   • teal   (translate) — the T2T translating stage. It is a machine-working state like
  *                       the blue ones, but the ONE that can take tens of seconds (a cold
  *                       GGUF load), so it earns its own hue rather than hiding inside the
@@ -38,7 +41,7 @@ import type { DictationStatus } from "./types";
 export type DictationVisualState = "off" | "armed" | "speaking" | "processing" | "error";
 
 /** Colour-token key — maps 1:1 to an `app.css` --c-* token / Tailwind `bg-*`/`text-*` utility. */
-export type DictationTone = "faint" | "accent" | "live" | "dim" | "rec" | "think" | "translate";
+export type DictationTone = "faint" | "armed" | "live" | "dim" | "rec" | "think" | "translate";
 
 export interface DictationVisual {
   state: DictationVisualState;
@@ -74,7 +77,7 @@ export function dictationVisual(
     case "listening":
       return speaking
         ? { state: "speaking", tone: "live", label: "listening", pulse: true, filled: true }
-        : { state: "armed", tone: "accent", label: "listening", pulse: true, filled: true };
+        : { state: "armed", tone: "armed", label: "listening", pulse: true, filled: true };
     case "idle":
     default:
       return { state: "off", tone: "faint", label: "off", pulse: false, filled: false };

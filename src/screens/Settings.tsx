@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Mic, Check, Play, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus, FolderOpen } from "lucide-react";
 import { useApp } from "@/lib/store";
@@ -42,8 +42,21 @@ import { METHOD_OPTIONS } from "@/components/DictationFields";
 // Row titles come from the settings manifest — the single source both this
 // screen and the Sync list render from, so their labels can never drift.
 import { SETTING } from "@/lib/settingsManifest";
-import { ACCENT_PRESETS, DEFAULT_ACCENT_HUE, accentCollision, deriveAccent, resolvedTheme } from "@/lib/theme";
-import type { ThemeName } from "@/lib/types";
+import {
+  ACCENT_PRESETS,
+  DEFAULT_ACCENT_HUE,
+  DEFAULT_ACCENT_MOTION,
+  DEFAULT_ARC_HUE,
+  currentAccentHue,
+  deriveAccent,
+  fmtPer,
+  prefersReducedMotion,
+  resolvedTheme,
+  secToSlider,
+  sliderToSec,
+  subscribeAccentHue,
+} from "@/lib/theme";
+import type { AccentMotion, ThemeName } from "@/lib/types";
 import { SyncTab } from "@/screens/SettingsSync";
 
 /** "1.2 GB" / "84 MB" for the audio-copy usage readout. */
@@ -331,7 +344,7 @@ function AudioTab() {
             level={level}
             active={testing}
             bars={16}
-            tone={testing && !micWarming ? "accent" : "dim"}
+            tone={testing && !micWarming ? "armed" : "dim"}
             className="h-7 w-28"
           />
           {testing && micWarming && (
@@ -632,7 +645,6 @@ function AppearanceRows() {
   };
 
   const preset = ACCENT_PRESETS.find(([, h]) => h === hue);
-  const collision = accentCollision(hue);
 
   return (
     <>
@@ -654,28 +666,12 @@ function AppearanceRows() {
       </SettingRow>
       <SettingRow
         title={SETTING.accentHue.label}
-        desc="The accent for buttons, selection, the armed chip and charts. Recording red, live green and the working hues never change."
+        desc="The accent for buttons, selection, chosen chips and charts. Recording red, live green, the armed amber and the working hues never change."
       >
         <div role="radiogroup" aria-label={SETTING.accentHue.label} className="flex items-center gap-2">
-          {ACCENT_PRESETS.map(([name, h]) => {
-            const on = h === hue;
-            return (
-              <button
-                key={name}
-                type="button"
-                role="radio"
-                aria-checked={on}
-                aria-label={name}
-                title={name}
-                onClick={() => pick(h)}
-                className={cn(
-                  "ring-signal size-[26px] rounded-full transition-shadow",
-                  on && "ring-2 ring-text ring-offset-[3px] ring-offset-[color:var(--c-panel)]",
-                )}
-                style={{ background: deriveAccent(h, dark).accent }}
-              />
-            );
-          })}
+          {ACCENT_PRESETS.map(([name, h]) => (
+            <HueSwatch key={name} name={name} hue={h} on={h === hue} dark={dark} onPick={pick} />
+          ))}
           <button
             type="button"
             role="radio"
@@ -712,19 +708,193 @@ function AppearanceRows() {
                 {hue}° · {preset ? preset[0].toLowerCase() : "custom"}
               </span>
             </div>
-            {collision === "translate" && (
-              <span className="text-[12px] text-warn">
-                Close to the translating stage’s teal — that stage rotates to violet so the chip’s dot stays unambiguous.
-              </span>
-            )}
-            {collision === "think" && (
-              <span className="text-[12px] text-warn">
-                Close to the thinking blue — armed and finalizing will differ by motion and fill only.
-              </span>
-            )}
           </div>
         </SettingRow>
       </div>
+      <MotionRows dark={dark} />
+    </>
+  );
+}
+
+/** One preset swatch: a radio painted with the accent that hue derives to in this theme. */
+function HueSwatch({
+  name, hue, on, dark, onPick,
+}: { name: string; hue: number; on: boolean; dark: boolean; onPick: (h: number) => void }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={on}
+      aria-label={name}
+      title={name}
+      onClick={() => onPick(hue)}
+      className={cn(
+        "ring-signal size-[26px] rounded-full transition-shadow",
+        on && "ring-2 ring-text ring-offset-[3px] ring-offset-[color:var(--c-panel)]",
+      )}
+      style={{ background: deriveAccent(hue, dark).accent }}
+    />
+  );
+}
+
+/* ── Motion ────────────────────────────────────────────────────────────── */
+
+/** The dropdown's tiers (seconds per turn); "custom" opens the log slider. */
+const MOTION_TIERS: { value: string; label: string }[] = [
+  { value: "0", label: "Still" },
+  { value: "604800", label: "One turn every 7 days" },
+  { value: "86400", label: "Every day" },
+  { value: "43200", label: "Every 12 hours" },
+  { value: "21600", label: "Every 6 hours" },
+  { value: "10800", label: "Every 3 hours" },
+  { value: "3600", label: "Every hour" },
+  { value: "1800", label: "Every 30 minutes" },
+  { value: "900", label: "Every 15 minutes" },
+  { value: "300", label: "Every 5 minutes" },
+  { value: "180", label: "Every 3 minutes" },
+  { value: "60", label: "Every minute" },
+  { value: "custom", label: "Custom…" },
+];
+const REDUCED_MOTION_REASON = "Still — your system asks for reduced motion.";
+
+/** Does the OS ask for reduced motion, tracked live. */
+function useReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(prefersReducedMotion);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = () => setReduced(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return reduced;
+}
+
+/** Motion of the Signal colour: tier dropdown, the custom log-scale speed, the range
+ *  (whole wheel / an arc to a second swatch) and a live "Right now" readout fed by this
+ *  window's drift driver (theme.ts). The engine itself never touches `accentHue`: the
+ *  hue you picked above is the base every turn starts from. */
+function MotionRows({ dark }: { dark: boolean }) {
+  const motion = useApp((st) => st.settings.accentMotion ?? DEFAULT_ACCENT_MOTION);
+  const updateSettings = useApp((st) => st.updateSettings);
+  const reduced = useReducedMotion();
+  const commit = useCallback(
+    (patch: Partial<AccentMotion>) => {
+      const cur = useApp.getState().settings.accentMotion ?? DEFAULT_ACCENT_MOTION;
+      updateSettings({ accentMotion: { ...cur, ...patch } });
+    },
+    [updateSettings],
+  );
+
+  // "Custom…" is a mode, not a value: a period that matches no tier reads as custom, and
+  // picking Custom… while on a tier keeps the row open with the slider at that tier's
+  // position until the thumb moves.
+  const isTier = MOTION_TIERS.some((t) => t.value === String(motion.period));
+  const [customMode, setCustomMode] = useState(!isTier);
+  const custom = customMode || !isTier;
+  const [slider, setSlider] = useState(() => secToSlider(motion.period || sliderToSec(500)));
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (pending.current === null && motion.period > 0) setSlider(secToSlider(motion.period));
+  }, [motion.period]);
+  useEffect(
+    () => () => {
+      if (pending.current !== null) clearTimeout(pending.current);
+    },
+    [],
+  );
+  const dragSpeed = (v: number) => {
+    setSlider(v);
+    if (pending.current !== null) clearTimeout(pending.current);
+    pending.current = setTimeout(() => {
+      pending.current = null;
+      commit({ period: sliderToSec(v) });
+    }, HUE_WRITE_DEBOUNCE_MS);
+  };
+  const pickTier = (v: string) => {
+    if (v === "custom") {
+      setCustomMode(true);
+      commit({ period: sliderToSec(slider) });
+      return;
+    }
+    setCustomMode(false);
+    commit({ period: Number(v) });
+  };
+
+  // What the tokens show right now — the driver restamps them on every tick.
+  const shownHue = useSyncExternalStore(subscribeAccentHue, currentAccentHue);
+  const note = reduced
+    ? REDUCED_MOTION_REASON
+    : motion.period === 0
+      ? "Still. The hue is exactly the Signal colour you picked above."
+      : `${motion.range === "wheel" ? "Turning the whole wheel" : "Breathing between two colours"}, ${fmtPer(
+          motion.period,
+        )}. Every window computes this from the clock.`;
+  const arcHue = motion.arcHue ?? DEFAULT_ARC_HUE;
+
+  return (
+    <>
+      <SettingRow
+        title={SETTING.accentMotion.label}
+        desc="How fast the Signal colour travels around the wheel. Still keeps it where you set it."
+        disabled={reduced}
+        disabledReason={REDUCED_MOTION_REASON}
+      >
+        <Select<string>
+          value={custom ? "custom" : String(motion.period)}
+          onChange={pickTier}
+          options={MOTION_TIERS}
+          disabled={reduced}
+          ariaLabel={SETTING.accentMotion.label}
+          className="w-[220px]"
+        />
+      </SettingRow>
+      {custom && (
+        <div className="pl-5">
+          <SettingRow title="Custom speed" desc="One full turn of the wheel takes this long.">
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={0}
+                max={1000}
+                step={1}
+                value={slider}
+                aria-label="Seconds per turn (log scale)"
+                onChange={(e) => dragSpeed(Number(e.target.value))}
+                className="ring-signal h-2 w-full min-w-[160px] cursor-pointer appearance-none rounded-pill bg-surface-2"
+              />
+              <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-dim">
+                {fmtPer(sliderToSec(slider))} · 30 s … 7 d
+              </span>
+            </div>
+          </SettingRow>
+        </div>
+      )}
+      <SettingRow title="Range" desc="The whole wheel, or a breath between the Signal colour and a second one.">
+        <Segmented<AccentMotion["range"]>
+          value={motion.range}
+          onChange={(range) => commit(range === "arc" ? { range, arcHue } : { range })}
+          ariaLabel="Range"
+          options={[
+            { value: "wheel", label: "Whole wheel" },
+            { value: "arc", label: "Between two colours" },
+          ]}
+        />
+      </SettingRow>
+      {motion.range === "arc" && (
+        <div className="pl-5">
+          <SettingRow title="Second colour" desc="The far end of the breath; the Signal colour above is the near end.">
+            <div role="radiogroup" aria-label="Second colour" className="flex items-center gap-2">
+              {ACCENT_PRESETS.map(([name, h]) => (
+                <HueSwatch key={name} name={name} hue={h} on={h === arcHue} dark={dark} onPick={(h) => commit({ arcHue: h })} />
+              ))}
+            </div>
+          </SettingRow>
+        </div>
+      )}
+      <SettingRow title="Right now" desc={note}>
+        <span className="font-mono text-[11.5px] tabular-nums text-dim">{shownHue}°</span>
+      </SettingRow>
     </>
   );
 }

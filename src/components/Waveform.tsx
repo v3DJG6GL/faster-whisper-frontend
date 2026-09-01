@@ -53,7 +53,7 @@ export function Waveform({
   processing = false,
   bars = 5,
   variant = "bars",
-  tone = "accent",
+  tone = "armed",
   pride = false,
   className,
 }: {
@@ -68,7 +68,8 @@ export function Waveform({
   // Mirrors DictationTone minus "faint" (callers map that to "dim"): the chip and
   // Home hand `dictationVisual().tone` straight through, so a tone added there must
   // be renderable here or the bars fall back to amber "ready" beside a working dot.
-  tone?: "accent" | "rec" | "dim" | "live" | "think" | "translate";
+  // "armed" is the fixed amber state token (--c-armed), not the accent.
+  tone?: "armed" | "rec" | "dim" | "live" | "think" | "translate";
   /** Reveal the Pride flag through the bars while hovered (see component note). */
   pride?: boolean;
   className?: string;
@@ -308,7 +309,7 @@ export function Waveform({
                 ? "text-translate"
                 : tone === "dim"
                 ? "text-faint"
-                : "text-accent",
+                : "text-armed",
         className,
       )}
     />

@@ -28,7 +28,7 @@ import {
 import { resolveInjectionTarget } from "@/lib/streaming";
 import { effectiveServerUrl } from "@/lib/backends";
 import { IS_WINDOWS } from "@/lib/platform";
-import { applyTheme, setAccentHue, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
+import { applyTheme, setAccentHue, setAccentMotion, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
 import type { AppRule, GeneralSettings, PipelineFetch, ThemeName } from "@/lib/types";
 
 // Client-side ceilings on the two server-supplied lists this window renders. Both arrive as
@@ -130,6 +130,7 @@ export default function QuickAdd() {
   const themeRef = useRef<ThemeName>("auto");
   // Track live OS scheme flips while on "auto" — this window is prewarmed/long-lived;
   // refresh() re-applies the setting itself on every summon.
+  useEffect(() => startAccentDrift(), []);
   useEffect(() => watchSystemTheme(() => themeRef.current), []);
   // Generation guards so an out-of-order async resolution can't apply stale state (mirrors
   // Dictionary's selectedIdRef / Transcribe's runId). `loadGen` covers refresh()'s fetches
@@ -186,6 +187,7 @@ export default function QuickAdd() {
       if (!cfg) return;
       themeRef.current = cfg.settings.theme;
       setAccentHue(cfg.settings.accentHue ?? DEFAULT_ACCENT_HUE);
+      setAccentMotion(cfg.settings.accentMotion);
       applyTheme(cfg.settings.theme);
       generalRef.current = cfg.settings.general;
       appRulesRef.current = normalizedAppRules(cfg.appRules);
@@ -204,6 +206,7 @@ export default function QuickAdd() {
       if (cfg) {
         themeRef.current = cfg.settings.theme;
         setAccentHue(cfg.settings.accentHue ?? DEFAULT_ACCENT_HUE);
+        setAccentMotion(cfg.settings.accentMotion);
         applyTheme(cfg.settings.theme);
         generalRef.current = cfg.settings.general;
         appRulesRef.current = normalizedAppRules(cfg.appRules);

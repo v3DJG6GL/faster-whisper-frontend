@@ -209,6 +209,7 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     theme: state.settings.theme,
     // …and the Signal colour, derived per window (theme.ts) — the chip cannot read the store.
     accentHue: state.settings.accentHue,
+    accentMotion: state.settings.accentMotion,
     // Overlay-chip behaviour (persistent dock / edge-peek / quick-launch). The ?? fallbacks
     // mirror the store defaults (hydrate fills missing fields, so they're belt-and-braces).
     persistentDock: rec.persistentDock ?? true,

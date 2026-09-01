@@ -12,6 +12,7 @@ import type {
   RecordingSettings,
   ThemeName,
   TranscribeSettings,
+  AccentMotion,
 } from "./types";
 
 /** The `general` category: settings.theme + the portable general fields.
@@ -28,6 +29,8 @@ export interface SyncGeneral {
   theme?: ThemeName;
   /** Signal colour hue, 0–360. Absent in blobs written before it existed (2026-09-02). */
   accentHue?: number;
+  /** Signal-colour motion. Absent in blobs written before it existed (2026-09-02). */
+  accentMotion?: AccentMotion;
   startMinimized?: boolean;
   /** Absent in blobs/exports written before it became syncable (2026-07-13). */
   openAtLogin?: boolean;

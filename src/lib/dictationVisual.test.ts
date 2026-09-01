@@ -25,7 +25,7 @@ const STATUSES: DictationStatus[] = [
   "error",
 ];
 
-const TONES: DictationTone[] = ["faint", "accent", "live", "dim", "rec", "think", "translate"];
+const TONES: DictationTone[] = ["faint", "armed", "live", "dim", "rec", "think", "translate"];
 
 /** Pull the keys out of a `const NAME: Record<DictationTone, string> = { … }` literal. */
 function mapKeys(name: string): string[] {
@@ -66,7 +66,7 @@ describe("dictationVisual", () => {
 
   it("splits listening on `speaking`", () => {
     expect(dictationVisual("listening", true).tone).toBe("live");
-    expect(dictationVisual("listening", false).tone).toBe("accent");
+    expect(dictationVisual("listening", false).tone).toBe("armed");
   });
 
   it("renders idle hollow and everything else filled", () => {
@@ -138,6 +138,11 @@ describe("the chip's tone maps", () => {
 });
 
 describe("Home hero follows the tone, not only the state", () => {
+  it("paints the fixed armed amber, not the accent", () => {
+    // The Signal colour may be any hue and may drift; the armed state must not follow it.
+    expect(/vis\.state === "armed"[\s\S]{0,400}bg-armed/.test(homeSrc)).toBe(true);
+    expect(/vis\.state === "armed"[\s\S]{0,400}bg-accent/.test(homeSrc)).toBe(false);
+  });
   it("paints the translate tone", () => {
     // `dictationVisual("translating")` is state "processing" + tone "translate"; the
     // waveform, sidebar dot and chip all use the tone, so the hero fill must too.

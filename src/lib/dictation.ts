@@ -158,6 +158,7 @@ export function dictate(profileId: string, action: TriggerAction): void {
             when: "after",
             theme: useApp.getState().settings.theme,
             accentHue: useApp.getState().settings.accentHue,
+            accentMotion: useApp.getState().settings.accentMotion,
             allowed: ownProp(useApp.getState().caps, backend.id)?.translation_languages ?? undefined,
           }).then((pick) => {
             if (pick.kind === "picked") rememberTranslationTargets(pick.targets);
@@ -216,6 +217,7 @@ async function startWithPickedTargets(
       when: "before",
       theme: s.settings.theme,
       accentHue: s.settings.accentHue,
+      accentMotion: s.settings.accentMotion,
       allowed: ownProp(s.caps, backend.id)?.translation_languages ?? undefined,
     });
     if (pick.kind === "aborted") {

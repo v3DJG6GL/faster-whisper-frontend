@@ -150,7 +150,10 @@ export default function Home() {
           ? "bg-translate text-white" // the T2T stage's own tone — the waveform, sidebar dot and chip all show it
           : "bg-think text-white"
         : vis.state === "armed"
-          ? "bg-accent text-accent-ink"
+          ? // The fixed armed amber (--c-armed), not the accent: the Signal colour may be any hue
+            // and may drift. Armed is always amber in both themes, so its ink is a constant too
+            // (the same dark ink app.css pairs with the stock amber accent).
+            "bg-armed text-[#1a1207]"
           : "bg-surface-2 text-dim";
   const waveTone = vis.tone === "faint" ? "dim" : vis.tone;
   // Mirror the chip (Overlay working = processing || warming): vis.state is "processing" for

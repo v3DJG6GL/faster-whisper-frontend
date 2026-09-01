@@ -46,9 +46,8 @@ export interface ExportOptions {
  *  reserved for the live-recording pulse. Shared with the speaker chips on
  *  the Transcribe screen.
  *
- *  These stay the stock amber/teal hexes even when the Signal colour
- *  (settings.accentHue) re-tints --spk-1/--spk-6 on screen: an export is a
- *  document, not chrome, and must read the same on every machine it lands on. */
+ *  The same hexes app.css fixes for --spk-1…8: the Signal colour tints chrome
+ *  only and never the speaker palette, so screen and export agree. */
 export const DEFAULT_SPEAKER_COLORS = [
   "#ff9e2c", // amber (accent)
   "#6faed9", // sky (think)

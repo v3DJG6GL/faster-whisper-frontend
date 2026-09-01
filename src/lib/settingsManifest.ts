@@ -35,7 +35,7 @@ export type FieldRef =
   | { slice: "recording"; key: keyof RecordingSettings }
   | { slice: "transcribe"; key: keyof TranscribeSettings }
   | { slice: "logging"; key: keyof LoggingSettings }
-  | { slice: "settings"; key: "theme" | "accentHue" | "homeProfileId" | "quickAddList" };
+  | { slice: "settings"; key: "theme" | "accentHue" | "accentMotion" | "homeProfileId" | "quickAddList" };
 
 /** The Sync tab's group cards, in display order. */
 export const SYNC_GROUPS = [
@@ -128,6 +128,8 @@ export const MANIFEST = [
     fields: [{ slice: "settings", key: "theme" }] },
   { id: "accentHue", label: "Signal colour", group: "general", category: "general",
     fields: [{ slice: "settings", key: "accentHue" }] },
+  { id: "accentMotion", label: "Motion", group: "general", category: "general",
+    fields: [{ slice: "settings", key: "accentMotion" }] },
   { id: "openAtLogin", label: "Launch at login", group: "general", category: "general",
     fields: [g("openAtLogin")] },
   { id: "startMinimized", label: "Start minimized to tray", group: "general", category: "general",
@@ -423,6 +425,7 @@ export const LOGGING_COVERAGE = {
 export const TOP_COVERAGE = {
   theme: "theme",
   accentHue: "accentHue",
+  accentMotion: "accentMotion",
   microphoneId: LOCAL, // a device id — meaningless on another machine
   homeProfileId: "homeProfile",
   quickAddList: "pinnedMappings",

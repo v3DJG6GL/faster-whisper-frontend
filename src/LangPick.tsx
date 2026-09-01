@@ -25,10 +25,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { abortLangPick, commitLangPick } from "@/lib/api";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
-import { applyTheme, setAccentHue, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
+import { applyTheme, setAccentHue, setAccentMotion, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
 import { safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
-import type { ThemeName } from "@/lib/types";
+import type { AccentMotion, ThemeName } from "@/lib/types";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -58,6 +58,8 @@ interface Seed {
   theme?: ThemeName;
   /** Signal colour hue, so the accent-tinted picks match the app. */
   accentHue?: number;
+  /** …and its motion: the picker runs the same clock arithmetic, so it drifts in step. */
+  accentMotion?: AccentMotion;
 }
 
 export default function LangPick() {
@@ -72,6 +74,7 @@ export default function LangPick() {
   const themeRef = useRef<ThemeName>("auto");
 
   useEffect(() => watchSystemTheme(() => themeRef.current), []);
+  useEffect(() => startAccentDrift(), []);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -84,6 +87,7 @@ export default function LangPick() {
           setSeed(s);
           themeRef.current = s.theme ?? "auto";
           setAccentHue(typeof s.accentHue === "number" ? s.accentHue : DEFAULT_ACCENT_HUE);
+          setAccentMotion(s.accentMotion);
           applyTheme(s.theme ?? "auto");
           // Preselect the Profile's own targets: Enter with no keystrokes must reproduce
           // what would have happened without the picker. Anything else makes the prompt a

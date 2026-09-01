@@ -79,6 +79,7 @@ import type {
 } from "./syncTypes";
 import type { SyncSubSettings } from "./types";
 import { MANIFEST, completeGates } from "./settingsManifest";
+import { isValidAccentMotion } from "./theme";
 import {
   APP_RULE_OVERRIDE_FIELDS,
   APP_RULE_PASTE_FIELDS,
@@ -300,6 +301,7 @@ function extractGeneral(settings: AppSettings): SyncGeneral {
   return {
     theme: settings.theme,
     accentHue: settings.accentHue,
+    accentMotion: settings.accentMotion,
     startMinimized: g.startMinimized,
     insertTiming: g.insertTiming,
     typeAsISpeak: g.typeAsISpeak,
@@ -1337,7 +1339,7 @@ export async function applyBlob(
     // applied to the two containers it never reached, on a pull that runs unattended at startup
     // and on every window focus.
     if (cats.general && isPlainObject(blob.general)) {
-      const { theme, accentHue, ...incoming } = blob.general as SyncGeneral;
+      const { theme, accentHue, accentMotion, ...incoming } = blob.general as SyncGeneral;
       // Machine-local fields are excluded from SyncGeneral by TYPE only, which stops us sending
       // them but not a peer (or a hand-authored import file) from sending them to us — and the
       // import dialog promises the user "evdev is never imported". Enforce it on the way in.
@@ -1364,6 +1366,12 @@ export async function applyBlob(
           typeof accentHue === "number" && Number.isFinite(accentHue) && accentHue >= 0 && accentHue <= 360
             ? accentHue
             : nextSettings.accentHue,
+        // Same shape-check as the hue: a period of 0 or 30 s…7 d, a known range, an arc hue
+        // in [0, 360] if present — else keep the current one (the engine would run garbage).
+        accentMotion: isValidAccentMotion(accentMotion)
+          ? { period: accentMotion.period, range: accentMotion.range,
+              ...(accentMotion.arcHue !== undefined ? { arcHue: accentMotion.arcHue } : {}) }
+          : nextSettings.accentMotion,
         general: {
           ...nextSettings.general,
           ...typedLike(general as Partial<typeof nextSettings.general>, nextSettings.general),

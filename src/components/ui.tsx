@@ -948,6 +948,7 @@ const DOT_BG: Record<string, string> = {
   idle: "bg-faint",
   faint: "bg-faint",
   accent: "bg-accent",
+  armed: "bg-armed",
   live: "bg-live",
   dim: "bg-dim",
   think: "bg-think",
@@ -966,7 +967,7 @@ export function StatusDot({
   // The dictation half of this union IS DictationTone — the sidebar hands `vis.tone`
   // straight through, so a tone added there must exist here (and in DOT_BG) or the dot
   // renders unstyled.
-  tone?: "ok" | "warn" | "rec" | "idle" | "faint" | "accent" | "live" | "dim" | "think" | "translate";
+  tone?: "ok" | "warn" | "rec" | "idle" | "faint" | "accent" | "armed" | "live" | "dim" | "think" | "translate";
   pulse?: boolean;
   filled?: boolean;
   title?: string;

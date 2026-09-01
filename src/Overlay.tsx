@@ -12,8 +12,8 @@ import {
   CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipExpansion, chipTuckHold, currentPhase,
   phaseClock, phaseElapsedMs,
 } from "@/lib/chipRules";
-import { applyTheme, setAccentHue, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
-import type { DictationPhase, DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
+import { applyTheme, setAccentHue, setAccentMotion, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
+import type { AccentMotion, DictationPhase, DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
 
 interface ChipState {
   status: DictationStatus;
@@ -33,6 +33,8 @@ interface ChipState {
   theme: ThemeName;
   /** Signal colour hue (0–360); absent = the amber default. */
   accentHue?: number;
+  /** Signal-colour motion; absent = Still. The chip runs the same clock arithmetic. */
+  accentMotion?: AccentMotion;
   // Active-Profile indicator (optional; absent when the feature is off / no Profile).
   profileTag?: string;
   // When true, the Profile tag is revealed only while the chip is hover-revealed (else always).
@@ -92,7 +94,7 @@ const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 // its own edge-tuck (peeked) / standby-dock presentation on top — see dotColorClass.
 const TONE_BG: Record<DictationTone, string> = {
   faint: "bg-faint",
-  accent: "bg-accent",
+  armed: "bg-armed",
   live: "bg-live",
   dim: "bg-dim",
   rec: "bg-rec",
@@ -106,7 +108,7 @@ const TONE_BG: Record<DictationTone, string> = {
 // off `vis.tone`, the two cannot disagree. Alphas match the old chain's.
 const TONE_GLOW: Record<DictationTone, string> = {
   faint: "none",
-  accent: "0 0 12px rgba(255,158,44,0.6)",
+  armed: "0 0 12px rgba(255,158,44,0.6)", // --c-armed amber: fixed, so the literal alpha halo stays truthful
   live: "0 0 12px rgba(54,208,122,0.5)",
   dim: "0 0 10px rgba(168,159,147,0.5)",
   rec: "0 0 10px rgba(255,92,70,0.5)",
@@ -196,6 +198,7 @@ export default function Overlay() {
         const registered = listen<ChipState>("dictation://update", (e) => {
           const theme = e.payload.theme ?? "auto";
           setAccentHue(e.payload.accentHue ?? DEFAULT_ACCENT_HUE);
+          setAccentMotion(e.payload.accentMotion);
           // Follow the app's theme (the chip is a separate webview); "auto" resolves
           // against this webview's own prefers-color-scheme — same OS, same answer.
           applyTheme(theme);
@@ -255,6 +258,8 @@ export default function Overlay() {
 
   // Track live OS scheme flips while the app theme is "auto" — the chip is long-lived
   // and would otherwise only pick the change up on its next dictation://update.
+  // The chip's own drift clock: same wall-clock arithmetic as the main window, no message needed.
+  useEffect(() => startAccentDrift(), []);
   useEffect(() => watchSystemTheme(() => state.theme), [state.theme]);
 
   // Standalone demo animation (browser preview only).
@@ -796,10 +801,10 @@ export default function Overlay() {
       : peeked
         ? standby
           ? "bg-dim"
-          : "bg-accent"
+          : "bg-armed" // armed: the fixed amber state token, never the (possibly drifting) accent
         : standby
           ? "border border-faint bg-transparent"
-          : "bg-accent";
+          : "bg-armed";
   // Same gate as dotColorClass above, deliberately: whenever the fill comes from the
   // tone map, so does the glow.
   const dotGlow =
@@ -829,7 +834,7 @@ export default function Overlay() {
       : speaking
         ? "live"
         : state.status === "listening"
-          ? "accent"
+          ? "armed"
           : "dim";
 
   // The ✕'s meaning depends on the stage: a cancellable translate SKIPS the translation

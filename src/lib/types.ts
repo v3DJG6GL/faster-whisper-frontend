@@ -202,6 +202,13 @@ export type InsertTiming = "off" | "stop" | "live";
 export type IndicatorPosition = "top" | "bottom" | "off";
 /** "auto" follows the OS scheme (prefers-color-scheme); see lib/theme.ts. */
 export type ThemeName = "dark" | "light" | "auto";
+
+/** See AppSettings.accentMotion; the engine's own copy lives in theme.ts. */
+export interface AccentMotion {
+  period: number;
+  range: "wheel" | "arc";
+  arcHue?: number;
+}
 /** Which usage figure the chip's optional readout shows (today's value). */
 export type OverlayStatsMetric = "words" | "audio" | "both";
 /** A navigable app screen, referenced by the sidebar, the overlay quick-launch,
@@ -428,6 +435,10 @@ export interface AppSettings {
    *  chroma are fixed per theme (theme.ts derives the tokens). Absent = 65, the
    *  hand-tuned amber in app.css. */
   accentHue?: number;
+  /** Motion of the Signal colour: `period` seconds per turn (0 = Still), around the
+   *  whole wheel or breathing along the short arc to `arcHue`. Every window derives the
+   *  hue from the wall clock (theme.ts), so nothing is synchronised. Absent = Still. */
+  accentMotion?: AccentMotion;
   microphoneId: string | null;
   transcribe?: TranscribeSettings; // Transcribe-screen defaults (per-run options)
   homeProfileId?: string | null; // which Profile the Home button targets (null = first enabled)

@@ -23,6 +23,9 @@
   --color-accent-soft: var(--c-accent-soft);
   --color-rec: var(--c-rec);
   --color-live: var(--c-live);
+  /* The armed ("ready to speak") state. It used to borrow the accent; since the Signal
+     colour can be anything — and can drift with time — state colours are fixed. */
+  --color-armed: var(--c-armed);
   --color-ok: var(--c-ok);
   --color-warn: var(--c-warn);
   --color-think: var(--c-think);
@@ -45,11 +48,14 @@
   --radius-pill: 999px;
 }
 
-/* The accent family (--c-accent, -ink, -soft, the three glow stops), --c-translate and
-   the two speaker tones that ARE those hues (--spk-1, --spk-6) are hand-tuned here for
-   the stock amber. For any other Signal colour, src/lib/theme.ts derives the same set
-   in OKLCH per resolved theme and stamps it inline on <html>, which wins over both
-   blocks below; the default hue stamps nothing, so these values apply untouched. */
+/* The accent family (--c-accent, -ink, -soft, the three glow stops) and the dictation
+   chart series (--c-chart-dict) are hand-tuned here for the stock amber. For any other
+   Signal colour — still or drifting (src/lib/theme.ts's clock-driven drift) — theme.ts
+   derives the same set in OKLCH per resolved theme and stamps it inline on <html>, which
+   wins over both blocks below; the default hue stamps nothing, so these values apply
+   untouched. Everything that carries STATE is a fixed token the accent never touches:
+   --c-armed, --c-live, --c-think, --c-translate, --c-rec, the stage hues, the speaker
+   palette. The accent tints chrome only. */
 :root,
 [data-theme="dark"] {
   --c-bg: #0e0d0b;
@@ -66,6 +72,7 @@
   --c-accent-soft: rgba(255, 158, 44, 0.14);
   --c-rec: #ff5c46;
   --c-live: #36d07a; /* green: actively-speaking (≈9.6:1 on --c-bg) */
+  --c-armed: #ff9e2c; /* amber: armed but silent ("ready to speak"). Fixed — it no longer borrows the accent, which may be any hue and may drift */
   --c-ok: #93b76f;
   --c-warn: #e0a33a;
   --c-think: #6faed9; /* cool steel blue: machine working (finalizing/inserting/warm-up) — the only cool hue, so it can't be read as off-grey, armed-amber, live-green, or error-red */
@@ -93,7 +100,7 @@
      matched brightness, indexed — exports resolve the same indexes to the
      DEFAULT_SPEAKER_COLORS hexes in transcriptExport.ts. Coral stays
      reserved for the recording pulse. */
-  --spk-1: #ff9e2c; /* amber (accent) */
+  --spk-1: #ff9e2c; /* amber (armed) */
   --spk-2: #6faed9; /* sky (think) */
   --spk-3: #36d07a; /* green (live) */
   --spk-4: #c792ea; /* lilac */
@@ -126,6 +133,7 @@
   --c-accent-soft: rgba(191, 111, 18, 0.12);
   --c-rec: #cf3a22;
   --c-live: #1f9d57; /* green: actively-speaking (darker for light bg) */
+  --c-armed: #bf6f12; /* amber, darkened for cream backgrounds; fixed (see the dark block) */
   --c-ok: #5e8a3c;
   --c-warn: #b9791f;
   --c-think: #33719f; /* cool steel blue: machine working (darker for light bg) */

@@ -33,6 +33,7 @@ export const DEFAULT_SYNC: SyncSettings = {
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: "auto", // follow the OS scheme until the user picks a side (Sidebar toggle)
   accentHue: 65, // the stock amber; theme.ts stamps no overrides for this value
+  accentMotion: { period: 0, range: "wheel" }, // Still: the Signal colour stays where it was set
   microphoneId: null,
   homeProfileId: null,
   quickAddList: null,
