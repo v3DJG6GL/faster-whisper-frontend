@@ -1316,6 +1316,8 @@ export function TranscriptViewer({
    *  GStreamer plugins — every retained YouTube audio) — decode to WAV in
    *  Rust and play that; (3) only when the WAV blob errors too is playback
    *  declared broken. */
+  /** `read_media_file`'s over-cap refusal (its exact wording is `MEDIA_TOO_LARGE` in Rust). */
+  const isTooLargeToBuffer = (e: unknown) => String(e).includes("too large to buffer");
   const onAudioError = (reason?: string) => {
     if (blobTriedRef.current) {
       if (wavTriedRef.current) {
@@ -1377,6 +1379,10 @@ export function TranscriptViewer({
       readMediaFile(mediaPath)
         .then((buf) => asBlob(buf, mediaPath))
         .catch((e) => {
+          // Rust refuses to buffer a file past its IPC cap — that is not a missing
+          // copy: re-enter with the blob stage marked tried so it plays from the
+          // decoded WAV through the asset protocol instead.
+          if (isTooLargeToBuffer(e)) return onAudioError(String(e));
           setAudioBroken(true);
           setBrokenWhy("gone");
           setBrokenDetail(`could not read the stored copy: ${String(e)}`);
@@ -1385,7 +1391,8 @@ export function TranscriptViewer({
     }
     readMediaFile(path)
       .then((buf) => asBlob(buf, path))
-      .catch(() => {
+      .catch((e) => {
+        if (isTooLargeToBuffer(e)) return onAudioError(String(e));
         // Original unreadable (moved/deleted) — fall back to the app's copy.
         if (!mediaPath) {
           setAudioBroken(true);
@@ -1397,7 +1404,8 @@ export function TranscriptViewer({
             asBlob(buf, mediaPath);
             setAudioNote("copy");
           })
-          .catch(() => {
+          .catch((e2) => {
+            if (isTooLargeToBuffer(e2)) return onAudioError(String(e2));
             setAudioBroken(true);
             setBrokenWhy("gone");
           });

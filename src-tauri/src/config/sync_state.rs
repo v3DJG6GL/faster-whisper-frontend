@@ -18,12 +18,14 @@ fn sync_state_path(dir: &Path) -> PathBuf {
     dir.join("sync-state.json")
 }
 
-/// Load the sync state, or `None` when absent/unparseable. An unparseable file
-/// is treated as "no state": the engine then re-pulls and rebuilds the snapshot
-/// — safe (worst case one spurious conflict prompt), so no .bak dance here.
+/// Load the sync state, or `None` when absent/unparseable/not an object. An unparseable
+/// (or non-object — `[]`, `null`, a bare scalar) file is treated as "no state": the engine
+/// then re-pulls and rebuilds the snapshot — safe (worst case one spurious conflict
+/// prompt), so no .bak dance here. The object check matters for `device_info`: a non-object
+/// document could not carry the device id, so a fresh one was minted on EVERY call.
 pub fn load(dir: &Path) -> Option<serde_json::Value> {
     let text = std::fs::read_to_string(sync_state_path(dir)).ok()?;
-    serde_json::from_str(&text).ok()
+    serde_json::from_str::<serde_json::Value>(&text).ok().filter(|v| v.is_object())
 }
 
 /// Persist atomically (tmp + rename), mirroring `config::save`.
@@ -32,10 +34,12 @@ pub fn save(dir: &Path, state: &serde_json::Value) -> anyhow::Result<()> {
     let path = sync_state_path(dir);
     let tmp = path.with_extension("json.tmp");
     let text = serde_json::to_string(state)?;
-    super::write_private(&tmp, &text)?;
-    // Don't leave the tmp behind when the rename fails (a Windows AV/indexer lock — the exact
-    // condition the config reader already retries for — a read-only or full volume, a cross-device
-    // app-data dir). The settings-export sibling already cleans up on this path.
+    // Don't leave the tmp behind when the write OR the rename fails — see `config::save`. The
+    // tmp here holds a partial copy of the whole merge-base snapshot.
+    if let Err(e) = super::write_private(&tmp, &text) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     if let Err(e) = std::fs::rename(&tmp, &path) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.into());
@@ -103,5 +107,24 @@ pub fn device_info(dir: &Path) -> DeviceInfo {
         } else {
             "linux".into()
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_non_object_state_file_does_not_mint_a_new_device_id_every_call() {
+        let dir = std::env::temp_dir().join(format!("fwf-syncstate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(sync_state_path(&dir), "[]").unwrap();
+        let a = device_info(&dir).device_id;
+        let b = device_info(&dir).device_id;
+        assert_eq!(a, b);
+        let saved = load(&dir).expect("the state is an object again");
+        assert_eq!(saved["deviceId"], a);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

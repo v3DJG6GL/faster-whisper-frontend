@@ -96,6 +96,19 @@ describe("dictation teardowns cancel the in-flight translate", () => {
     });
   }
 
+  it("only the user's cancel aborts an in-flight injection", () => {
+    // cancelLive passes the user-initiated flag so Rust aborts a transcript being typed even
+    // after the session is gone (stop-timing); the closed handler's idempotent release must
+    // NOT, or the end-of-session insert queued moments later would be aborted.
+    const cancelLive = mask(topLevelFunctions(streamingSrc).cancelLive);
+    expect(cancelLive).toContain("cancelRecord(true)");
+    expect(cancelLive).toContain("cancelStream(true)");
+    const closedRelease = streamingSrc.match(/\(activeEndpoint === "batch" \? cancelRecord\(([^)]*)\) : cancelStream\(([^)]*)\)\)/);
+    expect(closedRelease, "the closed-handler release moved — update cancelAudit.test.ts").not.toBeNull();
+    expect(closedRelease![1]).toBe("");
+    expect(closedRelease![2]).toBe("");
+  });
+
   it("the SUCCESS settle deliberately does not cancel", () => {
     // settleIdle runs after the inject queue drained, so every translate has
     // already resolved — cancelling there would abort a finished (or a NEXT

@@ -829,12 +829,17 @@ export default function Settings() {
             {/* Moved from Recording & history, which mixed audio RETENTION with controls
                 that only matter while a session is live. */}
             <SectionLabel className="mb-1 mt-7">While recording</SectionLabel>
-            <SettingRow
-              title={SETTING.muteSystemAudio.label}
-              desc="Mute system audio for the duration of a dictation."
-            >
-              <Toggle checked={s.recording.muteSystemAudio} onChange={(v) => updateRecording({ muteSystemAudio: v })} />
-            </SettingRow>
+            {/* PulseAudio/PipeWire-backed — `apply_mute` is a real no-op off Linux (macOS has
+                neither pactl nor wpctl), so don't show a dead switch there. The setting itself
+                still syncs; only the row is gated. */}
+            {IS_LINUX && (
+              <SettingRow
+                title={SETTING.muteSystemAudio.label}
+                desc="Mute other apps' audio for the duration of a dictation (PulseAudio/PipeWire desktops)."
+              >
+                <Toggle checked={s.recording.muteSystemAudio} onChange={(v) => updateRecording({ muteSystemAudio: v })} />
+              </SettingRow>
+            )}
             <SettingRow
               title={SETTING.handsFreeAutoStop.label}
               desc="End a hands-free session after this long with no speech, so it can't run for hours. Set to Never to keep it open until you stop it yourself. Push-to-talk ends on key release, so this doesn't apply to it."

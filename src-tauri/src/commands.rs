@@ -112,6 +112,13 @@ fn move_dir_contents(
         }
         let Some(name) = src.file_name() else { continue };
         let dest = to.join(name);
+        // Never clobber (the layout migration's rule, applied to the relocation too): a base
+        // that already holds a same-named file — a second install pointed at one synced folder,
+        // a re-run after a partial move — keeps it, and the record still points at the source.
+        if dest.exists() {
+            tracing::warn!("[audio] not moving {} — {} already exists", src.display(), dest.display());
+            continue;
+        }
         move_file(&src, &dest).map_err(|e| format!("could not move {}: {e}", src.display()))?;
         map.push((
             src.to_string_lossy().into_owned(),
@@ -226,8 +233,13 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
     // full read+parse of every record, so NOT every launch: after a migration that
     // moved something, and once per install (the stamp); `move_audio_base` heals
     // directly through its own rewrite.
+    // This runs synchronously inside setup(), before the event loop, so a fresh install with
+    // no records skips the scan entirely and only stamps; the expensive read+parse is reserved
+    // for a base that actually has history to heal.
     let stamp = base.join(".heal-v1");
-    if !map.is_empty() || !stamp.exists() {
+    if !stamp.exists() && map.is_empty() && !crate::transcripts::has_any_records(app) {
+        let _ = std::fs::write(&stamp, b"");
+    } else if !map.is_empty() || !stamp.exists() {
         crate::transcripts::heal_media_paths(app, &base);
         let _ = std::fs::write(&stamp, b"");
     }
@@ -274,6 +286,15 @@ pub async fn move_audio_base(
     .map_err(|e| e.to_string())?
 }
 
+/// Does one of OUR real windows hold keyboard focus? The click-through "overlay" chip never
+/// does, so it is excluded. Every sink guard in this file asks this before typing or pasting —
+/// keys sent while our own window is focused fire buttons/shortcuts in the app itself.
+fn own_window_focused(app: &AppHandle) -> bool {
+    app.webview_windows()
+        .iter()
+        .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+}
+
 /// Resolve an API key: an explicit (just-typed) key wins; otherwise look it up in
 /// the OS keyring by Backend id.
 fn resolve_key(explicit: Option<String>, backend_id: Option<String>) -> Option<String> {
@@ -293,6 +314,17 @@ fn resolve_key(explicit: Option<String>, backend_id: Option<String>) -> Option<S
         );
     }
     key
+}
+
+/// `resolve_key` on the blocking pool. A keyring read can BLOCK indefinitely (a locked KWallet /
+/// Secret Service parks the request behind a password prompt), and a hard failure is not memoized,
+/// so a recurring caller — the 30 s usage poll, per backend — otherwise parks a tokio runtime
+/// worker per call and can starve the runtime an in-flight transcription's polling shares.
+async fn resolve_key_async(explicit: Option<String>, backend_id: Option<String>) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || resolve_key(explicit, backend_id))
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Frontend-facing config load: the config plus whether Rust had to RECOVER it (backed up a
@@ -729,7 +761,7 @@ pub async fn get_usage_stats(
     days: Option<i64>,
     bucket: Option<String>,
 ) -> Option<transport::UsageStats> {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::discovery::get_usage_stats(
         &server_url,
         key.as_deref(),
@@ -751,7 +783,7 @@ pub async fn sync_pull(
     backend_id: Option<String>,
     api_key: Option<String>,
 ) -> transport::sync::SyncPull {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::sync::pull(&server_url, key.as_deref()).await
 }
 
@@ -766,7 +798,7 @@ pub async fn sync_push(
     base_version: i64,
     device: String,
 ) -> transport::sync::SyncPush {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::sync::push(&server_url, key.as_deref(), blob, base_version, &device).await
 }
 
@@ -777,7 +809,7 @@ pub async fn sync_delete(
     backend_id: Option<String>,
     api_key: Option<String>,
 ) -> transport::sync::SyncDelete {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::sync::delete(&server_url, key.as_deref()).await
 }
 
@@ -857,12 +889,18 @@ pub fn export_settings_file(path: String, envelope: serde_json::Value) -> Result
 /// webview falls back to this and plays from a blob URL. Raw IPC response
 /// (no base64/JSON round-trip); capped so a mispicked multi-GB video can't
 /// balloon the webview.
+/// The exact refusal text the viewer matches on to fall back to the decode path.
+pub const MEDIA_TOO_LARGE: &str = "too large to buffer";
+
 #[tauri::command]
 pub async fn read_media_file(path: String) -> Result<tauri::ipc::Response, String> {
-    const MAX_MEDIA_BYTES: u64 = 512 * 1024 * 1024;
+    // Below the ~240 MB at which handing the bytes over IPC froze the web process (see
+    // `decode_media_file`), with headroom for the JS-side Blob copy. The viewer routes an
+    // over-cap refusal to the decode path instead of calling the media broken.
+    const MAX_MEDIA_BYTES: u64 = 192 * 1024 * 1024;
     let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     if meta.len() > MAX_MEDIA_BYTES {
-        return Err("file too large to buffer for playback".into());
+        return Err(MEDIA_TOO_LARGE.into());
     }
     let bytes = tauri::async_runtime::spawn_blocking(move || std::fs::read(&path))
         .await
@@ -1113,7 +1151,9 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
             }
         }
     }
-    for key in ["general", "recording", "chip", "dictionary", "logging"] {
+    // Every scalar wire category — keep in step with `SCALAR_CATS` in src/lib/syncGates.ts. A
+    // category missing here passed validation and then vanished silently at apply time.
+    for key in ["general", "recording", "chip", "transcription", "fileTranscriptions", "dictionary", "logging"] {
         if let Some(v) = categories.get(key) {
             if !v.is_null() && !v.is_object() {
                 return Err(format!("The file's {key} settings are invalid."));
@@ -1357,7 +1397,7 @@ pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
 /// teardown the frontend's `closed` handler calls to release a parked session (capture-thread death /
 /// server-initiated close that never went through stop_stream): a no-op when already taken.
 #[tauri::command]
-pub async fn cancel_stream(app: AppHandle) -> Result<(), String> {
+pub async fn cancel_stream(app: AppHandle, user_initiated: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<StreamState>();
         let sess = state.0.lock().map_err(|_| "stream state poisoned".to_string())?.take();
@@ -1367,12 +1407,15 @@ pub async fn cancel_stream(app: AppHandle) -> Result<(), String> {
         // time, so without this a cancel only stopped FUTURE inserts while the current one kept
         // going into whatever window had focus.
         //
-        // ONLY when a session was actually taken. The frontend fire-and-forgets a cancel on every
-        // normal close, and that no-op call used to bump the counter too — harmless only because
-        // the injection captured its epoch so late that the bump always landed first. Now that the
-        // capture is at the top of `inject_text`, an unconditional bump here would abort the
-        // legitimate end-of-session insert queued moments later.
-        if had_session {
+        // When a session was actually taken, OR the user pressed Cancel. The frontend
+        // fire-and-forgets a (non-user) cancel on every normal close, and that no-op call used to
+        // bump the counter too — harmless only because the injection captured its epoch so late
+        // that the bump always landed first. Now that the capture is at the top of `inject_text`,
+        // an unconditional bump here would abort the legitimate end-of-session insert queued
+        // moments later. But in stop-timing mode the session is ALREADY gone while the transcript
+        // is being typed, so `had_session` alone made the chip's ✕ a no-op during "inserting…" —
+        // the one phase where a cancel matters most. `user_initiated` tells the two apart.
+        if had_session || user_initiated {
             crate::inject::cancel_injection();
         }
         session::retire_active_epoch(); // discarded session (+ any detached drain) must never emit again
@@ -1402,6 +1445,7 @@ pub async fn start_record(
     recordings_dir: Option<String>,
     trim_silence: bool,
     mute_system: bool,
+    standard: bool,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let key = resolve_key(api_key, backend_id);
@@ -1427,6 +1471,7 @@ pub async fn start_record(
                 save_dir,
                 trim_silence,
                 mute_system,
+                standard,
             },
         )?;
         *guard = Some(sess);
@@ -1465,7 +1510,7 @@ pub async fn stop_record(app: AppHandle) -> Result<(), String> {
 /// transcribe POST — a cancel should discard the clip, not fire a wasted server transcription. Also
 /// the idempotent teardown the `closed` handler calls to release a parked session on capture death.
 #[tauri::command]
-pub async fn cancel_record(app: AppHandle) -> Result<(), String> {
+pub async fn cancel_record(app: AppHandle, user_initiated: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<RecordState>();
         // The take AND the no-live-session decision happen under ONE lock. Reading the state and
@@ -1498,9 +1543,9 @@ pub async fn cancel_record(app: AppHandle) -> Result<(), String> {
         }
         // …and abandon any transcript still being typed out. The typing paths emit one key at a
         // time, so without this a cancel only stopped FUTURE inserts while the current one kept
-        // going into whatever window had focus. Gated on a real session for the same reason as
-        // the streaming twin — see `cancel_stream`.
-        if had_session {
+        // going into whatever window had focus. Gated on a real session OR a user-initiated
+        // cancel, for the reasons the streaming twin gives — see `cancel_stream`.
+        if had_session || user_initiated {
             crate::inject::cancel_injection();
         }
         session::retire_active_epoch(); // discarded session (+ any in-flight transcribe POST) must never emit again
@@ -1909,10 +1954,7 @@ pub async fn get_focused_app(
     // knows its own keyboard focus. Dictation won't type into our own UI, so surface that
     // truthfully instead of letting AT-SPI report whatever was focused before us. The
     // click-through "overlay" chip never holds focus; exclude it.
-    if app
-        .webview_windows()
-        .iter()
-        .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+    if own_window_focused(&app)
     {
         return Ok(Some(crate::atspi_guard::FocusedApp {
             app_id: "self".into(),
@@ -2198,10 +2240,7 @@ pub async fn inject_text(
     // focused). A Wayland client is always told its own keyboard focus, so this is reliable on KWin —
     // unlike detecting other apps' focused fields. The click-through "overlay" chip never holds
     // focus; exclude it. The transcript still shows in the chip.
-    if app
-        .webview_windows()
-        .iter()
-        .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+    if own_window_focused(&app)
     {
         tracing::info!("[inject] skipped: our own window holds focus");
         return Ok(InjectOutcome { landed: false, diverted: false });
@@ -2210,6 +2249,15 @@ pub async fn inject_text(
     // fire actions in the wrong window — the user pastes it themselves. No modifier gate needed
     // since nothing is typed (the own-window guard above already ran).
     if method == "clipboard" {
+        // Same check as the mid-function divert below, for the same reason: a cancel landing
+        // between the epoch capture and this write (the own-window focus IPC above is an
+        // event-loop round trip) must not install the transcript over the user's clipboard.
+        // `cancel_wants_recovery` stays in the condition — an error abort wants its text kept.
+        if crate::inject::injection_cancelled(epoch) && !crate::inject::cancel_wants_recovery(epoch)
+        {
+            tracing::info!("[inject] clipboard-only insert cancelled before the write — skipping");
+            return Ok(InjectOutcome { landed: true, diverted: false });
+        }
         if !text.is_empty() {
             // The whole point of the handshake: this arm's `landed: true` used to be a constant,
             // and it is the arm that runs for every phrase when the insert method IS the
@@ -2304,10 +2352,7 @@ pub async fn inject_text(
     // the clipboard-only branch precisely so our own window holding focus can never clobber the
     // user's clipboard for an insert they cannot see land. Skipping is safe — `streaming.ts`
     // leaves `injectedText` un-advanced on a skip, so the text goes out with the next insert.
-    if app
-        .webview_windows()
-        .iter()
-        .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+    if own_window_focused(&app)
     {
         tracing::info!("[inject] skipped at the sink: our own window took focus mid-injection");
         return Ok(InjectOutcome { landed: false, diverted: false });
@@ -2413,12 +2458,7 @@ pub async fn inject_text(
     // (served by a bare `std::thread`, no `AppHandle`) and `inject` (served by the blocking pool)
     // take the same predicate the entry guard above uses.
     let probe_app = app.clone();
-    let own_window_focused = move || {
-        probe_app
-            .webview_windows()
-            .iter()
-            .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
-    };
+    let own_focused_probe = move || own_window_focused(&probe_app);
     let res = if crate::inject::is_wayland() {
         // Each Wayland arm now reports its own `Landed`, like the X11 arm below: the two TYPING
         // arms (bare auto-Enter via the portal, and `direct` via the virtual keyboard) were the
@@ -2438,7 +2478,7 @@ pub async fn inject_text(
             // to the portal keycode path when the protocol is unavailable (e.g. GNOME)
             // or a job fails.
             let vk_probe: std::sync::Arc<dyn Fn() -> bool + Send + Sync> =
-                std::sync::Arc::new(own_window_focused.clone());
+                std::sync::Arc::new(own_focused_probe.clone());
             match crate::virtual_keyboard::type_text(vkbd.inner(), &text, auto_enter, epoch, vk_probe).await {
                 Ok(landed) => {
                     tracing::info!("[inject] typed via virtual keyboard");
@@ -2517,10 +2557,7 @@ pub async fn inject_text(
             // READ), so the caller re-sends and no text is duplicated. This does not strand the
             // held-chord latch — if it had been armed, `method` would already be "clipboard" and
             // this branch is unreachable.
-            if app
-                .webview_windows()
-                .iter()
-                .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+            if own_window_focused(&app)
             {
                 tracing::info!("[inject] skipped at the clipboard write: our own window took focus");
                 // An early `return` here would skip the error-abort recovery block at the end of
@@ -2560,10 +2597,7 @@ pub async fn inject_text(
             // `diverted: true`, not `landed: false`: the transcript IS on the clipboard by now, so
             // that is the truthful answer, and the restore below must be skipped so it stays
             // pasteable.
-            if app
-                .webview_windows()
-                .iter()
-                .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
+            if own_window_focused(&app)
             {
                 tracing::info!("[inject] skipped at the paste chord: our own window took focus");
                 // Re-set through the PERSISTENT owner first. The write above used the plain
@@ -2613,12 +2647,7 @@ pub async fn inject_text(
         // runtime, so the main thread is never waiting on us.
         let probe_app = app.clone();
         tokio::task::spawn_blocking(move || {
-            let own_window_focused = move || {
-                probe_app
-                    .webview_windows()
-                    .iter()
-                    .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
-            };
+            let own_focused_probe = move || own_window_focused(&probe_app);
             crate::inject::inject(
                 &text,
                 &method,
@@ -2627,7 +2656,7 @@ pub async fn inject_text(
                 &paste_shortcut,
                 remote_target,
                 epoch,
-                &own_window_focused,
+                &own_focused_probe,
             )
         })
         .await
@@ -2647,8 +2676,11 @@ pub async fn inject_text(
         // `recovered` is what upgrades `NothingWritten` to `landed: true, diverted: true` below,
         // i.e. the claim "the text IS somewhere the user can reach". Now that the write can say
         // otherwise, that claim follows the write instead of assuming it: on failure the outcome
-        // falls back to plain `NothingWritten`, which is truthful and safe — this arm is reached
-        // only when no key was transmitted.
+        // falls back to plain `NothingWritten`, which is truthful and safe. (This arm is also
+        // reachable after a partial or even complete write — the typing backends report
+        // `Landed::Yes` for a prefix — because `Landed` does not say whether any key went out;
+        // an error abort landing in that window then overwrites the clipboard with text that
+        // was already typed. Closing that needs a "nothing written" variant on `Landed`.)
         match crate::inject::set_clipboard_persistent(&recovery_text) {
             Ok(()) => {
                 tracing::info!(

@@ -588,6 +588,8 @@ pub struct RecordParams {
     /// streaming save path. Affects ONLY the saved file, never what's sent for transcription.
     pub trim_silence: bool,
     pub mute_system: bool,
+    /// The backend is a plain OpenAI-compatible server (shapes the `language` field).
+    pub standard: bool,
 }
 
 pub struct RecordSession {
@@ -820,6 +822,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
         params.prompt.as_deref(),
         params.decode_overrides.as_ref(),
         params.override_profile.as_deref(),
+        params.standard,
         wav,
     )
     .await

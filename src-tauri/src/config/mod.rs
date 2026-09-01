@@ -1000,10 +1000,14 @@ pub fn save(dir: &Path, config: &Config) -> anyhow::Result<()> {
     let path = config_path(dir);
     let tmp = path.with_extension("json.tmp");
     let text = serde_json::to_string_pretty(config)?;
-    write_private(&tmp, &text)?;
-    // Don't leave the tmp behind when the rename fails (a Windows AV/indexer lock — the exact
-    // condition the config reader already retries for — a read-only or full volume, a cross-device
-    // app-data dir). The settings-export sibling already cleans up on this path.
+    // Don't leave the tmp behind when the write OR the rename fails (a full volume — write_private
+    // fails AFTER creating and truncating the file — a Windows AV/indexer lock, which the config
+    // reader already retries for, a read-only or cross-device app-data dir). The settings-export
+    // sibling cleans up on both paths.
+    if let Err(e) = write_private(&tmp, &text) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     if let Err(e) = std::fs::rename(&tmp, &path) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.into());
@@ -1037,6 +1041,13 @@ pub mod keys {
     /// parks behind a password prompt — retrying it prompts the user a second time.
     pub(crate) fn retryable(e: &keyring::Error) -> bool {
         matches!(e, keyring::Error::PlatformFailure(_))
+    }
+
+    /// The loop's actual gate: retry only the FIRST attempt, and only a retryable error.
+    /// (`retryable` alone was pinned by a test while the loop ignored it and retried — and
+    /// double-prompted — everything.)
+    pub(crate) fn should_retry(attempt: u8, e: &keyring::Error) -> bool {
+        attempt == 0 && retryable(e)
     }
 
     fn entry(backend_id: &str) -> keyring::Result<keyring::Entry> {
@@ -1081,13 +1092,16 @@ pub mod keys {
                 // key may EXIST but cannot be read — the visible symptom is an opaque 403 on
                 // connect, so say what actually happened.
                 Err(e) => {
-                    if attempt == 0 && retryable(&e) {
+                    if should_retry(attempt, &e) {
                         continue;
                     }
                     // Debug-format the id, like `resolve_key`'s sibling log: it is a sync/import-supplied
                     // string with no length bound and no control-character fold, so a Display copy would
                     // let a peer forge whole records in the log the user is asked to send for support.
                     tracing::warn!("[keys] keyring read failed for backend {backend_id:?}: {e}");
+                    // Not `continue`: falling out of the match re-entered the loop, so every
+                    // non-retryable error was read (and prompted for) a second time anyway.
+                    return None;
                 }
             }
         }
@@ -1110,11 +1124,28 @@ mod tests {
 
     #[test]
     fn only_platform_failures_are_retried() {
-        use super::keys::retryable;
+        use super::keys::{retryable, should_retry};
         assert!(retryable(&keyring::Error::PlatformFailure("dbus".into())));
         assert!(!retryable(&keyring::Error::NoStorageAccess("locked".into())));
         assert!(!retryable(&keyring::Error::Ambiguous(vec![])));
         assert!(!retryable(&keyring::Error::Invalid("attr".into(), "why".into())));
+        // The loop's gate, not just the predicate: a locked wallet is never read twice.
+        assert!(should_retry(0, &keyring::Error::PlatformFailure("dbus".into())));
+        assert!(!should_retry(1, &keyring::Error::PlatformFailure("dbus".into())));
+        assert!(!should_retry(0, &keyring::Error::NoStorageAccess("locked".into())));
+    }
+
+    #[test]
+    fn a_failed_config_write_leaves_no_tmp_behind() {
+        let dir = std::env::temp_dir().join(format!("fwf-cfg-tmp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Pre-plant the tmp path as a DIRECTORY so the write itself fails after the open.
+        std::fs::create_dir_all(dir.join("config.json.tmp")).unwrap();
+        assert!(save(&dir, &Config::default()).is_err());
+        // The planted directory is not ours to remove; what must not exist is a stray FILE.
+        assert!(!dir.join("config.json.tmp").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Frontend-owned keys must survive the typed `Config` round-trip that `save_config`
