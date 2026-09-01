@@ -99,6 +99,12 @@ describe("manifest integrity", () => {
     }
   });
 
+  it("the retired insertTiming has no sync row", () => {
+    // The field is kept in the type for rollbacks but has no UI control anywhere, so a
+    // per-setting sync switch for it would advertise something the user cannot change.
+    expect(DEFS.some((d) => d.fields.some((f) => f.slice === "general" && f.key === "insertTiming"))).toBe(false);
+  });
+
   it("legacy sub-toggle semantics carry over (defaults preserve today's behavior)", () => {
     // The four pre-manifest sub-toggles keep their defaults under new ids.
     expect(DEFAULT_SETTING_SYNC.audioFolder).toBe(false); // was recordingsDir: false

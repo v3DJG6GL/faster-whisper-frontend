@@ -289,6 +289,46 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(p.insertionOverrides?.insertMethod).toBe("direct"); // the rest still applies
   });
 
+  it("this device's own per-profile Return survives a pull with profile insertion sync ON", async () => {
+    // The strip above must not also erase the value THIS device configured: the app-rule
+    // twin repins `autoEnter` ungated, and the profile path needs the same half.
+    useApp.setState({
+      settings: settings(),
+      profiles: [
+        { id: "p1", name: "Mine", activation: "handsfree", enabled: true, hotkey: ["F5"], backendId: null,
+          insertionOverrides: { autoEnter: true } },
+      ],
+    });
+    await applyBlob(
+      {
+        profiles: {
+          list: [
+            { id: "p1", name: "Mine", activation: "handsfree", enabled: true, hotkey: ["F5"], backendId: null,
+              insertionOverrides: { insertMethod: "direct" } },
+            { id: "p2", name: "Theirs", activation: "handsfree", enabled: true, hotkey: ["F6"], backendId: null,
+              insertionOverrides: { autoEnter: true } },
+          ],
+          homeProfileId: null,
+        } as never,
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    const mine = useApp.getState().profiles.find((x) => x.id === "p1")!;
+    expect(mine.insertionOverrides?.autoEnter).toBe(true); // kept
+    expect(mine.insertionOverrides?.insertMethod).toBe("direct"); // inbound still applies
+    const theirs = useApp.getState().profiles.find((x) => x.id === "p2")!;
+    expect(theirs.insertionOverrides?.autoEnter).toBeUndefined(); // unknown here: nothing to keep
+  });
+
+  it("typeAsISpeak travels in the general block", async () => {
+    // It replaced `insertTiming` as the global default every inheriting Profile resolves
+    // through; the manifest offers a sync switch for it, so the wire must carry it.
+    const cfg = slice();
+    cfg.settings.general.typeAsISpeak = false;
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    expect(blob.general?.typeAsISpeak).toBe(false);
+  });
+
   it("a peer cannot arm the post-paste Return through an APP RULE override either", async () => {
     useApp.setState({
       settings: settings(),

@@ -26,6 +26,10 @@ export interface SyncGeneral {
    *  (2026-07-13) — apply's spread then keeps the device's local value. */
   openAtLogin?: boolean;
   insertTiming: InsertTiming;
+  /** Optional: absent in blobs written before it became syncable (2026-09-01) —
+   *  apply's spread then keeps the device's local value. The global default every
+   *  inheriting Profile resolves through; replaced `insertTiming`. */
+  typeAsISpeak?: boolean;
   insertMethod: InsertMethod;
   pasteShortcut: string[];
   autoEnter: boolean;

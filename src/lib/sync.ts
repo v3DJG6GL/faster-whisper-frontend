@@ -266,6 +266,7 @@ function extractGeneral(settings: AppSettings): SyncGeneral {
     theme: settings.theme,
     startMinimized: g.startMinimized,
     insertTiming: g.insertTiming,
+    typeAsISpeak: g.typeAsISpeak,
     insertMethod: g.insertMethod,
     pasteShortcut: g.pasteShortcut,
     autoEnter: g.autoEnter,
@@ -1477,6 +1478,18 @@ export async function applyBlob(
       // values, absence included (`exact`) — same contract as the per-app twins.
       if (!gates.profileInsertion)
         nextProfiles = repinElementFields(nextProfiles, st.profiles, PROFILE_INSERTION_FIELDS, true);
+      // UNGATED twin of the app-rule `autoEnter` repin (`APP_RULE_LOCAL_ONLY_FIELDS`):
+      // `sanitizeProfiles` drops the nested field on every inbound path so a peer can't arm
+      // it, which without this also erased THIS device's own per-profile Enter on every pull.
+      // A profile this device knows keeps its value; one new to it arrives with the field
+      // absent, as intended. (Redundant, and harmless, when the gate above already repinned.)
+      const localAutoEnter = new Map(st.profiles.map((p) => [p.id, p.insertionOverrides?.autoEnter]));
+      nextProfiles = nextProfiles.map((p) => {
+        const mine = localAutoEnter.get(p.id);
+        return mine === undefined
+          ? p
+          : { ...p, insertionOverrides: { ...p.insertionOverrides, autoEnter: mine } };
+      });
       // `??` only replaces null/undefined, so a JSON `0` or `false` survived it — and the scrub
       // below is gated on truthiness, so a falsy non-string skipped that too and reached Rust's
       // `Option<String>`. Same wedge as `quickAddList`. "Home profile" gate

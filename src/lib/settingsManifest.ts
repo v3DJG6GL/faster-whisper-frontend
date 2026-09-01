@@ -126,8 +126,6 @@ export const MANIFEST = [
     fields: [g("openAtLogin")] },
   { id: "startMinimized", label: "Start minimized to tray", group: "general", category: "general",
     fields: [g("startMinimized")] },
-  { id: "autoInsert", label: "Auto-insert", group: "general", category: "general",
-    fields: [g("insertTiming")] },
   { id: "typeAsISpeak", section: "Insertion", label: "Type as I speak",
     group: "dictation", category: "general",
     desc: "Default for new and inheriting profiles.",
@@ -328,7 +326,9 @@ type Covered = SettingId | typeof LOCAL;
 export const GENERAL_COVERAGE = {
   openAtLogin: "openAtLogin",
   startMinimized: "startMinimized",
-  insertTiming: "autoInsert",
+  // Retired onto `typeAsISpeak` at load (`migrateInsertTiming`); no UI row, so no sync
+  // switch. It still rides the general category as a conservative value for rollbacks.
+  insertTiming: LOCAL,
   typeAsISpeak: "typeAsISpeak",
   insertMethod: "insertMethod",
   pasteShortcut: "pasteShortcut",
