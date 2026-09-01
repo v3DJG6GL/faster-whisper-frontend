@@ -139,8 +139,9 @@ export function loadHistory(force = false): Promise<void> {
     return loading.then(() => loadHistory(true));
   }
   if (!force && useTranscriptHistory.getState().loaded) return Promise.resolve();
-  // The listing must see the newest content: a coalesced write still parked here would
-  // otherwise revert a just-edited record to its older on-disk text in the UI.
+  // Issue any parked coalesced write before listing. The write is not awaited (nothing
+  // orders the two IPC calls), but without this a just-edited record trailed the listing by
+  // the whole debounce window and reverted to its older on-disk text in the UI.
   flushRecordWrites();
   loading = listTranscriptRecords()
     .then((raw) => {

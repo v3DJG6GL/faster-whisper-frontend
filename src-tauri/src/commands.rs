@@ -883,15 +883,15 @@ pub fn export_settings_file(path: String, envelope: serde_json::Value) -> Result
     Ok(())
 }
 
+/// The exact refusal text the viewer matches on to fall back to the decode path.
+pub const MEDIA_TOO_LARGE: &str = "too large to buffer";
+
 /// Read a media file the user picked into memory for in-card playback. The
 /// asset-protocol path is preferred, but Linux WebKitGTK's media stack is
 /// unreliable over custom URI schemes — when the <audio> element errors, the
 /// webview falls back to this and plays from a blob URL. Raw IPC response
 /// (no base64/JSON round-trip); capped so a mispicked multi-GB video can't
 /// balloon the webview.
-/// The exact refusal text the viewer matches on to fall back to the decode path.
-pub const MEDIA_TOO_LARGE: &str = "too large to buffer";
-
 #[tauri::command]
 pub async fn read_media_file(path: String) -> Result<tauri::ipc::Response, String> {
     // Below the ~240 MB at which handing the bytes over IPC froze the web process (see

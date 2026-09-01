@@ -434,11 +434,17 @@ pub async fn save_transcript_media(
             let _ = std::fs::remove_file(&tmp);
             return Err(e.to_string());
         }
-        // Owner-only like the records themselves (copy inherits source perms).
+        // Owner-only like the records themselves (copy inherits source perms). On Windows the
+        // file inherits the DACL of a `files/` folder that may have pre-existed the pick (a
+        // restored or synced tree), so it gets the same per-file DACL the recordings get.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        }
+        #[cfg(windows)]
+        if let Err(e) = crate::audio::windows_owner_only_dacl(&tmp) {
+            tracing::warn!("[transcripts] could not restrict {} to the current user: {e}", tmp.display());
         }
         if let Err(e) = std::fs::rename(&tmp, &dest) {
             let _ = std::fs::remove_file(&tmp);

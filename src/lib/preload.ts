@@ -160,7 +160,6 @@ export function acquireWarm(key: string, spec: PreloadSpec): WarmLease {
     // re-acquire at t=119 s was debounced (no POST) while a fresh interval put the next
     // POST at t≈239 s — past the server's 180 s plan lease, with the app believing it
     // held the models warm.
-    const due = prev ? Math.max(0, RENEW_MS - (Date.now() - prev.sentAt)) : RENEW_MS;
     const e0: Entry = {
       key,
       spec,
@@ -168,21 +167,26 @@ export function acquireWarm(key: string, spec: PreloadSpec): WarmLease {
       sentKey: prev?.sentKey ?? "",
       sentAt: prev?.sentAt ?? 0,
       timerIsInterval: false,
-      timer: setTimeout(() => {
-        const e = leases.get(key);
-        if (!e) return;
-        // Force: the renew tick is exactly the case the debounce must not eat.
-        fire(e, true);
-        e.timer = setInterval(() => {
-          const e2 = leases.get(key);
-          if (e2) fire(e2, true);
-        }, RENEW_MS);
-        e.timerIsInterval = true;
-      }, due),
+      timer: undefined as unknown as ReturnType<typeof setTimeout>,
     };
     entry = e0;
     leases.set(key, entry);
     fire(entry, false);
+    // Armed AFTER the acquire's own send: when the carried send was already stale, `fire`
+    // just POSTed and stamped `sentAt` — measuring from the OLD stamp put a 0 ms force-POST
+    // of the identical plan right behind it.
+    const due = Math.max(0, RENEW_MS - (Date.now() - e0.sentAt));
+    e0.timer = setTimeout(() => {
+      const e = leases.get(key);
+      if (!e) return;
+      // Force: the renew tick is exactly the case the debounce must not eat.
+      fire(e, true);
+      e.timer = setInterval(() => {
+        const e2 = leases.get(key);
+        if (e2) fire(e2, true);
+      }, RENEW_MS);
+      e.timerIsInterval = true;
+    }, due);
   }
   let released = false;
   return {

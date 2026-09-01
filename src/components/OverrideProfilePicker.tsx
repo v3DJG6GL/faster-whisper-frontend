@@ -127,6 +127,12 @@ export function OverrideProfilePicker({
           placeholder="profile name (e.g. clinic-de)"
         />
       )}
+      {/* The signal the two-shape picker used to carry as a "· not on server" option: a stored
+          name the server did not list falls back server-side. Only when a list was fetched —
+          an empty/failed fetch proves nothing. */}
+      {isCustomValue && names.length > 0 && (
+        <p className="text-[12px] text-faint">Not among the profiles this server listed.</p>
+      )}
     </div>
   );
 }

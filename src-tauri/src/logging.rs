@@ -511,6 +511,15 @@ mod tests {
         assert!(stamp.as_bytes()[4] == b'-' && stamp.as_bytes()[10] == b' ' && stamp.as_bytes()[19] == b'.', "{out:?}");
     }
 
+    #[test]
+    fn the_live_tail_timer_writes_the_same_stamp_shape() {
+        use tracing_subscriber::fmt::{format::Writer, time::FormatTime};
+        let mut s = String::new();
+        LocalTimer.format_time(&mut Writer::new(&mut s)).unwrap();
+        assert_eq!(s.len(), "2023-11-14 22:13:20.123".len(), "{s:?}");
+        assert!(s.as_bytes()[4] == b'-' && s.as_bytes()[10] == b' ' && s.as_bytes()[19] == b'.', "{s:?}");
+    }
+
     fn line(msg: &str, level: &'static str) -> LogLine {
         let (tag, rest) = split_tag(msg);
         LogLine {

@@ -644,6 +644,9 @@ function ConflictDialog() {
 
 function ConflictDialogBody({ pending }: { pending: NonNullable<ReturnType<typeof getPendingConflict>> }) {
   const [picks, setPicks] = useState<Record<string, "local" | "remote">>({});
+  // resolveSyncConflicts returns silently while a session runs (same rule as the review's
+  // approve) — the button says so instead of doing nothing.
+  const dictating = useApp((st) => st.status !== "idle");
   return (
     <Modal onClose={dismissSyncConflict}>
       <div className="text-[15px] font-semibold text-text">Sync conflict</div>
@@ -673,11 +676,15 @@ function ConflictDialogBody({ pending }: { pending: NonNullable<ReturnType<typeo
           );
         })}
       </div>
+      {dictating && (
+        <Notice className="mt-3">Stop dictation before resolving — nothing is queued while a session runs.</Notice>
+      )}
       <div className="mt-5 flex justify-end gap-2">
         <Button variant="ghost" onClick={dismissSyncConflict}>
           Later
         </Button>
         <Button
+          disabled={dictating}
           onClick={() => {
             const chosen = Object.fromEntries(pending.categories.map((c) => [c, picks[c] ?? "local"]));
             void resolveSyncConflicts(chosen);

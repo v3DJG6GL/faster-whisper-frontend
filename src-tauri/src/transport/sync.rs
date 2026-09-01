@@ -321,9 +321,16 @@ pub async fn delete(server_url: &str, api_key: Option<&str>) -> SyncDelete {
     }
 }
 
-/// Is a composed push body past the wire ceiling this same module enforces on pulls?
+/// Room the push body leaves under the ceiling: the RESPONSE echoing the same blob carries a
+/// different, larger envelope (`version` + `updated_at`) and is read at the same ceiling, so a
+/// body that just fits must not produce a stored blob whose echo — and every later pull — no
+/// longer does.
+const SYNC_RESPONSE_MARGIN: usize = 4096;
+
+/// Is a composed push body past the wire ceiling this same module enforces on pulls (less the
+/// response envelope's margin)?
 fn over_wire_limit(body_len: usize) -> bool {
-    body_len > SYNC_MAX_BODY
+    body_len > SYNC_MAX_BODY - SYNC_RESPONSE_MARGIN
 }
 
 #[cfg(test)]
@@ -342,7 +349,9 @@ mod tests {
 
     #[test]
     fn the_push_body_is_bounded_like_the_pull_body() {
-        assert!(!over_wire_limit(SYNC_MAX_BODY));
-        assert!(over_wire_limit(SYNC_MAX_BODY + 1));
+        // Less the envelope margin: the echoed blob is read at SYNC_MAX_BODY in a larger wrapper.
+        assert!(!over_wire_limit(SYNC_MAX_BODY - SYNC_RESPONSE_MARGIN));
+        assert!(over_wire_limit(SYNC_MAX_BODY - SYNC_RESPONSE_MARGIN + 1));
+        assert!(over_wire_limit(SYNC_MAX_BODY));
     }
 }

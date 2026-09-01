@@ -486,7 +486,7 @@ function RuleCard({
               })}
               {mapUnshown > 0 && (
                 <div className="font-mono text-[11px] text-faint">
-                  Showing the first {MAX_SHOWN_MAP_ROWS} of {mapPairs.length} mappings — the rest are kept and saved unchanged.
+                  Only the first {MAX_SHOWN_MAP_ROWS} of {mapPairs.length} mappings can be shown here — the rest are kept and saved unchanged.
                 </div>
               )}
               {mapHidden > 0 && (

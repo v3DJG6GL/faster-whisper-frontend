@@ -838,9 +838,13 @@ export function mergeSegmentTranslations(
   upsertRecord(updated);
   // The queue row is keyed by PATH, and two records of one URL share it: while record A is
   // still merging chunks, the user may open record B of the same link from History — patching
-  // by path then swapped the OPEN transcript to A's segments under B's header.
+  // by path then swapped the OPEN transcript to A's segments under B's header. Only THAT
+  // collision is suppressed: an open record of a different path leaves A's own row updated.
   const openId = get().openRecordId;
-  if (!openId || openId === rec.id) patchItem(rec.sourcePath, { result: updated.result });
+  const open = openId ? recordById[openId] : undefined;
+  if (!open || open.id === rec.id || open.sourcePath !== rec.sourcePath) {
+    patchItem(rec.sourcePath, { result: updated.result });
+  }
 }
 
 /** Fold a progress poll into the store. "unknown" is the server saying "no

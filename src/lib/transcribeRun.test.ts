@@ -476,6 +476,31 @@ describe("mergeSegmentTranslations respects the OPEN record", () => {
     const savedA = useTranscriptHistory.getState().records.find((r) => r.id === "open-a")!;
     expect(savedA.result!.segments![0].translations).toEqual({ de: "A-de" });
   });
+
+  it("an open record of a DIFFERENT path does not suppress A's own queue row", () => {
+    const of = (id: string, path: string): TranscriptRecord => ({
+      schemaVersion: 1,
+      kind: "file",
+      id,
+      createdAt: "2026-08-30T12:00:00Z",
+      sourcePath: path,
+      sourceName: path.slice(1),
+      status: "done",
+      result: { text: id, segments: [{ start: 0, end: 1, text: id }] },
+    });
+    const a = of("diff-a", "/a.mp3");
+    const b = of("diff-b", "/b.mp3");
+    openHistoryRecord(a);
+    openHistoryRecord(b); // B open from History while A's retro-translate merges in the background
+    // The multi-file run's queue still lists A's row beside B's.
+    useTranscribeRun.setState((s) => ({
+      queue: [...s.queue, { path: "/a.mp3", status: "done", kind: "file", result: a.result }],
+    }));
+    mergeSegmentTranslations("diff-a", { 0: { de: "A-de" } }, { targets: ["de"] });
+    const rowA = useTranscribeRun.getState().queue.find((q) => q.path === "/a.mp3")!;
+    expect(rowA.result!.segments![0].translations).toEqual({ de: "A-de" });
+    expect(useTranscribeRun.getState().openRecordId).toBe("diff-b");
+  });
 });
 
 describe("assembleTranslatedSegments (text-source kept-original marks)", () => {

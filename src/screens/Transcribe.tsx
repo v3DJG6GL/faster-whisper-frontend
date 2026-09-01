@@ -1,3 +1,4 @@
+import { ownProp } from "@/lib/own";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -705,7 +706,7 @@ export default function Transcribe() {
       // verbatim (it forces "no profile" server-side).
       overrideProfile: runOverrideProfile || backend.overrideProfile,
       standard:
-        effectiveServerKind(backend, useApp.getState().connections[backend.id]) === "standard",
+        effectiveServerKind(backend, ownProp(useApp.getState().connections, backend.id)) === "standard",
     };
   };
 
@@ -2263,7 +2264,9 @@ export default function Transcribe() {
                     <span className="font-mono text-[11px] text-think">
                       {/* The whole-pipeline number the panel shows, not the stage-local
                           fraction: the two are on screen together and disagreed. */}
-                      {typeof runningOverall === "number"
+                      {/* A bare 0 (no server progress yet — a standard server is never
+                          polled) shows the stage word: the row's only liveness signal. */}
+                      {typeof runningOverall === "number" && runningOverall > 0
                         ? `${Math.round(runningOverall * 100)}%`
                         : stageLabel(progress).toLowerCase()}
                     </span>

@@ -609,8 +609,11 @@ export default function Settings() {
   const runStoreAction = (kind: "dict" | "files" | "links" | "clear") => {
     // Nothing parked may land after the wipe: a coalesced record write, an 800 ms edit
     // debounce or a chunk merge otherwise re-created a JSON file Rust just removed.
-    dropPendingWrites();
-    if (kind === "dict" || kind === "clear") forgetRecord(null);
+    // Only the kinds that delete record JSONs; "files"/"links" empty a media folder and must
+    // not drop an unrelated edit debounce. The workbench registry holds file/URL transcripts,
+    // which only "clear" removes — forgetting it on "dict" closed an open transcript for nothing.
+    if (kind === "dict" || kind === "clear") dropPendingWrites();
+    if (kind === "clear") forgetRecord(null);
     const done = (n: number, what: string) => {
       setStoreMsg({ text: `Removed ${n} ${what}.` });
       setConfirming(null);
@@ -695,6 +698,8 @@ export default function Settings() {
           refreshStoreStats(picked);
           // Rust rewrote every record's mediaPath/sourcePath on disk; the load-once
           // mirror still holds the pre-move paths — and would write them back on edit.
+          // The workbench registry holds them too (an overlay edit persists through it).
+          forgetRecord(null);
           void loadHistory(true).catch(() => {});
         } finally {
           setDirBusy(false);
@@ -709,6 +714,7 @@ export default function Settings() {
       .then(() => {
         updateRecording({ audioBaseDir: null, recordingsDir: null });
         refreshStoreStats(null);
+        forgetRecord(null);
         void loadHistory(true).catch(() => {});
       })
       .catch((e) => setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true }))
@@ -932,10 +938,10 @@ export default function Settings() {
                     Reset
                   </Button>
                 </div>
-                {storeMsg?.error && (
-                  <div className="mt-2 text-[12px] text-warn">{storeMsg.text}</div>
-                )}
               </div>
+              {storeMsg?.error && (
+                <div className="mt-2 text-[12px] text-warn">{storeMsg.text}</div>
+              )}
               {storeStats && (
                 <>
                   <div className="mt-3.5 flex h-[6px] gap-0.5">
@@ -1199,9 +1205,6 @@ export default function Settings() {
             </SettingRow>
             {storeMsg && !storeMsg.error && (
               <div className="py-2 text-[12px] text-dim">{storeMsg.text}</div>
-            )}
-            {storeMsg?.error && (
-              <div className="py-2 text-[12px] text-warn">{storeMsg.text}</div>
             )}
 
           </Card>

@@ -114,12 +114,18 @@ fn fold_foreground() {
     if hwnd.is_null() {
         return; // transient during activation hand-off
     }
-    if LAST_HWND.swap(hwnd as isize, std::sync::atomic::Ordering::Relaxed) == hwnd as isize {
+    use std::sync::atomic::Ordering::Relaxed;
+    if LAST_HWND.load(Relaxed) == hwnd as isize {
         return; // same window as last time — nothing to re-resolve
     }
     let Some(app_id) = (unsafe { foreground_app_id(hwnd) }) else {
-        return; // shell foreground or unreadable process — keep the previous state
+        // Shell foreground, or a process not readable YET (a UWP frame whose CoreWindow child
+        // is still to come, an OpenProcess that failed mid-start): keep the previous state and
+        // — by not recording the HWND — let the 1 s poll re-resolve it, as it did before the
+        // short-circuit existed.
+        return;
     };
+    LAST_HWND.store(hwnd as isize, Relaxed);
     let mut s = snap.lock();
     if s.current.as_ref().map_or(false, |c| c.app_id == app_id) {
         return; // unchanged (where the 1 s poll usually lands)
@@ -153,8 +159,9 @@ unsafe fn foreground_app_id(hwnd: HWND) -> Option<String> {
     }
     let exe = exe_basename(pid)?;
     // UWP: the foreground window belongs to the ApplicationFrameHost shim;
-    // the real app's process owns the CoreWindow child.
-    let exe = if exe == "applicationframehost" { uwp_app(hwnd, pid).unwrap_or(exe) } else { exe };
+    // the real app's process owns the CoreWindow child. On a cold start that child does not
+    // exist yet — None, never the frame host's own name, so the next poll tries again.
+    let exe = if exe == "applicationframehost" { uwp_app(hwnd, pid)? } else { exe };
     // Judged on the RESOLVED exe, so a shell host behind the frame host is caught too.
     if is_shell_exe(&exe) {
         return None; // Start menu / Search / notification centre — the Linux plasmashell twin
@@ -210,6 +217,13 @@ unsafe fn exe_basename(pid: u32) -> Option<String> {
         return None;
     }
     let path = String::from_utf16_lossy(&buf[..len as usize]);
+    normalize_exe_basename(&path)
+}
+
+/// Full image path → lowercased basename without `.exe`, bounded and defanged; None when
+/// nothing displayable is left (a name made only of format/control characters), which keeps
+/// the previous snapshot exactly as the AT-SPI twin's empty-after-bound check does.
+fn normalize_exe_basename(path: &str) -> Option<String> {
     let base = path.rsplit(['\\', '/']).next()?.to_lowercase();
     let base = base.strip_suffix(".exe").map(str::to_string).unwrap_or(base);
     // Same bound + defang the AT-SPI twin applies to ITS app id, for the same three sinks (the
@@ -222,7 +236,11 @@ unsafe fn exe_basename(pid: u32) -> Option<String> {
     // rule side is normalized with the same character class, and an exe basename that kept an
     // invisible mark while the rule had it stripped would turn a working "never type here" rule
     // into a silent no-op — the failure the rule-side normalization exists to prevent, inverted.
-    Some(crate::transport::bounded_server_text(&base, APP_ID_MAX))
+    let id = crate::transport::bounded_server_text(&base, APP_ID_MAX);
+    if id.trim().is_empty() {
+        return None;
+    }
+    Some(id)
 }
 
 /// Resolve a UWP app hosted by ApplicationFrameHost: find the child window of
@@ -254,7 +272,14 @@ unsafe fn uwp_app(host: HWND, host_pid: u32) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_shell_exe;
+    use super::{is_shell_exe, normalize_exe_basename};
+
+    #[test]
+    fn an_exe_name_with_nothing_displayable_left_is_not_an_app_id() {
+        assert_eq!(normalize_exe_basename("C:\\Apps\\Code.exe").as_deref(), Some("code"));
+        assert_eq!(normalize_exe_basename("C:\\x\\\u{202e}.exe"), None);
+        assert_eq!(normalize_exe_basename("C:\\x\\\u{1}\u{2}.exe"), None);
+    }
 
     #[test]
     fn shell_hosts_are_filtered_by_name_and_real_apps_are_not() {

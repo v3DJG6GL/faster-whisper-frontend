@@ -170,6 +170,11 @@ const MAX_BANKED_DOC = 8 * 1024 * 1024;
 // PRIOR phrases; the current clipboard phrase is committedDoc beyond it. Advanced by the phrase-end
 // quiet timer (you paused → start fresh), reset at each hard break + session start.
 let clipBaseline = "";
+/** The session accumulators as they stood before the current clipboard window's first
+ *  booking. The clipboard is REPLACED per window, and every final inside one quiet window
+ *  re-copies the whole window — so each booking replaces the window's earlier one instead of
+ *  appending "A", then "A B". Null = nothing booked in this window yet. */
+let clipBooked: { text: string | null; ctxLen: number } | null = null;
 // Insertion config captured at dictation start.
 interface InsertCfg {
   /** Whether the session inserts at all. "off" is gone from the UI; it survives here only
@@ -753,6 +758,7 @@ function bumpPhraseEnd(): void {
     // You paused → end the current clipboard-only phrase, so the next utterance copies fresh and
     // "Clipboard only" holds just your latest phrase instead of the whole hard-break window.
     clipBaseline = committedDoc;
+    clipBooked = null;
   }, PHRASE_END_QUIET_MS);
 }
 
@@ -772,6 +778,7 @@ function clearPhraseEnd(): void {
   clipDirty = false;
   clipHoldsOurs = false; // session reset — start clean
   clipBaseline = "";
+  clipBooked = null;
 }
 
 /** Must this injection go to the CLIPBOARD rather than the keyboard?
@@ -1474,15 +1481,6 @@ async function ensureListeners(): Promise<void> {
               utterance,
             });
             if (insertCfg !== cfg) return;
-            if (translated) {
-              sessionPhraseContext.push(phraseClip);
-              // The clipboard is REPLACED per phrase (never appended to), so
-              // the copied text needs no phrase gap — only this session
-              // accumulator, which History renders as one document, does.
-              sessionTranslatedText = sessionTranslatedText
-                ? sessionTranslatedText + PHRASE_GAP + clipOut.trim()
-                : clipOut.trim();
-            }
             let landed = true;
             try {
               ({ landed } = await injectText({ text: clipOut, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
@@ -1507,6 +1505,21 @@ async function ensureListeners(): Promise<void> {
             // took focus during the await, Rust wrote nothing and returned `landed: false`; booking
             // the copy anyway pulses a "copied" confirmation for a phrase that reached no clipboard,
             // and clears a restore debt an earlier real paste still owes the user.
+            // Booked only for a DELIVERED copy (mirrors the typed branch's `if (delivered)`): an
+            // own-window skip or a failed write must not add a phrase History never got. And
+            // per WINDOW: the copy re-sends the whole quiet window on every final, so this
+            // replaces the window's earlier booking instead of appending it again.
+            if (translated && !t.isSelf && landed) {
+              clipBooked ??= { text: sessionTranslatedText, ctxLen: sessionPhraseContext.length };
+              sessionPhraseContext.length = clipBooked.ctxLen;
+              sessionPhraseContext.push(phraseClip);
+              // The clipboard is REPLACED per phrase (never appended to), so the copied text
+              // needs no phrase gap — only this session accumulator, which History renders as
+              // one document, does.
+              sessionTranslatedText = clipBooked.text
+                ? clipBooked.text + PHRASE_GAP + clipOut.trim()
+                : clipOut.trim();
+            }
             if (!t.isSelf && landed) {
               sessionClipboard = true;
               signalInsert("clipboard");
@@ -1745,6 +1758,7 @@ async function ensureListeners(): Promise<void> {
     }
     committedDoc = "";
     clipBaseline = "";
+    clipBooked = null;
     injectedText = "";
     seenDoc = "";
     // Same reason as the final handler's: a pending tick would undo this clear.
@@ -2085,7 +2099,12 @@ async function ensureListeners(): Promise<void> {
             }
             if (onClipboard) {
               sessionClipboard = true;
-              flashError("Focus moved to this app — the transcript is on the clipboard to paste manually.");
+              // A clipboard-method skip has two possible causes (see sinkSkipMessage): no focus claim there.
+              flashError(
+                t.method === "clipboard"
+                  ? "The transcript is on the clipboard to paste manually."
+                  : "Focus moved to this app — the transcript is on the clipboard to paste manually.",
+              );
             } else {
               flashError(sinkSkipMessage(t.method));
             }
@@ -2273,18 +2292,19 @@ function teardownAfterFatalInject(): void {
   void retireSessionEpoch().catch((err) => console.error("retire epoch after fatal inject failed:", err));
 }
 
-/** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
- *  Guarded: if a new session starts first (status leaves "error"), the pending clear is a no-op. */
-/** The wording for "nothing was written and the clipboard retry failed too": on a
- *  clipboard-method insert the ONLY producer of that shape is a failed clipboard write
- *  (the own-window case is `t.isSelf`), so blaming focus there sent the user after the
- *  wrong problem. */
+/** The wording for "nothing was written and the clipboard retry failed too". On a
+ *  clipboard-method insert `landed:false` has TWO producers this side cannot tell apart —
+ *  Rust's own-window guard runs for every method before the clipboard arm, and `t.isSelf`
+ *  is a ~1 s-old answer — so the message names neither cause alone; blaming focus (or the
+ *  clipboard) outright sent the user after the wrong problem. */
 export function sinkSkipMessage(method: InsertMethod): string {
   return method === "clipboard"
-    ? "Couldn’t put the text on the clipboard — nothing was inserted."
+    ? "Nothing was inserted — the text couldn’t be put on the clipboard, or this app has focus."
     : "Focus moved to this app — nothing was inserted.";
 }
 
+/** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
+ *  Guarded: if a new session starts first (status leaves "error"), the pending clear is a no-op. */
 function flashError(message: string): void {
   // Every call site is terminal for the session (a failed start, a failed insert, a lost
   // connection), and `settleIdle` — the normal releaser — only runs for a session that reached
@@ -2652,7 +2672,7 @@ async function startLiveInner(
         recordingsDir: audioBasePref(rec),
         trimSilence: rec.trimSilence,
         muteSystem: rec.muteSystemAudio,
-        standard: effectiveServerKind(backend, useApp.getState().connections[backend.id]) === "standard",
+        standard: effectiveServerKind(backend, ownProp(useApp.getState().connections, backend.id)) === "standard",
       });
     } else {
       await startStream({

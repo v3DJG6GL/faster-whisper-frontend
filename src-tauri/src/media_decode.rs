@@ -82,6 +82,8 @@ fn write_cached(out: &std::path::Path, wav: &[u8]) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
     }
+    #[cfg(windows)]
+    let _ = crate::audio::windows_owner_only_dacl(&tmp); // per-user cache dir; consistency only
     if let Err(e) = std::fs::rename(&tmp, out) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.to_string());

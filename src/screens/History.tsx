@@ -130,6 +130,7 @@ function RecordingPlayer({ path }: { path: string }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [src, setSrc] = useState<string | null>(null);
   const [gone, setGone] = useState(false);
+  const [tooBig, setTooBig] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [cur, setCur] = useState(0);
   const [len, setLen] = useState(0);
@@ -144,8 +145,11 @@ function RecordingPlayer({ path }: { path: string }) {
         url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
         setSrc(url);
       })
-      .catch(() => {
-        if (!stale) setGone(true);
+      .catch((e) => {
+        if (stale) return;
+        // The over-cap refusal is not a missing file: say so instead of "removed by retention".
+        setTooBig(String(e).includes("too large to buffer"));
+        setGone(true);
       });
     return () => {
       stale = true;
@@ -156,7 +160,9 @@ function RecordingPlayer({ path }: { path: string }) {
   if (gone) {
     return (
       <div className="mt-3 text-[12px] text-faint">
-        Audio unavailable — removed by retention, or recordings were off.
+        {tooBig
+          ? "Audio too large to play here — open the recording from the log folder."
+          : "Audio unavailable — removed by retention, or recordings were off."}
       </div>
     );
   }

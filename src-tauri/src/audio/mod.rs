@@ -244,7 +244,12 @@ pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
         if let Some(parent) = dir.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        return std::fs::DirBuilder::new().mode(0o700).create(dir);
+        // The recursive builder this replaced was idempotent; a concurrent creator (two media
+        // copies racing for `files/`, a sync client restoring the tree) must not fail the caller.
+        return match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+            r => r,
+        };
     }
     #[cfg(windows)]
     {
@@ -269,7 +274,7 @@ pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
 /// mark it PROTECTED so the parent's inherited entries do not apply. New files created inside
 /// inherit that one ACE, which is what carries the guarantee to the `.wav`/`.txt` pairs.
 #[cfg(windows)]
-fn windows_owner_only_dacl(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn windows_owner_only_dacl(dir: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::{LocalFree, HANDLE};
     use windows_sys::Win32::Security::Authorization::{
@@ -515,6 +520,9 @@ mod retention_tests {
         assert_eq!(mode(&leaf), 0o700);
         assert_ne!(mode(&root.join("a")), 0o700);
         assert_ne!(mode(&root.join("a").join("b")), 0o700);
+        // Idempotent, like the recursive builder it replaced: a second (or racing) creator is Ok.
+        super::create_dir_private(&leaf).unwrap();
+        assert_eq!(mode(&leaf), 0o700);
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -126,6 +126,21 @@ describe("acquireWarm", () => {
     c.release();
   });
 
+  it("a re-acquire after a stale carried send POSTs once, not twice", () => {
+    const a = acquireWarm("k", spec);
+    expect(calls).toBe(1);
+    a.release();
+    vi.advanceTimersByTime(RENEW_MS * 2);
+    const b = acquireWarm("k", spec);
+    expect(calls).toBe(2);
+    // No 0 ms force-tick behind the acquire's own send; the next renew is a full window away.
+    vi.advanceTimersByTime(RENEW_MS - 1);
+    expect(calls).toBe(2);
+    vi.advanceTimersByTime(1);
+    expect(calls).toBe(3);
+    b.release();
+  });
+
   it("stops the timer on release", () => {
     const lease = acquireWarm("k", spec);
     lease.release();

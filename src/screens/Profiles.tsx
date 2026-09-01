@@ -200,9 +200,9 @@ function Editor({
         <Labeled label="Chip tag">
           <TextInput
             value={p.tag ?? ""}
-            // `|| undefined`: an empty tag is stored as absent, and a set-then-clear otherwise
-            // read as "unsaved" forever (the same normalisation the sibling controls use).
-            onChange={(e) => set({ tag: e.target.value || undefined })}
+            // A blank (or whitespace-only) tag is stored as absent — the save path trims — or a
+            // set-then-clear read as "unsaved" forever (the sibling controls normalise alike).
+            onChange={(e) => set({ tag: e.target.value.trim() ? e.target.value : undefined })}
             placeholder={deriveChipTag(p.name) || "From name"}
             maxLength={16}
           />

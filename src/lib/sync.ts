@@ -1863,6 +1863,17 @@ export function backendsPushBlocked(): boolean {
   return snapshotSecretsUnavailable;
 }
 
+/** Does the composed blob list a backend that has a key on the server without carrying that
+ *  key? Pushing it would erase the server's stored key through the whole-blob PUT. */
+export function backendsBlobIncomplete(blob: SyncBlob): boolean {
+  if (!isPlainObject(blob.backends)) return false;
+  const secrets = isPlainObject(blob.backends.secrets) ? blob.backends.secrets : {};
+  const list = Array.isArray(blob.backends.list) ? (blob.backends.list as unknown[]) : [];
+  return list.some(
+    (b) => isPlainObject(b) && b.hasApiKey === true && typeof b.id === "string" && !ownProp(secrets, b.id),
+  );
+}
+
 async function stashSnapshotSecrets(secrets: Record<string, string>): Promise<void> {
   await withTimeout(
     setBackendKey(SNAPSHOT_SECRETS_ACCOUNT, JSON.stringify(secrets)).catch((e) =>
@@ -2105,7 +2116,11 @@ export async function pushNow(manual = false): Promise<void> {
       setRuntime({ syncStatus: "ok" });
       return;
     }
-    if (cats.backends && backendsPushBlocked()) {
+    // Gated on the COMPOSED blob, not on the Backends switch: the snapshot pass-through
+    // (switch OFF, or the live read degraded) is exactly the arm that carries a list with
+    // `hasApiKey` entries and no secrets, while a switch-ON push whose live keyring read was
+    // complete is safe even with the latch set (the stash write alone may have failed).
+    if (backendsPushBlocked() && backendsBlobIncomplete(blob)) {
       // Refuse rather than degrade: every alternative (a keyless list, an omitted category)
       // erases the server's stored keys through the whole-blob PUT. Said out loud so the
       // user knows why nothing is leaving this device.
@@ -2518,8 +2533,8 @@ export async function approvePendingReview(): Promise<void> {
   if (useApp.getState().status !== "idle") return;
   pendingReview = null;
   if (!(await applyBlob(r.blob, r.cats))) {
-    // Deferred (dictation live): put the review back so the approval isn't
-    // consumed by an apply that never happened.
+    // Not applied (a session started mid-apply, or the store kept changing under it): put
+    // the review back so the approval isn't consumed by an apply that never happened.
     pendingReview = r;
     return;
   }
@@ -2538,14 +2553,10 @@ export async function approvePendingReview(): Promise<void> {
  *  re-offers it rather than silently treating the rejected state as agreed. */
 export function rejectPendingReview(): void {
   pendingReview = null;
-  pendingApply = null; // a refusal also cancels anything a deferred approve left queued
+  // Also drops a pull-apply parked while dictation ran: with no base adopted the next pull
+  // re-offers it, so nothing lands behind a refusal.
+  pendingApply = null;
   setRuntime({ syncStatus: "idle", syncError: null });
-}
-
-/** Is the review dialog's Apply actionable right now? (Not while dictating — see
- *  approvePendingReview.) */
-export function reviewApplyBlocked(): boolean {
-  return useApp.getState().status !== "idle";
 }
 
 // ── conflict resolution (driven by the Sync tab dialog) ─────────────────────
@@ -2613,8 +2624,8 @@ export async function resolveSyncConflicts(
     return;
   }
   if (!(await applyBlob(final, applyCats))) {
-    // Deferred (dictation live): restore the conflict so the user's picks are
-    // re-offered instead of silently adopting a base that was never applied.
+    // Not applied (a session started mid-apply, or the store kept changing under it):
+    // restore the conflict so the picks are re-offered, not a base that never landed.
     pendingConflict = c;
     return;
   }
@@ -2638,7 +2649,7 @@ export async function resolveSyncConflicts(
 
 export function dismissSyncConflict(): void {
   pendingConflict = null;
-  pendingApply = null; // "Later" also cancels a deferred resolve
+  pendingApply = null; // "Later" also drops a pull-apply parked while dictation ran (re-offered next pull)
   setRuntime({ syncStatus: "idle", syncError: null });
 }
 

@@ -120,6 +120,8 @@ mod tests {
         assert!(!t.contains('\u{202e}'), "{t:?}");
         assert!(t.contains("DE → FR"));
         let long = tooltip("app", "listening", &"X".repeat(200));
-        assert!(long.chars().count() < 200 + 10, "{long:?}");
+        // base + the 5-char separator + 64 route chars + the bound's own ellipsis — nowhere near 200.
+        assert_eq!(long.chars().count(), "app".len() + 5 + 64 + 1, "{long:?}");
+        assert!(!long.contains(&"X".repeat(65)), "{long:?}");
     }
 }

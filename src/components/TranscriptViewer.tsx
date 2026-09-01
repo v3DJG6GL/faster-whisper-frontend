@@ -1663,17 +1663,7 @@ export function TranscriptViewer({
         return;
       }
       const t = audioRef.current?.currentTime ?? 0;
-      // Last word already started (binary search — words are time-ordered).
-      let lo = 0;
-      let hi = words.length - 1;
-      let best = -1;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        if (words[mid].start <= t) {
-          best = mid;
-          lo = mid + 1;
-        } else hi = mid - 1;
-      }
+      const best = lastStartedAt(words, t);
       const next = Math.max(0, Math.min(words.length - 1, best + dir));
       seekTo(words[next].start);
     };

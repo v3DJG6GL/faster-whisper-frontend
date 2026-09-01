@@ -3,7 +3,7 @@
 // wire-neutrality proof (all gates on ≡ ungated compose).
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { ALL_CATEGORIES, applyBlob, composeBlob, mergeBlobs } from "./sync";
+import { ALL_CATEGORIES, applyBlob, backendsBlobIncomplete, composeBlob, mergeBlobs } from "./sync";
 import { completeGates, DEFAULT_SETTING_SYNC } from "./settingsManifest";
 import { catsFromGates, gateApplyScalar, gateComposeScalar } from "./syncGates";
 import { stableStringify } from "./stable";
@@ -311,5 +311,20 @@ describe("forward-compat: unknown categories carry through", () => {
     const merged = mergeBlobs(undefined, {} as SyncBlob, remote).merged;
     expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
     expect(merged.general).toBeUndefined();
+  });
+});
+
+describe("backendsBlobIncomplete (the push refusal's real gate)", () => {
+  const b = (id: string, hasApiKey: boolean) =>
+    ({ id, name: id, serverUrl: "http://h", hasApiKey }) as unknown as SyncBlob["backends"] extends { list: infer L } ? (L extends (infer T)[] ? T : never) : never;
+  it("a keyed backend without its secret would erase the server's key", () => {
+    expect(backendsBlobIncomplete({ backends: { list: [b("x", true)], secrets: {} } } as SyncBlob)).toBe(true);
+    expect(backendsBlobIncomplete({ backends: { list: [b("x", true)] } } as SyncBlob)).toBe(true);
+  });
+  it("a complete secrets map, a keyless list, or no backends category is pushable", () => {
+    expect(backendsBlobIncomplete({ backends: { list: [b("x", true)], secrets: { x: "k" } } } as SyncBlob)).toBe(false);
+    expect(backendsBlobIncomplete({ backends: { list: [b("x", false)], secrets: {} } } as SyncBlob)).toBe(false);
+    expect(backendsBlobIncomplete({} as SyncBlob)).toBe(false);
+    expect(backendsBlobIncomplete({ backends: [] as never } as SyncBlob)).toBe(false);
   });
 });

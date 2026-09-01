@@ -1136,15 +1136,16 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_config_write_leaves_no_tmp_behind() {
+    fn a_failed_config_save_leaves_no_tmp_behind() {
         let dir = std::env::temp_dir().join(format!("fwf-cfg-tmp-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        // Pre-plant the tmp path as a DIRECTORY so the write itself fails after the open.
-        std::fs::create_dir_all(dir.join("config.json.tmp")).unwrap();
+        // Pre-plant the FINAL path as a non-empty directory: the tmp file is written in full
+        // and the rename then fails — the cleanup this pins is the one after a successful
+        // write (a planted tmp path would fail at the open and never create anything).
+        std::fs::create_dir_all(dir.join("config.json").join("occupied")).unwrap();
         assert!(save(&dir, &Config::default()).is_err());
-        // The planted directory is not ours to remove; what must not exist is a stray FILE.
-        assert!(!dir.join("config.json.tmp").is_file());
+        assert!(!dir.join("config.json.tmp").exists(), "tmp left behind after a failed rename");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

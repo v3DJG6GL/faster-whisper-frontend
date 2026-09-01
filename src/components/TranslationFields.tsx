@@ -65,7 +65,10 @@ export function TranslationTargetChips({
   ).filter((code) => code !== exclude);
   const shown = chipCodes(value);
   const shownCandidates = chipCodes(candidates, 200);
-  const remaining = shownCandidates.filter((code) => !value.includes(code));
+  // Membership and removal go through the SAME sanitizer as the chips: a synced " de " renders
+  // "DE", so removing/re-offering it must match on that code, not on the raw entry.
+  const codeOf = (c: string) => chipCodes([c])[0] ?? "";
+  const remaining = shownCandidates.filter((code) => !shown.includes(code));
   const atCap = value.length >= max;
 
   return (
@@ -75,7 +78,7 @@ export function TranslationTargetChips({
           key={code}
           type="button"
           disabled={disabled}
-          onClick={() => onChange(value.filter((c) => c !== code))}
+          onClick={() => onChange(value.filter((c) => codeOf(c) !== code))}
           title={`Remove ${languageLabel(code)}`}
           className={cn(
             "ring-signal inline-flex h-7 items-center gap-1.5 rounded-pill border px-2.5 font-mono text-[11.5px]",
@@ -96,7 +99,7 @@ export function TranslationTargetChips({
           aria-label="Add a target language"
           onChange={(e) => {
             const code = e.target.value;
-            if (code && !value.includes(code)) onChange([...value, code]);
+            if (code && !shown.includes(code)) onChange([...value, code]);
           }}
           className={cn(
             "ring-signal h-7 cursor-pointer appearance-none rounded-pill border border-dashed border-line-strong",

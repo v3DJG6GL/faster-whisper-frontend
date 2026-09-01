@@ -265,8 +265,7 @@ impl Engine {
         }
         out
     }
-
-    }
+}
 
 /// The teardown-latch predicate both backends share: does any key of `keys` that is a
 /// shortcut MODIFIER (`is_mod`) still read as down (`down`)? Only modifiers matter — they are
@@ -611,9 +610,8 @@ mod tests {
         assert_eq!(fires, vec![Fire::Start("ptt".into()), Fire::Stop("ptt".into())]);
     }
 
-    /// The guard arbitrates CHORDS, it does not turn matching into an exact modifier mask:
-    /// an unrelated key being down must still leave a chord free to fire, or dictation would
-    /// die the moment the user rests a finger anywhere (and every nested family would break).
+    /// Every branch of the shared latch predicate: fully held / fully released / a staggered
+    /// release with one modifier still down / only the plain key down / the empty chord.
     #[test]
     fn the_teardown_latch_arms_on_any_modifier_still_down_and_never_on_a_plain_key() {
         // Modifiers 1 and 2, plain key 9.
@@ -630,6 +628,9 @@ mod tests {
         assert!(!any_chord_mod_down(&[], is_mod, down_all), "empty chord ⇒ don't arm");
     }
 
+    /// The guard arbitrates CHORDS, it does not turn matching into an exact modifier mask:
+    /// an unrelated key being down must still leave a chord free to fire, or dictation would
+    /// die the moment the user rests a finger anywhere (and every nested family would break).
     #[test]
     fn an_unrelated_held_key_still_lets_a_chord_fire() {
         let mut e = overlapping();
