@@ -202,8 +202,12 @@ mod imp {
         };
         *g = None; // drop + abort any previous readers, under the lock
         // Fresh start: drop any held-key counts left over from a previous run so the
-        // inject-gate can't wait on a phantom modifier.
-        app.state::<crate::held_keys::HeldKeys>().clear();
+        // inject-gate can't wait on a phantom modifier — and retire the old readers' writer
+        // (a reader whose stream ends past the abort point still runs its post-loop; see
+        // HeldKeys::clear). One writer per start, cloned into every reader.
+        let held_keys = app.state::<crate::held_keys::HeldKeys>();
+        held_keys.clear();
+        let held_keys = held_keys.writer();
         let chords = chords_from(profiles, quick_add_hotkey);
         if chords.is_empty() {
             tracing::info!("[evdev] no mappable chords; not starting");
@@ -220,6 +224,7 @@ mod imp {
             }
             let app = app.clone();
             let chords = chords.clone();
+            let held_keys = held_keys.clone();
             tasks.push(tauri::async_runtime::spawn(async move {
                 // into_event_stream() builds a tokio AsyncFd, so it MUST run inside
                 // the async runtime — calling it on the main thread (where the
@@ -231,7 +236,7 @@ mod imp {
                         return;
                     }
                 };
-                run_device(app, stream, Engine::new((*chords).clone())).await;
+                run_device(app, held_keys, stream, Engine::new((*chords).clone())).await;
             }));
         }
         tracing::info!(
@@ -355,7 +360,7 @@ mod imp {
     /// path — the shared engine owns all chord semantics; this just tracks keys.)
     fn commit(
         app: &AppHandle,
-        held_keys: &crate::held_keys::HeldKeys,
+        held_keys: &crate::held_keys::HeldKeysWriter,
         held: &mut HashSet<u16>,
         engine: &mut Engine,
         code: u16,
@@ -418,10 +423,16 @@ mod imp {
         }
     }
 
-    async fn run_device(app: AppHandle, mut stream: evdev::EventStream, mut engine: Engine) {
-        // Mirror physical key state into the shared signal `inject_text` reads, so we
-        // never type into a still-held trigger modifier (see crate::held_keys).
-        let held_keys = app.state::<crate::held_keys::HeldKeys>().inner().clone();
+    async fn run_device(
+        app: AppHandle,
+        held_keys: crate::held_keys::HeldKeysWriter,
+        mut stream: evdev::EventStream,
+        mut engine: Engine,
+    ) {
+        // `held_keys` mirrors physical key state into the shared signal `inject_text` reads,
+        // so we never type into a still-held trigger modifier (see crate::held_keys). It is
+        // this start's writer: retired by the next start's clear(), so a post-loop that runs
+        // past the abort point cannot touch its successor's counts.
         let mut held: HashSet<u16> = HashSet::new();
         // Chatter filter (per device — bounce is per physical switch): key-ups for
         // held keys are deferred RELEASE_DEBOUNCE and erased if the key comes back

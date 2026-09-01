@@ -22,6 +22,7 @@
 //! preserve the state we RECORD that we destroyed it.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -139,28 +140,30 @@ pub fn modifier_code(code: &str) -> Option<u16> {
 }
 
 /// Shared, cheaply-clonable handle to the held-key refcount map. Managed by Tauri as
-/// app state; the evdev reader tasks and `inject_text` each clone a handle.
+/// app state; the hotkey backends write through a [`HeldKeysWriter`], `inject_text` reads.
 #[derive(Clone, Default)]
-pub struct HeldKeys(Arc<Mutex<HashMap<u16, u32>>>);
+pub struct HeldKeys(Arc<Inner>);
+
+#[derive(Default)]
+struct Inner {
+    map: Mutex<HashMap<u16, u32>>,
+    /// The generation writers must belong to for their writes to land. `clear()` bumps it:
+    /// a wipe is also a hand-over, and every writer that existed before it is a listener
+    /// being replaced — its remaining writes are rejected (see `HeldKeysWriter`).
+    generation: AtomicU64,
+}
 
 impl HeldKeys {
-    /// Record a key press (`down = true`) or release (`down = false`).
-    pub fn set(&self, code: u16, down: bool) {
-        if let Ok(mut m) = self.0.lock() {
-            if down {
-                *m.entry(code).or_insert(0) += 1;
-            } else if let Some(c) = m.get_mut(&code) {
-                *c = c.saturating_sub(1);
-                if *c == 0 {
-                    m.remove(&code);
-                }
-            }
-        }
+    /// A writer bound to the CURRENT generation. Take it once per listener start, after
+    /// `clear()`, and clone it into that start's workers.
+    pub fn writer(&self) -> HeldKeysWriter {
+        HeldKeysWriter { keys: self.clone(), generation: self.0.generation.load(Ordering::Acquire) }
     }
 
     /// Is any of `codes` currently held?
     pub fn any_held(&self, codes: &[u16]) -> bool {
         self.0
+            .map
             .lock()
             .map(|m| codes.iter().any(|c| m.contains_key(c)))
             .unwrap_or(false)
@@ -172,19 +175,62 @@ impl HeldKeys {
         !codes.is_empty()
             && self
                 .0
+                .map
                 .lock()
                 .map(|m| codes.iter().all(|c| m.contains_key(c)))
                 .unwrap_or(false)
     }
 
     /// Forget all held keys — called when the listener (re)starts, so a stale count
-    /// from a previous run can't wedge the gate.
+    /// from a previous run can't wedge the gate — and retire every existing writer.
+    ///
+    /// The retirement is what makes the wipe safe. The Windows worker exits gracefully and
+    /// runs a post-loop that decrements everything it held, and it may still be draining a
+    /// backlog — but the wipe runs the moment `start()` drops the old listener, BEFORE that
+    /// worker wakes. So the old worker's late writes used to land on the NEW worker's counts:
+    /// a decrement zeroed a modifier the new worker had just recorded as down, the injection
+    /// gate then read "nothing held", skipped its wait, and typed the transcript into a live
+    /// Ctrl; a late increment from its backlog left a count nobody would ever decrement. With
+    /// the generation bumped here, every write from the retired worker is dropped, and the
+    /// counts belong to one listener at a time.
     ///
     /// Deliberately unconditional and evidence-free: see [`MODS_LOST_AT`] for why the loss is
     /// recorded at the manufactured stop instead of here.
     pub fn clear(&self) {
-        if let Ok(mut m) = self.0.lock() {
+        // Bump FIRST: a writer that races the wipe must already be retired when it lands.
+        self.0.generation.fetch_add(1, Ordering::AcqRel);
+        if let Ok(mut m) = self.0.map.lock() {
             m.clear();
+        }
+    }
+}
+
+/// A listener's handle for recording presses and releases. Bound to the generation current
+/// when it was taken; once `HeldKeys::clear()` has run since, every write is a no-op — the
+/// listener that holds it has been replaced and must not touch its successor's counts.
+#[derive(Clone)]
+pub struct HeldKeysWriter {
+    keys: HeldKeys,
+    generation: u64,
+}
+
+impl HeldKeysWriter {
+    /// Record a key press (`down = true`) or release (`down = false`). Dropped when retired.
+    pub fn set(&self, code: u16, down: bool) {
+        let inner = &self.keys.0;
+        // Checked under the map lock so a `clear()` cannot slip between the check and the write.
+        if let Ok(mut m) = inner.map.lock() {
+            if inner.generation.load(Ordering::Acquire) != self.generation {
+                return;
+            }
+            if down {
+                *m.entry(code).or_insert(0) += 1;
+            } else if let Some(c) = m.get_mut(&code) {
+                *c = c.saturating_sub(1);
+                if *c == 0 {
+                    m.remove(&code);
+                }
+            }
         }
     }
 }
@@ -221,11 +267,31 @@ mod tests {
         // otherwise an unrelated sync pull landing while the user merely holds Shift to select text
         // would divert a phrase that was never at risk.
         let held = HeldKeys::default();
-        held.set(SHORTCUT_MOD_CODES[0], true);
+        held.writer().set(SHORTCUT_MOD_CODES[0], true);
         assert!(held.any_held(&SHORTCUT_MOD_CODES));
         held.clear();
         assert!(!held.any_held(&SHORTCUT_MOD_CODES));
         assert!(!take_lost_if_fresh(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn a_retired_writer_cannot_touch_its_successors_counts() {
+        const CTRL: u16 = SHORTCUT_MOD_CODES[0];
+        let held = HeldKeys::default();
+        let old = held.writer();
+        old.set(CTRL, true);
+        // The listener restarts: wipe + hand-over.
+        held.clear();
+        let new = held.writer();
+        new.set(CTRL, true);
+        assert!(held.all_held(&[CTRL]));
+        // The old worker's late post-loop decrement — the race that read "nothing held" and
+        // typed into a live Ctrl — is dropped, and so is a late increment from its backlog.
+        old.set(CTRL, false);
+        assert!(held.all_held(&[CTRL]));
+        old.set(CTRL, true);
+        new.set(CTRL, false);
+        assert!(!held.any_held(&[CTRL]));
     }
 
     #[test]

@@ -322,8 +322,12 @@ mod imp {
         };
         *g = None; // drop any previous Running → old worker drains + old hook unhooks
         // Fresh start: drop any held-key counts left over from a previous run so the
-        // inject-gate can't wait on a phantom modifier.
-        app.state::<crate::held_keys::HeldKeys>().clear();
+        // inject-gate can't wait on a phantom modifier — and retire the old worker's writer,
+        // so its late post-loop decrements (it wakes AFTER this) can't zero counts the new
+        // worker is about to record (see HeldKeys::clear).
+        let held_keys = app.state::<crate::held_keys::HeldKeys>();
+        held_keys.clear();
+        let held_keys = held_keys.writer();
         let chords = chords_from(profiles, quick_add_hotkey);
         if chords.is_empty() {
             tracing::info!("[winhook] no mappable chords; not starting");
@@ -341,7 +345,7 @@ mod imp {
         let worker_app = app.clone();
         let _ = std::thread::Builder::new()
             .name("win-hotkeys-match".into())
-            .spawn(move || worker(worker_app, rx, Engine::new(chords)));
+            .spawn(move || worker(worker_app, held_keys, rx, Engine::new(chords)));
 
         let (ready_tx, ready_rx) = channel::<Option<u32>>();
         let abandoned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -892,7 +896,7 @@ mod imp {
     /// worker loop, factored out so deferred releases commit through the same path.)
     fn commit(
         app: &AppHandle,
-        held_keys: &crate::held_keys::HeldKeys,
+        held_keys: &crate::held_keys::HeldKeysWriter,
         held: &mut HashSet<u16>,
         engine: &mut Engine,
         id: u16,
@@ -993,7 +997,7 @@ mod imp {
     /// session short. `up_once` carries that first strike between calls.
     fn resync_held(
         app: &AppHandle,
-        held_keys: &crate::held_keys::HeldKeys,
+        held_keys: &crate::held_keys::HeldKeysWriter,
         held: &mut HashSet<u16>,
         engine: &mut Engine,
         up_once: &mut HashSet<u16>,
@@ -1018,10 +1022,17 @@ mod imp {
     /// shared crate::chord_engine. Runs until the sender is dropped (shutdown/
     /// restart), then releases its HeldKeys contributions and stops any live
     /// Hold session.
-    fn worker(app: AppHandle, rx: Receiver<KeyEv>, mut engine: Engine) {
-        // Mirror physical modifier state into the shared signal `inject_text` reads,
-        // so we never type into a still-held trigger modifier (see crate::held_keys).
-        let held_keys = app.state::<crate::held_keys::HeldKeys>().inner().clone();
+    fn worker(
+        app: AppHandle,
+        held_keys: crate::held_keys::HeldKeysWriter,
+        rx: Receiver<KeyEv>,
+        mut engine: Engine,
+    ) {
+        // `held_keys` mirrors physical modifier state into the shared signal `inject_text`
+        // reads, so we never type into a still-held trigger modifier (see crate::held_keys).
+        // It is this start's writer: once a later start has cleared the map, our writes —
+        // including the post-loop's decrements below — are dropped rather than landing on
+        // our successor's counts.
         let mut held: HashSet<u16> = HashSet::new();
         // Chatter filter: key-ups for held keys are deferred RELEASE_DEBOUNCE and
         // erased if the key comes back down in the window (a worn-switch bounce fed
