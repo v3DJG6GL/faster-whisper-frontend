@@ -96,6 +96,104 @@ pub struct TextTranslationResult {
     pub warnings: Vec<String>,
 }
 
+/// Assemble the request body, applying each field's own present-vs-absent rule.
+///
+/// `source` and `translation_glossary` ride through on PRESENCE alone: `None` omits
+/// the key, `Some(s)` sends it verbatim — `""` included. The server distinguishes the
+/// two, resolving an empty glossary through the same knob ladder the batch form uses
+/// ("no glossary", overriding whatever would otherwise be inherited) and an empty
+/// source as auto-detect. Emptiness filters here collapsed both onto "absent", so a
+/// glossary the user had explicitly cleared came back from the server's own config on
+/// every dictation settle, retro-translate and subtitle run — the one path the batch
+/// form's fix did not cover.
+///
+/// `translation_model` / `translation_mode` keep their truthiness prune: their controls
+/// offer a real "Inherit" row, so `""` there is the absence of a choice, not a choice.
+/// The two ids are screened, not tri-state — an empty id names nothing.
+#[allow(clippy::too_many_arguments)]
+fn build_request_body<'a>(
+    texts: &'a [String],
+    targets: &'a [String],
+    source: Option<&'a str>,
+    model: Option<&'a str>,
+    mode: Option<&'a str>,
+    glossary: Option<&'a str>,
+    context_segments: Option<u32>,
+    progress_id: Option<&'a str>,
+    captured_id: Option<&'a str>,
+) -> RequestBody<'a> {
+    RequestBody {
+        segments: texts.iter().enumerate().map(|(id, t)| SegmentIn { id, text: t }).collect(),
+        targets,
+        source,
+        translation_model: model.filter(|s| !s.is_empty()),
+        translation_mode: mode.filter(|s| !s.is_empty()),
+        translation_glossary: glossary,
+        context_segments,
+        progress_id: progress_id.filter(|s| !s.is_empty()),
+        captured_id: captured_id.filter(|s| !s.is_empty()),
+    }
+}
+
+#[cfg(test)]
+mod request_body_tests {
+    use super::build_request_body;
+
+    fn body(source: Option<&str>, glossary: Option<&str>) -> serde_json::Value {
+        let texts = vec!["hallo".to_string()];
+        let targets = vec!["en".to_string()];
+        serde_json::to_value(build_request_body(
+            &texts, &targets, source, None, None, glossary, None, None, None,
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn an_explicitly_cleared_glossary_is_sent_and_an_absent_one_is_omitted() {
+        // The distinction the whole change exists for: "" = no glossary (overrides the
+        // server's own), absent = inherit it.
+        assert_eq!(body(None, Some(""))["translation_glossary"], "");
+        assert!(body(None, None).get("translation_glossary").is_none());
+        assert_eq!(body(None, Some("a = b"))["translation_glossary"], "a = b");
+    }
+
+    #[test]
+    fn a_whitespace_only_glossary_is_still_a_present_value() {
+        // It used to be trimmed away into "absent", which re-inherited. The server owns
+        // the decision about what an all-blank glossary means; the client just says it.
+        assert_eq!(body(None, Some("   "))["translation_glossary"], "   ");
+    }
+
+    #[test]
+    fn an_empty_source_rides_through_as_auto_detect() {
+        assert_eq!(body(Some(""), None)["source"], "");
+        assert!(body(None, None).get("source").is_none());
+        assert_eq!(body(Some("de"), None)["source"], "de");
+    }
+
+    #[test]
+    fn model_and_mode_keep_their_truthiness_prune() {
+        // Not tri-state: their pickers have an "Inherit" row, so "" is no choice at all.
+        let texts = vec!["hallo".to_string()];
+        let targets = vec!["en".to_string()];
+        let v = serde_json::to_value(build_request_body(
+            &texts,
+            &targets,
+            None,
+            Some(""),
+            Some(""),
+            None,
+            None,
+            Some(""),
+            Some(""),
+        ))
+        .unwrap();
+        for key in ["translation_model", "translation_mode", "progress_id", "captured_id"] {
+            assert!(v.get(key).is_none(), "{key} should be omitted");
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn translate_texts(
     server_url: &str,
@@ -131,17 +229,17 @@ pub async fn translate_texts(
         bail!("between 1 and {MAX_TARGETS} valid target languages");
     }
     let targets = &targets[..];
-    let body = RequestBody {
-        segments: texts.iter().enumerate().map(|(id, t)| SegmentIn { id, text: t }).collect(),
+    let body = build_request_body(
+        texts,
         targets,
-        source: source.filter(|s| !s.is_empty()),
-        translation_model: model.filter(|s| !s.is_empty()),
-        translation_mode: mode.filter(|s| !s.is_empty()),
-        translation_glossary: glossary.filter(|s| !s.trim().is_empty()),
+        source,
+        model,
+        mode,
+        glossary,
         context_segments,
-        progress_id: progress_id.filter(|s| !s.is_empty()),
-        captured_id: captured_id.filter(|s| !s.is_empty()),
-    };
+        progress_id,
+        captured_id,
+    );
     let base = base_url(server_url);
     // Per-request override of the shared client's 120 s default (reqwest's
     // RequestBuilder::timeout replaces the client-level timeout for this
