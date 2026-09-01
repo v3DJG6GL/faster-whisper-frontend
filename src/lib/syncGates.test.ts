@@ -247,8 +247,13 @@ describe("catsFromGates", () => {
 
 describe("pure helpers", () => {
   it("gateComposeScalar / gateApplyScalar pass non-objects through", () => {
-    expect(gateComposeScalar("general", "junk", undefined, GATES_ALL)).toBe("junk");
-    expect(gateApplyScalar("general", null, GATES_ALL)).toBe(null);
+    // A gate must be OFF, or both functions short-circuit on `off.length === 0`
+    // and the isPlainObject guard (the string-spread hazard) is never reached.
+    const someOff = { ...GATES_ALL, soundCues: false };
+    expect(gateComposeScalar("general", "junk", undefined, someOff)).toBe("junk");
+    expect(gateApplyScalar("general", "junk", someOff)).toBe("junk");
+    expect(gateApplyScalar("general", null, someOff)).toBe(null);
+    expect(gateComposeScalar("general", ["a"], undefined, someOff)).toEqual(["a"]);
   });
 });
 

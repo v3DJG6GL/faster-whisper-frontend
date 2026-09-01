@@ -115,7 +115,12 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
     setToast({ text: label, undo });
   }
 
-  const allOn = DEFS.every((d) => gates[d.id as SettingId]);
+  // Tri-state like every GroupCard below: a boolean master read "Off" forever
+  // on a stock install (machine-specific rows default off), and one click from
+  // there overwrote the whole curated map with all-true — no confirm, no undo.
+  const onDefs = DEFS.filter((d) => gates[d.id as SettingId]);
+  const master: boolean | "mixed" =
+    onDefs.length === DEFS.length ? true : onDefs.length === 0 ? false : "mixed";
   const totalChanged = changed.size;
   // The exceptions view's unit: switch changed from default, or default-off.
   const totalExceptions = DEFS.filter(
@@ -126,7 +131,6 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
     // `inert`, not pointer-events-none alone: the latter blocked the mouse but left every
     // switch and ↺ tab-reachable and Space-activatable while sync was off.
     <div className={cn(!enabled && "opacity-40")} inert={!enabled}>
-      {/* Sync everything: on = every switch on and the list folds away. */}
       <div className="flex items-center gap-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-medium text-text">Sync everything</div>
@@ -135,120 +139,127 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
           </div>
         </div>
         <Toggle
-          checked={allOn}
+          checked={master}
           ariaLabel="Sync everything"
-          onChange={(v) =>
-            setGates(Object.fromEntries(DEFS.map((d) => [d.id, v])) as Partial<
-              Record<SettingId, boolean>
-            >)
-          }
+          onChange={(v) => {
+            const undo = Object.fromEntries(
+              DEFS.map((d) => [d.id, gates[d.id as SettingId]]),
+            ) as Partial<Record<SettingId, boolean>>;
+            setGates(
+              Object.fromEntries(DEFS.map((d) => [d.id, v])) as Partial<Record<SettingId, boolean>>,
+            );
+            setToast({
+              text: v
+                ? "Every setting now syncs, including machine-specific ones"
+                : "Sync switched off for every setting",
+              undo,
+            });
+          }}
         />
       </div>
 
       {/* The list always renders — the master toggle sets switches, it never
           hides them; only Expand/Collapse and the filter control visibility. */}
-      <>
-        <div className="flex items-center pb-2">
-            {/* ONE view control — collapsed/expanded/exceptions are three
-                values of the same state, so two switches always left a dead
-                combination. Hand-toggled chevrons produce a mix no segment
-                matches ("custom"): none renders active until a segment snaps
-                the whole list back. */}
-            <Segmented
-              value={
-                ui.changedOnly
-                  ? "exceptions"
-                  : SYNC_GROUPS.every((g) => ui.expanded[g])
-                    ? "expanded"
-                    : SYNC_GROUPS.every((g) => !ui.expanded[g])
-                      ? "collapsed"
-                      : ("custom" as const)
-              }
-              onChange={(v) => {
-                if (v === "exceptions") patchUi({ changedOnly: true });
-                else
-                  patchUi({
-                    changedOnly: false,
-                    expanded: Object.fromEntries(
-                      SYNC_GROUPS.map((g) => [g, v === "expanded"]),
-                    ),
-                  });
-              }}
-              options={[
-                { value: "collapsed", label: "Collapsed" },
-                { value: "expanded", label: "Expanded" },
-                {
-                  value: "exceptions",
-                  label: `Changed & default-off${totalExceptions > 0 ? ` · ${totalExceptions}` : ""}`,
-                },
-              ]}
-              ariaLabel="List view"
-            />
-          </div>
+      <div className="flex items-center pb-2">
+          {/* ONE view control — collapsed/expanded/exceptions are three
+              values of the same state, so two switches always left a dead
+              combination. Hand-toggled chevrons produce a mix no segment
+              matches ("custom"): none renders active until a segment snaps
+              the whole list back. */}
+          <Segmented
+            value={
+              ui.changedOnly
+                ? "exceptions"
+                : SYNC_GROUPS.every((g) => ui.expanded[g])
+                  ? "expanded"
+                  : SYNC_GROUPS.every((g) => !ui.expanded[g])
+                    ? "collapsed"
+                    : ("custom" as const)
+            }
+            onChange={(v) => {
+              if (v === "exceptions") patchUi({ changedOnly: true });
+              else
+                patchUi({
+                  changedOnly: false,
+                  expanded: Object.fromEntries(
+                    SYNC_GROUPS.map((g) => [g, v === "expanded"]),
+                  ),
+                });
+            }}
+            options={[
+              { value: "collapsed", label: "Collapsed" },
+              { value: "expanded", label: "Expanded" },
+              {
+                value: "exceptions",
+                label: `Changed & default-off${totalExceptions > 0 ? ` · ${totalExceptions}` : ""}`,
+              },
+            ]}
+            ariaLabel="List view"
+          />
+        </div>
 
-          {SYNC_GROUPS.map((group) => (
-            <GroupCard
-              key={group}
-              group={group}
-              gates={gates}
-              changed={changed}
-              expanded={!!ui.expanded[group]}
-              changedOnly={ui.changedOnly}
-              // A chevron in "Changed & default-off" mode was inert (that mode wins over
-              // `expanded`): make it leave the mode, so the click does what the arrow shows.
-              onToggleExpand={() =>
-                patchUi({ changedOnly: false, expanded: { [group]: !ui.expanded[group] } })
-              }
-              onGate={(id, v) => setGates({ [id]: v } as Partial<Record<SettingId, boolean>>)}
-              onGateMany={(patch) => setGates(patch)}
-              onResetSetting={(def) => resetDefs([def], `“${def.label}” sync switch reset to default`)}
-              onResetGroup={(defs) =>
-                resetDefs(defs, `${defs.length} sync ${defs.length === 1 ? "switch" : "switches"} in ${SYNC_GROUP_LABEL[group]} reset to default`)
-              }
-            />
-          ))}
+        {SYNC_GROUPS.map((group) => (
+          <GroupCard
+            key={group}
+            group={group}
+            gates={gates}
+            changed={changed}
+            expanded={!!ui.expanded[group]}
+            changedOnly={ui.changedOnly}
+            // A chevron in "Changed & default-off" mode was inert (that mode wins over
+            // `expanded`): make it leave the mode, so the click does what the arrow shows.
+            onToggleExpand={() =>
+              patchUi({ changedOnly: false, expanded: { [group]: !ui.expanded[group] } })
+            }
+            onGate={(id, v) => setGates({ [id]: v } as Partial<Record<SettingId, boolean>>)}
+            onGateMany={(patch) => setGates(patch)}
+            onResetSetting={(def) => resetDefs([def], `“${def.label}” sync switch reset to default`)}
+            onResetGroup={(defs) =>
+              resetDefs(defs, `${defs.length} sync ${defs.length === 1 ? "switch" : "switches"} in ${SYNC_GROUP_LABEL[group]} reset to default`)
+            }
+          />
+        ))}
 
-          <div className="mt-4 flex items-center justify-end gap-3">
-            {confirmAll ? (
-              <>
-                <span className="text-[12px] text-warn">
-                  Reset {totalChanged} sync {totalChanged === 1 ? "switch" : "switches"} to
-                  default? Your settings&rsquo; values stay untouched — this only changes what
-                  this device syncs, and applies to this device only.
-                </span>
-                <button
-                  type="button"
-                  className="ring-signal rounded-lg border border-rec/40 px-3 py-1.5 text-[12px] font-semibold text-rec hover:bg-rec/10"
-                  onClick={() => {
-                    setConfirmAll(false);
-                    resetDefs(
-                      DEFS.filter((d) => changed.has(d.id as SettingId)),
-                      `${totalChanged} sync ${totalChanged === 1 ? "switch" : "switches"} reset to default`,
-                    );
-                  }}
-                >
-                  Reset
-                </button>
-                <button
-                  type="button"
-                  className="ring-signal rounded-lg border border-line px-3 py-1.5 text-[12px] text-dim hover:text-text"
-                  onClick={() => setConfirmAll(false)}
-                >
-                  Cancel
-                </button>
-              </>
-            ) : (
+        <div className="mt-4 flex items-center justify-end gap-3">
+          {confirmAll ? (
+            <>
+              <span className="text-[12px] text-warn">
+                Reset {totalChanged} sync {totalChanged === 1 ? "switch" : "switches"} to
+                default? Your settings&rsquo; values stay untouched — this only changes what
+                this device syncs, and applies to this device only.
+              </span>
               <button
                 type="button"
-                disabled={totalChanged === 0}
-                className="ring-signal rounded-lg border border-line px-3 py-1.5 text-[12px] text-faint hover:text-dim disabled:opacity-40"
-                onClick={() => setConfirmAll(true)}
+                className="ring-signal rounded-lg border border-rec/40 px-3 py-1.5 text-[12px] font-semibold text-rec hover:bg-rec/10"
+                onClick={() => {
+                  setConfirmAll(false);
+                  resetDefs(
+                    DEFS.filter((d) => changed.has(d.id as SettingId)),
+                    `${totalChanged} sync ${totalChanged === 1 ? "switch" : "switches"} reset to default`,
+                  );
+                }}
               >
-                Restore all defaults…
+                Reset
               </button>
-            )}
-          </div>
-      </>
+              <button
+                type="button"
+                className="ring-signal rounded-lg border border-line px-3 py-1.5 text-[12px] text-dim hover:text-text"
+                onClick={() => setConfirmAll(false)}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={totalChanged === 0}
+              className="ring-signal rounded-lg border border-line px-3 py-1.5 text-[12px] text-faint hover:text-dim disabled:opacity-40"
+              onClick={() => setConfirmAll(true)}
+            >
+              Restore all defaults…
+            </button>
+          )}
+        </div>
 
       {toast && (
         <Toast
