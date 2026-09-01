@@ -45,6 +45,7 @@ import { SyncTab } from "@/screens/SettingsSync";
 
 /** "1.2 GB" / "84 MB" for the audio-copy usage readout. */
 function fmtBytes(n: number): string {
+  if (n <= 0) return "0 KB"; // the floor below is for a sub-512-byte FILE, never for nothing
   if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
   if (n >= 1024 ** 2) return `${Math.round(n / 1024 ** 2)} MB`;
   return `${Math.max(1, Math.round(n / 1024))} KB`;
@@ -478,7 +479,7 @@ function LoggingSection() {
   const [folder, setFolder] = useState<string | null>(null);
   const logDir = logging?.logDir ?? null;
   useEffect(() => {
-    void logFolderPath().then(setFolder);
+    void logFolderPath(logDir).then(setFolder);
   }, [logDir]);
 
   return (
@@ -538,7 +539,7 @@ function LoggingSection() {
         last
       >
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={() => void openLogFolder().catch(() => {})}>
+          <Button size="sm" variant="ghost" onClick={() => void openLogFolder(logDir).catch(() => {})}>
             Open folder
           </Button>
           <Button

@@ -357,7 +357,7 @@ export function RestoreFromServer({
     setApplying(true);
     setError(null);
     try {
-      await applyBlob(blob, sel);
+      await applyBlob(blob, sel, 2, { ignoreGates: true });
       await onApplied();
     } catch (e) {
       setError(String(e));

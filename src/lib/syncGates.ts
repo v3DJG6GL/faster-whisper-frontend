@@ -162,6 +162,7 @@ export function catsFromGates(gates: Gates): Record<string, boolean> {
     appRules: gates.rulesThisOs,
   };
   for (const d of DEFS) {
+    if (d.localOnly) continue;
     if (d.category === "backends" || d.category === "profiles" || d.category === "appRules") continue;
     cats[d.category] = (cats[d.category] ?? false) || gates[d.id as SettingId];
   }

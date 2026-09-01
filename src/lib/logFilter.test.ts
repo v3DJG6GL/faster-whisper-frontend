@@ -13,6 +13,7 @@ import {
   passesThreshold,
   type FollowState,
   bugReportRunFields,
+  countNewer,
 } from "./logFilter";
 
 function line(over: Partial<LogLine> = {}): LogLine {
@@ -146,6 +147,15 @@ describe("followReduce", () => {
     const pending: FollowState = { follow: false, pendingNew: 7 };
     expect(followReduce(pending, { kind: "scrolled", atBottom: true })).toEqual(following);
     expect(followReduce(pending, { kind: "relatch" })).toEqual(following);
+  });
+});
+
+describe("countNewer", () => {
+  it("counts by seq watermark, not by array length", () => {
+    const L = [0, 1, 2, 3].map((seq) => line({ seq, msg: "m" }));
+    expect(countNewer(L, 1)).toBe(2);
+    expect(countNewer(L, 3)).toBe(0); // a widened filter grows the array; nothing arrived
+    expect(countNewer(L, -1)).toBe(4);
   });
 });
 

@@ -238,7 +238,9 @@ export async function initOverlayController(): Promise<void> {
   //  - the chip was up BEFORE this controller → the unconditional push below reaches it
   //    (and if config hydrates later, the settings-identity change re-emits through the
   //    subscriber's gate as usual).
-  void listen("overlay://ready", pushNow);
+  // Await the registration before the first push: an un-awaited listen leaves a window in
+  // which the chip's ready emit is dropped AND our push predates the chip's listener.
+  await listen("overlay://ready", pushNow);
   pushNow();
 
   useApp.subscribe((state, prev) => {

@@ -124,7 +124,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // Normalize a pre-split server blob first — the apply arms filter fields to their new
       // categories, so an unmigrated old blob would silently drop the chip settings, the
       // quick-add chord, and the pin (they'd sit in locations the arms no longer read).
-      await applyBlob(migrateBlob(blob), ALL_ON);
+      await applyBlob(migrateBlob(blob), ALL_ON, 2, { ignoreGates: true });
       // Turn sync on for this device, against the restored backend that matches
       // the gate's URL (the restore may have replaced Backend #1's entry).
       const s = st.getState();

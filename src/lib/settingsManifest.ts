@@ -105,6 +105,11 @@ export interface SettingDef {
   fields: readonly FieldRef[];
   /** Machine-specific (paths, chords, display geometry): sync default OFF. */
   machineSpecific?: true;
+  /** Rendered in Settings for its label, but NEVER synced: the apply arm drops the field
+   *  on every inbound path (the `autoEnter` strip — a peer must not arm a post-paste
+   *  Return), so a sync switch would advertise a choice the user does not have. No sync
+   *  row, no gate, no wire field. */
+  localOnly?: true;
   /** List-category arm this switch gates instead of field copying. */
   custom?: CustomArm;
 }
@@ -136,7 +141,7 @@ export const MANIFEST = [
   { id: "deepFieldDetection", section: "Insertion", label: "Deep field detection", group: "dictation", category: "general",
     fields: [g("deepFieldDetection")] },
   { id: "pressEnterAfter", section: "Insertion", label: "Press Enter after", group: "dictation", category: "general",
-    fields: [g("autoEnter")] },
+    localOnly: true, fields: [] },
   { id: "restoreClipboard", section: "Insertion", label: "Restore clipboard afterward", group: "dictation", category: "general",
     fields: [g("restoreClipboard")] },
   { id: "soundCues", label: "Sound cues", group: "general", category: "general",
@@ -332,7 +337,7 @@ export const GENERAL_COVERAGE = {
   typeAsISpeak: "typeAsISpeak",
   insertMethod: "insertMethod",
   pasteShortcut: "pasteShortcut",
-  autoEnter: "pressEnterAfter",
+  autoEnter: LOCAL, // never accepted from a peer — see the general apply strip in sync.ts
   restoreClipboard: "restoreClipboard",
   soundEffects: "soundCues",
   evdevEnabled: LOCAL, // Permissions-tab hardware opt-in, per machine
@@ -424,15 +429,15 @@ export const TOP_COVERAGE = {
 /** Sync default per setting: on unless machine-specific. THE single source —
  *  replaces the old duplicated sub-default literals. */
 export const DEFAULT_SETTING_SYNC = Object.fromEntries(
-  DEFS.map((d) => [d.id, !d.machineSpecific]),
+  DEFS.map((d) => [d.id, !d.machineSpecific && !d.localOnly]),
 ) as Record<SettingId, boolean>;
 
 export function settingsOfGroup(group: SyncGroup): SettingDef[] {
-  return DEFS.filter((d) => d.group === group);
+  return DEFS.filter((d) => d.group === group && !d.localOnly);
 }
 
 export function settingsOfCategory(cat: WireCategory): SettingDef[] {
-  return DEFS.filter((d) => d.category === cat);
+  return DEFS.filter((d) => d.category === cat && !d.localOnly);
 }
 
 /* ── Value access (changed-detection / reset) ──────────────────────────── */

@@ -31,7 +31,7 @@ import {
   matchesFilters,
   type FoldedLine,
   type FollowState,
-  type LevelThreshold, bugReportRunFields } from "@/lib/logFilter";
+  type LevelThreshold, bugReportRunFields, countNewer } from "@/lib/logFilter";
 import { loadHistory, useTranscriptHistory } from "@/lib/transcriptHistory";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
@@ -185,7 +185,9 @@ export default function Logs() {
   }, []);
 
   const all = visibleLines();
-  const chips = useMemo(() => collectTags(all), [all]);
+  // Union with the SELECTED tags: a tag whose lines have left the buffer (Clear view,
+  // roll-over) still filters, so its chip must stay on-screen to be switchable off.
+  const chips = useMemo(() => [...new Set([...collectTags(all), ...tags])], [all, tags]);
   const lines = useMemo(
     () => all.filter((l) => matchesFilters(l, threshold, tags, text)),
     [all, threshold, tags, text],
@@ -225,10 +227,13 @@ export default function Logs() {
 
   // Follow: on new content, keep the tail pinned (after paint — wrapped rows
   // re-measure); when unlatched, count what arrived for the pill.
-  const prevCount = useRef(0);
+  // Counted by seq watermark, not by length: a loosened filter grew the array without
+  // anything arriving, and at buffer cap each batch evicted as many lines as it added.
+  const prevSeq = useRef(-1);
   useEffect(() => {
-    const added = Math.max(0, lines.length - prevCount.current);
-    prevCount.current = lines.length;
+    const last = lines.length ? lines[lines.length - 1].seq : -1;
+    const added = prevSeq.current < 0 ? 0 : countNewer(lines, prevSeq.current);
+    prevSeq.current = Math.max(prevSeq.current, last);
     if (follow.follow) {
       if (rows.length > 0) {
         requestAnimationFrame(() => {
@@ -239,7 +244,7 @@ export default function Logs() {
       setFollow((f) => followReduce(f, { kind: "appended", count: added }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version, lines.length, follow.follow]);
+  }, [version, lines, follow.follow]);
 
   // Wrap toggles every row's height at once — drop all cached measurements.
   useEffect(() => {
@@ -422,7 +427,11 @@ export default function Logs() {
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? "Copied" : "Copy for bug report"}
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => void openLogFolder()}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => void openLogFolder(useApp.getState().settings.logging?.logDir ?? null)}
+        >
           <FolderOpen className="h-3.5 w-3.5" /> Open log folder
         </Button>
         <Button variant="ghost" size="sm" onClick={clearView}>

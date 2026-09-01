@@ -40,7 +40,7 @@ describe("manifest integrity", () => {
   it("machineSpecific settings default to sync OFF, others ON", () => {
     for (const d of DEFS) {
       expect(DEFAULT_SETTING_SYNC[d.id as keyof typeof DEFAULT_SETTING_SYNC]).toBe(
-        !d.machineSpecific,
+        !d.machineSpecific && !d.localOnly,
       );
     }
   });
@@ -52,7 +52,7 @@ describe("manifest integrity", () => {
       if (d.custom && !pointerCustoms.has(d.id)) {
         expect(d.fields.length, d.id).toBe(0);
       }
-      if (!d.custom) expect(d.fields.length, `${d.id} must own fields`).toBeGreaterThan(0);
+      if (!d.custom && !d.localOnly) expect(d.fields.length, `${d.id} must own fields`).toBeGreaterThan(0);
     }
   });
 

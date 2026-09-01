@@ -78,7 +78,7 @@ import type {
   SyncTranscription,
 } from "./syncTypes";
 import type { SyncSubSettings } from "./types";
-import { completeGates } from "./settingsManifest";
+import { MANIFEST, completeGates } from "./settingsManifest";
 import {
   APP_RULE_OVERRIDE_FIELDS,
   APP_RULE_PASTE_FIELDS,
@@ -90,6 +90,7 @@ import {
   repinElementFields,
   substituteElementFields,
   type Gates,
+  catsFromGates,
 } from "./syncGates";
 
 export const ALL_CATEGORIES: SyncCategory[] = [
@@ -123,6 +124,29 @@ export function subSettings(): SyncSubSettings {
 export function settingGates(): Gates {
   const sync = useApp.getState().settings.sync;
   return completeGates(sync?.sub, sync?.categories);
+}
+
+/** The engine's category toggles, DERIVED from the per-setting gates. The persisted
+ *  `sync.categories` map has had no UI writer since the manifest list replaced the
+ *  category rows: reading it froze an upgraded user's OFF category forever (no control
+ *  could turn it back on) and left the list-level switches — "Server list", "Profile
+ *  list & settings", "Rules for this OS" — inert. */
+function syncCats(): Record<SyncCategory, boolean> {
+  return catsFromGates(settingGates()) as Record<SyncCategory, boolean>;
+}
+
+const GATED_SCALAR_CATS = ["general", "recording", "chip", "transcription", "fileTranscriptions", "dictionary", "logging"] as const;
+
+/** applyBlob strips gated-off scalar fields, so the security review must judge what
+ *  will actually apply: comparing ungated blobs raised the consent dialog (and held a
+ *  whole category back) for a peer edit to a setting this device opted out of. Both
+ *  sides are stripped, or `clockCheck`'s absent-key fallbacks would fire spuriously. */
+function gateScalars(b: SyncBlob, gates: Gates): SyncBlob {
+  const out: SyncBlob = { ...b };
+  for (const c of GATED_SCALAR_CATS) {
+    if (out[c] !== undefined) (out as Record<string, unknown>)[c] = gateApplyScalar(c, out[c], gates);
+  }
+  return out;
 }
 
 /** This machine's appRules bucket. macOS has no app-rules backend; it falls
@@ -269,7 +293,8 @@ function extractGeneral(settings: AppSettings): SyncGeneral {
     typeAsISpeak: g.typeAsISpeak,
     insertMethod: g.insertMethod,
     pasteShortcut: g.pasteShortcut,
-    autoEnter: g.autoEnter,
+    // autoEnter is deliberately absent: the apply arm drops it on every inbound path (a
+    // peer must not arm a post-paste Return), so it is local-only in the manifest too.
     restoreClipboard: g.restoreClipboard,
     soundEffects: g.soundEffects,
     deepFieldDetection: g.deepFieldDetection,
@@ -430,7 +455,14 @@ export async function composeBlob(
     : snapshot?.recording;
   blob.chip = cats.chip ? extractChip(cfg.settings) : snapshot?.chip;
   blob.dictionary = cats.dictionary
-    ? extractDictionary(cfg.settings, opts.sub.quickAddHotkey, cats.backends, snapshot)
+    ? extractDictionary(
+        cfg.settings,
+        opts.sub.quickAddHotkey,
+        // The pin needs its referent list AND its own "Pinned word mappings" switch (which
+        // nothing read before). `gates` is absent on the export path, deliberately all-on.
+        cats.backends && (opts.gates?.pinnedMappings ?? true),
+        snapshot,
+      )
     : snapshot?.dictionary;
   blob.transcription = cats.transcription
     ? extractTranscription(cfg.settings, opts.sub.transcribePicks ?? false, snapshot)
@@ -1212,10 +1244,13 @@ export async function applyBlob(
   /** Retries left after a mid-apply store change (see the check after the keyring wait).
    *  Bounded so a user editing settings in a tight loop cannot spin this. */
   retries = 2,
+  /** `ignoreGates`: an explicit one-shot restore (file import, Restore from server,
+   *  onboarding) — see the gate step below. */
+  opts: { ignoreGates?: boolean } = {},
 ): Promise<void> {
   const st = useApp.getState();
   if (st.status !== "idle") {
-    pendingApply = { blob, cats };
+    pendingApply = { blob, cats, opts };
     return;
   }
   applyingRemote = true;
@@ -1227,13 +1262,15 @@ export async function applyBlob(
     // scalar categories up front, so every merge-over-current below keeps
     // this device's values for them (the recordingsDir idiom, generalized).
     // List-category gates re-pin per element inside their arms below.
-    const gates = completeGates(settings.sync?.sub, settings.sync?.categories);
-    blob = { ...blob };
-    for (const c of ["general", "recording", "chip", "transcription", "fileTranscriptions", "dictionary", "logging"] as const) {
-      if (blob[c] !== undefined) {
-        (blob as Record<string, unknown>)[c] = gateApplyScalar(c, blob[c], gates);
-      }
-    }
+    // An explicit one-shot restore (file import, Restore from server, onboarding) is not
+    // a sync round: the "what this device syncs" switches must not silently discard the
+    // values the user asked to restore — the export composes WITHOUT gates, and on a stock
+    // install every machine-specific switch is off (chip position, paste chord, folders…).
+    // All-on gates also neutralise the per-element repins in the list arms below.
+    const gates = opts.ignoreGates
+      ? (Object.fromEntries(MANIFEST.map((d) => [d.id, true])) as Gates)
+      : completeGates(settings.sync?.sub, settings.sync?.categories);
+    if (!opts.ignoreGates) blob = gateScalars(blob, gates);
     let nextSettings: AppSettings = settings;
     let nextBackends = st.backends;
     let nextProfiles = st.profiles;
@@ -1530,7 +1567,12 @@ export async function applyBlob(
       // blob.backends`) — the pre-split gating, when the pin rode inside that payload. Without
       // the referent list, the dangling-reference scrub below can only compare against THIS
       // device's backends, and a peer's perfectly valid pin would null the local one.
-      if (cats.backends && blob.backends && hasOwn(blob.dictionary as Record<string, unknown>, "quickAddList")) {
+      if (
+        gates.pinnedMappings &&
+        cats.backends &&
+        blob.backends &&
+        hasOwn(blob.dictionary as Record<string, unknown>, "quickAddList")
+      ) {
         nextSettings = { ...nextSettings, quickAddList: safeQuickAddTarget(d.quickAddList) };
       }
     }
@@ -1625,14 +1667,18 @@ export async function applyBlob(
   } finally {
     applyingRemote = false;
   }
-  if (staleRestart) await applyBlob(blob, cats, retries - 1);
+  if (staleRestart) await applyBlob(blob, cats, retries - 1, opts);
 }
 
 // ── engine state ─────────────────────────────────────────────────────────────
 
 let started = false;
 let applyingRemote = false;
-let pendingApply: { blob: SyncBlob; cats: Record<SyncCategory, boolean> } | null = null;
+let pendingApply: {
+  blob: SyncBlob;
+  cats: Record<SyncCategory, boolean>;
+  opts: { ignoreGates?: boolean };
+} | null = null;
 let state: SyncState = {};
 let device: SyncDeviceInfo | null = null;
 let pushTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1957,7 +2003,7 @@ export async function pushNow(manual = false): Promise<void> {
   try {
     await ensureStateFor(backend.id);
     const s = useApp.getState();
-    const cats = s.settings.sync?.categories ?? fullCats();
+    const cats = syncCats();
     let blob = await composeBlob(
       { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
       cats,
@@ -2015,11 +2061,14 @@ export async function pushNow(manual = false): Promise<void> {
           return;
         }
         // Auto-merged: adopt the merge locally, then retry on the new base. Honour the user's
-        // category opt-outs like the other two applyBlob callers — with fullCats() a category
-        // the user switched OFF still took the remote value on any ordinary 409.
-        const pushCats = useApp.getState().settings.sync?.categories ?? fullCats();
+        // opt-outs like the other two applyBlob callers.
+        const pushCats = syncCats();
         // A 409 merge adopts remote values too, so it gets the same consent gate as a pull.
-        const riskyPush = securityChanges(merged, blob, pushCats);
+        const riskyPush = securityChanges(
+          gateScalars(merged, settingGates()),
+          gateScalars(blob, settingGates()),
+          pushCats,
+        );
         if (riskyPush.length > 0) {
           await applyBlob(merged, heldBack(pushCats, riskyPush));
           raiseReview({
@@ -2048,10 +2097,10 @@ export async function pushNow(manual = false): Promise<void> {
  *  supersede happened while the transport call was in flight. */
 async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<void> {
   const s = useApp.getState();
-  const cats = fullCats();
+  const cats = syncCats();
   const local = await composeBlob(
     { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
-    s.settings.sync?.categories ?? cats,
+    cats,
     state.snapshot,
     { includeSecrets: true, sub: subSettings(), gates: settingGates() },
   );
@@ -2064,10 +2113,10 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
       remoteVersion: remote.version, remoteDevice: remote.device ?? null });
     return;
   }
-  const applyCats = s.settings.sync?.categories ?? cats;
+  const applyCats = cats;
   // This pull is unattended (startup + every window focus). If it would repoint a backend or
   // swap a stored key, hold it for confirmation instead of adopting it silently.
-  const risky = securityChanges(merged, local, applyCats);
+  const risky = securityChanges(gateScalars(merged, settingGates()), gateScalars(local, settingGates()), applyCats);
   if (risky.length > 0) {
     // Everything else still applies — only the backends category waits. Deliberately no
     // persistState here: adopting the server's version as the new base would drop the held-back
@@ -2104,20 +2153,6 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   if (hashBlob(merged) !== hashBlob(remoteBlob)) schedulePush(0);
 }
 
-function fullCats(): Record<SyncCategory, boolean> {
-  return {
-    general: true,
-    logging: true,
-    recording: true,
-    chip: true,
-    backends: true,
-    profiles: true,
-    dictionary: true,
-    appRules: true,
-    transcription: true,
-    fileTranscriptions: true,
-  };
-}
 
 function handleTransportFailure(status: number, error?: string): void {
   if (status === 404) {
@@ -2383,7 +2418,7 @@ export async function resolveSyncConflicts(
     if (val === undefined) delete final[cat];
     else (final as Record<string, unknown>)[cat] = val;
   }
-  const applyCats = useApp.getState().settings.sync?.categories ?? fullCats();
+  const applyCats = syncCats();
   // The security gate has to run HERE too, not just on the clean-merge path. `final` starts as
   // `c.merged`, which already contains every NON-conflicting category auto-resolved in the
   // server's favour — so a peer that also touches some category the user happened to edit
@@ -2391,7 +2426,7 @@ export async function resolveSyncConflicts(
   // unreviewed. The conflict dialog only ever showed the CONFLICTING category names, never the
   // address change. Same shape as reconcileRemote: apply everything else, hold backends, and
   // persist no base so a rejection is re-offered on the next pull.
-  const risky = securityChanges(final, c.local, applyCats);
+  const risky = securityChanges(gateScalars(final, settingGates()), gateScalars(c.local, settingGates()), applyCats);
   if (risky.length > 0) {
     await applyBlob(final, heldBack(applyCats, risky));
     raiseReview({
@@ -2489,7 +2524,7 @@ export async function initSync(): Promise<void> {
       if (pendingApply && s.status === "idle" && prev.status !== "idle") {
         const p = pendingApply;
         pendingApply = null;
-        void applyBlob(p.blob, p.cats);
+        void applyBlob(p.blob, p.cats, 2, p.opts);
       }
       return;
     }

@@ -60,7 +60,7 @@ function saveUiState(s: UiState): void {
   }
 }
 
-const DEFS: readonly SettingDef[] = MANIFEST;
+const DEFS: readonly SettingDef[] = (MANIFEST as readonly SettingDef[]).filter((d) => !d.localOnly);
 
 export function SyncSettingsList({ enabled }: { enabled: boolean }) {
   const settings = useApp((s) => s.settings);
@@ -123,7 +123,9 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
   ).length;
 
   return (
-    <div className={cn(!enabled && "pointer-events-none opacity-40")} aria-disabled={!enabled}>
+    // `inert`, not pointer-events-none alone: the latter blocked the mouse but left every
+    // switch and ↺ tab-reachable and Space-activatable while sync was off.
+    <div className={cn(!enabled && "opacity-40")} inert={!enabled}>
       {/* Sync everything: on = every switch on and the list folds away. */}
       <div className="flex items-center gap-4 py-3">
         <div className="min-w-0 flex-1">
@@ -192,7 +194,11 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
               changed={changed}
               expanded={!!ui.expanded[group]}
               changedOnly={ui.changedOnly}
-              onToggleExpand={() => patchUi({ expanded: { [group]: !ui.expanded[group] } })}
+              // A chevron in "Changed & default-off" mode was inert (that mode wins over
+              // `expanded`): make it leave the mode, so the click does what the arrow shows.
+              onToggleExpand={() =>
+                patchUi({ changedOnly: false, expanded: { [group]: !ui.expanded[group] } })
+              }
               onGate={(id, v) => setGates({ [id]: v } as Partial<Record<SettingId, boolean>>)}
               onGateMany={(patch) => setGates(patch)}
               onResetSetting={(def) => resetDefs([def], `“${def.label}” sync switch reset to default`)}

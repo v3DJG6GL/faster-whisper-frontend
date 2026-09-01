@@ -354,6 +354,35 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(useApp.getState().settings.transcribe?.translationMode).toBe("faithful"); // bogus value dropped
   });
 
+  it("an explicit restore applies machine-specific settings the sync switches would gate", async () => {
+    // Chip position's switch is OFF on a stock install; a backup must still restore it.
+    useApp.setState({ settings: settings() });
+    await applyBlob({ chip: { indicatorPosition: "bottom" } as never }, CATS_ALL);
+    expect(useApp.getState().settings.recording.indicatorPosition).toBe("top"); // sync round: gated
+    await applyBlob({ chip: { indicatorPosition: "bottom" } as never }, CATS_ALL, 2, { ignoreGates: true });
+    expect(useApp.getState().settings.recording.indicatorPosition).toBe("bottom"); // restore: applied
+  });
+
+  it("the Pinned word mappings switch gates the pin on apply", async () => {
+    const base = settings();
+    useApp.setState({
+      settings: {
+        ...base,
+        sync: { ...base.sync, sub: { ...base.sync?.sub, pinnedMappings: false } },
+      } as unknown as AppSettings,
+      backends: [backend()],
+    });
+    const before = useApp.getState().settings.quickAddList;
+    await applyBlob(
+      {
+        backends: { list: [backend()] } as never,
+        dictionary: { quickAddList: { backendId: "b1", slug: "x" } } as never,
+      },
+      CATS_ALL,
+    );
+    expect(useApp.getState().settings.quickAddList).toEqual(before);
+  });
+
   it("typeAsISpeak travels in the general block", async () => {
     // It replaced `insertTiming` as the global default every inheriting Profile resolves
     // through; the manifest offers a sync switch for it, so the wire must carry it.

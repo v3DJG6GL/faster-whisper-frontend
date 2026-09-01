@@ -117,8 +117,9 @@ export function initLogStatus(): void {
   if (statusStarted) return;
   statusStarted = true;
   void (async () => {
-    // Baseline starts at the launch totals so a fresh session opens quiet;
-    // errors during startup still count (status arrives after hydrate).
+    // The baseline deliberately stays at zero here: startup errors and warns SHOULD light
+    // the badge on a fresh session. It moves to the current totals only when the Logs
+    // screen is opened or closed (markLogsViewed).
     const t = await getLogStatus();
     useLogs.setState({ status: { seq: t.seq, errors: t.errors, warns: t.warns } });
     await onLogStatus((p) => {
@@ -132,8 +133,16 @@ export function initLogStatus(): void {
  *  streaming.ts `reg()`: a mount/unmount race can't leak a subscription. */
 export async function attachLogStream(): Promise<() => void> {
   let cancelled = false;
+  // The pump starts emitting the moment set_log_stream(true) lands, and append() advances
+  // nextSeq — so a batch arriving before the hydration request is issued made get_log_tail
+  // skip the whole session history (and append() would drop a late tail as already-seen).
+  // Park early batches; hydration goes in first, then they replay in order.
+  let hydrated = false;
+  let parked: LogLine[] = [];
   const unlisten = await onLogLines((p) => {
-    if (!cancelled) append(p.lines);
+    if (cancelled) return;
+    if (hydrated) append(p.lines);
+    else parked.push(...p.lines);
   });
   // Stream first-gate AFTER the listener exists, then hydrate the gap —
   // set_log_stream(true) marks "emit from now", so hydration covers the past.
@@ -141,6 +150,9 @@ export async function attachLogStream(): Promise<() => void> {
   const tail = await getLogTail(nextSeq);
   if (!cancelled) {
     append(tail.lines);
+    hydrated = true;
+    append(parked);
+    parked = [];
     useLogs.setState({
       status: { seq: tail.seq, errors: tail.errors, warns: tail.warns },
     });

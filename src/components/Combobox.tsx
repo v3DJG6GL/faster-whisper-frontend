@@ -152,6 +152,9 @@ export function Combobox({
     wantFirstRef.current = false;
     setOpen(false);
     setActive(-1);
+    // The value is now a committed pick, not a typed query — a reopen (ArrowDown or click)
+    // must show the whole pool, not filter by what was just chosen.
+    setTyped(false);
     onSelect(word);
   }
 

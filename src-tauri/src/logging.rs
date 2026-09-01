@@ -17,8 +17,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::config::{Config, LogLevel};
 
 pub const RING_CAP: usize = 10_000;
-/// One `log://lines` batch never exceeds this many lines; hydration via
-/// `get_log_tail` catches the screen up if a debug flood outruns the stream.
+/// One `log://lines` batch never exceeds this many lines, so a burst can't stall the
+/// pump's tick. `get_log_tail` hydrates ONCE at screen mount and never again: a
+/// sustained flood above BATCH_CAP/PUMP_INTERVAL evicts un-emitted ring lines and the
+/// screen's tail is quietly incomplete (the file on disk still has them). No seq-gap
+/// signal exists yet.
 const BATCH_CAP: usize = 500;
 const PUMP_INTERVAL_MS: u64 = 150;
 /// Status (badge counters) is checked every Nth pump tick ≈ ~1 s.
@@ -249,9 +252,11 @@ pub fn apply_log_level(level: LogLevel) {
     }
 }
 
-/// The log directory: the user's custom folder when set, else
-/// `<app_data>/logs` — which on Windows is
-/// `%LOCALAPPDATA%\faster-whisper-frontend\logs`, same place as before.
+/// The log directory: the user's custom folder when set, else `<app_local_data>/logs` —
+/// on Windows `%LOCALAPPDATA%\ch.informethic.faster-whisper-frontend\logs`. Local, not
+/// Roaming (`app_data_dir` is `%APPDATA%` on Windows): logs must not sync between
+/// machines. This is NOT the pre-viewer `%LOCALAPPDATA%\faster-whisper-frontend\logs`;
+/// `prune_legacy_dir` clears that folder's pair out.
 pub fn log_dir(app: &AppHandle, config: &Config) -> Option<PathBuf> {
     if let Some(dir) = config
         .settings
@@ -262,7 +267,13 @@ pub fn log_dir(app: &AppHandle, config: &Config) -> Option<PathBuf> {
     {
         return Some(PathBuf::from(dir));
     }
-    app.path().app_data_dir().ok().map(|d| d.join("logs"))
+    app.path().app_local_data_dir().ok().map(|d| d.join("logs"))
+}
+
+/// The superseded single-file scheme's pair, wherever it landed.
+pub fn prune_legacy_dir(dir: &Path) {
+    let _ = std::fs::remove_file(dir.join("fwf.log"));
+    let _ = std::fs::remove_file(dir.join("fwf.prev.log"));
 }
 
 fn format_line(l: &LogLine) -> String {
@@ -303,8 +314,7 @@ pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
 /// forever). Also removes the superseded single-file scheme's
 /// `fwf.log`/`fwf.prev.log` pair.
 pub fn prune_log_files(dir: &Path, keep_days: u32) {
-    let _ = std::fs::remove_file(dir.join("fwf.log"));
-    let _ = std::fs::remove_file(dir.join("fwf.prev.log"));
+    prune_legacy_dir(dir);
     if keep_days == 0 {
         return;
     }
@@ -340,6 +350,12 @@ pub fn apply_log_settings(app: &AppHandle, config: &Config) {
         open_session_file(&writer, &ring, &dir);
     }
     prune_log_files(&dir, config.settings.logging.keep_days);
+    // The pre-viewer builds wrote `%LOCALAPPDATA%\faster-whisper-frontend\logs`; the
+    // legacy pair there was never reached by the prune above.
+    #[cfg(windows)]
+    if let Some(base) = std::env::var_os("LOCALAPPDATA") {
+        prune_legacy_dir(&PathBuf::from(base).join("faster-whisper-frontend").join("logs"));
+    }
 }
 
 /// Batches ring lines to the Logs screen (only while it's open) and pushes
@@ -429,8 +445,13 @@ fn current_config(app: &AppHandle) -> Result<Config, String> {
 }
 
 #[tauri::command]
-pub fn log_folder_path(app: AppHandle) -> Result<String, String> {
-    let cfg = current_config(&app)?;
+pub fn log_folder_path(app: AppHandle, custom: Option<String>) -> Result<String, String> {
+    // `custom` is the LIVE preference: the store's save is debounced, so reading the
+    // on-disk config alone showed the previous folder right after a change.
+    let mut cfg = current_config(&app)?;
+    if let Some(c) = custom {
+        cfg.settings.logging.log_dir = Some(c);
+    }
     let dir = log_dir(&app, &cfg).ok_or("no log folder")?;
     // Home-relative display, same as audio_dir_path.
     if let Ok(home) = app.path().home_dir() {
@@ -442,9 +463,12 @@ pub fn log_folder_path(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn open_log_folder(app: AppHandle) -> Result<(), String> {
+pub fn open_log_folder(app: AppHandle, custom: Option<String>) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let cfg = current_config(&app)?;
+    let mut cfg = current_config(&app)?;
+    if let Some(c) = custom {
+        cfg.settings.logging.log_dir = Some(c);
+    }
     let dir = log_dir(&app, &cfg).ok_or("no log folder")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     app.opener()

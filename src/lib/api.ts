@@ -554,14 +554,16 @@ export async function getLogStatus(): Promise<LogTail> {
 }
 
 /** Display path of the log folder (home-relative where possible). */
-export async function logFolderPath(): Promise<string | null> {
+/** `custom` = the live log-folder preference (null = default); the command re-reads the
+ *  on-disk config otherwise, which lags the debounced save. */
+export async function logFolderPath(custom: string | null): Promise<string | null> {
   if (!isTauri) return null;
-  return invoke<string>("log_folder_path").catch(() => null);
+  return invoke<string>("log_folder_path", { custom }).catch(() => null);
 }
 
-export async function openLogFolder(): Promise<void> {
+export async function openLogFolder(custom: string | null): Promise<void> {
   if (!isTauri) return;
-  return invoke("open_log_folder");
+  return invoke("open_log_folder", { custom });
 }
 
 /** Batched new log lines — emitted only while the stream is active. */

@@ -32,7 +32,6 @@ export interface SyncGeneral {
   typeAsISpeak?: boolean;
   insertMethod: InsertMethod;
   pasteShortcut: string[];
-  autoEnter: boolean;
   restoreClipboard: boolean;
   soundEffects: boolean;
   deepFieldDetection: boolean;

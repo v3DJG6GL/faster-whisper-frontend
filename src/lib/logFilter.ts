@@ -223,6 +223,15 @@ export function bugReportRunFields(
   };
 }
 
+/** How many of `lines` are newer than the last seq the view had seen. Length deltas lie:
+ *  a loosened filter grows the array without anything arriving, and at buffer cap each
+ *  batch evicts as many lines as it adds. */
+export function countNewer(lines: readonly LogLine[], sinceSeq: number): number {
+  let n = 0;
+  for (let i = lines.length - 1; i >= 0 && lines[i].seq > sinceSeq; i--) n++;
+  return n;
+}
+
 export function buildBugReport(hdr: BugReportHeader, raw: readonly LogLine[]): string {
   const tail = raw.slice(-BUG_REPORT_LINES);
   const ctx = [

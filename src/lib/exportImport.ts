@@ -59,5 +59,5 @@ export async function applyImport(
   if (selection.backends && blob.backends && Object.keys(result.secrets).length > 0) {
     blob.backends = { ...blob.backends, secrets: result.secrets };
   }
-  await applyBlob(blob, selection);
+  await applyBlob(blob, selection, 2, { ignoreGates: true });
 }
