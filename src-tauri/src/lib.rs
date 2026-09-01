@@ -98,6 +98,15 @@ pub fn run() {
                     use tauri::Emitter;
                     let _ = window.emit("quickadd://closing", ());
                 }
+                // Same for the language picker: its asker in the main webview awaits either
+                // `langpick://commit` or `langpick://cancel` and nothing else settles it. An
+                // Alt+F4 that only hid the window left that promise pending for the rest of the
+                // process — hands-free latched its "picker open" gate and refused every later
+                // dictation; push-to-talk stalled the inject queue and never inserted the text.
+                if window.label() == "langpick" {
+                    use tauri::{Emitter, Manager};
+                    let _ = window.app_handle().emit("langpick://cancel", ());
+                }
             }
         })
         .setup(|app| {

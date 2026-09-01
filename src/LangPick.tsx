@@ -150,7 +150,7 @@ export default function LangPick() {
     );
   }, []);
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
+  const onKeyDown = useCallback((e: KeyboardEvent) => {
     const typing = document.activeElement === inputRef.current && query.length > 0;
     if (e.key === "Escape") {
       // Dismiss ≠ "translate nothing": the session falls back to the Profile's targets.
@@ -179,7 +179,17 @@ export default function LangPick() {
       return; // let the field handle ordinary typing
     }
     e.preventDefault();
-  };
+  }, [rows, active, chosen, query, commit, dismiss, toggle]);
+
+  // Esc/Enter/digits must work from anywhere in the window, not only while the filter
+  // field is focused: clicking a row moves focus to <body>, an ancestor of the React root,
+  // so a keydown there never bubbled through the root div's handler — leaving an
+  // undecorated always-on-top window with no way to answer or dismiss (QuickAdd hit the
+  // same trap, and fixed it the same way).
+  useEffect(() => {
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onKeyDown]);
 
   const src = safeDisplayText(seed.source ?? "", 12).toUpperCase() || "AUTO";
   const verb = seed.when === "after" ? "Insert" : "Start";
@@ -187,7 +197,6 @@ export default function LangPick() {
   return (
     <div
       className="flex h-screen w-screen flex-col overflow-hidden rounded-card border border-line-strong bg-panel"
-      onKeyDown={onKeyDown}
       role="dialog"
       aria-label="Translate to"
     >

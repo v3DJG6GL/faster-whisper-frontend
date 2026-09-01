@@ -56,6 +56,9 @@ pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
     // Callable from the trigger path (any thread) — hop to the main thread for GTK.
     let _ = app.run_on_main_thread(move || {
         let Some(win) = handle.get_webview_window("langpick") else {
+            // No window to ask → answer "dismissed" so the caller's await settles (see the
+            // CloseRequested arm in lib.rs for what a pending asker costs).
+            let _ = handle.emit("langpick://cancel", ());
             return;
         };
         center(&win);

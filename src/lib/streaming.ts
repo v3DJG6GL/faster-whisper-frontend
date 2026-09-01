@@ -237,6 +237,10 @@ let capturedRecordId: string | null = null;
 // bookkeeping (committedDoc/injectedText/seenDoc/clipBaseline) stays in
 // ORIGINAL text — only the outbound copy is swapped — so phrase diffing,
 // history capture and recovery paths are structurally untouched.
+/** The session's resolved translation context WITHOUT targets, kept so a settle-time pick
+ *  can create a translation the Profile didn't configure (`applySessionTargets`). Set at
+ *  every session start, even when `sessionTranslation` itself is null. */
+let sessionTranslationBase: Omit<NonNullable<typeof sessionTranslation>, "targets"> | null = null;
 let sessionTranslation: {
   targets: string[];
   includeOriginal?: boolean;
@@ -1041,7 +1045,14 @@ function settleIdle(): void {
     translateFailure: sessionTranslateFailure,
     activeProfile: null,
     dictationPhase: null,
+    // The session's resolved route dies with the session — otherwise the standby dock
+    // previews the finished run's targets under the home Profile's own tag, and the tray
+    // tooltip keeps them with no source language to pair them with.
+    sessionTargets: null,
   });
+  // The settle picker is armed per session by dictation.ts; a consumed or unused arming
+  // must not survive into a session started by a path that doesn't arm (overlay, Home).
+  askTargetsAtSettle = null;
   consumePendingHoldStart();
 }
 
@@ -1066,6 +1077,13 @@ function applySessionTargets(targets: string[]): void {
     sessionTranslation = null;
   } else if (sessionTranslation) {
     sessionTranslation.targets = clean;
+  } else if (sessionTranslationBase) {
+    // A Profile that asks but configures no targets: the pick CREATES the translation.
+    // It pays a cold model load — the preload plan and warm lease were made without it.
+    sessionTranslation = { ...sessionTranslationBase, targets: clean };
+  } else {
+    // No session context to build on — don't advertise a route nothing will produce.
+    return;
   }
   // Republish so the chip's route matches what will actually be injected.
   useApp.getState().setDictation({ sessionTargets: clean.length ? clean : null });
@@ -2346,22 +2364,20 @@ async function startLiveInner(
   {
     const trOv = { ...backend.translationOverrides, ...pov?.translationOverrides };
     const trTargets = (trOv.translateTo ?? []).map((t) => t.trim()).filter(Boolean);
-    sessionTranslation = trTargets.length
-      ? {
-          targets: trTargets,
-          includeOriginal: trOv.includeOriginal,
-          model: trOv.model,
-          glossary: trOv.glossary,
-          mode: trOv.mode,
-          contextSegments: trOv.contextSegments,
-          serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
-          backendId: backend.id,
-          // Unknown until this session sees a translate land: a server warm for
-          // the LAST session may have evicted the model since, so warmth is
-          // never carried across sessions.
-          warm: null,
-        }
-      : null;
+    sessionTranslationBase = {
+      includeOriginal: trOv.includeOriginal,
+      model: trOv.model,
+      glossary: trOv.glossary,
+      mode: trOv.mode,
+      contextSegments: trOv.contextSegments,
+      serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+      backendId: backend.id,
+      // Unknown until this session sees a translate land: a server warm for
+      // the LAST session may have evicted the model since, so warmth is
+      // never carried across sessions.
+      warm: null,
+    };
+    sessionTranslation = trTargets.length ? { ...sessionTranslationBase, targets: trTargets } : null;
     sessionTranslatedText = null;
     sessionByLang = {};
     captureIds.reset();
@@ -2790,6 +2806,7 @@ export async function cancelLive(): Promise<void> {
   clearPhraseEnd();
   insertCfg = null;
   injectChain = Promise.resolve();
+  askTargetsAtSettle = null; // see settleIdle
   useApp
     .getState()
     // Cancelled → no done marker (outcome "none"); clear any pending per-phrase pulse.

@@ -132,6 +132,12 @@ export function dictate(profileId: string, action: TriggerAction): void {
   // preload plan, the warm lease, the forced capability probe, and the `translateExpect`
   // sent inside the startStream invoke. Push-to-talk asks later instead (at the one-shot
   // translate), because a prompt during a held chord would swallow the keystrokes.
+  //
+  // Every start path begins with the settle picker DISARMED: only the hold+ask arming below
+  // may set it, and only for the session it starts. (Before this, the hands-free return
+  // skipped the arming call and a previous push-to-talk session's picker stayed armed —
+  // its wrongly-seeded prompt then popped at the NEXT session's one-shot translate.)
+  setSettleTargetPicker(null);
   if (profile.askTranslationTargets && profile.activation !== "hold") {
     void startWithPickedTargets(profile, backend, s.settings.microphoneId);
     return;
@@ -168,9 +174,6 @@ export function dictate(profileId: string, action: TriggerAction): void {
  *  then start a second session behind it). The START path's equivalent of
  *  `startingSession` — which can't cover this, because the await sits IN FRONT of it. */
 let pickerOpen = false;
-export function isPickerOpen(): boolean {
-  return pickerOpen;
-}
 
 /** Ask for this session's translation targets, then start with them merged in.
  *
@@ -235,11 +238,16 @@ function askTranslationTargets(seed: Record<string, unknown>): Promise<string[] 
       resolve(v);
     };
     const unlisten: (() => void)[] = [];
-    void import("@tauri-apps/api/event").then(async ({ listen }) => {
-      unlisten.push(await listen<string[]>("langpick://commit", (e) => finish(e.payload ?? [])));
-      unlisten.push(await listen("langpick://cancel", () => finish(null)));
-      await showLangPick(seed);
-    });
+    void import("@tauri-apps/api/event")
+      .then(async ({ listen }) => {
+        unlisten.push(await listen<string[]>("langpick://commit", (e) => finish(e.payload ?? [])));
+        unlisten.push(await listen("langpick://cancel", () => finish(null)));
+        await showLangPick(seed);
+      })
+      // A failed import/listen/show must read as "dismissed", never as a pending answer:
+      // the hands-free caller holds `pickerOpen` across this await and push-to-talk holds
+      // the inject queue, so a promise that never settles wedges dictation for the process.
+      .catch(() => finish(null));
   });
 }
 
