@@ -61,7 +61,7 @@ function Editor({
   const globalTypeAsISpeak = useApp((s) => s.settings.general.typeAsISpeak);
   const globalInsertMethod = useApp((s) => s.settings.general.insertMethod);
   // A low-level backend owns the chords when evdev is enabled AND permitted (Linux) or always on
-  // Windows (the hook backend) — same gate as the Settings quick-add row, so both rebind surfaces
+  // Windows (the hook backend) — same gate as the Dictionary screen's QuickAddShortcutField (was the Settings quick-add row), so both rebind surfaces
   // accept the same chords (useHotkeyCapture commits modifier-only / AltGr chords ONLY then).
   // Gating on `evdevEnabled` alone would let this editor accept a chord that can't fire when
   // evdev is toggled on but not permitted.
@@ -760,7 +760,7 @@ export default function Profiles() {
             // Include the global quick-add shortcut as a pseudo-profile so capturing a chord that
             // clashes with it is WARNED: the evdev matcher silently drops the quick-add chord when
             // it duplicates a profile chord (profiles register first), so a rebind could otherwise
-            // kill quick-add with no warning. Symmetric with the Settings quick-add row, which
+            // kill quick-add with no warning. Symmetric with the Dictionary screen's QuickAddShortcutField (was the Settings quick-add row), which
             // already checks against the profiles.
             others={[
               ...profiles.filter((p) => p.id !== editingId),

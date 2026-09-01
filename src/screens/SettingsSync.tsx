@@ -514,6 +514,7 @@ function SecurityReviewDialog() {
     "save-recordings": "Saving every dictation would be turned on",
     "history-retention": "File transcriptions would start being deleted",
     "dictation-retention": "Dictations would start being deleted",
+    "dictation-history": "Dictation history would be turned off and wiped",
   };
   const label = (c: SecurityChange) => LABELS[c.kind];
   const shown = pending.changes.slice(0, MAX_REVIEW_ROWS);

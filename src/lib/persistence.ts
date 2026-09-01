@@ -118,7 +118,7 @@ export async function initConfig(): Promise<void> {
       // it's silent and unrelated settings/backends edits are dropped, with only the Profiles
       // screen hinting why. Keep pendingBindingChange so the fix triggers a reregister.
       // Include the quick-add chord as a synthetic peer (mirrors the capture-time check in
-      // Profiles.tsx / the Settings quick-add row). It shares the same chord namespace as profile
+      // Profiles.tsx / the Dictionary screen's QuickAddShortcutField (was the Settings quick-add row)). It shares the same chord namespace as profile
       // chords in BOTH hotkey backends (evdev drops a dup, the plugin last-wins clobbers), but the
       // enable toggle bypasses capture — so an enabled profile could silently collide with quick-add
       // unless the save-gate sees it too.

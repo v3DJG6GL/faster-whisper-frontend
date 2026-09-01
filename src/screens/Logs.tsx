@@ -20,8 +20,7 @@ import {
   markLogsViewed,
   takePrefilter,
   useLogs,
-  visibleLines,
-} from "@/lib/logs";
+  visibleLines, clearedCount } from "@/lib/logs";
 import {
   buildBugReport,
   collectTags,
@@ -154,7 +153,17 @@ function LogRow({ r, wrap, open, onToggle }: {
 
 export default function Logs() {
   const version = useLogs((s) => s.version);
-  const [threshold, setThreshold] = useState<LevelThreshold>(() => takePrefilter() ?? "all");
+  const [threshold, setThreshold] = useState<LevelThreshold>("all");
+  // The doorway's "View logs" pre-filter, consumed in an effect keyed on the store value:
+  // reading it in the useState initializer only worked on MOUNT, so a click while already
+  // on /logs (the banner is app-wide) changed nothing and left the flag armed for the next
+  // unrelated visit — and StrictMode's double-invoked initializer consumed it in dev.
+  const prefilter = useLogs((s) => s.prefilter);
+  useEffect(() => {
+    if (!prefilter) return;
+    setThreshold(prefilter);
+    takePrefilter();
+  }, [prefilter]);
   const [tags, setTags] = useState<ReadonlySet<string>>(new Set());
   const [text, setText] = useState("");
   const [wrap, setWrap] = useState(true);
@@ -185,6 +194,7 @@ export default function Logs() {
   }, []);
 
   const all = visibleLines();
+  const cleared = clearedCount();
   // Union with the SELECTED tags: a tag whose lines have left the buffer (Clear view,
   // roll-over) still filters, so its chip must stay on-screen to be switchable off.
   const chips = useMemo(() => [...new Set([...collectTags(all), ...tags])], [all, tags]);
@@ -206,9 +216,12 @@ export default function Logs() {
       threshold !== "all" ? `${threshold}+` : null,
       tags.size ? `tags: ${[...tags].join(", ")}` : null,
       text.trim() ? `text: ${text.trim()}` : null,
+      // "Clear view" hides earlier lines from the report too; without this line the
+      // header claimed the paste WAS the session tail.
+      cleared > 0 ? `${cleared.toLocaleString()} earlier lines cleared from view` : null,
     ].filter(Boolean);
     return parts.length ? parts.join(" · ") : null;
-  }, [threshold, tags, text]);
+  }, [threshold, tags, text, cleared]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({

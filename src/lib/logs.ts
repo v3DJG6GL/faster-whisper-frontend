@@ -78,6 +78,11 @@ export function visibleLines(): LogLine[] {
   return visibleCache.lines;
 }
 
+/** Lines "Clear view" hid — still in the ring and on disk, absent from the view. */
+export function clearedCount(): number {
+  return clearFloorSeq > 0 ? buf.filter((l) => l.seq < clearFloorSeq).length : 0;
+}
+
 export function clearView() {
   clearFloorSeq = nextSeq;
   useLogs.setState((s) => ({ version: s.version + 1 }));

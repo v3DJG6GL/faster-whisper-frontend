@@ -7,8 +7,9 @@
 // distinguishes modifier sides and accepts modifier-only / AltGr chords — when
 // false the plugin registers, so chords are validated against its accelerators.
 //
-// Used by the Profiles editor (dictation chords) and the Settings "quick-add
-// shortcut" row, so both behave identically. `others` is the set of bindings to
+// Used by the Profiles editor (dictation chords) and the Dictionary screen's
+// QuickAddShortcutField (was the Settings "quick-add shortcut" row), so both
+// behave identically. `others` is the set of bindings to
 // check against for conflicts (e.g. the Profiles), passed as Profile[].
 
 import { useEffect, useRef, useState } from "react";

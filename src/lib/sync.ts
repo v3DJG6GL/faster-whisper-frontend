@@ -263,8 +263,14 @@ export function migrateBlob(blob: SyncBlob): SyncBlob {
         tr,
         new Set([...DICTATION_HISTORY_SET, ...FILE_TRANSCRIPTION_SET]),
       ) as SyncTranscription;
-      if (Object.keys(dictPart).length && isPlainObject(out.recording)) {
-        out.recording = { ...dictPart, ...(out.recording as object) } as SyncRecording;
+      if (Object.keys(dictPart).length) {
+        // Create the category when absent, like the file half below: the keys were already
+        // stripped from `transcription`, so an old-shape blob with no `recording` payload
+        // lost them from the merge base, the pull and an imported file.
+        out.recording = {
+          ...dictPart,
+          ...(isPlainObject(out.recording) ? (out.recording as object) : {}),
+        } as SyncRecording;
       }
       if (Object.keys(filePart).length && out.fileTranscriptions === undefined) {
         out.fileTranscriptions = filePart as SyncFileTranscriptions;
@@ -1388,8 +1394,13 @@ export async function applyBlob(
       const picks = sub.transcribePicks ? pickFields(raw, TRANSCRIPTION_PICK_SET) : {};
       nextSettings = {
         ...nextSettings,
+        // Over nextSettings.transcribe, not settings.transcribe alone: the recording arm
+        // above already routed the dictation-history flags in here, and rebuilding from
+        // the pre-apply settings discarded them on every ordinary pull (the
+        // fileTranscriptions arm below had the right idiom).
         transcribe: {
           ...settings.transcribe,
+          ...nextSettings.transcribe,
           ...sanitizeTranscription({ ...classified, ...picks }),
         },
       };
@@ -2183,7 +2194,8 @@ export interface SecurityChange {
     | "recording-retention"
     | "save-recordings"
     | "history-retention"
-    | "dictation-retention";
+    | "dictation-retention"
+    | "dictation-history";
   /** The backend a `backends`-category change applies to; the recording kinds have no backend and
    *  set this to an empty string (the dialog omits it). */
   backend: string;
@@ -2198,7 +2210,12 @@ export interface SecurityChange {
 /** Which category each held-back change lives in, so the apply can suppress exactly that one and
  *  let everything else through. */
 function catOf(kind: SecurityChange["kind"]): SyncCategory {
-  if (kind === "recording-retention" || kind === "save-recordings" || kind === "dictation-retention") {
+  if (
+    kind === "recording-retention" ||
+    kind === "save-recordings" ||
+    kind === "dictation-retention" ||
+    kind === "dictation-history"
+  ) {
     return "recording";
   }
   if (kind === "history-retention") return "fileTranscriptions";
@@ -2248,6 +2265,18 @@ function securityChanges(
         kind: "save-recordings",
         backend: "",
         detail: "every dictation would be saved to this device as audio and text",
+      });
+    }
+    // Strictly more destructive than the retention clock beside it: Rust's retention sweep
+    // wipes EVERY dictation record the moment this reads false, on the next config save.
+    if (
+      incoming.recording.keepDictationHistory === false &&
+      local.recording?.keepDictationHistory !== false
+    ) {
+      out.push({
+        kind: "dictation-history",
+        backend: "",
+        detail: "the whole dictation history on this device would be deleted, and no new dictations kept",
       });
     }
   }

@@ -383,6 +383,22 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(useApp.getState().settings.quickAddList).toEqual(before);
   });
 
+  it("dictation-history flags survive a blob that also carries the transcription category", async () => {
+    // The recording arm routes them into settings.transcribe; the transcription arm then
+    // rebuilt transcribe from the PRE-apply settings and threw them away — on every pull.
+    useApp.setState({ settings: settings() });
+    await applyBlob(
+      {
+        recording: { keepDictationHistory: true, dictationRetentionDays: 5 } as never,
+        transcription: { translationMode: "faithful" } as never,
+      },
+      CATS_ALL,
+    );
+    const t = useApp.getState().settings.transcribe;
+    expect(t?.dictationRetentionDays).toBe(5);
+    expect(t?.translationMode).toBe("faithful");
+  });
+
   it("typeAsISpeak travels in the general block", async () => {
     // It replaced `insertTiming` as the global default every inheriting Profile resolves
     // through; the manifest offers a sync switch for it, so the wire must carry it.
