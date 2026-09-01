@@ -32,7 +32,7 @@ import {
 } from "@/lib/transcriptHistory";
 import { addFiles, openHistoryRecord, useTranscribeRun } from "@/lib/transcribeRun";
 import {
-  DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExports, speakerOrder,
+  EXPORT_EXTENSIONS, generateExports, speakerHex, speakerOrder,
   type ExportFormat,
 } from "@/lib/transcriptExport";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
@@ -422,11 +422,10 @@ export default function History() {
         speakerColors: order.length && (t.colorizeSpeakers ?? true) ? "line" : "off",
         speakerNames: t.showSpeakerNames ?? true,
         timestamps: t.showTimestamps ?? false,
+        // THE resolver (viewer + exports) — an open-coded modulo here lacked its
+        // range guards and could disagree with the viewer on a persisted index.
         colors: Object.fromEntries(
-          Object.entries(rec.speakerColors ?? {}).map(([l, i]) => [
-            l,
-            DEFAULT_SPEAKER_COLORS[i % DEFAULT_SPEAKER_COLORS.length],
-          ]),
+          Object.keys(rec.speakerColors ?? {}).map((l) => [l, speakerHex(order, rec.speakerColors, l)]),
         ),
         wordTimestamps: t.wordTimestamps ?? false,
         ...(recLangs.length ? { tracks: ["orig", ...recLangs] } : {}),

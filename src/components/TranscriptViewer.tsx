@@ -26,7 +26,7 @@ import {
 } from "@/lib/api";
 import {
   beginChunk, foldPollFailure, foldTranslatePoll, newTranslateRun,
-  runChunkedTranslate, type TranslateRunUi,
+  runChunkedTranslate, translateOptsFrom, untranslatedIndexes, type TranslateRunUi,
 } from "@/lib/retroTranslate";
 import { transportErrorDoorway } from "@/lib/errors";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -834,6 +834,7 @@ export function TranscriptViewer({
     }
     return seen;
   }, [result]);
+  const untranslatedIdxs = useMemo(() => untranslatedIndexes(result.segments, langs), [result, langs]);
   const effSegments = useMemo(
     (): EffSegment[] =>
       (result.segments ?? []).map((seg, i) => ({
@@ -2116,7 +2117,8 @@ export function TranscriptViewer({
                 // No translated tracks yet = nothing to refresh — open the
                 // options panel instead of silently no-opping on [] targets.
                 if (langs.length) {
-                  void runTranslate(flaggedIdxs, langs);
+                  // The transcript's OWN regime, not the backend default — see translateOptsFrom.
+                  void runTranslate(flaggedIdxs, langs, translateOptsFrom(result.translation));
                 } else {
                   setShowTranslate(true);
                 }
@@ -2318,6 +2320,20 @@ export function TranscriptViewer({
             <span className="text-[11px] text-faint">
               MT · {safeDisplayText(result.translation.model.split("/").pop() ?? "", 40)}
             </span>
+          )}
+          {/* The way back into a half-translated transcript: a cancelled or interrupted
+              chunked run keeps its merged chunks, and the "Translate" door below closes the
+              moment the first one lands. Driven by actual per-segment coverage. */}
+          {isTauri && retroTranslateAvailable && !trRun && untranslatedIdxs.length > 0 && (
+            <button
+              type="button"
+              disabled={translating}
+              title="This run was cancelled or interrupted — translate the segments it never reached"
+              className="ring-signal inline-flex h-7 items-center gap-1 rounded-pill border border-dashed border-line-strong px-3 text-[12px] text-dim transition-colors hover:text-text"
+              onClick={() => void runTranslate(untranslatedIdxs, langs, translateOptsFrom(result.translation))}
+            >
+              Finish translating {untranslatedIdxs.length}
+            </button>
           )}
         </div>
       )}

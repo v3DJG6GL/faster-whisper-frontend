@@ -2,7 +2,7 @@
 // backend + one fix out. The exact friendly_err phrases come from
 // src-tauri/src/transport/mod.rs — keep the two in step.
 import { describe, expect, it } from "vitest";
-import { describeTransportError, shortCause, transportErrorDoorway } from "./errors";
+import { describeTransportError, shortCause, transportErrorDoorway, translateFailureDoorway } from "./errors";
 
 describe("describeTransportError", () => {
   it("connect refusal: names the backend, promises nothing started, no log detour", () => {
@@ -65,5 +65,21 @@ describe("shortCause", () => {
     expect(shortCause(new Error("translation timed out"))).toBe("timed out");
     expect(shortCause("HTTP 404: not found")).toBe("HTTP 404");
     expect(shortCause("???")).toBe("see the log");
+  });
+});
+
+describe("translateFailureDoorway", () => {
+  it("names a client-side cause and offers no log that holds nothing", () => {
+    expect(translateFailureDoorway("timeout", new Error("no answer within 20s"))).toEqual({
+      msg: "Translation took too long — inserted the original text.",
+      showLogs: false,
+    });
+    expect(translateFailureDoorway("cancelled", null).showLogs).toBe(false);
+    expect(translateFailureDoorway("empty", null).msg).toContain("came back empty");
+  });
+  it("a server error keeps the cause and the log doorway", () => {
+    const d = translateFailureDoorway("error", "HTTP 500: boom");
+    expect(d.showLogs).toBe(true);
+    expect(d.msg).toContain("HTTP 500");
   });
 });

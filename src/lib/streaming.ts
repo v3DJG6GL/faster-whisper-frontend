@@ -22,7 +22,7 @@
 // baseline so the next utterance starts fresh, and optionally type a separator.
 
 import { useApp } from "./store";
-import { shortCause } from "./errors";
+import { translateFailureDoorway } from "./errors";
 import { attachRecordingPath, recordDictation } from "./transcriptHistory";
 import { effectiveServerUrl } from "./backends";
 import { refreshCaps, translationWarm } from "./capabilities";
@@ -525,9 +525,7 @@ async function maybeTranslate(
       sessionTranslateWarned = true;
       // Keep the dictation-specific promise ("your words still landed") but
       // name the cause instead of leaving it a mystery (truthful-toast rule).
-      useApp
-        .getState()
-        .setLogsDoorway(`Translation failed (${shortCause(r.error)}) — inserted the original text.`);
+      useApp.getState().setLogsDoorway(translateFailureDoorway(sessionTranslateFailure, r.error));
     }
     return { text, translated: false };
   } finally {
@@ -1239,7 +1237,10 @@ async function ensureListeners(): Promise<void> {
     // session after the configured quiet stretch. Fires once, then disarms itself.
     if (autoStopMs > 0) {
       const tNow = performance.now();
-      const listening = useApp.getState().status === "listening";
+      // "Is the mic open", NOT "is the status listening": a per-phrase translate holds the
+      // status on "translating" for seconds while capture continues — a status gate here
+      // reset the silence accounting for the whole translate and froze the chip's meter.
+      const listening = isCapturing();
       if (stepSpeaking(autoStopMemo, latestLevel, listening, tNow)) {
         lastSpokeAt = tNow;
       } else if (listening && tNow - lastSpokeAt >= autoStopMs) {
@@ -1260,7 +1261,7 @@ async function ensureListeners(): Promise<void> {
       // so a late leading-edge level must not resurrect a non-zero meter over the just-cleared idle
       // state (it would stick until the next session + churn a cross-window emit). Bookkeeping above
       // stays unconditional so coalescing remains correct regardless of status.
-      if (useApp.getState().status === "listening") setDictation({ level: latestLevel });
+      if (isCapturing()) setDictation({ level: latestLevel });
     } else if (!levelTimer) {
       levelTimer = setTimeout(() => {
         levelTimer = undefined;
@@ -1269,7 +1270,7 @@ async function ensureListeners(): Promise<void> {
         // local and can't be cleared on teardown, so if it fires after `closed`/cancelLive
         // froze the meter to 0 it must not resurrect the last non-zero level (it would stick
         // until the next session and churn a needless cross-window emit).
-        if (useApp.getState().status === "listening") setDictation({ level: latestLevel });
+        if (isCapturing()) setDictation({ level: latestLevel });
       }, wait);
     }
   });
@@ -1302,7 +1303,10 @@ async function ensureListeners(): Promise<void> {
     // post-stop drain (transcribing/injecting) still passes and updates the preview. Mirrors the
     // inSession() guard the final/boundary/overrides-ignored handlers already carry.
     if (!inSession()) return;
-    const capturing = useApp.getState().status === "listening";
+    // Capture state, not status: during a per-phrase translate (status "translating", mic
+    // open) a status gate stopped bumping the phrase-end timer, so it expired mid-speech —
+    // firing the auto-Enter and resetting the clipboard baseline while the user was talking.
+    const capturing = isCapturing();
     // Coalesced for the same measured reason as `stream://level` above, and against a worse
     // pacer. `overlay.ts` subscribes on `state.partial !== prev.partial` exactly as it does on
     // `level`, so every partial rebuilds the whole chip payload, IPC-emits it cross-window and

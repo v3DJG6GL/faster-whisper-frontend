@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   beginChunk, foldPollFailure, foldTranslatePoll, newTranslateRun,
   runChunkedTranslate, TRANSLATE_CHUNK, type TranslateRunUi,
+  translateOptsFrom, untranslatedIndexes,
 } from "./retroTranslate";
 import type { TextTranslationResult } from "./api";
 
@@ -246,5 +247,28 @@ describe("kept-original + warnings threading", () => {
     });
     expect(kepts).toEqual([{ 0: [], 1: [] }]);
     expect(onWarnings).not.toHaveBeenCalled();
+  });
+});
+
+describe("untranslatedIndexes (the resume set after a cancelled run)", () => {
+  const segs = [{ translations: { de: "a" } }, { translations: { de: " " } }, {}, { translations: { de: "d" } }];
+  it("lists every segment missing one of the langs", () => {
+    expect(untranslatedIndexes(segs, ["de"])).toEqual([1, 2]);
+    expect(untranslatedIndexes(segs, ["de", "fr"])).toEqual([0, 1, 2, 3]);
+  });
+  it("is empty for a fully merged run and for no langs", () => {
+    expect(untranslatedIndexes([{ translations: { de: "a" } }], ["de"])).toEqual([]);
+    expect(untranslatedIndexes(segs, [])).toEqual([]);
+    expect(untranslatedIndexes(undefined, ["de"])).toEqual([]);
+  });
+});
+
+describe("translateOptsFrom", () => {
+  it("passes the record's own regime through", () => {
+    expect(translateOptsFrom({ mode: "faithful", model: "m" })).toEqual({ mode: "faithful", model: "m" });
+  });
+  it("narrows an unknown mode and an empty model to inherit", () => {
+    expect(translateOptsFrom({ mode: "weird", model: "" })).toEqual({ mode: undefined, model: undefined });
+    expect(translateOptsFrom(undefined)).toEqual({ mode: undefined, model: undefined });
   });
 });

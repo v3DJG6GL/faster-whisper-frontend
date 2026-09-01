@@ -89,6 +89,22 @@ export function describeTransportError(
 
 /** The failure-doorway payload for setLogsDoorway: title + fix in one line,
  *  "View logs" offered only when the log holds more than the line says. */
+/** The dictation per-phrase translate fallback doorway. The client-side causes (our own
+ *  budget, our own cancel, an empty answer) are named as such and offer no "View logs":
+ *  the Logs buffer is fed by Rust tracing only, and a client-side budget expiry writes
+ *  nothing there — the old text rendered every one of them as "see the log" with a
+ *  button that led to nothing. */
+export function translateFailureDoorway(
+  cause: "timeout" | "cancelled" | "empty" | "error" | null,
+  e: unknown,
+): { msg: string; showLogs: boolean } {
+  const tail = " — inserted the original text.";
+  if (cause === "timeout") return { msg: `Translation took too long${tail}`, showLogs: false };
+  if (cause === "cancelled") return { msg: `Translation was cancelled${tail}`, showLogs: false };
+  if (cause === "empty") return { msg: `Translation came back empty${tail}`, showLogs: false };
+  return { msg: `Translation failed (${shortCause(e)})${tail}`, showLogs: true };
+}
+
 export function transportErrorDoorway(
   kind: TransportErrorKind,
   e: unknown,

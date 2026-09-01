@@ -150,12 +150,52 @@ export function loadHistory(force = false): Promise<void> {
 
 /** Insert or replace one record — in the mirror immediately, on disk
  *  best-effort (an I/O failure must never break the run that produced it). */
+// Rapid successive upserts of ONE record — a chunked retro-translate merges every
+// TRANSLATE_CHUNK (32) segments — each stringified and rewrote the whole record (all
+// segments, words and every translation merged so far): ~30 full rewrites for a
+// 900-segment transcript. The in-memory mirror updates immediately (live fill is the
+// point); the disk write is leading-edge, then coalesced.
+const WRITE_COALESCE_MS = 2_000;
+const writeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingWrite = new Map<string, TranscriptRecord>();
+const lastWriteAt = new Map<string, number>();
+
+function writeNow(rec: TranscriptRecord): void {
+  lastWriteAt.set(rec.id, Date.now());
+  void saveTranscriptRecord(rec.id, JSON.stringify(rec), rec.kind === "dictation").catch((e) =>
+    console.error("history save failed:", e),
+  );
+}
+
+/** Write every coalesced record now (app teardown). */
+export function flushRecordWrites(): void {
+  for (const [id, rec] of pendingWrite) {
+    clearTimeout(writeTimers.get(id));
+    writeTimers.delete(id);
+    writeNow(rec);
+  }
+  pendingWrite.clear();
+}
+
 export function upsertRecord(rec: TranscriptRecord): void {
   useTranscriptHistory.setState((s) => ({
     records: newestFirst([rec, ...s.records.filter((r) => r.id !== rec.id)]),
   }));
-  void saveTranscriptRecord(rec.id, JSON.stringify(rec), rec.kind === "dictation").catch((e) =>
-    console.error("history save failed:", e),
+  const since = Date.now() - (lastWriteAt.get(rec.id) ?? 0);
+  if (since >= WRITE_COALESCE_MS && !writeTimers.has(rec.id)) {
+    writeNow(rec);
+    return;
+  }
+  pendingWrite.set(rec.id, rec);
+  if (writeTimers.has(rec.id)) return;
+  writeTimers.set(
+    rec.id,
+    setTimeout(() => {
+      writeTimers.delete(rec.id);
+      const last = pendingWrite.get(rec.id);
+      pendingWrite.delete(rec.id);
+      if (last) writeNow(last);
+    }, WRITE_COALESCE_MS),
   );
 }
 

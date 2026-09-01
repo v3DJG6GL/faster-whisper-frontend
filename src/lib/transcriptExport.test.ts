@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  cpsWarnings, DEFAULT_SPEAKER_COLORS, exportStemSuffix, generateExport,
+  cpsWarnings, DEFAULT_SPEAKER_COLORS, exportStemSuffix, generateExport, generateExports,
   prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
 } from "./transcriptExport";
 import type { BatchResult } from "./types";
@@ -256,6 +256,17 @@ describe("multi-track (tracks option)", () => {
 });
 
 describe("generateExports / filenames / cps", () => {
+  it("keeps a track code out of the path it would otherwise write into", () => {
+    // Codes come from server-advertised / synced settings and land in a filename that
+    // Rust writes with no containment check.
+    const files = generateExports(TRANSLATED, { format: "lrc", tracks: ["orig", "../de", "a:b*c"] });
+    for (const f of files) {
+      const n = f.name("out");
+      expect(n).not.toMatch(/[/\\:*]/);
+      expect(n).not.toContain("..");
+    }
+  });
+
   it("lrc with two tracks = one file per track, suffixed", async () => {
     const { generateExports } = await import("./transcriptExport");
     const files = generateExports(TRANSLATED, { format: "lrc", tracks: ["orig", "de"] });
@@ -307,6 +318,11 @@ describe("speakerColorIndex / speakerHex (one resolver for viewer + exports)", (
     const picks = { SPEAKER_01: 5 };
     const idx = speakerColorIndex(order, picks, "SPEAKER_01");
     expect(speakerHex(order, picks, "SPEAKER_01")).toBe(DEFAULT_SPEAKER_COLORS[idx]);
+    // A persisted out-of-range index wraps instead of yielding undefined — History's
+    // quickExport goes through this resolver too, so viewer and export agree.
+    expect(speakerHex(order, { SPEAKER_01: -1 }, "SPEAKER_01")).toBe(
+      DEFAULT_SPEAKER_COLORS[DEFAULT_SPEAKER_COLORS.length - 1],
+    );
     // colorOf receives picks as explicit hexes (the wire format callers
     // build via speakerHex) — the emitted <font color> matches slot 5 (teal).
     const out = generateExport(RESULT, {

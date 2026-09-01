@@ -595,7 +595,9 @@ export function generateExports(
   const trackList = [...(ctx.origIncluded ? ["orig"] : []), ...ctx.visLangs];
   if (opts.format === "lrc" && trackList.length > 1) {
     return trackList.map((track) => ({
-      name: (stem: string) => `${stem}${track === "orig" ? "" : `.${track}`}.lrc`,
+      // The empty-slug guard keeps a hostile code from colliding with the "orig" file.
+      name: (stem: string) =>
+        `${stem}${track === "orig" || !trackSlug(track) ? "" : `.${trackSlug(track)}`}.lrc`,
       content: lrcExport(result, ctx, track),
     }));
   }
@@ -610,6 +612,10 @@ export function generateExports(
 
 /** ".de" when exactly one translated track (and not the original) is picked —
  *  so single-language exports name themselves; "" otherwise. */
+/** Track codes reach a filename (the stem suffix and the per-track LRC name); they come
+ *  from server-advertised / peer-synced settings, so keep them to path-safe characters. */
+const trackSlug = (c: string) => c.replace(/[^A-Za-z0-9-]/g, "");
+
 export function exportStemSuffix(tracks?: string[]): string {
   if (!tracks || tracks.includes("orig")) return "";
   const langs = tracks.filter((t) => t !== "orig");
@@ -617,7 +623,7 @@ export function exportStemSuffix(tracks?: string[]): string {
   // A multi-target export used to return "" here, so the file name carried no
   // language at all -- the one case where naming matters MOST, since the file
   // holds several. Bounded: these codes are user-authored and land in a path.
-  return "." + langs.map((l) => l.replace(/[^A-Za-z0-9-]/g, "")).filter(Boolean).slice(0, 4).join("+");
+  return "." + langs.map(trackSlug).filter(Boolean).slice(0, 4).join("+");
 }
 
 /** Translated cue lines that exceed the 20 chars/sec subtitle reading-speed

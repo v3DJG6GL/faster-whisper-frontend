@@ -9,12 +9,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The Tauri commands are no-ops outside Tauri (api.ts guards each on `isTauri`), except
 // the disk listing, which we drive here to exercise the malformed-record filter.
 const listTranscriptRecords = vi.fn<() => Promise<unknown[]>>();
+const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: boolean) => Promise.resolve());
 vi.mock("./api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api")>()),
   listTranscriptRecords: () => listTranscriptRecords(),
+  saveTranscriptRecord: (id: string, json: string, d: boolean) => saveTranscriptRecord(id, json, d),
 }));
 
-const { loadHistory, recordDictation, useTranscriptHistory } = await import("./transcriptHistory");
+const { loadHistory, recordDictation, upsertRecord, useTranscriptHistory } = await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
 
 const CAPTURE = {
@@ -159,5 +161,24 @@ describe("per-language tracks", () => {
       .records.find((r) => r.id === id) as TranscriptRecord;
     expect(rec.translations).toBeUndefined();
     expect(rec.translationTargets).toBeUndefined();
+  });
+});
+
+describe("upsertRecord coalesces the disk write, not the mirror", () => {
+  it("writes leading-edge, then once more with the LAST record after the window", () => {
+    vi.useFakeTimers();
+    saveTranscriptRecord.mockClear();
+    const base: TranscriptRecord = {
+      schemaVersion: 1, kind: "file", id: "co-1", createdAt: "2026-08-30T12:00:00Z",
+      sourcePath: "/c.mp3", sourceName: "c.mp3", status: "done", result: { text: "v0" },
+    };
+    for (let i = 1; i <= 10; i++) upsertRecord({ ...base, result: { text: `v${i}` } });
+    expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
+    // The mirror already has the latest version; the file will catch up.
+    expect(useTranscriptHistory.getState().records.find((r) => r.id === "co-1")?.result?.text).toBe("v10");
+    vi.advanceTimersByTime(2_100);
+    expect(saveTranscriptRecord).toHaveBeenCalledTimes(2);
+    expect(String(saveTranscriptRecord.mock.calls[1][1])).toContain("v10");
+    vi.useRealTimers();
   });
 });

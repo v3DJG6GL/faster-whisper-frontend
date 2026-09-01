@@ -14,6 +14,30 @@ import type { TextTranslationResult } from "./api";
  *  window to do their job (context = 3 segments, fluent groups span a few). */
 export const TRANSLATE_CHUNK = 32;
 
+/** Segment indexes missing at least one of `langs` — a cancelled or failed chunked run
+ *  leaves these behind, and they are the run's resume set. The viewer's other doors
+ *  close the moment the FIRST chunk lands (`langs` is non-empty from then on), so this is
+ *  the only way back into a half-translated transcript. */
+export function untranslatedIndexes(
+  segments: { translations?: Record<string, string> }[] | undefined,
+  langs: string[],
+): number[] {
+  if (!langs.length) return [];
+  return (segments ?? []).flatMap((s, i) =>
+    langs.some((l) => !(s.translations?.[l] ?? "").trim()) ? [i] : [],
+  );
+}
+
+/** Re-runs reproduce the transcript's OWN regime (the mode/model its record carries),
+ *  not the backend default — else "Re-translate N flagged" mixes two regimes in one
+ *  transcript. `mode` is a free string on the record, so narrow it. */
+export function translateOptsFrom(
+  info?: { mode?: string; model?: string },
+): { mode?: "fluent" | "faithful"; model?: string } {
+  const mode = info?.mode === "faithful" || info?.mode === "fluent" ? info.mode : undefined;
+  return { mode, model: info?.model || undefined };
+}
+
 export type TranslatePhase =
   | "starting" // request sent, no progress entry observed yet
   | "downloading" // server is fetching the MT model

@@ -13,6 +13,7 @@ import { cancelLive, requestStopIfStarting } from "@/lib/streaming";
 import { SCREEN_PATH } from "@/lib/screens";
 import { applyTheme, watchSystemTheme } from "@/lib/theme";
 import { initLogStatus, openLogsPrefiltered } from "@/lib/logs";
+import { flushRecordWrites } from "@/lib/transcriptHistory";
 import { tryNavigate } from "@/lib/navGuard";
 import { Onboarding } from "@/screens/Onboarding";
 import Logs from "@/screens/Logs";
@@ -196,6 +197,9 @@ export default function App() {
     initUsageController();
     // Sidebar Logs badge: always-on counter feed (tiny, change-gated events).
     initLogStatus();
+    // History coalesces rapid record writes (chunked translate); land them on quit/reload.
+    window.addEventListener("beforeunload", flushRecordWrites);
+    return () => window.removeEventListener("beforeunload", flushRecordWrites);
   }, []);
 
   // Global dictation triggers (CLI / hotkeys) → start/stop the right mode.
