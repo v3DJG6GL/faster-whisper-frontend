@@ -14,7 +14,7 @@ import { ownProp } from "./own";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
 import type { Backend, Profile } from "./types";
 
-export type TriggerAction = "start" | "stop" | "toggle" | "reclassify" | "cancel";
+export type TriggerAction = "start" | "stop" | "toggle" | "reclassify";
 
 // "Busy" = any non-idle state. A new session must not start over one; a stop/toggle
 // while busy ends it.
@@ -73,14 +73,6 @@ export function dictate(profileId: string, action: TriggerAction): void {
     // would otherwise fall through to the start branch and be swallowed by startLive's
     // startingSession guard, wedging the just-started latch. Honor it like the explicit "stop".
     if (requestStopIfStarting()) return;
-  }
-  // Chord family: the quick-add superset completed inside the grace window — the
-  // matcher already opened the quick-add window; discard the nascent blip so no
-  // transcript of the half-second of chord noise ever lands. Safe on a mid-start
-  // session too (cancelLive hard-resets); a stray cancel while idle is a no-op.
-  if (action === "cancel") {
-    if (isBusy() || isStarting()) void cancelLive();
-    return;
   }
   // Chord family: the latch superset completed over the hold root. Three meanings:
   //   • session running under ANOTHER profile → upgrade it in place (hold → hands-free);

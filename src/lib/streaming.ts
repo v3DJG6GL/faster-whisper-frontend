@@ -24,7 +24,7 @@
 import { useApp } from "./store";
 import { translateFailureDoorway } from "./errors";
 import { attachRecordingPath, recordDictation } from "./transcriptHistory";
-import { effectiveServerUrl } from "./backends";
+import { backendPrompt, effectiveServerUrl } from "./backends";
 import { refreshCaps, translationWarm } from "./capabilities";
 import { acquireWarm, preloadPlanFor, type WarmLease } from "./preload";
 import { ownProp } from "./own";
@@ -2387,10 +2387,10 @@ async function startLiveInner(
   const language = pov?.language?.trim() ? pov.language.trim() : backend.language;
   // prompt is a 3-state sentinel sent to the backend: undefined → omit (inherit the
   // server DEFAULT_PROMPT); "" → explicit clear (no initial_prompt); value → use it.
-  // A profile that set its prompt (incl. an explicit "" clear) wins; else the
-  // backend's prompt; an empty backend prompt means inherit, so omit.
-  const prompt =
-    pov?.prompt !== undefined ? pov.prompt : backend.prompt !== "" ? backend.prompt : undefined;
+  // A profile that set its prompt (incl. an explicit "" clear) wins; else the backend's
+  // own tri-state — `backendPrompt` reads it, so a backend CLEARED to "" sends "" and
+  // only an un-set one is omitted (a bare `backend.prompt !== ""` collapsed both).
+  const prompt = pov?.prompt !== undefined ? pov.prompt : backendPrompt(backend);
   const decodeOverrides = mergeDecodeOverrides(backend.decodeOverrides, pov?.decodeOverrides);
   // A set per-Profile override-profile name wins; else inherit the Backend's.
   const overrideProfile = pov?.overrideProfile?.trim() ? pov.overrideProfile.trim() : backend.overrideProfile;

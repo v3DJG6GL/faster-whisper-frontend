@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
+import { Server, Pencil, Copy, Trash2, Plug, Loader2, Eraser, RotateCcw } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, StatusDot, TextArea, TextInput } from "@/components/ui";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
@@ -16,7 +16,7 @@ import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/syncTypes";
 import { ALL_CATEGORIES } from "@/lib/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
-import { authorityOf, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
+import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -115,6 +115,9 @@ function Editor({
     () => !!initial.translationOverrides && Object.keys(initial.translationOverrides).length > 0,
   );
   const set = (patch: Partial<Backend>) => setB((x) => ({ ...x, ...patch }));
+  // The prompt's tri-state view: undefined = inherit, "" = explicit clear, value = set.
+  const promptOverride = backendPrompt(b);
+  const promptOverridden = promptOverride !== undefined;
   // `detected` = what the last connection test inferred; `kind` = the effective
   // classification (a manual override wins). `kind` gates the decode-override editor.
   const detected = classifyConnection(result);
@@ -351,17 +354,55 @@ function Editor({
         </Notice>
       )}
 
-      <Labeled label="Default vocabulary / prompt (optional)" className="mt-4">
+      {/* Tri-state, the same shape the Profile editor and the decode fields use:
+          undefined = inherit the server override-profile's DEFAULT_PROMPT (omit the
+          field), "" = explicit clear (send an empty prompt, so nothing is inherited),
+          value = use it. Stored as `prompt` + `promptCleared` — see `backendPrompt`. */}
+      <div className="mt-4">
+        <div className="mb-2 flex items-center gap-1.5">
+          {promptOverridden && (
+            <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+          )}
+          <label className="text-[12px] font-medium text-dim">
+            Default vocabulary / prompt (optional)
+          </label>
+          <div className="ml-auto flex items-center gap-2">
+            {promptOverride !== "" && (
+              <button
+                type="button"
+                onClick={() => set(backendPromptFields(""))}
+                title="Override with empty (suppress the inherited prompt)"
+                className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
+              >
+                <Eraser className="size-3" /> clear
+              </button>
+            )}
+            {promptOverridden && (
+              <button
+                type="button"
+                onClick={() => set(backendPromptFields(undefined))}
+                title="Reset to inherited"
+                className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
+              >
+                <RotateCcw className="size-3" /> reset
+              </button>
+            )}
+          </div>
+        </div>
         <TextArea
           aria-label="Default vocabulary / prompt"
-          value={b.prompt}
-          onChange={(e) => set({ prompt: e.target.value })}
+          value={promptOverride ?? ""}
+          onChange={(e) => set(backendPromptFields(e.target.value))}
           rows={2}
           // Ghost the selected server override-profile's DEFAULT_PROMPT as the
-          // inherited baseline; empty here means "inherit the server prompt".
-          placeholder={resolvedPrompt || "Bias terms — names, jargon…"}
+          // inherited baseline; a cleared field says so instead.
+          placeholder={
+            promptOverride === ""
+              ? "(cleared — no prompt sent)"
+              : resolvedPrompt || "Bias terms — names, jargon…"
+          }
         />
-      </Labeled>
+      </div>
 
       <div className="mt-5">
         <DisclosureCard

@@ -46,7 +46,19 @@ export interface Backend {
   model: string; // e.g. "large-v3", "whisper-1", or an HF repo id
   endpoint: EndpointKind; // streaming WS vs batch multipart
   language: string; // "auto" | ISO 639-1 (default; a Profile may override)
-  prompt: string; // optional initial_prompt / vocabulary biasing (default; overridable)
+  /** Default initial_prompt / vocabulary biasing (a Profile may override).
+   *
+   *  The tri-state lives in this field PLUS `promptCleared` — read/write it with
+   *  `backendPrompt` / `backendPromptFields` rather than touching either directly:
+   *    "value"          → send that prompt
+   *    "" + no flag     → inherit (omit the field; the server's DEFAULT_PROMPT applies)
+   *    "" + promptCleared → explicit clear (send prompt="", suppressing the inherited one) */
+  prompt: string;
+  /** Explicit-clear marker for `prompt` (see above). Additive on purpose: `prompt`
+   *  stays a required string on disk, so a config written here still loads in a build
+   *  that predates the tri-state — it reads the "" as the inherit it always meant,
+   *  which is the harmless direction. Only meaningful while `prompt` is empty. */
+  promptCleared?: boolean;
   responseFormat: ResponseFormat;
   decodeOverrides?: DecodeOverrides; // Phase-B: per-Backend decode defaults
   translationOverrides?: TranslationOverrides; // T2T defaults (absent key = inherit server)
@@ -114,12 +126,18 @@ export interface Profile {
 /** T2T translation defaults, layered Backend → Profile → run (absent key =
  *  inherit the previous layer, server config at the root). */
 export interface TranslationOverrides {
+  /** Tri-state, like the decode overrides: `undefined` = inherit the previous
+   *  layer (omit `translate_to` — the server's own TRANSLATE_TO applies), `[]` =
+   *  explicitly NO targets (send `translate_to=""`, overriding an inherited
+   *  list), a non-empty list = translate into exactly these. */
   translateTo?: string[];
   /** Model ref ("org/repo:quant"); empty/undefined = server default. */
   model?: string;
   /** Previous-segment context depth; undefined = server default. */
   contextSegments?: number;
-  /** Glossary — one "source = target" line per fixed term. */
+  /** Glossary — one "source = target" line per fixed term. Tri-state:
+   *  `undefined` = inherit (omit the field), `""` = explicit clear (send
+   *  `translation_glossary=""`, so no inherited glossary applies), value = use it. */
   glossary?: string;
   /** "fluent" (sentence-merged) or "faithful" (per-cue); undefined = server default. */
   mode?: "fluent" | "faithful";

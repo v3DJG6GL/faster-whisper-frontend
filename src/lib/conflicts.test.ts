@@ -25,8 +25,9 @@ describe("conflicts — designed nesting exemption", () => {
   it("a hold nested inside a hands-free chord is the designed family, not a shadow", () => {
     expect(conflicts([prof(["ControlLeft", "ShiftLeft"]), prof(["ControlLeft", "ShiftLeft", "Space"], "handsfree")])).toEqual([]);
   });
-  it("a hold nested inside the quick-add chord is exempt too", () => {
-    expect(conflicts([prof(["ControlLeft", "ShiftLeft"]), quickAddPeer(["ControlLeft", "ShiftLeft", "KeyQ"])])).toEqual([]);
+  it("a hold nested inside the quick-add chord is a shadow (the abort-and-open nesting is gone)", () => {
+    const found = conflicts([prof(["ControlLeft", "ShiftLeft"]), quickAddPeer(["ControlLeft", "ShiftLeft", "KeyQ"])]);
+    expect(found.some((c) => c.kind === "shadow" && c.otherId === QUICK_ADD_PEER_ID)).toBe(true);
   });
   it("the exemption is DIRECTIONAL: a hands-free chord inside a hold superset is a real shadow", () => {
     const found = conflicts([prof(["ControlLeft", "ShiftLeft"], "handsfree"), prof(["ControlLeft", "ShiftLeft", "Space"])]);

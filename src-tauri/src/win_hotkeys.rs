@@ -958,7 +958,6 @@ mod imp {
                     crate::held_keys::clear_chord_lost();
                     emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))
                 }
-                Fire::Cancel(pid) => emit(app, &pid, "cancel", Some(&chord_mods(&pid))),
                 Fire::OpenQuickAdd => crate::quickadd::show(app),
             }
         }

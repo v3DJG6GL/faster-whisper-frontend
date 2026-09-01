@@ -14,12 +14,14 @@
 //     in place (hold → hands-free) — the hold is released WITHOUT a `Stop`.
 //     Allowed at ANY time during the hold: an upgrade keeps the session, so
 //     it is always safe.
-//   • A QUICK-ADD chord that strictly contains an actively-holding HOLD chord
-//     fires `Cancel` + `OpenQuickAdd` — but ONLY within GRACE of the hold's
-//     start: the just-started blip of recording is discarded (nothing has
-//     been inserted yet; insertion is per-phrase). Outside the window it is
-//     ignored entirely — a stray Right Ctrl mid-dictation must not eat the
-//     session, which keeps running and stops on the hold's real release.
+//   • The QUICK-ADD chord is a plain rising-edge chord, exactly like a
+//     hands-free toggle with nothing to upgrade: it opens the window and takes
+//     part in nesting only as an ordinary peer. (It used to be the third member
+//     of the family — a superset that aborted a just-started hold within a grace
+//     window. Nothing in the market nests a third chord over push-to-talk, the
+//     starter profiles never used it, and it was the one nesting with edge cases
+//     of its own — so it is gone, and hold ⊂ quick-add is an ordinary shadow
+//     conflict again.)
 //   • A hold suppressed-then-unsuppressed (superset pressed and released while
 //     the root stays down) does NOT re-fire `Start`: holds start only on the
 //     physical completion edge. (The old matcher restarted here — wrong for
@@ -43,11 +45,7 @@
 // every overlapping pair, so nothing arbitrated them.
 
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
-
-/// How long after a hold's `Start` a quick-add superset may abort it. Mirrors
-/// Vowen's "the longer combo wins if it arrives within that window".
-pub const QUICK_ADD_GRACE: Duration = Duration::from_millis(500);
+use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChordKind {
@@ -104,8 +102,6 @@ pub enum Fire {
     /// Hands-free chord completed over a live hold — emit "reclassify" (the
     /// frontend upgrades in place, or toggles off when it's already hands-free).
     Reclassify(String),
-    /// Quick-add aborted a nascent hold — emit "cancel" for the hold's profile.
-    Cancel(String),
     /// Open the quick-add window.
     OpenQuickAdd,
 }
@@ -120,7 +116,8 @@ pub struct Engine {
     active: Vec<bool>,
     /// Physical completion last event — edge detection for holds.
     fully_prev: Vec<bool>,
-    /// When an active hold emitted Start (drives the quick-add grace window).
+    /// When an active hold emitted Start — picks the most recent hold as the
+    /// handoff donor when a hands-free superset contains more than one.
     started_at: Vec<Option<Instant>>,
     /// Reused per-event scratch (the matchers run on every keystroke system-wide).
     fully: Vec<bool>,
@@ -166,7 +163,7 @@ impl Engine {
     }
 
     /// The most recently started, still-active HOLD strictly contained in chord
-    /// `j` — the handoff donor for a hands-free upgrade / quick-add abort.
+    /// `j` — the handoff donor for a hands-free upgrade.
     fn active_hold_subset(&self, j: usize) -> Option<usize> {
         self.subsets[j]
             .iter()
@@ -271,29 +268,11 @@ impl Engine {
                     }
                 }
                 KindTag::QuickAdd => {
+                    // Same edge + re-arm discipline as hands-free, with nothing to hand off.
                     let on = rising && !blocked;
                     if on && !self.active[i] {
                         self.active[i] = true;
-                        match self.active_hold_subset(i) {
-                            Some(r) => {
-                                let fresh = self.started_at[r]
-                                    .map(|t| now.duration_since(t) < QUICK_ADD_GRACE)
-                                    .unwrap_or(false);
-                                if fresh {
-                                    // Abort the nascent blip and open the window.
-                                    self.active[r] = false;
-                                    self.started_at[r] = None;
-                                    if let ChordKind::Hold { profile_id: root } = &self.chords[r].kind {
-                                        out.push(Fire::ReleaseHold(root.clone()));
-                                        out.push(Fire::Cancel(root.clone()));
-                                    }
-                                    out.push(Fire::OpenQuickAdd);
-                                }
-                                // Outside the grace window: ignore entirely — the
-                                // hold stays active and stops on its real release.
-                            }
-                            None => out.push(Fire::OpenQuickAdd),
-                        }
+                        out.push(Fire::OpenQuickAdd);
                     } else if !fully {
                         self.active[i] = false;
                     }
@@ -313,16 +292,17 @@ mod tests {
     const CTRL_L: u16 = 1;
     const SHIFT_L: u16 = 2;
     const SPACE: u16 = 3;
-    const CTRL_R: u16 = 4;
     const KEY_H: u16 = 5;
     const SUPER_L: u16 = 6;
     const ALT_L: u16 = 7;
 
+    /// The designed family: a push-to-talk hold nested in a hands-free superset, with an
+    /// independent quick-add chord beside them (the starter shape, quick-add on Alt+Super).
     fn family() -> Engine {
         Engine::new(vec![
             ChordSpec { keys: vec![CTRL_L, SHIFT_L], kind: ChordKind::Hold { profile_id: "ptt".into() } },
             ChordSpec { keys: vec![CTRL_L, SHIFT_L, SPACE], kind: ChordKind::HandsFree { profile_id: "handsfree".into() } },
-            ChordSpec { keys: vec![CTRL_L, SHIFT_L, CTRL_R], kind: ChordKind::QuickAdd },
+            ChordSpec { keys: vec![ALT_L, SUPER_L], kind: ChordKind::QuickAdd },
         ])
     }
 
@@ -425,58 +405,25 @@ mod tests {
         );
     }
 
+
+    /// Quick-add is a plain rising-edge chord: press opens, and it re-arms only on a real
+    /// release — exactly the hands-free discipline, with no hold to hand off.
     #[test]
-    fn quick_add_inside_grace_aborts_the_blip() {
+    fn quick_add_opens_on_each_press_and_rearms_on_release() {
         let mut e = family();
         let t = Instant::now();
         let fires = run(
             &mut e,
             &[
-                (&[CTRL_L, SHIFT_L], t),
-                (&[CTRL_L, SHIFT_L, CTRL_R], t + Duration::from_millis(200)),
-                (&[], t + Duration::from_millis(300)),
+                (&[ALT_L], t),
+                (&[ALT_L, SUPER_L], t), // open
+                (&[ALT_L], t),          // Super up → re-arm
+                (&[ALT_L, SUPER_L], t), // open again
+                (&[], t),
             ],
         );
-        assert_eq!(
-            fires,
-            vec![
-                Fire::Start("ptt".into()),
-                Fire::ReleaseHold("ptt".into()),
-                Fire::Cancel("ptt".into()),
-                Fire::OpenQuickAdd,
-            ]
-        );
+        assert_eq!(fires, vec![Fire::OpenQuickAdd, Fire::OpenQuickAdd]);
     }
-
-    #[test]
-    fn quick_add_outside_grace_is_ignored_and_session_survives() {
-        let mut e = family();
-        let t = Instant::now();
-        let fires = run(
-            &mut e,
-            &[
-                (&[CTRL_L, SHIFT_L], t),
-                (&[CTRL_L, SHIFT_L, CTRL_R], t + Duration::from_millis(900)), // ignored
-                (&[CTRL_L, SHIFT_L], t + Duration::from_millis(1000)),        // RCtrl up — no restart
-                (&[], t + Duration::from_millis(1100)),                       // real release → stop
-            ],
-        );
-        assert_eq!(fires, vec![Fire::Start("ptt".into()), Fire::Stop("ptt".into())]);
-    }
-
-    #[test]
-    fn quick_add_from_idle_opens_without_a_blip() {
-        // RCtrl-first: the hold completes already-suppressed (no Start), and
-        // quick-add opens with nothing to cancel.
-        let mut e = family();
-        let t = Instant::now();
-        let fires = run(
-            &mut e,
-            &[(&[CTRL_R], t), (&[CTRL_R, CTRL_L], t), (&[CTRL_R, CTRL_L, SHIFT_L], t), (&[], t)],
-        );
-        assert_eq!(fires, vec![Fire::OpenQuickAdd]);
-    }
-
 
     /// The lift of a superset-only key must not fire the nested chord: only the
     /// Hold arm was edge-gated; HandsFree/QuickAdd used the level and fired on

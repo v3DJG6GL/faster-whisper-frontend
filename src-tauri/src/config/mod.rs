@@ -106,9 +106,8 @@ fn default_true() -> bool {
 }
 
 /// Quick-add default: Super+Alt (user-set 2026-07-13; canonical order per
-/// `code_rank`). Independent of the push-to-talk/hands-free defaults — no chord
-/// nesting, so chord_engine.rs's grace-window abort never applies between the
-/// defaults (it still works for user-configured superset chords).
+/// `code_rank`). An independent chord beside the push-to-talk/hands-free defaults;
+/// nesting it over a hold is a shadow conflict, not a feature (see chord_engine.rs).
 fn default_quick_add_hotkey() -> Vec<String> {
     vec!["AltLeft".into(), "MetaLeft".into()]
 }

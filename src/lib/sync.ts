@@ -1101,6 +1101,11 @@ function sanitizeBackends(list: unknown): Backend[] {
       model: typeof b.model === "string" ? b.model : "",
       language: typeof b.language === "string" ? b.language : "auto",
       prompt: typeof b.prompt === "string" ? b.prompt : "",
+      // The explicit-clear half of the prompt's tri-state (see `backendPrompt`). Only
+      // `true` survives: anything else — a peer's string, a number, absent — is the
+      // inherit the empty prompt already means, and a non-boolean would reach Rust's
+      // `Option<bool>`, which has no serde fallback and would wedge every later save.
+      promptCleared: b.promptCleared === true ? true : undefined,
       endpoint: oneOf<EndpointKind>(b.endpoint, ENDPOINT_KINDS, "stream"),
       responseFormat: oneOf<ResponseFormat>(b.responseFormat, RESPONSE_FORMATS, "json"),
       hasApiKey: b.hasApiKey === true,

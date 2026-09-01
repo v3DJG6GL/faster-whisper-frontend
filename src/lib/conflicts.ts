@@ -6,15 +6,15 @@
 //   • "shadow"    — one chord is a strict subset of another (e.g. Alt vs Ctrl+Alt).
 //                   The shorter chord would fire whenever the longer one is held.
 //
-// DESIGNED NESTINGS are exempt from "shadow" — the chord family the matcher
-// implements on purpose (src-tauri/src/chord_engine.rs):
+// ONE DESIGNED NESTING is exempt from "shadow" — the chord family the matcher
+// implements on purpose (src-tauri/src/chord_engine.rs), and the shape every
+// dictation product ships (Wispr Flow: Ctrl+Win → Ctrl+Win+Space):
 //   • a HOLD chord ⊂ a HANDS-FREE chord  — completing the superset UPGRADES the
-//     running push-to-talk session to hands-free (reclassify, no restart);
-//   • a HOLD chord ⊂ the QUICK-ADD chord — completing the superset within the
-//     grace window aborts the nascent blip and opens quick add.
-// Everything else nested (latch ⊂ latch, hold ⊂ hold, quick-add ⊂ anything…)
-// is still a hard "shadow" conflict. This MUST stay in lockstep with the
-// engine's semantics so the UI only permits what the matcher actually handles.
+//     running push-to-talk session to hands-free (reclassify, no restart).
+// Everything else nested (latch ⊂ latch, hold ⊂ hold, anything ⊂/⊃ quick-add…)
+// is a hard "shadow" conflict. This MUST stay in lockstep with the engine's
+// semantics — and with the registration filter in both hotkey backends — so
+// the UI only permits what the matcher actually handles.
 // Only enabled profiles with a non-empty hotkey participate.
 
 import type { Profile } from "./types";
@@ -52,7 +52,7 @@ function isStrictSubset(a: string[], b: string[]): boolean {
 
 /** How a binding behaves in the chord engine — the axis the designed-nesting
  *  exemption turns on. The quick-add peer is its own kind (its Profile shell
- *  says "hold", but the engine treats it as the abort-and-open superset). */
+ *  says "hold", but it is a plain open-the-window chord and nests with nothing). */
 export type BindingKind = "hold" | "handsfree" | "quickadd";
 
 function kindOf(p: Profile): BindingKind {
@@ -62,7 +62,7 @@ function kindOf(p: Profile): BindingKind {
 
 /** The nestings the chord engine implements on purpose (see header comment). */
 function isDesignedNesting(subKind: BindingKind, supKind: BindingKind): boolean {
-  return subKind === "hold" && (supKind === "handsfree" || supKind === "quickadd");
+  return subKind === "hold" && supKind === "handsfree";
 }
 
 /** Find every chord conflict among the given profiles. `collapseSides` (= plugin backend / evdev off)

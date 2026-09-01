@@ -127,6 +127,33 @@ export function newBackendDraft(conn?: {
   };
 }
 
+/**
+ * A Backend's "Default vocabulary / prompt" as the tri-state the wire speaks:
+ * `undefined` = inherit (omit the field, so the server's DEFAULT_PROMPT applies),
+ * `""` = explicit clear (send an empty prompt, suppressing the inherited one),
+ * a value = use it.
+ *
+ * Stored as a PAIR (`prompt` + `promptCleared`) rather than an optional string, so
+ * `Backend.prompt` stays a required string in the Rust config struct: omitting it
+ * would make a config written by this build unparseable to any earlier one, and
+ * Rust's recovery for an unparseable config is "rename to config.json.bak and load
+ * defaults" — i.e. a downgrade would wipe every backend, profile and hotkey. A
+ * build that predates the flag simply reads the "" as the inherit it always meant.
+ */
+export function backendPrompt(b: Pick<Backend, "prompt" | "promptCleared">): string | undefined {
+  if (b.prompt) return b.prompt;
+  return b.promptCleared ? "" : undefined;
+}
+
+/** Write `backendPrompt`'s tri-state back onto a Backend — spread the result into
+ *  the draft (both keys always, so a reset drops a stale flag). */
+export function backendPromptFields(
+  v: string | undefined,
+): Pick<Backend, "prompt" | "promptCleared"> {
+  // A non-empty prompt is a set value; the flag only ever qualifies an empty one.
+  return { prompt: v ?? "", promptCleared: v === "" ? true : undefined };
+}
+
 /** A human default name for a backend at `url` — its host, or a fallback. */
 export function nameFromUrl(url: string): string {
   try {

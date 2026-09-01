@@ -11,7 +11,7 @@ import {
 import { DecodeFields } from "@/components/DecodeFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
-import { TranslationOptionsFields, pruneTargets } from "@/components/TranslationFields";
+import { TranslationOptionsFields, pruneTargets, translationRunOptions } from "@/components/TranslationFields";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { TranscriptViewer, speakersOf } from "@/components/TranscriptViewer";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -30,7 +30,7 @@ import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcriptHistory";
 import { closeRecord, openHistoryRecord } from "@/lib/transcribeRun";
-import { backendOptions, effectiveServerUrl } from "@/lib/backends";
+import { backendOptions, backendPrompt, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isTextSourcePath } from "@/lib/subtitleImport";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
@@ -683,8 +683,10 @@ export default function Transcribe() {
       serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
       model: model || backend.model,
       language,
-      // Empty backend prompt = inherit the server DEFAULT_PROMPT → omit the field.
-      prompt: backend.prompt || undefined,
+      // Tri-state: unset = inherit the server DEFAULT_PROMPT (omit the field), an
+      // explicit clear = send "" (suppress it), a value = send it. `|| undefined`
+      // collapsed clear onto inherit.
+      prompt: backendPrompt(backend),
       decodeOverrides: Object.keys(merged).length ? merged : undefined,
       // Per-run pick wins ("" = inherit); NO_OVERRIDE_PROFILE passes through
       // verbatim (it forces "no profile" server-side).
@@ -703,26 +705,26 @@ export default function Transcribe() {
     // silently swallowed an explicit Translate-to-English).
     const effTargets = translationAvailable ? translateTo : [];
     const t2t = effTargets.length > 0;
+    // "Authoritative" now has to be SAID, not just implied by omission: the server reads
+    // an absent `translate_to` as "inherit my override-profile's TRANSLATE_TO", so an
+    // empty chip list goes out as an explicit empty — see `translationRunOptions`, which
+    // also carries the backend glossary's own tri-state through.
+    const t2tOptions = translationRunOptions({
+      available: translationAvailable,
+      targets: effTargets,
+      mode: translationMode,
+      model: translationModel || backend.translationOverrides?.model,
+      glossary: backend.translationOverrides?.glossary,
+    });
     const options: TranscribeOptions | undefined =
-      diarize || translate || separateBgm || t2t
+      diarize || translate || separateBgm || t2tOptions.translateTo !== undefined
         ? {
             // Belt-and-braces exclusivity: when a sync race left both set,
             // T2T wins and Whisper's task is omitted entirely.
             ...(translate && !t2t
               ? { task: "translate" as const, useTranslationsEndpoint: isStandard }
               : {}),
-            ...(t2t
-              ? {
-                  translateTo: effTargets,
-                  translationMode,
-                  ...((translationModel || backend.translationOverrides?.model)
-                    ? { translationModel: translationModel || backend.translationOverrides?.model }
-                    : {}),
-                  ...(backend.translationOverrides?.glossary
-                    ? { translationGlossary: backend.translationOverrides.glossary }
-                    : {}),
-                }
-              : {}),
+            ...t2tOptions,
             ...(diarize && diarAvailable && !isStandard
               ? {
                   diarize: true,

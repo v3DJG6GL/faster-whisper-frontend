@@ -4,9 +4,9 @@
 // legacy strings so docs/muscle memory stay valid. Default chords (user-set
 // 2026-07-13, replacing the nested Ctrl+Shift family): hold Ctrl+Shift =
 // push-to-talk, Ctrl+Super = hands-free, Super+Alt = quick add — three independent
-// chords, so none of chord_engine.rs's designed-nesting behaviors (in-place
-// upgrade / grace-window abort) applies between the DEFAULTS; the engine still
-// supports them for user-configured nested chords.
+// chords, so chord_engine.rs's designed nesting (hold ⊂ hands-free = in-place
+// upgrade) does not apply between the DEFAULTS; the engine still supports it for
+// a user-configured hands-free superset.
 
 import type { Profile } from "./types";
 

@@ -22,7 +22,7 @@ import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { backendOptions, effectiveServerUrl } from "@/lib/backends";
+import { backendOptions, backendPrompt, effectiveServerUrl } from "@/lib/backends";
 import { backendForProfile } from "@/lib/dictation";
 import { liveAllowed } from "@/lib/streaming";
 import { configuredRouteTargets } from "@/lib/overlay";
@@ -113,8 +113,13 @@ function Editor({
   });
   const inheritedDecode = { ...resolved, ...backend?.decodeOverrides };
   // The "Vocabulary / prompt" this profile inherits when it sets none: the backend's
-  // own prompt, else the selected server override-profile's DEFAULT_PROMPT.
-  const inheritedPrompt = (backend?.prompt || resolvedPrompt) ?? "";
+  // own prompt, else the selected server override-profile's DEFAULT_PROMPT. Read
+  // through the backend's TRI-state — a backend whose prompt is explicitly CLEARED
+  // inherits nothing, so ghosting the server's DEFAULT_PROMPT under it would promise
+  // a prompt this profile will never send (`backend.prompt || …` did exactly that,
+  // because a clear and an unset prompt are the same empty string).
+  const backendPromptOverride = backend ? backendPrompt(backend) : undefined;
+  const inheritedPrompt = (backendPromptOverride ?? resolvedPrompt) ?? "";
   const promptOverridden = p.prompt !== undefined; // "" = explicit clear, value = set
 
   const { heldCodes, warn } = useHotkeyCapture({

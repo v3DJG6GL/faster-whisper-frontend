@@ -3,9 +3,10 @@
 // remaining candidates. Reused by the Processing card, the Backend/Profile
 // "Translation defaults" editors, and retro-translate popovers.
 import type { ReactNode } from "react";
+import { Eraser, RotateCcw } from "lucide-react";
 import { LANGUAGES, languageLabel } from "../lib/languages";
 import { cn } from "../lib/cn";
-import type { Capabilities, TranslationOverrides } from "../lib/types";
+import type { Capabilities, TranscribeOptions, TranslationOverrides } from "../lib/types";
 import { ModelPicker } from "./ModelPicker";
 import { MicroLabel, Segmented, Stepper, TextArea } from "./ui";
 
@@ -175,6 +176,117 @@ export function TranslationOptionsFields({
   );
 }
 
+/** Store-shape for a `TranslationOverrides` draft: drop the keys that are "inherit"
+ *  so an all-inherit object stores as `undefined` (the `decodeOverrides` idiom), and
+ *  KEEP the ones that are an explicit empty override.
+ *
+ *  `translateTo` and `glossary` are tri-state — only `undefined` is inherit. An empty
+ *  list / empty string is the user saying "none, whatever the layer below has", and
+ *  pruning it silently re-inherited the value they had just cleared. `model`/`mode`
+ *  stay truthiness-pruned: their controls have a real "Inherit" row instead. */
+export function pruneTranslationOverrides(
+  next: TranslationOverrides,
+): TranslationOverrides | undefined {
+  const out = { ...next };
+  if (out.translateTo === undefined) delete out.translateTo;
+  if (!out.model) delete out.model;
+  if (out.contextSegments === undefined) delete out.contextSegments;
+  if (out.glossary === undefined) delete out.glossary;
+  if (!out.mode) delete out.mode;
+  // Tri-state: only `undefined` is "inherit". `false` is an explicit OFF and must be
+  // STORED — the effective value is a per-field spread merge (streaming.ts trOv), so a
+  // pruned `false` silently re-inherited a Backend default of `true` while the toggle
+  // sat visibly off.
+  if (out.includeOriginal === undefined) delete out.includeOriginal;
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** The T2T slice of a run's `TranscribeOptions`, as the wire's tri-state.
+ *
+ *  The screen's chips are authoritative, so "no targets" has to be SAID (`translateTo:
+ *  []` → `translate_to=""`) rather than left out — an absent field now means "inherit
+ *  the server override-profile's TRANSLATE_TO", which would put back the stage the user
+ *  switched off. Everything is omitted for a backend that has no T2T stage at all
+ *  (a standard Whisper server), where the field would be meaningless.
+ *
+ *  `glossary` carries the Backend default's own tri-state through untouched: an
+ *  explicit "" is forwarded so the server's TRANSLATION_GLOSSARY is suppressed, and
+ *  only an unset one is omitted. */
+export function translationRunOptions(args: {
+  /** The backend runs a translating stage (full backend, translation_enabled). */
+  available: boolean;
+  /** The run's target codes — an empty list is an explicit "translate into nothing". */
+  targets: string[];
+  mode: "fluent" | "faithful";
+  /** Resolved per-run model; empty/undefined = the server's default. */
+  model?: string;
+  /** Tri-state: undefined = inherit, "" = explicit clear, value = use it. */
+  glossary?: string;
+}): Pick<
+  TranscribeOptions,
+  "translateTo" | "translationMode" | "translationModel" | "translationGlossary"
+> {
+  if (!args.available) return {};
+  if (!args.targets.length) return { translateTo: [] };
+  return {
+    translateTo: args.targets,
+    translationMode: args.mode,
+    ...(args.model ? { translationModel: args.model } : {}),
+    ...(args.glossary !== undefined ? { translationGlossary: args.glossary } : {}),
+  };
+}
+
+/** The clear/reset field header the tri-state override editors share (the same
+ *  affordance `DecodeFields` and the Profile prompt use): an accent dot while the
+ *  field overrides its inherited value, a "clear" button that writes the explicit
+ *  EMPTY override, and a "reset" that goes back to inherit. */
+function OverrideLabel({
+  label,
+  overridden,
+  canClear,
+  clearTitle,
+  onClear,
+  onReset,
+}: {
+  label: string;
+  /** The field holds an override (empty or not) — shows the dot and the reset. */
+  overridden: boolean;
+  /** Not already cleared — hides "clear" once the override IS the empty one. */
+  canClear: boolean;
+  clearTitle: string;
+  onClear: () => void;
+  onReset: () => void;
+}) {
+  return (
+    <div className="mb-1.5 flex items-center gap-1.5">
+      {overridden && <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />}
+      <label className="text-[12px] font-medium text-dim">{label}</label>
+      <div className="ml-auto flex items-center gap-2">
+        {canClear && (
+          <button
+            type="button"
+            onClick={onClear}
+            title={clearTitle}
+            className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
+          >
+            <Eraser className="size-3" /> clear
+          </button>
+        )}
+        {overridden && (
+          <button
+            type="button"
+            onClick={onReset}
+            title="Reset to inherited"
+            className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
+          >
+            <RotateCcw className="size-3" /> reset
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** The Backend/Profile "Translation defaults" body — targets, model, context
  *  depth, glossary, and mode, each absent = inherit the previous layer
  *  (Backend inherits the server; a Profile inherits its Backend). */
@@ -197,31 +309,36 @@ export function TranslationDefaultsEditor({
   liveInsert?: boolean;
 }) {
   const v = value ?? {};
-  const patch = (p: Partial<TranslationOverrides>) => {
-    const next = { ...v, ...p };
-    // Prune empties so "all inherit" stores undefined (decodeOverrides idiom).
-    if (!next.translateTo?.length) delete next.translateTo;
-    if (!next.model) delete next.model;
-    if (next.contextSegments === undefined) delete next.contextSegments;
-    if (!next.glossary?.trim()) delete next.glossary;
-    if (!next.mode) delete next.mode;
-    // Tri-state: only `undefined` is "inherit". `false` is an explicit OFF and must be
-    // STORED — the effective value is a per-field spread merge (streaming.ts trOv), so a
-    // pruned `false` silently re-inherited a Backend default of `true` while the toggle
-    // sat visibly off.
-    if (next.includeOriginal === undefined) delete next.includeOriginal;
-    onChange(Object.keys(next).length ? next : undefined);
-  };
+  const patch = (p: Partial<TranslationOverrides>) =>
+    onChange(pruneTranslationOverrides({ ...v, ...p }));
 
   return (
     <div className="space-y-3">
       <div>
-        <div className="mb-1.5 text-[12px] font-medium text-dim">Translate to</div>
+        <OverrideLabel
+          label="Translate to"
+          overridden={v.translateTo !== undefined}
+          canClear={v.translateTo?.length !== 0}
+          clearTitle="Override with none (translate into nothing, ignoring the inherited targets)"
+          onClear={() => patch({ translateTo: [] })}
+          onReset={() => patch({ translateTo: undefined })}
+        />
         <TranslationTargetChips
           value={v.translateTo ?? []}
           onChange={(next) => patch({ translateTo: next })}
           allowed={caps?.translation_languages}
         />
+        {/* An empty chip row cannot tell "none set" from "explicitly none" on its own,
+            and the two now resolve differently: absent inherits the layer below (a
+            server override-profile's TRANSLATE_TO), cleared overrides it with nothing.
+            Only shown while the row IS empty — with chips up, they say it. */}
+        {!v.translateTo?.length && (
+          <div className="mt-1 text-[11px] text-faint">
+            {v.translateTo === undefined
+              ? `Inherit — ${inheritLabel}`
+              : "(cleared — no translation, overrides the inherited targets)"}
+          </div>
+        )}
       </div>
       <div className="grid grid-cols-2 items-start gap-4">
         <div>
@@ -275,13 +392,27 @@ export function TranslationDefaultsEditor({
         />
       </div>
       <div>
-        <div className="mb-1.5 text-[12px] font-medium text-dim">Glossary</div>
+        <OverrideLabel
+          label="Glossary"
+          overridden={v.glossary !== undefined}
+          canClear={v.glossary !== ""}
+          clearTitle="Override with empty (suppress the inherited glossary)"
+          onClear={() => patch({ glossary: "" })}
+          onReset={() => patch({ glossary: undefined })}
+        />
         <TextArea
           aria-label="Translation glossary"
           value={v.glossary ?? ""}
-          onChange={(e) => patch({ glossary: e.target.value || undefined })}
+          // Tri-state: emptying an existing value stores "" (clear — the server's own
+          // glossary is suppressed); reset stores undefined (inherit). Coercing
+          // "" → undefined here made the two indistinguishable.
+          onChange={(e) => patch({ glossary: e.target.value })}
           rows={3}
-          placeholder={"One fixed term per line:\nRechnung = invoice"}
+          placeholder={
+            v.glossary === ""
+              ? "(cleared — no glossary sent)"
+              : "One fixed term per line:\nRechnung = invoice"
+          }
         />
       </div>
       <div className="flex items-center justify-between gap-4">

@@ -7,9 +7,8 @@
 //! react to the configured chords, and never persist or transmit scancodes.
 //!
 //! Each keyboard runs an async event loop tracking a held-key set; chord
-//! semantics (hold start/stop edges, hands-free toggle + re-arm, and the designed
-//! hold ⊂ hands-free ⊂ quick-add chord family: in-place reclassify, grace-window
-//! quick-add abort, "most-specific chord wins" suppression) live in the shared
+//! semantics (hold start/stop edges, hands-free toggle + re-arm, the designed
+//! hold ⊂ hands-free family's in-place reclassify, and peer arbitration) live in the shared
 //! [`crate::chord_engine`], and each completion emits the same `trigger` event
 //! the CLI/plugin paths use — so it plugs straight into the existing controller.
 
@@ -417,7 +416,6 @@ mod imp {
                     crate::held_keys::clear_chord_lost();
                     emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))
                 }
-                Fire::Cancel(pid) => emit(app, &pid, "cancel", Some(&chord_mods(&pid))),
                 Fire::OpenQuickAdd => crate::quickadd::show(app),
             }
         }

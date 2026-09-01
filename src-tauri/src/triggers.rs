@@ -21,7 +21,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, S
 pub struct TriggerPayload {
     /// The fired Profile's stable id (resolved to a Backend on the frontend).
     pub profile_id: String,
-    pub action: String, // "start" | "stop" | "toggle" | "reclassify" | "cancel" (chord family — see chord_engine)
+    pub action: String, // "start" | "stop" | "toggle" | "reclassify" (chord family — see chord_engine)
 }
 
 /// The shortcut modifiers that were physically down at the moment the last trigger fired — by

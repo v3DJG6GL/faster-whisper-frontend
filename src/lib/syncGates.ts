@@ -174,6 +174,9 @@ export const BACKEND_DEFAULTS_FIELDS = [
   "model",
   "language",
   "prompt",
+  // Travels WITH `prompt` — it is the other half of one value (see `backendPrompt`),
+  // and gating them apart would let a peer's prompt land without its cleared-ness.
+  "promptCleared",
   "responseFormat",
   "decodeOverrides",
   "translationOverrides",
