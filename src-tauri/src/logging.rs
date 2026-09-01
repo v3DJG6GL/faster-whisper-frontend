@@ -476,17 +476,6 @@ pub fn open_log_folder(app: AppHandle, custom: Option<String>) -> Result<(), Str
         .map_err(|e| e.to_string())
 }
 
-/// Phase-2 stub: webview `console.*` tee lands here once the frontend wires it.
-#[tauri::command]
-pub fn frontend_log(level: String, msg: String) {
-    match level.as_str() {
-        "error" => tracing::error!(target: "webview", "{msg}"),
-        "warn" => tracing::warn!(target: "webview", "{msg}"),
-        "debug" => tracing::debug!(target: "webview", "{msg}"),
-        _ => tracing::info!(target: "webview", "{msg}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -258,7 +258,6 @@ pub fn run() {
             logging::get_log_status,
             logging::log_folder_path,
             logging::open_log_folder,
-            logging::frontend_log,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

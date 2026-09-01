@@ -17,10 +17,18 @@ function line(seq: number): LogLine {
 }
 
 let emit: ((p: { lines: LogLine[] }) => void) | null = null;
+const streamCalls: boolean[] = [];
+let failNextTail = false;
 
 vi.mock("./api", () => ({
   getLogStatus: async () => ({ seq: 0, errors: 0, warns: 0 }),
-  getLogTail: async () => ({ seq: 2, errors: 0, warns: 0, lines: [line(0), line(1)] }),
+  getLogTail: async () => {
+    if (failNextTail) {
+      failNextTail = false;
+      throw new Error("ipc down");
+    }
+    return { seq: 2, errors: 0, warns: 0, lines: [line(0), line(1)] };
+  },
   onLogLines: async (cb: (p: { lines: LogLine[] }) => void) => {
     emit = cb;
     return () => {
@@ -28,7 +36,9 @@ vi.mock("./api", () => ({
     };
   },
   onLogStatus: async () => () => {},
-  setLogStream: async () => {},
+  setLogStream: async (active: boolean) => {
+    streamCalls.push(active);
+  },
 }));
 
 const { attachLogStream, clearView, visibleLines } = await import("./logs");
@@ -59,5 +69,27 @@ describe("visibleLines", () => {
     expect(cleared).not.toBe(appended);
 
     detach();
+  });
+});
+
+describe("attachLogStream ownership", () => {
+  it("a stale detach from a superseded attach never turns the live stream off", async () => {
+    streamCalls.length = 0;
+    const p1 = attachLogStream();
+    const p2 = attachLogStream();
+    (await p1)();
+    // mount1's detach ran AFTER mount2 attached: it must not send `false`.
+    expect(streamCalls[streamCalls.length - 1]).toBe(true);
+    (await p2)();
+    expect(streamCalls[streamCalls.length - 1]).toBe(false);
+  });
+
+  it("rolls the listener back when hydration rejects", async () => {
+    failNextTail = true;
+    const before = visibleLines().length;
+    await expect(attachLogStream()).rejects.toThrow("ipc down");
+    expect(emit).toBeNull(); // unlisten ran
+    emit?.({ lines: [line(9)] });
+    expect(visibleLines().length).toBe(before);
   });
 });

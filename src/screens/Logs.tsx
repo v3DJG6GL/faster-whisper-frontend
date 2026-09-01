@@ -182,10 +182,12 @@ export default function Logs() {
     void loadHistory();
     let detach: (() => void) | undefined;
     let cancelled = false;
-    void attachLogStream().then((d) => {
-      if (cancelled) d();
-      else detach = d;
-    });
+    void attachLogStream()
+      .then((d) => {
+        if (cancelled) d();
+        else detach = d;
+      })
+      .catch(() => {}); // attach rolled itself back; nothing to detach
     return () => {
       cancelled = true;
       detach?.();
@@ -443,7 +445,9 @@ export default function Logs() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => void openLogFolder(useApp.getState().settings.logging?.logDir ?? null)}
+          onClick={() =>
+            void openLogFolder(useApp.getState().settings.logging?.logDir ?? null).catch(() => {})
+          }
         >
           <FolderOpen className="h-3.5 w-3.5" /> Open log folder
         </Button>

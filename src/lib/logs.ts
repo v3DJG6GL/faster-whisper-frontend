@@ -136,7 +136,13 @@ export function initLogStatus(): void {
 /** Attach the Logs screen: hydrate the buffer, then stream new batches.
  *  Returns a detach fn (unlisten + stream off). All-or-nothing rollback à la
  *  streaming.ts `reg()`: a mount/unmount race can't leak a subscription. */
+/** Bumped per attach; only the CURRENT attachment may turn the stream off, so a
+ *  late-resolving detach from a previous mount (StrictMode's double mount, or a
+ *  fast route flap) can't disable the live one's stream. */
+let attachGen = 0;
+
 export async function attachLogStream(): Promise<() => void> {
+  const gen = ++attachGen;
   let cancelled = false;
   // The pump starts emitting the moment set_log_stream(true) lands, and append() advances
   // nextSeq — so a batch arriving before the hydration request is issued made get_log_tail
@@ -151,20 +157,32 @@ export async function attachLogStream(): Promise<() => void> {
   });
   // Stream first-gate AFTER the listener exists, then hydrate the gap —
   // set_log_stream(true) marks "emit from now", so hydration covers the past.
-  await setLogStream(true);
-  const tail = await getLogTail(nextSeq);
-  if (!cancelled) {
-    append(tail.lines);
-    hydrated = true;
-    append(parked);
-    parked = [];
-    useLogs.setState({
-      status: { seq: tail.seq, errors: tail.errors, warns: tail.warns },
-    });
+  let ok = false;
+  try {
+    await setLogStream(true);
+    const tail = await getLogTail(nextSeq);
+    if (!cancelled) {
+      append(tail.lines);
+      hydrated = true;
+      append(parked);
+      parked = [];
+      useLogs.setState({
+        status: { seq: tail.seq, errors: tail.errors, warns: tail.warns },
+      });
+    }
+    ok = true;
+  } finally {
+    // The rollback the doc promises: a rejected IPC must not leave the
+    // listener live (appending from every screen) with no detach to call.
+    if (!ok) {
+      cancelled = true;
+      unlisten();
+      if (gen === attachGen) void setLogStream(false);
+    }
   }
   return () => {
     cancelled = true;
     unlisten();
-    void setLogStream(false);
+    if (gen === attachGen) void setLogStream(false);
   };
 }
