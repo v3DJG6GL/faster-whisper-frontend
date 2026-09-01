@@ -3,7 +3,7 @@
 // per-device category toggles + status/manual controls + conflict dialog).
 // The engine lives in lib/sync.ts; this screen only drives it.
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { DownloadCloud, UploadCloud, RefreshCw, Loader2 } from "lucide-react";
 import { useApp, DEFAULT_SYNC } from "@/lib/store";
@@ -18,7 +18,7 @@ import {
   StatusDot,
   Toggle,
 } from "@/components/ui";
-import { importSettingsFile, pickImportFile, pickSavePath, syncDelete } from "@/lib/api";
+import { evdevStatus, importSettingsFile, pickImportFile, pickSavePath, syncDelete, type EvdevStatus } from "@/lib/api";
 import { applyImport, exportToFile } from "@/lib/exportImport";
 import { SyncSettingsList } from "@/screens/SyncSettingsList";
 import {
@@ -26,6 +26,7 @@ import {
   applyBlob,
   approvePendingReview,
   dismissSyncConflict,
+  deleteFailureMessage,
   getPendingConflict,
   getPendingReview,
   isCodeList,
@@ -124,6 +125,14 @@ function Modal({ children, onClose }: { children: ReactNode; onClose: () => void
 /** Per-category selection + hazard preview for a parsed import file. */
 export function ImportPreview({ result, onClose }: { result: ImportResult; onClose: () => void }) {
   const evdevEnabled = useApp((st) => st.settings.general.evdevEnabled);
+  const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
+  useEffect(() => {
+    void evdevStatus().then(setEvdev).catch(() => {}); // match Profiles/Settings; ignore an IPC reject
+  }, []);
+  // Same predicate as the persistence save gate (persistence.ts): a low-level backend
+  // owns the chords only on Windows, or when evdev is enabled AND permitted. While the
+  // status is still loading, collapse — over-warn rather than under-warn.
+  const lowLevelActive = IS_WINDOWS || (evdevEnabled && !!evdev?.permitted);
   const dictating = useApp((st) => st.status !== "idle");
   // Normalize a pre-split file once for everything this dialog previews —
   // `applyImport` migrates again on apply (idempotent), so preview and apply
@@ -170,7 +179,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     MAX_PREVIEW_PEERS,
   );
   const predictedConflicts =
-    chordConflicts(peers, !IS_WINDOWS && !evdevEnabled).length > 0;
+    chordConflicts(peers, !lowLevelActive).length > 0;
 
   const missingKeys =
     sel.backends && categories.backends
@@ -306,6 +315,14 @@ export function RestoreFromServer({
   onApplied: () => void | Promise<void>;
 }) {
   const evdevEnabled = useApp((st) => st.settings.general.evdevEnabled);
+  const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
+  useEffect(() => {
+    void evdevStatus().then(setEvdev).catch(() => {}); // match Profiles/Settings; ignore an IPC reject
+  }, []);
+  // Same predicate as the persistence save gate (persistence.ts): a low-level backend
+  // owns the chords only on Windows, or when evdev is enabled AND permitted. While the
+  // status is still loading, collapse — over-warn rather than under-warn.
+  const lowLevelActive = IS_WINDOWS || (evdevEnabled && !!evdev?.permitted);
   const dictating = useApp((st) => st.status !== "idle");
   // Normalize a pre-split server blob for the preview AND the apply below.
   const blob = useMemo(() => migrateBlob((state.blob ?? {}) as SyncBlob), [state.blob]);
@@ -339,7 +356,7 @@ export function RestoreFromServer({
     0,
     MAX_PREVIEW_PEERS,
   );
-  const predictedConflicts = chordConflicts(peers, !IS_WINDOWS && !evdevEnabled).length > 0;
+  const predictedConflicts = chordConflicts(peers, !lowLevelActive).length > 0;
   const replaces =
     (sel.backends && blob.backends && st.backends.length > 0) ||
     (sel.profiles && blob.profiles && st.profiles.length > 0) ||
@@ -595,8 +612,15 @@ function SecurityReviewDialog() {
 /** Keep Local / Keep Remote per genuinely-conflicting category. */
 function ConflictDialog() {
   const pending = getPendingConflict();
-  const [picks, setPicks] = useState<Record<string, "local" | "remote">>({});
   if (!pending) return null;
+  // Keyed on the conflict's identity so a NEW conflict remounts the body with
+  // fresh picks — the instance never unmounts between conflicts, and a retained
+  // "remote" pick would silently hand the peer a category with no second prompt.
+  return <ConflictDialogBody key={pending.id} pending={pending} />;
+}
+
+function ConflictDialogBody({ pending }: { pending: NonNullable<ReturnType<typeof getPendingConflict>> }) {
+  const [picks, setPicks] = useState<Record<string, "local" | "remote">>({});
   return (
     <Modal onClose={dismissSyncConflict}>
       <div className="text-[15px] font-semibold text-text">Sync conflict</div>
@@ -695,10 +719,17 @@ export function SyncTab() {
   const doDeleteServerCopy = async () => {
     if (!syncBackend) return;
     setDeleteArmed(false);
-    await syncDelete({
+    const r = await syncDelete({
       serverUrl: effectiveServerUrl(syncBackend, useApp.getState().settings),
       backendId: syncBackend.id,
     });
+    // 404 = already gone; treat as done. Anything else must not clear the local
+    // base — with version 0 and no snapshot, the next push CASes against 0,
+    // takes a 409 against the doc the user believes deleted, and merges it back.
+    if (!r.ok && r.status !== 404) {
+      useApp.getState().setSyncRuntime({ syncStatus: "error", syncError: deleteFailureMessage(r) });
+      return;
+    }
     await resetSyncState();
   };
 

@@ -35,7 +35,7 @@ import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } 
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "./paste";
 import { IS_WINDOWS } from "./platform";
 import { hasOwn, ownProp } from "./own";
-import { normalizeAppId } from "./sanitize";
+import { normalizeAppId, safeDisplayText } from "./sanitize";
 import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./conflicts";
 import { LEGACY_HANDSFREE } from "./types";
 import type {
@@ -1741,11 +1741,17 @@ interface PendingConflict {
   remoteDevice: string | null;
 }
 let pendingConflict: PendingConflict | null = null;
+/** Monotonic identity for the CURRENT pending conflict: the dialog keys its
+ *  body on it so a later conflict remounts with fresh picks — a retained
+ *  "remote" pick from the previous conflict would otherwise silently hand the
+ *  peer a category with no second prompt. */
+let conflictSeq = 0;
+let pendingConflictId = 0;
 /** The Sync tab reads the pending conflict through this (set into the store
  *  would drag blob payloads through every subscriber). */
-export function getPendingConflict(): { categories: SyncCategory[]; remoteDevice: string | null } | null {
+export function getPendingConflict(): { id: number; categories: SyncCategory[]; remoteDevice: string | null } | null {
   return pendingConflict
-    ? { categories: pendingConflict.categories, remoteDevice: pendingConflict.remoteDevice }
+    ? { id: pendingConflictId, categories: pendingConflict.categories, remoteDevice: pendingConflict.remoteDevice }
     : null;
 }
 
@@ -2451,7 +2457,21 @@ export function rejectPendingReview(): void {
 
 // ── conflict resolution (driven by the Sync tab dialog) ─────────────────────
 
+/** Test seam: raise a minimal conflict so the id contract is pinnable without
+ *  a transport (mirrors resetWarmDebounceForTests in preload.ts). */
+export function raiseConflictForTests(): void {
+  raiseConflict({
+    categories: ["general"],
+    remoteDevice: null,
+    local: {},
+    remote: {},
+    merged: {},
+    remoteVersion: 0,
+  } as unknown as PendingConflict);
+}
+
 function raiseConflict(c: PendingConflict): void {
+  pendingConflictId = ++conflictSeq;
   pendingConflict = c;
   setRuntime({
     syncStatus: "error",
@@ -2639,6 +2659,20 @@ export async function initSync(): Promise<void> {
   });
 
   if (canSync()) void pullNow();
+}
+
+/** Plain-language failure line for "Delete server copy" — the one server call on
+ *  the Sync tab whose result used to be discarded. Server text is peer/attacker
+ *  authored, so it is defanged like the warnings channel. */
+export function deleteFailureMessage(r: { ok: boolean; status: number; error?: string | null }): string {
+  const detail = safeDisplayText(r.error ?? "", 200);
+  if (r.status === 401 || r.status === 403) {
+    return "The server rejected the API key — the stored settings were not deleted.";
+  }
+  if (r.status === 0) {
+    return `Could not reach the server — the stored settings were not deleted.${detail ? ` (${detail})` : ""}`;
+  }
+  return `The server refused to delete the stored settings (${r.status}).${detail ? ` ${detail}` : ""}`;
 }
 
 /** For the Sync tab's "Delete server copy": forget local bookkeeping so the
