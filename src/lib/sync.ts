@@ -246,8 +246,11 @@ export function migrateBlob(blob: SyncBlob): SyncBlob {
   if (isPlainObject(g) && hasOwn(g, "quickAddHotkey")) {
     const { quickAddHotkey, ...rest } = g;
     out.general = rest as SyncGeneral;
-    if (isCodeList(quickAddHotkey) && out.dictionary?.quickAddHotkey === undefined) {
-      out.dictionary = { ...(out.dictionary ?? {}), quickAddHotkey };
+    // Guarded like `g`/`b` around it: a server-authored STRING here would be
+    // rest-spread into one key per code unit (and persisted as the snapshot).
+    const dict = isPlainObject(out.dictionary) ? out.dictionary : undefined;
+    if (isCodeList(quickAddHotkey) && dict?.quickAddHotkey === undefined) {
+      out.dictionary = { ...(dict ?? {}), quickAddHotkey } as typeof out.dictionary;
     }
   }
   // v0.1.63 shipped ONE `transcription` category carrying the history flags
@@ -281,8 +284,9 @@ export function migrateBlob(blob: SyncBlob): SyncBlob {
   if (isPlainObject(b) && hasOwn(b, "quickAddList")) {
     const { quickAddList, ...rest } = b;
     out.backends = rest as SyncBackends;
-    if (out.dictionary?.quickAddList === undefined && quickAddList !== undefined) {
-      out.dictionary = { ...(out.dictionary ?? {}), quickAddList: safeQuickAddTarget(quickAddList) };
+    const dict = isPlainObject(out.dictionary) ? out.dictionary : undefined;
+    if (dict?.quickAddList === undefined && quickAddList !== undefined) {
+      out.dictionary = { ...(dict ?? {}), quickAddList: safeQuickAddTarget(quickAddList) } as typeof out.dictionary;
     }
   }
   return out;
@@ -1271,7 +1275,6 @@ export async function applyBlob(
   const STALE = Symbol("stale-restart");
   try {
     const settings = st.settings;
-    const sub = settings.sync?.sub ?? { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: false };
     // Per-setting gates: strip a gated-off setting's fields from the inbound
     // scalar categories up front, so every merge-over-current below keeps
     // this device's values for them (the recordingsDir idiom, generalized).
@@ -1379,13 +1382,13 @@ export async function applyBlob(
           // must apply — treating it as "keep local" made a peer's next push resurrect the old
           // path and silently revert a reset-to-default after one round trip.
           recordingsDir:
-            sub.recordingsDir && (typeof rec.recordingsDir === "string" || rec.recordingsDir === null)
+            gates.audioFolder && (typeof rec.recordingsDir === "string" || rec.recordingsDir === null)
               ? rec.recordingsDir
               : settings.recording.recordingsDir,
           // Same machine-path rule for the audio base folder (one sub-toggle
           // governs both paths).
           audioBaseDir:
-            sub.recordingsDir && (typeof rec.audioBaseDir === "string" || rec.audioBaseDir === null)
+            gates.audioFolder && (typeof rec.audioBaseDir === "string" || rec.audioBaseDir === null)
               ? rec.audioBaseDir
               : settings.recording.audioBaseDir,
         },
@@ -1399,7 +1402,7 @@ export async function applyBlob(
     if (cats.transcription && isPlainObject(blob.transcription)) {
       const raw = blob.transcription as Record<string, unknown>;
       const classified = pickFields(raw, TRANSCRIPTION_FIELD_SET);
-      const picks = sub.transcribePicks ? pickFields(raw, TRANSCRIPTION_PICK_SET) : {};
+      const picks = gates.transcribePicks ? pickFields(raw, TRANSCRIPTION_PICK_SET) : {};
       nextSettings = {
         ...nextSettings,
         // Over nextSettings.transcribe, not settings.transcribe alone: the recording arm
@@ -1521,7 +1524,7 @@ export async function applyBlob(
       // device already knows to ITS chord (the recordingsDir precedent, per list element). A
       // profile new to this device keeps the inbound chord: there is no local value, and
       // `sanitizeProfiles` requires a code list, so stripping would drop the profile whole.
-      if (!sub.profileHotkeys) {
+      if (!gates.profileHotkeys) {
         const localChords = new Map(st.profiles.map((p) => [p.id, p.hotkey]));
         nextProfiles = nextProfiles.map((p) => {
           const local = localChords.get(p.id);
@@ -1572,7 +1575,7 @@ export async function applyBlob(
       // list — it lands in the same `canonicalizeCodes` / `conflicts()` consumers as the
       // profile chords, where a numeric entry throws in a component body AND in the debounced
       // save. Absent/malformed/opted-out → keep this device's chord.
-      if (sub.quickAddHotkey && isCodeList(d.quickAddHotkey)) {
+      if (gates.quickAddHotkey && isCodeList(d.quickAddHotkey)) {
         nextSettings = {
           ...nextSettings,
           general: { ...nextSettings.general, quickAddHotkey: d.quickAddHotkey },
@@ -2263,7 +2266,7 @@ function heldBack(
 /** Compare what a pull would apply against what this device holds, and report only the
  *  security-relevant differences. `local` is the freshly composed local blob, so its
  *  `backends.secrets` already reflects the keyring — no extra wallet read here. */
-function securityChanges(
+export function securityChanges(
   incoming: SyncBlob,
   local: SyncBlob,
   cats: Record<SyncCategory, boolean>,
@@ -2323,6 +2326,10 @@ function securityChanges(
   ) => {
     if (!isPlainObject(container)) return;
     const rawNext = ownProp(container, key);
+    // An ABSENT key is "no change" on the apply side (the arms merge over current), so it
+    // must not be read as the app default here — a peer with this row's sync switch off
+    // omits it, and the fallback raised a consent dialog for a deletion that can't happen.
+    if (rawNext === undefined) return;
     const nextDays = typeof rawNext === "number" && Number.isFinite(rawNext) ? rawNext : fallback;
     const rawHere = isPlainObject(localContainer) ? ownProp(localContainer, key) : undefined;
     const hereDays = typeof rawHere === "number" ? rawHere : fallback;

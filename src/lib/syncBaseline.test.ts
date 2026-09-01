@@ -10,6 +10,7 @@ import {
   composeBlob,
   mergeBlobs,
   migrateBlob,
+  securityChanges,
 } from "./sync";
 import { useApp } from "./store";
 import { DEFAULT_SETTINGS } from "./defaults";
@@ -165,6 +166,19 @@ describe("migrateBlob (baseline)", () => {
     });
     expect("quickAddHotkey" in (out.general as object)).toBe(false);
     expect(out.dictionary?.quickAddHotkey).toEqual(["AltLeft", "MetaLeft"]);
+  });
+
+  it("a non-object dictionary container is treated as absent, never spread per code unit", () => {
+    const out = migrateBlob({
+      general: { quickAddHotkey: ["KeyA"] } as never,
+      dictionary: "x".repeat(1000) as never,
+    });
+    expect(Object.keys(out.dictionary as object)).toEqual(["quickAddHotkey"]);
+    const out2 = migrateBlob({
+      backends: { list: [], quickAddList: { backendId: "b1", slug: "x" } } as never,
+      dictionary: "y".repeat(1000) as never,
+    });
+    expect(Object.keys(out2.dictionary as object)).toEqual(["quickAddList"]);
   });
 });
 
@@ -374,6 +388,41 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(useApp.getState().settings.recording.indicatorPosition).toBe("top"); // sync round: gated
     await applyBlob({ chip: { indicatorPosition: "bottom" } as never }, CATS_ALL, 2, { ignoreGates: true });
     expect(useApp.getState().settings.recording.indicatorPosition).toBe("bottom"); // restore: applied
+  });
+
+  it("an explicit restore also brings the folders and Transcribe picks the legacy sub keys gate", async () => {
+    // These arms used to read `sub` directly, which ignoreGates never neutralised —
+    // the very folders the restore comment promises were still dropped.
+    useApp.setState({ settings: settings() });
+    await applyBlob(
+      {
+        recording: { recordingsDir: "/tmp/x", audioBaseDir: "/tmp/y" } as never,
+        transcription: { backendId: "b1", model: "m", language: "en" } as never,
+      },
+      CATS_ALL,
+      2,
+      { ignoreGates: true },
+    );
+    const st = useApp.getState().settings;
+    expect(st.recording.recordingsDir).toBe("/tmp/x");
+    expect(st.recording.audioBaseDir).toBe("/tmp/y");
+    expect(st.transcribe?.backendId).toBe("b1");
+    expect(st.transcribe?.model).toBe("m");
+    expect(st.transcribe?.language).toBe("en");
+  });
+
+  it("an absent dictationRetentionDays on the wire is 'no change', not the 7-day default", () => {
+    const local = { recording: { dictationRetentionDays: 30 } } as never;
+    expect(
+      securityChanges({ recording: { saveRecordings: true } } as never, local, CATS_ALL).some(
+        (c) => c.kind === "dictation-retention",
+      ),
+    ).toBe(false);
+    expect(
+      securityChanges({ recording: { dictationRetentionDays: 7 } } as never, local, CATS_ALL).some(
+        (c) => c.kind === "dictation-retention",
+      ),
+    ).toBe(true);
   });
 
   it("the Pinned word mappings switch gates the pin on apply", async () => {
