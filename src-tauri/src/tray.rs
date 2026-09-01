@@ -70,9 +70,11 @@ pub fn show_main_at_screen(app: AppHandle, screen: String) {
 /// other surface that can tell the user their German is about to arrive as French.
 ///
 /// `route` is the pre-rendered "DE → FR IT" the chip shows, or empty for a session
-/// that doesn't translate. It is built from peer-authored language codes, so it
-/// arrives already bounded by `chipPayload`; bound it again here rather than trust
-/// a caller, since the value goes straight into a shell-drawn tooltip.
+/// that doesn't translate. It is built from peer-authored language codes by
+/// `trayRoute` (overlay.ts), which — unlike `chipPayload` — does NOT screen them, so
+/// this is the only bound: length-capped AND defanged (bidi/format controls
+/// stripped, controls folded), since the value goes straight into a shell-drawn
+/// tooltip whose whole point is to disclose the route.
 #[tauri::command]
 pub fn set_tray_state(app: AppHandle, status: String, route: Option<String>) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
@@ -89,11 +91,35 @@ pub fn set_tray_state(app: AppHandle, status: String, route: Option<String>) {
     };
     // Only while something is actually happening: an idle tray naming a route would be
     // advertising a session that isn't running.
-    let route = route.unwrap_or_default();
-    let tip = if route.is_empty() || status == "idle" {
+    let tip = tooltip(base, &status, route.as_deref().unwrap_or_default());
+    let _ = tray.set_tooltip(Some(tip.as_str()));
+}
+
+/// The tooltip text: the status line, plus the bounded route while a session runs.
+fn tooltip(base: &str, status: &str, route: &str) -> String {
+    if route.is_empty() || status == "idle" {
         base.to_string()
     } else {
-        format!("{base}  ·  {}", route.chars().take(64).collect::<String>())
-    };
-    let _ = tray.set_tooltip(Some(tip.as_str()));
+        format!("{base}  ·  {}", crate::transport::bounded_server_text(route, 64))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tooltip;
+
+    #[test]
+    fn an_idle_tray_never_advertises_a_route() {
+        assert_eq!(tooltip("app", "idle", "DE → FR"), "app");
+        assert_eq!(tooltip("app", "listening", ""), "app");
+    }
+
+    #[test]
+    fn the_route_is_defanged_and_bounded_before_it_reaches_the_shell() {
+        let t = tooltip("app", "listening", "D\u{202e}E → FR");
+        assert!(!t.contains('\u{202e}'), "{t:?}");
+        assert!(t.contains("DE → FR"));
+        let long = tooltip("app", "listening", &"X".repeat(200));
+        assert!(long.chars().count() < 200 + 10, "{long:?}");
+    }
 }

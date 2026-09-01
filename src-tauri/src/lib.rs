@@ -23,6 +23,7 @@ mod triggers;
 mod virtual_keyboard;
 mod wayland_inject;
 mod win_hotkeys;
+mod winpos;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -245,7 +246,6 @@ pub fn run() {
             overlay::set_chip_hit_region,
             overlay::chip_pointer_over,
             langpick::show_lang_pick,
-            langpick::hide_lang_pick,
             langpick::commit_lang_pick,
             langpick::cancel_lang_pick,
             quickadd::show_quick_add,

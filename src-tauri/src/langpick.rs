@@ -16,7 +16,7 @@
 //! user is about to type digits into it, so it belongs where the eyes already are, not
 //! tucked against a screen border.
 
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// Logical size declared for the `langpick` window in tauri.conf.json.
 const LP_W: f64 = 460.0;
@@ -26,23 +26,6 @@ const LP_H: f64 = 460.0;
 #[cfg(target_os = "linux")]
 const LP_TITLE: &str = "fwf-translate-to";
 
-/// Center on the monitor the window currently lives on (or the primary). A no-op on
-/// native Wayland, where the compositor decides placement.
-fn center(win: &WebviewWindow) {
-    let monitor = match win.current_monitor() {
-        Ok(Some(m)) => Some(m),
-        _ => win.primary_monitor().ok().flatten(),
-    };
-    let Some(monitor) = monitor else { return };
-    let scale = monitor.scale_factor();
-    let m_pos = monitor.position();
-    let m_size = monitor.size();
-    let w = (LP_W * scale) as i32;
-    let h = (LP_H * scale) as i32;
-    let x = m_pos.x + (m_size.width as i32 - w) / 2;
-    let y = m_pos.y + (m_size.height as i32 - h) / 2;
-    let _ = win.set_position(PhysicalPosition::new(x, y));
-}
 
 /// Show + focus the picker, carrying the seed the main window built.
 ///
@@ -54,14 +37,14 @@ fn center(win: &WebviewWindow) {
 pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
     let handle = app.clone();
     // Callable from the trigger path (any thread) — hop to the main thread for GTK.
-    let _ = app.run_on_main_thread(move || {
+    let hop = app.run_on_main_thread(move || {
         let Some(win) = handle.get_webview_window("langpick") else {
             // No window to ask → answer "dismissed" so the caller's await settles (see the
             // CloseRequested arm in lib.rs for what a pending asker costs).
             let _ = handle.emit("langpick://cancel", ());
             return;
         };
-        center(&win);
+        crate::winpos::center_on_monitor(&win, LP_W, LP_H);
         let _ = win.set_always_on_top(true);
         // KDE-Wayland ignores client keep-above; install a KWin rule instead, matched on a
         // unique title. The focus-ALLOWED variant (like quick-add's, unlike the chip's) —
@@ -74,16 +57,26 @@ pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
-        // Emitted AFTER the window is up so the webview's listener is registered — a Tauri
-        // emit with no listener is dropped, never queued (the same race quick-add's
-        // `overlay://ready`-style handshake exists for).
+        // A Tauri emit with no listener is dropped, never queued. What makes this one safe
+        // is NOT `win.show()` — the webview registers its listener in a mount effect,
+        // independently of visibility — but the window being PREWARMED (visible:false in
+        // tauri.conf.json, mounted at launch), so the listener exists long before the first
+        // user-triggered summon. A summon in the first few hundred ms of process life could
+        // still lose it; quick-add's pull-based `get_quickadd_seed` is the recovery shape if
+        // that ever matters here.
         let _ = handle.emit("langpick://shown", seed);
     });
+    // "A dismissed picker always answers": if the main-thread hop itself failed (event loop
+    // gone / not yet running) the closure never ran, so nothing above could emit — answer
+    // here, or the asker's promise pends forever and hands-free latches its picker gate.
+    if hop.is_err() {
+        let _ = app.emit("langpick://cancel", ());
+    }
 }
 
 /// Hide the picker. It stays alive (prewarmed) for the next summon — the close-to-hide
-/// guard in `lib.rs` keeps it from being destroyed.
-#[tauri::command]
+/// guard in `lib.rs` keeps it from being destroyed. Not an IPC command: nothing in the
+/// webview calls it, and commit/cancel are the only ways a picker should close.
 pub fn hide_lang_pick(app: AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {

@@ -18,6 +18,7 @@ import { keycapLabel } from "./keyboardLayout";
 // `collapseModifierSides` put it into a `string[]` where `canonicalizeCodes`' `localeCompare`
 // tie-break threw — aborting `applyBlob` uncaught and stalling sync permanently.
 import { ownProp } from "./own";
+import { IS_WINDOWS } from "./platform";
 
 /** Named keys (by `event.code`) the plugin accepts as a shortcut's key part. */
 const NAMED_CODES = new Set<string>([
@@ -181,10 +182,19 @@ export function collapseModifierSides(codes: string[]): string[] {
  *  `AltRight` on AltGr layouts (German/Swiss). The Windows backend drops that
  *  phantom in both feeds (scan 0x21D / injected raw input), so a captured
  *  "Ctrl + AltGr" chord could never match at runtime — drop it whenever AltGr
- *  is the modifier actually in play. */
+ *  is the modifier actually in play. WINDOWS-ONLY: X11/Wayland deliver AltGr as a
+ *  lone AltRight and evdev binds ControlLeft and AltRight as two independent keys,
+ *  so callers gate on `altGrPhantomActive`, not on the raw AltGraph modifier state —
+ *  or a Linux Ctrl+AltGr+X capture silently commits the broader AltGr+X. */
 export function dropAltGrPhantom(codes: string[], altGraph: boolean): string[] {
   if (!altGraph || !codes.includes("AltRight")) return codes;
   return codes.filter((c) => c !== "ControlLeft");
+}
+
+/** Is the phantom-ControlLeft strip in play for this key event? True only on
+ *  Windows (the platform that synthesizes the phantom) with AltGraph active. */
+export function altGrPhantomActive(e: { getModifierState?: (k: string) => boolean }): boolean {
+  return IS_WINDOWS && e.getModifierState?.("AltGraph") === true;
 }
 
 export function canonicalizeCodes(codes: string[]): string[] {

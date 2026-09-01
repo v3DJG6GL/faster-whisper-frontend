@@ -15,7 +15,14 @@
 import { useEffect, useRef, useState } from "react";
 import { safeDisplayText } from "@/lib/sanitize";
 import { validateCodes, suspendShortcuts, reregisterShortcuts } from "./api";
-import { MODIFIER_CODES, codeToToken, canonicalizeCodes, eventToCode, dropAltGrPhantom } from "./keys";
+import {
+  MODIFIER_CODES,
+  codeToToken,
+  canonicalizeCodes,
+  eventToCode,
+  dropAltGrPhantom,
+  altGrPhantomActive,
+} from "./keys";
 import { learnLetter } from "./keyboardLayout";
 import { findChordConflict, type BindingKind } from "./conflicts";
 import type { Profile } from "./types";
@@ -103,7 +110,7 @@ export function useHotkeyCapture(opts: {
       // eventToCode (not e.code): software-injected chords (SpeechMike-style
       // companion apps) arrive with no scancode, so e.code is ""/"Unidentified".
       const code = eventToCode(e);
-      const altGr = e.getModifierState?.("AltGraph") === true;
+      const altGr = altGrPhantomActive(e);
       if (MODIFIER_CODES.has(code)) {
         pressed.add(code);
         // Keep `pressed` and the displayed set in sync: once AltGr is in play the

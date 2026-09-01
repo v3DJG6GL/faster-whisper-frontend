@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { dropAltGrPhantom } from "./keys";
 
 // Windows/WebView2 emits a phantom ControlLeft keydown right before AltRight on
@@ -14,5 +14,22 @@ describe("dropAltGrPhantom", () => {
   });
   it("does nothing when AltRight is not part of the chord", () => {
     expect(dropAltGrPhantom(["ControlLeft", "KeyA"], true)).toEqual(["ControlLeft", "KeyA"]);
+  });
+});
+
+// The strip is a Windows/WebView2 artefact: on Linux the evdev backend binds ControlLeft
+// and AltRight independently, so a Ctrl+AltGr+X capture must keep its Ctrl.
+describe("altGrPhantomActive", () => {
+  const altGraphDown = { getModifierState: (k: string) => k === "AltGraph" };
+  it("is armed only on Windows", async () => {
+    vi.resetModules();
+    vi.doMock("./platform", () => ({ IS_LINUX: false, IS_WINDOWS: true }));
+    const win = await import("./keys");
+    expect(win.altGrPhantomActive(altGraphDown)).toBe(true);
+    vi.doMock("./platform", () => ({ IS_LINUX: true, IS_WINDOWS: false }));
+    vi.resetModules();
+    const linux = await import("./keys");
+    expect(linux.altGrPhantomActive(altGraphDown)).toBe(false);
+    vi.doUnmock("./platform");
   });
 });

@@ -40,8 +40,17 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 /// Poll cadence backing up the foreground event (see module docs). The frontend
-/// itself only re-reads the target every 700 ms, so 1 s recovery is invisible.
+/// itself only re-reads the target every 700 ms, so 1 s recovery is invisible. A tick
+/// is near-free while the foreground HWND is unchanged (see `LAST_HWND`), so the poll
+/// costs nothing while the app idles in the tray.
 const POLL_MS: u32 = 1000;
+
+/// The foreground HWND the previous fold saw. Compared BEFORE any process work: the 1 s
+/// poll almost always lands on an unchanged foreground, and without this pre-check every
+/// tick opened a handle to the foreground process (OpenProcess + QueryFullProcessImageNameW
+/// + a UTF-16 decode) just to discover nothing changed. Tracker-thread only (the timer and
+/// the WinEvent callback both land there).
+static LAST_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
 /// The shared snapshot, reachable from the bare `extern "system"` WinEvent
 /// callback (which can't capture). Set once by `run`; the `started` flag in
@@ -96,12 +105,20 @@ unsafe extern "system" fn fg_event(
 
 /// Read the current foreground app and fold it into the snapshot with the same
 /// semantics as the Linux `set_current`: `current` tracks the latest real app,
-/// `last_other` is written only at the transition INTO our own window / the
-/// shell — so "the app the user came from" can't go stale.
+/// `last_other` is written only at the transition INTO our own window — so "the app
+/// the user came from" can't go stale. (Shell surfaces never reach here: `foreground_app_id`
+/// returns None for them, which keeps the previous real app current.)
 fn fold_foreground() {
     let Some(snap) = SNAP.get() else { return };
-    let Some(app_id) = foreground_app_id() else {
-        return; // no/transient/shell foreground, or unreadable process — keep the previous state
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.is_null() {
+        return; // transient during activation hand-off
+    }
+    if LAST_HWND.swap(hwnd as isize, std::sync::atomic::Ordering::Relaxed) == hwnd as isize {
+        return; // same window as last time — nothing to re-resolve
+    }
+    let Some(app_id) = (unsafe { foreground_app_id(hwnd) }) else {
+        return; // shell foreground or unreadable process — keep the previous state
     };
     let mut s = snap.lock();
     if s.current.as_ref().map_or(false, |c| c.app_id == app_id) {
@@ -123,32 +140,42 @@ fn fold_foreground() {
     });
 }
 
-/// Identity of the current foreground window's app, or None to keep the
-/// previous snapshot untouched.
-fn foreground_app_id() -> Option<String> {
-    unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd.is_null() {
-            return None; // transient during activation hand-off
-        }
-        if is_shell_window(hwnd) {
-            return None; // taskbar / desktop / Alt-Tab flicker
-        }
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(hwnd, &mut pid);
-        if pid == 0 {
-            return None;
-        }
-        let exe = exe_basename(pid)?;
-        // UWP: the foreground window belongs to the ApplicationFrameHost shim;
-        // the real app's process owns the CoreWindow child.
-        if exe == "applicationframehost" {
-            if let Some(real) = uwp_app(hwnd, pid) {
-                return Some(real);
-            }
-        }
-        Some(exe)
+/// Identity of the foreground window's app, or None to keep the previous snapshot
+/// untouched (a shell surface, or an unreadable process).
+unsafe fn foreground_app_id(hwnd: HWND) -> Option<String> {
+    if is_shell_window(hwnd) {
+        return None; // taskbar / desktop / Alt-Tab flicker
     }
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(hwnd, &mut pid);
+    if pid == 0 {
+        return None;
+    }
+    let exe = exe_basename(pid)?;
+    // UWP: the foreground window belongs to the ApplicationFrameHost shim;
+    // the real app's process owns the CoreWindow child.
+    let exe = if exe == "applicationframehost" { uwp_app(hwnd, pid).unwrap_or(exe) } else { exe };
+    // Judged on the RESOLVED exe, so a shell host behind the frame host is caught too.
+    if is_shell_exe(&exe) {
+        return None; // Start menu / Search / notification centre — the Linux plasmashell twin
+    }
+    Some(exe)
+}
+
+/// Shell surfaces that foreground a plain `Windows.UI.Core.CoreWindow` — a class every real
+/// UWP app shares, so they cannot be filtered by class like the taskbar; filter by process
+/// name instead, the way `is_noise` filters plasmashell on Linux. Without this the Start
+/// menu became `current`, the chip's "→ app" readout named it, and a per-app rule for the
+/// app the user came from silently stopped applying to a chord fired over the open menu.
+fn is_shell_exe(base: &str) -> bool {
+    matches!(
+        base,
+        "startmenuexperiencehost" // Start menu (Win10 1903+ / Win11)
+            | "searchhost" | "searchapp" | "searchui" // Search (Win11 / Win10 / older)
+            | "shellexperiencehost" // notification / action centre, volume flyout
+            | "lockapp" // lock screen
+            | "textinputhost" // touch keyboard / emoji panel
+    )
 }
 
 /// Shell surfaces whose momentary focus must not clobber the target readout.
@@ -223,4 +250,19 @@ unsafe fn uwp_app(host: HWND, host_pid: u32) -> Option<String> {
     let mut ctx = Ctx { host_pid, found: None };
     EnumChildWindows(host, Some(enum_cb), &mut ctx as *mut Ctx as LPARAM);
     exe_basename(ctx.found?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_shell_exe;
+
+    #[test]
+    fn shell_hosts_are_filtered_by_name_and_real_apps_are_not() {
+        for shell in ["startmenuexperiencehost", "searchhost", "searchapp", "shellexperiencehost", "lockapp"] {
+            assert!(is_shell_exe(shell), "{shell}");
+        }
+        for app in ["explorer", "code", "chrome", "applicationframehost", "wordpad"] {
+            assert!(!is_shell_exe(app), "{app}");
+        }
+    }
 }

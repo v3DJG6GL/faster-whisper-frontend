@@ -11,7 +11,7 @@
 //! rule (matched on a unique title) — the focus-allowed cousin of the chip's rule in
 //! `overlay.rs mod kwin`: it forces keep-above + off-taskbar but never touches focus.
 
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// Logical size declared for the `quickadd` window in tauri.conf.json.
 const QA_W: f64 = 600.0;
@@ -21,23 +21,6 @@ const QA_H: f64 = 480.0;
 #[cfg(target_os = "linux")]
 const QA_TITLE: &str = "fwf-quick-add";
 
-/// Center the window on the monitor it currently lives on (or the primary).
-/// A no-op on native Wayland (the compositor decides placement).
-fn center(win: &WebviewWindow) {
-    let monitor = match win.current_monitor() {
-        Ok(Some(m)) => Some(m),
-        _ => win.primary_monitor().ok().flatten(),
-    };
-    let Some(monitor) = monitor else { return };
-    let scale = monitor.scale_factor();
-    let m_pos = monitor.position();
-    let m_size = monitor.size();
-    let w = (QA_W * scale) as i32;
-    let h = (QA_H * scale) as i32;
-    let x = m_pos.x + (m_size.width as i32 - w) / 2;
-    let y = m_pos.y + (m_size.height as i32 - h) / 2;
-    let _ = win.set_position(PhysicalPosition::new(x, y));
-}
 
 /// Rendezvous between the Windows seed grab (writer: a plain thread) and
 /// `get_quickadd_seed` (reader: an async command). Generation-stamped: every summon
@@ -260,7 +243,7 @@ fn show_now(app: &AppHandle) {
         let Some(win) = handle.get_webview_window("quickadd") else {
             return;
         };
-        center(&win);
+        crate::winpos::center_on_monitor(&win, QA_W, QA_H);
         let _ = win.set_always_on_top(true);
         // KDE-Wayland ignores client keep-above; install a KWin window rule instead (matched on a
         // unique title), the focus-allowed cousin of the chip's rule. The title must be set before
@@ -609,7 +592,9 @@ pub(crate) mod win_seed {
             || cancel.as_ref().is_some_and(|(rdv, generation)| !rdv.is_current(*generation));
         // The single-flight lives HERE, not in `show`, because `show` is only one of two callers:
         // `commands::get_focused_selection` (the correct-on-close re-grab, which runs ~400ms after
-        // the window hides and can last ~1.3s) calls straight through. A summon landing in that
+        // the window hides and can last SECONDS: the ≤3 s modifier release gate, an un-timed
+        // clipboard prologue, then COPY_DEADLINE_MS / COPY_DEADLINE_RDP_MS of polling — and,
+        // passing `cancel: None`, it is never superseded) calls straight through. A summon landing in that
         // window used to start a second concurrent grab and produce exactly the interleave
         // described on SEED_GRAB_ACTIVE. Owning it here also means it is held for as long as the
         // grab actually runs, rather than until some caller's timeout fires.

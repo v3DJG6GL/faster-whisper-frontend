@@ -5,7 +5,6 @@
 //! group name, rule body, and install state.
 
 use std::process::{Command, Stdio};
-
 /// KDE Plasma on Wayland — the only place these window rules are needed and usable.
 pub fn is_kde_wayland() -> bool {
     let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()

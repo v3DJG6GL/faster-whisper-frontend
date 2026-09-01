@@ -41,11 +41,7 @@ const CHIP_TITLE: &str = "fwf-dictation-chip";
 /// "raise the window off the border" trick never actually applied). A no-op on native
 /// Wayland (the compositor decides).
 fn position(win: &WebviewWindow, edge: &str) {
-    let monitor = match win.current_monitor() {
-        Ok(Some(m)) => Some(m),
-        _ => win.primary_monitor().ok().flatten(),
-    };
-    let Some(monitor) = monitor else { return };
+    let Some(monitor) = crate::winpos::monitor_of(win) else { return };
 
     let scale = monitor.scale_factor();
     let m_pos = monitor.position();
@@ -205,7 +201,7 @@ pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64, persi
     #[cfg(windows)]
     {
         let _ = &win;
-        win_hover::set_region(x, y, w, h, persist);
+        win_hover::set_region(&app, x, y, w, h, persist);
     }
     #[cfg(all(not(target_os = "linux"), not(windows)))]
     {
@@ -396,8 +392,25 @@ mod win_hover {
     /// mirroring LAST_HIT_REGION's persist semantics on Linux.
     static REGION: Mutex<Option<(f64, f64, f64, f64)>> = Mutex::new(None);
     static PERSIST: Mutex<Option<(f64, f64, f64, f64)>> = Mutex::new(None);
+    /// Window geometry (scale factor, outer x, outer y) cached at show / re-place time.
+    /// `scale_factor` and `outer_position` are NOT cheap syscalls from the poller thread —
+    /// each is a user message posted to the event loop plus a blocking channel read — and
+    /// they only change when the chip is re-placed, so the 50 ms poll reads them from here
+    /// and asks the event loop for the cursor position alone (three round-trips → one).
+    static GEOM: Mutex<Option<(f64, i32, i32)>> = Mutex::new(None);
 
-    pub fn set_region(x: f64, y: f64, w: f64, h: f64, persist: bool) {
+    /// Refresh the cached geometry from the window (main-thread or not — it is a one-off).
+    fn refresh_geom(app: &AppHandle) {
+        let Some(win) = app.get_webview_window("overlay") else { return };
+        if let (Ok(scale), Ok(pos)) = (win.scale_factor(), win.outer_position()) {
+            if let Ok(mut g) = GEOM.lock() {
+                *g = Some((scale, pos.x, pos.y));
+            }
+        }
+    }
+
+    pub fn set_region(app: &AppHandle, x: f64, y: f64, w: f64, h: f64, persist: bool) {
+        refresh_geom(app);
         if let Ok(mut r) = REGION.lock() {
             *r = Some((x, y, w, h));
         }
@@ -417,6 +430,7 @@ mod win_hover {
         }
         // show_overlay just called ignore_cursor() → the window IS click-through again.
         INTERACTIVE.store(false, Ordering::SeqCst);
+        refresh_geom(app);
         VISIBLE.store(true, Ordering::SeqCst);
         if !POLLER.swap(true, Ordering::SeqCst) {
             let app = app.clone();
@@ -434,8 +448,9 @@ mod win_hover {
         // Whether the window currently RECEIVES cursor events (= !ignore_cursor_events).
         loop {
             let visible = VISIBLE.load(Ordering::SeqCst);
-            // 50 ms tracks hover-enter/leave comfortably (GetCursorPos + GetWindowRect
-            // are cheap syscalls); idle slowly while hidden.
+            // 50 ms tracks hover-enter/leave comfortably; the per-tick cost is one
+            // event-loop round-trip (cursor position — the geometry is cached, see GEOM).
+            // Idle slowly while hidden.
             std::thread::sleep(std::time::Duration::from_millis(if visible { 50 } else { 250 }));
             let want = visible && cursor_in_chip(&app).unwrap_or(false);
             if want != INTERACTIVE.load(Ordering::SeqCst) {
@@ -460,17 +475,25 @@ mod win_hover {
     }
 
     /// Is the global cursor inside the chip rect? Webview-logical rect → physical px
-    /// (same 10 px forgiveness pad as the GDK shape). None (no rect yet / any getter
-    /// failure) reads as "outside" — the window stays click-through.
+    /// (same 10 px forgiveness pad as the GDK shape). `None` = no confident answer (no rect
+    /// yet, or a getter failed); each caller picks its own safe default — the hover poller
+    /// reads it as "outside" (stay click-through), `chip_pointer_over` reads it as "inside"
+    /// (fail OPEN: it is a cancellation signal, and a query hiccup must not break a hover).
     pub fn cursor_in_chip(app: &AppHandle) -> Option<bool> {
         let (x, y, w, h) = (*REGION.lock().ok()?)?;
-        let win = app.get_webview_window("overlay")?;
         let cur = app.cursor_position().ok()?;
-        let pos = win.outer_position().ok()?;
-        let scale = win.scale_factor().ok()?;
+        let (scale, px, py) = match *GEOM.lock().ok()? {
+            Some(g) => g,
+            None => {
+                // No cached geometry yet (a caller before the first show): one live fetch.
+                let win = app.get_webview_window("overlay")?;
+                let pos = win.outer_position().ok()?;
+                (win.scale_factor().ok()?, pos.x, pos.y)
+            }
+        };
         let pad = 10.0 * scale;
-        let rx = pos.x as f64 + x * scale - pad;
-        let ry = pos.y as f64 + y * scale - pad;
+        let rx = px as f64 + x * scale - pad;
+        let ry = py as f64 + y * scale - pad;
         Some(
             cur.x >= rx
                 && cur.x < rx + w * scale + 2.0 * pad
