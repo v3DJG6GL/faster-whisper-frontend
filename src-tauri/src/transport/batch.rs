@@ -455,11 +455,15 @@ async fn post(
     };
     form = form
         .text("model", model.to_string())
-        .text("response_format", "verbose_json")
-        // Explicit word granularity: the full backend defaults words ON for
-        // verbose_json anyway (same wire result), and standard servers need
-        // the explicit ask — so word timestamps work against both kinds.
-        .text("timestamp_granularities[]", "word");
+        .text("response_format", "verbose_json");
+    // Explicit word granularity: the full backend defaults words ON for
+    // verbose_json anyway (same wire result), and standard servers need the
+    // explicit ask. It is a transcriptions-only parameter, so it must never
+    // ride along on the OpenAI /v1/audio/translations route (a strict server
+    // 400s the run).
+    if !use_translations_route {
+        form = form.text("timestamp_granularities[]", "word");
+    }
 
     // T2T wins over translate-to-EN: with targets present the whisper `task` field is
     // never sent (the UI enforces the exclusivity too — this is the belt-and-braces the
@@ -524,7 +528,9 @@ async fn post(
         }
     }
 
-    if !language.is_empty() && language != "auto" {
+    // /v1/audio/translations auto-detects the source and always outputs
+    // English — `language` is undefined there.
+    if !use_translations_route && !language.is_empty() && language != "auto" {
         form = form.text("language", language.to_string());
     }
     // prompt sentinel: None → omit the field (server inherits DEFAULT_PROMPT);
@@ -810,7 +816,10 @@ pub async fn download_result_media(
         if total == 0 {
             bail!("the server sent no audio");
         }
-        f.flush().await.ok();
+        // tokio::fs::File defers writes to a blocking op — a late ENOSPC/EIO
+        // surfaces here, not on the write_all that queued it. Swallowing it
+        // renamed truncated media into place as the run's mediaPath.
+        f.flush().await.context("writing the media file")?;
         Ok(())
     }
     .await;
