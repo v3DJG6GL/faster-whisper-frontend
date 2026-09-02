@@ -860,7 +860,7 @@ export default function Backends() {
       </ListScreenHeader>
 
       {flow ? (
-        <div className="mt-8">
+        <div className="page-content">
           {flow.step === "connect" ? (
             <ConnectStep
               onCancel={() => setFlow(null)}
@@ -918,7 +918,7 @@ export default function Backends() {
         </div>
       ) : (
         <>
-          <SectionLabel className="mb-3 mt-8">Configured</SectionLabel>
+          <SectionLabel className="mb-3 mt-5">Configured</SectionLabel>
           {backends.length === 0 ? (
             <Card className="p-8 text-center text-[13.5px] text-dim">
               No backends yet. Add one to point the app at a faster-whisper server.

@@ -878,28 +878,17 @@ export default function Dictionary() {
 
   return (
     <Stack gap={6} className="page page-prose">
-      <header className="flex items-start justify-between gap-4">
+      <header className="pb-2">
         <div>
           <div className="font-mono text-[11px] uppercase tracking-label text-accent">{screenEyebrow("dictionary")}</div>
           <h1 className="mt-2 flex items-center gap-2.5 font-display text-[30px] font-bold tracking-tight text-text">
             <BookA className="size-7 text-accent" aria-hidden /> {screenTitle("dictionary")}
           </h1>
-          <p className="mt-2 max-w-md text-[13.5px] text-dim">
+          <p className="mt-2 text-[13.5px] text-dim">
             Text rules your server applies to every transcription — replacements, word mappings,
             punctuation tidy-up. Edit the ones your account is allowed to change.
           </p>
         </div>
-        {backend && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => load(backend)}
-            disabled={loading || saving || dirty.length > 0}
-            title={dirty.length > 0 ? "Discard your changes first (Refresh reloads from the server)" : "Reload from server"}
-          >
-            <RefreshCw className={cn("size-4", loading && "animate-spin")} /> Refresh
-          </Button>
-        )}
       </header>
 
       {/* Backend picker (only when there's a choice) + role readout */}
@@ -938,11 +927,24 @@ export default function Dictionary() {
                 </button>
               );
             })}
-          {backend && fetchRes?.ok && role && (
-            <span className="ml-auto text-[12px] text-faint">
-              Editing as <span className="text-dim">{role}</span>
-            </span>
-          )}
+          <span className="ml-auto flex items-center gap-3">
+            {backend && fetchRes?.ok && role && (
+              <span className="text-[12px] text-faint">
+                Editing as <span className="text-dim">{role}</span>
+              </span>
+            )}
+        {backend && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => load(backend)}
+            disabled={loading || saving || dirty.length > 0}
+            title={dirty.length > 0 ? "Discard your changes first (Refresh reloads from the server)" : "Reload from server"}
+          >
+            <RefreshCw className={cn("size-4", loading && "animate-spin")} /> Refresh
+          </Button>
+        )}
+          </span>
         </div>
       )}
 

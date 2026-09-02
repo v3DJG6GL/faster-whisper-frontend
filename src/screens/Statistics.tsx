@@ -41,7 +41,7 @@ export default function Statistics() {
         dictations landed, and your rhythm over any range. One filter bar and one measure; every panel follows them.
       </PageHeader>
 
-      <div className="mt-8">
+      <div className="page-content">
         <StatisticsView scope={state.scope} onScope={setScope} query={state.query} onQuery={setQuery} metric={state.metric} onMetric={setMetric} rhythm={state.rhythm} onRhythm={setRhythm} />
       </div>
     </div>

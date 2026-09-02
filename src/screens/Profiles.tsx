@@ -758,7 +758,7 @@ export default function Profiles() {
       </ListScreenHeader>
 
       {draft ? (
-        <div className="mt-8">
+        <div className="page-content">
           <Editor
             // Remount when the edited target changes (e.g. a deep link swaps draft while the editor
             // stays mounted) so Editor's useState(initial) re-seeds instead of stranding the prior
@@ -780,7 +780,7 @@ export default function Profiles() {
         </div>
       ) : (
         <>
-          <SectionLabel className="mb-3 mt-8">Configured</SectionLabel>
+          <SectionLabel className="mb-3 mt-5">Configured</SectionLabel>
           {profiles.length === 0 ? (
             backends.length > 0 && !startersDismissed ? (
               // Checklist path: suggest the starter pair as amber-edged drafts on the

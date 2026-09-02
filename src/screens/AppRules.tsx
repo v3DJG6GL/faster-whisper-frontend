@@ -295,12 +295,12 @@ export default function AppRules() {
       </ListScreenHeader>
 
       {draft ? (
-        <div className="mt-8">
+        <div className="page-content">
           <Editor initial={draft} onSave={onSave} onCancel={onCancel} />
         </div>
       ) : (
         <>
-          <SectionLabel className="mb-3 mt-8">Rules</SectionLabel>
+          <SectionLabel className="mb-3 mt-5">Rules</SectionLabel>
           {appRules.length === 0 ? (
             <Card className="p-8 text-center text-[13.5px] text-dim">
               No rules yet. Add one to control how a specific app receives dictation.

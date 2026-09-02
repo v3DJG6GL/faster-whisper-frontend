@@ -355,34 +355,8 @@ export default function Logs() {
         </span>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2 border-b border-line pb-3">
+      <div className="page-content flex flex-wrap items-center gap-2 border-b border-line pb-3">
         <Segmented value={threshold} onChange={setThreshold} options={LEVEL_OPTIONS} ariaLabel="Log level filter" />
-        {chips.map((tag) => {
-          const on = tags.has(tag);
-          return (
-            <button
-              key={tag}
-              type="button"
-              aria-pressed={on}
-              onClick={() =>
-                setTags((prev) => {
-                  const next = new Set(prev);
-                  if (on) next.delete(tag);
-                  else next.add(tag);
-                  return next;
-                })
-              }
-              className={cn(
-                "ring-signal rounded-pill border px-2.5 py-1 font-mono text-[11px] transition-colors",
-                on
-                  ? "border-accent bg-accent-soft text-accent"
-                  : "border-line-strong text-dim hover:text-text",
-              )}
-            >
-              {safeDisplayText(tag, 24)}
-            </button>
-          );
-        })}
         <TextInput
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -402,6 +376,36 @@ export default function Logs() {
           <Toggle checked={wrap} onChange={setWrap} ariaLabel="Wrap long lines" />
         </label>
       </div>
+      {chips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line py-3" aria-label="Tag filters">
+        {chips.map((tag) => {
+            const on = tags.has(tag);
+            return (
+              <button
+                key={tag}
+                type="button"
+                aria-pressed={on}
+                onClick={() =>
+                  setTags((prev) => {
+                    const next = new Set(prev);
+                    if (on) next.delete(tag);
+                    else next.add(tag);
+                    return next;
+                  })
+                }
+                className={cn(
+                  "ring-signal rounded-pill border px-2.5 py-1 font-mono text-[11px] transition-colors",
+                  on
+                    ? "border-accent bg-accent-soft text-accent"
+                    : "border-line-strong text-dim hover:text-text",
+                )}
+              >
+                {safeDisplayText(tag, 24)}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div className="relative min-h-0 flex-1">
         <div

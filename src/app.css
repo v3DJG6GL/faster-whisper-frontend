@@ -265,10 +265,14 @@ textarea {
    ────────────────────────────────────────────────────────────────────────── */
 :root {
   --page-pad: clamp(20px, 3vw, 48px);
-  --w-prose: 820px;  /* reading measure — transcript excerpts, dictionary terms */
-  --w-cards: 900px;  /* deliberately composed card layouts — Home, Statistics */
-  --w-form: 1180px;  /* label + control rows, two-column editors */
-  --w-dense: 1760px; /* self-scrolling panes side by side — Transcribe studio */
+  /* 2026-09-02: the user runs the app wide (1280 px default window, often more) and
+     wants every screen to use it. Home / History / Dictionary now fill like the
+     studio; only the label + control forms keep 1180 px, where a wider row would
+     just stretch the gap between a label and its control. */
+  --w-prose: 1760px; /* History, Dictionary — lists and tables, they fill the window */
+  --w-cards: 1760px; /* card layouts — Home */
+  --w-form: 1180px;  /* label + control rows, two-column editors — Profiles, Backends, App rules, Settings */
+  --w-dense: 1760px; /* self-scrolling panes side by side — Transcribe studio; Statistics */
 }
 
 @layer components {
@@ -277,8 +281,14 @@ textarea {
     max-width: var(--page-w, none);
     margin-inline: auto;
     padding-inline: var(--page-pad);
-    padding-block: 48px;
+    /* Top: the sidebar's logo sits 24 px under the window edge (Sidebar.tsx pt-6);
+       the page eyebrow starts on the same line. */
+    padding-block: 24px 48px;
   }
+  /* The one gap between a page's heading block (eyebrow, title, lede) and whatever comes
+     first below it — a toolbar, an action row, a list. Every screen uses it, so the
+     rhythm at the top of a page is the same everywhere; sections below it step by 20 px. */
+  .page-content { margin-top: 32px; }
   .page-prose { --page-w: var(--w-prose); }
   .page-cards { --page-w: var(--w-cards); }
   .page-form { --page-w: var(--w-form); }

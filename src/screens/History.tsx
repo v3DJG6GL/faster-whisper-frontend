@@ -848,7 +848,7 @@ export default function History() {
         Everything you transcribed or dictated — stored only on this machine.
       </PageHeader>
 
-      <div className="mt-8 flex items-center gap-3">
+      <div className="page-content flex items-center gap-3">
         <Segmented
           value={segment}
           onChange={(v) => {

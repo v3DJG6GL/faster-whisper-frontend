@@ -876,7 +876,7 @@ export default function Transcribe() {
       {files.length ? (
         <div
           className={cn(
-            "mt-8 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-8",
+            "mt-5 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-8",
             // Drops still add files in this state — say so, like the empty dropzone does.
             dragOver && !busy && "border-accent bg-accent-soft/30",
           )}
@@ -926,7 +926,7 @@ export default function Transcribe() {
           type="button"
           onClick={choose}
           className={cn(
-            "ring-signal mt-8 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-12 text-center transition-colors hover:border-faint",
+            "ring-signal mt-5 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-12 text-center transition-colors hover:border-faint",
             dragOver && "border-accent bg-accent-soft/30",
           )}
         >
@@ -2462,7 +2462,7 @@ export default function Transcribe() {
     <div
       className={
         studio
-          ? "page page-dense flex h-full min-h-0 gap-7 px-8 py-8"
+          ? "page page-dense flex h-full min-h-0 gap-7 pb-8 pt-6"
           : "page page-form"
       }
     >
