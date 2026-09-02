@@ -1,10 +1,10 @@
 //! A tiny shared "which keys are physically held right now" signal.
 //!
-//! Populated by the evdev hotkey backend (the only component that can observe real
-//! key state on Wayland) and read by `inject_text`, so we never type into a still-
-//! held modifier from the trigger chord — otherwise our injected keystrokes fold
-//! into that Ctrl/Alt/Meta and fire shortcuts in the focused app (e.g. a hands-free
-//! profile's stop fires on the *second* chord press, with every key still down).
+//! Populated by the hotkey backends (evdev on Linux, the low-level hook on Windows)
+//! and read by `inject_text`, so we never type into a still-held modifier from the
+//! trigger chord — otherwise our injected keystrokes fold into that Ctrl/Alt/Meta
+//! and fire shortcuts in the focused app (e.g. a hands-free profile's stop fires on
+//! the *second* chord press, with every key still down).
 //!
 //! Refcounted by keycode so multiple keyboards compose correctly. When the backend isn't running
 //! the map stays empty, so the gate is a no-op and injection behaves exactly as before.

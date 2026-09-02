@@ -268,6 +268,7 @@ mod imp {
             // blob and is persisted, sizes a hot path. This bound is orders of magnitude above
             // any real binding set, so nothing legitimate is dropped.
             if out.len() >= MAX_CHORDS {
+                tracing::warn!("[winhook] chord ceiling {MAX_CHORDS} reached, dropping {what}");
                 return;
             }
             // The registration filter: duplicates, and every nesting except the designed
@@ -828,7 +829,7 @@ mod imp {
     /// `chord_mods` = the firing chord's OWN modifier keycodes, already translated into the
     /// `held_keys` (evdev) namespace by the caller. This backend feeds `HeldKeys` and is always
     /// the registrar on Windows, so without the snapshot `inject_text`'s held-modifier gate was
-    /// dead here — see `triggers::snapshot_trigger_mods`. Empty for a teardown-emitted stop.
+    /// dead here — see `triggers::snapshot_trigger_mods`. `None` for a teardown-emitted stop.
     fn emit(app: &AppHandle, profile_id: &str, action: &str, chord_mods: Option<&[u16]>) {
         // `None` = a teardown-emitted stop, which is not a user chord release: leave the existing
         // snapshot alone rather than clearing it, so a stop that follows a real chord press by
@@ -985,15 +986,11 @@ mod imp {
                 }
                 Fire::Reclassify(pid) => {
                     // Same rising edge, same reason as Start/Toggle above: the engine fires
-                    // Reclassify only on the hands-free chord's own physical completion (`on &&
-                    // !active[i]`), so this press IS in the map and the still-held check works
-                    // normally for it — which makes any pending loss latch a dud. It was the one
-                    // fire of the three that did not clear it, and it CONTINUES a live session
-                    // into hands-free mode, so an injection follows it. Reachable on the ordinary
-                    // multi-keyboard setup: keyboard A's stream dies with a hold active and its
-                    // post-loop arms the latch, keyboard B's separate engine still has that hold,
-                    // and completing the hands-free superset on B otherwise consumed the stale latch
-                    // (TTL 130s) and diverted the phrase to the clipboard.
+                    // Reclassify only on the hands-free chord's own physical completion, so this
+                    // press IS in the map and the still-held check works normally for it — which
+                    // makes any pending loss latch a dud. Reachable when the hook is briefly
+                    // blind during a re-arm gap (≤3 s) and a release is missed, or when a
+                    // desktop-switch release never reaches either feed.
                     crate::held_keys::clear_chord_lost();
                     emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))
                 }

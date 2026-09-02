@@ -20,7 +20,6 @@ use std::time::Duration;
 const FILE_TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// Mirrors `session.rs`'s cap on the same list from the dictation path.
-const MAX_OVERRIDE_NOTICES: usize = 50;
 /// A BCP-47 tag; the longest real ones are ~35 characters.
 const LANGUAGE_MAX: usize = 64;
 /// Speaker labels are identity-adjacent server strings ("SPEAKER_00" or
@@ -350,6 +349,7 @@ pub async fn cancel(
         client().post(format!("{base}/v1/audio/transcriptions/cancel/{progress_id}")),
         api_key,
     )
+    .timeout(PROGRESS_TIMEOUT)
     .send()
     .await
     .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
@@ -554,10 +554,8 @@ async fn post(
     // authoritative, so an empty one has to be said out loud — omitting it let the
     // server put back the stage the user had switched off.
     if let Some(csv) = translate_to {
-        let has_any = has_targets;
         form = form.text("translate_to", csv);
-        // The per-run translation knobs only mean anything alongside real targets.
-        if has_any {
+        if has_targets {
             if let Some(m) = opts.translation_model.as_deref().filter(|m| !m.is_empty()) {
                 form = form.text("translation_model", m.to_string());
             }
@@ -640,7 +638,10 @@ async fn post(
 
     let status = resp.status();
     if !status.is_success() {
-        let body = body_capped_to(resp, MAX_ERROR_BODY).await.unwrap_or_default();
+        let body = match body_capped_to(resp, MAX_ERROR_BODY).await {
+            Ok(b) => b,
+            Err(reason) => reason,
+        };
         bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
     }
 
@@ -692,13 +693,13 @@ async fn post(
         warnings: parsed
             .warnings
             .iter()
-            .take(MAX_OVERRIDE_NOTICES)
+            .take(super::MAX_NOTICES)
             .map(|s| super::bounded_server_text(s, super::MAX_ERROR_TEXT))
             .collect(),
         overrides_ignored: parsed
             .overrides_ignored
             .iter()
-            .take(MAX_OVERRIDE_NOTICES)
+            .take(super::MAX_NOTICES)
             .map(|s| super::bounded_server_text(s, super::MAX_ERROR_TEXT))
             .collect(),
         // Opaque 32-hex id from OUR backend; screened like a progress id so a
@@ -781,7 +782,10 @@ pub async fn url_preview(
         .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
     let status = resp.status();
     if !status.is_success() {
-        let body = body_capped_to(resp, MAX_ERROR_BODY).await.unwrap_or_default();
+        let body = match body_capped_to(resp, MAX_ERROR_BODY).await {
+            Ok(b) => b,
+            Err(reason) => reason,
+        };
         bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
     }
     let parsed: UrlPreview = json_capped_to::<UrlPreview>(resp, MAX_META_BODY)

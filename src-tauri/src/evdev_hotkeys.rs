@@ -63,7 +63,6 @@ mod imp {
     // evdev 0.13 renamed `Key` to `KeyCode` (same KEY_* constants, same .code()).
     use evdev::{Device, EventType, KeyCode as Key};
     use std::collections::HashSet;
-    use std::sync::Arc;
     use tauri::{AppHandle, Emitter, Manager};
 
     fn is_keyboard(d: &Device) -> bool {
@@ -150,6 +149,7 @@ mod imp {
             // blob and is persisted, sizes a hot path. This bound is orders of magnitude above
             // any real binding set, so nothing legitimate is dropped.
             if out.len() >= MAX_CHORDS {
+                tracing::warn!("[evdev] chord ceiling {MAX_CHORDS} reached, dropping {what}");
                 return;
             }
             // The registration filter: duplicates, and every nesting except the designed
@@ -228,16 +228,14 @@ mod imp {
         }
         // Fixed for the life of the listener; each reader gets its own Engine
         // (chord-family state is per-keyboard, like the held-key set).
-        let chords = Arc::new(chords);
-
         let mut tasks = Vec::new();
         for (path, dev) in evdev::enumerate() {
             if !is_keyboard(&dev) {
                 continue;
             }
             let app = app.clone();
-            let chords = chords.clone();
             let held_keys = held_keys.clone();
+            let engine = Engine::new(chords.clone());
             tasks.push(tauri::async_runtime::spawn(async move {
                 // into_event_stream() builds a tokio AsyncFd, so it MUST run inside
                 // the async runtime — calling it on the main thread (where the
@@ -249,7 +247,7 @@ mod imp {
                         return;
                     }
                 };
-                run_device(app, held_keys, stream, Engine::new((*chords).clone())).await;
+                run_device(app, held_keys, stream, engine).await;
             }));
         }
         tracing::info!(

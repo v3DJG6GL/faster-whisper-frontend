@@ -109,7 +109,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                     }
                 }
             } else {
-                let body = body_capped_to(resp, MAX_ERROR_BODY).await.unwrap_or_default();
+                let body = match body_capped_to(resp, MAX_ERROR_BODY).await { Ok(b) => b, Err(r) => r };
                 let detail = detail_from(&body);
                 tracing::warn!("[pipeline] rules GET failed: HTTP {code} {detail}");
                 PipelineFetch {
@@ -180,7 +180,7 @@ pub async fn save_pipeline_rules(
                     }
                 }
             } else {
-                let body = body_capped_to(resp, MAX_ERROR_BODY).await.unwrap_or_default();
+                let body = match body_capped_to(resp, MAX_ERROR_BODY).await { Ok(b) => b, Err(r) => r };
                 let parsed: Option<serde_json::Value> = serde_json::from_str(&body).ok();
                 let errors = parsed.as_ref().and_then(|v| v.get("errors").cloned());
                 // Bounded and control-folded like every other server-supplied string: the fallback

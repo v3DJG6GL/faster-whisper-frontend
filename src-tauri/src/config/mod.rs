@@ -39,11 +39,12 @@ pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
         opts.custom_flags(libc::O_NOFOLLOW);
     }
     // An existing file keeps its old mode through OpenOptions, so restate it after the open.
+    // Tolerate fchmod failure (e.g. FAT/exFAT, some FUSE mounts).
     let mut f = opts.open(path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
     }
     f.write_all(contents.as_bytes())?;
     f.sync_all()
@@ -578,6 +579,10 @@ pub struct RecordingSettings {
     /// Hover-intent delay (ms) before the chip reveals detail + quick-launch buttons.
     #[serde(default = "default_hover_reveal")]
     pub hover_reveal_ms: u32,
+    /// Send the dictated-into app id with each session's usage outcome.
+    /// `#[serde(default = …)]` so older configs default on (matching the TS default).
+    #[serde(default = "default_true")]
+    pub report_target_app: bool,
     /// Chip quick-launch buttons. Frontend-owned opaque JSON (like decode_overrides);
     /// Rust never interprets it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -822,6 +827,7 @@ impl Default for Config {
                     peek_while_active: false,
                     dim_after_sec: 2.5,
                     hover_reveal_ms: 500,
+                    report_target_app: true,
                     quick_launch: Vec::new(),
                 },
                 sync: None,
@@ -837,7 +843,7 @@ impl Default for Config {
             backends: Vec::new(),
             profiles: Vec::new(),
             app_rules: Vec::new(),
-            version: Some(2),
+            version: Some(3),
         }
     }
 }

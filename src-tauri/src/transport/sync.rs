@@ -167,7 +167,7 @@ pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
                 // to `detail_from`, which full-parses it as JSON just to extract 200 characters.
                 // This is the UNATTENDED leg — startup plus every window focus — so a hostile
                 // server answering 500 with a 32 MiB document needed no state and no gesture.
-                let body = body_capped_to(resp, SYNC_MAX_BODY).await.unwrap_or_default();
+                let body = match body_capped_to(resp, SYNC_MAX_BODY).await { Ok(b) => b, Err(r) => r };
                 SyncPull {
                     ok: false,
                     status: code,
@@ -222,7 +222,7 @@ pub async fn push(
     {
         Ok(resp) => {
             let code = resp.status().as_u16();
-            let text = body_capped_to(resp, SYNC_MAX_BODY).await.unwrap_or_default();
+            let text = match body_capped_to(resp, SYNC_MAX_BODY).await { Ok(b) => b, Err(r) => r };
             if (200..300).contains(&(code as i32)) {
                 match serde_json::from_str::<SyncRemoteState>(&text) {
                     Ok(state) if state.version_representable() => SyncPush {
@@ -305,7 +305,7 @@ pub async fn delete(server_url: &str, api_key: Option<&str>) -> SyncDelete {
                 }
             } else {
                 // Same ceiling as the pull arm above and as `push`. User-initiated, so narrower.
-                let body = body_capped_to(resp, SYNC_MAX_BODY).await.unwrap_or_default();
+                let body = match body_capped_to(resp, SYNC_MAX_BODY).await { Ok(b) => b, Err(r) => r };
                 SyncDelete {
                     ok: false,
                     status: code,

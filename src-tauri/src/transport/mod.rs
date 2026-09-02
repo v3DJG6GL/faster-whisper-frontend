@@ -518,6 +518,9 @@ pub const MAX_BODY: usize = 32 * 1024 * 1024;
 /// asked to attach to support reports. Same ceiling the streaming parse path uses.
 pub const MAX_ERROR_TEXT: usize = 200;
 
+/// Ceiling on server-supplied notice/override lists (streaming notices, batch overrides).
+pub const MAX_NOTICES: usize = 50;
+
 /// Ceiling on a body we read ONLY to pull a `detail` string out of. `detail_from` full-parses the
 /// whole body as JSON to extract at most [`MAX_ERROR_TEXT`] characters, so the transcription-sized
 /// [`MAX_BODY`] buys nothing on a non-2xx arm — it just lets a hostile server bill us 32 MiB and a
@@ -629,11 +632,10 @@ mod wire_language_tests {
 /// growing without bound. Every caller now names its own ceiling: an error arm that only wants a
 /// `detail` string takes [`MAX_ERROR_BODY`], a sync payload takes `sync::SYNC_MAX_BODY`, and only a
 /// route that can legitimately carry a transcription takes [`MAX_BODY`].
-pub async fn body_capped_to(resp: reqwest::Response, limit: usize) -> Result<String, String> {
+pub async fn body_capped_to(mut resp: reqwest::Response, limit: usize) -> Result<String, String> {
     if resp.content_length().is_some_and(|n| n > limit as u64) {
         return Err(TOO_LARGE.into());
     }
-    let mut resp = resp;
     let mut buf: Vec<u8> = Vec::new();
     loop {
         match resp.chunk().await {

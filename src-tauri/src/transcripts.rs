@@ -650,7 +650,8 @@ pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
         }
     }
     if removed > 0 {
-        tracing::info!("[transcripts] retention: removed {removed} record(s) older than {days}d");
+        let effective = days.min(MAX_RETENTION_DAYS);
+        tracing::info!("[transcripts] retention: removed {removed} record(s) older than {effective}d");
     }
     removed
 }

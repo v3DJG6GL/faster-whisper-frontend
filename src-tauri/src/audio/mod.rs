@@ -176,7 +176,8 @@ pub fn prune_recordings(dir: &Path, days: u32) -> usize {
         }
     }
     if removed > 0 {
-        tracing::info!("[record] retention: removed {removed} file(s) older than {days}d");
+        let effective = days.min(MAX_RETENTION_DAYS);
+        tracing::info!("[record] retention: removed {removed} file(s) older than {effective}d");
     }
     removed
 }

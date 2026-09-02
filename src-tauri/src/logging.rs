@@ -247,7 +247,7 @@ pub fn apply_log_level(level: LogLevel) {
     let l = level.as_str();
     if let Some(h) = RELOAD.get() {
         let _ = h.reload(tracing_subscriber::EnvFilter::new(format!(
-            "faster_whisper_frontend_lib={l},{l}"
+            "faster_whisper_frontend_lib={l}"
         )));
     }
 }

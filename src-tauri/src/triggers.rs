@@ -56,8 +56,9 @@ pub fn trigger_modifiers_still_held(held: &crate::held_keys::HeldKeys) -> bool {
 /// Callers pass the FIRING CHORD's own modifiers, not every modifier currently down. That is
 /// strictly more precise than what the CLI path did before, and it is what keeps an unrelated
 /// held Ctrl (scroll-zoom) or Shift from diverting an ordinary phrase to the clipboard.
-/// An empty slice clears the snapshot — correct for a teardown-emitted "stop", which is not a
-/// user chord release.
+/// An empty slice produces an empty snapshot — a chord with no observable modifiers.
+/// Teardown-emitted stops pass `None` to the backends, which skip this call entirely
+/// so the existing snapshot survives for the clipboard gate.
 pub fn snapshot_trigger_mods(app: &AppHandle, chord_mods: &[u16]) {
     if let Ok(mut g) = TRIGGER_MODS.lock() {
         let held = app.state::<crate::held_keys::HeldKeys>();

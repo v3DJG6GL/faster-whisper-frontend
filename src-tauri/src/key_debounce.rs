@@ -67,15 +67,15 @@ impl Debouncer {
     /// Drain and return every deferred release whose window has elapsed — the
     /// caller commits each as a key-up.
     pub fn expire(&mut self, now: Instant) -> Vec<u16> {
-        let due: Vec<u16> = self
-            .pending
-            .iter()
-            .filter(|(_, &dl)| dl <= now)
-            .map(|(&k, _)| k)
-            .collect();
-        for k in &due {
-            self.pending.remove(k);
-        }
+        let mut due = Vec::new();
+        self.pending.retain(|&k, &mut dl| {
+            if dl <= now {
+                due.push(k);
+                false
+            } else {
+                true
+            }
+        });
         due
     }
 

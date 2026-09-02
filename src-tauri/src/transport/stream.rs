@@ -520,7 +520,7 @@ pub async fn run<F>(
         // The writes get one flat bound (a half-open socket can't park them);
         // the reads below get an ACTIVITY-based window instead.
         const DRAIN_WRITE_DEADLINE: Duration = Duration::from_secs(10);
-        let _ = tokio::time::timeout(DRAIN_WRITE_DEADLINE, async {
+        if tokio::time::timeout(DRAIN_WRITE_DEADLINE, async {
             // Drain the PCM the capture thread queued but the main loop hadn't consumed when the stop
             // signal won the (non-biased) select — push it through the resampler and send it, so the
             // final tens of ms aren't silently dropped from the transcript. `recv().await` (not a
@@ -551,7 +551,11 @@ pub async fn run<F>(
             let _ = write.send(text_msg(json!({"type":"flush"}).to_string())).await;
             let _ = write.send(text_msg(json!({"type":"stop"}).to_string())).await;
         })
-        .await;
+        .await
+        .is_err()
+        {
+            tracing::warn!("[stream] drain write deadline ({DRAIN_WRITE_DEADLINE:?}) elapsed — audio tail may be incomplete");
+        }
         // Read the remaining finals with an idle window that every server frame
         // RESETS — the `loading` keepalives a cold model load emits every ~3 s
         // count, so an arbitrarily long load can't get the finished transcript
@@ -723,7 +727,7 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
             // hard break into a space.
             on_event(StreamEvent::Error(super::bounded_server_text(
                 &str_field(&v, "message"),
-                MAX_ERROR_MESSAGE,
+                super::MAX_ERROR_TEXT,
             )));
             Frame::Continue
         }
@@ -760,7 +764,6 @@ const MAX_SEPARATOR: usize = 32;
 /// An `error` message is surfaced in the UI and written to the log file users are asked to send
 /// for support. `pipeline.rs` already truncates server-derived strings before logging; the stream
 /// path gets the same ceiling so a hostile server can't pad the log or forge records.
-const MAX_ERROR_MESSAGE: usize = 200;
 
 /// First `n` chars of a server-supplied string. Char-indexed, so it can't split a UTF-8 sequence.
 pub(crate) fn bounded(s: &str, n: usize) -> String {
@@ -792,15 +795,13 @@ fn bounded_str_vec_field(v: &serde_json::Value, key: &str) -> Vec<String> {
         .map(|a| {
             a.iter()
                 .filter_map(|e| e.as_str())
-                .take(MAX_NOTICES)
+                .take(super::MAX_NOTICES)
                 .map(|s| crate::transport::bounded_server_text(s, crate::transport::MAX_ERROR_TEXT))
                 .collect()
         })
         .unwrap_or_default()
 }
 
-/// Mirrors `session::MAX_OVERRIDE_NOTICES`, which bounds the batch path's copy of this list.
-const MAX_NOTICES: usize = 50;
 
 #[cfg(test)]
 mod display_url_tests {

@@ -423,7 +423,6 @@ fn rms(samples: &[f32]) -> f32 {
 /// user actually spoke (the "~2s until the chip turns amber" complaint).
 const MIC_LIVE_RMS: f32 = 1.0e-5;
 /// Server-supplied "ignored override" notices are rendered one per row; bound how many arrive.
-const MAX_OVERRIDE_NOTICES: usize = 50;
 /// Consecutive above-floor callbacks required before the mic counts as live (~30 ms), so the
 /// single open-click/DC blip a warming device can emit doesn't end the warm-up gate early.
 const MIC_LIVE_CONFIRM: u8 = 3;
@@ -877,7 +876,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
                 let notices: Vec<String> = res
                     .overrides_ignored
                     .iter()
-                    .take(MAX_OVERRIDE_NOTICES)
+                    .take(crate::transport::MAX_NOTICES)
                     .map(|s| crate::transport::bounded_server_text(s, 200))
                     .collect();
                 emit_if_active(&app, epoch, "stream://overrides-ignored", notices);

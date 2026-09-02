@@ -88,7 +88,7 @@ pub async fn post_usage_outcomes(
     {
         Ok(resp) => {
             let code = resp.status().as_u16();
-            let text = body_capped_to(resp, MAX_META_BODY).await.unwrap_or_default();
+            let text = match body_capped_to(resp, MAX_META_BODY).await { Ok(b) => b, Err(r) => r };
             if (200..300).contains(&code) {
                 let parsed: OutcomeResponse = serde_json::from_str(&text).unwrap_or_default();
                 let mut results = parsed.results;
