@@ -21,6 +21,7 @@ import {
   toUsageQuery,
   weekColumns,
   facetRows,
+  translationRows,
   findStage,
   fmtTimeSaved,
   niceMax,
@@ -249,6 +250,35 @@ describe("usageDerive", () => {
       { code: "EN", pct: 60 },
       { code: "FR", pct: 30 },
     ]);
+  });
+
+  it("translationRows: languages as upper-case codes scaled among themselves, outcomes dim", () => {
+    const rows = translationRows({
+      targets: [
+        { code: "de", runs: 41, kept_original: 6 },
+        { code: "en", runs: 12, kept_original: 0 },
+        { code: " fr ", runs: 3, kept_original: 1 },
+        { code: "", runs: 9, kept_original: 0 },
+      ],
+      translation: { kept_original: 9, not_asked: 87, aborted: 0, unreported: 2 },
+    });
+    expect(rows.map((r) => [r.label, r.value, r.pct, !!r.dim])).toEqual([
+      ["DE", 41, 100, false],
+      ["EN", 12, 29, false],
+      ["FR", 3, 7, false],
+      ["Kept original", 9, 22, true],
+      ["Not asked", 87, 100, true], // wider than the languages' scale: clamped, not dominant
+      ["Unreported", 2, 5, true],
+    ]);
+    expect(rows[0].title).toBe("DE · 41 dictations · 6 kept the original");
+    expect(rows[1].title).toBe("EN · 12 dictations");
+    expect(rows[2].title).toBe("FR · 3 dictations · 1 kept the original");
+    expect(rows[0].colorVar).toBe("var(--c-translate)");
+  });
+
+  it("translationRows without any target keeps the two outcome rows", () => {
+    const rows = translationRows({ translation: { kept_original: 0, not_asked: 4, aborted: 0, unreported: 0 } });
+    expect(rows.map((r) => [r.label, r.pct])).toEqual([["Kept original", 0], ["Not asked", 0]]);
   });
 
   it("facetRows scales to the largest row", () => {

@@ -617,6 +617,8 @@ export function targetShares(stage: UsageStage, max = 4): { code: string; pct: n
 
 export interface FacetRow {
   label: string;
+  /** Hover text when the label alone does not say it all (a language row's kept count). */
+  title?: string;
   value: number;
   /** Width as a share of the facet's largest row (the mockup scales bars to the max). */
   pct: number;
@@ -626,14 +628,53 @@ export interface FacetRow {
   colorVar?: string;
 }
 
-/** Rows scaled to the largest value; zero rows kept (they read as "none") unless `dropZero`. */
+/** Rows scaled to the largest value; zero rows kept (they read as "none") unless `dropZero`.
+ *  `scaleTo` = "lit" scales to the largest NON-dim row instead, so the "Translated into"
+ *  facet keeps its languages readable next to a much larger dim "Not asked" (a dim row
+ *  wider than the scale is clamped to full width). */
 export function facetRows(
-  rows: readonly { label: string; value: number; dim?: boolean; colorVar?: string }[],
+  rows: readonly { label: string; title?: string; value: number; dim?: boolean; colorVar?: string }[],
   dropZero = false,
+  scaleTo: "all" | "lit" = "all",
 ): FacetRow[] {
   const clean = rows
     .map((r) => ({ ...r, value: typeof r.value === "number" && Number.isFinite(r.value) ? Math.max(0, r.value) : 0 }))
     .filter((r) => !dropZero || r.value > 0);
-  const max = clean.reduce((m, r) => Math.max(m, r.value), 0);
-  return clean.map((r) => ({ ...r, pct: max > 0 ? Math.round((r.value / max) * 100) : 0 }));
+  const max = clean.reduce((m, r) => (scaleTo === "lit" && r.dim ? m : Math.max(m, r.value)), 0);
+  return clean.map((r) => ({ ...r, pct: max > 0 ? Math.min(100, Math.round((r.value / max) * 100)) : 0 }));
+}
+
+/** The "Translated into" facet: one row per target code (upper-case, the picker's codes),
+ *  then the outcomes that were not a translation, dim. Codes come from the server and are
+ *  shown as-is (D26: code only), so a stray value is clipped to 8 chars. */
+export function translationRows(d: {
+  targets?: readonly { code: string; runs: number; kept_original: number }[];
+  translation?: { kept_original: number; not_asked: number; aborted: number; unreported: number };
+}): FacetRow[] {
+  const langs = (d.targets ?? [])
+    .filter((t) => t && typeof t.code === "string" && t.code.trim() !== "")
+    .slice(0, 6)
+    .map((t) => {
+      const code = t.code.trim().slice(0, 8).toUpperCase();
+      const kept = typeof t.kept_original === "number" && t.kept_original > 0 ? t.kept_original : 0;
+      const runs = typeof t.runs === "number" ? t.runs : 0;
+      return {
+        label: code,
+        title: `${code} · ${runs} ${runs === 1 ? "dictation" : "dictations"}${kept > 0 ? ` · ${kept} kept the original` : ""}`,
+        value: runs,
+        colorVar: "var(--c-translate)",
+      };
+    });
+  const tr = d.translation ?? { kept_original: 0, not_asked: 0, aborted: 0, unreported: 0 };
+  return facetRows(
+    [
+      ...langs,
+      { label: "Kept original", value: tr.kept_original, dim: true },
+      { label: "Not asked", value: tr.not_asked, dim: true },
+      ...(tr.aborted > 0 ? [{ label: "Aborted", value: tr.aborted, dim: true }] : []),
+      ...(tr.unreported > 0 ? [{ label: "Unreported", value: tr.unreported, dim: true }] : []),
+    ],
+    false,
+    "lit",
+  );
 }

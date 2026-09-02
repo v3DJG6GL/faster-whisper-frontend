@@ -61,6 +61,7 @@ import {
   dayToIso,
   densifyKinds,
   facetRows,
+  translationRows,
   findStage,
   fmtTimeSaved,
   hourModel,
@@ -621,7 +622,7 @@ function HBars({ title, rows, empty }: { title: string; rows: FacetRow[]; empty?
       ) : (
         rows.map((r) => (
           <div key={r.label} className="grid grid-cols-[96px_1fr_44px] items-center gap-2 py-[3px] text-[12px] text-dim">
-            <span className="truncate" title={r.label}>{r.label}</span>
+            <span className="truncate" title={r.title ?? r.label}>{r.label}</span>
             <div className="h-2 overflow-hidden rounded-pill bg-line">
               <i className="block h-full rounded-pill" style={{ width: `${r.pct}%`, background: r.dim ? "var(--c-faint)" : (r.colorVar ?? "var(--c-chart-dict)") }} />
             </div>
@@ -654,7 +655,6 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
   }
   const act = d?.activation ?? { hold: 0, handsfree: 0 };
   const del = d?.delivery ?? { typed: 0, clipboard: 0, none: 0, unreported: 0 };
-  const tr = d?.translation ?? { translated: 0, kept_original: 0, not_asked: 0, aborted: 0, unreported: 0 };
   const apps = (stats.apps ?? [])
     .filter((a) => a && typeof a.app_id === "string")
     .slice(0, 4)
@@ -695,16 +695,7 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
           rows={facetRows(apps, true)}
           empty={reportApp ? "No app names yet — they appear once a dictation lands." : "Off — “Report the app I dictate into” is turned off in Settings."}
         />
-        <HBars
-          title="Translation outcome"
-          rows={facetRows([
-            { label: "Translated", value: tr.translated, colorVar: "var(--c-translate)" },
-            { label: "Kept original", value: tr.kept_original, dim: true },
-            { label: "Not asked", value: tr.not_asked, dim: true },
-            ...(tr.aborted > 0 ? [{ label: "Aborted", value: tr.aborted, dim: true }] : []),
-            ...(tr.unreported > 0 ? [{ label: "Unreported", value: tr.unreported, dim: true }] : []),
-          ])}
-        />
+        <HBars title="Translated into" rows={translationRows(d ?? {})} />
       </div>
     </Panel>
   );

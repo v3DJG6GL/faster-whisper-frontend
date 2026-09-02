@@ -724,6 +724,15 @@ export interface UsageDictation {
     aborted: number;
     unreported: number;
   };
+  /** Languages dictations were translated into over the window, busiest first (≤16):
+   *  runs per target code and how many of those reverted to the original. */
+  targets: UsageDictationTarget[];
+}
+
+export interface UsageDictationTarget {
+  code: string;
+  runs: number;
+  kept_original: number;
 }
 
 /** The optional pipeline stages the Statistics page can narrow to (`with=`). */

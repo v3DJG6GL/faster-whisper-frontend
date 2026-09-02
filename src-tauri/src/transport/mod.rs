@@ -239,6 +239,17 @@ pub struct UsageTranslationOutcome {
     pub unreported: i64,
 }
 
+/// One language dictations were translated into: runs, and how many kept the original.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageDictationTarget {
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub runs: i64,
+    #[serde(default)]
+    pub kept_original: i64,
+}
+
 /// The dictation facets the client reports after each session (`POST /v1/usage/outcome`).
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UsageDictation {
@@ -256,6 +267,8 @@ pub struct UsageDictation {
     pub delivery: UsageDelivery,
     #[serde(default)]
     pub translation: UsageTranslationOutcome,
+    #[serde(default)]
+    pub targets: Vec<UsageDictationTarget>,
 }
 
 /// One app the user dictated into (top-N over the window).

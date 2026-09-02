@@ -343,6 +343,10 @@ pub async fn get_usage_stats(server_url: &str, api_key: Option<&str>, query: &Us
             t.code = super::bounded_server_text(&t.code, 16);
         }
     }
+    u.dictation.targets.truncate(MAX_USAGE_LIST);
+    for t in &mut u.dictation.targets {
+        t.code = super::bounded_server_text(&t.code, 16);
+    }
     u.apps.truncate(MAX_USAGE_LIST);
     for a in &mut u.apps {
         a.app_id = super::bounded_server_text(&a.app_id, 64);
