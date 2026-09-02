@@ -1044,6 +1044,7 @@ mod imp {
         held: &mut HashSet<u16>,
         engine: &mut Engine,
         up_once: &mut HashSet<u16>,
+        deb: &mut crate::key_debounce::Debouncer,
     ) {
         let up_now: HashSet<u16> = held.iter().copied().filter(|&id| !physically_down(id)).collect();
         // Retain-then-swap: only keys up on BOTH polls are acted on.
@@ -1051,6 +1052,11 @@ mod imp {
         *up_once = up_now;
         for id in confirmed {
             up_once.remove(&id);
+            // Clear any deferred release the debouncer still holds for this key,
+            // restoring the held/pending coupling `on_event` documents: without
+            // this a stale `pending` entry swallows the user's next press of the
+            // same key (the `pending.remove` arm returns None).
+            deb.forget(id);
             tracing::warn!(
                 "[winhook] key {id:#06x} is up per the OS but no key-up ever arrived — releasing it \
                  (a capture hook or a desktop switch ate the release)"
@@ -1121,7 +1127,7 @@ mod imp {
                 // Called even when nothing is held (an event can wake us before the deadline
                 // we skipped scheduling): it then simply clears any stale first strike, so a
                 // key pressed later always gets its own two polls.
-                resync_held(&app, &held_keys, &mut held, &mut engine, &mut up_once);
+                resync_held(&app, &held_keys, &mut held, &mut engine, &mut up_once, &mut deb);
             }
             if let Some(ev) = ev {
                 if let Some((k, d)) = deb.on_event(ev.id, ev.down, held.contains(&ev.id), now) {

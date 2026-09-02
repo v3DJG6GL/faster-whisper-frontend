@@ -713,7 +713,7 @@ async fn post(
             targets: t
                 .targets
                 .iter()
-                .take(8)
+                .take(super::MAX_TARGETS)
                 .map(|s| super::bounded_server_text(s, 16))
                 .collect(),
             source: t.source.map(|s| super::bounded_server_text(&s, 16)),

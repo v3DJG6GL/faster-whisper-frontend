@@ -315,6 +315,12 @@ mod imp {
     /// "all keys", for the reason `chord_engine::any_chord_mod_down` gives. Empty = no. An
     /// unreadable key state deliberately reads as "not held": failing toward arming there would
     /// divert a phrase to the clipboard on every teardown for anyone whose enumeration fails.
+    ///
+    /// **Blocking I/O**: `evdev::enumerate()` opens and ioctls every `/dev/input/event*` node —
+    /// a slow USB/bluetooth HID device or a wedged udev node can stall. Callers must not run
+    /// this on the main/GTK thread (the Windows twin, `GetAsyncKeyState`, has no I/O at all).
+    /// `stop_held_sessions` runs from `commands::suspend_shortcuts`, which is a sync Tauri
+    /// command on the GTK thread — if this proves problematic, move it to `spawn_blocking`.
     fn chord_mod_still_down(codes: &[u16]) -> bool {
         if codes.is_empty() {
             return false;

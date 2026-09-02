@@ -305,7 +305,12 @@ pub(crate) fn windows_owner_only_dacl(dir: &Path) -> std::io::Result<()> {
         }
         let mut needed: u32 = 0;
         GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut needed);
-        let mut buf = vec![0u8; needed.max(1) as usize];
+        // Back the buffer with u64 so the pointer meets TOKEN_USER's alignment
+        // requirement (8 on x64). A Vec<u8> only guarantees 1-byte alignment,
+        // and casting through a misaligned pointer is UB regardless of what the
+        // global allocator happens to return.
+        let u64_len = (needed.max(1) as usize + 7) / 8;
+        let mut buf = vec![0u64; u64_len];
         let ok = GetTokenInformation(
             token,
             TokenUser,

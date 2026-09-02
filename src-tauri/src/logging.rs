@@ -469,9 +469,15 @@ fn live_log_dir(custom: Option<String>) -> Option<String> {
     custom.map(|c| c.trim().to_string()).filter(|c| !c.is_empty())
 }
 
-fn current_config(app: &AppHandle) -> Result<Config, String> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    Ok(crate::config::load(&dir))
+/// Resolve the effective log directory from the LIVE custom preference, without
+/// loading (and potentially recovering/backing-up) config.json. `log_dir` only
+/// reads `settings.logging.log_dir`, so inlining its logic avoids the destructive
+/// recovery path that `config::load` triggers on an unreadable or corrupt config.
+fn resolve_log_dir(app: &AppHandle, custom: Option<String>) -> Option<std::path::PathBuf> {
+    if let Some(dir) = live_log_dir(custom) {
+        return Some(std::path::PathBuf::from(dir));
+    }
+    app.path().app_local_data_dir().ok().map(|d| d.join("logs"))
 }
 
 #[tauri::command]
@@ -479,9 +485,7 @@ pub fn log_folder_path(app: AppHandle, custom: Option<String>) -> Result<String,
     // `custom` is the LIVE preference (null/blank = the default folder): the store's save is
     // debounced, so the on-disk config lags a change by 400 ms — and it lags a RESET too, so
     // "None = read the config" showed (and opened) the just-cleared custom folder.
-    let mut cfg = current_config(&app)?;
-    cfg.settings.logging.log_dir = live_log_dir(custom);
-    let dir = log_dir(&app, &cfg).ok_or("no log folder")?;
+    let dir = resolve_log_dir(&app, custom).ok_or("no log folder")?;
     // Home-relative display, same as audio_dir_path.
     if let Ok(home) = app.path().home_dir() {
         if let Ok(rest) = dir.strip_prefix(&home) {
@@ -494,10 +498,8 @@ pub fn log_folder_path(app: AppHandle, custom: Option<String>) -> Result<String,
 #[tauri::command]
 pub fn open_log_folder(app: AppHandle, custom: Option<String>) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let mut cfg = current_config(&app)?;
-    cfg.settings.logging.log_dir = live_log_dir(custom); // see log_folder_path
-    let dir = log_dir(&app, &cfg).ok_or("no log folder")?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dir = resolve_log_dir(&app, custom).ok_or("no log folder")?;
+    crate::audio::create_dir_private(&dir).map_err(|e| e.to_string())?;
     app.opener()
         .open_path(dir.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())

@@ -90,6 +90,12 @@ impl Debouncer {
         due
     }
 
+    /// Drop a single key's deferred release without committing it — restores the
+    /// `held`/`pending` coupling for callers that bypass `on_event` (e.g. `resync_held`).
+    pub fn forget(&mut self, key: u16) {
+        self.pending.remove(&key);
+    }
+
     /// Earliest pending deadline, driving the backend's timed wait
     /// (`recv_timeout` / `timeout_at`). `None` = nothing pending, wait forever.
     pub fn next_deadline(&self) -> Option<Instant> {

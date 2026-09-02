@@ -48,9 +48,17 @@ const MAX_NAME: usize = 120;
 const PROMPT_MAX: usize = 2000;
 /// The decode-values map is a handful of scalars; anything past this is not a real profile.
 const VALUES_MAX_BYTES: usize = 64 * 1024;
-/// Ceiling on the usage trend points kept. The server clamps `days` to 366 and the client
-/// renders the tail, so this removes the 32 MiB body headroom without clipping a real window.
+/// Ceiling on the usage trend points kept. With `all=1` and `from`/`to` the server sends up
+/// to a 10-year daily window (3,653 points). The per-field caps below trim the result after
+/// the read; `USAGE_MAX_BODY` sizes the read itself.
 const MAX_SERIES: usize = 3_700;
+
+/// Ceiling on the usage-stats body. The `all=1` window can produce ~2 MB of
+/// `series` (3,700 points x ~500 B) plus `calendar`, `hours`, `stages` — past
+/// the shared `MAX_META_BODY` (1 MiB) that `get_json` applies. Without a
+/// dedicated ceiling the document is silently rejected and the Statistics page
+/// stays blank for any multi-year user who picks the "All" range.
+const USAGE_MAX_BODY: usize = 8 * 1024 * 1024;
 
 fn bounded_name(s: &str) -> String {
     super::bounded_server_text(s, MAX_NAME)
@@ -60,27 +68,26 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
     let base = base_url(server_url);
     let http = client();
 
-    // /auth/whoami is best-effort (open-mode banner / username); ignore its failures.
-    let (mut open_mode, mut username) = (false, None);
-    // Status-gated like every sibling probe (`get_json`, the `/v1/models` arm below,
-    // `get_recent_words`): without it a 401 or 500 whose body happens to parse was rendered as a
-    // successful identity — an unauthenticated error response showing an open-mode banner and a
-    // username in the connection UI.
-    if let Ok(resp) = with_auth(http.get(format!("{base}/auth/whoami")), api_key).send().await {
-        if resp.status().is_success() {
-            if let Ok(who) = super::json_capped_to::<WhoAmI>(resp, super::MAX_META_BODY).await {
-                open_mode = who.open_mode;
-                // Bounded and control-folded HERE so every consumer inherits it: the username is
-                // rendered inline with the connection verdict ("· open mode (no auth)" / "· name"),
-                // which is the text the user reads to judge the connection. Unbounded it was a
-                // 32 MiB layout freeze; with bidi marks it reorders the verdict around it.
-                username = who.username.map(|u| bounded_name(&u));
+    // The two probes are independent: fire them concurrently so the happy path
+    // costs one round trip instead of two, and a black-holed server stalls for
+    // one default timeout instead of doubling it.
+    let whoami_fut = async {
+        let (mut open_mode, mut username) = (false, None);
+        if let Ok(resp) = with_auth(http.get(format!("{base}/auth/whoami")), api_key).send().await {
+            if resp.status().is_success() {
+                if let Ok(who) = super::json_capped_to::<WhoAmI>(resp, super::MAX_META_BODY).await {
+                    open_mode = who.open_mode;
+                    username = who.username.map(|u| bounded_name(&u));
+                }
             }
         }
-    }
+        (open_mode, username)
+    };
+    let models_fut = with_auth(http.get(format!("{base}/v1/models")), api_key).send();
+    let ((open_mode, username), models_result) = tokio::join!(whoami_fut, models_fut);
 
     // /v1/models is the actual connectivity gate.
-    match with_auth(http.get(format!("{base}/v1/models")), api_key).send().await {
+    match models_result {
         Ok(resp) => {
             let status = resp.status();
             if status == reqwest::StatusCode::UNAUTHORIZED {
@@ -133,10 +140,10 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     // `json_capped_to`'s error can include the server body (serde's
                     // `invalid_type` Display echoes the offending value untruncated). Every
                     // sibling field is already `bounded_name`d and both static error arms plus
-                    // `friendly_err` are bounded to 300. Bound this one to match.
+                    // `friendly_err` are bounded to `MAX_ERR`. Bound this one to match.
                     error: Some(super::bounded_server_text(
                         &format!("Unexpected /v1/models response: {e}"),
-                        300,
+                        super::MAX_ERR,
                     )),
                 },
             }
@@ -217,7 +224,7 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     };
     caps.translation_languages = bound_langs(caps.translation_languages);
     caps.translate_to_default = caps.translate_to_default.map(|mut v| {
-        v.truncate(8);
+        v.truncate(super::MAX_TARGETS);
         v.iter().map(|s| super::bounded_server_text(s, 16)).collect()
     });
     Some(caps)
@@ -317,7 +324,12 @@ pub async fn get_usage_stats(server_url: &str, api_key: Option<&str>, query: &Us
     // Every string and list here rides in a struct the store re-serializes with TWO
     // JSON.stringify passes on the main thread every 30s for every backend — the same reason
     // `series` is sliced client-side. The `test_connection` sibling caps `username`.
-    let mut u: UsageStats = get_json(url, api_key).await?;
+    // Read at the usage-specific ceiling (not the shared MAX_META_BODY): the "All"
+    // window can legitimately exceed 1 MiB — see USAGE_MAX_BODY.
+    let mut u: UsageStats = match with_auth(client().get(url), api_key).send().await {
+        Ok(resp) if resp.status().is_success() => super::json_capped_to::<UsageStats>(resp, USAGE_MAX_BODY).await.ok()?,
+        _ => return None,
+    };
     u.username = bounded_name(&u.username);
     u.tz = bounded_name(&u.tz);
     // Keep the NEWEST points: the client renders the tail, so truncating from the front

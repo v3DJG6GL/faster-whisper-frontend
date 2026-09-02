@@ -24,7 +24,7 @@ const SYNC_TIMEOUT: Duration = Duration::from_secs(15);
 /// Every existing bound on this data sits on a CONSUMER: `MAX_SYNCED_ENTRIES` (500) caps the
 /// entry COUNT per category, the render caps bound what is shown, and the per-field caps bound
 /// individual leaves. Nothing bounded the BLOB, so this route inherited the transcription-sized
-/// [`MAX_BODY`] (32 MiB) — while the doc comment above claims payloads are ≤512 KB.
+/// [`MAX_BODY`] (32 MiB) — while `SYNC_TIMEOUT` documented payloads as ≤512 KB.
 ///
 /// That gap is reachable and measurable: a blob that passes every existing sanitizer (500 backends
 /// each carrying a 60 KB prompt ≈ 29 MiB) costs ~1.5-2 s of hard main-thread block per pull, in a
@@ -32,7 +32,7 @@ const SYNC_TIMEOUT: Duration = Duration::from_secs(15);
 /// persisted verbatim to `sync-state.json` as the 3-way merge base, so it is re-read and re-hashed
 /// at every launch for the life of the install.
 ///
-/// 4 MiB, not the 512 KB the comment claims: the worst-case LEGITIMATE blob computed from the caps
+/// 4 MiB: the worst-case LEGITIMATE blob computed from the caps
 /// above is ~1.5 MB (500 backends ≈750 KB + 500 profiles ≈500 KB + appRules ≈100 KB + secrets
 /// ≈50 KB), and a typical one is under 50 KB. 512 KB would reject a real max-config user and brick
 /// their sync; 4 MiB keeps ~2.5x headroom over worst-case-legit while cutting the surface 8x.
@@ -162,12 +162,10 @@ pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
                     },
                 }
             } else {
-                // SYNC_MAX_BODY, not the transcription-sized MAX_BODY: `push`'s non-2xx arm in
-                // this same file already reads at the 4 MiB ceiling, and the whole body is handed
-                // to `detail_from`, which full-parses it as JSON just to extract 200 characters.
-                // This is the UNATTENDED leg — startup plus every window focus — so a hostile
-                // server answering 500 with a 32 MiB document needed no state and no gesture.
-                let body = match body_capped_to(resp, SYNC_MAX_BODY).await { Ok(b) => b, Err(r) => r };
+                // Pure error arm: the body goes straight into `detail_from` and nothing
+                // else, so the error-body ceiling is enough — buffering 4 MiB to extract
+                // 200 characters is wasted on the unattended startup/focus-change leg.
+                let body = match body_capped_to(resp, super::MAX_ERROR_BODY).await { Ok(b) => b, Err(r) => r };
                 SyncPull {
                     ok: false,
                     status: code,
@@ -222,7 +220,19 @@ pub async fn push(
     {
         Ok(resp) => {
             let code = resp.status().as_u16();
-            let text = match body_capped_to(resp, SYNC_MAX_BODY).await { Ok(b) => b, Err(r) => r };
+            // Keep the body read outcome separate: folding the transport error
+            // into `text` meant a size/timeout error was JSON-parsed and surfaced
+            // as "Unexpected response: expected value at line 1" instead of the
+            // real cause.
+            let text = match body_capped_to(resp, SYNC_MAX_BODY).await {
+                Ok(b) => b,
+                Err(reason) => return SyncPush {
+                    ok: false,
+                    status: code,
+                    error: Some(reason),
+                    ..Default::default()
+                },
+            };
             if (200..300).contains(&(code as i32)) {
                 match serde_json::from_str::<SyncRemoteState>(&text) {
                     Ok(state) if state.version_representable() => SyncPush {
@@ -304,8 +314,9 @@ pub async fn delete(server_url: &str, api_key: Option<&str>) -> SyncDelete {
                     error: None,
                 }
             } else {
-                // Same ceiling as the pull arm above and as `push`. User-initiated, so narrower.
-                let body = match body_capped_to(resp, SYNC_MAX_BODY).await { Ok(b) => b, Err(r) => r };
+                // Pure error arm: `detail_from` extracts at most 200 characters, so the
+                // error-body ceiling matches every other non-2xx arm in the transport.
+                let body = match body_capped_to(resp, super::MAX_ERROR_BODY).await { Ok(b) => b, Err(r) => r };
                 SyncDelete {
                     ok: false,
                     status: code,

@@ -72,7 +72,10 @@ pub fn decode_to_cached_wav(app: &tauri::AppHandle, path: &str) -> Result<String
 /// tmp + rename, and no tmp left behind on EITHER failure — a WAV here can be hundreds of
 /// MB, so ENOSPC mid-write is the realistic case (`save_text_file` has the same shape).
 fn write_cached(out: &std::path::Path, wav: &[u8]) -> Result<(), String> {
-    let tmp = out.with_extension("wav.tmp");
+    // A unique suffix so two concurrent decodes of the same file (e.g. a retry
+    // while the first decode is still running) write independent tmp files and
+    // the loser's rename simply overwrites with identical bytes.
+    let tmp = out.with_extension(format!("wav.{:x}.tmp", std::process::id()));
     if let Err(e) = std::fs::write(&tmp, wav) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.to_string());
@@ -106,6 +109,13 @@ fn prune_cache_to(dir: &std::path::Path, keep: &std::path::Path, max_bytes: u64)
         .filter_map(|e| {
             let p = e.path();
             if !p.is_file() || p == keep {
+                return None;
+            }
+            // Skip in-progress tmp files: a concurrent decode is writing to
+            // `<hash>.wav.tmp` and will rename it on completion. Unlinking it
+            // makes that rename fail with ENOENT and the viewer declares
+            // playback broken for a file that decoded fine.
+            if p.extension().is_some_and(|ext| ext == "tmp") {
                 return None;
             }
             let m = e.metadata().ok()?;
@@ -189,9 +199,16 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
         sample_rate = spec.rate();
         channels = spec.channels().count() as u16;
         decoded.copy_to_vec_interleaved::<i16>(&mut interleaved);
-        for s in &interleaved {
-            pcm.extend_from_slice(&s.to_le_bytes());
-        }
+        // Bulk-copy the whole packet at once instead of two bytes at a time:
+        // for the sizes this path handles (~640 MB), the per-sample loop paid
+        // hundreds of millions of capacity checks and tiny memcpys.
+        let byte_slice = unsafe {
+            std::slice::from_raw_parts(
+                interleaved.as_ptr() as *const u8,
+                interleaved.len() * std::mem::size_of::<i16>(),
+            )
+        };
+        pcm.extend_from_slice(byte_slice);
         if pcm.len() - 44 > MAX_PCM_BYTES {
             return Err("audio too long to decode for playback".into());
         }

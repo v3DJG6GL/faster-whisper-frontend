@@ -446,11 +446,14 @@ mod win_hover {
 
     fn run(app: AppHandle) {
         loop {
+            // Sample VISIBLE for the sleep cadence, then re-read AFTER waking so the
+            // hover decision uses the current state, not one up to 250 ms stale.
             let visible = VISIBLE.load(Ordering::SeqCst);
             // 50 ms tracks hover-enter/leave comfortably; the per-tick cost is one
             // event-loop round-trip (cursor position — the geometry is cached, see GEOM).
             // Idle slowly while hidden.
             std::thread::sleep(std::time::Duration::from_millis(if visible { 50 } else { 250 }));
+            let visible = VISIBLE.load(Ordering::SeqCst);
             let want = visible && cursor_in_chip(&app).unwrap_or(false);
             if want != INTERACTIVE.load(Ordering::SeqCst) {
                 INTERACTIVE.store(want, Ordering::SeqCst);

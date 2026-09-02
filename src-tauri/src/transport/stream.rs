@@ -598,6 +598,17 @@ pub async fn run<F>(
         }
     }
 
+    // Drain any events the reader task queued while the main loop was exiting
+    // (a write error can break the loop while a `Final` is already in the
+    // channel). Without this, a mid-session socket death silently drops the
+    // last phrase the server finished.
+    while let Ok(FromReader::Event(e)) = evt_rx.try_recv() {
+        if saving {
+            accumulate_transcript(&e, &mut transcript_docs, &mut transcript_cur);
+        }
+        on_event(e);
+    }
+
     // We own the write half; the reader owns the read half. Once draining is done,
     // drop the reader so it can't linger after we return.
     reader.abort();

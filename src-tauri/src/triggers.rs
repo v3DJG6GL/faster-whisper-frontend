@@ -173,7 +173,8 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
         if matches!(a.as_str(), "start" | "stop" | "toggle") {
             emit_trigger(app, p, &a);
         } else {
-            tracing::warn!("[trigger] cli ignored unknown action '{a}'");
+            let a_log = crate::transport::bounded_server_text(&a, 120);
+            tracing::warn!("[trigger] cli ignored unknown action '{a_log}'");
         }
     }
     // A bare second launch (no trigger/quick-add flag) means "open the app again". The main

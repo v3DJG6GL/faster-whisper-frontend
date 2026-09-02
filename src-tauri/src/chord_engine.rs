@@ -3,7 +3,10 @@
 // bindings into u16 key codes (evdev codes / Windows VKs — both u16), feed the
 // current held-key set per key event, and dispatch the returned `Fire`s
 // (emit "trigger", quickadd::show, ACTIVE_HOLDS bookkeeping). Keeping the
-// dispatch here means the chord-family semantics below exist exactly once.
+// chord-family DECISION here means those semantics exist exactly once;
+// the DISPATCH of each `Fire` variant lives in each backend's `commit()`
+// (evdev_hotkeys::commit and win_hotkeys::commit — both must be updated
+// when a `Fire` arm changes).
 //
 // Chord-family semantics (the designed nesting, mirrored by src/lib/conflicts.ts):
 //   • A HOLD chord fires `Start` the instant its keys complete — zero added
@@ -89,7 +92,7 @@ impl ChordKind {
     /// longer one, or two sessions would run at once. `src/lib/conflicts.ts` enforces the
     /// same rule in the Settings UI; this is its twin for the profile lists that never pass
     /// through the UI (a sync pull, an import), applied by both backends' `chords_from`.
-    pub fn may_nest_in(&self, sup: &ChordKind) -> bool {
+    fn may_nest_in(&self, sup: &ChordKind) -> bool {
         matches!((self, sup), (ChordKind::Hold { .. }, ChordKind::HandsFree { .. }))
     }
 }
@@ -102,7 +105,7 @@ pub struct ChordSpec {
 
 /// How two chords' key SETS relate (duplicates inside a `keys` Vec are ignored).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Relation {
+enum Relation {
     Same,
     /// The first is a strict subset of the second.
     Inside,
@@ -111,7 +114,7 @@ pub enum Relation {
     Independent,
 }
 
-pub fn relation(a: &[u16], b: &[u16]) -> Relation {
+fn relation(a: &[u16], b: &[u16]) -> Relation {
     let a: HashSet<u16> = a.iter().copied().collect();
     let b: HashSet<u16> = b.iter().copied().collect();
     if a == b {

@@ -985,16 +985,16 @@ pub fn load_outcome(dir: &Path) -> (Config, bool) {
             return (Config::default(), true);
         }
     };
-    // Fast path: already the current (v2) shape.
+    // Fast path: already the current (v3) shape.
     if let Ok(cfg) = serde_json::from_str::<Config>(&text) {
-        return (cfg, false);
+        return (cfg, *recovered);
     }
     // Migration path: a legacy `profiles`/`modes` config (no `backends`).
     match migrate_legacy(&text) {
         Some(cfg) => {
             tracing::info!("[config] migrated legacy backends/profiles → v2");
             let _ = save(dir, &cfg);
-            (cfg, false)
+            (cfg, *recovered)
         }
         None => {
             tracing::warn!("config parse failed; backing up + using defaults");
@@ -1129,12 +1129,15 @@ pub mod keys {
     }
 
     pub fn delete(backend_id: &str) -> anyhow::Result<()> {
-        cache().lock().unwrap().remove(backend_id);
-        match entry(backend_id)?.delete_credential() {
+        let result = match entry(backend_id)?.delete_credential() {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e.into()),
-        }
+        };
+        // Evict AFTER the deletion so a concurrent `get` racing this window
+        // caches `None` (correct) rather than re-inserting the old secret.
+        cache().lock().unwrap().remove(backend_id);
+        result
     }
 }
 

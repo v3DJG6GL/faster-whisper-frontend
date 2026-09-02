@@ -46,7 +46,7 @@ pub(crate) fn audio_base_pref(settings: &config::AppSettings) -> Option<String> 
 /// Folder where saved dictation `.wav` files go: `<base>/dictations`.
 /// `custom` is the BASE-folder preference (see `resolve_audio_base`).
 pub(crate) fn resolve_recordings_dir(app: &AppHandle, custom: Option<String>) -> Option<PathBuf> {
-    resolve_audio_base(app, custom).map(|b| b.join("dictations"))
+    resolve_audio_base(app, custom).map(|b| b.join(AUDIO_SUBDIRS[0]))
 }
 
 /// Absolute path of the active audio base folder (custom or default), for
@@ -273,6 +273,17 @@ pub async fn move_audio_base(
                 res = Err(e);
                 break;
             }
+        }
+        // Move the heal stamp so the new base is stamped and the old one is clean.
+        // Without this the old base keeps a stray `.heal-v1` and the new one
+        // re-runs the full heal scan on the next launch.
+        let stamp_name = ".heal-v1";
+        let old_stamp = from.join(stamp_name);
+        let new_stamp = to.join(stamp_name);
+        if old_stamp.exists() {
+            let _ = std::fs::rename(&old_stamp, &new_stamp);
+        } else {
+            let _ = std::fs::write(&new_stamp, b"");
         }
         let _ = std::fs::remove_dir(&from); // only if empty
         // Always re-point what actually moved: records store ABSOLUTE paths, and a
@@ -2668,9 +2679,8 @@ pub async fn inject_text(
         // `is_focused` posts to the event loop and waits on a channel, so the toolkit call runs on
         // the main thread whichever thread asks. No deadlock: this command runs on the async
         // runtime, so the main thread is never waiting on us.
-        let probe_app = app.clone();
+        let own_focused_probe = own_focused_probe.clone();
         tokio::task::spawn_blocking(move || {
-            let own_focused_probe = move || own_window_focused(&probe_app);
             crate::inject::inject(
                 &text,
                 &method,

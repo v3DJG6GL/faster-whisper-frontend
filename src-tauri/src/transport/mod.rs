@@ -1,9 +1,13 @@
 //! HTTP transport to a faster-whisper / OpenAI-compatible backend.
 //!
-//! `discovery` resolves server capabilities (`/v1/models`, `/auth/whoami`);
+//! `discovery` resolves server capabilities (`/v1/models`, `/auth/whoami`),
+//! usage stats (`/v1/usage`), and override profiles;
 //! `preload` sends the best-effort model pre-warm hint;
 //! `batch` does the multipart `POST /v1/audio/transcriptions`; `stream` is the
-//! streaming WebSocket client; `pipeline` reads/writes the server's text rules.
+//! streaming WebSocket client; `pipeline` reads/writes the server's text rules;
+//! `sync` is the settings-sync client (`/v1/client-settings`);
+//! `text` handles T2T translation (`/v1/text/translations`);
+//! `usage` reports dictation outcomes (`/v1/usage/outcome`).
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -484,7 +488,7 @@ pub fn friendly_err(e: &reqwest::Error) -> String {
 
 /// Cap for the transport's own error text (server-supplied `detail` strings are bounded tighter,
 /// at [`MAX_ERROR_TEXT`]) — an error line is a single-line banner, not a document.
-const MAX_ERR: usize = 300;
+pub(crate) const MAX_ERR: usize = 300;
 
 /// Pull FastAPI's `detail` string from an error body, falling back to the raw text.
 ///
@@ -533,8 +537,8 @@ pub const MAX_ERROR_BODY: usize = 256 * 1024;
 /// recent words. Every one of these has a per-field cap applied AFTER the read, so leaving them at
 /// the transcription-sized [`MAX_BODY`] meant the 32 MiB buffer and the full serde tree were paid
 /// first and the cap only trimmed the result. Several fire on screen entry or from a gesture-free
-/// effect. [`MAX_BODY`] should now be reachable only from the one route that can legitimately carry
-/// a transcription.
+/// effect. [`MAX_BODY`] should now be reachable only from the routes that can legitimately carry
+/// a transcription (`batch`) or a T2T translation (`text`).
 pub const MAX_META_BODY: usize = 1024 * 1024;
 
 /// Bound and defang a server-supplied string on its way to the UI or the log.
@@ -642,7 +646,11 @@ pub async fn body_capped_to(mut resp: reqwest::Response, limit: usize) -> Result
     if resp.content_length().is_some_and(|n| n > limit as u64) {
         return Err(TOO_LARGE.into());
     }
-    let mut buf: Vec<u8> = Vec::new();
+    // Pre-allocate when the server declares the size (already proven <= limit above),
+    // avoiding the geometric doubling that otherwise pushes peak RSS to ~1.5x on
+    // multi-megabyte transcription / sync bodies.
+    let capacity = resp.content_length().map(|n| n as usize).unwrap_or(0);
+    let mut buf: Vec<u8> = Vec::with_capacity(capacity);
     loop {
         match resp.chunk().await {
             Ok(Some(chunk)) => {

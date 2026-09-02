@@ -42,7 +42,7 @@ pub(crate) fn legacy_media_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// Same opaque contract as the records: Rust never reads the audio.
 pub(crate) fn files_media_dir(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
     crate::commands::resolve_audio_base(app, custom)
-        .map(|b| b.join("files"))
+        .map(|b| b.join(crate::commands::AUDIO_SUBDIRS[1]))
         .ok_or_else(|| "could not resolve the audio folder".into())
 }
 
@@ -50,7 +50,7 @@ pub(crate) fn files_media_dir(app: &AppHandle, custom: Option<String>) -> Result
 /// only playable source for those records.
 pub(crate) fn links_media_dir(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
     crate::commands::resolve_audio_base(app, custom)
-        .map(|b| b.join("links"))
+        .map(|b| b.join(crate::commands::AUDIO_SUBDIRS[2]))
         .ok_or_else(|| "could not resolve the audio folder".into())
 }
 
@@ -262,14 +262,19 @@ fn owned_dir_bytes(dir: &Path, own: impl Fn(&Path) -> bool) -> (u64, u32) {
     (bytes, files)
 }
 
-/// Does the transcript store hold ANY record? Cheap (a directory listing), so the startup
-/// migration can skip the full read+parse heal on a fresh install.
+/// Does the transcript store hold ANY `.json` record? Cheap (a directory listing), so the
+/// startup migration can skip the full read+parse heal on a fresh install. Checks both
+/// `transcripts/` and `transcripts/dictation/` — the same directories `heal_media_paths`
+/// scans — so the predicate and the work it guards agree on what a record is.
 pub fn has_any_records(app: &AppHandle) -> bool {
-    transcripts_dir(app)
-        .ok()
-        .and_then(|d| std::fs::read_dir(d).ok())
-        .map(|mut e| e.any(|x| x.is_ok()))
-        .unwrap_or(false)
+    [transcripts_dir(app), dictations_dir(app)]
+        .into_iter()
+        .flatten()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .any(|e| {
+            e.flatten()
+                .any(|x| x.path().extension().and_then(|s| s.to_str()) == Some("json"))
+        })
 }
 
 /// Delete a dictation record's audio (`dictation-*.wav` + its `.txt` sidecar) — only
@@ -488,8 +493,9 @@ pub fn transcript_store_stats(
     }))
 }
 
-/// "Delete all dictations now": every stored session record AND every file in
-/// the recordings folder (.wav + .txt sidecars — the folder is app-managed).
+/// "Delete all dictations now": every stored session record AND every app-owned
+/// file in the recordings folder (.wav + .txt sidecars matching the `dictation-*`
+/// naming convention — a user-chosen folder may hold foreign files).
 /// The retention clocks stay as set.
 #[tauri::command]
 pub fn delete_all_dictations(app: AppHandle, audio_base: Option<String>) -> Result<u32, String> {
