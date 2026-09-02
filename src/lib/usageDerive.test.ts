@@ -13,7 +13,9 @@ import {
   dayToIso,
   densifyKinds,
   dowOf,
-  hourModel,
+  rhythmModel,
+  companionMetric,
+  sumKinds,
   isoToDay,
   legendRanges,
   levelOf,
@@ -189,28 +191,96 @@ describe("usageDerive", () => {
     expect(cols[0].month).not.toBeNull();
   });
 
-  it("hourModel: 7×24 grid for the scoped kind and measure with a peak; nested splits feed the other measures", () => {
+  it("rhythmModel hours: 7×24 grid for the scoped kind and measure with a peak; nested splits feed the other measures", () => {
     const hours: UsageHourCell[] = [
       { dow: 1, hour: 10, all: 4200, dictation: 4000, file: 200, url: 0, text: 0, sessions: { all: 3, dictation: 2, file: 1 }, audio_s: { all: 1500, dictation: 300, file: 1200 } },
       { dow: 4, hour: 15, all: 300, dictation: 300, url: 0, text: 0, file: 0 },
       { dow: 9, hour: 10, all: 1, dictation: 1, file: 0, url: 0, text: 0 }, // bogus dow
     ];
-    const m = hourModel(hours, "all");
-    expect(m.rows).toHaveLength(7);
-    expect(m.rows[1]).toHaveLength(24);
-    expect(m.peak).toMatchObject({ dow: 1, hour: 10, value: 4200 });
-    expect(m.rows[1][10].level).toBe(4);
-    expect(m.rows[1][10].kinds.file.words).toBe(200);
-    expect(m.rows[4][15].level).toBeGreaterThan(0);
+    const m = rhythmModel("hours", { hours }, "all", "words", 20_000, 20_013);
+    expect(m.layout.rows).toBe(7);
+    expect(m.layout.cols).toBe(24);
+    expect(m.cells).toHaveLength(168);
+    expect(m.peak).toMatchObject({ row: 1, col: 10, value: 4200, companion: 3 });
+    expect(m.cells[1 * 24 + 10].level).toBe(4);
+    expect(m.cells[1 * 24 + 10].kinds.file.words).toBe(200);
+    expect(m.cells[4 * 24 + 15].level).toBeGreaterThan(0);
     expect(m.counts[0]).toBe(168 - 2);
-    expect(hourModel(undefined, "file").peak).toBeNull();
+    expect(m.sent).toBe("yes");
+    expect(m.layout.cellName(34)).toBe("Tue 10:00–11:00");
+    // Side bars: Tuesday holds 4200 of 4500 → 6.5× a flat week's row.
+    expect(m.rowTotals[1]).toBe(4200);
+    expect(m.rowIndex[1]).toBeCloseTo((4200 / 4500) * 7, 5);
+    expect(m.colTotals[10]).toBe(4200);
+    expect(m.occOf(m.cells[34])).toBe(2); // two Tuesdays in a 14-day window
+    expect(m.occWord(m.cells[34])).toBe("Tuesday");
+    // One slot holds 93 % → the phrase names it.
+    expect(m.phrase).toBe("Tue 10–11");
+    expect(rhythmModel("hours", { hours: undefined }, "file", "words", 1, 2).peak).toBeNull();
     // Duration comes from the nested split; a slot without it reads as zero.
-    const a = hourModel(hours, "all", "audio_s");
-    expect(a.peak).toMatchObject({ dow: 1, hour: 10, value: 1500 });
-    expect(a.rows[4][15].value).toBe(0);
-    expect(presentKinds(a.rows[1][10].kinds, "audio_s", "all")).toEqual([{ kind: "dictation", value: 300 }, { kind: "file", value: 1200 }]);
-    // Scoped to files, in sessions.
-    expect(hourModel(hours, "file", "sessions").peak).toMatchObject({ dow: 1, hour: 10, value: 1 });
+    const a = rhythmModel("hours", { hours }, "all", "audio_s", 20_000, 20_013);
+    expect(a.peak).toMatchObject({ row: 1, col: 10, value: 1500, companion: 3 });
+    expect(a.cells[4 * 24 + 15].value).toBe(0);
+    expect(presentKinds(a.cells[34].kinds, "audio_s", "all")).toEqual([{ kind: "dictation", value: 300 }, { kind: "file", value: 1200 }]);
+    // Scoped to files, in sessions — the companion flips to processing time.
+    expect(companionMetric("sessions")).toBe("proc_s");
+    expect(companionMetric("errors")).toBe("sessions");
+    expect(rhythmModel("hours", { hours }, "file", "sessions", 20_000, 20_013).peak).toMatchObject({ row: 1, col: 10, value: 1 });
+  });
+
+  it("rhythmModel: a words-only server is reported, not shown as zeros", () => {
+    const hours: UsageHourCell[] = [{ dow: 0, hour: 8, all: 10, dictation: 10, file: 0, url: 0, text: 0 }];
+    expect(rhythmModel("hours", { hours }, "all", "words", 1, 30).sent).toBe("yes");
+    expect(rhythmModel("hours", { hours }, "all", "audio_s", 1, 30).sent).toBe("no-measure");
+    expect(rhythmModel("hours", { hours: [] }, "all", "audio_s", 1, 30).sent).toBe("yes"); // nothing to judge by
+    expect(rhythmModel("days", { hours }, "all", "words", 1, 30).sent).toBe("no-grid");
+    expect(rhythmModel("days", { hours, dom_hours: [] }, "all", "words", 1, 30).sent).toBe("yes");
+  });
+
+  it("rhythmModel days: day of month across, hour down; a one-month window shows that month's days", () => {
+    // 1–31 Aug 2026 = days 20_666..20_696 (day 20_000 = 4 Oct 2024).
+    const aug1 = 20_666, aug31 = 20_696;
+    const dom_hours: UsageHourCell[] = [
+      { dom: 29, hour: 5, all: 900, dictation: 900, file: 0, url: 0, text: 0, sessions: { all: 3, dictation: 3 } },
+      { dom: 2, hour: 20, all: 100, dictation: 100, file: 0, url: 0, text: 0, sessions: { all: 1, dictation: 1 } },
+      { dom: 31, hour: 0, all: 50, dictation: 50, file: 0, url: 0, text: 0 },
+    ];
+    const m = rhythmModel("days", { dom_hours }, "all", "words", aug1, aug31);
+    expect(m.layout.rows).toBe(24);
+    expect(m.layout.cols).toBe(31);
+    expect(m.peak).toMatchObject({ row: 5, col: 28, value: 900, companion: 3 });
+    expect(m.layout.cellName(5 * 31 + 28)).toBe("29 Aug 05:00–06:00");
+    expect(m.layout.colLong(28)).toBe("29 August");
+    expect(m.occOf(m.peak!)).toBe(1);
+    expect(m.phrase).toBe("mostly 21st–31st");
+    // A window inside February: 28 columns, the 29th–31st never rendered.
+    const feb1 = 20_485, feb28 = 20_512;
+    const f = rhythmModel("days", { dom_hours }, "all", "words", feb1, feb28);
+    expect(f.layout.cols).toBe(28);
+    expect(f.peak?.value).toBe(100);
+    // Across many months: 31 columns, "the 29th", occurrences per day of month.
+    const y = rhythmModel("days", { dom_hours }, "all", "words", 20_000, 20_364);
+    expect(y.layout.cols).toBe(31);
+    expect(y.layout.cellName(5 * 31 + 28)).toBe("the 29th 05:00–06:00");
+    expect(y.occOf(y.cells[5 * 31 + 28])).toBe(11); // no 29 Feb 2025
+    expect(y.occOf(y.cells[30])).toBe(7); // seven 31-day months in a year
+    expect(y.occWord(y.cells[30])).toBe("month");
+  });
+
+  it("rhythmModel months: year rows × month columns folded from the per-day series", () => {
+    const series = [pt(20_000, 100), pt(20_020, 300), pt(20_100, 50)];
+    const m = rhythmModel("months", { series }, "all", "words", 20_000, 20_364);
+    expect(m.layout.rows).toBe(2); // Oct 2024 – Oct 2025
+    expect(m.layout.cols).toBe(12);
+    expect(m.layout.rowLabel(0)).toBe("2024");
+    expect(m.peak).toMatchObject({ row: 0, col: 9, value: 400, companion: 2 }); // Oct 2024: two dictation days
+    expect(m.layout.cellName(9)).toBe("Oct 2024");
+    expect(m.cells[12].value).toBe(50); // Jan 2025
+    expect(m.phrase).toBe("mostly Oct");
+    expect(m.occOf(m.peak!)).toBe(1);
+    // A day outside the window is ignored.
+    expect(rhythmModel("months", { series }, "all", "words", 20_010, 20_364).peak?.value).toBe(300);
+    expect(sumKinds(m.cells).all.words).toBe(450);
   });
 
   it("bucketing: days ≤ 120, ISO weeks ≤ 730, months beyond; sums per bucket", () => {
@@ -236,12 +306,15 @@ describe("usageDerive", () => {
 
   it("page query: URL parse/format round trip, wire form, window resolution", () => {
     const get = (o: Record<string, string>) => (k: string) => o[k] ?? null;
-    expect(parsePageQuery(get({}))).toEqual({ scope: "all", query: { range: "30", with: [] }, metric: "words" });
+    expect(parsePageQuery(get({}))).toEqual({ scope: "all", query: { range: "30", with: [] }, metric: "words", rhythm: "hours" });
+    expect(parsePageQuery(get({ rhythm: "days" })).rhythm).toBe("days");
+    expect(parsePageQuery(get({ rhythm: "weeks" })).rhythm).toBe("hours");
+    expect(pageQueryParams("all", { range: "30", with: [] }, "words", "months")).toEqual({ rhythm: "months" });
     expect(parsePageQuery(get({ metric: "sessions" })).metric).toBe("sessions");
     expect(pageQueryParams("all", { range: "30", with: [] }, "audio_s")).toEqual({ metric: "audio_s" });
     expect(parsePageQuery(get({ scope: "file" })).scope).toBe("file"); // the older deep link
     const p = parsePageQuery(get({ kind: "url", range: "custom", from: "100", to: "200", with: "vad,translating,bogus" }));
-    expect(p).toEqual({ scope: "url", query: { range: "custom", from: 100, to: 200, with: ["translating", "vad"] }, metric: "words" });
+    expect(p).toEqual({ scope: "url", query: { range: "custom", from: 100, to: 200, with: ["translating", "vad"] }, metric: "words", rhythm: "hours" });
     expect(pageQueryParams(p.scope, p.query)).toEqual({ kind: "url", range: "custom", from: "100", to: "200", with: "translating,vad" });
     // A custom range without a usable span falls back.
     expect(parsePageQuery(get({ range: "custom", from: "200", to: "100" })).query.range).toBe("30");

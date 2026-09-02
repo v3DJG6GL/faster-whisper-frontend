@@ -327,14 +327,17 @@ pub struct UsageKindSplit {
     pub text: f64,
 }
 
-/// One weekday × hour slot over the window (`dow` 0 = Monday): words per kind flat
-/// on the slot, the other five measures nested per kind. The nested blocks are
-/// optional so a server from before they existed still deserializes; when absent
-/// they are not re-emitted, and the client's grid falls back to zero for them.
+/// One hour slot over the window — a weekday × hour slot (`dow` 0 = Monday, in `hours`)
+/// or a day-of-month × hour slot (`dom` 1..31, in `dom_hours`): words per kind flat on
+/// the slot, the other five measures nested per kind. The nested blocks are optional so
+/// a server from before they existed still deserializes; when absent they are not
+/// re-emitted, and the client can tell "not sent" from "zero".
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UsageHourCell {
-    #[serde(default)]
-    pub dow: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dow: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dom: Option<i64>,
     #[serde(default)]
     pub hour: i64,
     #[serde(default, flatten)]
@@ -420,6 +423,10 @@ pub struct UsageStats {
     pub calendar: Vec<UsageCalendarDay>,
     #[serde(default)]
     pub hours: Vec<UsageHourCell>,
+    /// The same slots by day of month × hour (the busy panel's "days" rhythm). Absent on
+    /// a server from before it existed; kept absent so the client can say so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dom_hours: Option<Vec<UsageHourCell>>,
     #[serde(default)]
     pub streak: UsageStreaks,
     /// Window: words / 40 wpm − audio_s, dictation only (seconds).
@@ -700,8 +707,22 @@ mod usage_hour_cell_tests {
         let c: UsageHourCell = serde_json::from_str(r#"{"dow":0,"hour":8,"all":7,"dictation":7}"#).unwrap();
         let out = serde_json::to_value(&c).unwrap();
         assert_eq!(out["all"], 7);
+        assert_eq!(out["dow"], 0);
+        assert!(out.get("dom").is_none());
         assert!(out.get("audio_s").is_none());
         assert!(out.get("sessions").is_none());
+        let u: UsageStats = serde_json::from_str(r#"{"hours":[]}"#).unwrap();
+        assert!(serde_json::to_value(&u).unwrap().get("dom_hours").is_none());
+    }
+
+    /// The day-of-month grid rides through beside the weekday one.
+    #[test]
+    fn the_day_of_month_grid_keeps_its_dom_key() {
+        let u: UsageStats = serde_json::from_str(r#"{"dom_hours":[{"dom":29,"hour":5,"all":3,"sessions":{"all":1}}]}"#).unwrap();
+        let out = serde_json::to_value(&u).unwrap();
+        assert_eq!(out["dom_hours"][0]["dom"], 29);
+        assert!(out["dom_hours"][0].get("dow").is_none());
+        assert_eq!(out["dom_hours"][0]["sessions"]["all"], 1.0);
     }
 }
 

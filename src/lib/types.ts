@@ -756,8 +756,12 @@ export interface UsageCalendarDay extends UsageKindWords {
  *  (the original shape); the other five measures are nested per-kind splits the backend
  *  added for its own busy-hours card (absent on older servers → read as zero).
  *  `dow` 0 = Monday … 6 = Sunday. Sparse. */
+/** One hour slot: a weekday × hour slot (`dow` 0 = Monday, in `hours`) or a day-of-month ×
+ *  hour slot (`dom` 1..31, in `dom_hours`). Words per kind sit flat; the other five
+ *  measures are nested per-kind splits a server from 2 Sep 2026 on sends (absent before). */
 export interface UsageHourCell extends UsageKindWords {
-  dow: number;
+  dow?: number;
+  dom?: number;
   hour: number;
   audio_s?: Partial<UsageKindWords>;
   proc_s?: Partial<UsageKindWords>;
@@ -806,6 +810,9 @@ export interface UsageStats {
   calendar: UsageCalendarDay[];
   /** Sparse words per weekday × hour per kind over the window. */
   hours: UsageHourCell[];
+  /** The same slots by day of month × hour (the busy panel's "days" rhythm); absent on an
+   *  older server. */
+  dom_hours?: UsageHourCell[];
   streak: UsageStreaks;
   /** Window: words / 40 wpm − audio_s, dictation only (seconds). */
   time_saved_s: number;

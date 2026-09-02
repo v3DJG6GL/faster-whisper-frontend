@@ -242,9 +242,10 @@ function parseStageList(v: string | null | undefined): UsageStageKey[] {
 
 /** `?kind=&with=&range=&from=&to=&metric=` (plus the older `?scope=`) → page state. Anything
  *  unrecognised falls back to the default; a custom range without a usable span too. */
-export function parsePageQuery(get: (key: string) => string | null): { scope: UsageScope; query: UsagePageQuery; metric: ChartMetric } {
+export function parsePageQuery(get: (key: string) => string | null): { scope: UsageScope; query: UsagePageQuery; metric: ChartMetric; rhythm: Rhythm } {
   const scope = parseScope(get("kind") ?? get("scope"));
   const metric = parseMetric(get("metric"));
+  const rhythm = parseRhythm(get("rhythm"));
   const r = get("range");
   const withS = parseStageList(get("with"));
   let range: RangePreset = (RANGE_PRESETS as readonly string[]).includes(r ?? "") ? (r as RangePreset) : "30";
@@ -261,15 +262,16 @@ export function parsePageQuery(get: (key: string) => string | null): { scope: Us
       range = "30";
     }
   }
-  return { scope, query: { range, ...(range === "custom" ? { from, to } : {}), with: withS }, metric };
+  return { scope, query: { range, ...(range === "custom" ? { from, to } : {}), with: withS }, metric, rhythm };
 }
 
 /** The URL params for a page state — only what differs from the default, so a plain
  *  `/statistics` stays clean. */
-export function pageQueryParams(scope: UsageScope, q: UsagePageQuery, metric: ChartMetric = "words"): Record<string, string> {
+export function pageQueryParams(scope: UsageScope, q: UsagePageQuery, metric: ChartMetric = "words", rhythm: Rhythm = "hours"): Record<string, string> {
   const out: Record<string, string> = {};
   if (scope !== "all") out.kind = scope;
   if (metric !== "words") out.metric = metric;
+  if (rhythm !== "hours") out.rhythm = rhythm;
   if (q.range !== "30") out.range = q.range;
   if (q.range === "custom" && q.from !== undefined && q.to !== undefined) {
     out.from = String(q.from);
@@ -544,20 +546,95 @@ export function weekColumns(cells: readonly CalendarCell[]): CalendarColumn[] {
   return cols;
 }
 
-/* ── hour grid ──────────────────────────────────────────────────────────── */
+/* ── the busy panel's rhythms (D40 R1): weekday × hour, day of month × hour, year × month ── */
 
-export interface HourCell extends KindSplit {
-  dow: number;
-  hour: number;
-  level: Level;
+export type Rhythm = "hours" | "days" | "months";
+export const RHYTHMS: readonly Rhythm[] = ["hours", "days", "months"];
+
+export function parseRhythm(v: string | null | undefined): Rhythm {
+  return (RHYTHMS as readonly string[]).includes(v ?? "") ? (v as Rhythm) : "hours";
 }
 
-export interface HourModel {
-  /** 7 rows (Mon..Sun) × 24. */
-  rows: HourCell[][];
+/** The count beside the measure in the busy tooltip and peak line (D45 C1): sessions, or
+ *  processing time when the measure IS sessions — the backend's pairing. */
+export function companionMetric(m: ChartMetric): ChartMetric {
+  return m === "sessions" ? "proc_s" : "sessions";
+}
+
+export const DOW_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
+const MONTH_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
+const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
+const ymdOf = (day: number): [number, number, number] => {
+  const d = dayDate(day);
+  return [d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()];
+};
+
+export interface RhythmCell extends KindSplit {
+  row: number;
+  col: number;
+  level: Level;
+  /** The scoped companion measure (companionMetric). */
+  companion: number;
+  /** False for a day-of-month column a one-month window does not reach (never rendered). */
+  inWindow: boolean;
+}
+
+/** How one rhythm is laid out and named. Hours: weekday rows × hour columns. Days (D42 A2,
+ *  the backend's geometry): hour rows × day-of-month columns. Months: year rows × month columns. */
+export interface RhythmLayout {
+  rows: number;
+  cols: number;
+  rowLabel: (r: number) => string;
+  rowLong: (r: number) => string;
+  colLabel: (c: number) => string;
+  colLong: (c: number) => string;
+  cellName: (i: number) => string;
+  colUnit: string;
+  rowUnit: string;
+  /** The legend's slot word: "weekday hour" / "day-of-month hour" / "month". */
+  slotWord: string;
+  /** What the side bars compare against: a flat "week" / "month" / "year". */
+  flatWord: string;
+  /** Days only: how often each day of month occurs in the window (0 = outside a one-month window). */
+  colOcc: number[] | null;
+}
+
+/** Whether this server sent what the rhythm needs: the measure's nested split on the slots
+ *  (`no-measure`: a server from before 2 Sep 2026 sends words only) or the day-of-month grid
+ *  at all (`no-grid`). Words and months never depend on either. */
+export type RhythmSent = "yes" | "no-measure" | "no-grid";
+
+export interface RhythmModel {
+  rhythm: Rhythm;
+  layout: RhythmLayout;
+  /** rows × cols, row-major (index = row * cols + col). */
+  cells: RhythmCell[];
   breaks: Breaks;
   counts: [number, number, number, number, number];
-  peak: HourCell | null;
+  peak: RhythmCell | null;
+  colTotals: number[];
+  rowTotals: number[];
+  /** Each column's / row's total relative to a flat distribution (1 = average). */
+  colIndex: number[];
+  rowIndex: number[];
+  sum: number;
+  /** How many times a cell's period occurs in the window: that weekday (hours), that day of
+   *  month (days), once (months) — "≈ N per Tuesday · 78 Tuesdays in range". */
+  occOf: (cell: RhythmCell) => number;
+  /** The period's name for that line: "Tuesday" / "month" / "". */
+  occWord: (cell: RhythmCell) => string;
+  sent: RhythmSent;
+  /** The pattern phrase: "mostly Mon–Fri 06–12", "mostly 21st–31st", "mostly Aug + Sep"; null
+   *  when nothing holds enough of the measure. */
+  phrase: string | null;
+}
+
+export interface RhythmSource {
+  hours?: readonly UsageHourCell[] | null;
+  dom_hours?: readonly UsageHourCell[] | null;
+  /** The window's per-day series (months). */
+  series?: readonly UsageSeriesPoint[] | null;
 }
 
 /** A slot's per-kind totals: words sit flat on the slot (the original shape), the other
@@ -576,36 +653,174 @@ function slotKinds(h: UsageHourCell): UsageKinds {
   return out;
 }
 
-/** The weekday × hour grid for the scoped kind and the page's measure, levelled by the
- *  quartiles of the active slots. */
-export function hourModel(hours: readonly UsageHourCell[] | undefined, scope: UsageScope, metric: ChartMetric = "words"): HourModel {
-  const grid = new Map<string, UsageKinds>();
-  for (const h of hours ?? []) {
-    if (!h || !Number.isInteger(h.dow) || h.dow < 0 || h.dow > 6 || !Number.isInteger(h.hour) || h.hour < 0 || h.hour > 23) continue;
-    const key = `${h.dow}:${h.hour}`;
-    const cur = grid.get(key) ?? zeroKinds();
-    const add = slotKinds(h);
+/** The per-kind sum of several cells — a side bar's tooltip. */
+export function sumKinds(cells: readonly KindSplit[]): UsageKinds {
+  const out = zeroKinds();
+  for (const c of cells) for (const k of ["all", ...KINDS] as const) addTotals(out[k], safeTotals(c.kinds[k]));
+  return out;
+}
+
+const daysInMonth = (y: number, m: number) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+
+function rhythmLayout(rhythm: Rhythm, from: number, to: number): RhythmLayout & { y0: number; fm: number; oneMonth: boolean } {
+  const [fy, fm] = ymdOf(from);
+  const [ty, tm] = ymdOf(to);
+  if (rhythm === "days") {
+    const oneMonth = fy === ty && fm === tm;
+    const cols = oneMonth ? daysInMonth(fy, fm) : 31;
+    const colOcc = new Array<number>(cols).fill(0);
+    const end = Math.min(to, from + MAX_SPAN_DAYS + 31);
+    for (let d = from; d <= end; d++) colOcc[ymdOf(d)[2] - 1]++;
+    const dayName = (c: number) => (oneMonth ? `${c + 1} ${MONTH[fm]}` : `the ${ordinal(c + 1)}`);
+    return {
+      rows: 24, cols, y0: fy, fm, oneMonth, colOcc,
+      rowLabel: (r) => (r % 3 === 0 ? String(r).padStart(2, "0") : ""),
+      rowLong: (r) => `${hh(r)}–${hh(r + 1)}`,
+      colLabel: (c) => ((c + 1) % 5 === 0 || c === 0 ? String(c + 1) : ""),
+      colLong: (c) => (oneMonth ? `${c + 1} ${MONTH_LONG[fm]}` : `the ${ordinal(c + 1)} of each month`),
+      cellName: (i) => `${dayName(i % cols)} ${hh(Math.floor(i / cols))}–${hh(Math.floor(i / cols) + 1)}`,
+      colUnit: "day of month", rowUnit: "hour of day", slotWord: "day-of-month hour", flatWord: "month",
+    };
+  }
+  if (rhythm === "months") {
+    const years = Math.max(1, ty - fy + 1);
+    return {
+      rows: years, cols: 12, y0: fy, fm, oneMonth: false, colOcc: null,
+      rowLabel: (r) => String(fy + r),
+      rowLong: (r) => String(fy + r),
+      colLabel: (c) => MONTH[c],
+      colLong: (c) => MONTH_LONG[c],
+      cellName: (i) => `${MONTH[i % 12]} ${fy + Math.floor(i / 12)}`,
+      colUnit: "month", rowUnit: "year", slotWord: "month", flatWord: "year",
+    };
+  }
+  return {
+    rows: 7, cols: 24, y0: fy, fm, oneMonth: false, colOcc: null,
+    rowLabel: (r) => DOW_SHORT[r],
+    rowLong: (r) => `${DOW_LONG[r]}s`,
+    colLabel: (c) => (c % 3 === 0 ? String(c).padStart(2, "0") : ""),
+    colLong: (c) => `${hh(c)}–${hh(c + 1)}`,
+    cellName: (i) => `${DOW_SHORT[Math.floor(i / 24)]} ${hh(i % 24)}–${hh(i % 24 + 1)}`,
+    colUnit: "hour of day", rowUnit: "weekday", slotWord: "weekday hour", flatWord: "week",
+  };
+}
+
+const DAY_PARTS: [string, number, number][] = [["06–12", 6, 12], ["12–18", 12, 18], ["18–24", 18, 24], ["00–06", 0, 6]];
+
+/** Hours: the smallest weekday / part-of-day group holding 60 %+ of the measure (one slot
+ *  holding half is named as the slot); days: the third of the month or the part of the day;
+ *  months: the top month at 40 %+, else the top two at 50 %+. Ported from the backend. */
+function rhythmPhrase(rhythm: Rhythm, values: readonly number[], colTot: readonly number[], rowTot: readonly number[], cols: number): string | null {
+  const total = values.reduce((a, v) => a + v, 0);
+  if (!(total > 0)) return null;
+  if (rhythm === "hours") {
+    const sum = (days: readonly number[], a: number, b: number) => days.reduce((s, d) => { for (let h = a; h < b; h++) s += values[d * 24 + h]; return s; }, 0);
+    let peak = 0;
+    values.forEach((v, i) => { if (v > values[peak]) peak = i; });
+    if (values[peak] / total >= 0.5) return `${DOW_SHORT[Math.floor(peak / 24)]} ${String(peak % 24).padStart(2, "0")}–${String(peak % 24 + 1).padStart(2, "0")}`;
+    const groups: [string, number[], number, number][] = [];
+    const wk = [0, 1, 2, 3, 4], we = [5, 6], all = [0, 1, 2, 3, 4, 5, 6];
+    for (let d = 0; d < 7; d++) for (const [p, a, b] of DAY_PARTS) groups.push([`${DOW_SHORT[d]} ${p}`, [d], a, b]);
+    for (let d = 0; d < 7; d++) groups.push([DOW_SHORT[d], [d], 0, 24]);
+    for (const [p, a, b] of DAY_PARTS) { groups.push([`Mon–Fri ${p}`, wk, a, b]); groups.push([`Sat–Sun ${p}`, we, a, b]); }
+    for (const [p, a, b] of DAY_PARTS) groups.push([p, all, a, b]);
+    groups.push(["Mon–Fri", wk, 0, 24], ["Sat–Sun", we, 0, 24]);
+    for (const [label, days, a, b] of groups) if (sum(days, a, b) / total >= 0.6) return `mostly ${label}`;
+    return null;
+  }
+  if (rhythm === "days") {
+    const third = (n: number) => colTot.slice(n * 10, n === 2 ? cols : n * 10 + 10).reduce((a, v) => a + v, 0);
+    const thirds: [string, number][] = [["1st–10th", third(0)], ["11th–20th", third(1)], ["21st–31st", third(2)]];
+    for (const [label, v] of thirds) if (v / total >= 0.6) return `mostly ${label}`;
+    for (const [label, a, b] of DAY_PARTS) if (rowTot.slice(a, b).reduce((x, v) => x + v, 0) / total >= 0.6) return `mostly ${label}`;
+    return null;
+  }
+  const order = colTot.map((v, i) => [v, i] as const).sort((a, b) => b[0] - a[0]);
+  if (order[0][0] / total >= 0.4) return `mostly ${MONTH[order[0][1]]}`;
+  if ((order[0][0] + order[1][0]) / total >= 0.5) return `mostly ${MONTH[order[0][1]]} + ${MONTH[order[1][1]]}`;
+  return null;
+}
+
+/** One rhythm of the busy panel for the scoped kind and the page's measure: the cells,
+ *  levelled by quartiles of the active ones, the peak, the side-bar totals relative to a
+ *  flat distribution, occurrences, the phrase, and whether this server sent what it needs. */
+export function rhythmModel(rhythm: Rhythm, src: RhythmSource, scope: UsageScope, metric: ChartMetric, from: number, to: number): RhythmModel {
+  const ok = isDay(from) && isDay(to) && from <= to;
+  const f = ok ? from : 0;
+  const t = ok ? to : 0;
+  const L = rhythmLayout(rhythm, f, t);
+  const N = L.rows * L.cols;
+  const comp = companionMetric(metric);
+  const grid: (UsageKinds | undefined)[] = new Array(N);
+  const put = (i: number, add: UsageKinds) => {
+    if (i < 0 || i >= N) return;
+    const cur = grid[i] ?? zeroKinds();
     for (const k of ["all", ...KINDS] as const) addTotals(cur[k], add[k]);
-    grid.set(key, cur);
-  }
-  const valueOf = (k: UsageKinds | undefined) => (k ? metricValue(k[scope], metric) : 0);
-  const breaks = quantileBreaks([...grid.values()].map(valueOf));
-  const counts: HourModel["counts"] = [0, 0, 0, 0, 0];
-  let peak: HourCell | null = null;
-  const rows: HourCell[][] = [];
-  for (let d = 0; d < 7; d++) {
-    const row: HourCell[] = [];
-    for (let h = 0; h < 24; h++) {
-      const kinds = grid.get(`${d}:${h}`) ?? zeroKinds();
-      const value = valueOf(kinds);
-      const cell: HourCell = { dow: d, hour: h, kinds, value, level: levelOf(value, breaks) };
-      counts[cell.level]++;
-      if (value > 0 && (!peak || value > peak.value)) peak = cell;
-      row.push(cell);
+    grid[i] = cur;
+  };
+  const hourOk = (h: UsageHourCell) => Number.isInteger(h.hour) && h.hour >= 0 && h.hour <= 23;
+  let sent: RhythmSent = "yes";
+  if (rhythm === "hours") {
+    for (const h of src.hours ?? []) {
+      if (!h || !hourOk(h) || !Number.isInteger(h.dow) || (h.dow as number) < 0 || (h.dow as number) > 6) continue;
+      put((h.dow as number) * 24 + h.hour, slotKinds(h));
     }
-    rows.push(row);
+  } else if (rhythm === "days") {
+    if (!src.dom_hours) sent = "no-grid";
+    for (const h of src.dom_hours ?? []) {
+      if (!h || !hourOk(h) || !Number.isInteger(h.dom) || (h.dom as number) < 1 || (h.dom as number) > L.cols) continue;
+      put(h.hour * L.cols + ((h.dom as number) - 1), slotKinds(h));
+    }
+  } else {
+    for (const p of src.series ?? []) {
+      if (!p || !isDay(p.day) || p.day < f || p.day > t) continue;
+      const [y, m] = ymdOf(p.day);
+      const add = zeroKinds();
+      for (const k of ["all", ...KINDS] as const) addTotals(add[k], safeTotals(p[k]));
+      put((y - L.y0) * 12 + m, add);
+    }
   }
-  return { rows, breaks, counts, peak };
+  // A words-only server: the slots exist but carry no nested split for this measure.
+  if (sent === "yes" && metric !== "words" && rhythm !== "months") {
+    const slots = (rhythm === "hours" ? src.hours : src.dom_hours) ?? [];
+    if (slots.length > 0 && !slots.some((h) => h && typeof h[metric] === "object" && h[metric] !== null)) sent = "no-measure";
+  }
+  const cells: RhythmCell[] = [];
+  for (let i = 0; i < N; i++) {
+    const kinds = grid[i] ?? zeroKinds();
+    const col = i % L.cols;
+    cells.push({
+      row: Math.floor(i / L.cols), col, kinds, level: 0,
+      value: metricValue(kinds[scope], metric),
+      companion: metricValue(kinds[scope], comp),
+      inWindow: L.colOcc ? L.colOcc[col] > 0 : true,
+    });
+  }
+  const active = cells.filter((c) => c.inWindow);
+  const breaks = quantileBreaks(active.map((c) => c.value));
+  const counts: RhythmModel["counts"] = [0, 0, 0, 0, 0];
+  let peak: RhythmCell | null = null;
+  for (const c of cells) {
+    c.level = levelOf(c.value, breaks);
+    if (!c.inWindow) continue;
+    counts[c.level]++;
+    if (c.value > 0 && (!peak || c.value > peak.value)) peak = c;
+  }
+  const colTotals = new Array<number>(L.cols).fill(0);
+  const rowTotals = new Array<number>(L.rows).fill(0);
+  for (const c of cells) { colTotals[c.col] += c.value; rowTotals[c.row] += c.value; }
+  const sum = colTotals.reduce((a, v) => a + v, 0);
+  const liveCols = L.colOcc ? L.colOcc.filter((n) => n > 0).length || L.cols : L.cols;
+  const colIndex = colTotals.map((v) => (sum > 0 ? v / (sum / liveCols) : 0));
+  const rowIndex = rowTotals.map((v) => (sum > 0 ? v / (sum / L.rows) : 0));
+  const wd = rhythm === "hours" ? weekdayCounts(f, t) : null;
+  const { y0: _y0, fm: _fm, oneMonth: _one, ...layout } = L;
+  return {
+    rhythm, layout, cells, breaks, counts, peak, colTotals, rowTotals, colIndex, rowIndex, sum, sent,
+    occOf: (c) => (wd ? wd[c.row] : L.colOcc ? L.colOcc[c.col] : 1),
+    occWord: (c) => (rhythm === "hours" ? DOW_LONG[c.row] : rhythm === "days" ? "month" : ""),
+    phrase: rhythmPhrase(rhythm, cells.map((c) => c.value), colTotals, rowTotals, L.cols),
+  };
 }
 
 export const DOW_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;

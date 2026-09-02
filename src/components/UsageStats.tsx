@@ -70,7 +70,6 @@ import {
   translationRows,
   findStage,
   fmtTimeSaved,
-  hourModel,
   isDurationMetric,
   isFiltered,
   isoToDay,
@@ -80,6 +79,12 @@ import {
   orderedStageRows,
   pct,
   presentKinds,
+  rhythmModel,
+  sumKinds,
+  companionMetric,
+  RHYTHMS,
+  DOW_LONG,
+  type Rhythm,
   resolveWindow,
   runsBreakdown,
   safeTotals,
@@ -91,7 +96,6 @@ import {
   timeSavedS,
   TYPING_WPM,
   weekColumns,
-  weekdayCounts,
   zeroKinds,
   MAX_SPAN_DAYS,
   type BucketMode,
@@ -122,7 +126,6 @@ function metricText(m: ChartMetric, v: number, compact = false): string {
   const u = METRIC_UNIT[m] ?? ["", ""];
   return `${compact ? fmtCompact(v) : fmtFull(v)} ${Math.round(v) === 1 ? u[0] : u[1]}`;
 }
-const DOW_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 
 /* ── shared bits ─────────────────────────────────────────────────────────── */
 
@@ -731,11 +734,11 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
   );
 }
 
-/* ── rhythm: the calendar + the hour grid ────────────────────────────────── */
+/* ── the calendar + the busy panel ────────────────────────────────── */
 
 /* ── the per-kind tooltip (D31 T3 / D33): present kinds, a split bar, the total ── */
 
-function KindTip({ title, kinds, metric, scope, total, quarter, extra }: {
+function KindTip({ title, kinds, metric, scope, total, quarter, extra, companion }: {
   title: string;
   kinds: UsageKinds;
   metric: ChartMetric;
@@ -743,11 +746,16 @@ function KindTip({ title, kinds, metric, scope, total, quarter, extra }: {
   total: number;
   /** The cell's quarter name, on the total line (or the single row). */
   quarter?: string;
-  /** One more faint line: `["≈ 40 words per Tuesday", "78 Tuesdays in range"]` (D32). */
-  extra?: [string, string] | null;
+  /** Faint lines after the total: `[["≈ 40 words per Tuesday", "78 Tuesdays in range"]]` (D32). */
+  extra?: ReadonlyArray<[string, string]> | null;
+  /** D45 C1: a second measure beside the first on every row ("1h 12m · 4 sessions"). */
+  companion?: ChartMetric;
 }) {
   const rows = presentKinds(kinds, metric, scope);
   const single = rows.length === 1;
+  const withComp = (kindValue: number, v: string) => (companion ? <>{v} <span className="text-faint">· {metricText(companion, kindValue)}</span></> : v);
+  const compOf = (k: UsageKind) => metricValue(safeTotals(kinds[k]), companion ?? metric);
+  const compTotal = metricValue(safeTotals(kinds[scope]), companion ?? metric);
   return (
     <>
       <div className="mb-1 font-mono text-[10.5px] uppercase tracking-label text-faint">{title}</div>
@@ -765,21 +773,21 @@ function KindTip({ title, kinds, metric, scope, total, quarter, extra }: {
           {rows.map((r) => (
             <div key={r.kind} className="flex items-baseline justify-between gap-4 leading-relaxed text-dim">
               <span className="flex items-center gap-1.5"><Swatch kind={r.kind} />{KIND_LABEL[r.kind]}</span>
-              <span className="font-num text-text">{metricText(metric, r.value)}{single && quarter ? ` · ${quarter}` : ""}</span>
+              <span className="font-num text-text">{withComp(compOf(r.kind), metricText(metric, r.value))}{single && quarter ? ` · ${quarter}` : ""}</span>
             </div>
           ))}
           {!single && (
             <div className={cn("flex items-baseline justify-between gap-4 leading-relaxed text-dim", rows.length > 0 && "mt-1 border-t border-line pt-1")}>
               <span>total{quarter ? ` · ${quarter}` : ""}</span>
-              <span className="font-num font-semibold text-text">{metricText(metric, total)}</span>
+              <span className="font-num font-semibold text-text">{withComp(compTotal, metricText(metric, total))}</span>
             </div>
           )}
-          {extra && (
-            <div className="mt-0.5 flex items-baseline justify-between gap-4 text-[11.5px] leading-relaxed text-faint">
-              <span>{extra[0]}</span>
-              <span>{extra[1]}</span>
+          {extra?.map((line, i) => (
+            <div key={i} className={cn("flex items-baseline justify-between gap-4 text-[11.5px] leading-relaxed text-faint", i === 0 && "mt-0.5")}>
+              <span>{line[0]}</span>
+              <span>{line[1]}</span>
             </div>
-          )}
+          ))}
         </>
       )}
     </>
@@ -891,7 +899,7 @@ function LevelLegend({ lead, breaks, counts, unit, metric }: { lead: string; bre
   );
 }
 
-function RhythmPanel({ dense, streaks, scope, withS, from, to, title, filtered, metric }: {
+function CalendarPanel({ dense, streaks, scope, withS, from, to, title, filtered, metric }: {
   dense: readonly UsageSeriesPoint[];
   streaks: UsageStreaks | undefined;
   scope: UsageScope;
@@ -918,7 +926,7 @@ function RhythmPanel({ dense, streaks, scope, withS, from, to, title, filtered, 
   const label = METRIC_LABEL[metric];
   return (
     <Panel
-      title={`Rhythm · ${title} · ${scope === "all" ? "all kinds" : KIND_LABEL[scope]}${withWord}`}
+      title={`Calendar · ${title} · ${scope === "all" ? "all kinds" : KIND_LABEL[scope]}${withWord}`}
       right={
         <Pill>
           streak {fmtFull(streak.current)} {streak.current === 1 ? "day" : "days"} · best {fmtFull(streak.best)}
@@ -975,73 +983,176 @@ function RhythmPanel({ dense, streaks, scope, withS, from, to, title, filtered, 
   );
 }
 
-function HoursPanel({ stats, scope, title, metric, from, to }: { stats: UsageStats; scope: UsageScope; title: string; metric: ChartMetric; from: number; to: number }) {
-  const model = useMemo(() => hourModel(stats.hours, scope, metric), [stats.hours, scope, metric]);
-  const peak = model.peak;
-  const kindWord = scope === "all" ? "" : ` · ${KIND_LABEL[scope]}`;
+/** The busy panel (D40 R1 / D41 N1): one grid, three rhythms — weekday × hour, day of month ×
+ *  hour (the backend's geometry, D42 A2), year × month — for the page's measure, with side
+ *  bars against a flat distribution (D43 M1), a peak line (D44 P1) and per-kind tooltips
+ *  that pair the measure with sessions (D45 C1). The rhythm is the panel's own state
+ *  (`?rhythm=`): it changes this panel, the measure changes every panel. */
+function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from, to }: {
+  stats: UsageStats;
+  dense: readonly UsageSeriesPoint[];
+  scope: UsageScope;
+  title: string;
+  metric: ChartMetric;
+  rhythm: Rhythm;
+  onRhythm: (r: Rhythm) => void;
+  from: number;
+  to: number;
+}) {
+  const model = useMemo(
+    () => rhythmModel(rhythm, { hours: stats.hours, dom_hours: stats.dom_hours, series: dense }, scope, metric, from, to),
+    [rhythm, stats.hours, stats.dom_hours, dense, scope, metric, from, to],
+  );
+  const L = model.layout;
+  const N = L.rows * L.cols;
+  const comp = companionMetric(metric);
   const label = METRIC_LABEL[metric];
+  const kindWord = scope === "all" ? "" : ` · ${KIND_LABEL[scope]}`;
   const { tip, onMove, onLeave, onFocus, onBlur } = useCellTip();
-  const { focusIdx, onKeyDown } = useRovingGrid(7 * 24, 1, 24);
+  const { focusIdx, onKeyDown } = useRovingGrid(N, 1, L.cols);
   const boundsRef = useRef<HTMLDivElement | null>(null);
-  // How often each weekday occurs in the window — "≈ N per Tuesday · 78 Tuesdays" (D32).
-  const occ = useMemo(() => weekdayCounts(from, to), [from, to]);
-  const hovered = tip ? model.rows[Math.floor(tip.i / 24)]?.[tip.i % 24] : undefined;
-  const slot = (dow: number, hour: number) => `${DOW_SHORT[dow]} ${String(hour).padStart(2, "0")}:00–${String(hour + 1).padStart(2, "0")}:00`;
-  const extra: [string, string] | null =
-    hovered && hovered.value > 0 && occ[hovered.dow] > 1
-      ? [`≈ ${metricText(metric, hovered.value / occ[hovered.dow], true)} per ${DOW_LONG[hovered.dow]}`, `${fmtFull(occ[hovered.dow])} ${DOW_LONG[hovered.dow]}s in range`]
-      : null;
+  const peak = model.peak;
+  const share = (v: number) => (model.sum > 0 ? `${Math.round((v / model.sum) * 100)} % of the range` : "—");
+  // What the tooltip describes: a cell (i < N), a top bar (a column) or a side bar (a row).
+  const hov = useMemo(() => {
+    if (!tip) return null;
+    const i = tip.i;
+    if (i < N) {
+      const c = model.cells[i];
+      if (!c) return null;
+      const occ = model.occOf(c);
+      const extra: [string, string][] = [];
+      if (c.value > 0 && occ > 1) extra.push([`≈ ${metricText(metric, c.value / occ, true)} per ${model.occWord(c)}`, `${fmtFull(occ)} ${rhythm === "hours" ? `${model.occWord(c)}s` : "months"} in range`]);
+      return { title: L.cellName(i), kinds: c.kinds, total: c.value, quarter: c.level ? QUARTER_NAME[c.level] : undefined, extra };
+    }
+    if (i < N + L.cols) {
+      const col = i - N;
+      const v = model.colTotals[col];
+      const extra: [string, string][] = [["share", share(v)], ["vs average", `${model.colIndex[col].toFixed(1)}× an average ${L.colUnit}`]];
+      const days = to - from + 1;
+      if (rhythm === "hours" && v > 0 && days > 1) extra.push([`≈ ${metricText(metric, v / days, true)} per day`, `${fmtFull(days)} days in range`]);
+      const occ = L.colOcc?.[col] ?? 1;
+      if (rhythm === "days" && v > 0 && occ > 1) extra.push([`≈ ${metricText(metric, v / occ, true)} per month`, `${fmtFull(occ)} months in range`]);
+      return { title: `${L.colLong(col)} · every ${L.rowUnit}`, kinds: sumKinds(model.cells.filter((c) => c.col === col)), total: v, quarter: undefined, extra };
+    }
+    const row = i - N - L.cols;
+    const v = model.rowTotals[row];
+    const extra: [string, string][] = [["share", share(v)], ["vs average", `${model.rowIndex[row].toFixed(1)}× an average ${L.rowUnit}`]];
+    const first = model.cells[row * L.cols];
+    const occ = first ? model.occOf(first) : 1;
+    if (rhythm === "hours" && v > 0 && occ > 1) extra.push([`≈ ${metricText(metric, v / occ, true)} per ${DOW_LONG[row]}`, `${fmtFull(occ)} ${DOW_LONG[row]}s in range`]);
+    return { title: `${L.rowLong(row)} · all ${L.colUnit}s`, kinds: sumKinds(model.cells.slice(row * L.cols, row * L.cols + L.cols)), total: v, quarter: undefined, extra };
+  }, [tip, model, L, N, metric, rhythm, from, to]);
+  // Arrow keys move between cells only; the bars are plain tab stops.
+  const keys = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const el = (e.target as HTMLElement).closest?.("[data-i]") as HTMLElement | null;
+    if (el && Number(el.dataset.i) >= N) return;
+    onKeyDown(e);
+  }, [N, onKeyDown]);
+  const cMax = Math.max(1, ...model.colIndex);
+  const rMax = Math.max(1, ...model.rowIndex);
+  const barLen = (idx: number, max: number) => (idx > 0 ? Math.max(6, (idx / max) * 100) : 0).toFixed(1);
+  const barBg = (idx: number) => (idx > 1 ? "var(--c-accent)" : "var(--c-line-strong)");
+  const cellClass = rhythm === "hours" ? "aspect-square max-h-[20px]" : rhythm === "days" ? "h-[11px]" : "h-[22px]";
+  const tz = stats.tz === "local" ? "server time" : stats.tz;
+  const peakOcc = peak ? model.occOf(peak) : 0;
   return (
     <Panel
-      title={`When you dictate · ${title}${kindWord}`}
-      right={
-        peak ? (
-          <Pill>
-            peak {DOW_SHORT[peak.dow]} {String(peak.hour).padStart(2, "0")}–{String(peak.hour + 1).padStart(2, "0")} · {metricText(metric, peak.value, true)}
-          </Pill>
-        ) : (
-          <Pill>no {label.toLowerCase()} in this range</Pill>
-        )
-      }
+      title={`Busy ${rhythm} · ${title}${kindWord}`}
+      right={<Segmented value={rhythm} onChange={onRhythm} ariaLabel="Rhythm — weekday × hour, day of month × hour, or year × month" options={RHYTHMS.map((r) => ({ value: r, label: r }))} />}
     >
-      <div ref={boundsRef} className="relative" onMouseMove={onMove} onMouseLeave={onLeave} onFocus={onFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
-        <CellTip tip={tip} boundsRef={boundsRef}>
-          {hovered && <KindTip title={slot(hovered.dow, hovered.hour)} kinds={hovered.kinds} metric={metric} scope={scope} total={hovered.value} quarter={hovered.level ? QUARTER_NAME[hovered.level] : undefined} extra={extra} />}
-        </CellTip>
-        <div
-          className="grid gap-[3px]"
-          style={{ gridTemplateColumns: "34px repeat(24, minmax(0, 1fr))" }}
-          role="grid"
-          aria-label={`${label} per weekday and hour, levelled by quartiles of the active hour slots. Use the arrow keys to move between slots.`}
-        >
-          <div />
-          {Array.from({ length: 24 }, (_, h) => (
-            <div key={h} className="font-mono text-[10px] text-faint">
-              {h % 3 === 0 ? String(h).padStart(2, "0") : ""}
-            </div>
-          ))}
-          {model.rows.map((row, d) => (
-            <Fragment key={d}>
-              <div className="flex items-center font-mono text-[10.5px] text-faint">{DOW_SHORT[d]}</div>
-              {row.map((c) => {
-                const i = c.dow * 24 + c.hour;
-                return (
-                  <i
-                    key={c.hour}
-                    data-i={i}
-                    tabIndex={i === focusIdx ? 0 : -1}
-                    role="gridcell"
-                    aria-label={`${slot(c.dow, c.hour)}: ${c.value > 0 ? metricText(metric, c.value) : `no ${label.toLowerCase()}`}${c.level ? `, ${QUARTER_NAME[c.level]}` : ""}`}
-                    className={cn("block aspect-square max-h-[20px] w-full rounded-[3px] outline-none", CELL_HOVER, peak && c.dow === peak.dow && c.hour === peak.hour && "ring-[1.5px] ring-inset ring-text")}
-                    style={{ background: LEVEL_BG[c.level] }}
-                  />
-                );
-              })}
-            </Fragment>
-          ))}
-        </div>
+      <div className="mb-2.5 truncate font-mono text-[11.5px] text-dim" title={peak ? `${metricText(metric, peak.value)} in the busiest ${rhythm === "hours" ? "slot" : rhythm.slice(0, -1)}, ${L.cellName(peak.row * L.cols + peak.col)}${peakOcc > 1 ? `, summed over ${fmtFull(peakOcc)} ${rhythm === "hours" ? `${model.occWord(peak)}s` : "months"} in the range` : ""}` : undefined}>
+        {peak ? (
+          <>
+            Peak {L.cellName(peak.row * L.cols + peak.col)} · <b className="font-semibold text-text">{metricText(metric, peak.value)}</b>
+            {peakOcc > 1 && ` · ≈ ${metricText(metric, peak.value / peakOcc, true)} per ${model.occWord(peak)}`}
+            {` · ${metricText(comp, peak.companion)}`}
+            {model.phrase && <> · <span className="text-accent" title={`the smallest group holding 60 %+ of the ${label.toLowerCase()}`}>{model.phrase}</span></>}
+          </>
+        ) : (
+          `No ${label.toLowerCase()} in this range`
+        )}
       </div>
-      <LevelLegend lead={`${label} per weekday hour · quarters of your active hour slots`} breaks={model.breaks} counts={model.counts} unit={["slot", "slots"]} metric={metric} />
+      {model.sent !== "yes" ? (
+        <div className="rounded-[10px] border border-dashed border-line-strong px-3 py-2.5 text-[12.5px] text-dim">
+          {model.sent === "no-grid" ? (
+            <><b className="font-semibold text-text">This server does not send the day-of-month grid.</b> Busy days needs a server from 2 September 2026 or later. Hours and months still work.</>
+          ) : (
+            <><b className="font-semibold text-text">This server sends words per hour only.</b> {label} per {L.slotWord} needs a server from 2 September 2026 or later. The rest of the page still follows the measure.</>
+          )}
+        </div>
+      ) : (
+        <div ref={boundsRef} className="relative" onMouseMove={onMove} onMouseLeave={onLeave} onFocus={onFocus} onBlur={onBlur} onKeyDown={keys}>
+          <CellTip tip={tip} boundsRef={boundsRef}>
+            {hov && <KindTip title={hov.title} kinds={hov.kinds} metric={metric} scope={scope} total={hov.total} quarter={hov.quarter} extra={hov.extra} companion={comp} />}
+          </CellTip>
+          <div
+            className={cn("grid", rhythm === "days" ? "gap-[2px]" : "gap-[3px]")}
+            style={{ gridTemplateColumns: `34px repeat(${L.cols}, minmax(0, 1fr)) 30px` }}
+            role="grid"
+            aria-label={`${label} per ${L.slotWord}, levelled by quartiles of the active slots, with each ${L.colUnit} and ${L.rowUnit} against a flat ${L.flatWord}. Use the arrow keys to move between slots.`}
+          >
+            <div />
+            {model.colIndex.map((idx, c) => (
+              <div
+                key={`t${c}`}
+                data-i={N + c}
+                tabIndex={0}
+                role="img"
+                aria-label={`${L.colLong(c)}: ${metricText(metric, model.colTotals[c])}, ${idx.toFixed(1)} times an average ${L.colUnit}`}
+                className={cn("relative flex h-[24px] items-end rounded-[2px] outline-none", CELL_HOVER, !(L.colOcc ? L.colOcc[c] > 0 : true) && "invisible")}
+              >
+                <i className="block w-full rounded-t-[2px]" style={{ height: `${barLen(idx, cMax)}%`, background: barBg(idx) }} />
+                <i className="pointer-events-none absolute inset-x-0 border-t border-dashed border-line-strong" style={{ bottom: `${(100 / cMax).toFixed(1)}%` }} aria-hidden />
+              </div>
+            ))}
+            <div />
+            <div />
+            {Array.from({ length: L.cols }, (_, c) => (
+              <div key={`l${c}`} className="font-mono text-[10px] text-faint">{L.colLabel(c)}</div>
+            ))}
+            <div />
+            {Array.from({ length: L.rows }, (_, r) => (
+              <Fragment key={r}>
+                <div className="flex items-center font-mono text-[10.5px] text-faint">{L.rowLabel(r)}</div>
+                {model.cells.slice(r * L.cols, r * L.cols + L.cols).map((c) => {
+                  const i = r * L.cols + c.col;
+                  return (
+                    <i
+                      key={c.col}
+                      data-i={i}
+                      tabIndex={i === focusIdx ? 0 : -1}
+                      role="gridcell"
+                      aria-label={`${L.cellName(i)}: ${c.value > 0 ? `${metricText(metric, c.value)} · ${metricText(comp, c.companion)}` : `no ${label.toLowerCase()}`}${c.level ? `, ${QUARTER_NAME[c.level]}` : ""}`}
+                      className={cn("block w-full rounded-[3px] outline-none", cellClass, CELL_HOVER, peak === c && "ring-[1.5px] ring-inset ring-text", !c.inWindow && "invisible")}
+                      style={{ background: LEVEL_BG[c.level] }}
+                    />
+                  );
+                })}
+                <div
+                  data-i={N + L.cols + r}
+                  tabIndex={0}
+                  role="img"
+                  aria-label={`${L.rowLong(r)}: ${metricText(metric, model.rowTotals[r])}, ${model.rowIndex[r].toFixed(1)} times an average ${L.rowUnit}`}
+                  className={cn("relative flex items-center rounded-[2px] outline-none", CELL_HOVER)}
+                >
+                  <i className="block h-[60%] rounded-r-[2px]" style={{ width: `${barLen(model.rowIndex[r], rMax)}%`, background: barBg(model.rowIndex[r]) }} />
+                  <i className="pointer-events-none absolute inset-y-0 border-l border-dashed border-line-strong" style={{ left: `${(100 / rMax).toFixed(1)}%` }} aria-hidden />
+                </div>
+              </Fragment>
+            ))}
+          </div>
+        </div>
+      )}
+      {model.sent === "yes" && (
+        <>
+          <LevelLegend lead={`${label} per ${L.slotWord} · quarters of your active slots`} breaks={model.breaks} counts={model.counts} unit={["slot", "slots"]} metric={metric} />
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-faint">
+            <span><i className="mr-1.5 inline-block h-2 w-3 rounded-[1px] bg-line-strong align-[-1px]" aria-hidden />side bars: each {L.colUnit} (top) and {L.rowUnit} (right) against a flat {L.flatWord} · dashed tick = average</span>
+            <span className="ml-auto">{tz}</span>
+          </div>
+        </>
+      )}
     </Panel>
   );
 }
@@ -1480,6 +1591,8 @@ export function StatisticsView({
   onQuery,
   metric,
   onMetric,
+  rhythm,
+  onRhythm,
 }: {
   scope: UsageScope;
   onScope: (s: UsageScope) => void;
@@ -1487,6 +1600,8 @@ export function StatisticsView({
   onQuery: (q: UsagePageQuery) => void;
   metric: ChartMetric;
   onMetric: (m: ChartMetric) => void;
+  rhythm: Rhythm;
+  onRhythm: (r: Rhythm) => void;
 }) {
   const { statsBackends, viewBackend, setView, stats: base } = useUsageView();
   const view = useApp((s) => s.usageView);
@@ -1547,8 +1662,8 @@ export function StatisticsView({
         <StackedChart buckets={buckets} mode={mode} scope={scope} metric={metric} />
         <StagesPanel stats={stats} dense={dense} scope={scope} withS={query.with} rangeWord={word} />
         <DictationPanel stats={stats} scope={scope} />
-        <RhythmPanel dense={dense} streaks={stats.streak} scope={scope} withS={query.with} from={win.from} to={win.to} title={word} filtered={filtered} metric={metric} />
-        <HoursPanel stats={stats} scope={scope} title={word} metric={metric} from={win.from} to={win.to} />
+        <CalendarPanel dense={dense} streaks={stats.streak} scope={scope} withS={query.with} from={win.from} to={win.to} title={word} filtered={filtered} metric={metric} />
+        <BusyPanel stats={stats} dense={dense} scope={scope} title={word} metric={metric} rhythm={rhythm} onRhythm={onRhythm} from={win.from} to={win.to} />
       </div>
     </>
   );

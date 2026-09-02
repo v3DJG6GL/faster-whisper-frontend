@@ -236,6 +236,8 @@ const MAX_USAGE_LIST: usize = 16;
 const MAX_CALENDAR: usize = 3_700;
 /// The hour grid is at most 7 × 24 slots.
 const MAX_HOURS: usize = 168;
+/// 31 days of month × 24 hours.
+const MAX_DOM_HOURS: usize = 744;
 /// The stages a `with=` filter may name; anything else is dropped before it reaches the URL.
 const USAGE_STAGES: [&str; 4] = ["translating", "diarizing", "separating", "vad"];
 
@@ -341,6 +343,9 @@ pub async fn get_usage_stats(server_url: &str, api_key: Option<&str>, query: &Us
         u.calendar.drain(..u.calendar.len() - MAX_CALENDAR);
     }
     u.hours.truncate(MAX_HOURS);
+    if let Some(d) = u.dom_hours.as_mut() {
+        d.truncate(MAX_DOM_HOURS);
+    }
     u.range.source = super::bounded_server_text(&u.range.source, 16);
     u.stages.truncate(MAX_USAGE_LIST);
     for st in &mut u.stages {

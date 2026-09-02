@@ -13,7 +13,7 @@ import { useSearchParams } from "react-router-dom";
 import { StatisticsView } from "@/components/UsageStats";
 import { PageHeader } from "@/components/ui";
 import { useApp } from "@/lib/store";
-import { pageQueryParams, parsePageQuery, type ChartMetric, type UsagePageQuery, type UsageScope } from "@/lib/usageDerive";
+import { pageQueryParams, parsePageQuery, type ChartMetric, type Rhythm, type UsagePageQuery, type UsageScope } from "@/lib/usageDerive";
 
 export default function Statistics() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -26,11 +26,12 @@ export default function Statistics() {
   setParams.current = setSearchParams;
   useEffect(() => {
     setUsageViewQuery(state.query);
-    setParams.current(pageQueryParams(state.scope, state.query, state.metric), { replace: true });
+    setParams.current(pageQueryParams(state.scope, state.query, state.metric, state.rhythm), { replace: true });
   }, [state, setUsageViewQuery]);
   const setScope = (scope: UsageScope) => setState((s) => ({ ...s, scope }));
   const setQuery = (query: UsagePageQuery) => setState((s) => ({ ...s, query }));
   const setMetric = (metric: ChartMetric) => setState((s) => ({ ...s, metric }));
+  const setRhythm = (rhythm: Rhythm) => setState((s) => ({ ...s, rhythm }));
   return (
     <div className="page page-cards">
       <PageHeader eyebrow="faster-whisper · usage" title="Statistics">
@@ -39,7 +40,7 @@ export default function Statistics() {
       </PageHeader>
 
       <div className="mt-8">
-        <StatisticsView scope={state.scope} onScope={setScope} query={state.query} onQuery={setQuery} metric={state.metric} onMetric={setMetric} />
+        <StatisticsView scope={state.scope} onScope={setScope} query={state.query} onQuery={setQuery} metric={state.metric} onMetric={setMetric} rhythm={state.rhythm} onRhythm={setRhythm} />
       </div>
     </div>
   );
