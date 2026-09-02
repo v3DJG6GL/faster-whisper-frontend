@@ -186,6 +186,7 @@ export function dropPendingWrites(): void {
   for (const t of writeTimers.values()) clearTimeout(t);
   writeTimers.clear();
   pendingWrite.clear();
+  lastWriteAt.clear();
 }
 
 /** The workbench registers records it holds open (transcribeRun); a delete must reach those
@@ -310,6 +311,7 @@ export function deleteRecord(id: string): void {
   clearTimeout(writeTimers.get(id));
   writeTimers.delete(id);
   pendingWrite.delete(id);
+  lastWriteAt.delete(id);
   forgetHook?.(id);
   useTranscriptHistory.setState((s) => ({
     records: s.records.filter((r) => r.id !== id),

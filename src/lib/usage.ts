@@ -54,10 +54,8 @@ export function viewerTimeZone(): string | undefined {
   }
 }
 
-/** The Backend the Statistics page (and the Home strip) VIEWS: the user's pick when it
- *  has usage, else the home-target backend, else the first backend that has usage. The
- *  same rule UsageStats.tsx renders by, so the view document is fetched for the backend
- *  the page shows. */
+/** The Backend the usage poll fetches stats for: the user's pick when it
+ *  has usage, else the home-target backend, else the first backend that has usage. */
 export function viewStatsBackend(s = useApp.getState()): Backend | undefined {
   const withUsage = s.backends.filter((b) => !!ownProp(s.usage, b.id));
   const defaultId = homeTargetProfile(s.profiles, s.settings.homeProfileId)?.backendId ?? s.backends[0]?.id;
@@ -160,12 +158,12 @@ async function refreshAll(): Promise<void> {
           /* one backend failing must not stop the rest */
         }
       }
+      try {
+        await refreshView();
+      } catch {
+        /* the page keeps its last document */
+      }
     } while (rerunRequested); // re-reads the latest backends snapshot on the rerun
-    try {
-      await refreshView();
-    } catch {
-      /* the page keeps its last document */
-    }
   } finally {
     pollingAll = false;
   }

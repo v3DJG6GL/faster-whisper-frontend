@@ -137,15 +137,13 @@ function syncCats(): Record<SyncCategory, boolean> {
   return catsFromGates(settingGates()) as Record<SyncCategory, boolean>;
 }
 
-const GATED_SCALAR_CATS = SCALAR_CATS;
-
 /** applyBlob strips gated-off scalar fields, so the security review must judge what
  *  will actually apply: comparing ungated blobs raised the consent dialog (and held a
  *  whole category back) for a peer edit to a setting this device opted out of. Both
  *  sides are stripped, or `clockCheck`'s absent-key fallbacks would fire spuriously. */
 function gateScalars(b: SyncBlob, gates: Gates): SyncBlob {
   const out: SyncBlob = { ...b };
-  for (const c of GATED_SCALAR_CATS) {
+  for (const c of SCALAR_CATS) {
     if (out[c] !== undefined) (out as Record<string, unknown>)[c] = gateApplyScalar(c, out[c], gates);
   }
   return out;
@@ -797,6 +795,18 @@ export function sanitizeProfiles(list: unknown): Profile[] {
                 ? undefined
                 : p.insertionOverrides.restoreClipboard === true,
             autoEnter: undefined,
+          }
+        : undefined,
+      translationOverrides: p.translationOverrides && typeof p.translationOverrides === "object"
+        ? {
+            translateTo: Array.isArray(p.translationOverrides.translateTo)
+              ? p.translationOverrides.translateTo.filter((c: unknown): c is string => typeof c === "string").slice(0, 8)
+              : undefined,
+            model: typeof p.translationOverrides.model === "string" ? p.translationOverrides.model : undefined,
+            contextSegments: typeof p.translationOverrides.contextSegments === "number" ? p.translationOverrides.contextSegments : undefined,
+            glossary: typeof p.translationOverrides.glossary === "string" ? p.translationOverrides.glossary : undefined,
+            mode: p.translationOverrides.mode === "fluent" || p.translationOverrides.mode === "faithful" ? p.translationOverrides.mode : undefined,
+            includeOriginal: p.translationOverrides.includeOriginal == null ? undefined : p.translationOverrides.includeOriginal === true,
           }
         : undefined,
       model: typeof p.model === "string" ? p.model : undefined,

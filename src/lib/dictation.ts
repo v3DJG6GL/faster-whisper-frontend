@@ -257,6 +257,7 @@ async function startWithPickedTargets(
  *  and begins with the settle picker disarmed like every other start path. `profile` may be
  *  undefined when only a Backend is targeted. */
 export function startHandsFree(backend: Backend, micId: string | null, profile: Profile | undefined): void {
+  if (pickerOpen) return;
   setSettleTargetPicker(null);
   setRouteHint(null);
   useApp.getState().setDictation({ activeProfile: profile?.id ?? null });

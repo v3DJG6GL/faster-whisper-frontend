@@ -225,8 +225,9 @@ export function parsePageQuery(get: (key: string) => string | null): { scope: Us
   let from: number | undefined;
   let to: number | undefined;
   if (range === "custom") {
-    const f = Number(get("from"));
-    const t = Number(get("to"));
+    const rawF = get("from"), rawT = get("to");
+    const f = rawF ? Number(rawF) : NaN;
+    const t = rawT ? Number(rawT) : NaN;
     if (isDay(f) && isDay(t) && f <= t && t - f < MAX_SPAN_DAYS) {
       from = f;
       to = t;

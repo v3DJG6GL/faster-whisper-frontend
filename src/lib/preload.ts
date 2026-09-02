@@ -41,13 +41,15 @@ type Transport = (args: {
   models: { family: Family; id: string }[];
 }) => Promise<boolean>;
 
+const defaultTransport: Transport = (args) => (isTauri ? preloadModels(args) : Promise.resolve(false));
+
 // isTauri is checked HERE rather than at each fire site so an injected test
 // transport is reached in a plain Node environment, where isTauri is false.
-let transport: Transport = (args) => (isTauri ? preloadModels(args) : Promise.resolve(false));
+let transport: Transport = defaultTransport;
 
 /** Test seam: swap the transport (call with no argument to restore the real one). */
 export function setPreloadTransport(fn?: Transport): void {
-  transport = fn ?? ((args) => (isTauri ? preloadModels(args) : Promise.resolve(false)));
+  transport = fn ?? defaultTransport;
 }
 
 /** Test seam: forget every "last sent" memory, so one test's send can't debounce the next. */

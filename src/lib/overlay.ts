@@ -344,7 +344,7 @@ export async function initOverlayController(): Promise<void> {
         // Only chime "stop" if the mic actually went live this session — a session ENDED during
         // warm-up (stopLive sets {transcribing, warming:false} in one update, mic never live) would
         // otherwise play a "stop" with no preceding "start".
-        if (state.status === "transcribing" && prev.status === "listening" && state.micLive)
+        if (state.status === "transcribing" && (prev.status === "listening" || prev.status === "translating") && state.micLive)
           void playCue("stop").catch((e) => console.error("playCue failed:", e));
         else if (state.status === "error") void playCue("error").catch((e) => console.error("playCue failed:", e));
       }

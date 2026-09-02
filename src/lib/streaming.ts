@@ -1508,7 +1508,7 @@ async function ensureListeners(): Promise<void> {
       // Inject-queue depth read HERE, synchronously at enqueue time, and carried
       // into the queued task: it decides how long this phrase's translate may
       // wait on a cold model (20 s when nothing is behind it, the short
-      // length-based budget when a backlog exists — see translateBudgetMs).
+      // length-based budget when a backlog exists — see translateCeilingMs).
       // Read inside the task instead and it would report the depth at DRAIN
       // time, by which point this task is the one being drained.
       //

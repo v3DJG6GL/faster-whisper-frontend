@@ -107,7 +107,7 @@ export function railStages(
  *  the transcribe row). */
 export function railIndex(stage: string | undefined, stages: RailStage[]): number {
   const i = stages.indexOf(railOf(stage));
-  return i < 0 ? stages.indexOf("transcribing") : i;
+  return i < 0 ? Math.max(0, stages.indexOf("transcribing")) : i;
 }
 
 /** The rail row that is actually active. "waiting" is the server queued on a
@@ -996,7 +996,7 @@ async function translateTextSource(
     // Dense and aligned with results — a chunk from an older backend that omits
     // `kept` contributes empty arrays, never a shift.
     for (let k = 0; k < r.results.length; k++) keptAll.push(r.kept?.[k] ?? []);
-    if (r.warnings?.length) warnings.push(...r.warnings);
+    if (r.warnings?.length) for (const w of r.warnings) if (!warnings.includes(w)) warnings.push(w);
     model = model ?? r.model;
     source = source ?? r.source;
   }

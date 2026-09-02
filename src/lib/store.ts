@@ -598,6 +598,16 @@ function upsertById<T extends { id: string }>(arr: T[], item: T): T[] {
   return next;
 }
 
+function evictBackendCaches(s: AppState, id: string) {
+  const connections = { ...s.connections };
+  delete connections[id];
+  const usage = { ...s.usage };
+  delete usage[id];
+  const caps = { ...s.caps };
+  delete caps[id];
+  return { connections, usage, caps };
+}
+
 export const useApp = create<AppState>((set) => ({
   settings: DEFAULT_SETTINGS,
   // Empty until hydrate() — fresh installs genuinely have no backends/profiles
@@ -675,17 +685,9 @@ export const useApp = create<AppState>((set) => ({
       else delete urlOverrides[backendId];
       // The effective connect target changed: drop the cached connection +
       // usage + caps so status/classification re-test against the new address.
-      const connections = { ...s.connections };
-      delete connections[backendId];
-      const usage = { ...s.usage };
-      delete usage[backendId];
-      const caps = { ...s.caps };
-      delete caps[backendId];
       return {
         settings: { ...s.settings, sync: { ...sync, urlOverrides } },
-        connections,
-        usage,
-        caps,
+        ...evictBackendCaches(s, backendId),
       };
     }),
   updateGeneral: (patch) =>
@@ -710,13 +712,7 @@ export const useApp = create<AppState>((set) => ({
       // id. Drop the stale connection + usage so they re-test against the new target instead of
       // showing the old server's "connected"/classification.
       if (prev && (prev.serverUrl !== b.serverUrl || prev.hasApiKey !== b.hasApiKey)) {
-        const connections = { ...s.connections };
-        delete connections[b.id];
-        const usage = { ...s.usage };
-        delete usage[b.id];
-        const caps = { ...s.caps };
-        delete caps[b.id];
-        return { backends, connections, usage, caps };
+        return { backends, ...evictBackendCaches(s, b.id) };
       }
       return { backends };
     }),
@@ -724,12 +720,6 @@ export const useApp = create<AppState>((set) => ({
     set((s) => {
       // Drop the removed backend's cached connection + usage + caps too, so a re-added backend
       // that recycles the id (or a late in-flight fetch) can't read the dead server's state.
-      const connections = { ...s.connections };
-      delete connections[id];
-      const usage = { ...s.usage };
-      delete usage[id];
-      const caps = { ...s.caps };
-      delete caps[id];
       return {
         backends: s.backends.filter((b) => b.id !== id),
         // Only build a new profiles array if a profile actually referenced the removed backend —
@@ -738,9 +728,7 @@ export const useApp = create<AppState>((set) => ({
         profiles: s.profiles.some((p) => p.backendId === id)
           ? s.profiles.map((p) => (p.backendId === id ? { ...p, backendId: null } : p))
           : s.profiles,
-        connections,
-        usage,
-        caps,
+        ...evictBackendCaches(s, id),
         // Scrub the other id-keyed references to the removed backend so none dangle: the usage-view
         // pin (runtime), the PERSISTED quick-add-list pin, and the sync meta (removing the sync
         // server disables sync — there's nowhere to push to; also drop its per-device URL

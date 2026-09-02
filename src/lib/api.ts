@@ -353,12 +353,16 @@ export async function preloadModels(args: {
   models: { family: PreloadFamily; id: string }[];
 }): Promise<boolean> {
   if (!isTauri) return false;
-  return invoke<boolean>("preload_models", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
-    models: args.models,
-  });
+  try {
+    return await invoke<boolean>("preload_models", {
+      serverUrl: args.serverUrl,
+      backendId: args.backendId ?? null,
+      apiKey: args.apiKey ?? null,
+      models: args.models,
+    });
+  } catch {
+    return false;
+  }
 }
 
 /** One override-profile's decode values + locked client keys, for previewing
@@ -1172,17 +1176,6 @@ export async function importSettingsFile(path: string): Promise<ImportResult> {
   return invoke<ImportResult>("import_settings_file", { path });
 }
 
-/** Native "save file" dialog → absolute path (or null if cancelled / not in Tauri). */
-export async function pickSavePath(defaultName: string): Promise<string | null> {
-  if (!isTauri) return null;
-  const { save } = await import("@tauri-apps/plugin-dialog");
-  const selected = await save({
-    defaultPath: defaultName,
-    filters: [{ name: "Settings export", extensions: ["json"] }],
-  });
-  return typeof selected === "string" ? selected : null;
-}
-
 /** Save dialog for a transcript export → absolute path (or null if cancelled). */
 export async function pickExportPath(
   defaultName: string,
@@ -1196,6 +1189,11 @@ export async function pickExportPath(
     filters: [{ name: formatName, extensions: [extension] }],
   });
   return typeof selected === "string" ? selected : null;
+}
+
+/** Native "save file" dialog → absolute path (or null if cancelled / not in Tauri). */
+export function pickSavePath(defaultName: string): Promise<string | null> {
+  return pickExportPath(defaultName, "Settings export", "json");
 }
 
 /** Write a plain text file via the Rust side (atomic tmp+rename). */

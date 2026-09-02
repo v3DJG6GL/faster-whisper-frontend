@@ -189,7 +189,8 @@ export async function initOutcomeQueue(): Promise<void> {
   if (!isTauri || loaded) return;
   loaded = true;
   try {
-    queue = pruneQueue(parseQueue(await loadUsageOutcomes()), Date.now());
+    const persisted = pruneQueue(parseQueue(await loadUsageOutcomes()), Date.now());
+    queue = { ...persisted, items: [...persisted.items, ...queue.items] };
   } catch (e) {
     console.error("usage outcome queue load failed:", e);
   }
@@ -252,7 +253,4 @@ export async function flushOutcomes(): Promise<void> {
   }
 }
 
-/** Test/inspection hook: the in-memory queue. */
-export function outcomeQueueSnapshot(): OutcomeQueue {
-  return queue;
-}
+

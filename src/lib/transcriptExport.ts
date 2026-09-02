@@ -634,7 +634,8 @@ export function exportStemSuffix(tracks?: string[]): string {
   // A multi-target export used to return "" here, so the file name carried no
   // language at all -- the one case where naming matters MOST, since the file
   // holds several. Bounded: these codes are user-authored and land in a path.
-  return "." + langs.map(trackSlug).filter(Boolean).slice(0, 4).join("+");
+  const slugs = langs.map(trackSlug).filter(Boolean).slice(0, 4);
+  return slugs.length ? "." + slugs.join("+") : "";
 }
 
 /** Translated cue lines that exceed the 20 chars/sec subtitle reading-speed
