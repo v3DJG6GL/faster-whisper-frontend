@@ -48,14 +48,15 @@
   --radius-pill: 999px;
 }
 
-/* The accent family (--c-accent, -ink, -soft, the three glow stops) and the dictation
-   chart series (--c-chart-dict) are hand-tuned here for the stock amber. For any other
+/* The accent family (--c-accent, -ink, -soft, the three glow stops) is hand-tuned here
+   for the stock amber. For any other
    Signal colour — still or drifting (src/lib/theme.ts's clock-driven drift) — theme.ts
    derives the same set in OKLCH per resolved theme and stamps it inline on <html>, which
    wins over both blocks below; the default hue stamps nothing, so these values apply
    untouched. Everything that carries STATE is a fixed token the accent never touches:
    --c-armed, --c-live, --c-think, --c-translate, --c-rec, the stage hues, the speaker
-   palette. The accent tints chrome only. */
+   palette — and so is everything that carries IDENTITY: the chart kind colours
+   (--c-chart-dict is the dictation series, not the accent). The accent tints chrome only. */
 :root,
 [data-theme="dark"] {
   --c-bg: #0e0d0b;

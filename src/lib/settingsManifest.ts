@@ -40,6 +40,7 @@ export type FieldRef =
 /** The Sync tab's group cards, in display order. */
 export const SYNC_GROUPS = [
   "general",
+  "appearance",
   "dictation",
   "recordingHistory",
   "transcribeDefaults",
@@ -54,6 +55,7 @@ export type SyncGroup = (typeof SYNC_GROUPS)[number];
 
 export const SYNC_GROUP_LABEL: Record<SyncGroup, string> = {
   general: "General",
+  appearance: "Appearance",
   dictation: "Dictation",
   recordingHistory: "Recording & history",
   transcribeDefaults: "Transcribe defaults",
@@ -124,11 +126,11 @@ const lg = (key: keyof LoggingSettings): FieldRef => ({ slice: "logging", key })
 
 export const MANIFEST = [
   // ── General ──────────────────────────────────────────────────────────
-  { id: "theme", label: "Theme", group: "general", category: "general",
+  { id: "theme", label: "Theme", group: "appearance", category: "general",
     fields: [{ slice: "settings", key: "theme" }] },
-  { id: "accentHue", label: "Signal colour", group: "general", category: "general",
+  { id: "accentHue", label: "Signal colour", group: "appearance", category: "general",
     fields: [{ slice: "settings", key: "accentHue" }] },
-  { id: "accentMotion", label: "Motion", group: "general", category: "general",
+  { id: "accentMotion", label: "Motion", group: "appearance", category: "general",
     fields: [{ slice: "settings", key: "accentMotion" }] },
   { id: "openAtLogin", label: "Launch at login", group: "general", category: "general",
     fields: [g("openAtLogin")] },

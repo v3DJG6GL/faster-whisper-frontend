@@ -13,9 +13,11 @@
 // recomputing them, so the stock look stays byte-identical to the stylesheet.
 //
 // The accent tints CHROME ONLY: buttons, selection, focus, chosen chips, route text, the
-// ambient glow and the dictation chart series. Everything that carries state is a fixed
-// app.css token the accent never touches — armed amber (--c-armed), live green, thinking
-// blue, translating teal, recording red, off grey, the stage hues and the speaker palette.
+// ambient glow. Everything that carries state OR identity is a fixed app.css token the
+// accent never touches — armed amber (--c-armed), live green, thinking blue, translating
+// teal, recording red, off grey, the stage hues, the speaker palette and the chart kind
+// colours (--c-chart-dict/-file/-link/-text: a rose accent must not make Dictation and
+// Links the same series).
 // That is what makes the next part safe.
 //
 // Motion: `settings.accentMotion` lets the Signal colour travel around the wheel (or
@@ -102,9 +104,6 @@ export interface DerivedAccent {
   glowA: string;
   glowB: string;
   glow0: string;
-  /** A slightly deeper cut of the accent for chart marks: the dictation series and the
-   *  activity calendar (`--c-chart-dict`), so they retint with the Signal colour. */
-  chart: string;
 }
 
 /** The concrete tokens for a hue in one theme. Pure; the Settings swatches call it too. */
@@ -118,7 +117,6 @@ export function deriveAccent(hue: number, dark: boolean): DerivedAccent {
     glowA: alpha(accent, dark ? 0.09 : 0.05),
     glowB: alpha(accent, dark ? 0.05 : 0.03),
     glow0: alpha(accent, 0),
-    chart: dark ? oklchHex(0.66, 0.15, h) : oklchHex(0.55, 0.15, h),
   };
 }
 
@@ -130,7 +128,6 @@ const ACCENT_VARS = [
   "--c-glow-a",
   "--c-glow-b",
   "--c-glow-0",
-  "--c-chart-dict",
 ] as const;
 
 /* ── Motion (the pure arithmetic every window runs) ───────────────────── */
@@ -287,7 +284,6 @@ function stampHue(hue: number, dark: boolean): void {
     style.setProperty("--c-glow-a", d.glowA);
     style.setProperty("--c-glow-b", d.glowB);
     style.setProperty("--c-glow-0", d.glow0);
-    style.setProperty("--c-chart-dict", d.chart);
   }
   for (const fn of listeners) fn(hue);
 }

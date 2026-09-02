@@ -53,8 +53,9 @@ function LogsBadge() {
 
 export function BrandMark() {
   // The unified app mark — the same artwork as src-tauri/icons/icon.svg (five-bar
-  // level meter on the warm-dark Signal tile); keep the two in sync. Colors are
-  // fixed on purpose: it's the logo, identical in both themes and on the desktop.
+  // level meter on the warm-dark Signal tile); keep the two in sync. The tile is fixed
+  // (identical in both themes and on the desktop icon); the bars wear the Signal colour,
+  // so the mark retints — and drifts — with the rest of the chrome.
   return (
     <svg width="36" height="36" viewBox="0 0 1024 1024" fill="none" aria-hidden>
       <defs>
@@ -63,8 +64,8 @@ export function BrandMark() {
           <stop offset="1" stopColor="#0e0d0b" />
         </linearGradient>
         <linearGradient id="bm-bar" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#ffb95e" />
-          <stop offset="1" stopColor="#ff9e2c" />
+          <stop offset="0" style={{ stopColor: "color-mix(in oklch, var(--c-accent) 78%, white)" }} />
+          <stop offset="1" style={{ stopColor: "var(--c-accent)" }} />
         </linearGradient>
       </defs>
       <rect width="1024" height="1024" rx="224" fill="url(#bm-tile)" />

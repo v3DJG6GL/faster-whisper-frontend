@@ -661,6 +661,17 @@ impl Default for LoggingSettings {
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub theme: ThemeName,
+    /// The Signal colour (hue in degrees) and its motion — frontend-owned like `sync`
+    /// and `transcribe`: Rust stores + round-trips both and never interprets them.
+    /// Every secondary window (quick-add, picker) reads the config THROUGH this struct,
+    /// so a key missing here is silently dropped by serde: the quick-add window stayed
+    /// amber and the colour did not survive a restart until these fields existed.
+    /// `#[serde(default, skip…)]` so older configs load and an unset value round-trips
+    /// byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent_hue: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent_motion: Option<serde_json::Value>,
     pub microphone_id: Option<String>,
     /// Which Profile the Home "click to dictate" button targets (None = first
     /// enabled). Pure storage; the frontend resolves it. `#[serde(default)]` so
@@ -765,6 +776,8 @@ impl Default for Config {
         Config {
             settings: AppSettings {
                 theme: ThemeName::Auto,
+                accent_hue: None,
+                accent_motion: None,
                 microphone_id: None,
                 home_profile_id: None,
                 quick_add_list: None,
@@ -1158,6 +1171,8 @@ mod tests {
         // exactly the frontend-written keys the way the UI's `save_config` payload would.
         let mut json = serde_json::to_value(Config::default()).expect("default serializes");
         json["settings"]["recentTranslationTargets"] = serde_json::json!(["fr", "de"]);
+        json["settings"]["accentHue"] = serde_json::json!(330);
+        json["settings"]["accentMotion"] = serde_json::json!({"period": 3600, "range": "wheel"});
         json["profiles"] = serde_json::json!([{
             "id": "p1", "name": "P", "activation": "hold", "enabled": true, "hotkey": [],
             "askTranslationTargets": true
@@ -1167,5 +1182,8 @@ mod tests {
         let out = serde_json::to_value(&cfg).expect("config serializes");
         assert_eq!(out["profiles"][0]["askTranslationTargets"], serde_json::json!(true));
         assert_eq!(out["settings"]["recentTranslationTargets"], serde_json::json!(["fr", "de"]));
+        // The quick-add and picker windows read the Signal colour through this struct.
+        assert_eq!(out["settings"]["accentHue"], serde_json::json!(330.0));
+        assert_eq!(out["settings"]["accentMotion"]["period"], serde_json::json!(3600));
     }
 }

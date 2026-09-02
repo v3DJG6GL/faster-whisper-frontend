@@ -67,7 +67,7 @@ function fmtBytes(n: number): string {
   return `${Math.max(1, Math.round(n / 1024))} KB`;
 }
 
-const TABS = ["General", "Audio", "Dictation", "Recording & history", "Chip", "Sync", "Permissions"] as const;
+const TABS = ["General", "Appearance", "Audio", "Dictation", "Recording & history", "Chip", "Sync", "Permissions"] as const;
 
 /** The audio store's per-type identity: subfolder, legend label, and the hue
  *  shared by the split bar, its legend and the subfolder chips. */
@@ -1115,8 +1115,13 @@ export default function Settings() {
               <Toggle checked={s.general.soundEffects} onChange={(v) => updateGeneral({ soundEffects: v })} />
             </SettingRow>
             {/* The quick-add shortcut moved to the Dictionary screen, next to the pinned list. */}
-            <AppearanceRows />
             <LoggingSection />
+          </Card>
+        )}
+
+        {tab === "Appearance" && (
+          <Card className="px-6">
+            <AppearanceRows />
           </Card>
         )}
 

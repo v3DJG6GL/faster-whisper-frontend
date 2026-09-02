@@ -176,7 +176,7 @@ interface TileSpec {
   label: string;
   icon: typeof Type;
   value: string;
-  tone: "accent" | "ok" | "warn" | "text";
+  tone: "dict" | "ok" | "warn" | "text";
   sub: ReactNode;
   spark: number[];
   sparkColor: string;
@@ -196,7 +196,7 @@ function tileSpecs(stats: UsageStats, dense: UsageSeriesPoint[], scope: UsageSco
   const wpm = Math.round(stats.dictation?.wpm ?? 0);
   const tiles: TileSpec[] = [
     {
-      key: "words", label: "Words", icon: Type, value: fmtFull(today.words), tone: "accent",
+      key: "words", label: "Words", icon: Type, value: fmtFull(today.words), tone: "dict",
       sub: <><Today /> · <Num>{fmtCompact(total.words)}</Num> total</>,
       spark: spark((p) => scopeTotals(p, scope).words), sparkColor: "var(--c-chart-dict)",
     },
@@ -227,7 +227,7 @@ function tileSpecs(stats: UsageStats, dense: UsageSeriesPoint[], scope: UsageSco
   return tiles;
 }
 
-const TONE: Record<TileSpec["tone"], string> = { accent: "text-accent", ok: "text-ok", warn: "text-warn", text: "text-text" };
+const TONE: Record<TileSpec["tone"], string> = { dict: "text-chart-dict", ok: "text-ok", warn: "text-warn", text: "text-text" };
 
 function StatTile({ tile, spark }: { tile: TileSpec; spark: boolean }) {
   const Icon = tile.icon;

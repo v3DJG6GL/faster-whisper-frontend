@@ -94,6 +94,14 @@ describe("manifest integrity", () => {
     }
   });
 
+  it("the appearance settings form their own Sync group card", () => {
+    // Theme, Signal colour and Motion sit under their own Settings tab and the Sync tab
+    // mirrors that: one "Appearance" card, not three rows buried in General.
+    const ids = settingsOfGroup("appearance").map((d) => d.id).sort();
+    expect(ids).toEqual(["accentHue", "accentMotion", "theme"]);
+    expect(settingsOfGroup("general").some((d) => d.id === "theme")).toBe(false);
+  });
+
   it("the retired insertTiming has no sync row", () => {
     // The field is kept in the type for rollbacks but has no UI control anywhere, so a
     // per-setting sync switch for it would advertise something the user cannot change.

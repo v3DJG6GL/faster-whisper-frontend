@@ -56,7 +56,7 @@ describe("deriveAccent", () => {
     // D13′: the translating stage, the speaker palette and the armed amber are fixed
     // app.css tokens; the accent must not be able to move them.
     expect(Object.keys(deriveAccent(185, true)).sort()).toEqual(
-      ["accent", "chart", "glow0", "glowA", "glowB", "ink", "soft"],
+      ["accent", "glow0", "glowA", "glowB", "ink", "soft"],
     );
   });
 });
@@ -193,8 +193,8 @@ describe("applyTheme + setAccentHue", () => {
     applyTheme("auto");
     expect(dataset.theme).toBe("light");
     expect(props.get("--c-accent")).toBe(deriveAccent(275, false).accent);
-    expect(props.get("--c-chart-dict")).toBe(deriveAccent(275, false).chart);
-    // Fixed state tokens are never stamped, whatever the hue.
+    // Fixed state and kind tokens are never stamped, whatever the hue.
+    expect(props.has("--c-chart-dict")).toBe(false);
     expect(props.has("--c-translate")).toBe(false);
     expect(props.has("--spk-1")).toBe(false);
     expect(props.has("--c-armed")).toBe(false);
