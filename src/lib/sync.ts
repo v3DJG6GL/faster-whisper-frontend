@@ -516,12 +516,6 @@ export async function composeBlob(
         blob.backends = snapshot?.backends;
       }
     }
-  } else if (opts.includeSecrets && snapshotSecretsUnavailable) {
-    // The snapshot recorded keys we could not read back this session — and the snapshot holds
-    // no key VALUES (those live in the keyring), so neither its list nor an omitted key can be
-    // pushed without erasing the server's stored keys (see above). `pushNow` refuses the whole
-    // push while this latch is set (`backendsPushBlocked`); this arm only keeps the shape sane.
-    blob.backends = snapshot?.backends;
   } else {
     blob.backends = snapshot?.backends;
   }
@@ -550,8 +544,8 @@ export async function composeBlob(
         (blob as Record<string, unknown>)[c] = gateComposeScalar(c, blob[c], snapshot?.[c], gates);
       }
     }
-    if (cats.backends && blob.backends) {
-      let list = blob.backends.list;
+    if (cats.backends && isPlainObject(blob.backends)) {
+      let list = Array.isArray(blob.backends.list) ? blob.backends.list : [];
       const snapList = snapshot?.backends?.list;
       if (!gates.serverAddresses) list = substituteElementFields(list, snapList, ["serverUrl"]);
       if (!gates.modelDecodeDefaults)
@@ -2219,7 +2213,7 @@ export async function pushNow(manual = false): Promise<void> {
           });
           return;
         }
-        await applyBlob(merged, pushCats);
+        if (!(await applyBlob(merged, pushCats))) return;
         blob = merged;
         base = remote.version;
         continue;
@@ -2276,6 +2270,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     setRuntime({ syncStatus: "ok" });
     return;
   }
+  if (myGen !== gen) return;
   // Persist what the SERVER holds (remote), not the merge result: snapshot is
   // the 3-way base for the NEXT sync and hash is the did-anything-change gate
   // for pushes. Recording `merged` here would make the follow-up push compose

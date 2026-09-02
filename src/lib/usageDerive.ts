@@ -541,10 +541,8 @@ export function streakFor(streaks: Partial<UsageStreaks> | null | undefined, sco
 
 /* ── stages ─────────────────────────────────────────────────────────────── */
 
-export type StageKey = "translating" | "diarizing" | "vad" | "separating";
-
 export interface StageRowMeta {
-  key: StageKey;
+  key: UsageStageKey;
   label: string;
   /** CSS token for the stage's dot + meter (the existing pipeline-stage hues). */
   colorVar: string;
@@ -591,12 +589,12 @@ export function orderedStageRows(withS: readonly UsageStageKey[]): StageRowMeta[
 
 /** The audio stages only ever run on files and links; under a Dictation or Text kind
  *  their rows say so instead of showing an empty meter. */
-export function stageAppliesToScope(key: StageKey, scope: UsageScope): boolean {
+export function stageAppliesToScope(key: UsageStageKey, scope: UsageScope): boolean {
   return key === "translating" || scope === "all" || scope === "file" || scope === "url";
 }
 
 /** The server's row for a stage, if it reported one with any runs. */
-export function findStage(stages: readonly UsageStage[] | undefined, key: StageKey): UsageStage | undefined {
+export function findStage(stages: readonly UsageStage[] | undefined, key: UsageStageKey): UsageStage | undefined {
   const s = stages?.find((x) => x && x.stage === key);
   return s && typeof s.runs === "number" && s.runs > 0 ? s : undefined;
 }

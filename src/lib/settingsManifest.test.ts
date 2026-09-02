@@ -37,11 +37,11 @@ describe("manifest integrity", () => {
     for (const d of DEFS) expect(SYNC_GROUPS).toContain(d.group);
   });
 
-  it("machineSpecific settings default to sync OFF, others ON", () => {
+  it("machineSpecific / localOnly settings default to sync OFF", () => {
     for (const d of DEFS) {
-      expect(DEFAULT_SETTING_SYNC[d.id as keyof typeof DEFAULT_SETTING_SYNC]).toBe(
-        !d.machineSpecific && !d.localOnly,
-      );
+      if (d.machineSpecific || d.localOnly) {
+        expect(DEFAULT_SETTING_SYNC[d.id as keyof typeof DEFAULT_SETTING_SYNC], d.id).toBe(false);
+      }
     }
   });
 

@@ -19,7 +19,7 @@ function isDeceptiveFormatChar(code: number): boolean {
     code === 0x1160 || // HANGUL JUNGSEONG FILLER — category-based rule reaches these
     code === 0x3164 || // HANGUL FILLER
     code === 0xffa0 || // HALFWIDTH HANGUL FILLER
-    (code >= 0x200b && code <= 0x200f) || // ZWSP/ZWNJ/ZWJ/LRM/RLM
+    code === 0x200b || code === 0x200e || code === 0x200f || // ZWSP/LRM/RLM (NOT ZWNJ/ZWJ — see Rust twin)
     code === 0x2028 || code === 0x2029 || // LINE/PARAGRAPH SEPARATOR — Zl/Zp, so the Cc test in
                                           // the callers misses them, yet both are UAX#14 mandatory
                                           // breaks. Rust's twin has had them since H12; here they
@@ -79,9 +79,10 @@ export function safeDisplayText(s: unknown, max = 200): string {
  *  re-saving it did not repair it. App rules have no consent gate and raise no security-review
  *  prompt, so such a rule arrives on an unattended pull.
  *
- *  The producer side is normalized to match: `atspi_guard` already ran the AT-SPI application name
- *  through the same class, and `win_focus::exe_basename` now does too — normalizing only the rule
- *  would invert the bug on Windows, where a filename legitimately may carry those characters. */
+ *  The producer side is normalized to match: `atspi_guard` runs the AT-SPI application name
+ *  through `bounded_server_text` (which calls `is_deceptive_format_char`), and
+ *  `win_focus::exe_basename` does too — normalizing only the rule would invert the bug on
+ *  Windows, where a filename legitimately may carry those characters. */
 export function normalizeAppId(s: unknown): string {
   let out = "";
   for (const ch of safeDisplayText(s, 200)) {

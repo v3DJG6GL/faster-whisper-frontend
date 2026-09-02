@@ -308,6 +308,12 @@ function stampHue(hue: number, dark: boolean): void {
 
 /** Stamp the resolved theme on the document root (the only place data-theme is set),
  *  then the Signal colour derived for that theme at this instant. */
+export function applyAccentAndTheme(hue: number | undefined, motion: AccentMotion | undefined, theme: ThemeName): void {
+  setAccentHue(hue ?? DEFAULT_ACCENT_HUE);
+  setAccentMotion(motion);
+  applyTheme(theme);
+}
+
 export function applyTheme(t: ThemeName): void {
   const resolved = resolvedTheme(t);
   document.documentElement.dataset.theme = resolved;

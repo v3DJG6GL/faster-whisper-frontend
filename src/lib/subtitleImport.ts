@@ -117,7 +117,7 @@ function parseVtt(body: string): ImportedText {
     const raw = lines.slice(i + 1).join(" ");
     const v = /^<v\s+([^>]{1,40})>([\s\S]*?)(?:<\/v>)?$/.exec(raw.trim());
     if (v) {
-      const { text } = cueText([v[2]]);
+      const text = v[2].replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, "").replace(/\s+/g, " ").trim();
       if (text) segments.push({ start, end, text, speaker: v[1].trim() });
     } else {
       const { text, speaker } = cueText(lines.slice(i + 1));
@@ -191,7 +191,8 @@ function parseJsonExport(body: string): ImportedText {
               : undefined,
       });
     }
-  } else if (typeof obj.text === "string" && obj.text.trim()) {
+  }
+  if (segments.length === 0 && typeof obj.text === "string" && obj.text.trim()) {
     return parsePlainText(obj.text);
   }
   return {

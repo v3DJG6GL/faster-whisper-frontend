@@ -93,7 +93,7 @@ export function useOverrideContext(args: {
 
   useEffect(() => {
     const name = profileName?.trim();
-    if (!name || name === NO_OVERRIDE_PROFILE || serverKind === "standard") {
+    if (!name || name === NO_OVERRIDE_PROFILE || serverKind === "standard" || !backendId) {
       setResolved(undefined);
       setResolvedPrompt(undefined);
       return;

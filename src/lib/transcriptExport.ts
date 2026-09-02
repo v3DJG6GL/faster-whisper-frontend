@@ -246,14 +246,13 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
       result.segments
         .flatMap((seg) => {
           const prefix = seg.speaker && ctx.names ? `${nameOf(ctx, seg.speaker)}: ` : "";
+          const tranFirst = ctx.opts.lineOrder === "trans-first";
           return cueLines(
             ctx,
             seg,
-            `[${txtTime(seg.start)}] ${prefix}${clean(seg.text)}`,
-            // The time moves onto the translated line when the original is hidden — a
-            // translations-only TXT with Timestamps on otherwise had no time at all.
+            `${ctx.origIncluded && tranFirst ? "        " : `[${txtTime(seg.start)}] `}${prefix}${clean(seg.text)}`,
             (t, s, lang) =>
-              `${ctx.origIncluded ? "        " : `[${txtTime(s.start)}] `}${ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
+              `${ctx.origIncluded && !tranFirst ? "        " : `[${txtTime(s.start)}] `}${ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
           );
         })
         .join("\n") + "\n"
@@ -621,8 +620,6 @@ export function exportFileNames(opts: ExportOptions): ((stem: string) => string)
   return [(stem: string) => `${stem}${exportStemSuffix(opts.tracks)}.${EXPORT_EXTENSIONS[opts.format]}`];
 }
 
-/** ".de" when exactly one translated track (and not the original) is picked —
- *  so single-language exports name themselves; "" otherwise. */
 /** Track codes reach a filename (the stem suffix and the per-track LRC name); they come
  *  from server-advertised / peer-synced settings, so keep them to path-safe characters. */
 const trackSlug = (c: string) => c.replace(/[^A-Za-z0-9-]/g, "");

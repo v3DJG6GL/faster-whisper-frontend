@@ -952,8 +952,6 @@ function abandonActiveRun(): void {
   if (target) void cancelBackendTranscription(target).catch(() => {});
 }
 
-/** Sequential queue pump. Runs detached from the component; every commit
- *  compares against the CURRENT epoch so a cancel/input-change abandons it. */
 /** Translate-only run for a subtitle/text source: read + parse locally, one
  *  batched /v1/text/translations call, assemble a BatchResult the viewer,
  *  history and exports consume like any other. */
@@ -1031,7 +1029,7 @@ export function assembleTranslatedSegments(
 ): { start: number; end: number; text: string; speaker?: string; translations?: Record<string, string>; translationsKept?: string[] }[] {
   return parsed.map((seg, i) => ({
     start: seg.start ?? i,
-    end: seg.end ?? (seg.start !== undefined ? seg.start : i + 1),
+    end: seg.end ?? (parsed[i + 1]?.start ?? (seg.start !== undefined ? seg.start + 1 : i + 1)),
     text: seg.text,
     ...(seg.speaker ? { speaker: seg.speaker } : {}),
     ...(results[i] && Object.keys(results[i]).length ? { translations: results[i] } : {}),
@@ -1265,7 +1263,7 @@ export function cancelRun() {
   // Abort the in-flight file AND skip everything queued. Two sides to the
   // abort: the server is told to stop the actual work (dropping the HTTP
   // request alone leaves its pipeline stages running to completion), and
-  // the Rust epoch bump drops our end of the request. Bumping the epoch
+  // the store epoch bump drops our end of the request. Bumping the epoch
   // makes the pump exit and ignores the aborted call's rejection.
   abandonActiveRun();
   set((s) => ({

@@ -136,9 +136,9 @@ describe("applyImport", () => {
     const sel = { ...allOff(), general: true };
     await applyImport(sel, emptyResult());
     expect(applyBlob).toHaveBeenCalledTimes(1);
-    const [, passedSel, direction, opts] = vi.mocked(applyBlob).mock.calls[0];
+    const [, passedSel, retries, opts] = vi.mocked(applyBlob).mock.calls[0];
     expect(passedSel).toEqual(sel);
-    expect(direction).toBe(2);
+    expect(retries).toBe(2);
     expect(opts).toEqual({ ignoreGates: true });
   });
 });

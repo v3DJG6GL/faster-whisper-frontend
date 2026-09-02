@@ -226,8 +226,10 @@ export async function flushOutcomes(): Promise<void> {
         if (!batch) break;
         const ids = batch.items.map((x) => x.outcome.job_id);
         // A backend the user removed can no longer be authenticated (its key left the
-        // keyring with it): its outcomes have nowhere to go.
-        if (!useApp.getState().backends.some((b) => b.id === batch.backendId)) {
+        // keyring with it): its outcomes have nowhere to go.  Guard on configLoaded so
+        // the empty boot-time list doesn't look like "all backends removed."
+        const st = useApp.getState();
+        if (st.configLoaded && !st.backends.some((b) => b.id === batch.backendId)) {
           queue = applyPost(queue, ids, "drop", now);
           persist();
           continue;

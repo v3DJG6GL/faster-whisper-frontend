@@ -2,12 +2,10 @@
 // events into the store (status / level / live transcript) and into the focused
 // app (text injection).
 //
-// Injection timing (Settings → General → Auto-insert):
-//   • "off"  — never insert.
-//   • "stop" — insert the whole transcript once, when dictation stops (uses the
-//              chosen Insertion-method: clipboard paste or direct typing).
-//   • "live" — insert each phrase AS YOU FINISH IT (streaming backends only, and
-//              only when the Profile's activation is hands-free — never hold; see below).
+// Injection timing (per-Profile "Type as I speak"):
+//   • off   — insert the whole transcript once, when dictation stops.
+//   • on    — insert each phrase AS YOU FINISH IT (streaming backends only, and
+//             only when the Profile's activation is hands-free — never hold; see below).
 //
 // Live insert is NOT possible in HOLD/push-to-talk mode: the activation chord is
 // physically held for the entire dictation, so the compositor folds that held
@@ -1223,7 +1221,8 @@ function settleToIdleAfterInjection(startedAt: number, cfg: InsertCfg | null): v
       // B has independently reached "injecting" — settling on status alone would idle B mid-injection
       // (and stamp its outcome wrong). A normal end keeps insertCfg===cfg; a cancel (→null) or restart
       // (→new object) makes this a no-op. Mirrors the inject tasks' `insertCfg !== cfg` guard.
-      if (insertCfg === cfg && useApp.getState().status === "injecting") {
+      const curStatus = useApp.getState().status;
+      if (insertCfg === cfg && (curStatus === "injecting" || curStatus === "error")) {
         settleIdle();
       }
     }, wait);
@@ -2096,6 +2095,7 @@ async function ensureListeners(): Promise<void> {
             // "unavailable": no picker could be shown → the configured targets stand.
           }
           if (sessionTranslation) {
+            setDictation({ status: "translating" });
             const one = await maybeTranslate(text, cfg, { oneShot: true });
             if (insertCfg !== cfg) return;
             outText = one.text;
@@ -2888,6 +2888,11 @@ function applyReclassify(profile: Profile): void {
   lastSpokeAt = performance.now();
   autoStopMs = rec.handsFreeAutoStopMin > 0 ? rec.handsFreeAutoStopMin * 60_000 : 0;
   st.setDictation({ activeProfile: profile.id });
+  if (sessionMeta) {
+    sessionMeta.activation = "handsfree";
+    sessionMeta.profileName = profile.name;
+    sessionMeta.profileTag = profile.tag?.trim() || undefined;
+  }
 }
 
 export async function stopLive(): Promise<void> {
