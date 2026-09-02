@@ -27,7 +27,7 @@ import {
   foldDropped,
   foldLines,
   followReduce,
-  matchesFilters,
+  makeLogFilter,
   type FoldedLine,
   type FollowState,
   type LevelThreshold, bugReportRunFields, countNewer } from "@/lib/logFilter";
@@ -174,6 +174,8 @@ export default function Logs() {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Clear a still-pending "Copied" timer if the screen unmounts mid-window.
+  useEffect(() => () => window.clearTimeout(copyTimerRef.current), []);
   const [follow, setFollow] = useState<FollowState>({ follow: true, pendingNew: 0 });
 
   // Attach the stream for the screen's lifetime; badge clears on open & close.
@@ -205,7 +207,7 @@ export default function Logs() {
   // roll-over) still filters, so its chip must stay on-screen to be switchable off.
   const chips = useMemo(() => [...new Set([...collectTags(all), ...tags])], [all, tags]);
   const lines = useMemo(
-    () => all.filter((l) => matchesFilters(l, threshold, tags, text)),
+    () => all.filter(makeLogFilter(threshold, tags, text)),
     [all, threshold, tags, text],
   );
   const rows = useMemo(

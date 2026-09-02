@@ -39,7 +39,7 @@ import {
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
   cpsWarnings, DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExports,
-  speakerColorIndex, speakerHex, speakerOrder,
+  prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
   type ExportFormat, type ExportOptions, exportFileNames } from "@/lib/transcriptExport";
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
 import { cn } from "@/lib/cn";
@@ -117,15 +117,9 @@ type ContractRow = {
   onToggle?: () => void;
 };
 
-/** "SPEAKER_00" → "Speaker 1"; anything else verbatim (already bounded by Rust). */
-export function prettySpeaker(label: string): string {
-  const m = /^SPEAKER_(\d+)$/.exec(label);
-  return m ? `Speaker ${parseInt(m[1], 10) + 1}` : label;
-}
-
 /** Distinct speaker labels of a result, in first-appearance order — the
  *  export module owns the implementation (one resolver for viewer + exports). */
-export { speakerOrder as speakersOf } from "@/lib/transcriptExport";
+export { speakerOrder as speakersOf, prettySpeaker } from "@/lib/transcriptExport";
 
 type EffSegment = {
   start: number;
@@ -355,7 +349,7 @@ const SegmentRow = memo(function SegmentRow({
               className="block min-w-0 whitespace-pre-wrap text-faint"
               onClick={!origVisible && canSeek ? () => seekTo(seg.start) : undefined}
             >
-              <LangTag code={lang} color="var(--c-faint)" />
+              <LangTag code={safeDisplayText(lang, 16)} color="var(--c-faint)" />
               {stripControlChars(tr.trim())}
               <span className="ml-2 align-middle font-mono text-[10.5px]">
                 · kept original — re-translate in Edit
@@ -392,7 +386,7 @@ const SegmentRow = memo(function SegmentRow({
             style={{ color: mtColor }}
             onClick={!origVisible && canSeek ? () => seekTo(seg.start) : undefined}
           >
-            <LangTag code={lang} color={mtAccent} />
+            <LangTag code={safeDisplayText(lang, 16)} color={mtAccent} />
             {stale ? (
               <s>{stripControlChars(tr.trim())}</s>
             ) : trWords ? (
@@ -761,6 +755,13 @@ export function TranscriptViewer({
   // A symphonia decode is in flight — the stall watchdog must not advance
   // the chain past it (a long file legitimately takes seconds to decode).
   const decodePendingRef = useRef(false);
+  // Mirrors decodePendingRef for the readMediaFile buffer stage — same hazard:
+  // the watchdog must not re-enter onAudioError while a buffer read is in flight.
+  const bufferPendingRef = useRef(false);
+  // Generation counter for the audio fallback chain: bumped on every record switch
+  // (path/mediaPath change) so an in-flight readMediaFile/decodeMediaFile from the
+  // OLD record does not land its result on the NEW record's player.
+  const audioGenRef = useRef(0);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
@@ -1258,6 +1259,8 @@ export function TranscriptViewer({
     blobTriedRef.current = false;
     wavTriedRef.current = false;
     decodePendingRef.current = false;
+    bufferPendingRef.current = false;
+    audioGenRef.current += 1;
     setBlobSrc(null);
     // mediaPath, not just path: two same-URL records share a path but each holds its OWN
     // copy (keyed on the record id), so a record switch that changes only mediaPath must
@@ -1308,6 +1311,11 @@ export function TranscriptViewer({
   /** `read_media_file`'s over-cap refusal (its exact wording is `MEDIA_TOO_LARGE` in Rust). */
   const isTooLargeToBuffer = (e: unknown) => String(e).includes("too large to buffer");
   const onAudioError = (reason?: string) => {
+    // Capture the current generation so async callbacks from a previous record
+    // (still in flight after a record switch) are silently discarded.
+    const gen = audioGenRef.current;
+    const stale = () => gen !== audioGenRef.current;
+
     if (blobTriedRef.current) {
       if (wavTriedRef.current) {
         setAudioBroken(true);
@@ -1317,6 +1325,7 @@ export function TranscriptViewer({
       }
       wavTriedRef.current = true;
       const fail = (why: "gone" | "codec" = "codec", detail?: string) => {
+        if (stale()) return;
         setAudioBroken(true);
         setBrokenWhy(why);
         if (detail) setBrokenDetail(detail);
@@ -1329,11 +1338,13 @@ export function TranscriptViewer({
         decodePendingRef.current = true;
         decodeMediaFile(p)
           .then((wavPath) => {
+            if (stale()) return;
             if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
             blobUrlRef.current = null;
             setBlobSrc(convertFileSrc(wavPath));
           })
           .catch((e) => {
+            if (stale()) return;
             if (next) return next();
             fail(
               String(e).includes("gone") ? "gone" : "codec",
@@ -1354,6 +1365,7 @@ export function TranscriptViewer({
     }
     blobTriedRef.current = true;
     const asBlob = (buf: ArrayBuffer, p: string) => {
+      if (stale()) return;
       const url = URL.createObjectURL(new Blob([buf], { type: mediaMime(p) }));
       blobUrlRef.current = url;
       setBlobSrc(url);
@@ -1365,9 +1377,11 @@ export function TranscriptViewer({
         setBrokenWhy("gone");
         return;
       }
+      bufferPendingRef.current = true;
       readMediaFile(mediaPath)
         .then((buf) => asBlob(buf, mediaPath))
         .catch((e) => {
+          if (stale()) return;
           // Rust refuses to buffer a file past its IPC cap — that is not a missing
           // copy: re-enter with the blob stage marked tried so it plays from the
           // decoded WAV through the asset protocol instead.
@@ -1375,12 +1389,15 @@ export function TranscriptViewer({
           setAudioBroken(true);
           setBrokenWhy("gone");
           setBrokenDetail(`could not read the stored copy: ${String(e)}`);
-        });
+        })
+        .finally(() => { bufferPendingRef.current = false; });
       return;
     }
+    bufferPendingRef.current = true;
     readMediaFile(path)
       .then((buf) => asBlob(buf, path))
       .catch((e) => {
+        if (stale()) return;
         if (isTooLargeToBuffer(e)) return onAudioError(String(e));
         // Original unreadable (moved/deleted) — fall back to the app's copy.
         if (!mediaPath) {
@@ -1390,28 +1407,31 @@ export function TranscriptViewer({
         }
         readMediaFile(mediaPath)
           .then((buf) => {
+            if (stale()) return;
             asBlob(buf, mediaPath);
             setAudioNote("copy");
           })
           .catch((e2) => {
+            if (stale()) return;
             if (isTooLargeToBuffer(e2)) return onAudioError(String(e2));
             setAudioBroken(true);
             setBrokenWhy("gone");
           });
-      });
+      })
+      .finally(() => { bufferPendingRef.current = false; });
   };
 
   // WebKitGTK doesn't reliably fire `error` for an unsupported container —
   // observed with yt-dlp's fragmented m4a it just stalls with readyState 0
   // forever, so an error-event-driven fallback chain never advances. Treat
   // a source that produces no metadata within 6 s as errored (unless a
-  // decode is already in flight — that legitimately takes seconds).
+  // decode or buffer read is already in flight — both legitimately take seconds).
   const activeAudioSrc = blobSrc ?? audioSrc;
   useEffect(() => {
     if (!activeAudioSrc || audioBroken) return;
     const t = window.setTimeout(() => {
       const a = audioRef.current;
-      if (a && a.readyState === 0 && !decodePendingRef.current)
+      if (a && a.readyState === 0 && !decodePendingRef.current && !bufferPendingRef.current)
         onAudioError("stalled — no media events within 6 s");
     }, 6000);
     return () => window.clearTimeout(t);
@@ -2824,7 +2844,7 @@ export function TranscriptViewer({
                 translationsKept={result.segments?.[i]?.translationsKept}
                 visLangsKey={visLangsKey}
                 origVisible={origVisible}
-                origLang={result.language ?? "??"}
+                origLang={safeDisplayText((result.language ?? "??"), 16)}
                 stale={!!fileStale[i]}
                 isFrontier={i === (trRun?.frontierIdx ?? -1)}
                 colorOf={colorOf}

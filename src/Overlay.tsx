@@ -188,6 +188,13 @@ export default function Overlay() {
     quickLaunch: [],
   });
 
+  // Track the last-applied accent/theme so the ~30 Hz level stream does not
+  // re-stamp the whole accent engine on every sample (setAccentMotion tears down
+  // and re-arms the drift interval, applyTheme writes ~11 custom properties).
+  const prevHueRef = useRef<number>(DEFAULT_ACCENT_HUE);
+  const prevMotionRef = useRef<AccentMotion | undefined>(undefined);
+  const prevThemeRef = useRef<string>("auto");
+
   // Live updates from the Rust core when running under Tauri.
   useEffect(() => {
     if (!isTauri) return;
@@ -197,11 +204,14 @@ export default function Overlay() {
       .then(({ listen, emit }) => {
         const registered = listen<ChipState>("dictation://update", (e) => {
           const theme = e.payload.theme ?? "auto";
-          setAccentHue(e.payload.accentHue ?? DEFAULT_ACCENT_HUE);
-          setAccentMotion(e.payload.accentMotion);
-          // Follow the app's theme (the chip is a separate webview); "auto" resolves
-          // against this webview's own prefers-color-scheme — same OS, same answer.
-          applyTheme(theme);
+          const hue = e.payload.accentHue ?? DEFAULT_ACCENT_HUE;
+          const mot = e.payload.accentMotion;
+          // Only re-apply accent/theme when the values actually change —
+          // the level stream fires ~30 Hz and each call tears down the drift
+          // timer and writes ~11 custom properties on the document root.
+          if (hue !== prevHueRef.current) { prevHueRef.current = hue; setAccentHue(hue); }
+          if (mot !== prevMotionRef.current) { prevMotionRef.current = mot; setAccentMotion(mot); }
+          if (theme !== prevThemeRef.current) { prevThemeRef.current = theme; applyTheme(theme); }
           setState({
             ...e.payload,
             warming: e.payload.warming ?? false,
@@ -364,7 +374,8 @@ export default function Overlay() {
     return () => clearTimeout(t);
   }, [wantExpanded, state.partial]);
 
-  // Hover-to-reveal: holding the cursor over the chip for ≥1s expands it to show
+  // Hover-to-reveal: holding the cursor over the chip for the configured delay
+  // (hoverRevealMs, default 500 ms) expands it to show
   // the language + stream/batch detail beside the tag. (Under Tauri this only fires
   // once the chip's input region is shaped — see overlay.rs / setChipHitRegion;
   // in the browser preview there's no click-through, so it works directly.)
@@ -1159,7 +1170,7 @@ export default function Overlay() {
             )}
           />
 
-          {/* Identity row: the Profile tag (hover ≥1s reveals "│ language · mode", which animates
+          {/* Identity row: the Profile tag (hover-dwell reveals "│ language · mode", which animates
               its WIDTH open so the text never scales), the usage readout, and the P16/D injection
               target — each its own group, joined by thin vertical rules so they don't blur into one
               chain. The tag│language seam rides the hover-reveal (inside the tag group above). */}
@@ -1282,7 +1293,11 @@ export default function Overlay() {
                                     reordered while the copy that actually lands is cleaned by
                                     `sanitize_injected`. `stripControlChars` is that function's TS
                                     mirror and keeps Tab/LF, so wrapping is unaffected. */}
-                                {stripControlChars(state.partial.slice(-400))}
+                                {/* Code-point-safe tail: slice(-400) counts UTF-16 units and
+                                    can split a surrogate pair, producing a lone low surrogate
+                                    that renders as U+FFFD. Spread → slice → join iterates
+                                    code points, matching safeDisplayText's contract. */}
+                                {stripControlChars([...state.partial].slice(-400).join(""))}
                               </span>
                             </div>
                             {faded && (

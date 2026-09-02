@@ -221,12 +221,12 @@ export function ConfirmLeave({
 // The pill's shape, shared with RouteBadge below. Exported as a STRING rather than
 // widening Badge with a className/tone: Badge has neither by design, it is used on
 // nearly every screen, and a per-site escape hatch on it would be the end of that.
-// `max-w` + `truncate`: badges carry remote-authored leaves (a backend's language, a
-// profile's tag) whose sanitizers bound the LIST length, not the per-field length — and
-// `languageLabel` returns an unknown code unchanged. Unbounded here, one field pushed
-// the Test/Edit/Remove controls off the card it labels.
+// `max-w-[16ch]` + `truncate`: badges carry remote-authored leaves (a backend's
+// language, a profile's tag) whose sanitizers bound the LIST length, not the per-field
+// length — and `languageLabel` returns an unknown code unchanged. Unbounded here, one
+// field pushed the Test/Edit/Remove controls off the card it labels.
 export const BADGE_BASE =
-  "inline-block align-bottom rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider";
+  "inline-block align-bottom rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider max-w-[16ch] truncate";
 
 /** A small uppercase pill. `accent` = highlighted, `warn` = caution, default = dim. */
 export function Badge({ children, tone }: { children: ReactNode; tone?: "accent" | "dim" | "warn" }) {
@@ -317,7 +317,9 @@ export function RouteBadge({ source, targets }: { source: string; targets?: stri
   return (
     // max-w is raised over BADGE_BASE's 16ch because this pill legitimately holds a
     // route, not a single leaf — each PART is bounded by routeParts instead.
-    <span className={cn(BADGE_BASE, "max-w-[34ch] bg-surface-2")}>
+    // `truncate` (overflow-hidden + text-ellipsis) clips when the combined parts still
+    // exceed the raised cap.
+    <span className={cn(BADGE_BASE, "max-w-[34ch] truncate bg-surface-2")}>
       <span className="text-dim">{r.source || "auto"}</span>
       {r.targets.length > 0 && (
         <>

@@ -460,14 +460,9 @@ export function RestoreFromServer({
   );
 }
 
-/** Every string in this dialog came from the untrusted blob, and it is the ONE surface where the
- *  user decides whether to trust an address. Strip the characters that let a sender make text
- *  read as something other than what it is — C0/C1 controls, the bidi overrides and isolates
- *  (U+202A–U+202E, U+2066–U+2069) and the invisible marks — and bound the length so a long value
- *  cannot push the buttons off screen. */
+/** Maximum category rows shown in the SecurityReviewDialog change list. */
 const MAX_REVIEW_ROWS = 50;
-/** Moved to lib/sanitize.ts (`safeDisplayText`) so the sibling dialogs and cards that render
- *  remote-authored identity share one implementation — and one Cf denylist — with this one. */
+/** Alias for `safeDisplayText` — every string in this dialog came from the untrusted blob. */
 const safeText = safeDisplayText;
 
 /** The label for the "adopt the other device's value" arm of a conflict choice. The name is

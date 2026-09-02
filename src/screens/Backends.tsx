@@ -14,7 +14,7 @@ import { languageLabel } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey, syncPull } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/syncTypes";
-import { ALL_CATEGORIES } from "@/lib/sync";
+import { ALL_CATEGORIES, migrateBlob } from "@/lib/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
 import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
@@ -156,6 +156,12 @@ function Editor({
       if (liveTarget.current.url === testedUrl && liveTarget.current.key === testedKey) {
         setResult(info);
         setConnection(b.id, info);
+      }
+    } catch (e) {
+      // IPC reject (same guard the list card's handleTest carries) — surface the
+      // failure so the editor doesn't just silently stop.
+      if (liveTarget.current.url === testedUrl && liveTarget.current.key === testedKey) {
+        setResult({ ok: false, openMode: false, models: [], error: String(e) });
       }
     } finally {
       setTesting(false);
@@ -722,7 +728,7 @@ function RestoreOffer({
           {remote.updated_at ? ` · ${relTime(remote.updated_at * 1000)}` : ""}
         </div>
         <div className="mt-2.5 flex flex-wrap gap-1.5">
-          {ALL_CATEGORIES.filter((c) => remote.blob?.[c] !== undefined).map((c) => (
+          {ALL_CATEGORIES.filter((c) => (remote.blob ? migrateBlob(remote.blob) : {})[c] !== undefined).map((c) => (
             <span
               key={c}
               className="rounded-pill border border-line-strong px-2.5 py-0.5 font-mono text-[10px] text-dim"

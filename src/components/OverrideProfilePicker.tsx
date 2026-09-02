@@ -111,7 +111,9 @@ export function OverrideProfilePicker({
         onChange={(v) => {
           if (v === CUSTOM) {
             setShowCustom(true);
-            if (value === NO_OVERRIDE_PROFILE) onChange(""); // leave the None sentinel behind
+            // Clear the parent value so it does not silently keep (and save/send) the
+            // previous server-listed name while the text field shows empty.
+            onChange("");
           } else {
             setShowCustom(false);
             onChange(v);
@@ -122,7 +124,7 @@ export function OverrideProfilePicker({
       {custom && (
         <TextInput
           aria-label={ariaLabel}
-          value={isCustomValue ? value : ""}
+          value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="profile name (e.g. clinic-de)"
         />

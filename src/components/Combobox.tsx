@@ -208,11 +208,12 @@ export function Combobox({
         aria-autocomplete="list"
         aria-activedescendant={showPopover && active >= 0 ? optId(active) : undefined}
         onChange={(e) => { wantFirstRef.current = false; onChange(e.target.value); setTyped(true); setOpen(true); setActive(-1); }}
-        onFocus={() => { if (!disabled && openOnFocus) { setTyped(false); setOpen(true); } }}
+        onFocus={() => { if (!disabled && openOnFocus) { if (!value) setTyped(false); setOpen(true); } }}
         // A click in an already-focused field (e.g. after Esc closed the popover)
         // doesn't refire onFocus — reopen explicitly so the user can get it back.
-        // (A caret-move click while the popover is open keeps the typed filter.)
-        onClick={() => { if (!disabled) { if (!open) setTyped(false); setOpen(true); } }}
+        // Preserve the typed filter: clearing it here would discard a half-typed
+        // query when the user clicks the field after Escape.
+        onClick={() => { if (!disabled) setOpen(true); }}
         onBlur={() => { setOpen(false); setActive(-1); }}
         onKeyDown={onKeyDown}
       />

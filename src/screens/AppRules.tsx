@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AppWindow, Ban, Crosshair, Pencil, Trash2 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, ConfirmLeave, EditorHeader, Labeled, ListScreenHeader, SectionLabel, TextInput, Toggle } from "@/components/ui";
+import { Button, Card, ConfirmLeave, EditorHeader, Labeled, ListScreenHeader, Notice, SectionLabel, TextInput, Toggle } from "@/components/ui";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { getFocusedOtherApp } from "@/lib/api";
 import { pasteLabel } from "@/lib/paste";
@@ -47,6 +47,7 @@ function Editor({
   const [r, setR] = useState<AppRule>(initial);
   const [capturing, setCapturing] = useState(false);
   const [captureMsg, setCaptureMsg] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   // The label we last auto-filled from "Use current", so a later capture can refresh the label
   // unless the user hand-typed a custom one (then we leave it). See captureCurrent.
   const lastAutoName = useRef<string | undefined>(undefined);
@@ -88,7 +89,11 @@ function Editor({
   const canSave = normalizeAppId(r.appId).length > 0;
 
   const save = () => {
-    if (!canSave) return false; // nothing persisted — "Save and leave" must stay
+    if (!canSave) {
+      setSaveError("A non-empty application id is required before saving.");
+      return false; // nothing persisted — "Save and leave" must stay
+    }
+    setSaveError(null);
     onSave({ ...r, appId: normalizeAppId(r.appId), name: r.name?.trim() ? r.name.trim() : undefined });
     return true;
   };
@@ -127,9 +132,10 @@ function Editor({
           onStay={guard.stay}
         />
       )}
+      {saveError && <Notice tone="warn" className="mb-3">{saveError}</Notice>}
       <Labeled label="Application id">
         <div className="flex gap-2">
-          <TextInput value={r.appId} onChange={(e) => set({ appId: e.target.value })} placeholder={APP_ID_PLACEHOLDER} />
+          <TextInput value={r.appId} onChange={(e) => { set({ appId: e.target.value }); setSaveError(null); }} placeholder={APP_ID_PLACEHOLDER} />
           <Button variant="ghost" onClick={captureCurrent} disabled={capturing} title="Use the currently focused app">
             <Crosshair className="size-4" /> {capturing ? "Detecting…" : "Use current"}
           </Button>
@@ -151,9 +157,9 @@ function Editor({
         <Toggle ariaLabel="Never type into this app" checked={r.block} onChange={(v) => set({ block: v })} />
       </div>
 
-      {/* The same four controls Settings → Dictation and the Profile editor render. This
-          screen used to hand-roll two of them, with a different label for the method and
-          its three options in a different order — pinned by nothing.
+      {/* The same four controls as the Profile editor — one component, so the labels and
+          the option order can't drift apart. Settings → Dictation keeps its own two-state
+          rows and shares only the manifest labels and METHOD_OPTIONS.
 
           "Inherit" here means the ACTIVE PROFILE's value, or the global default when the
           profile doesn't override it either. No resolved value is shown beside it, unlike

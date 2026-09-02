@@ -564,7 +564,7 @@ function LoggingSection() {
             onClick={() =>
               void pickRecordingsDir().then((picked) => {
                 if (picked) updateLogging({ logDir: picked });
-              })
+              }).catch(() => {})
             }
           >
             Change…
@@ -1046,22 +1046,26 @@ export default function Settings() {
       refreshStoreStats();
       void loadHistory(true).catch(() => {});
     };
+    const fail = (e: unknown) => {
+      setConfirming(null);
+      setStoreMsg({ text: safeDisplayText(String(e), 200), error: true });
+    };
     if (kind === "dict") {
       void deleteAllDictations(basePref)
         .then((n) => done(n, "dictation file(s)"))
-        .catch((e) => setStoreMsg({ text: safeDisplayText(String(e), 200), error: true }));
+        .catch(fail);
     } else if (kind === "files") {
       void removeTranscriptMedia("file", basePref)
         .then((n) => done(n, "audio cop(y/ies)"))
-        .catch((e) => setStoreMsg({ text: safeDisplayText(String(e), 200), error: true }));
+        .catch(fail);
     } else if (kind === "links") {
       void removeTranscriptMedia("url", basePref)
         .then((n) => done(n, "downloaded file(s)"))
-        .catch((e) => setStoreMsg({ text: safeDisplayText(String(e), 200), error: true }));
+        .catch(fail);
     } else {
       void clearFileTranscriptions(basePref)
         .then((n) => done(n, "transcript(s)"))
-        .catch((e) => setStoreMsg({ text: safeDisplayText(String(e), 200), error: true }));
+        .catch(fail);
     }
   };
   // One dictation clock for text AND audio: display the stricter of the two
@@ -1374,9 +1378,6 @@ export default function Settings() {
                   </Button>
                 </div>
               </div>
-              {storeMsg?.error && (
-                <div className="mt-2 text-[12px] text-warn">{storeMsg.text}</div>
-              )}
               {storeStats && (
                 <>
                   <div className="mt-3.5 flex h-[6px] gap-0.5">
@@ -1647,8 +1648,8 @@ export default function Settings() {
                 </Button>
               )}
             </SettingRow>
-            {storeMsg && !storeMsg.error && (
-              <div className="py-2 text-[12px] text-dim">{storeMsg.text}</div>
+            {storeMsg && (
+              <div className={`py-2 text-[12px] ${storeMsg.error ? "text-warn" : "text-dim"}`}>{storeMsg.text}</div>
             )}
 
           </Card>

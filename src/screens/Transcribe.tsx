@@ -461,7 +461,14 @@ export default function Transcribe() {
     persistOptions({ backendId: id, model: "", translationModel: "", language: lang, translateTo: nextT });
   };
   useEffect(() => {
-    if (backends.length && !backends.some((b) => b.id === backendId)) applyBackendPick(backends[0].id);
+    if (backends.length && !backends.some((b) => b.id === backendId)) {
+      // Guard: don't abandon an in-flight run when a sync push replaces the backends list.
+      // The user gestures behind `applyBackendPick` are already `disabled={busy}`, but this
+      // effect fires on store changes (applyBlob, conflict resolution) with no such gate.
+      const isRunning = queue.some((it) => it.status === "running" || it.status === "queued");
+      if (isRunning) return;
+      applyBackendPick(backends[0].id);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the resets are stable setters
   }, [backends, backendId]);
 
@@ -638,16 +645,14 @@ export default function Transcribe() {
   const stripBoxRef = useRef<HTMLDivElement | null>(null);
   const [stripW, setStripW] = useState(640);
   useEffect(() => {
-    const w = stripBoxRef.current?.offsetWidth ?? 0;
-    if (w > 0 && w !== stripW) setStripW(w);
-  });
-  useEffect(() => {
-    const measure = () => {
-      const w = stripBoxRef.current?.offsetWidth ?? 0;
+    const el = stripBoxRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const w = entry.contentRect.width;
       if (w > 0) setStripW(w);
-    };
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   const doneCount = queue.filter((it) => it.status === "done").length;

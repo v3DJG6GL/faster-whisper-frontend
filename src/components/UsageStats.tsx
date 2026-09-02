@@ -210,7 +210,7 @@ interface TileSpec {
   label: string;
   icon: typeof Type;
   value: string;
-  tone: "dict" | "ok" | "warn" | "text";
+  tone: "dict" | "ok" | "warn";
   sub: ReactNode;
   spark: number[];
   sparkColor: string;
@@ -263,7 +263,7 @@ function tileSpecs(stats: UsageStats, dense: readonly UsageKinds[], scope: Usage
 
 // "dict" is the Words tile: a figure about you, not about the Dictation kind, so it wears the
 // Signal colour like the chip's readout (D27). Kind series keep --c-chart-* (kindFill).
-const TONE: Record<TileSpec["tone"], string> = { dict: "text-accent", ok: "text-ok", warn: "text-warn", text: "text-text" };
+const TONE: Record<TileSpec["tone"], string> = { dict: "text-accent", ok: "text-ok", warn: "text-warn" };
 
 function StatTile({ tile, spark }: { tile: TileSpec; spark: boolean }) {
   const Icon = tile.icon;

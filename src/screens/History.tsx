@@ -298,18 +298,30 @@ export default function History() {
     };
   }, []);
 
+  // Pre-compute search haystacks once per record set — this avoids re-deriving
+  // every record's full text (up to 20 000 chars) on every keystroke.
+  const haystacks = useMemo(
+    () =>
+      records.map((r) => ({
+        name: r.sourceName.toLowerCase(),
+        appId: (r.appId ?? "").toLowerCase(),
+        text: recordText(r, 20_000).toLowerCase(),
+      })),
+    [records],
+  );
+
   // Search first (global — both kinds, names AND text), THEN the segment/app
   // facets, so hidden matches can be counted and surfaced.
   const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return records;
     return records.filter(
-      (r) =>
-        r.sourceName.toLowerCase().includes(q) ||
-        (r.appId ?? "").toLowerCase().includes(q) ||
-        recordText(r, 20_000).toLowerCase().includes(q),
+      (_r, i) =>
+        haystacks[i].name.includes(q) ||
+        haystacks[i].appId.includes(q) ||
+        haystacks[i].text.includes(q),
     );
-  }, [records, query]);
+  }, [records, query, haystacks]);
 
   const fileMatches = useMemo(
     () => searched.filter((r) => !isDictation(r) && r.kind !== "url" && r.kind !== "text"),
@@ -440,8 +452,10 @@ export default function History() {
       const files = generateExports(recordEditedResult(rec), {
         format,
         renames: rec.renames ?? {},
-        speakerColors: order.length && (t.colorizeSpeakers ?? true) ? "line" : "off",
-        speakerNames: t.showSpeakerNames ?? true,
+        // Match TranscriptViewer's legacy migration: the modern keys fall back
+        // through the legacy `speakerColorMode` when absent.
+        speakerColors: order.length && (t.colorizeSpeakers ?? (t.speakerColorMode ? t.speakerColorMode !== "off" : true)) ? "line" : "off",
+        speakerNames: t.showSpeakerNames ?? (t.speakerColorMode !== "line-only"),
         timestamps: t.showTimestamps ?? false,
         // THE resolver (viewer + exports) — an open-coded modulo here lacked its
         // range guards and could disagree with the viewer on a persisted index.

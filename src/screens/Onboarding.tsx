@@ -114,7 +114,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // Full backend → this account may have synced settings; discover, don't ask.
       if (res.bootId) {
         const p = await syncPull({ serverUrl, apiKey: key || null });
-        if (abandoned.current || normalizeUrl(urlRef.current) !== serverUrl) return;
+        if (abandoned.current || normalizeUrl(urlRef.current) !== serverUrl || keyRef.current !== keyAtTest) return;
         if (p.ok && p.state?.blob) {
           setPull(p);
           setStep("restore");
@@ -152,6 +152,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         s.upsertBackend(gateBackend.current);
         match = gateBackend.current;
       }
+      // Write the API key the user proved at the gate to the matched backend's keyring
+      // entry — `applyBlob` may have replaced the backends list, orphaning the key that
+      // was written under `gateBackend.id`. Mirrors Backends.RestoreOffer.finishRestore.
+      if (match && key) await setBackendKey(match.id, key);
       s.updateSync({ enabled: true, backendId: match?.id ?? null });
       finish();
     } catch (e) {
@@ -260,7 +264,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 {pull.state.updated_at ? ` · ${relTime(pull.state.updated_at * 1000)}` : ""}
               </div>
               <div className="mt-2.5 flex flex-wrap gap-1.5">
-                {ALL_CATEGORIES.filter((c) => pull.state?.blob?.[c] !== undefined).map((c) => (
+                {/* Migrate the raw blob so pre-split categories (chip, dictionary,
+                    recording/fileTranscriptions) show in the disclosure chips. */}
+                {ALL_CATEGORIES.filter((c) => (pull.state?.blob ? migrateBlob(pull.state.blob) : {})[c] !== undefined).map((c) => (
                   <span key={c} className="rounded-pill border border-line-strong px-2.5 py-0.5 font-mono text-[10px] text-dim">
                     {c === "appRules" ? "app rules" : c}
                   </span>

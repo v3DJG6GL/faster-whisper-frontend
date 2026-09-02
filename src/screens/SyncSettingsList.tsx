@@ -82,12 +82,13 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
   }, [gates]);
 
   const [ui, setUi] = useState<UiState>(loadUiState);
-  const patchUi = (p: Partial<UiState>) =>
-    setUi((prev) => {
-      const next = { ...prev, ...p, expanded: { ...prev.expanded, ...(p.expanded ?? {}) } };
-      saveUiState(next);
-      return next;
-    });
+  const patchUi = (p: Partial<UiState>) => {
+    // Compute next outside the updater so persistence can't run on a discarded
+    // concurrent-render value (StrictMode invokes updaters twice).
+    const next = { ...ui, ...p, expanded: { ...ui.expanded, ...(p.expanded ?? {}) } };
+    setUi(next);
+    saveUiState(next);
+  };
 
   const [toast, setToast] = useState<{
     text: string;
@@ -97,9 +98,9 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
 
   function setGates(patch: Partial<Record<SettingId, boolean>>) {
     const next = { ...gates, ...patch };
-    // Persist the complete gate map plus the legacy mirror key, so an older
-    // app version reading this config still sees the audio-folder intent.
-    updateSync({ sub: { ...next, recordingsDir: next.audioFolder } });
+    // Persist the complete gate map plus the legacy mirror keys, so an older
+    // app version reading this config still sees the audio-folder and auto-stop intent.
+    updateSync({ sub: { ...next, recordingsDir: next.audioFolder, latchAutoStop: next.handsFreeAutoStop } });
   }
 
   /** Reset the given switches to their DEFAULT position (not to off). */

@@ -91,7 +91,9 @@ export default function LangPick() {
           // what would have happened without the picker. Anything else makes the prompt a
           // trap — confirming it by habit would silently change the outcome. (Esc is the
           // other habit, and it aborts loudly rather than changing anything.)
-          setChosen((s.preset ?? []).filter((t) => typeof t === "string").slice(0, MAX_TARGETS));
+          setChosen([...new Set(
+            (s.preset ?? []).filter((t) => typeof t === "string" && t.length <= 64),
+          )].slice(0, MAX_TARGETS));
           setQuery("");
           setActive(0);
           setShowSeq((n) => n + 1);
@@ -132,7 +134,7 @@ export default function LangPick() {
     const base = seed.allowed?.length
       ? seed.allowed
       : LANGUAGES.filter((l) => l.value !== "auto").map((l) => l.value);
-    return base.filter((c) => typeof c === "string" && c !== seed.source);
+    return base.filter((c) => typeof c === "string" && c.length <= 64 && c !== seed.source);
   }, [seed.allowed, seed.source]);
 
   // Recents first, then everything else. Grouped rather than merged: a flat list ranked by
@@ -142,7 +144,7 @@ export default function LangPick() {
     const q = query.trim().toLowerCase();
     const match = (c: string) =>
       !q || c.toLowerCase().startsWith(q) || languageLabel(c).toLowerCase().startsWith(q);
-    const recent = (seed.recent ?? []).filter((c) => candidates.includes(c)).slice(0, MAX_RECENT);
+    const recent = [...new Set((seed.recent ?? []).filter((c) => typeof c === "string" && c.length <= 64 && candidates.includes(c)))].slice(0, MAX_RECENT);
     const rest = candidates.filter((c) => !recent.includes(c));
     return [
       { label: "Recent", items: recent.filter(match) },
@@ -260,7 +262,7 @@ export default function LangPick() {
               title={`Remove ${languageLabel(c)}`}
               className="ring-signal inline-flex items-center gap-1.5 rounded-pill border border-accent/50 px-2.5 py-1 font-mono text-[12px] text-accent"
             >
-              {c.toUpperCase()}
+              {safeDisplayText(c, 12).toUpperCase()}
               <span aria-hidden className="opacity-60">
                 ×
               </span>
@@ -341,7 +343,7 @@ export default function LangPick() {
                         on ? "text-accent" : "text-faint",
                       )}
                     >
-                      {code.toUpperCase()}
+                      {safeDisplayText(code, 12).toUpperCase()}
                     </span>
                   </li>
                 );

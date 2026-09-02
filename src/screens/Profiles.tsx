@@ -434,8 +434,8 @@ function Editor({
             );
           })()}
 
-          {/* The same four controls the Dictation tab and App Rules render — one component,
-              so the labels and the option order can't drift apart again. */}
+          {/* The same four controls as App Rules — one component, so the labels and the
+              option order can't drift apart. Settings → Dictation keeps its own two-state rows. */}
           {(() => {
             const c = dictationControls({
               value: p.insertionOverrides ?? {},
@@ -507,7 +507,7 @@ function Editor({
               })}
               inheritLabel={
                 backend?.translationOverrides?.model
-                  ? backend.translationOverrides.model
+                  ? safeDisplayText(backend.translationOverrides.model, 60)
                   : "backend default"
             }
           />
