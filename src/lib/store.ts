@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { LEGACY_HANDSFREE } from "./types";
+import { DEFAULT_PAGE_QUERY, type UsagePageQuery } from "./usageDerive";
 import type {
   AppRule,
   AppSettings,
@@ -425,6 +426,15 @@ interface AppState {
    *  persisted). The chip readout ignores this — it always uses activeStatsBackend. */
   usageViewBackendId: string | null;
 
+  /** The Statistics page's own usage document: fetched for the filters it has set
+   *  (`usageViewQuery`) against the viewed backend, tagged with the query signature it
+   *  answers so a stale response is ignored. null = nothing fetched yet / unsupported.
+   *  Runtime-only. Fed by lib/usage.ts. */
+  usageView: { sig: string; stats: UsageStats | null } | null;
+  /** What the Statistics page asked for (range preset or custom span, stage filter).
+   *  Per-device view state — never synced, never persisted. */
+  usageViewQuery: UsagePageQuery;
+
   /** Last config auto-save failure (disk full / read-only / IPC), surfaced as a banner so the
    *  user knows their recent settings/backends/profiles changes were NOT written to disk and
    *  may be lost on restart. null = last save succeeded. Runtime-only; set by the persistence
@@ -497,6 +507,10 @@ interface AppState {
 
   /** Pick which Backend the usage view shows (null = follow the dictation target). */
   setUsageViewBackend: (id: string | null) => void;
+  /** Store the Statistics page's fetched document for a query signature. */
+  setUsageView: (sig: string, stats: UsageStats | null) => void;
+  /** Change what the Statistics page asks for (the controller refetches). */
+  setUsageViewQuery: (q: UsagePageQuery) => void;
 
   /** Set (or clear, with null) the config-save error banner. */
   setSaveError: (msg: string | null, kind?: "save" | "load") => void;
@@ -616,6 +630,8 @@ export const useApp = create<AppState>((set) => ({
   usage: {},
   caps: {},
   usageViewBackendId: null,
+  usageView: null,
+  usageViewQuery: DEFAULT_PAGE_QUERY,
   saveError: null,
   saveErrorKind: null,
   logsDoorway: null,
@@ -814,6 +830,15 @@ export const useApp = create<AppState>((set) => ({
       if (hasOwn(s.usage, backendId) && JSON.stringify(s.usage[backendId]) === JSON.stringify(stats)) return {};
       return { usage: { ...s.usage, [backendId]: stats } };
     }),
+
+  setUsageView: (sig, stats) =>
+    set((s) => {
+      // Same stability rule as setUsage: the 30 s poll re-answers the same query with an
+      // identical document; keep the reference so the page does not re-render for nothing.
+      if (s.usageView && s.usageView.sig === sig && JSON.stringify(s.usageView.stats) === JSON.stringify(stats)) return {};
+      return { usageView: { sig, stats } };
+    }),
+  setUsageViewQuery: (q) => set({ usageViewQuery: q }),
 
   setCaps: (backendId, caps) =>
     set((s) => {

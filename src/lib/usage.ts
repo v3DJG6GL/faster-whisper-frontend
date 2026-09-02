@@ -3,10 +3,11 @@
 // (React) and the chip readout (the separate overlay webview, fed via
 // overlay.ts) can read it. Like overlay.ts it's a store-subscribed singleton.
 //
-// One fetch pulls the whole usage document — per-kind today/total, a 90-day
-// per-kind daily series, stages, dictation facets, apps, the activity calendar and
-// streak; the charts slice 7/30/90 days from the series client-side, so changing
-// the range never refetches. Best-effort throughout: a standard/old server (no
+// Two documents per backend: a FIXED 30-day one for the Home strip and the chip
+// (`usage[backendId]`), and — for the viewed backend only — the Statistics page's own
+// (`usageView`), fetched for whatever range / custom span / stage filter the page has set
+// (`usageViewQuery`) and refetched when that changes or the poll ticks. The kind filter
+// is client-side and never refetches. Best-effort throughout: a standard/old server (no
 // /v1/usage) or any error yields null and the stats surfaces simply hide.
 //
 // The outcome queue (lib/usageOutcome.ts) is flushed from here too: at launch, on
@@ -20,11 +21,12 @@ import { backendForProfile, homeTargetProfile } from "./dictation";
 import { effectiveServerKind } from "./serverKind";
 import { effectiveServerUrl } from "./backends";
 import { hasOwn, ownProp } from "./own";
+import { toUsageQuery, type UsagePageQuery } from "./usageDerive";
 import type { Backend } from "./types";
 
 const POLL_MS = 30_000; // steady refresh cadence
 const AFTER_SESSION_MS = 1_500; // the server records usage in its post-request finally
-export const TREND_DAYS = 90; // fetched once; the chart slices 7/30/90 from it
+export const TREND_DAYS = 30; // the Home strip's and the chip's fixed window
 
 let started = false;
 let pollingAll = false;
@@ -52,6 +54,40 @@ export function viewerTimeZone(): string | undefined {
   }
 }
 
+/** The Backend the Statistics page (and the Home strip) VIEWS: the user's pick when it
+ *  has usage, else the home-target backend, else the first backend that has usage. The
+ *  same rule UsageStats.tsx renders by, so the view document is fetched for the backend
+ *  the page shows. */
+export function viewStatsBackend(s = useApp.getState()): Backend | undefined {
+  const withUsage = s.backends.filter((b) => !!ownProp(s.usage, b.id));
+  const defaultId = homeTargetProfile(s.profiles, s.settings.homeProfileId)?.backendId ?? s.backends[0]?.id;
+  return withUsage.find((b) => b.id === s.usageViewBackendId) ?? withUsage.find((b) => b.id === defaultId) ?? withUsage[0];
+}
+
+/** The signature a view document answers: backend + target + the exact wire query. */
+export function viewSignature(backend: Backend, target: string, q: UsagePageQuery, tz: string | undefined): string {
+  return JSON.stringify([backend.id, target, toUsageQuery(q, tz)]);
+}
+
+/** Fetch the Statistics page's document for the current query against the viewed
+ *  backend. A response for a query that is no longer current is dropped. */
+async function refreshView(): Promise<void> {
+  const s = useApp.getState();
+  const backend = viewStatsBackend(s);
+  if (!backend) return;
+  const target = effectiveServerUrl(backend, s.settings);
+  const tz = viewerTimeZone();
+  const q = s.usageViewQuery;
+  const sig = viewSignature(backend, target, q, tz);
+  const stats = await getUsageStats({ serverUrl: target, backendId: backend.id, query: toUsageQuery(q, tz) });
+  const now = useApp.getState();
+  const cur = viewStatsBackend(now);
+  if (!cur || cur.id !== backend.id) return;
+  if (viewSignature(cur, effectiveServerUrl(cur, now.settings), now.usageViewQuery, tz) !== sig) return;
+  if (stats === null && now.usageView?.sig === sig) return; // keep the last-known on a transient miss
+  now.setUsageView(sig, stats);
+}
+
 async function refreshOne(backend: Backend): Promise<void> {
   const { connections, usage, setUsage } = useApp.getState();
   // Skip a server we KNOW is standard (no /v1/usage); "unknown" ⇒ try anyway.
@@ -70,8 +106,7 @@ async function refreshOne(backend: Backend): Promise<void> {
   const stats = await getUsageStats({
     serverUrl: target,
     backendId: backend.id,
-    days: TREND_DAYS,
-    tz: viewerTimeZone(),
+    query: { days: TREND_DAYS, tz: viewerTimeZone() },
   });
   // Mirror the Backends connection-test guard (+ upsertBackend's invalidation): a slow fetch against
   // the OLD server can resolve AFTER the user edited this backend's URL/key (store dropped the stale
@@ -86,7 +121,7 @@ async function refreshOne(backend: Backend): Promise<void> {
   // already in flight against the old address resolve afterwards and re-install its counters
   // under a backend that now points somewhere else — undoing the invalidation that just ran.
   if (effectiveServerUrl(cur, st.settings) !== target) return;
-  // `series` is server-supplied (Rust caps it at 366). We asked for TREND_DAYS buckets, so
+  // `series` is server-supplied (Rust caps it at 3,700). We asked for TREND_DAYS buckets, so
   // anything past that is not data we can use — but it WOULD be stored and then re-serialized by
   // setUsage's two stringify passes on the main thread, every 30s, for every backend, forever.
   if (stats?.series && stats.series.length > TREND_DAYS) {
@@ -126,6 +161,11 @@ async function refreshAll(): Promise<void> {
         }
       }
     } while (rerunRequested); // re-reads the latest backends snapshot on the rerun
+    try {
+      await refreshView();
+    } catch {
+      /* the page keeps its last document */
+    }
   } finally {
     pollingAll = false;
   }
@@ -153,6 +193,11 @@ export function initUsageController(): void {
     if (prev.status !== "idle" && state.status === "idle") {
       clearTimeout(afterTimer);
       afterTimer = setTimeout(() => void refreshAll(), AFTER_SESSION_MS);
+    }
+    // The Statistics page changed what it asks for, or which backend it looks at: fetch
+    // that document now rather than on the next 30 s tick.
+    if (state.usageViewQuery !== prev.usageViewQuery || state.usageViewBackendId !== prev.usageViewBackendId) {
+      void refreshView().catch(() => {});
     }
   });
 }

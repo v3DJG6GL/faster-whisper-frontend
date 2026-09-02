@@ -39,6 +39,10 @@
   --color-chart-file: var(--c-chart-file);
   --color-chart-link: var(--c-chart-link);
   --color-chart-text: var(--c-chart-text);
+  --color-cal-1: var(--c-cal-1);
+  --color-cal-2: var(--c-cal-2);
+  --color-cal-3: var(--c-cal-3);
+  --color-cal-4: var(--c-cal-4);
 
   --font-display: "Hubot Sans Variable", system-ui, sans-serif;
   --font-sans: "Mona Sans Variable", system-ui, sans-serif;
@@ -97,6 +101,12 @@
   --c-chart-file: #3e96ea;
   --c-chart-link: #d76797;
   --c-chart-text: #6f675c;
+  /* The Rhythm calendar's four active steps (quartiles of active days), ~0.12 OKLCH L
+     apart. Fixed like the kind colours: the ramp never follows the Signal colour. */
+  --c-cal-1: #4a3418;
+  --c-cal-2: #7a4f14;
+  --c-cal-3: #ad6b0c;
+  --c-cal-4: #e0900e;
   /* Speaker-chip palette (Transcribe screen): eight hue-separated tones at
      matched brightness, indexed — exports resolve the same indexes to the
      DEFAULT_SPEAKER_COLORS hexes in transcriptExport.ts. Coral stays
@@ -147,6 +157,10 @@
   --c-chart-file: #0f74c5;
   --c-chart-link: #b14576;
   --c-chart-text: #9a9082;
+  --c-cal-1: #e9c7a0;
+  --c-cal-2: #d9a061;
+  --c-cal-3: #c37a2a;
+  --c-cal-4: #9a4f00;
   /* Speaker-chip palette, darkened for cream backgrounds (same hue order). */
   --spk-1: #bf6f12;
   --spk-2: #33719f;

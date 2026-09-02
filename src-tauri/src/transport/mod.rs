@@ -269,13 +269,39 @@ pub struct UsageApp {
     pub words: i64,
 }
 
-/// One calendar day's words (sparse over `range.calendar_days`).
+/// Words per kind — the calendar's and the hour grid's cell payload.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageKindWords {
+    #[serde(default)]
+    pub all: i64,
+    #[serde(default)]
+    pub dictation: i64,
+    #[serde(default)]
+    pub file: i64,
+    #[serde(default)]
+    pub url: i64,
+    #[serde(default)]
+    pub text: i64,
+}
+
+/// One calendar day's words per kind (sparse over the window).
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UsageCalendarDay {
     #[serde(default)]
     pub day: i64,
+    #[serde(default, flatten)]
+    pub kinds: UsageKindWords,
+}
+
+/// One weekday × hour slot's words per kind over the window (`dow` 0 = Monday).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageHourCell {
     #[serde(default)]
-    pub words: i64,
+    pub dow: i64,
+    #[serde(default)]
+    pub hour: i64,
+    #[serde(default, flatten)]
+    pub kinds: UsageKindWords,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -286,13 +312,38 @@ pub struct UsageStreak {
     pub best: i64,
 }
 
-/// Echo of the windows the server applied.
+/// Streaks per kind over the full retained history.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageStreaks {
+    #[serde(default)]
+    pub all: UsageStreak,
+    #[serde(default)]
+    pub dictation: UsageStreak,
+    #[serde(default)]
+    pub file: UsageStreak,
+    #[serde(default)]
+    pub url: UsageStreak,
+    #[serde(default)]
+    pub text: UsageStreak,
+}
+
+/// Echo of the window the server applied (days-since-epoch in `tz`).
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UsageWindow {
     #[serde(default)]
-    pub days: i64,
+    pub from: i64,
     #[serde(default)]
-    pub calendar_days: i64,
+    pub to: i64,
+    #[serde(default)]
+    pub days: i64,
+    /// Earliest day with any usage ("All" starts here); None when there is none.
+    #[serde(default)]
+    pub first_day: Option<i64>,
+    /// "rollups", or "jobs" when a stage filter recomputed the document.
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub jobs_retention_days: i64,
 }
 
 /// The caller's own usage document — one fetch feeds the Home strip, the Statistics
@@ -321,7 +372,9 @@ pub struct UsageStats {
     #[serde(default)]
     pub calendar: Vec<UsageCalendarDay>,
     #[serde(default)]
-    pub streak: UsageStreak,
+    pub hours: Vec<UsageHourCell>,
+    #[serde(default)]
+    pub streak: UsageStreaks,
     /// Window: words / 40 wpm − audio_s, dictation only (seconds).
     #[serde(default)]
     pub time_saved_s: f64,

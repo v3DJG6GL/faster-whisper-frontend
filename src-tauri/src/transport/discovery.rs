@@ -50,7 +50,7 @@ const PROMPT_MAX: usize = 2000;
 const VALUES_MAX_BYTES: usize = 64 * 1024;
 /// Ceiling on the usage trend points kept. The server clamps `days` to 366 and the client
 /// renders the tail, so this removes the 32 MiB body headroom without clipping a real window.
-const MAX_SERIES: usize = 366;
+const MAX_SERIES: usize = 3_700;
 
 fn bounded_name(s: &str) -> String {
     super::bounded_server_text(s, MAX_NAME)
@@ -233,8 +233,65 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
 
 /// Ceiling on the list blocks of the usage document (stages / targets-per-stage / apps).
 const MAX_USAGE_LIST: usize = 16;
-/// Ceiling on the calendar days kept (the client asks for 90).
-const MAX_CALENDAR: usize = 400;
+/// Ceiling on the calendar days kept (a 10-year "All" window is 3,653 days).
+const MAX_CALENDAR: usize = 3_700;
+/// The hour grid is at most 7 × 24 slots.
+const MAX_HOURS: usize = 168;
+/// The stages a `with=` filter may name; anything else is dropped before it reaches the URL.
+const USAGE_STAGES: [&str; 4] = ["translating", "diarizing", "separating", "vad"];
+
+/// The Statistics page's query (`GET /v1/usage`): one window form — `days`, `from`/`to`
+/// (days-since-epoch), or `all` — plus the `with=` stage filter. Mirrors TS `UsageQuery`.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct UsageQuery {
+    #[serde(default)]
+    pub days: Option<i64>,
+    #[serde(default)]
+    pub from: Option<i64>,
+    #[serde(default)]
+    pub to: Option<i64>,
+    #[serde(default)]
+    pub all: bool,
+    #[serde(default)]
+    pub with: Vec<String>,
+    #[serde(default)]
+    pub tz: Option<String>,
+}
+
+impl UsageQuery {
+    /// The query string (without `?`), every value validated: integers only, a bounded
+    /// IANA zone, and only the four known stage names.
+    pub fn to_query(&self) -> String {
+        let mut q: Vec<String> = Vec::new();
+        if self.all {
+            q.push("all=1".into());
+        } else if self.from.is_some() || self.to.is_some() {
+            if let Some(f) = self.from {
+                q.push(format!("from={f}"));
+            }
+            if let Some(t) = self.to {
+                q.push(format!("to={t}"));
+            }
+        } else if let Some(d) = self.days {
+            q.push(format!("days={d}"));
+        }
+        let stages: Vec<&str> = self
+            .with
+            .iter()
+            .map(String::as_str)
+            .filter(|s| USAGE_STAGES.contains(s))
+            .collect();
+        if !stages.is_empty() {
+            q.push(format!("with={}", stages.join(",")));
+        }
+        if let Some(z) = self.tz.as_deref() {
+            if iana_zone_ok(z) {
+                q.push(format!("tz={z}"));
+            }
+        }
+        q.join("&")
+    }
+}
 
 /// An IANA zone name is `Area/City`-shaped ASCII (`Europe/Zurich`, `America/Argentina/
 /// Buenos_Aires`, `Etc/GMT+2`). Anything else is not a zone the server could resolve, and
@@ -254,26 +311,13 @@ fn iana_zone_ok(tz: &str) -> bool {
 /// standard/old server, unauthorized, unreachable) → None, so the UI simply hides the
 /// stats surfaces (Home section + chip line). Query params are omitted when None so the
 /// server applies its own defaults.
-pub async fn get_usage_stats(
-    server_url: &str,
-    api_key: Option<&str>,
-    days: Option<i64>,
-    tz: Option<&str>,
-) -> Option<UsageStats> {
+pub async fn get_usage_stats(server_url: &str, api_key: Option<&str>, query: &UsageQuery) -> Option<UsageStats> {
     let base = base_url(server_url);
-    let mut q: Vec<String> = Vec::new();
-    if let Some(d) = days {
-        q.push(format!("days={d}"));
-    }
-    if let Some(z) = tz {
-        if iana_zone_ok(z) {
-            q.push(format!("tz={z}"));
-        }
-    }
+    let q = query.to_query();
     let url = if q.is_empty() {
         format!("{base}/v1/usage")
     } else {
-        format!("{base}/v1/usage?{}", q.join("&"))
+        format!("{base}/v1/usage?{q}")
     };
     // Every string and list here rides in a struct the store re-serializes with TWO
     // JSON.stringify passes on the main thread every 30s for every backend — the same reason
@@ -289,6 +333,8 @@ pub async fn get_usage_stats(
     if u.calendar.len() > MAX_CALENDAR {
         u.calendar.drain(..u.calendar.len() - MAX_CALENDAR);
     }
+    u.hours.truncate(MAX_HOURS);
+    u.range.source = super::bounded_server_text(&u.range.source, 16);
     u.stages.truncate(MAX_USAGE_LIST);
     for st in &mut u.stages {
         st.stage = super::bounded_server_text(&st.stage, 32);
@@ -349,4 +395,28 @@ pub async fn get_override_profile(
         }
     }
     Some(p)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UsageQuery;
+
+    #[test]
+    fn usage_query_validates_every_value_before_it_reaches_the_url() {
+        let q = UsageQuery { days: Some(30), tz: Some("Europe/Zurich".into()), ..Default::default() };
+        assert_eq!(q.to_query(), "days=30&tz=Europe/Zurich");
+        // from/to win over days; all wins over both; unknown stages and a bad zone are dropped.
+        let q = UsageQuery {
+            days: Some(30),
+            from: Some(100),
+            to: Some(200),
+            with: vec!["vad".into(), "bogus; DROP".into(), "translating".into()],
+            tz: Some("../etc".into()),
+            ..Default::default()
+        };
+        assert_eq!(q.to_query(), "from=100&to=200&with=vad,translating");
+        let q = UsageQuery { all: true, from: Some(1), ..Default::default() };
+        assert_eq!(q.to_query(), "all=1");
+        assert_eq!(UsageQuery::default().to_query(), "");
+    }
 }

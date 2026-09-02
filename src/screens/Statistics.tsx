@@ -1,33 +1,42 @@
 // Dedicated Statistics page — the full usage document lifted off Home so the home
-// screen stays focused on dictation: per-kind tiles, the stacked columns by kind, the
-// Stages / Dictation / Rhythm panels. Reached from the sidebar, the "View statistics →"
-// link on Home, or a Home small multiple (`?scope=file` preselects that kind). A backend
-// selector at the top switches which backend's usage you're viewing.
+// screen stays focused on dictation: one filter bar (range · kind · with-stages), the
+// per-kind tiles, the stacked columns by kind, the Stages / Dictation / Rhythm / When-you-
+// dictate panels. Reached from the sidebar, the "View statistics →" link on Home, or a
+// Home small multiple (`?kind=file` preselects that kind). The filters live in the URL
+// (`?kind=&with=&range=&from=&to=`) so a reload or a deep link lands on the same view, and
+// in the store (`usageViewQuery`) so the controller fetches the matching document.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { StatisticsView } from "@/components/UsageStats";
 import { PageHeader } from "@/components/ui";
-import { parseScope, type UsageScope } from "@/lib/usageDerive";
+import { useApp } from "@/lib/store";
+import { pageQueryParams, parsePageQuery, type UsagePageQuery, type UsageScope } from "@/lib/usageDerive";
 
 export default function Statistics() {
   const [searchParams, setSearchParams] = useSearchParams();
-  // Read once on mount; the control owns it from there and mirrors it back to the URL so
-  // a reload (or the sidebar's back) lands on the same scope.
-  const [scope, setScopeState] = useState<UsageScope>(() => parseScope(searchParams.get("scope")));
-  const setScope = (s: UsageScope) => {
-    setScopeState(s);
-    setSearchParams(s === "all" ? {} : { scope: s }, { replace: true });
-  };
+  const setUsageViewQuery = useApp((s) => s.setUsageViewQuery);
+  // Read once on mount; the controls own it from there and mirror it back to the URL.
+  const [state, setState] = useState(() => parsePageQuery((k) => searchParams.get(k)));
+  // react-router re-creates setSearchParams whenever the URL changes, so it must not be an
+  // effect dependency: the write below would change the URL and re-run itself forever.
+  const setParams = useRef(setSearchParams);
+  setParams.current = setSearchParams;
+  useEffect(() => {
+    setUsageViewQuery(state.query);
+    setParams.current(pageQueryParams(state.scope, state.query), { replace: true });
+  }, [state, setUsageViewQuery]);
+  const setScope = (scope: UsageScope) => setState((s) => ({ ...s, scope }));
+  const setQuery = (query: UsagePageQuery) => setState((s) => ({ ...s, query }));
   return (
     <div className="page page-cards">
       <PageHeader eyebrow="faster-whisper · usage" title="Statistics">
-        Everything you’ve dictated, transcribed and translated — today and all-time — by kind, with the stages each run
-        used, how dictations landed, and your rhythm over the last 90 days.
+        Everything you’ve dictated, transcribed and translated — by kind, with the stages each run used, how dictations
+        landed, and your rhythm over any range. One filter bar; every panel follows it.
       </PageHeader>
 
       <div className="mt-8">
-        <StatisticsView scope={scope} onScope={setScope} />
+        <StatisticsView scope={state.scope} onScope={setScope} query={state.query} onQuery={setQuery} />
       </div>
     </div>
   );

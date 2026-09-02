@@ -725,12 +725,59 @@ export interface UsageDictation {
   };
 }
 
-/** The caller's own usage document — one fetch feeds Home, Statistics and the chip. */
+/** The optional pipeline stages the Statistics page can narrow to (`with=`). */
+export type UsageStageKey = "translating" | "diarizing" | "separating" | "vad";
+
+/** Words per kind — the calendar's and the hour grid's cell payload. */
+export interface UsageKindWords {
+  all: number;
+  dictation: number;
+  file: number;
+  url: number;
+  text: number;
+}
+
+/** One calendar day's words per kind (sparse over the window). */
+export interface UsageCalendarDay extends UsageKindWords {
+  day: number;
+}
+
+/** One weekday × hour slot's words per kind over the window, in the caller's zone.
+ *  `dow` 0 = Monday … 6 = Sunday. Sparse. */
+export interface UsageHourCell extends UsageKindWords {
+  dow: number;
+  hour: number;
+}
+
+export interface UsageStreak {
+  current: number;
+  best: number;
+}
+
+/** Streaks over the FULL retained history (not the window), per kind; a day counts
+ *  when that kind had words. */
+export type UsageStreaks = Record<"all" | UsageKind, UsageStreak>;
+
+/** Echo of the window the server applied (days-since-epoch in `tz`). */
+export interface UsageRange {
+  from: number;
+  to: number;
+  days: number;
+  /** Earliest day with any usage, or null when there is none ("All" starts here). */
+  first_day: number | null;
+  /** "jobs" when a `with=` stage filter recomputed the document from the jobs table. */
+  source: "rollups" | "jobs";
+  /** How far back the jobs table reaches (the stage-filter disclosure). */
+  jobs_retention_days: number;
+}
+
+/** The caller's own usage document — the Home strip and the chip read a fixed 30-day
+ *  one; the Statistics page fetches its own for the filters it has set. */
 export interface UsageStats {
   username: string;
   /** The IANA zone the server reckoned days in. */
   tz: string;
-  range: { days: number; calendar_days: number };
+  range: UsageRange;
   today: UsageKinds;
   total: UsageKinds;
   series: UsageSeriesPoint[];
@@ -738,11 +785,25 @@ export interface UsageStats {
   dictation: UsageDictation;
   /** Top apps dictated into over the window (app id, never a window title). */
   apps: { app_id: string; sessions: number; words: number }[];
-  /** Sparse words-per-day over `range.calendar_days`. */
-  calendar: { day: number; words: number }[];
-  streak: { current: number; best: number };
+  /** Sparse words-per-day per kind over the window. */
+  calendar: UsageCalendarDay[];
+  /** Sparse words per weekday × hour per kind over the window. */
+  hours: UsageHourCell[];
+  streak: UsageStreaks;
   /** Window: words / 40 wpm − audio_s, dictation only (seconds). */
   time_saved_s: number;
+}
+
+/** The query the Statistics page sends (`GET /v1/usage`). Exactly one window form:
+ *  `days`, `from`/`to` (days-since-epoch, local), or `all`. */
+export interface UsageQuery {
+  days?: number;
+  from?: number;
+  to?: number;
+  all?: boolean;
+  /** Stages every counted run must have had (AND). */
+  with?: UsageStageKey[];
+  tz?: string;
 }
 
 /** One dictation session's end-of-session facts (POST /v1/usage/outcome item).

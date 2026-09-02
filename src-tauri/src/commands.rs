@@ -757,11 +757,10 @@ pub async fn get_usage_stats(
     server_url: String,
     backend_id: Option<String>,
     api_key: Option<String>,
-    days: Option<i64>,
-    tz: Option<String>,
+    query: transport::discovery::UsageQuery,
 ) -> Option<transport::UsageStats> {
     let key = resolve_key_async(api_key, backend_id).await;
-    transport::discovery::get_usage_stats(&server_url, key.as_deref(), days, tz.as_deref()).await
+    transport::discovery::get_usage_stats(&server_url, key.as_deref(), &query).await
 }
 
 /// Report end-of-dictation outcomes (`POST /v1/usage/outcome`). Structured result

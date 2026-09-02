@@ -1,7 +1,9 @@
 // The usage surfaces: the Home "Usage" strip (four sparkline tiles + small multiples
-// by kind) and the Statistics page (scope + range, five tiles, the stacked columns by
-// kind, the Stages / Dictation / Rhythm panels). Both read the active backend's usage
-// document from the store (fed by lib/usage.ts) and render nothing when unsupported.
+// by kind, off the fixed 30-day document) and the Statistics page (one filter bar —
+// range · kind · with-stages — five tiles, the stacked columns by kind bucketed to the
+// window, the Stages / Dictation / Rhythm / When-you-dictate panels, off the page's own
+// document). Both read from the store (fed by lib/usage.ts) and render nothing when
+// unsupported.
 //
 // Numbers come from lib/usageDerive.ts (pure, tested); this file only lays them out.
 // The backend series is SPARSE (only days that had usage) — densified client-side into
@@ -13,6 +15,7 @@
 // text in the text tokens, never a series colour; the legend is always present.
 
 import {
+  Fragment,
   useEffect,
   useId,
   useLayoutEffect,
@@ -38,40 +41,67 @@ import {
   fmtDateFull,
   localTodayDay,
 } from "@/lib/format";
-import { TREND_DAYS } from "@/lib/usage";
+import { TREND_DAYS, viewSignature, viewerTimeZone } from "@/lib/usage";
+import { effectiveServerUrl } from "@/lib/backends";
 import {
   CHART_METRICS,
+  DOW_SHORT,
   KINDS,
   KIND_LABEL,
   KIND_VAR,
+  QUARTER_NAME,
+  RANGE_LABEL,
+  RANGE_PRESETS,
   SCOPE_LABEL,
-  STAGE_ROWS,
-  calendarCells,
+  STAGE_CHIP_LABEL,
+  STAGE_KEYS,
+  bucketMode,
+  bucketize,
+  calendarModel,
+  dayToIso,
   densifyKinds,
   facetRows,
   findStage,
   fmtTimeSaved,
+  hourModel,
+  isFiltered,
+  isoToDay,
+  legendRanges,
   metricValue,
   niceMax,
+  orderedStageRows,
   pct,
+  resolveWindow,
   runsBreakdown,
   safeTotals,
   scopeTotals,
+  spanPresets,
+  stageAppliesToScope,
+  streakFor,
   targetShares,
   timeSavedS,
+  weekColumns,
   zeroKinds,
+  MAX_SPAN_DAYS,
+  type BucketMode,
   type ChartMetric,
   type FacetRow,
+  type RangePreset,
+  type UsageBucket,
+  type UsagePageQuery,
   type UsageScope,
 } from "@/lib/usageDerive";
 import { homeTargetProfile } from "@/lib/dictation";
 import { ownProp } from "@/lib/own";
 import { safeDisplayText } from "@/lib/sanitize";
 import { BackendChips } from "@/components/BackendChips";
-import type { UsageKind, UsageKinds, UsageSeriesPoint, UsageStats } from "@/lib/types";
+import type { UsageKind, UsageKinds, UsageSeriesPoint, UsageStageKey, UsageStats } from "@/lib/types";
 
-const RANGES = ["7", "30", "90"] as const;
-type RangeKey = (typeof RANGES)[number];
+const _spanDate = new Intl.DateTimeFormat("de-CH", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const _monthYear = new Intl.DateTimeFormat("de-CH", { month: "long", year: "numeric", timeZone: "UTC" });
+/** `1. Aug. 2026`, for the range pill and the custom-span popover. */
+const fmtSpanDate = (day: number) => _spanDate.format(new Date(day * 86_400_000));
+const fmtMonthYear = (day: number) => _monthYear.format(new Date(day * 86_400_000));
 
 const METRIC_LABEL: Record<ChartMetric, string> = { words: "words", minutes: "minutes", runs: "runs" };
 const metricTick = (m: ChartMetric, v: number) => (m === "minutes" ? fmtDurationAxis(v) : fmtCompact(v));
@@ -188,26 +218,26 @@ const Today = () => <span className="text-[10px] uppercase tracking-label text-f
 
 /** The tile row for a scope: Words / Audio / Runs / (Time saved) / Errors. Time saved is
  *  dictation-only by definition (the server's figure is too), whatever the scope. */
-function tileSpecs(stats: UsageStats, dense: UsageSeriesPoint[], scope: UsageScope, withSaved: boolean): TileSpec[] {
+function tileSpecs(stats: UsageStats, dense: readonly UsageKinds[], scope: UsageScope, withSaved: boolean, windowWord = "total"): TileSpec[] {
   const today = scopeTotals(stats.today, scope);
   const total = scopeTotals(stats.total, scope);
   const last30 = dense.slice(-30);
-  const spark = (f: (p: UsageSeriesPoint) => number) => last30.map(f);
+  const spark = (f: (p: UsageKinds) => number) => last30.map(f);
   const wpm = Math.round(stats.dictation?.wpm ?? 0);
   const tiles: TileSpec[] = [
     {
       key: "words", label: "Words", icon: Type, value: fmtFull(today.words), tone: "dict",
-      sub: <><Today /> · <Num>{fmtCompact(total.words)}</Num> total</>,
+      sub: <><Today /> · <Num>{fmtCompact(total.words)}</Num> {windowWord}</>,
       spark: spark((p) => scopeTotals(p, scope).words), sparkColor: "var(--c-chart-dict)",
     },
     {
       key: "audio", label: "Audio", icon: Clock, value: fmtDurationExact(today.audio_s), tone: "text",
-      sub: <><Today /> · <Num>{fmtDuration(total.audio_s)}</Num> all-time</>,
+      sub: <><Today /> · <Num>{fmtDuration(total.audio_s)}</Num> {windowWord}</>,
       spark: spark((p) => scopeTotals(p, scope).audio_s), sparkColor: "var(--c-dim)",
     },
     {
       key: "runs", label: "Runs", icon: Mic, value: fmtFull(today.sessions), tone: "text",
-      sub: scope === "all" ? <><Today /> · <Num>{runsBreakdown(stats.today)}</Num></> : <><Today /> · <Num>{fmtCompact(total.sessions)}</Num> total</>,
+      sub: scope === "all" ? <><Today /> · <Num>{runsBreakdown(stats.today)}</Num></> : <><Today /> · <Num>{fmtCompact(total.sessions)}</Num> {windowWord}</>,
       spark: spark((p) => scopeTotals(p, scope).sessions), sparkColor: "var(--c-dim)",
     },
   ];
@@ -221,7 +251,7 @@ function tileSpecs(stats: UsageStats, dense: UsageSeriesPoint[], scope: UsageSco
   }
   tiles.push({
     key: "errors", label: "Errors", icon: TriangleAlert, value: fmtFull(today.errors), tone: today.errors > 0 ? "warn" : "ok",
-    sub: <><Today /> · <Num>{fmtFull(total.errors)}</Num> total</>,
+    sub: <><Today /> · <Num>{fmtFull(total.errors)}</Num> {windowWord}</>,
     spark: spark((p) => scopeTotals(p, scope).errors), sparkColor: "var(--c-faint)",
   });
   return tiles;
@@ -248,7 +278,21 @@ function StatTile({ tile, spark }: { tile: TileSpec; spark: boolean }) {
 
 const TIP_W = 176;
 
-function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; range: number; scope: UsageScope }) {
+const BUCKET_WORD: Record<BucketMode, string> = { day: "day", week: "week", month: "month" };
+
+/** Column label for a bucket's start: `12.06.` per day/week, `Juni` per month. */
+function bucketTick(b: UsageBucket, mode: BucketMode, last: boolean): string {
+  if (last && mode === "day") return "today";
+  return fmtDateTick(b.from, mode === "month");
+}
+/** Tooltip header: the day, `Woche ab 6.7.`-style for a week, month + year for a month. */
+function bucketTitle(b: UsageBucket, mode: BucketMode): string {
+  if (mode === "day") return fmtDateFull(b.from);
+  if (mode === "week") return `${fmtDateTick(b.from)} – ${fmtDateTick(b.to)}`;
+  return fmtMonthYear(b.from);
+}
+
+function StackedChart({ buckets, mode, scope }: { buckets: UsageBucket[]; mode: BucketMode; scope: UsageScope }) {
   const [metric, setMetric] = useState<ChartMetric>("words");
   const [solo, setSolo] = useState<UsageKind | null>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -263,10 +307,10 @@ function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; rang
   const effSolo: UsageKind | null = scope === "all" ? solo : scope;
   const shown = (k: UsageKind) => !effSolo || effSolo === k;
 
-  // hover is an index into the sliced window — a different day after the range changes.
-  useEffect(() => setHover(null), [range]);
+  // hover is an index into the bucket list — a different column after the window changes.
+  useEffect(() => setHover(null), [buckets]);
 
-  const pts = useMemo(() => dense.slice(-range), [dense, range]);
+  const pts = buckets;
   const n = pts.length;
   const cols = useMemo(
     () => pts.map((p) => KINDS.map((k) => (shown(k) ? metricValue(safeTotals(p[k]), metric) : 0))),
@@ -281,8 +325,8 @@ function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; rang
   const barW = bw * 0.64;
   const yOf = (v: number) => ph * (v / top);
 
-  // X ticks: a weekly stride anchored on today (always a tick), fortnightly on the 90-day view.
-  const step = n > 60 ? 14 : 7;
+  // X ticks: about one per 60 px, always the last column, from the right so "today" anchors.
+  const step = Math.max(1, Math.round(60 / Math.max(1, bw)));
   const isTick = (i: number) => i === n - 1 || (n - 1 - i) % step === 0;
 
   const onMove = (e: ReactPointerEvent<SVGRectElement>) => {
@@ -331,9 +375,10 @@ function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; rang
     );
   };
 
+  const unit = BUCKET_WORD[mode];
   return (
     <Panel
-      title={`${METRIC_LABEL[metric]} per day, by kind`}
+      title={`${METRIC_LABEL[metric]} per ${unit}, by kind`}
       right={
         <>
           <div className="flex flex-wrap gap-3.5" role="group" aria-label="Kinds (click to solo)">
@@ -351,7 +396,7 @@ function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; rang
       <div ref={ref} className="relative px-3 pb-1 pt-1">
         {allZero ? (
           <div className="grid h-[220px] place-items-center text-[13px] text-faint">
-            No {METRIC_LABEL[metric]} in the last {range} days
+            No {METRIC_LABEL[metric]} in this range
           </div>
         ) : (
           <>
@@ -362,7 +407,7 @@ function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; rang
               className="ring-signal block"
               tabIndex={0}
               role="img"
-              aria-label={`${METRIC_LABEL[metric]} per day by kind, last ${range} days. Use the arrow keys to step through days.`}
+              aria-label={`${METRIC_LABEL[metric]} per ${unit} by kind, ${n} ${unit}s. Use the arrow keys to step through them.`}
               onKeyDown={onKey}
               onBlur={() => setHover(null)}
             >
@@ -384,7 +429,7 @@ function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; rang
                 let y = pad.t + ph;
                 const x = barX(i);
                 return (
-                  <g key={pts[i].day} opacity={hover != null && hover !== i ? 0.55 : 1}>
+                  <g key={pts[i].from} opacity={hover != null && hover !== i ? 0.55 : 1}>
                     {KINDS.map((k, ki) => {
                       const v = c[ki];
                       if (!(v > 0)) return null;
@@ -392,7 +437,7 @@ function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; rang
                       y -= h;
                       // 2 px surface gap between stacked segments (the mockup's `h-2`).
                       return (
-                        <rect key={k} x={x.toFixed(1)} y={y.toFixed(1)} width={barW.toFixed(1)} height={Math.max(0.5, h - 2).toFixed(1)} rx={2} fill={kindFill(k, hatchId)} />
+                        <rect key={k} x={x.toFixed(1)} y={y.toFixed(1)} width={barW.toFixed(1)} height={Math.max(0.5, h - 2).toFixed(1)} rx={Math.min(2, barW / 2)} fill={kindFill(k, hatchId)} />
                       );
                     })}
                   </g>
@@ -401,7 +446,7 @@ function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; rang
               {pts.map((p, i) =>
                 isTick(i) ? (
                   <text
-                    key={p.day}
+                    key={p.from}
                     x={barX(i) + barW / 2}
                     y={H - 7}
                     textAnchor={i === n - 1 ? "end" : i === 0 ? "start" : "middle"}
@@ -409,7 +454,7 @@ function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; rang
                     fontSize={10}
                     fill="var(--c-faint)"
                   >
-                    {i === n - 1 ? "today" : fmtDateTick(p.day)}
+                    {bucketTick(p, mode, i === n - 1)}
                   </text>
                 ) : null,
               )}
@@ -429,7 +474,7 @@ function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; rang
                 className="pointer-events-none absolute z-20 min-w-[150px] rounded-[10px] border border-line-strong bg-surface/95 px-3 py-2 text-[12px] shadow-[0_16px_40px_-16px_rgba(0,0,0,0.9)] backdrop-blur-sm"
                 style={{ left: tipLeft, top: tipTop, width: TIP_W }}
               >
-                <div className="mb-1 font-mono text-[10.5px] uppercase tracking-label text-faint">{fmtDateFull(hp.day)}</div>
+                <div className="mb-1 font-mono text-[10.5px] uppercase tracking-label text-faint">{bucketTitle(hp, mode)}</div>
                 {KINDS.map((k) => (
                   <div key={k} className={cn("flex items-baseline justify-between gap-4 leading-relaxed", shown(k) ? "text-dim" : "text-faint")}>
                     <span className="flex items-center gap-1.5"><Swatch kind={k} />{KIND_LABEL[k]}</span>
@@ -443,13 +488,14 @@ function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; rang
               </div>
             )}
             <div className="sr-only" aria-live="polite">
-              {hp ? `${fmtDateFull(hp.day)}: ${metricFull(metric, totals[hover!])} ${METRIC_LABEL[metric]}` : ""}
+              {hp ? `${bucketTitle(hp, mode)}: ${metricFull(metric, totals[hover!])} ${METRIC_LABEL[metric]}` : ""}
             </div>
           </>
         )}
       </div>
       <div className="mt-1.5 text-[11.5px] text-faint">
-        {scope === "all" ? "Click a legend entry to solo that kind. " : ""}Hover for the day’s split. Text imports are hatched neutral: they are rare and never a volume story.
+        {scope === "all" ? "Click a legend entry to solo that kind. " : ""}Hover for the {unit}’s split.
+        {mode !== "day" && ` One column per ${unit} at this range.`} Text imports are hatched neutral: they are rare and never a volume story.
       </div>
     </Panel>
   );
@@ -457,8 +503,8 @@ function StackedChart({ dense, range, scope }: { dense: UsageSeriesPoint[]; rang
 
 /* ── stages ──────────────────────────────────────────────────────────────── */
 
-/** Window runs per kind: the densified series summed (the fetched window = `range.days`). */
-function windowKinds(dense: UsageSeriesPoint[]): UsageKinds {
+/** Window runs per kind: the densified series summed. */
+function windowKinds(dense: readonly UsageKinds[]): UsageKinds {
   const out = zeroKinds();
   for (const p of dense) {
     for (const k of ["all", ...KINDS] as const) {
@@ -474,17 +520,29 @@ function windowKinds(dense: UsageSeriesPoint[]): UsageKinds {
   return out;
 }
 
-function StagesPanel({ stats, dense }: { stats: UsageStats; dense: UsageSeriesPoint[] }) {
-  const days = stats.range?.days || TREND_DAYS;
+function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageStats; dense: readonly UsageKinds[]; scope: UsageScope; withS: readonly UsageStageKey[]; rangeWord: string }) {
   const win = windowKinds(dense);
   const media = win.file.sessions + win.url.sessions;
+  const narrowed = withS.length > 0;
   return (
     <Panel
-      title={`Stages · share of runs that used them, ${days} days`}
+      title={`Stages · share of runs that used them, ${rangeWord}`}
       right={<Pill>{fmtFull(media)} file &amp; link runs · {fmtFull(win.dictation.sessions)} dictations</Pill>}
     >
       <div>
-        {STAGE_ROWS.map((row) => {
+        {orderedStageRows(withS).map((row) => {
+          const pinned = withS.includes(row.key);
+          if (!stageAppliesToScope(row.key, scope)) {
+            return (
+              <div key={row.key} className="grid grid-cols-[160px_1fr] items-center gap-3.5 border-t border-line py-2.5 text-[12.5px]">
+                <div className="flex items-center gap-2 text-dim">
+                  <i className="inline-block size-2 rounded-full" style={{ background: "var(--c-line-strong)" }} />
+                  {row.label}
+                </div>
+                <div className="text-faint">Files and links only — {SCOPE_LABEL[scope].toLowerCase()} runs never use it.</div>
+              </div>
+            );
+          }
           const st = findStage(stats.stages, row.key);
           if (!st) {
             return (
@@ -493,7 +551,7 @@ function StagesPanel({ stats, dense }: { stats: UsageStats; dense: UsageSeriesPo
                   <i className="inline-block size-2 rounded-full" style={{ background: "var(--c-line-strong)" }} />
                   {row.label}
                 </div>
-                <div className="text-faint">Not used in the last {days} days. {row.emptyCopy}</div>
+                <div className="text-faint">Not used in {rangeWord}. {row.emptyCopy}</div>
               </div>
             );
           }
@@ -521,17 +579,21 @@ function StagesPanel({ stats, dense }: { stats: UsageStats; dense: UsageSeriesPo
               <div className="flex items-center gap-2 font-semibold text-text">
                 <i className="inline-block size-2 rounded-full" style={{ background: row.colorVar }} />
                 {row.label}
+                {pinned && <span className="rounded-pill border border-line px-1.5 font-mono text-[9.5px] font-normal uppercase tracking-label text-faint">filter</span>}
               </div>
               <div className="flex items-center gap-2.5">
                 <div className="h-1.5 flex-1 overflow-hidden rounded-pill bg-line">
                   <i className="block h-full rounded-pill" style={{ width: `${share}%`, background: row.colorVar }} />
                 </div>
-                <span className="w-[120px] font-num text-[12px] text-text">{share} % · {fmtFull(st.runs)} {runsWord}</span>
+                <span className="w-[120px] font-num text-[12px] text-text">
+                  {share} % · {fmtFull(st.runs)} {runsWord}
+                </span>
               </div>
               <div className="text-dim"><Num>{fmtDuration(st.audio_s)}</Num> audio</div>
               <div className="text-dim">{detail}</div>
-              {(targets.length > 0 || kept > 0) && (
+              {(targets.length > 0 || kept > 0 || (narrowed && !pinned)) && (
                 <div className="col-start-2 col-end-[-1] -mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] text-faint">
+                  {narrowed && !pinned && <span>of the filtered runs, {share} % were also {STAGE_CHIP_LABEL[row.key].toLowerCase()} ·</span>}
                   {targets.map((t) => (
                     <span key={t.code} className="rounded-pill border border-line px-2 py-px font-mono text-[11px] text-dim">
                       {safeDisplayText(t.code)} {t.pct} %
@@ -571,9 +633,25 @@ function HBars({ title, rows, empty }: { title: string; rows: FacetRow[]; empty?
   );
 }
 
-function DictationPanel({ stats }: { stats: UsageStats }) {
+function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope }) {
   const d = stats.dictation;
   const reportApp = useApp((s) => s.settings.recording.reportTargetApp !== false);
+  // Files / Links / Text: the facets do not apply; one line, expandable, so the page's
+  // shape stays put while the filter says what it says.
+  const collapsible = scope !== "all" && scope !== "dictation";
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [scope]);
+  if (collapsible && !open) {
+    return (
+      <Card className="mt-3.5 flex flex-wrap items-center gap-2.5 px-4 py-3">
+        <Eyebrow>Dictation</Eyebrow>
+        <span className="text-[12.5px] text-faint">Dictation details apply to dictation runs.</span>
+        <button type="button" onClick={() => setOpen(true)} className="ring-signal rounded-md px-1 text-[12.5px] text-dim underline underline-offset-4 hover:text-text">
+          show
+        </button>
+      </Card>
+    );
+  }
   const act = d?.activation ?? { hold: 0, handsfree: 0 };
   const del = d?.delivery ?? { typed: 0, clipboard: 0, none: 0, unreported: 0 };
   const tr = d?.translation ?? { translated: 0, kept_original: 0, not_asked: 0, aborted: 0, unreported: 0 };
@@ -582,7 +660,19 @@ function DictationPanel({ stats }: { stats: UsageStats }) {
     .slice(0, 4)
     .map((a) => ({ label: safeDisplayText(a.app_id) || "unknown", value: a.sessions }));
   return (
-    <Panel title="Dictation" right={<Pill>{fmtFull(d?.sessions ?? 0)} sessions</Pill>}>
+    <Panel
+      title="Dictation"
+      right={
+        <>
+          <Pill>{fmtFull(d?.sessions ?? 0)} sessions</Pill>
+          {collapsible && (
+            <button type="button" onClick={() => setOpen(false)} className="ring-signal rounded-md px-1 text-[12px] text-faint underline underline-offset-4 hover:text-text">
+              hide
+            </button>
+          )}
+        </>
+      }
+    >
       <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3.5">
         <HBars
           title="Activation"
@@ -620,58 +710,323 @@ function DictationPanel({ stats }: { stats: UsageStats }) {
   );
 }
 
-/* ── rhythm ──────────────────────────────────────────────────────────────── */
+/* ── rhythm: the calendar + the hour grid ────────────────────────────────── */
 
-const LEVEL_BG = [
-  "var(--c-surface-2)",
-  "color-mix(in srgb, var(--c-chart-dict) 30%, var(--c-surface-2))",
-  "color-mix(in srgb, var(--c-chart-dict) 55%, var(--c-surface-2))",
-  "color-mix(in srgb, var(--c-chart-dict) 80%, var(--c-surface-2))",
-  "var(--c-chart-dict)",
-];
+const LEVEL_BG = ["var(--c-surface-2)", "var(--c-cal-1)", "var(--c-cal-2)", "var(--c-cal-3)", "var(--c-cal-4)"] as const;
 
-function RhythmPanel({ stats }: { stats: UsageStats }) {
-  const days = stats.range?.calendar_days || 90;
-  const cells = useMemo(() => calendarCells(stats.calendar ?? [], days, localTodayDay()), [stats.calendar, days]);
-  const streak = stats.streak ?? { current: 0, best: 0 };
+/** The five labelled steps: swatch, word range, count. Shared by both grids. */
+function LevelLegend({ lead, breaks, counts, unit }: { lead: string; breaks: [number, number, number]; counts: readonly number[]; unit: [string, string] }) {
+  const ranges = legendRanges(breaks, fmtCompact);
+  return (
+    <div className="mt-2.5 flex flex-wrap items-end gap-3.5 text-[11.5px] text-faint">
+      <span>{lead}</span>
+      <span className="ml-auto flex">
+        {ranges.map((r, i) => (
+          <span key={i} className="flex min-w-[58px] flex-col gap-1">
+            <i className="block h-2.5 w-full rounded-[2px]" style={{ background: LEVEL_BG[i] }} />
+            <span className="font-mono text-[10.5px] text-dim">{r}</span>
+            <span className="font-mono text-[10px] text-faint">{counts[i]} {counts[i] === 1 ? unit[0] : unit[1]}</span>
+          </span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+function RhythmPanel({ stats, scope, withS, from, to, title, filtered }: { stats: UsageStats; scope: UsageScope; withS: readonly UsageStageKey[]; from: number; to: number; title: string; filtered: boolean }) {
+  const model = useMemo(() => calendarModel(stats.calendar, scope, from, to), [stats.calendar, scope, from, to]);
+  const cols = useMemo(() => weekColumns(model.cells), [model.cells]);
+  const streak = streakFor(stats.streak, scope);
+  const [ref, w] = useWidth(900);
+  // 16 px cells, shrinking to 12 px before the grid scrolls inside the panel.
+  const cell = Math.max(12, Math.min(16, Math.floor((w - 44) / Math.max(1, cols.length)) - 3));
+  const today = localTodayDay();
+  const withWord = withS.length ? ` · with ${withS.map((k) => STAGE_CHIP_LABEL[k].toLowerCase()).join(" + ")}` : "";
   return (
     <Panel
-      title={`Rhythm · ${days} days`}
-      right={<Pill>streak {fmtFull(streak.current)} {streak.current === 1 ? "day" : "days"} · best {fmtFull(streak.best)}</Pill>}
+      title={`Rhythm · ${title} · ${scope === "all" ? "all kinds" : KIND_LABEL[scope]}${withWord}`}
+      right={
+        <Pill>
+          streak {fmtFull(streak.current)} {streak.current === 1 ? "day" : "days"} · best {fmtFull(streak.best)}
+          {filtered ? " · filtered" : ""}
+        </Pill>
+      }
+    >
+      <div ref={ref} className="overflow-x-auto pb-1">
+        <div
+          className="grid w-max gap-[3px]"
+          style={{ gridTemplateColumns: `max-content repeat(${cols.length}, ${cell}px)` }}
+          role="img"
+          aria-label={`Words per day, ${model.cells.length} days, levelled by quartiles of the active days`}
+        >
+          <div />
+          {cols.map((c) => (
+            <div key={`m${c.monday}`} className="h-[14px] whitespace-nowrap font-mono text-[10.5px] text-faint">
+              {c.month ?? ""}
+            </div>
+          ))}
+          <div className="grid gap-[3px]" style={{ gridTemplateRows: `repeat(7, ${cell}px)` }}>
+            {DOW_SHORT.map((d, i) => (
+              <div key={d} className="flex items-center justify-end pr-1.5 font-mono text-[10.5px] text-faint" style={{ height: cell }}>
+                {i % 2 === 0 ? d : ""}
+              </div>
+            ))}
+          </div>
+          {cols.map((c) => (
+            <div key={c.monday} className="grid gap-[3px]" style={{ gridTemplateRows: `repeat(7, ${cell}px)` }}>
+              {c.cells.map((cellData, r) =>
+                cellData ? (
+                  <i
+                    key={cellData.day}
+                    className={cn("block rounded-[3px]", cellData.day === today && "ring-[1.5px] ring-inset ring-text")}
+                    style={{ width: cell, height: cell, background: LEVEL_BG[cellData.level] }}
+                    title={`${fmtDateFull(cellData.day)} · ${fmtFull(cellData.words)} words${cellData.level ? ` · ${QUARTER_NAME[cellData.level]}` : ""}`}
+                  />
+                ) : (
+                  <i key={`e${c.monday}-${r}`} className="block" style={{ width: cell, height: cell }} />
+                ),
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+      <LevelLegend lead="Words per day · quarters of your active days" breaks={model.breaks} counts={model.counts} unit={["day", "days"]} />
+    </Panel>
+  );
+}
+
+function HoursPanel({ stats, scope, title }: { stats: UsageStats; scope: UsageScope; title: string }) {
+  const model = useMemo(() => hourModel(stats.hours, scope), [stats.hours, scope]);
+  const peak = model.peak;
+  const kindWord = scope === "all" ? "" : ` · ${KIND_LABEL[scope]}`;
+  return (
+    <Panel
+      title={`When you dictate · ${title}${kindWord}`}
+      right={
+        peak ? (
+          <Pill>
+            peak {DOW_SHORT[peak.dow]} {String(peak.hour).padStart(2, "0")}–{String(peak.hour + 1).padStart(2, "0")} · {fmtCompact(peak.words)} words
+          </Pill>
+        ) : (
+          <Pill>no words in this range</Pill>
+        )
+      }
     >
       <div
-        className="grid justify-start gap-[3px] overflow-x-auto pb-1"
-        style={{ gridAutoFlow: "column", gridTemplateRows: "repeat(7, 10px)", gridAutoColumns: "10px" }}
+        className="grid gap-[3px]"
+        style={{ gridTemplateColumns: "34px repeat(24, minmax(0, 1fr))" }}
         role="img"
-        aria-label={`Daily activity, ${days} days`}
+        aria-label="Words per weekday and hour, levelled by quartiles of the active hour slots"
       >
-        {cells.map((c) => (
-          <i
-            key={c.day}
-            className="size-2.5 rounded-[2px]"
-            style={{ background: LEVEL_BG[c.level] }}
-            title={`${fmtDateFull(c.day)} · ${fmtFull(c.words)} words`}
-          />
+        <div />
+        {Array.from({ length: 24 }, (_, h) => (
+          <div key={h} className="font-mono text-[10px] text-faint">
+            {h % 3 === 0 ? String(h).padStart(2, "0") : ""}
+          </div>
+        ))}
+        {model.rows.map((row, d) => (
+          <Fragment key={d}>
+            <div className="flex items-center font-mono text-[10.5px] text-faint">{DOW_SHORT[d]}</div>
+            {row.map((c) => (
+              <i
+                key={c.hour}
+                className="block aspect-square max-h-[20px] w-full rounded-[3px]"
+                style={{ background: LEVEL_BG[c.level] }}
+                title={`${DOW_SHORT[c.dow]} ${String(c.hour).padStart(2, "0")}:00–${String(c.hour + 1).padStart(2, "0")}:00 · ${fmtFull(c.words)} words${c.level ? ` · ${QUARTER_NAME[c.level]}` : ""}`}
+              />
+            ))}
+          </Fragment>
         ))}
       </div>
-      <div className="mt-2 flex items-center gap-2 text-[11.5px] text-faint">
-        Words per day
-        <span className="ml-auto flex items-center gap-1">
-          less
-          {LEVEL_BG.map((bg, i) => <i key={i} className="size-2.5 rounded-[2px]" style={{ background: bg }} />)}
-          more
+      <LevelLegend lead="Words per weekday hour · quarters of your active hour slots" breaks={model.breaks} counts={model.counts} unit={["slot", "slots"]} />
+    </Panel>
+  );
+}
+
+/* ── the filter bar ──────────────────────────────────────────────────────── */
+
+const STAGE_DOT: Record<UsageStageKey, string> = {
+  translating: "var(--c-translate)",
+  diarizing: "var(--c-diarize)",
+  separating: "var(--c-separate)",
+  vad: "var(--c-think)",
+};
+
+function CustomSpanPopover({ from, to, today, onApply, onCancel }: { from: number; to: number; today: number; onApply: (from: number, to: number) => void; onCancel: () => void }) {
+  const [f, setF] = useState(dayToIso(from));
+  const [t, setT] = useState(dayToIso(to));
+  const fd = isoToDay(f);
+  const td = isoToDay(t);
+  const ok = fd !== undefined && td !== undefined && fd <= td && td - fd < MAX_SPAN_DAYS;
+  const days = ok ? td - fd + 1 : 0;
+  const mode = ok ? bucketMode(days) : "day";
+  return (
+    <div className="mt-2.5 w-max max-w-full rounded-[12px] border border-line-strong bg-surface p-3.5 shadow-[0_16px_40px_-16px_rgba(0,0,0,0.9)]" role="dialog" aria-label="Custom range">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1 font-mono text-[10.5px] uppercase tracking-label text-faint">
+          From
+          <input type="date" value={f} max={t} onChange={(e) => setF(e.target.value)} className="ring-signal rounded-[8px] border border-line-strong bg-panel px-2 py-1 font-mono text-[12.5px] normal-case tracking-normal text-text" />
+        </label>
+        <label className="flex flex-col gap-1 font-mono text-[10.5px] uppercase tracking-label text-faint">
+          To
+          <input type="date" value={t} min={f} onChange={(e) => setT(e.target.value)} className="ring-signal rounded-[8px] border border-line-strong bg-panel px-2 py-1 font-mono text-[12.5px] normal-case tracking-normal text-text" />
+        </label>
+      </div>
+      <div className="mt-2.5 flex flex-wrap gap-1.5">
+        {spanPresets(today).map((p) => (
+          <button
+            key={p.label}
+            type="button"
+            onClick={() => {
+              setF(dayToIso(p.from));
+              setT(dayToIso(p.to));
+            }}
+            className="ring-signal rounded-pill border border-line-strong px-2.5 py-0.5 text-[12px] text-dim hover:text-text"
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <div className="mt-2.5 flex items-center gap-2 text-[11.5px] text-faint">
+        <span>{ok ? `${days} ${days === 1 ? "day" : "days"} · shown by ${BUCKET_WORD[mode]}` : "Pick a start on or before the end, at most 10 years apart."}</span>
+        <span className="flex-1" />
+        <button type="button" onClick={onCancel} className="ring-signal rounded-pill border border-line-strong px-3 py-1 text-[12px] text-dim hover:text-text">
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={!ok}
+          onClick={() => ok && onApply(fd, td)}
+          className="ring-signal rounded-pill bg-accent px-3 py-1 text-[12px] font-semibold text-accent-ink disabled:opacity-40"
+        >
+          Apply
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function FilterBar({
+  scope,
+  onScope,
+  query,
+  onQuery,
+  today,
+  firstDay,
+  retentionDays,
+}: {
+  scope: UsageScope;
+  onScope: (s: UsageScope) => void;
+  query: UsagePageQuery;
+  onQuery: (q: UsagePageQuery) => void;
+  today: number;
+  firstDay: number | null | undefined;
+  retentionDays: number | undefined;
+}) {
+  const [custom, setCustom] = useState(false);
+  const win = resolveWindow(query, today, firstDay);
+  const pickRange = (r: RangePreset) => {
+    if (r === "custom") {
+      setCustom(true);
+      return;
+    }
+    setCustom(false);
+    onQuery({ range: r, with: query.with });
+  };
+  const toggleStage = (k: UsageStageKey) => {
+    const set = new Set(query.with);
+    if (set.has(k)) set.delete(k);
+    else set.add(k);
+    onQuery({ ...query, with: STAGE_KEYS.filter((x) => set.has(x)) });
+  };
+  const anySet = isFiltered(scope, query) || query.range !== "30";
+  const spanText =
+    query.range === "all"
+      ? `${fmtSpanDate(win.from)} – ${fmtSpanDate(win.to)} · ${fmtFull(win.days)} days · since the first ${firstDay == null ? "run" : "dictation"}`
+      : `${fmtSpanDate(win.from)} – ${fmtSpanDate(win.to)} · ${fmtFull(win.days)} ${win.days === 1 ? "day" : "days"}${query.range === "custom" ? " · custom" : ""}`;
+  return (
+    <div className="rounded-[12px] border border-line bg-surface px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5">
+        <Eyebrow>Range</Eyebrow>
+        <Segmented
+          value={custom ? "custom" : query.range}
+          onChange={pickRange}
+          ariaLabel="Range"
+          options={RANGE_PRESETS.map((r) => ({ value: r, label: RANGE_LABEL[r] }))}
+        />
+        <Eyebrow>Kind</Eyebrow>
+        <Segmented
+          value={scope}
+          onChange={onScope}
+          ariaLabel="Kind"
+          options={(["all", ...KINDS] as UsageScope[]).map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
+        />
+        <Eyebrow>With</Eyebrow>
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Stages every run must have used">
+          {STAGE_KEYS.map((k) => {
+            const on = query.with.includes(k);
+            return (
+              <button
+                key={k}
+                type="button"
+                aria-pressed={on}
+                onClick={() => toggleStage(k)}
+                className={cn(
+                  "ring-signal inline-flex items-center gap-1.5 rounded-pill border px-2.5 py-0.5 text-[12px] transition-colors",
+                  on ? "border-solid border-line-strong bg-surface-2 text-text" : "border-dashed border-line-strong text-dim hover:text-text",
+                )}
+              >
+                <i className="inline-block size-2 rounded-full" style={{ background: STAGE_DOT[k] }} />
+                {STAGE_CHIP_LABEL[k]}
+              </button>
+            );
+          })}
+        </div>
+        <span className="ml-auto flex items-center gap-2">
+          <Pill>{spanText}</Pill>
+          {anySet && (
+            <button
+              type="button"
+              onClick={() => {
+                setCustom(false);
+                onScope("all");
+                onQuery({ range: "30", with: [] });
+              }}
+              className="ring-signal rounded-md px-1 text-[12px] text-faint underline underline-offset-4 hover:text-text"
+            >
+              Clear
+            </button>
+          )}
         </span>
       </div>
-    </Panel>
+      {custom && (
+        <CustomSpanPopover
+          from={query.range === "custom" && query.from !== undefined ? query.from : win.from}
+          to={query.range === "custom" && query.to !== undefined ? query.to : win.to}
+          today={today}
+          onApply={(from, to) => {
+            setCustom(false);
+            onQuery({ range: "custom", from, to, with: query.with });
+          }}
+          onCancel={() => setCustom(false)}
+        />
+      )}
+      {query.with.length > 0 && (
+        <div className="mt-2 text-[11.5px] text-faint">
+          Stage filters cover the last {fmtFull(retentionDays || 365)} days: every number on this page now counts only runs that were{" "}
+          {query.with.map((k) => STAGE_CHIP_LABEL[k].toLowerCase()).join(" and ")}.
+        </div>
+      )}
+    </div>
   );
 }
 
 /* ── view resolution ─────────────────────────────────────────────────────── */
 
 /** Resolve which backends have usage stats, the currently-VIEWED one (the user's pick,
- *  defaulting to the dictation/home-target backend), the densified series, and a setter.
- *  Shared by the Home strip + the Statistics page so they stay in sync. The chip readout
- *  is independent — it always follows the dictation backend (see lib/usage.ts). */
+ *  defaulting to the dictation/home-target backend), the fixed 30-day series, and a
+ *  setter. Shared by the Home strip + the Statistics page so they stay in sync. The chip
+ *  readout is independent — it always follows the dictation backend (see lib/usage.ts). */
 function useUsageView() {
   const backends = useApp((s) => s.backends);
   const usage = useApp((s) => s.usage);
@@ -699,7 +1054,7 @@ function useUsageView() {
 
 /* ── Home strip ──────────────────────────────────────────────────────────── */
 
-/** One kind's 30-day bars on the shared scale — a link into Statistics with that scope. */
+/** One kind's 30-day bars on the shared scale — a link into Statistics with that kind. */
 function KindMultiple({ kind, dense, max, hatchId }: { kind: UsageKind; dense: UsageSeriesPoint[]; max: number; hatchId: string }) {
   const W = 200;
   const H = 70;
@@ -708,7 +1063,7 @@ function KindMultiple({ kind, dense, max, hatchId }: { kind: UsageKind; dense: U
   const sum = dense.reduce((s, p) => s + safeTotals(p[kind]).words, 0);
   return (
     <Link
-      to={`/statistics?scope=${kind}`}
+      to={`/statistics?kind=${kind}`}
       className="ring-signal block rounded-[10px] px-1.5 py-1 transition-colors hover:bg-surface-2"
       title={`${KIND_LABEL[kind]} — open in Statistics`}
     >
@@ -736,7 +1091,7 @@ export function HomeUsageStrip() {
   const { statsBackends, viewBackend, setView, stats, dense } = useUsageView();
   const hatchId = useId();
   if (!viewBackend || !stats) return null;
-  const tiles = tileSpecs(stats, dense, "all", false);
+  const tiles = tileSpecs(stats, dense, "all", false, "in 30 days");
   const last30 = dense.slice(-30);
   const max = Math.max(0, ...last30.flatMap((p) => KINDS.map((k) => safeTotals(p[k]).words)));
   const saved = last30.reduce((s, p) => s + timeSavedS(safeTotals(p.dictation).words, safeTotals(p.dictation).audio_s), 0);
@@ -776,11 +1131,46 @@ export function HomeUsageStrip() {
 
 /* ── Statistics page ─────────────────────────────────────────────────────── */
 
-/** Statistics page body: backend chips + scope + range, the five tiles, the stacked
- *  columns and the three panels. Friendly empty state when no backend has usage. */
-export function StatisticsView({ scope, onScope }: { scope: UsageScope; onScope: (s: UsageScope) => void }) {
-  const { statsBackends, viewBackend, setView, stats, dense } = useUsageView();
-  const [range, setRange] = useState<RangeKey>("30");
+/** The range as the panels name it: `30 days` · `1 year` · `since 14 Feb 2025` · a span. */
+function rangeWord(q: UsagePageQuery, win: { from: number; to: number; days: number }): string {
+  if (q.range === "all") return `since ${fmtSpanDate(win.from)}`;
+  if (q.range === "custom") return `${fmtSpanDate(win.from)} – ${fmtSpanDate(win.to)}`;
+  if (q.range === "365") return "1 year";
+  return `${q.range} days`;
+}
+
+/** Statistics page body: backend chips + the filter bar, the five tiles, the stacked
+ *  columns and the four panels. Friendly empty state when no backend has usage. */
+export function StatisticsView({
+  scope,
+  onScope,
+  query,
+  onQuery,
+}: {
+  scope: UsageScope;
+  onScope: (s: UsageScope) => void;
+  query: UsagePageQuery;
+  onQuery: (q: UsagePageQuery) => void;
+}) {
+  const { statsBackends, viewBackend, setView, stats: base } = useUsageView();
+  const view = useApp((s) => s.usageView);
+  const settings = useApp((s) => s.settings);
+  const today = localTodayDay();
+  // The page's own document, only when it answers THIS query against THIS backend; until
+  // then the last one it had (or the fixed 30-day one on first visit) stays up, marked stale.
+  const sig = viewBackend ? viewSignature(viewBackend, effectiveServerUrl(viewBackend, settings), query, viewerTimeZone()) : null;
+  const fresh = !!sig && view?.sig === sig;
+  const stats = fresh ? view!.stats : (view?.stats ?? base);
+  const win = useMemo(
+    () => (fresh && stats ? { from: stats.range.from, to: stats.range.to, days: stats.range.days } : resolveWindow(query, today, view?.stats?.range?.first_day)),
+    [fresh, stats, query, today, view],
+  );
+  const dense = useMemo(
+    () => (stats ? densifyKinds(Array.isArray(stats.series) ? stats.series : [], win.days, win.to).filter((p) => p.day >= win.from && p.day <= win.to) : []),
+    [stats, win],
+  );
+  const mode = bucketMode(win.days);
+  const buckets = useMemo(() => bucketize(dense, mode), [dense, mode]);
   if (!viewBackend || !stats) {
     return (
       <Card className="grid place-items-center p-12 text-center">
@@ -791,34 +1181,38 @@ export function StatisticsView({ scope, onScope }: { scope: UsageScope; onScope:
       </Card>
     );
   }
-  const tiles = tileSpecs(stats, dense, scope, true);
+  const word = rangeWord(query, win);
+  const tiles = tileSpecs(stats, buckets, scope, true, query.range === "all" ? "all-time" : `in ${word}`);
+  const filtered = isFiltered(scope, query);
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-center gap-2.5">
+      <div className="mb-3 flex flex-wrap items-center gap-2.5">
         <BackendChips backends={statsBackends} selectedId={viewBackend.id} onSelect={setView} />
-        <Segmented
-          value={scope}
-          onChange={onScope}
-          ariaLabel="Scope"
-          options={(["all", ...KINDS] as UsageScope[]).map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
-        />
-        <span className="flex-1" />
-        <Segmented
-          value={range}
-          onChange={setRange}
-          ariaLabel="Range"
-          options={RANGES.map((r) => ({ value: r, label: `${r}d` }))}
+        {!fresh && <Pill>updating…</Pill>}
+      </div>
+      <div className="mb-4">
+        <FilterBar
+          scope={scope}
+          onScope={onScope}
+          query={query}
+          onQuery={onQuery}
+          today={today}
+          firstDay={stats.range?.first_day}
+          retentionDays={stats.range?.jobs_retention_days}
         />
       </div>
-      <div className="grid grid-cols-5 gap-3 max-[860px]:grid-cols-2">
+      <div className={cn("grid grid-cols-5 gap-3 max-[860px]:grid-cols-2", !fresh && "opacity-70")}>
         {tiles.map((t) => (
           <StatTile key={t.key} tile={t} spark />
         ))}
       </div>
-      <StackedChart dense={dense} range={Number(range)} scope={scope} />
-      <StagesPanel stats={stats} dense={dense} />
-      <DictationPanel stats={stats} />
-      <RhythmPanel stats={stats} />
+      <div className={cn(!fresh && "opacity-70")}>
+        <StackedChart buckets={buckets} mode={mode} scope={scope} />
+        <StagesPanel stats={stats} dense={dense} scope={scope} withS={query.with} rangeWord={word} />
+        <DictationPanel stats={stats} scope={scope} />
+        <RhythmPanel stats={stats} scope={scope} withS={query.with} from={win.from} to={win.to} title={word} filtered={filtered} />
+        <HoursPanel stats={stats} scope={scope} title={word} />
+      </div>
     </>
   );
 }

@@ -21,6 +21,7 @@ import type {
   UsageOutcome,
   UsageOutcomePostResult,
   UsageStats,
+  UsageQuery,
 } from "./types";
 import type { UrlPreview } from "./urlSource";
 import type {
@@ -422,16 +423,21 @@ export async function getUsageStats(args: {
   serverUrl: string;
   backendId?: string | null;
   apiKey?: string | null;
-  days?: number | null;
-  tz?: string | null;
+  query: UsageQuery;
 }): Promise<UsageStats | null> {
   if (!isTauri) return null;
   return invoke<UsageStats | null>("get_usage_stats", {
     serverUrl: args.serverUrl,
     backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
-    days: args.days ?? null,
-    tz: args.tz ?? null,
+    query: {
+      days: args.query.days ?? null,
+      from: args.query.from ?? null,
+      to: args.query.to ?? null,
+      all: args.query.all ?? false,
+      with: args.query.with ?? [],
+      tz: args.query.tz ?? null,
+    },
   });
 }
 
