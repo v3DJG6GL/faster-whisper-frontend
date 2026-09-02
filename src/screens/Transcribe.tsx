@@ -48,6 +48,11 @@ const MAX_IGNORED_SHOWN = 50;
  *  for the config rail and a readable transcript pane beside the 228px sidebar,
  *  so the page stays stacked. Picking Studio on a narrower window grows it. */
 const STUDIO_MIN_WINDOW = 1400;
+/** Studio's config rail: its default width, the narrowest it can be dragged, and the room
+ *  the transcript pane always keeps beside it. */
+const STUDIO_RAIL_DEFAULT = 520;
+const STUDIO_RAIL_MIN = 360;
+const STUDIO_PANE_MIN = 560;
 
 /** Retro-translate runs whose transcript is NOT the one on screen: a slim
  *  strip in the Processing-card design language, so a run started on another
@@ -669,6 +674,39 @@ export default function Transcribe() {
     updateSettings({ transcribe: { ...settings.transcribe, ...patch } });
   };
 
+  // The studio splitter: the rail width lives in the transcribe settings (local, never
+  // synced); while a drag is in flight the live value is local state, persisted on release.
+  const [railDrag, setRailDrag] = useState<number | null>(null);
+  const railMax = Math.max(STUDIO_RAIL_MIN, winW - STUDIO_PANE_MIN);
+  const clampRail = (px: number) => Math.round(Math.min(railMax, Math.max(STUDIO_RAIL_MIN, px)));
+  const railPx = clampRail(railDrag ?? settings.transcribe?.studioRailPx ?? STUDIO_RAIL_DEFAULT);
+  const onRailPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    const startX = e.clientX;
+    const start = railPx;
+    el.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => setRailDrag(clampRail(start + ev.clientX - startX));
+    const up = (ev: PointerEvent) => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+      const final = clampRail(start + ev.clientX - startX);
+      setRailDrag(null);
+      persistOptions({ studioRailPx: final });
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+  };
+  const onRailKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = e.key === "ArrowLeft" ? -24 : e.key === "ArrowRight" ? 24 : e.key === "Home" ? -railPx : e.key === "End" ? railMax : null;
+    if (step === null) return;
+    e.preventDefault();
+    persistOptions({ studioRailPx: clampRail(railPx + step) });
+  };
+
   const choose = async () => {
     if (picking.current || busy) return;
     picking.current = true;
@@ -868,6 +906,7 @@ export default function Transcribe() {
           { value: "studio", label: "Studio" },
         ]}
       />
+      </div>
     </div>
   );
 
@@ -2467,16 +2506,31 @@ export default function Transcribe() {
       }
     >
       <div
-        className={
-          studio
-            ? "min-h-0 w-[420px] shrink-0 overflow-y-auto overscroll-contain pb-4 pr-1.5"
-            : undefined
-        }
+        className={studio ? "min-h-0 shrink-0 overflow-y-auto overscroll-contain pb-4 pr-1.5" : undefined}
+        style={studio ? { width: railPx } : undefined}
       >
         {header}
         {configSections}
         {studio && recentStrip}
       </div>
+      {studio && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize the settings column"
+          aria-valuemin={STUDIO_RAIL_MIN}
+          aria-valuemax={railMax}
+          aria-valuenow={railPx}
+          tabIndex={0}
+          title="Drag to resize · double-click to reset"
+          onPointerDown={onRailPointerDown}
+          onKeyDown={onRailKeyDown}
+          onDoubleClick={() => persistOptions({ studioRailPx: STUDIO_RAIL_DEFAULT })}
+          className="group -mx-3 flex w-6 shrink-0 cursor-col-resize justify-center outline-none"
+        >
+          <i className={cn("block w-px rounded-full bg-line transition-colors group-hover:bg-accent group-focus-visible:bg-accent", railDrag !== null && "bg-accent")} />
+        </div>
+      )}
       <div className={studio ? "flex min-h-0 min-w-0 flex-1 flex-col" : undefined}>
         {!studio && recentStrip}
         {viewer ??
@@ -2498,21 +2552,3 @@ export default function Transcribe() {
     </div>
   );
 }
-      {studio && (
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize the settings column"
-          aria-valuemin={STUDIO_RAIL_MIN}
-          aria-valuemax={railMax}
-          aria-valuenow={railPx}
-          tabIndex={0}
-          title="Drag to resize · double-click to reset"
-          onPointerDown={onRailPointerDown}
-          onKeyDown={onRailKeyDown}
-          onDoubleClick={() => persistOptions({ studioRailPx: STUDIO_RAIL_DEFAULT })}
-          className="group -mx-3 flex w-6 shrink-0 cursor-col-resize justify-center outline-none"
-        >
-          <i className={cn("block w-px rounded-full bg-line transition-colors group-hover:bg-accent group-focus-visible:bg-accent", railDrag !== null && "bg-accent")} />
-        </div>
-      )}

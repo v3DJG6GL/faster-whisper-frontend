@@ -408,6 +408,7 @@ export const TRANSCRIBE_COVERAGE = {
   speakerColorMode: LOCAL, // legacy, superseded by the display toggles
   wordTimestamps: "wordTimestamps",
   layout: LOCAL, // window-width-dependent screen arrangement
+  studioRailPx: LOCAL, // the studio splitter position — per-window view state
   showTimestamps: "showTimestamps",
   showSpeakerNames: "showSpeakerNames",
   colorizeSpeakers: "colorizeSpeakers",

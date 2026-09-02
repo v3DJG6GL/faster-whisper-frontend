@@ -393,6 +393,8 @@ export interface TranscribeSettings {
    *  transcript right; "stacked" = the single centered column. Absent = auto
    *  (studio once the window is wide enough and a transcript exists). */
   layout?: "stacked" | "studio";
+  /** Studio: the config rail's width in px, dragged on the splitter (absent = default). */
+  studioRailPx?: number;
   /** Display toggles (the view IS the export): "[mm:ss]" prefixes, speaker
    *  name chips/prefixes, per-speaker line coloring. */
   showTimestamps?: boolean;
