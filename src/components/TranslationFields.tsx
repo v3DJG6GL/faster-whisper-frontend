@@ -190,6 +190,7 @@ export function TranslationOptionsFields({
                 models={caps?.translation_models ?? []}
                 defaultLabel={`Default · ${caps?.translation_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
                 ariaLabel="Translation model"
+                disabled={disabled}
               />
             </div>
           )}

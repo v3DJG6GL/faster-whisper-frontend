@@ -25,6 +25,11 @@ describe("axisLayout", () => {
       { row: 0, offset: 0 },
     ]);
   });
+  it("a label that overflows the right edge is pulled left", () => {
+    const out = axisLayout([300, 300], [50, 320], 602);
+    expect(out[1].offset).toBeLessThanOrEqual(0);
+    expect(300 + 2 + out[1].offset + 320).toBeLessThanOrEqual(602);
+  });
 });
 
 describe("SKIPPED_EXPLANATIONS", () => {

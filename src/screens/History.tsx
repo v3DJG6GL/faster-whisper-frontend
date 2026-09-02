@@ -307,7 +307,7 @@ export default function History() {
       (r) =>
         r.sourceName.toLowerCase().includes(q) ||
         (r.appId ?? "").toLowerCase().includes(q) ||
-        recordText(r).toLowerCase().includes(q),
+        recordText(r, 4000).toLowerCase().includes(q),
     );
   }, [records, query]);
 

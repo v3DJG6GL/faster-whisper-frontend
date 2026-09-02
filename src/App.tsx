@@ -75,7 +75,10 @@ function NavigationBridge() {
         const path = SCREEN_PATH[screen as keyof typeof SCREEN_PATH];
         // Same unsaved-work guard the sidebar runs: the overlay chip can fire
         // this while a list editor is open.
-        if (path) tryNavigate(() => navigate(path));
+        if (path) {
+          const go = () => navigate(path);
+          if (tryNavigate(go)) go();
+        }
       }),
     [navigate],
   );
@@ -150,13 +153,14 @@ function LogsDoorwayBanner() {
             type="button"
             // Through the unsaved-work guard like every other navigation the shell issues: the
             // doorway is raised asynchronously and can land over an open editor.
-            onClick={() =>
-              tryNavigate(() => {
+            onClick={() => {
+              const go = () => {
                 setLogsDoorway(null);
                 openLogsPrefiltered("warn");
                 navigate("/logs");
-              })
-            }
+              };
+              if (tryNavigate(go)) go();
+            }}
             className="shrink-0 whitespace-nowrap font-semibold text-accent hover:underline"
           >
             View logs

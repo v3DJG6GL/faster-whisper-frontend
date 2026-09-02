@@ -209,7 +209,8 @@ body {
    floats on the desktop — the body must not paint the opaque app background (which
    would show as a hard rectangle in the window's padding/shadow gutter). */
 body[data-window="overlay"],
-body[data-window="quickadd"] {
+body[data-window="quickadd"],
+body[data-window="langpick"] {
   background: transparent;
 }
 

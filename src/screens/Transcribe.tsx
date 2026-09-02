@@ -420,7 +420,8 @@ export default function Transcribe() {
         .then((u) => {
           if (stale) u();
           else unlisten = u;
-        }),
+        })
+        .catch((e) => console.warn("drag-drop registration failed:", e)),
     );
     return () => {
       stale = true;
@@ -466,7 +467,7 @@ export default function Transcribe() {
   }, [backends, backendId]);
 
   const backend = backends.find((b) => b.id === backendId) ?? backends[0];
-  const serverKind = backend ? effectiveServerKind(backend, connections[backend.id]) : "unknown";
+  const serverKind = backend ? effectiveServerKind(backend, ownProp(connections, backend.id)) : "unknown";
   // "unknown" must never gate (serverKind.ts contract) — only a PROVEN
   // standard server hides the full-backend-only stages.
   const isStandard = serverKind === "standard";
@@ -577,11 +578,11 @@ export default function Transcribe() {
     const url = normalizeMediaUrl(urlDraft);
     setUrlPreviewData(null);
     setUrlPreviewErr(null);
+    const seq = ++urlPreviewSeq.current;
     if (!url || !urlAvailable || !backend) {
       setUrlPreviewLoading(false);
       return;
     }
-    const seq = ++urlPreviewSeq.current;
     setUrlPreviewLoading(true);
     const timer = window.setTimeout(() => {
       urlPreview({
@@ -2300,7 +2301,7 @@ export default function Transcribe() {
       )}
 
       {queue.length === 1 && queue[0].status === "failed" && (
-        <Notice className="mt-6">{stripControlChars(queue[0].error ?? "Transcription failed.")}</Notice>
+        <Notice className="mt-6">{stripControlChars(queue[0].error ?? "Transcription failed.", 500)}</Notice>
       )}
     </>
   );

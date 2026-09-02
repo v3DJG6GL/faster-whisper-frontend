@@ -1066,6 +1066,11 @@ export default function Dictionary() {
               onReset={() => resetRule(r.name)}
             />
           ))}
+          {rules.length > MAX_SHOWN_RULES && (
+            <p className="py-2 text-center text-[12px] text-faint">
+              Showing the first {MAX_SHOWN_RULES} of {rules.length} rules.
+            </p>
+          )}
         </Stack>
       )}
     </Stack>

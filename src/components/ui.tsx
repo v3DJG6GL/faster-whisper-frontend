@@ -226,7 +226,7 @@ export function ConfirmLeave({
 // `languageLabel` returns an unknown code unchanged. Unbounded here, one field pushed
 // the Test/Edit/Remove controls off the card it labels.
 export const BADGE_BASE =
-  "inline-block max-w-[16ch] truncate align-bottom rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider";
+  "inline-block align-bottom rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider";
 
 /** A small uppercase pill. `accent` = highlighted, `warn` = caution, default = dim. */
 export function Badge({ children, tone }: { children: ReactNode; tone?: "accent" | "dim" | "warn" }) {
@@ -301,7 +301,7 @@ export function routeParts(
     .filter(Boolean)
     .map((t) => safeDisplayText(languageLabel(t), 24));
   return {
-    source: safeDisplayText(source, 24),
+    source: safeDisplayText(languageLabel(source), 24),
     targets: labels.slice(0, ROUTE_TARGETS_SHOWN),
     more: Math.max(0, labels.length - ROUTE_TARGETS_SHOWN),
   };

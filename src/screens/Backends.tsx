@@ -812,6 +812,9 @@ export default function Backends() {
       if (cur && cur.serverUrl === b.serverUrl && cur.hasApiKey === b.hasApiKey && curUrl === testedUrl) {
         setConnection(b.id, info);
       }
+    } catch (e) {
+      console.error("test_connection failed", e);
+      setConnection(b.id, { ok: false, error: String(e) } as ConnectionInfo);
     } finally {
       setTesting((s) => {
         const next = new Set(s);

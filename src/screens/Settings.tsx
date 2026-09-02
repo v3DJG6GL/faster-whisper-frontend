@@ -1024,6 +1024,7 @@ export default function Settings() {
   const [confirming, setConfirming] = useState<null | "dict" | "files" | "links" | "clear">(null);
   const [storeMsg, setStoreMsg] = useState<{ text: string; error?: boolean } | null>(null);
   const [dirBusy, setDirBusy] = useState(false);
+  const dirBusyRef = useRef(false);
   // Both die with the tab that owns them: an armed "Delete 214 sessions" confirm must not
   // survive a trip to another tab, and a stale "Removed N files." must not greet the next visit.
   useEffect(() => {
@@ -1111,7 +1112,8 @@ export default function Settings() {
   const changeRecDir = () =>
     void pickRecordingsDir()
       .then(async (picked) => {
-        if (!picked || dirBusy) return;
+        if (!picked || dirBusyRef.current) return;
+        dirBusyRef.current = true;
         setDirBusy(true);
         try {
           // A coalesced record write captured BEFORE the move would land after it and put
@@ -1126,12 +1128,14 @@ export default function Settings() {
           forgetRecord(null);
           void loadHistory(true).catch(() => {});
         } finally {
+          dirBusyRef.current = false;
           setDirBusy(false);
         }
       })
       .catch((e) => setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true }));
   const resetRecDir = () => {
-    if (dirBusy) return;
+    if (dirBusyRef.current) return;
+    dirBusyRef.current = true;
     setDirBusy(true);
     dropPendingWrites();
     void moveAudioBase(basePref, null)
@@ -1142,7 +1146,7 @@ export default function Settings() {
         void loadHistory(true).catch(() => {});
       })
       .catch((e) => setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true }))
-      .finally(() => setDirBusy(false));
+      .finally(() => { dirBusyRef.current = false; setDirBusy(false); });
   };
 
   const runEvdevSetup = () => {

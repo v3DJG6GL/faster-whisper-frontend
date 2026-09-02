@@ -40,6 +40,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState<Step>("gate");
   const [url, setUrl] = useState("");
   const [key, setKey] = useState("");
+  const urlRef = useRef(url);
+  const keyRef = useRef(key);
+  urlRef.current = url;
+  keyRef.current = key;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<ConnectionInfo | null>(null);
@@ -89,7 +93,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // the keyring under it, `syncPull` run against it, and its restore offer presented while the
       // on-screen field showed the corrected host. Accepting that restore runs
       // `applyBlob(blob, ALL_ON)` and binds sync to that server.
-      if (abandoned.current || normalizeUrl(url) !== serverUrl || key !== keyAtTest) {
+      if (abandoned.current || normalizeUrl(urlRef.current) !== serverUrl || keyRef.current !== keyAtTest) {
         return;
       }
       if (!res.ok) {

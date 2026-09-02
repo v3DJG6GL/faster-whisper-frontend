@@ -718,11 +718,11 @@ export function SyncTab() {
   const busy = syncStatus === "syncing";
 
   const doExport = async () => {
-    const stamp = new Date().toISOString().slice(0, 10);
-    const path = await pickSavePath(`faster-whisper-settings-${stamp}.json`);
-    if (!path) return;
-    setExportState("busy");
     try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const path = await pickSavePath(`faster-whisper-settings-${stamp}.json`);
+      if (!path) return;
+      setExportState("busy");
       await exportToFile(path, includeSecrets);
       setExportState("done");
       setTimeout(() => setExportState("idle"), 2500);
@@ -734,9 +734,9 @@ export function SyncTab() {
 
   const doImport = async () => {
     setImportError(null);
-    const path = await pickImportFile();
-    if (!path) return;
     try {
+      const path = await pickImportFile();
+      if (!path) return;
       setImportResult(await importSettingsFile(path));
     } catch (e) {
       // `import_settings_file`'s serde errors echo the offending input VERBATIM and untruncated
@@ -750,18 +750,20 @@ export function SyncTab() {
   const doDeleteServerCopy = async () => {
     if (!syncBackend) return;
     setDeleteArmed(false);
-    const r = await syncDelete({
-      serverUrl: effectiveServerUrl(syncBackend, useApp.getState().settings),
-      backendId: syncBackend.id,
-    });
-    // 404 = already gone; treat as done. Anything else must not clear the local
-    // base — with version 0 and no snapshot, the next push CASes against 0,
-    // takes a 409 against the doc the user believes deleted, and merges it back.
-    if (!r.ok && r.status !== 404) {
-      useApp.getState().setSyncRuntime({ syncStatus: "error", syncError: deleteFailureMessage(r) });
-      return;
+    try {
+      const r = await syncDelete({
+        serverUrl: effectiveServerUrl(syncBackend, useApp.getState().settings),
+        backendId: syncBackend.id,
+      });
+      if (!r.ok && r.status !== 404) {
+        useApp.getState().setSyncRuntime({ syncStatus: "error", syncError: deleteFailureMessage(r) });
+        return;
+      }
+      await resetSyncState();
+    } catch (e) {
+      console.error("delete server copy failed", e);
+      useApp.getState().setSyncRuntime({ syncStatus: "error", syncError: safeDisplayText(String(e), 200) });
     }
-    await resetSyncState();
   };
 
   return (

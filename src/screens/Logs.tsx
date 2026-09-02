@@ -173,6 +173,7 @@ export default function Logs() {
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [follow, setFollow] = useState<FollowState>({ follow: true, pendingNew: 0 });
 
   // Attach the stream for the screen's lifetime; badge clears on open & close.
@@ -328,11 +329,13 @@ export default function Logs() {
     } catch (e) {
       console.error("bug report copy failed:", e);
       setCopyError(true);
-      window.setTimeout(() => setCopyError(false), 1600);
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopyError(false), 1600);
       return;
     }
     setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
+    clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopied(false), 1600);
   }
 
   return (
