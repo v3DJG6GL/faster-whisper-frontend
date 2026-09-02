@@ -876,6 +876,12 @@ function useRovingGrid(count: number, dx: number, dy: number) {
   return { focusIdx, onKeyDown };
 }
 
+/** The hovered / focused cell's highlight, driven from the tooltip's index rather than
+ *  `:hover`: Tailwind v4 wraps every hover utility in `@media (hover: hover)`, which
+ *  WebKitGTK does not always report, and a ring (box-shadow) cannot be undone by the
+ *  cells' `outline-none`. */
+const CELL_HOT = "z-10 ring-2 ring-text ring-offset-1 ring-offset-panel";
+
 const CELL_HOVER = "hover:outline hover:outline-2 hover:outline-offset-1 hover:outline-text relative hover:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-text focus-visible:z-10";
 
 const LEVEL_BG = ["var(--c-surface-2)", "var(--c-cal-1)", "var(--c-cal-2)", "var(--c-cal-3)", "var(--c-cal-4)"] as const;
@@ -969,7 +975,7 @@ function CalendarPanel({ dense, streaks, scope, withS, from, to, title, filtered
                     tabIndex={i === focusIdx ? 0 : -1}
                     role="gridcell"
                     aria-label={`${fmtDateFull(cellData.day)}: ${cellData.value > 0 ? metricText(metric, cellData.value) : `no ${label.toLowerCase()}`}${cellData.level ? `, ${QUARTER_NAME[cellData.level]}` : ""}`}
-                    className={cn("block rounded-[3px] outline-none", CELL_HOVER, cellData.day === today && "ring-[1.5px] ring-inset ring-text")}
+                    className={cn("block rounded-[3px] outline-none", CELL_HOVER, cellData.day === today && "ring-[1.5px] ring-inset ring-text", tip?.i === i && CELL_HOT)}
                     style={{ width: cell, height: cell, background: LEVEL_BG[cellData.level] }}
                   />
                 );
@@ -1056,6 +1062,32 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
   const cellClass = rhythm === "hours" ? "aspect-square max-h-[20px]" : rhythm === "days" ? "h-[11px]" : "h-[22px]";
   const tz = stats.tz === "local" ? "server time" : stats.tz;
   const peakOcc = peak ? model.occOf(peak) : 0;
+  // The two average ticks are drawn once across each track (a per-cell dash would break
+  // at every grid gap): measured from the first and last bar of each track after layout.
+  const [ticks, setTicks] = useState<{ top: { x1: number; x2: number; y: number }; side: { x: number; y1: number; y2: number } } | null>(null);
+  useLayoutEffect(() => {
+    const host = boundsRef.current;
+    if (!host) { setTicks(null); return; }
+    const measure = () => {
+      const box = host.getBoundingClientRect();
+      const tops = host.querySelectorAll<HTMLElement>('[data-track="top"]');
+      const sides = host.querySelectorAll<HTMLElement>('[data-track="side"]');
+      if (!tops.length || !sides.length) { setTicks(null); return; }
+      const t0 = tops[0].getBoundingClientRect();
+      const t1 = tops[tops.length - 1].getBoundingClientRect();
+      const s0 = sides[0].getBoundingClientRect();
+      const s1 = sides[sides.length - 1].getBoundingClientRect();
+      const next = {
+        top: { x1: t0.left - box.left, x2: t1.right - box.left, y: t0.bottom - box.top - t0.height / cMax },
+        side: { x: s0.left - box.left + s0.width / rMax, y1: s0.top - box.top, y2: s1.bottom - box.top },
+      };
+      setTicks((p) => (p && JSON.stringify(p) === JSON.stringify(next) ? p : next));
+    };
+    measure();
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+    ro?.observe(host);
+    return () => ro?.disconnect();
+  }, [model, cMax, rMax]);
   return (
     <Panel
       title={`Busy ${rhythm} · ${title}${kindWord}`}
@@ -1076,9 +1108,9 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
       {model.sent !== "yes" ? (
         <div className="rounded-[10px] border border-dashed border-line-strong px-3 py-2.5 text-[12.5px] text-dim">
           {model.sent === "no-grid" ? (
-            <><b className="font-semibold text-text">This server does not send the day-of-month grid.</b> Busy days needs a server from 2 September 2026 or later. Hours and months still work.</>
+            <><b className="font-semibold text-text">This server does not send the day-of-month grid.</b> Update the server to see busy days. Hours and months still work.</>
           ) : (
-            <><b className="font-semibold text-text">This server sends words per hour only.</b> {label} per {L.slotWord} needs a server from 2 September 2026 or later. The rest of the page still follows the measure.</>
+            <><b className="font-semibold text-text">This server sends words per hour only.</b> Update the server to see {label.toLowerCase()} per {L.slotWord}. The rest of the page still follows the measure.</>
           )}
         </div>
       ) : (
@@ -1100,10 +1132,10 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
                 tabIndex={0}
                 role="img"
                 aria-label={`${L.colLong(c)}: ${metricText(metric, model.colTotals[c])}, ${idx.toFixed(1)} times an average ${L.colUnit}`}
-                className={cn("relative flex h-[24px] items-end rounded-[2px] outline-none", CELL_HOVER, !(L.colOcc ? L.colOcc[c] > 0 : true) && "invisible")}
+                data-track="top"
+                className={cn("relative flex h-[24px] items-end rounded-[2px] outline-none", CELL_HOVER, !(L.colOcc ? L.colOcc[c] > 0 : true) && "invisible", tip?.i === N + c && CELL_HOT)}
               >
                 <i className="block w-full rounded-t-[2px]" style={{ height: `${barLen(idx, cMax)}%`, background: barBg(idx) }} />
-                <i className="pointer-events-none absolute inset-x-0 border-t border-dashed border-line-strong" style={{ bottom: `${(100 / cMax).toFixed(1)}%` }} aria-hidden />
               </div>
             ))}
             <div />
@@ -1124,7 +1156,7 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
                       tabIndex={i === focusIdx ? 0 : -1}
                       role="gridcell"
                       aria-label={`${L.cellName(i)}: ${c.value > 0 ? `${metricText(metric, c.value)} · ${metricText(comp, c.companion)}` : `no ${label.toLowerCase()}`}${c.level ? `, ${QUARTER_NAME[c.level]}` : ""}`}
-                      className={cn("block w-full rounded-[3px] outline-none", cellClass, CELL_HOVER, peak === c && "ring-[1.5px] ring-inset ring-text", !c.inWindow && "invisible")}
+                      className={cn("block w-full rounded-[3px] outline-none", cellClass, CELL_HOVER, peak === c && "ring-[1.5px] ring-inset ring-text", !c.inWindow && "invisible", tip?.i === i && CELL_HOT)}
                       style={{ background: LEVEL_BG[c.level] }}
                     />
                   );
@@ -1134,14 +1166,20 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
                   tabIndex={0}
                   role="img"
                   aria-label={`${L.rowLong(r)}: ${metricText(metric, model.rowTotals[r])}, ${model.rowIndex[r].toFixed(1)} times an average ${L.rowUnit}`}
-                  className={cn("relative flex items-center rounded-[2px] outline-none", CELL_HOVER)}
+                  data-track="side"
+                  className={cn("relative flex items-center rounded-[2px] outline-none", CELL_HOVER, tip?.i === N + L.cols + r && CELL_HOT)}
                 >
                   <i className="block h-[60%] rounded-r-[2px]" style={{ width: `${barLen(model.rowIndex[r], rMax)}%`, background: barBg(model.rowIndex[r]) }} />
-                  <i className="pointer-events-none absolute inset-y-0 border-l border-dashed border-line-strong" style={{ left: `${(100 / rMax).toFixed(1)}%` }} aria-hidden />
                 </div>
               </Fragment>
             ))}
           </div>
+          {ticks && (
+            <>
+              <i className="pointer-events-none absolute border-t border-dashed border-line-strong" style={{ left: ticks.top.x1, width: ticks.top.x2 - ticks.top.x1, top: ticks.top.y }} aria-hidden />
+              <i className="pointer-events-none absolute border-l border-dashed border-line-strong" style={{ left: ticks.side.x, top: ticks.side.y1, height: ticks.side.y2 - ticks.side.y1 }} aria-hidden />
+            </>
+          )}
         </div>
       )}
       {model.sent === "yes" && (
