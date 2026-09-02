@@ -235,22 +235,22 @@ function tileSpecs(stats: UsageStats, dense: readonly UsageKinds[], scope: Usage
       spark: spark((p) => scopeTotals(p, scope).words), sparkColor: "var(--c-accent)",
     },
     {
-      key: "audio", label: "Audio", icon: Clock, value: fmtDurationExact(today.audio_s), tone: "text",
+      key: "audio", label: "Audio", icon: Clock, value: fmtDurationExact(today.audio_s), tone: "dict",
       sub: <><Today /> · <Num>{fmtDuration(total.audio_s)}</Num> {windowWord}</>,
-      spark: spark((p) => scopeTotals(p, scope).audio_s), sparkColor: "var(--c-dim)",
+      spark: spark((p) => scopeTotals(p, scope).audio_s), sparkColor: "var(--c-accent)",
     },
     {
-      key: "runs", label: "Runs", icon: Mic, value: fmtFull(today.sessions), tone: "text",
+      key: "runs", label: "Runs", icon: Mic, value: fmtFull(today.sessions), tone: "dict",
       sub: scope === "all" ? <><Today /> · <Num>{runsBreakdown(stats.today)}</Num></> : <><Today /> · <Num>{fmtCompact(total.sessions)}</Num> {windowWord}</>,
-      spark: spark((p) => scopeTotals(p, scope).sessions), sparkColor: "var(--c-dim)",
+      spark: spark((p) => scopeTotals(p, scope).sessions), sparkColor: "var(--c-accent)",
     },
   ];
   if (withSaved) {
     const d = safeTotals(stats.today?.dictation);
     tiles.push({
-      key: "saved", label: "Time saved", icon: Timer, value: fmtTimeSaved(timeSavedS(d.words, d.audio_s)), tone: "ok",
+      key: "saved", label: "Time saved", icon: Timer, value: fmtTimeSaved(timeSavedS(d.words, d.audio_s)), tone: "dict",
       sub: <><Today /> · vs typing at 40 wpm{wpm > 0 && <> · <Num>{wpm} wpm</Num> spoken</>}</>,
-      spark: spark((p) => timeSavedS(safeTotals(p.dictation).words, safeTotals(p.dictation).audio_s)), sparkColor: "var(--c-ok)",
+      spark: spark((p) => timeSavedS(safeTotals(p.dictation).words, safeTotals(p.dictation).audio_s)), sparkColor: "var(--c-accent)",
     });
   }
   tiles.push({
