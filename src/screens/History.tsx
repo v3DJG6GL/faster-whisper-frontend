@@ -8,11 +8,9 @@
 // matches, a banner names them (NN/g scoped-search guidance).
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useNavigate } from "react-router-dom";
-import {
-  Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, FileText, Link2, Mic, MicOff,
-  Pause, Play, RotateCcw, Search, Trash2, X,
-} from "lucide-react";
+import { Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, FileText, Link2, Mic, MicOff, Pause, Play, RotateCcw, Search, Trash2, X, History as HistoryIcon } from "lucide-react";
 import {
   Badge,
   Button,
@@ -846,7 +844,7 @@ export default function History() {
 
   return (
     <div ref={rootRef} className="page page-prose">
-      <PageHeader eyebrow="transcribe" title="History">
+      <PageHeader eyebrow={screenEyebrow("history")} title={screenTitle("history")} icon={HistoryIcon}>
         Everything you transcribed or dictated — stored only on this machine.
       </PageHeader>
 

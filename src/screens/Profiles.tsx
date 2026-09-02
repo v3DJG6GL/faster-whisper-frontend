@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useSearchParams } from "react-router-dom";
-import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser } from "lucide-react";
+import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser, Command } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Badge, Button, Card, ConfirmLeave, RouteBadge, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextArea, TextInput, Toggle } from "@/components/ui";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
@@ -745,8 +746,9 @@ export default function Profiles() {
   return (
     <div className="page page-form">
       <ListScreenHeader
-        eyebrow="profiles"
-        title="Profiles"
+        eyebrow={screenEyebrow("profiles")}
+        title={screenTitle("profiles")}
+        icon={Command}
         showAdd={!draft}
         addLabel="Add profile"
         onAdd={startAdd}

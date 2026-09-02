@@ -10,6 +10,7 @@
 // render — so editing never remounts an input (cf. DecodeFields focus-loss caveat).
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { safeDisplayText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
 import { backendOptions } from "@/lib/backends";
@@ -879,9 +880,9 @@ export default function Dictionary() {
     <Stack gap={6} className="page page-prose">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <div className="font-mono text-[11px] uppercase tracking-label text-accent">Server rules</div>
+          <div className="font-mono text-[11px] uppercase tracking-label text-accent">{screenEyebrow("dictionary")}</div>
           <h1 className="mt-2 flex items-center gap-2.5 font-display text-[30px] font-bold tracking-tight text-text">
-            <BookA className="size-7 text-accent" /> Dictionary
+            <BookA className="size-7 text-accent" aria-hidden /> {screenTitle("dictionary")}
           </h1>
           <p className="mt-2 max-w-md text-[13.5px] text-dim">
             Text rules your server applies to every transcription — replacements, word mappings,

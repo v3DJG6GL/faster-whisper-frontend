@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { LucideIcon } from "lucide-react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, ArrowLeft, Check, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -48,12 +49,15 @@ export function SectionLabel({ children, className }: { children: ReactNode; cla
 /* ── Page header ──────────────────────────────────────────────────────── */
 /** The eyebrow + title + lede triple at the top of a screen. Renders a fragment so it
  *  drops into either a bare container or the inner div of a flex header row unchanged. */
-export function PageHeader({ eyebrow, title, children }: { eyebrow: string; title: string; children: ReactNode }) {
+export function PageHeader({ eyebrow, title, icon: Icon, children }: { eyebrow: string; title: string; icon?: LucideIcon; children: ReactNode }) {
   return (
     <>
       <div className="font-mono text-[11px] uppercase tracking-label text-accent">{eyebrow}</div>
-      <h1 className="mt-2 font-display text-[30px] font-bold tracking-tight text-text">{title}</h1>
-      <p className="mt-2 max-w-md text-[13.5px] text-dim">{children}</p>
+      <h1 className="mt-2 flex items-center gap-2.5 font-display text-[30px] font-bold tracking-tight text-text">
+        {Icon && <Icon className="size-7 text-accent" aria-hidden />}
+        {title}
+      </h1>
+      <p className="mt-2 text-[13.5px] text-dim">{children}</p>
     </>
   );
 }
@@ -66,6 +70,7 @@ export function PageHeader({ eyebrow, title, children }: { eyebrow: string; titl
 export function ListScreenHeader({
   eyebrow,
   title,
+  icon,
   children,
   showAdd,
   addLabel,
@@ -73,22 +78,25 @@ export function ListScreenHeader({
 }: {
   eyebrow: string;
   title: string;
+  icon?: LucideIcon;
   children: ReactNode;
   showAdd: boolean;
   addLabel: string;
   onAdd: () => void;
 }) {
+  // The heading block stands alone; the page's actions start a row of their own under
+  // the lede, so the description never shares a line with a button.
   return (
-    <div className="flex items-end justify-between">
-      <div>
-        <PageHeader eyebrow={eyebrow} title={title}>
-          {children}
-        </PageHeader>
-      </div>
+    <div>
+      <PageHeader eyebrow={eyebrow} title={title} icon={icon}>
+        {children}
+      </PageHeader>
       {showAdd && (
-        <Button variant="accent" onClick={onAdd}>
-          <Plus className="size-4" /> {addLabel}
-        </Button>
+        <div className="page-content flex justify-start">
+          <Button variant="accent" onClick={onAdd}>
+            <Plus className="size-4" /> {addLabel}
+          </Button>
+        </div>
       )}
     </div>
   );

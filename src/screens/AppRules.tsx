@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { AppWindow, Ban, Crosshair, Pencil, Trash2 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, ConfirmLeave, EditorHeader, Labeled, ListScreenHeader, Notice, SectionLabel, TextInput, Toggle } from "@/components/ui";
@@ -282,8 +283,9 @@ export default function AppRules() {
   return (
     <div className="page page-form">
       <ListScreenHeader
-        eyebrow="app rules"
-        title="Per-app rules"
+        eyebrow={screenEyebrow("app-rules")}
+        title={screenTitle("app-rules")}
+        icon={AppWindow}
         showAdd={!draft}
         addLabel="Add rule"
         onAdd={startAdd}

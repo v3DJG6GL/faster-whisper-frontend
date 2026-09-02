@@ -1,9 +1,8 @@
 import { ownProp } from "@/lib/own";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { screenEyebrow, screenTitle } from "@/lib/screens";
+import { useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Link } from "react-router-dom";
-import {
-  UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, Link2,
-} from "lucide-react";
+import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, Link2, AudioLines } from "lucide-react";
 import { useApp } from "@/lib/store";
 import {
   Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select,
@@ -832,12 +831,11 @@ export default function Transcribe() {
   // The page assembles from four blocks so the stacked column and the studio
   // two-pane arrangement can share every section unchanged.
   const header = (
-    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
-      <div>
-        <PageHeader eyebrow="batch" title="Transcribe a file">
-          Send audio or video files to one of your backends via the batch endpoint.
-        </PageHeader>
-      </div>
+    <div>
+      <PageHeader eyebrow={screenEyebrow("transcribe")} title={screenTitle("transcribe")} icon={AudioLines}>
+        Add audio or video files, links to audio or video content, or text files, then transcribe, translate and diarize them.
+      </PageHeader>
+      <div className="page-content flex justify-start">
       <Segmented
         value={studio ? "studio" : "stacked"}
         ariaLabel="Page layout"
@@ -2500,3 +2498,21 @@ export default function Transcribe() {
     </div>
   );
 }
+      {studio && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize the settings column"
+          aria-valuemin={STUDIO_RAIL_MIN}
+          aria-valuemax={railMax}
+          aria-valuenow={railPx}
+          tabIndex={0}
+          title="Drag to resize · double-click to reset"
+          onPointerDown={onRailPointerDown}
+          onKeyDown={onRailKeyDown}
+          onDoubleClick={() => persistOptions({ studioRailPx: STUDIO_RAIL_DEFAULT })}
+          className="group -mx-3 flex w-6 shrink-0 cursor-col-resize justify-center outline-none"
+        >
+          <i className={cn("block w-px rounded-full bg-line transition-colors group-hover:bg-accent group-focus-visible:bg-accent", railDrag !== null && "bg-accent")} />
+        </div>
+      )}

@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Mic, Check, Play, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus, FolderOpen } from "lucide-react";
+import { Mic, Check, Play, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus, FolderOpen, Settings as SettingsIcon } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { swap } from "@/lib/arr";
 import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
-import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screens";
+import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta, screenEyebrow, screenTitle } from "@/lib/screens";
 import { IS_LINUX } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
@@ -1172,9 +1172,10 @@ export default function Settings() {
     // between the two menus that read as one piece of chrome. So the rail sits
     // at the page padding and the content column takes the rest, capped at the
     // form width so setting rows never stretch past a comfortable measure.
-    <div className="flex gap-8 px-[var(--page-pad)] py-12">
-      <div className="sticky top-12 z-10 w-[150px] shrink-0 self-start">
-        <h1 className="mb-5 font-display text-[22px] font-bold tracking-tight text-text">Settings</h1>
+    <div className="flex gap-8 px-[var(--page-pad)] pb-12 pt-6">
+      <div className="sticky top-6 z-10 w-[220px] shrink-0 self-start">
+        <div className="font-mono text-[11px] uppercase tracking-label text-accent">{screenEyebrow("settings")}</div>
+        <h1 className="mb-5 mt-2 flex items-center gap-2.5 font-display text-[30px] font-bold tracking-tight text-text"><SettingsIcon className="size-7 text-accent" aria-hidden />{screenTitle("settings")}</h1>
         <div className="flex flex-col gap-0.5">
           {TABS.map((t) => (
             <button

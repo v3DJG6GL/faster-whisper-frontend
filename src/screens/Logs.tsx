@@ -8,7 +8,8 @@
 // full 10k-line buffer — and live OUTSIDE the store (see lib/logs.ts).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDown, Check, ChevronRight, Copy, Eraser, FolderOpen } from "lucide-react";
+import { screenEyebrow, screenTitle } from "@/lib/screens";
+import { ArrowDown, Check, ChevronRight, Copy, Eraser, FolderOpen, ScrollText } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
@@ -341,9 +342,11 @@ export default function Logs() {
   }
 
   return (
-    <div className="flex h-full flex-col px-[var(--page-pad)] pt-10">
-      <div className="flex items-baseline gap-3">
-        <h1 className="font-display text-[24px] font-bold text-text">Logs</h1>
+    <div className="flex h-full flex-col px-[var(--page-pad)] pt-6">
+      <div className="font-mono text-[11px] uppercase tracking-label text-accent">{screenEyebrow("logs")}</div>
+      <h1 className="mt-2 flex items-center gap-2.5 font-display text-[30px] font-bold tracking-tight text-text"><ScrollText className="size-7 text-accent" aria-hidden />{screenTitle("logs")}</h1>
+      {/* The live status line under the title, like a lede: streaming state left, the session count right. */}
+      <div className="mt-2 flex items-center gap-3">
         <span className="flex items-center gap-1.5 text-[12px] font-medium text-live">
           <StatusDot tone="live" pulse title="Streaming" /> Streaming
         </span>

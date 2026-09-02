@@ -8,6 +8,8 @@
 // and the measure (`?kind=`, `?metric=`) are client-side: they change what the page shows of
 // the document it already has, never the fetch.
 
+import { BarChart3 } from "lucide-react";
+import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { StatisticsView } from "@/components/UsageStats";
@@ -33,8 +35,8 @@ export default function Statistics() {
   const setMetric = (metric: ChartMetric) => setState((s) => ({ ...s, metric }));
   const setRhythm = (rhythm: Rhythm) => setState((s) => ({ ...s, rhythm }));
   return (
-    <div className="page page-cards">
-      <PageHeader eyebrow="faster-whisper · usage" title="Statistics">
+    <div className="page page-dense">
+      <PageHeader eyebrow={screenEyebrow("statistics")} title={screenTitle("statistics")} icon={BarChart3}>
         Everything you’ve dictated, transcribed and translated — by kind, with the stages each session used, how
         dictations landed, and your rhythm over any range. One filter bar and one measure; every panel follows them.
       </PageHeader>

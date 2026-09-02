@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useSearchParams } from "react-router-dom";
 import { Server, Pencil, Copy, Trash2, Plug, Loader2, Eraser, RotateCcw } from "lucide-react";
 import { useApp } from "@/lib/store";
@@ -847,8 +848,9 @@ export default function Backends() {
   return (
     <div className="page page-form">
       <ListScreenHeader
-        eyebrow="backends"
-        title="Backends"
+        eyebrow={screenEyebrow("backends")}
+        title={screenTitle("backends")}
+        icon={Server}
         showAdd={!flow}
         addLabel="Add backend"
         onAdd={() => setFlow({ step: "connect" })}
