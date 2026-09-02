@@ -13,6 +13,7 @@ import type { TargetPick } from "./streaming";
 import { getFocusedApp, isTauri, showLangPick, showQuickAdd } from "./api";
 import { ownProp } from "./own";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
+import { configuredRouteTargets } from "./overlay";
 import type { Backend, Profile } from "./types";
 
 export type TriggerAction = "start" | "stop" | "toggle" | "reclassify";
@@ -40,6 +41,12 @@ function stopOrCancel(hard: boolean): void {
   if (isGracefulStop(s, isCapturing())) void stopLive();
   else if (isProcessing(s)) {
     if (hard) void cancelLive();
+    // A non-hard release during processing is the documented fast re-press flow:
+    // the previous session is still draining. Void any queued hold start here too —
+    // on a staggered modifier-chord release the chord is already broken as far as
+    // Rust is concerned, but `shortcutModsHeld` would still answer true and
+    // `consumePendingHoldStart` would start a hold session with nothing left to release.
+    voidPendingHoldStart();
   }
   // idle/error but a session may be mid-START (its status not yet "listening", e.g. a fast PTT tap
   // whose chord-release "stop" landed during the start prologue) → mark it to tear down on go-live,
@@ -152,7 +159,7 @@ export function dictate(profileId: string, action: TriggerAction): void {
       ? () =>
           askTranslationTargets({
             source: profile.language?.trim() ? profile.language : backend.language,
-            preset: profile.translationOverrides?.translateTo ?? [],
+            preset: configuredRouteTargets(profile, backend) ?? [],
             recent: useApp.getState().settings.recentTranslationTargets ?? [],
             tag: profile.tag?.trim() || profile.name,
             when: "after",
@@ -201,7 +208,7 @@ async function startWithPickedTargets(
   if (pickerOpen) return;
   pickerOpen = true;
   const s = useApp.getState();
-  const preset = profile.translationOverrides?.translateTo ?? [];
+  const preset = configuredRouteTargets(profile, backend) ?? [];
   const backendLang = backend.language;
   try {
     // Resolve the injection target BEFORE taking focus — see the docblock. Non-fatal: an

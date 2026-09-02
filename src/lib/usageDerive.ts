@@ -274,7 +274,8 @@ export function resolveWindow(q: UsagePageQuery, today: number, firstDay?: numbe
   return { from: today - days + 1, to: today, days };
 }
 
-/** True when anything but the default range / no stages / every kind is set. */
+/** True when a kind or a stage filter is set — the RANGE is deliberately not
+ *  counted; callers that want it add `q.range !== "30"`. */
 export function isFiltered(scope: UsageScope, q: UsagePageQuery): boolean {
   return scope !== "all" || q.with.length > 0;
 }
@@ -639,7 +640,11 @@ export function facetRows(
   const clean = rows
     .map((r) => ({ ...r, value: typeof r.value === "number" && Number.isFinite(r.value) ? Math.max(0, r.value) : 0 }))
     .filter((r) => !dropZero || r.value > 0);
-  const max = clean.reduce((m, r) => (scaleTo === "lit" && r.dim ? m : Math.max(m, r.value)), 0);
+  let max = clean.reduce((m, r) => (scaleTo === "lit" && r.dim ? m : Math.max(m, r.value)), 0);
+  // When every lit row has value 0, fall back to the all-rows max so dim rows
+  // still render their bars — "Not asked: 87" next to a zero-width bar reads
+  // as "no data" when there IS data.
+  if (max === 0 && scaleTo === "lit") max = clean.reduce((m, r) => Math.max(m, r.value), 0);
   return clean.map((r) => ({ ...r, pct: max > 0 ? Math.min(100, Math.round((r.value / max) * 100)) : 0 }));
 }
 

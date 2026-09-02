@@ -278,7 +278,7 @@ describe("usageDerive", () => {
 
   it("translationRows without any target keeps the two outcome rows", () => {
     const rows = translationRows({ translation: { kept_original: 0, not_asked: 4, aborted: 0, unreported: 0 } });
-    expect(rows.map((r) => [r.label, r.pct])).toEqual([["Kept original", 0], ["Not asked", 0]]);
+    expect(rows.map((r) => [r.label, r.pct])).toEqual([["Kept original", 0], ["Not asked", 100]]);
   });
 
   it("facetRows scales to the largest row", () => {

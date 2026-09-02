@@ -27,7 +27,10 @@ export function passesThreshold(level: LogLine["level"], t: LevelThreshold): boo
 }
 
 /** Combined row filter: threshold AND tag set (empty set = all tags) AND
- *  case-insensitive substring over tag + message. */
+ *  case-insensitive substring over tag + message.
+ *
+ *  For hot-path bulk filtering (10k-line buffer), prefer `makeLogFilter` which
+ *  pre-trims/lowercases the query once instead of per line. */
 export function matchesFilters(
   l: LogLine,
   t: LevelThreshold,
@@ -42,6 +45,25 @@ export function matchesFilters(
     if (!hay.includes(q)) return false;
   }
   return true;
+}
+
+/** Allocate-once filter: pre-trims/lowercases the query so 10k-line scans
+ *  don't redo it per line. Returns a predicate suitable for `Array.filter`. */
+export function makeLogFilter(
+  t: LevelThreshold,
+  tags: ReadonlySet<string>,
+  text: string,
+): (l: LogLine) => boolean {
+  const q = text.trim().toLowerCase();
+  return (l) => {
+    if (!passesThreshold(l.level, t)) return false;
+    if (tags.size > 0 && (!l.tag || !tags.has(l.tag))) return false;
+    if (q) {
+      const hay = `${l.tag ?? ""} ${l.msg}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  };
 }
 
 /** Distinct subsystem tags in first-seen order, for the filter chips. */
@@ -163,9 +185,6 @@ export interface BugReportHeader {
 
 export const BUG_REPORT_LINES = 500;
 
-/** The paste-ready support bundle: context header + the last 500 lines the
- *  caller passes in — the Logs screen hands over exactly what the view shows,
- *  so what you filtered to is what you paste. */
 /** The slice of a history record the bug-report header reads. Structural, so this module
  *  needs no import from the history store. */
 export interface BugReportRun {
@@ -234,6 +253,9 @@ export function countNewer(lines: readonly LogLine[], sinceSeq: number): number 
   return n;
 }
 
+/** The paste-ready support bundle: context header + the last 500 lines the
+ *  caller passes in — the Logs screen hands over exactly what the view shows,
+ *  so what you filtered to is what you paste. */
 export function buildBugReport(hdr: BugReportHeader, raw: readonly LogLine[]): string {
   const tail = raw.slice(-BUG_REPORT_LINES);
   const ctx = [

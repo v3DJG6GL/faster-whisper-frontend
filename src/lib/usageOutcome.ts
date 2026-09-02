@@ -86,12 +86,16 @@ export function nextBatch(
 export type PostVerdict = "sent" | "retry" | "drop";
 
 /** What a post result means for the batch: a 2xx is delivered (`duplicate` included — the
- *  server already has it); unreachable (0), 5xx, 408 and 429 are transient → retry with
- *  backoff; any other 4xx is a request the server will refuse every time → drop. */
+ *  server already has it); unreachable (0), 5xx, 408, 429, and auth errors (401/403) are
+ *  transient → retry with backoff (auth failures are a property of auth STATE — a locked
+ *  keyring, a rotated key — not of the request itself, and dropping the batch permanently
+ *  deletes outcomes persisted across restarts); any other 4xx is a request the server will
+ *  refuse every time → drop. The queue already bounds retries via MAX_AGE_MS and capped
+ *  backoff, so treating 401/403 as retryable costs nothing. */
 export function verdictFor(r: { ok: boolean; status: number }): PostVerdict {
   if (r.ok) return "sent";
   const s = r.status;
-  if (s === 0 || s >= 500 || s === 408 || s === 429) return "retry";
+  if (s === 0 || s >= 500 || s === 408 || s === 429 || s === 401 || s === 403) return "retry";
   if (s >= 400) return "drop";
   return "retry";
 }

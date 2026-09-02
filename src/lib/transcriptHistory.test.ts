@@ -4,7 +4,7 @@
 // that matter for that: the dictation capture round-trips every field the UI branches
 // on, and a malformed file never breaks the listing.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The Tauri commands are no-ops outside Tauri (api.ts guards each on `isTauri`), except
 // the disk listing, which we drive here to exercise the malformed-record filter.
@@ -169,6 +169,10 @@ describe("per-language tracks", () => {
 });
 
 describe("upsertRecord coalesces the disk write, not the mirror", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("writes leading-edge, then once more with the LAST record after the window", () => {
     vi.useFakeTimers();
     saveTranscriptRecord.mockClear();
@@ -183,7 +187,6 @@ describe("upsertRecord coalesces the disk write, not the mirror", () => {
     vi.advanceTimersByTime(2_100);
     expect(saveTranscriptRecord).toHaveBeenCalledTimes(2);
     expect(String(saveTranscriptRecord.mock.calls[1][1])).toContain("v10");
-    vi.useRealTimers();
   });
 });
 

@@ -213,7 +213,7 @@ function pickFields(obj: Record<string, unknown>, fields: ReadonlySet<string>): 
   return out;
 }
 function omitFields(obj: Record<string, unknown>, fields: ReadonlySet<string>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
+  const out: Record<string, unknown> = Object.create(null);
   for (const k of Object.keys(obj)) if (!fields.has(k)) out[k] = obj[k];
   return out;
 }
@@ -421,6 +421,14 @@ function extractProfiles(
       return snap ? { ...p, hotkey: snap } : p;
     });
   }
+  // Strip `insertionOverrides.autoEnter` before the wire/export: the apply side forces
+  // it off on every inbound path (same security reason as the app-rule twin), so emitting
+  // it promises a value no import can restore.
+  list = list.map((p) =>
+    p.insertionOverrides?.autoEnter !== undefined
+      ? { ...p, insertionOverrides: { ...p.insertionOverrides, autoEnter: undefined } }
+      : p,
+  );
   return { list, homeProfileId };
 }
 
@@ -526,7 +534,12 @@ export async function composeBlob(
   // bucket passes through from the snapshot untouched.
   if (cats.appRules) {
     const buckets = { linux: [] as AppRule[], windows: [] as AppRule[] };
-    buckets[MY_BUCKET] = cfg.appRules;
+    // Strip `autoEnter` before it reaches the wire/export: the apply side forces it off
+    // on every inbound path (security: a post-paste Return submits whatever the transcript
+    // put in the buffer), so emitting it promises a value no import can restore. Stripping
+    // here keeps the export honest and prevents a backup/restore from silently dropping the
+    // setting on a fresh device (where there is no local value to repin from).
+    buckets[MY_BUCKET] = cfg.appRules.map(({ autoEnter: _, ...r }) => r as AppRule);
     buckets[OTHER_BUCKET] = snapshot?.appRules?.[OTHER_BUCKET] ?? [];
     blob.appRules = buckets;
   } else {
@@ -761,7 +774,7 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       // which returns its argument unchanged when the code is unknown) — an object leaf throws
       // "Objects are not valid as a React child" — and `endpoint` is another fallback-less enum.
       endpoint: p.endpoint == null ? p.endpoint : oneOf<EndpointKind>(p.endpoint, ENDPOINT_KINDS, "stream"),
-      name: typeof p.name === "string" ? p.name : "",
+      name: p.name,
       tag: typeof p.tag === "string" ? p.tag : undefined,
       typeAsISpeak: p.typeAsISpeak == null ? undefined : p.typeAsISpeak === true,
       // Typed `Option<bool>` in Rust like its sibling above: a non-boolean would fail the
@@ -1029,7 +1042,7 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
  *  passed through untouched: Rust ignores unrecognised fields, so a newer peer's additions must
  *  survive the round-trip rather than being erased by an older client's next push. */
 function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
-  const out: Record<string, unknown> = {};
+  const out: Record<string, unknown> = Object.create(null);
   for (const [k, v] of Object.entries(incoming as Record<string, unknown>)) {
     // OWN properties on both reads. `k` comes from `Object.entries` over the blob, and
     // `JSON.parse` makes `__proto__` / `constructor` / `toString` ordinary own enumerable keys —
@@ -1398,6 +1411,12 @@ export async function applyBlob(
           ),
         },
       };
+      // Retired value: an inbound "off" from a pre-migration peer must not survive —
+      // migrateInsertTiming won't re-run on a current-version config, so map to the
+      // conservative "stop" the migration itself writes.
+      if (nextSettings.general.insertTiming === "off") {
+        nextSettings = { ...nextSettings, general: { ...nextSettings.general, insertTiming: "stop" } };
+      }
     }
     // Same shape check, same reason as the `general` arm above — `blob.recording` reaches
     // `typedLike` directly.
@@ -1413,7 +1432,7 @@ export async function applyBlob(
       if (Object.keys(dictHist).length) {
         nextSettings = {
           ...nextSettings,
-          transcribe: { ...settings.transcribe, ...nextSettings.transcribe, ...dictHist },
+          transcribe: { ...nextSettings.transcribe, ...dictHist },
         };
       }
       for (const k of DICTATION_HISTORY_FIELDS) delete rec[k];
@@ -1464,7 +1483,6 @@ export async function applyBlob(
         // the pre-apply settings discarded them on every ordinary pull (the
         // fileTranscriptions arm below had the right idiom).
         transcribe: {
-          ...settings.transcribe,
           ...nextSettings.transcribe,
           ...sanitizeTranscription({ ...classified, ...picks }),
         },
@@ -1479,7 +1497,7 @@ export async function applyBlob(
       if (Object.keys(ft).length) {
         nextSettings = {
           ...nextSettings,
-          transcribe: { ...settings.transcribe, ...nextSettings.transcribe, ...ft },
+          transcribe: { ...nextSettings.transcribe, ...ft },
         };
       }
     }
@@ -1569,7 +1587,12 @@ export async function applyBlob(
       // against the PRE-wait `st.backends` (the wait only re-derives `hasApiKey`), so a backend
       // added, repointed or deleted while the apply was parked was hydrated away the same way.
       const live = useApp.getState();
+      // Also check `status`: starting a dictation touches only `status`/`activeProfile`
+      // (none of the four slice identities below), so a session started during the
+      // reconcileBackendSecrets await slips the guard and `hydrate` replaces profiles,
+      // backends and appRules under a session that is actively reading them.
       if (
+        live.status !== "idle" ||
         live.settings !== settings ||
         live.backends !== st.backends ||
         live.profiles !== st.profiles ||
@@ -1586,22 +1609,12 @@ export async function applyBlob(
       // device already knows to ITS chord (the recordingsDir precedent, per list element). A
       // profile new to this device keeps the inbound chord: there is no local value, and
       // `sanitizeProfiles` requires a code list, so stripping would drop the profile whole.
-      if (!gates.profileHotkeys) {
-        const localChords = new Map(st.profiles.map((p) => [p.id, p.hotkey]));
-        nextProfiles = nextProfiles.map((p) => {
-          const local = localChords.get(p.id);
-          return local && !catEqual(local, p.hotkey) ? { ...p, hotkey: local } : p;
-        });
-      }
+      if (!gates.profileHotkeys)
+        nextProfiles = repinElementFields(nextProfiles, st.profiles, ["hotkey"]);
       // "Enabled per profile" gate off: which profiles are active is
       // per-machine — re-pin each known profile to ITS local enabled state.
-      if (!gates.enabledPerProfile) {
-        const localEnabled = new Map(st.profiles.map((p) => [p.id, p.enabled]));
-        nextProfiles = nextProfiles.map((p) => {
-          const mine = localEnabled.get(p.id);
-          return mine !== undefined && mine !== p.enabled ? { ...p, enabled: mine } : p;
-        });
-      }
+      if (!gates.enabledPerProfile)
+        nextProfiles = repinElementFields(nextProfiles, st.profiles, ["enabled"]);
       // Per-Profile insertion overrides gate off: re-pin each known profile to ITS local
       // values, absence included (`exact`) — same contract as the per-app twins.
       if (!gates.profileInsertion)

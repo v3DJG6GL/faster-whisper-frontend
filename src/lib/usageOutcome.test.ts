@@ -49,13 +49,14 @@ describe("usage outcome queue", () => {
     expect(nextBatch(later, 10_001)).toBeNull();
   });
 
-  it("verdicts: 2xx sent, 0/5xx/408/429 retry, other 4xx drop", () => {
+  it("verdicts: 2xx sent, 0/5xx/401/403/408/429 retry, other 4xx drop", () => {
     expect(verdictFor({ ok: true, status: 200 })).toBe("sent");
     expect(verdictFor({ ok: false, status: 0 })).toBe("retry");
     expect(verdictFor({ ok: false, status: 503 })).toBe("retry");
     expect(verdictFor({ ok: false, status: 408 })).toBe("retry");
     expect(verdictFor({ ok: false, status: 429 })).toBe("retry");
-    expect(verdictFor({ ok: false, status: 401 })).toBe("drop");
+    expect(verdictFor({ ok: false, status: 401 })).toBe("retry");
+    expect(verdictFor({ ok: false, status: 403 })).toBe("retry");
     expect(verdictFor({ ok: false, status: 404 })).toBe("drop");
     expect(verdictFor({ ok: false, status: 422 })).toBe("drop");
   });

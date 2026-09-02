@@ -65,13 +65,11 @@ export function quickLaunchMeta(e: OverlayQuickAction): { label: string; icon: L
     e.kind === "screen"
       ? SCREENS.find((s) => s.id === e.target)
       : OVERLAY_ACTIONS.find((a) => a.id === e.target);
-  // The registry branch is a bounded static string; the fallback is the entry's own `target`,
-  // which on a synced entry is server-chosen — and the Settings editor renders this label as a
-  // React child. Same split the overlay chip tag already guards against.
+  // The registry label is a bounded static string. No raw-target fallback: the registry
+  // lookup matches the RAW target, so a zero-width-padded target like "settings\u200b"
+  // resolves to nothing; falling back to the raw target would render an inert button
+  // impersonating a real one. "Unknown action" is safe for React children.
   return {
-    // No raw-target fallback: the registry lookup uses the RAW target while this label was
-    // defanged, so a zero-width-padded `"settings\u200b"` resolved to nothing yet rendered as
-    // `settings` — an inert button impersonating a real one, and a duplicate offered in the editor.
     label: reg?.label ?? "Unknown action",
     icon: reg?.icon ?? SCREENS[0].icon,
   };

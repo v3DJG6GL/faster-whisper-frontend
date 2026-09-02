@@ -129,14 +129,30 @@ function parseVtt(body: string): ImportedText {
 
 function parseLrc(body: string): ImportedText {
   const segments: ImportedText["segments"] = [];
+  const tagRe = /\[(\d+):(\d+(?:\.\d+)?)\]/g;
   for (const line of body.split(/\r?\n/)) {
-    const m = /^\[(\d+):(\d+(?:\.\d+)?)\](.*)$/.exec(line.trim());
-    if (!m) continue; // metadata tags ([ti:…]) and blanks fall out here
-    const start = parseInt(m[1], 10) * 60 + parseFloat(m[2]);
+    const trimmed = line.trim();
+    // Match all leading [mm:ss.xx] timestamp tags. LRC's most common compression
+    // repeats a chorus line under several timestamps: [00:12.00][00:45.00]text.
+    // Each tag produces its own segment sharing the same text.
+    tagRe.lastIndex = 0;
+    const starts: number[] = [];
+    let lastTagEnd = 0;
+    let tm: RegExpExecArray | null;
+    while ((tm = tagRe.exec(trimmed)) !== null) {
+      if (tm.index !== lastTagEnd) break; // non-tag text interrupted
+      starts.push(parseInt(tm[1], 10) * 60 + parseFloat(tm[2]));
+      lastTagEnd = tagRe.lastIndex;
+    }
+    if (starts.length === 0) continue; // metadata tags ([ti:…]) and blanks
     // Enhanced-LRC inline <mm:ss.xx> word tags reduce to plain text.
-    const { text, speaker } = cueText([m[3].replace(/<\d+:\d+(?:\.\d+)?>/g, " ")]);
-    if (text) segments.push({ start, text, speaker });
+    const { text, speaker } = cueText([trimmed.slice(lastTagEnd).replace(/<\d+:\d+(?:\.\d+)?>/g, " ")]);
+    if (text) {
+      for (const start of starts) segments.push({ start, text, speaker });
+    }
   }
+  // Multi-tag lines scatter segments out of source order — sort by time.
+  segments.sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
   // Ends: next segment's start (open-ended last line stays end-less).
   for (let i = 0; i < segments.length - 1; i++) segments[i].end = segments[i + 1].start;
   return { segments };

@@ -247,10 +247,15 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
         .flatMap((seg) => {
           const prefix = seg.speaker && ctx.names ? `${nameOf(ctx, seg.speaker)}: ` : "";
           const tranFirst = ctx.opts.lineOrder === "trans-first";
+          // Whether at least one translated line will actually emit for this
+          // segment — a kept-original or absent translation produces nothing.
+          // Without this check, trans-first with no trans lines leaves the
+          // original with only an indent and the segment's timestamp vanishes.
+          const hasTrans = ctx.origIncluded && ctx.visLangs.some((l) => trOf(seg, l) !== null);
           return cueLines(
             ctx,
             seg,
-            `${ctx.origIncluded && tranFirst ? "        " : `[${txtTime(seg.start)}] `}${prefix}${clean(seg.text)}`,
+            `${hasTrans && tranFirst ? "        " : `[${txtTime(seg.start)}] `}${prefix}${clean(seg.text)}`,
             (t, s, lang) =>
               `${ctx.origIncluded && !tranFirst ? "        " : `[${txtTime(s.start)}] `}${ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
           );
@@ -496,7 +501,7 @@ function jsonExport(result: BatchResult, ctx: Ctx): string {
   return JSON.stringify(
     {
       text: stripControlChars(result.text),
-      language: result.language ?? null,
+      language: stripControlChars(result.language ?? "") || null,
       duration: result.duration ?? null,
       speakers: ctx.order.map((label) => ({
         // The raw label is the lookup key; the EMITTED value is defanged like every other
@@ -510,10 +515,10 @@ function jsonExport(result: BatchResult, ctx: Ctx): string {
       ...(result.translation
         ? {
             translation: {
-              model: result.translation.model ?? null,
-              targets: result.translation.targets,
-              source: result.translation.source ?? null,
-              ...(result.translation.mode ? { mode: result.translation.mode } : {}),
+              model: stripControlChars(result.translation.model ?? "") || null,
+              targets: result.translation.targets.map((t) => stripControlChars(t)),
+              source: stripControlChars(result.translation.source ?? "") || null,
+              ...(result.translation.mode ? { mode: stripControlChars(result.translation.mode) } : {}),
             },
           }
         : {}),
@@ -617,12 +622,16 @@ export function exportFileNames(opts: ExportOptions): ((stem: string) => string)
         track === "orig" ? `${stem}.lrc` : `${stem}.${trackSlug(track) || `t${i}`}.lrc`,
     );
   }
-  return [(stem: string) => `${stem}${exportStemSuffix(opts.tracks)}.${EXPORT_EXTENSIONS[opts.format]}`];
+  // JSON carries every track regardless of the picker (see ctxOf / exportTrackList),
+  // so the stem suffix must be empty — a language-suffixed name for a full-data file
+  // is misleading and wrong when the track picker state survives a format switch.
+  const suffix = opts.format === "json" ? "" : exportStemSuffix(opts.tracks);
+  return [(stem: string) => `${stem}${suffix}.${EXPORT_EXTENSIONS[opts.format]}`];
 }
 
 /** Track codes reach a filename (the stem suffix and the per-track LRC name); they come
  *  from server-advertised / peer-synced settings, so keep them to path-safe characters. */
-const trackSlug = (c: string) => c.replace(/[^A-Za-z0-9-]/g, "");
+const trackSlug = (c: string) => c.replace(/[^A-Za-z0-9-]/g, "").slice(0, 12);
 
 export function exportStemSuffix(tracks?: string[]): string {
   if (!tracks || tracks.includes("orig")) return "";

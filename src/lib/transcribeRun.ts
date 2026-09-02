@@ -74,6 +74,11 @@ export interface StageMeta {
   dlStart?: number;
 }
 
+/** Canonical pipeline order — used to close seeded clocks of stages the server
+ *  jumped over (e.g. a seeded "separating" clock when the backend declines BGM
+ *  separation and jumps straight to "transcribing"). */
+const RAIL_ORDER: RailStage[] = ["downloading", "separating", "transcribing", "diarizing", "translating"];
+
 /** Rough share of a run's wall time per stage — sizes the segments of the
  *  overall pipeline bar and weights the overall percentage. */
 export const STAGE_WEIGHTS: Record<RailStage, number> = {
@@ -120,10 +125,14 @@ export function activeRailIndex(
   progress: BatchProgress | null,
   stageTimes: Partial<Record<RailStage, StageTime>>,
   stages: RailStage[],
+  skipped?: ReadonlySet<RailStage>,
 ): number {
   if (!progress?.stage) return 0;
   if (progress.stage === "waiting") {
-    const i = stages.findIndex((st) => !stageTimes[st]?.end);
+    // Find the first stage whose clock hasn't closed AND isn't skipped.
+    // Without the skipped check, a declined stage's seeded clock (never
+    // closed by a rail transition) latches this forever.
+    const i = stages.findIndex((st) => !stageTimes[st]?.end && !skipped?.has(st));
     return i === -1 ? railIndex(progress.stage, stages) : i;
   }
   return railIndex(progress.stage, stages);
@@ -182,8 +191,8 @@ export function overallFraction(s: {
 }): number | null {
   if (!s.queue.some((it) => it.status === "running" || it.status === "queued")) return null;
   const stages = railStages(s.lastOptions, s.forUrl, s.forText);
-  const active = activeRailIndex(s.progress, s.stageTimes, stages);
   const skipped = skippedStages(s);
+  const active = activeRailIndex(s.progress, s.stageTimes, stages, skipped);
   let total = 0;
   let done = 0;
   stages.forEach((st, i) => {
@@ -264,7 +273,7 @@ export function stageTimeline(s: {
 }): TimelineEntry[] {
   const active = s.complete
     ? s.stages.length
-    : activeRailIndex(s.progress, s.stageTimes, s.stages);
+    : activeRailIndex(s.progress, s.stageTimes, s.stages, s.skipped);
   const out: TimelineEntry[] = [];
   s.stages.forEach((st, i) => {
     if (s.skipped.has(st)) return;
@@ -406,12 +415,26 @@ const set = useTranscribeRun.setState;
 const get = useTranscribeRun.getState;
 
 /** Which rail row a server progress stage lights ("waiting"/"unknown" both
- *  belong to the transcribe row — the semaphore queue precedes the decode). */
+ *  belong to the transcribe row — the semaphore queue precedes the decode).
+ *
+ *  Stage vocabulary (server-side progress registry):
+ *    downloading — media download (URL runs) OR MT-model fetch during translating
+ *    resolving   — URL metadata probe (folds onto the download row)
+ *    loading     — MT-model loading (always a translating sub-phase)
+ *    waiting     — semaphore queue (folds onto transcribe)
+ *    separating, transcribing, diarizing, translating — pipeline stages
+ *
+ *  NOTE: "downloading" is ambiguous — it can be a media download (download rail)
+ *  or an MT-model fetch (translating rail). railOf maps it to the download row;
+ *  in a translating-only context (text runs) the RAIL_ORDER close-earlier-clocks
+ *  logic in foldProgress prevents it from rewinding the rail. */
 export function railOf(stage: string | undefined | null): RailStage {
   // "resolving" (the metadata probe) folds onto the download row the same
   // way "waiting"/"analyzing" fold onto transcribe — seconds-long phases
   // don't get their own rail rows.
   if (stage === "downloading" || stage === "resolving") return "downloading";
+  // "loading" is the MT-model loading sub-phase — always part of translation.
+  if (stage === "loading") return "translating";
   return stage === "separating" || stage === "diarizing" || stage === "translating"
     ? stage
     : "transcribing";
@@ -796,8 +819,10 @@ export function mergeSegmentTranslations(
   patch: Record<number, Record<string, string>>,
   provenance?: { model?: string; targets?: string[]; source?: string; mode?: string },
   /** Per merged index: target codes whose entry kept the SOURCE text (server
-   *  quality guard). REPLACES the segment's mark — a successful re-translate
-   *  passes [] (or omits the map) and clears it. */
+   *  quality guard). Replaces the mark for the languages in this patch — a
+   *  successful re-translate passes [] (or omits the map) and clears it.
+   *  Marks of languages NOT in this patch are carried forward so a re-translate
+   *  targeting a subset of tracks never erases untouched tracks' marks. */
   kept?: Record<number, string[]>,
 ) {
   const rec = recordById[key] ?? historyByPath[key];
@@ -805,7 +830,13 @@ export function mergeSegmentTranslations(
   const segments = rec.result.segments.map((seg, i) => {
     if (!patch[i]) return seg;
     const next: typeof seg = { ...seg, translations: { ...seg.translations, ...patch[i] } };
-    if (kept?.[i]?.length) next.translationsKept = kept[i];
+    // Carry the marks of languages this patch did NOT touch: a re-translate
+    // targeting a SUBSET of the record's tracks must not erase the untouched
+    // tracks' kept-original marks.
+    const touched = new Set(Object.keys(patch[i]));
+    const carried = (seg.translationsKept ?? []).filter((l) => !touched.has(l));
+    const marks = [...carried, ...(kept?.[i] ?? [])];
+    if (marks.length) next.translationsKept = marks;
     else delete next.translationsKept;
     return next;
   });
@@ -876,6 +907,26 @@ export function foldProgress(p: BatchProgress) {
         // span would poison the average).
         if (pc.observed) {
           learnStageRtf(prev, now - pc.start, p.duration ?? s.progress?.duration);
+        }
+      }
+      // Close every still-open clock whose pipeline order is before `cur`.
+      // This handles seeded clocks for stages the server skipped (e.g. the
+      // pump seeds "separating" at request entry, but if the server declines
+      // BGM separation and jumps to "transcribing", the seeded clock must be
+      // closed — otherwise it spans the whole run and defeats the "skipped"
+      // inference). Only when `obs` is true: "waiting" is not evidence that
+      // the earlier stages won't still happen.
+      if (obs) {
+        const curIdx = RAIL_ORDER.indexOf(cur);
+        for (let ri = 0; ri < curIdx; ri++) {
+          const st = RAIL_ORDER[ri];
+          const tc = stageTimes[st];
+          if (tc && !tc.end) {
+            stageTimes[st] = { ...tc, end: now };
+            if (tc.observed) {
+              learnStageRtf(st, now - tc.start, p.duration ?? s.progress?.duration);
+            }
+          }
         }
       }
       // Entering a stage whose clock is already CLOSED restarts it fresh.
@@ -1103,17 +1154,26 @@ async function pump(
       // this file's polls from the previous file's last in-flight one — a late
       // answer would open the previous file's stage on the next file's clocks.
       let pollingDone = false;
+      // Monotonic sequence: drop any response whose seq is older than the
+      // newest folded one — out-of-order responses (poll latency > 1s on a
+      // loaded backend) would rewind the stage clocks and poison learnStageRtf.
+      let pollSeq = 0;
+      let pollInFlight = false;
       const poller = pid
         ? window.setInterval(() => {
+            if (pollInFlight) return; // don't stack concurrent polls
+            const seq = ++pollSeq;
+            pollInFlight = true;
             getTranscribeProgress({
               serverUrl: ctx.serverUrl,
               backendId: ctx.backendId,
               progressId: pid,
             })
               .then((p) => {
-                if (!pollingDone && epoch === get().epoch) foldProgress(p);
+                if (!pollingDone && epoch === get().epoch && seq === pollSeq) foldProgress(p);
               })
-              .catch(() => {});
+              .catch(() => {})
+              .finally(() => { pollInFlight = false; });
           }, 1000)
         : undefined;
       try {

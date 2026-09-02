@@ -191,7 +191,7 @@ interface InsertCfg {
    *  two controls on one App Rules screen with opposite semantics. They now come off
    *  `resolveTarget`'s result at each site, like `method` always has. */
   profileInsertion?: InsertionOverrides;
-  live: boolean; // timing === "live" on a streaming backend (hands-free, or clipboard in any mode)
+  live: boolean; // timing !== "off", hands-free (or clipboard in any mode), on a streaming backend
   targetApp: FocusedApp | null; // focused app at start (per-app rules + chip + field guard)
   blocked: boolean; // a per-app rule blocks typing here → coerced to clipboard-only
   notEditable: boolean; // deep detection: focused element isn't a text field → coerced to clipboard-only
@@ -562,6 +562,10 @@ async function maybeTranslate(
     if (r.ok) tr.warm = true;
     if (insertCfg !== cfg) return { text, translated: false }; // superseded — caller bails on its own guard too
     if (r.ok) {
+      // A later success clears a previous phrase's failure: the latch is read at session
+      // END, and reporting a failure when every phrase after the cold start translated fine
+      // (the normal trajectory) misleads both the chip marker and the history record.
+      sessionTranslateFailure = null;
       // Keep the tracks apart while we still can. r.text is the joined string
       // that gets injected and is unsplittable afterwards; this is the only
       // point where the language keys are still attached.
@@ -1211,7 +1215,10 @@ function inSession(): boolean {
 
 // Return to idle once the injection queue has fully drained (the text has landed in
 // the focused field) — but never before MIN_INJECT_VISIBLE_MS, and never over a status
-// that has moved on (a fresh session, or an error that arrived meanwhile).
+// that has moved on (a fresh session started meanwhile). When the status is "error"
+// (a failed inject called flashError), the settle runs the bookkeeping (lease release,
+// history capture, outcome) but leaves the error status and message intact for
+// ERROR_LINGER_MS — see the guard inside.
 function settleToIdleAfterInjection(startedAt: number, cfg: InsertCfg | null): void {
   void injectChain.then(() => {
     const wait = Math.max(0, MIN_INJECT_VISIBLE_MS - (performance.now() - startedAt));
@@ -1222,8 +1229,24 @@ function settleToIdleAfterInjection(startedAt: number, cfg: InsertCfg | null): v
       // (and stamp its outcome wrong). A normal end keeps insertCfg===cfg; a cancel (→null) or restart
       // (→new object) makes this a no-op. Mirrors the inject tasks' `insertCfg !== cfg` guard.
       const curStatus = useApp.getState().status;
-      if (insertCfg === cfg && (curStatus === "injecting" || curStatus === "error")) {
+      if (insertCfg === cfg && curStatus === "injecting") {
         settleIdle();
+      } else if (insertCfg === cfg && curStatus === "error") {
+        // The inject failed and flashError is showing the message for ERROR_LINGER_MS.
+        // Run the same bookkeeping settleIdle does (lease, history, outcome, session fields)
+        // but leave status/dictationError intact so the user can read the recovery hint.
+        // flashError's own timer will clear to idle when it expires.
+        releaseWarmLease();
+        captureDictationHistory();
+        reportSessionOutcome(endOutcome());
+        useApp.getState().setDictation({
+          activeProfile: null,
+          dictationPhase: null,
+          sessionTargets: null,
+          routePending: null,
+        });
+        askTargetsAtSettle = null;
+        consumePendingHoldStart();
       }
     }, wait);
   });
@@ -2670,7 +2693,11 @@ async function startLiveInner(
     // terms are unchanged — see liveAllowed for why the activation must be the runtime one.
     // Profile override wins; absent = inherit the Dictation-tab default. Without the
     // fallback the editor's "Inherit" would silently mean "off".
-    live: liveAllowed({ wants: pov?.typeAsISpeak ?? g.typeAsISpeak, endpoint, activation, method }),
+    // `insertTiming === "off"` still reaches here via sync apply (a pre-migration peer
+    // that slips past the "off"→"stop" remap, or a race with a local migration): the
+    // `closed` handler's `cfg.timing === "off"` guard drops the whole insert, but only
+    // when `live` is false — otherwise phrases are injected live and that guard never runs.
+    live: g.insertTiming !== "off" && liveAllowed({ wants: pov?.typeAsISpeak ?? g.typeAsISpeak, endpoint, activation, method }),
   };
   // Freeze the history-capture metadata for this session (see sessionMeta).
   // The profile was stamped into the store synchronously before startLive.

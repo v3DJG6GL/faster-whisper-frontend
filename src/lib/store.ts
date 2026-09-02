@@ -241,7 +241,8 @@ function isReservedId(id: unknown): boolean {
  * direction. New profiles leave the field undefined and inherit `general.typeAsISpeak`.
  *
  * Runs exactly once, gated by `migrateConfig` on the config's schema version being
- * below `CONFIG_VERSION`. Presence of the field cannot be the key: Rust's
+ * below 3 (the version that introduced this migration). Presence of the field cannot
+ * be the key: Rust's
  * `GeneralSettings.insert_timing` is a non-Option `#[serde(default)]` field, so every
  * config that has passed through `load_config`/`save_config` carries it — a presence
  * gate re-ran this on every launch and reset `typeAsISpeak` to the write-back value.

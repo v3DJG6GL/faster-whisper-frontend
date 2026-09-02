@@ -130,19 +130,30 @@ export function initLogStatus(): void {
   if (statusStarted) return;
   statusStarted = true;
   void (async () => {
+    // Register the listener FIRST so no status event emitted between the
+    // hydration snapshot and the listen() call is lost (the same ordering
+    // hazard attachLogStream already fixed for log://lines).
+    // Track the highest seq we've applied so a late hydration snapshot
+    // never overwrites a newer event.
+    let appliedSeq = 0;
+    await onLogStatus((p) => {
+      if (p.seq > appliedSeq) {
+        appliedSeq = p.seq;
+        useLogs.setState({ status: p });
+      }
+    }).catch(() => {});
     // The baseline deliberately stays at zero here: startup errors and warns SHOULD light
     // the badge on a fresh session. It moves to the current totals only when the Logs
     // screen is opened or closed (markLogsViewed).
     try {
       const t = await getLogStatus();
-      useLogs.setState({ status: { seq: t.seq, errors: t.errors, warns: t.warns } });
+      if (t.seq > appliedSeq) {
+        appliedSeq = t.seq;
+        useLogs.setState({ status: { seq: t.seq, errors: t.errors, warns: t.warns } });
+      }
     } catch {
-      // The badge starts at zero; the stream below still feeds it. Without this a failed
-      // hydrate skipped the subscription too and froze the badge for the session.
+      // The badge starts at zero; the stream above still feeds it.
     }
-    await onLogStatus((p) => {
-      useLogs.setState({ status: p });
-    }).catch(() => {});
   })();
 }
 
