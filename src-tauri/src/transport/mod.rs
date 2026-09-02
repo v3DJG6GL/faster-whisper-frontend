@@ -310,7 +310,27 @@ pub struct UsageCalendarDay {
     pub kinds: UsageKindWords,
 }
 
-/// One weekday × hour slot's words per kind over the window (`dow` 0 = Monday).
+/// One measure split per kind — the hour grid's nested `audio_s` / `proc_s` /
+/// `sessions` / `requests` / `errors` blocks (backend `SLOT_MEASURES`). Floats
+/// throughout: seconds are fractional and the counts round-trip exactly.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UsageKindSplit {
+    #[serde(default)]
+    pub all: f64,
+    #[serde(default)]
+    pub dictation: f64,
+    #[serde(default)]
+    pub file: f64,
+    #[serde(default)]
+    pub url: f64,
+    #[serde(default)]
+    pub text: f64,
+}
+
+/// One weekday × hour slot over the window (`dow` 0 = Monday): words per kind flat
+/// on the slot, the other five measures nested per kind. The nested blocks are
+/// optional so a server from before they existed still deserializes; when absent
+/// they are not re-emitted, and the client's grid falls back to zero for them.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UsageHourCell {
     #[serde(default)]
@@ -319,6 +339,16 @@ pub struct UsageHourCell {
     pub hour: i64,
     #[serde(default, flatten)]
     pub kinds: UsageKindWords,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_s: Option<UsageKindSplit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proc_s: Option<UsageKindSplit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sessions: Option<UsageKindSplit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests: Option<UsageKindSplit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub errors: Option<UsageKindSplit>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -635,6 +665,43 @@ mod wire_language_tests {
         assert_eq!(wire_language_for(true, ""), None);
         assert_eq!(wire_language_for(true, "de"), Some("de"));
         assert_eq!(wire_language_for(false, "auto"), Some(""));
+    }
+}
+
+#[cfg(test)]
+mod usage_hour_cell_tests {
+    use super::{UsageHourCell, UsageStats};
+
+    /// The busy-hours grid reads the nested per-kind splits the server puts on every
+    /// slot beside the flat words. They used to be dropped on the way through this
+    /// typed mirror, which left the grid empty for every measure but words.
+    #[test]
+    fn nested_measure_splits_survive_the_typed_mirror() {
+        let body = r#"{"hours":[{"dow":1,"hour":9,"all":120,"dictation":100,"file":20,"url":0,"text":0,
+            "audio_s":{"all":61.5,"dictation":41.5,"file":20.0,"url":0.0,"text":0.0},
+            "proc_s":{"all":3.25,"dictation":2.0,"file":1.25,"url":0.0,"text":0.0},
+            "sessions":{"all":3,"dictation":2,"file":1,"url":0,"text":0},
+            "requests":{"all":5,"dictation":4,"file":1,"url":0,"text":0},
+            "errors":{"all":1,"dictation":0,"file":1,"url":0,"text":0}}]}"#;
+        let u: UsageStats = serde_json::from_str(body).unwrap();
+        let out = serde_json::to_value(&u.hours[0]).unwrap();
+        assert_eq!(out["dictation"], 100);
+        assert_eq!(out["audio_s"]["dictation"], 41.5);
+        assert_eq!(out["proc_s"]["all"], 3.25);
+        assert_eq!(out["sessions"]["file"], 1.0);
+        assert_eq!(out["requests"]["all"], 5.0);
+        assert_eq!(out["errors"]["file"], 1.0);
+    }
+
+    /// An older server sends only the flat words: the nested blocks stay absent
+    /// rather than becoming zero-filled objects the client would mistake for data.
+    #[test]
+    fn an_old_server_slot_keeps_its_blocks_absent() {
+        let c: UsageHourCell = serde_json::from_str(r#"{"dow":0,"hour":8,"all":7,"dictation":7}"#).unwrap();
+        let out = serde_json::to_value(&c).unwrap();
+        assert_eq!(out["all"], 7);
+        assert!(out.get("audio_s").is_none());
+        assert!(out.get("sessions").is_none());
     }
 }
 
