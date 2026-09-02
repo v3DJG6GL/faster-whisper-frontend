@@ -136,6 +136,9 @@ export interface AccentMotion {
   /** Seconds per full turn of the wheel (or per breath, for an arc). 0 = Still. */
   period: number;
   range: "wheel" | "arc";
+  /** The near end of the arc, when `range` is "arc". Absent = the Signal colour (older
+   *  blobs, where the arc started from `accentHue`). */
+  arcFrom?: number;
   /** The far end of the arc, when `range` is "arc". Absent = the Rose preset. */
   arcHue?: number;
 }
@@ -151,13 +154,13 @@ export const DEFAULT_ARC_HUE = 350;
  *  be a finite number of seconds inside the slider's span, the range one of the two. */
 export function isValidAccentMotion(m: unknown): m is AccentMotion {
   if (!m || typeof m !== "object") return false;
-  const { period, range, arcHue } = m as Record<string, unknown>;
+  const { period, range, arcHue, arcFrom } = m as Record<string, unknown>;
   if (typeof period !== "number" || !Number.isFinite(period)) return false;
   if (period !== 0 && (period < MOTION_MIN_PERIOD || period > MOTION_MAX_PERIOD)) return false;
   if (range !== "wheel" && range !== "arc") return false;
-  if (arcHue !== undefined && (typeof arcHue !== "number" || !Number.isFinite(arcHue) || arcHue < 0 || arcHue > 360))
-    return false;
-  return true;
+  const okHue = (h: unknown) =>
+    h === undefined || (typeof h === "number" && Number.isFinite(h) && h >= 0 && h <= 360);
+  return okHue(arcHue) && okHue(arcFrom);
 }
 
 /** Where in the turn the wall clock says we are: 0 ≤ phase < 1. Every window computes
@@ -170,18 +173,19 @@ export function motionPhase(nowMs: number, period: number): number {
 
 /** The hue at `nowMs` for a base hue and a motion. Pure — the driver and the tests share
  *  it. "wheel" sweeps the full circle from the base; "arc" breathes along the SHORT arc
- *  between the base and `arcHue` with an ease-in-out ((1 − cos)/2), so it lingers at both
- *  ends the way a lamp does. Period 0 returns the base untouched. */
+ *  between `arcFrom` (the base when absent) and `arcHue` with an ease-in-out ((1 − cos)/2),
+ *  so it lingers at both ends the way a lamp does. Period 0 returns the base untouched. */
 export function driftHue(base: number, motion: AccentMotion, nowMs: number): number {
   const { period } = motion;
   if (!(period > 0)) return base;
   const ph = motionPhase(nowMs, period);
   if (motion.range === "wheel") return (base + 360 * ph) % 360;
+  const near = motion.arcFrom ?? base;
   const far = motion.arcHue ?? DEFAULT_ARC_HUE;
   // Signed shortest angular distance, in (−180, 180].
-  const d = ((((far - base) % 360) + 540) % 360) - 180;
+  const d = ((((far - near) % 360) + 540) % 360) - 180;
   const e = (1 - Math.cos(2 * Math.PI * ph)) / 2;
-  return ((((base + d * e) % 360) + 360) % 360);
+  return ((((near + d * e) % 360) + 360) % 360);
 }
 
 /** How often the driver restamps the tokens: once per degree of hue, but never faster

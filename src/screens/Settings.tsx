@@ -644,7 +644,27 @@ function AppearanceRows() {
     }, HUE_WRITE_DEBOUNCE_MS);
   };
 
+  // "Custom" is a mode, not a hue: a preset's exact degree is still "custom" once the
+  // wheel swatch was clicked (before, the ring only appeared after the slider had moved
+  // off every preset), and picking a preset leaves the mode again.
   const preset = ACCENT_PRESETS.find(([, h]) => h === hue);
+  const [customMode, setCustomMode] = useState(!preset);
+  const custom = customMode || !preset;
+  const pickPreset = (h: number) => {
+    setCustomMode(false);
+    pick(h);
+  };
+  const pickCustom = () => {
+    setCustomMode(true);
+    sliderRef.current?.focus();
+  };
+
+  // While the colour travels, a fixed pick has nothing to show: the rows grey out and
+  // say what would bring them back (the arc chooses its own two ends below).
+  const motion = useApp((st) => st.settings.accentMotion ?? DEFAULT_ACCENT_MOTION);
+  const reduced = useReducedMotion();
+  const moving = !reduced && motion.period > 0;
+  const movingReason = "Motion is on, so the colour travels on its own. Set Motion to Still to pick a fixed colour.";
 
   return (
     <>
@@ -667,30 +687,41 @@ function AppearanceRows() {
       <SettingRow
         title={SETTING.accentHue.label}
         desc="The accent for buttons, selection, chosen chips and charts. Recording red, live green, the armed amber and the working hues never change."
+        disabled={moving}
+        disabledReason={movingReason}
       >
-        <div role="radiogroup" aria-label={SETTING.accentHue.label} className="flex items-center gap-2">
+        <div
+          role="radiogroup"
+          aria-label={SETTING.accentHue.label}
+          className={cn("flex items-center gap-2 transition-opacity", moving && "opacity-50")}
+        >
           {ACCENT_PRESETS.map(([name, h]) => (
-            <HueSwatch key={name} name={name} hue={h} on={h === hue} dark={dark} onPick={pick} />
+            <HueSwatch key={name} name={name} hue={h} on={!custom && h === hue} dark={dark} disabled={moving} onPick={pickPreset} />
           ))}
           <button
             type="button"
             role="radio"
-            aria-checked={!preset}
+            aria-checked={custom}
             aria-label="Custom"
             title="Custom hue"
-            // Focusing the slider IS the selection: the custom swatch has no hue of its own.
-            onClick={() => sliderRef.current?.focus()}
+            disabled={moving}
+            onClick={pickCustom}
             className={cn(
-              "ring-signal size-[26px] rounded-full transition-shadow",
-              !preset && "ring-2 ring-text ring-offset-[3px] ring-offset-[color:var(--c-panel)]",
+              "ring-signal size-[26px] rounded-full transition-shadow disabled:cursor-not-allowed",
+              custom && "ring-2 ring-text ring-offset-[3px] ring-offset-[color:var(--c-panel)]",
             )}
             style={{ background: HUE_WHEEL }}
           />
         </div>
       </SettingRow>
       <div className="pl-5">
-        <SettingRow title="Custom hue" desc="Lightness and chroma are fixed per theme; only the hue is yours.">
-          <div className="flex flex-col gap-1.5">
+        <SettingRow
+          title="Custom hue"
+          desc="Lightness and chroma are fixed per theme; only the hue is yours."
+          disabled={moving}
+          disabledReason={movingReason}
+        >
+          <div className={cn("flex flex-col gap-1.5 transition-opacity", moving && "opacity-50")}>
             <div className="flex items-center gap-3">
               <input
                 ref={sliderRef}
@@ -699,41 +730,59 @@ function AppearanceRows() {
                 max={360}
                 step={1}
                 value={hue}
+                disabled={moving}
                 aria-label="Custom hue"
-                onChange={(e) => drag(Number(e.target.value))}
-                className="ring-signal h-2 w-full min-w-[160px] cursor-pointer appearance-none rounded-pill"
+                onChange={(e) => {
+                  setCustomMode(true);
+                  drag(Number(e.target.value));
+                }}
+                className="ring-signal h-2 w-full min-w-[160px] cursor-pointer appearance-none rounded-pill disabled:cursor-not-allowed"
                 style={{ background: HUE_TRACK }}
               />
               <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-dim">
-                {hue}° · {preset ? preset[0].toLowerCase() : "custom"}
+                {hue}° · {custom ? "custom" : preset![0].toLowerCase()}
               </span>
             </div>
           </div>
         </SettingRow>
       </div>
-      <MotionRows dark={dark} />
+      <MotionRows dark={dark} motion={motion} reduced={reduced} baseHue={hue} />
     </>
   );
 }
 
 /** One preset swatch: a radio painted with the accent that hue derives to in this theme. */
 function HueSwatch({
-  name, hue, on, dark, onPick,
-}: { name: string; hue: number; on: boolean; dark: boolean; onPick: (h: number) => void }) {
+  name, hue, on, dark, disabled, role = "radio", badge, onPick,
+}: {
+  name: string;
+  hue: number;
+  on: boolean;
+  dark: boolean;
+  disabled?: boolean;
+  /** "checkbox" for the arc's two-of-six palette (aria-checked still says "chosen"). */
+  role?: "radio" | "checkbox";
+  /** A one-character mark inside the swatch (the arc's "1"/"2" ends). */
+  badge?: string;
+  onPick: (h: number) => void;
+}) {
   return (
     <button
       type="button"
-      role="radio"
+      role={role}
       aria-checked={on}
-      aria-label={name}
+      aria-label={badge ? `${name}, end ${badge}` : name}
       title={name}
+      disabled={disabled}
       onClick={() => onPick(hue)}
       className={cn(
-        "ring-signal size-[26px] rounded-full transition-shadow",
+        "ring-signal grid size-[26px] place-items-center rounded-full font-mono text-[11px] font-semibold leading-none text-[color:var(--c-bg)] transition-shadow disabled:cursor-not-allowed",
         on && "ring-2 ring-text ring-offset-[3px] ring-offset-[color:var(--c-panel)]",
       )}
       style={{ background: deriveAccent(hue, dark).accent }}
-    />
+    >
+      {badge}
+    </button>
   );
 }
 
@@ -755,6 +804,19 @@ const MOTION_TIERS: { value: string; label: string }[] = [
   { value: "60", label: "Every minute" },
   { value: "custom", label: "Custom…" },
 ];
+/** The preset hue nearest to `hue` on the wheel (the arc palette shows presets only). */
+function nearestPreset(hue: number): number {
+  let best = ACCENT_PRESETS[0][1];
+  let bestD = 361;
+  for (const [, h] of ACCENT_PRESETS) {
+    const d = Math.abs(((((h - hue) % 360) + 540) % 360) - 180);
+    if (d < bestD) {
+      bestD = d;
+      best = h;
+    }
+  }
+  return best;
+}
 const REDUCED_MOTION_REASON = "Still — your system asks for reduced motion.";
 
 /** Does the OS ask for reduced motion, tracked live. */
@@ -774,10 +836,10 @@ function useReducedMotion(): boolean {
  *  (whole wheel / an arc to a second swatch) and a live "Right now" readout fed by this
  *  window's drift driver (theme.ts). The engine itself never touches `accentHue`: the
  *  hue you picked above is the base every turn starts from. */
-function MotionRows({ dark }: { dark: boolean }) {
-  const motion = useApp((st) => st.settings.accentMotion ?? DEFAULT_ACCENT_MOTION);
+function MotionRows({
+  dark, motion, reduced, baseHue,
+}: { dark: boolean; motion: AccentMotion; reduced: boolean; baseHue: number }) {
   const updateSettings = useApp((st) => st.updateSettings);
-  const reduced = useReducedMotion();
   const commit = useCallback(
     (patch: Partial<AccentMotion>) => {
       const cur = useApp.getState().settings.accentMotion ?? DEFAULT_ACCENT_MOTION;
@@ -830,7 +892,18 @@ function MotionRows({ dark }: { dark: boolean }) {
       : `${motion.range === "wheel" ? "Turning the whole wheel" : "Breathing between two colours"}, ${fmtPer(
           motion.period,
         )}. Every window computes this from the clock.`;
-  const arcHue = motion.arcHue ?? DEFAULT_ARC_HUE;
+  // The arc's two ends. Older blobs started from the Signal colour; the preset nearest to
+  // it stands in so the palette always shows two rings (the engine keeps the exact hue
+  // until the next pick writes both ends).
+  const arcTo = motion.arcHue ?? DEFAULT_ARC_HUE;
+  const arcFrom = motion.arcFrom ?? nearestPreset(baseHue);
+  // Two-of-six: a new pick becomes end 2 and the old end 2 becomes end 1, so two clicks
+  // in a row set the pair in reading order and a single click swaps the far end.
+  const pickArc = (h: number) => {
+    if (h === arcFrom || h === arcTo) return;
+    commit({ arcFrom: arcTo, arcHue: h });
+  };
+  const arcName = (h: number) => ACCENT_PRESETS.find(([, p]) => p === h)?.[0] ?? `${h}°`;
 
   return (
     <>
@@ -870,10 +943,10 @@ function MotionRows({ dark }: { dark: boolean }) {
           </SettingRow>
         </div>
       )}
-      <SettingRow title="Range" desc="The whole wheel, or a breath between the Signal colour and a second one.">
+      <SettingRow title="Range" desc="The whole wheel, or a breath between two colours you pick below.">
         <Segmented<AccentMotion["range"]>
           value={motion.range}
-          onChange={(range) => commit(range === "arc" ? { range, arcHue } : { range })}
+          onChange={(range) => commit(range === "arc" ? { range, arcFrom, arcHue: arcTo } : { range })}
           ariaLabel="Range"
           options={[
             { value: "wheel", label: "Whole wheel" },
@@ -883,11 +956,28 @@ function MotionRows({ dark }: { dark: boolean }) {
       </SettingRow>
       {motion.range === "arc" && (
         <div className="pl-5">
-          <SettingRow title="Second colour" desc="The far end of the breath; the Signal colour above is the near end.">
-            <div role="radiogroup" aria-label="Second colour" className="flex items-center gap-2">
-              {ACCENT_PRESETS.map(([name, h]) => (
-                <HueSwatch key={name} name={name} hue={h} on={h === arcHue} dark={dark} onPick={(h) => commit({ arcHue: h })} />
-              ))}
+          <SettingRow
+            title="Two colours"
+            desc="Pick the two ends of the breath. A new pick becomes end 2; the previous end 2 moves to end 1."
+          >
+            <div className="flex items-center gap-3">
+              <div role="group" aria-label="Two colours" className="flex items-center gap-2">
+                {ACCENT_PRESETS.map(([name, h]) => (
+                  <HueSwatch
+                    key={name}
+                    name={name}
+                    hue={h}
+                    role="checkbox"
+                    on={h === arcFrom || h === arcTo}
+                    badge={h === arcFrom ? "1" : h === arcTo ? "2" : undefined}
+                    dark={dark}
+                    onPick={pickArc}
+                  />
+                ))}
+              </div>
+              <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-dim">
+                {arcName(arcFrom)} ↔ {arcName(arcTo)}
+              </span>
             </div>
           </SettingRow>
         </div>

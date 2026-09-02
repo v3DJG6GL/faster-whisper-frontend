@@ -207,6 +207,7 @@ export type ThemeName = "dark" | "light" | "auto";
 export interface AccentMotion {
   period: number;
   range: "wheel" | "arc";
+  arcFrom?: number;
   arcHue?: number;
 }
 /** Which usage figure the chip's optional readout shows (today's value). */

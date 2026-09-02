@@ -101,6 +101,14 @@ describe("motion arithmetic", () => {
     expect(driftHue(350, up, 25_000)).toBeCloseTo((350 + 37.5) % 360);
   });
 
+  it("an arc with its own near end ignores the Signal colour", () => {
+    // Motion greys the Signal colour out, so the arc's two ends are the arc's own.
+    const m = { period: 100, range: "arc" as const, arcFrom: 185, arcHue: 235 };
+    expect(driftHue(65, m, 0)).toBe(185);
+    expect(driftHue(65, m, 50_000)).toBeCloseTo(235);
+    expect(driftHue(65, m, 100_000)).toBeCloseTo(185);
+  });
+
   it("an arc eases in and out: it lingers at both ends", () => {
     const m = { period: 100, range: "arc" as const, arcHue: 185 }; // 65 → 185, +120
     const at = (s: number) => driftHue(65, m, s * 1000) - 65;
@@ -137,6 +145,8 @@ describe("motion arithmetic", () => {
     expect(isValidAccentMotion({ period: Number.NaN, range: "wheel" })).toBe(false);
     expect(isValidAccentMotion({ period: 300, range: "spiral" })).toBe(false);
     expect(isValidAccentMotion({ period: 300, range: "arc", arcHue: 361 })).toBe(false);
+    expect(isValidAccentMotion({ period: 300, range: "arc", arcFrom: 185, arcHue: 235 })).toBe(true);
+    expect(isValidAccentMotion({ period: 300, range: "arc", arcFrom: -1, arcHue: 235 })).toBe(false);
     expect(isValidAccentMotion({ period: 300, range: "arc", arcHue: "350" })).toBe(false);
     expect(isValidAccentMotion(null)).toBe(false);
     expect(isValidAccentMotion("300")).toBe(false);
