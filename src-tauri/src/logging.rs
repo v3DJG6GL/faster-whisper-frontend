@@ -247,7 +247,7 @@ pub fn apply_log_level(level: LogLevel) {
     let l = level.as_str();
     if let Some(h) = RELOAD.get() {
         let _ = h.reload(tracing_subscriber::EnvFilter::new(format!(
-            "faster_whisper_frontend_lib={l}"
+            "faster_whisper_frontend_lib={l},info"
         )));
     }
 }
@@ -306,20 +306,26 @@ fn format_line(l: &LogLine) -> String {
 /// current contents first so the file is complete from launch. Reused for a
 /// live folder change — the new file again starts with the full history.
 pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
-    if std::fs::create_dir_all(dir).is_err() {
+    if crate::audio::create_dir_private(dir).is_err() {
         return;
     }
     let name = format!(
         "fwf-{}.log",
         chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
     );
-    let Ok(mut file) = std::fs::File::create(dir.join(name)) else {
+    let path = dir.join(name);
+    let Ok(mut file) = std::fs::File::create(&path) else {
         return;
     };
-    for line in ring.tail(0).lines {
-        let _ = file.write_all(format_line(&line).as_bytes());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
     }
     if let Ok(mut inner) = writer.0.lock() {
+        for line in ring.tail(0).lines {
+            let _ = file.write_all(format_line(&line).as_bytes());
+        }
         inner.file = Some(file);
         inner.dir = Some(dir.to_path_buf());
     }

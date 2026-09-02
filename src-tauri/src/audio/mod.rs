@@ -212,8 +212,11 @@ fn write_new_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Err(e) = windows_owner_only_dacl(path) {
         tracing::warn!("[audio] could not restrict {} to the current user: {e}", path.display());
     }
-    f.write_all(bytes)?;
-    f.sync_all()
+    if let Err(e) = f.write_all(bytes).and_then(|_| f.sync_all()) {
+        let _ = std::fs::remove_file(path);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// Create the recordings directory owner-only — 0700 on Unix, an owner-only inheritable DACL on
@@ -329,8 +332,9 @@ pub(crate) fn windows_owner_only_dacl(dir: &Path) -> std::io::Result<()> {
         };
 
         let mut acl: *mut ACL = std::ptr::null_mut();
-        if SetEntriesInAclW(1, &ea, std::ptr::null_mut(), &mut acl) != 0 {
-            return Err(std::io::Error::last_os_error());
+        let rc = SetEntriesInAclW(1, &ea, std::ptr::null_mut(), &mut acl);
+        if rc != 0 {
+            return Err(std::io::Error::from_raw_os_error(rc as i32));
         }
         let rc = SetNamedSecurityInfoW(
             wide.as_ptr(),
@@ -553,7 +557,7 @@ mod retention_tests {
     /// past ~10.7 million days and PANICS inside `setup()` on every launch once persisted.
     #[test]
     fn an_absurd_retention_window_is_clamped_not_fatal() {
-        let dir = std::env::temp_dir().join("fwf-retention-clamp");
+        let dir = std::env::temp_dir().join(format!("fwf-retention-clamp-{}", std::process::id()).as_str());
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         seed(&dir, "dictation-old.wav", 400);
@@ -567,7 +571,7 @@ mod retention_tests {
     /// folder cannot have the server-supplied transcript written through it.
     #[test]
     fn a_transcript_never_overwrites_an_existing_file() {
-        let dir = std::env::temp_dir().join("fwf-sidecar-nofollow");
+        let dir = std::env::temp_dir().join(format!("fwf-sidecar-nofollow-{}", std::process::id()).as_str());
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let victim = dir.join("dictation-x.txt");
@@ -579,7 +583,7 @@ mod retention_tests {
 
     #[test]
     fn keeps_everything_when_retention_is_off() {
-        let dir = std::env::temp_dir().join("fwf-retention-off");
+        let dir = std::env::temp_dir().join(format!("fwf-retention-off-{}", std::process::id()).as_str());
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         seed(&dir, "dictation-old.wav", 400);
@@ -590,7 +594,7 @@ mod retention_tests {
 
     #[test]
     fn removes_only_our_files_past_the_window() {
-        let dir = std::env::temp_dir().join("fwf-retention-window");
+        let dir = std::env::temp_dir().join(format!("fwf-retention-window-{}", std::process::id()).as_str());
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         seed(&dir, "dictation-old.wav", 40);

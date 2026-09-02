@@ -1083,7 +1083,8 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
     let config_version = doc
         .get("configVersion")
         .and_then(|v| v.as_u64())
-        .unwrap_or(2) as u32;
+        .map(|v| u32::try_from(v).unwrap_or(u32::MAX))
+        .unwrap_or(2);
 
     let mut warnings: Vec<String> = Vec::new();
     if config_version > CURRENT_CONFIG_VERSION {
@@ -1120,7 +1121,7 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
     // canonicalizes hotkey chords via the Profile deserializer, and fails
     // loudly on structurally-broken lists).
     if let Some(list) = categories.get_mut("backends").and_then(|b| b.get_mut("list")) {
-        let parsed: Vec<config::Backend> = serde_json::from_value(list.clone())
+        let parsed: Vec<config::Backend> = serde_json::from_value(list.take())
             .map_err(|e| format!("The file's server connections are invalid: {e}"))?;
         if parsed.len() > MAX_ENTRIES {
             return Err("That file lists far more server connections than the app supports.".into());
@@ -1144,7 +1145,7 @@ pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
         *list = serde_json::to_value(parsed).map_err(|e| e.to_string())?;
     }
     if let Some(list) = categories.get_mut("profiles").and_then(|p| p.get_mut("list")) {
-        let parsed: Vec<config::Profile> = serde_json::from_value(list.clone())
+        let parsed: Vec<config::Profile> = serde_json::from_value(list.take())
             .map_err(|e| format!("The file's dictation profiles are invalid: {e}"))?;
         if parsed.len() > MAX_ENTRIES {
             return Err("That file lists far more dictation profiles than the app supports.".into());

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Per-request override of the shared client's 120 s default (that default is
-/// sized for transcription uploads). Sync payloads are ≤512 KB of JSON, and the
+/// sized for transcription uploads). Sync payloads are bounded at 4 MB, and the
 /// engine serializes on one in-flight request — a sync call left hanging on an
 /// unreachable server (e.g. a LAN address away from home) blocks pulls/pushes
 /// to a NEWLY selected server for the whole 120 s. Keep failures prompt.

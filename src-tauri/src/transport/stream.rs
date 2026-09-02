@@ -403,7 +403,9 @@ pub async fn run<F>(
                 Some(Ok(_)) => {}
                 Some(Err(e)) => {
                     tracing::warn!("[stream] ws read error: {e}");
-                    let _ = evt_tx.send(FromReader::Event(StreamEvent::Error(e.to_string())));
+                    let _ = evt_tx.send(FromReader::Event(StreamEvent::Error(
+                        super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT),
+                    )));
                     break;
                 }
             }
@@ -687,16 +689,16 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
         }
         Some("partial") => {
             on_event(StreamEvent::Partial {
-                committed: bounded(&str_field(&v, "committed"), MAX_TRANSCRIPT),
-                pending: bounded(&str_field(&v, "pending"), MAX_TRANSCRIPT),
+                committed: bounded(str_field(&v, "committed"), MAX_TRANSCRIPT),
+                pending: bounded(str_field(&v, "pending"), MAX_TRANSCRIPT),
             });
             Frame::Continue
         }
         Some("final") => {
             let last = v.get("last").and_then(|b| b.as_bool()).unwrap_or(false);
             on_event(StreamEvent::Final {
-                committed: bounded(&str_field(&v, "committed"), MAX_TRANSCRIPT),
-                tail: bounded(&str_field(&v, "tail"), MAX_TRANSCRIPT),
+                committed: bounded(str_field(&v, "committed"), MAX_TRANSCRIPT),
+                tail: bounded(str_field(&v, "tail"), MAX_TRANSCRIPT),
                 last,
                 utterance: ordinal_field(&v, "utterance"),
             });
@@ -704,7 +706,7 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
         }
         Some("boundary") => {
             on_event(StreamEvent::Boundary {
-                separator: bounded(&str_field(&v, "separator"), MAX_SEPARATOR),
+                separator: bounded(str_field(&v, "separator"), MAX_SEPARATOR),
             });
             Frame::Continue
         }
@@ -712,7 +714,7 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
             // Server-authored id; bounded at the parse boundary like every
             // other string here, and it only ever travels back out as an
             // opaque field on the next translate request.
-            let id = bounded(&str_field(&v, "id"), 64);
+            let id = bounded(str_field(&v, "id"), 64);
             if !id.is_empty() {
                 on_event(StreamEvent::Captured { id, utterance: ordinal_field(&v, "utterance") });
             }
@@ -726,7 +728,7 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
             // and are typed as Enter, so folding controls to spaces would silently turn every
             // hard break into a space.
             on_event(StreamEvent::Error(super::bounded_server_text(
-                &str_field(&v, "message"),
+                str_field(&v, "message"),
                 super::MAX_ERROR_TEXT,
             )));
             Frame::Continue
@@ -761,10 +763,6 @@ const MAX_SIDECAR_BYTES: usize = 8 * 1024 * 1024;
 /// keystrokes into the focused window, so the server does not get to make it a payload.
 const MAX_SEPARATOR: usize = 32;
 
-/// An `error` message is surfaced in the UI and written to the log file users are asked to send
-/// for support. `pipeline.rs` already truncates server-derived strings before logging; the stream
-/// path gets the same ceiling so a hostile server can't pad the log or forge records.
-
 /// First `n` chars of a server-supplied string. Char-indexed, so it can't split a UTF-8 sequence.
 pub(crate) fn bounded(s: &str, n: usize) -> String {
     match s.char_indices().nth(n) {
@@ -783,8 +781,8 @@ fn ordinal_field(v: &serde_json::Value, key: &str) -> Option<u32> {
     v.get(key).and_then(|x| x.as_u64()).and_then(|n| u32::try_from(n).ok())
 }
 
-fn str_field(v: &serde_json::Value, key: &str) -> String {
-    v.get(key).and_then(|x| x.as_str()).unwrap_or("").to_string()
+fn str_field<'a>(v: &'a serde_json::Value, key: &str) -> &'a str {
+    v.get(key).and_then(|x| x.as_str()).unwrap_or("")
 }
 
 /// A server-supplied string LIST, held to the same ceiling the batch path applies to this data:

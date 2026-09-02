@@ -130,18 +130,10 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     models: vec![],
                     boot_id: None,
                     server_version: None,
-                    // serde's `invalid_type` Display echoes the OFFENDING VALUE untruncated, so
-                    // `{"data":"<1 MiB string>"}` — well inside MAX_META_BODY — yields a ~1 MiB
-                    // error string (measured: a 1 MB value produces 1,000,069 bytes). serde
-                    // formats it with `{:?}`, which already escapes the bidi class, so this is a
-                    // volume defect rather than a spoofing one — but volume is the whole harm here.
-                    // Every sibling field on these arms is already `bounded_name`d, and both
-                    // static error arms plus `friendly_err` are bounded to 300; this was the one
-                    // unbounded server-authored string left in `ConnectionInfo`. Its three renders
-                    // pass it through raw into a wrapping Notice — millions of line boxes in the
-                    // window that owns the debounced config save — and it is the text the user
-                    // reads to decide whether to keep pointing at this address, immediately
-                    // before the restore offer that applies a whole settings blob.
+                    // `json_capped_to`'s error can include the server body (serde's
+                    // `invalid_type` Display echoes the offending value untruncated). Every
+                    // sibling field is already `bounded_name`d and both static error arms plus
+                    // `friendly_err` are bounded to 300. Bound this one to match.
                     error: Some(super::bounded_server_text(
                         &format!("Unexpected /v1/models response: {e}"),
                         300,
@@ -286,7 +278,10 @@ impl UsageQuery {
         }
         if let Some(z) = self.tz.as_deref() {
             if iana_zone_ok(z) {
-                q.push(format!("tz={z}"));
+                let encoded: String = z.bytes().map(|b| {
+                    if b == b'+' { "%2B".to_string() } else { (b as char).to_string() }
+                }).collect();
+                q.push(format!("tz={encoded}"));
             }
         }
         q.join("&")

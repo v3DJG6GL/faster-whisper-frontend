@@ -256,7 +256,7 @@ pub async fn translate_texts(
     if !status.is_success() {
         let body = super::body_capped_to(resp, super::MAX_ERROR_BODY)
             .await
-            .unwrap_or_default();
+            .unwrap_or_else(|reason| reason);
         let detail = detail_from(&body);
         tracing::warn!("[text] translate failed: HTTP {} {detail}", status.as_u16());
         bail!("HTTP {}: {}", status.as_u16(), detail);

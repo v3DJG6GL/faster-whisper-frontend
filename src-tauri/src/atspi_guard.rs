@@ -578,8 +578,8 @@ mod imp {
         // real application name — or an existing rule keyed on one — is affected.
         let app_id =
             crate::transport::bounded_server_text(&app_id, crate::atspi_guard::APP_ID_MAX);
-        // Emptiness is judged on the BOUNDED value: a name made only of format controls (ZWJ,
-        // bidi overrides) is non-empty raw and empty after the bound, and an empty id must
+        // Emptiness is judged on the BOUNDED value: a name made only of format controls (bidi
+        // overrides, ZWSP) is non-empty raw and empty after the bound, and an empty id must
         // read as "no focus" — `is_noise("")` is false, so it would otherwise be installed as
         // the current app, render a blank chip target and be capturable as an AppRule key.
         if app_id.trim().is_empty() {

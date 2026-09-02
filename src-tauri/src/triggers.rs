@@ -360,21 +360,23 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
     if !quick_add_hotkey.is_empty() {
         match crate::config::codes_to_accelerator(quick_add_hotkey) {
             // Same defang: `quickAddHotkey` is a synced code list with the same passthrough.
-            Some(accel) => match Shortcut::from_str(&accel) {
-                // A profile registered first keeps the chord (it used to be silently replaced).
-                Ok(shortcut) if map.contains_key(&shortcut) => tracing::warn!(
-                    "[hotkey] quick-add '{}' has the same chord as a profile; ignoring it",
-                    crate::transport::bounded_server_text(&accel, 120)
-                ),
-                Ok(shortcut) => match gs.register(shortcut.clone()) {
-                    Ok(()) => {
-                        tracing::info!("[hotkey] registered '{}' → quick-add", crate::transport::bounded_server_text(&accel, 120));
-                        map.insert(shortcut, ShortcutTarget::OpenQuickAdd);
-                    }
-                    Err(e) => tracing::warn!("[hotkey] could not register quick-add '{}' (X11 only): {e}", crate::transport::bounded_server_text(&accel, 120)),
-                },
-                Err(_) => tracing::warn!("[hotkey] quick-add '{}' is not a registerable global shortcut", crate::transport::bounded_server_text(&accel, 120)),
-            },
+            Some(accel) => {
+                let safe_accel = crate::transport::bounded_server_text(&accel, 120);
+                match Shortcut::from_str(&accel) {
+                    // A profile registered first keeps the chord (it used to be silently replaced).
+                    Ok(shortcut) if map.contains_key(&shortcut) => tracing::warn!(
+                        "[hotkey] quick-add '{safe_accel}' has the same chord as a profile; ignoring it"
+                    ),
+                    Ok(shortcut) => match gs.register(shortcut.clone()) {
+                        Ok(()) => {
+                            tracing::info!("[hotkey] registered '{safe_accel}' → quick-add");
+                            map.insert(shortcut, ShortcutTarget::OpenQuickAdd);
+                        }
+                        Err(e) => tracing::warn!("[hotkey] could not register quick-add '{safe_accel}' (X11 only): {e}"),
+                    },
+                    Err(_) => tracing::warn!("[hotkey] quick-add '{safe_accel}' is not a registerable global shortcut"),
+                }
+            }
             None => tracing::info!(
                 "[hotkey] quick-add chord {:?} isn't a global-shortcut chord (modifier-only / AltGr) — use the evdev backend or a desktop shortcut → `app --quick-add`",
                 quick_add_hotkey

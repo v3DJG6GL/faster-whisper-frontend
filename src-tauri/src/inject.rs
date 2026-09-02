@@ -198,7 +198,7 @@ pub fn sanitize_injected(text: &str) -> String {
 ///
 /// `char::is_control()` is category Cc only, so none of these were caught: the bidi overrides and
 /// embeddings (U+202A–U+202E), the directional isolates (U+2066–U+2069), the invisible marks
-/// (U+200B ZWSP, U+200D ZWJ, U+200E/U+200F LRM/RLM) and U+FEFF. The transcript is server-authored
+/// (U+200B ZWSP, U+200E/U+200F LRM/RLM) and U+FEFF — ZWNJ and ZWJ are kept (see below). The transcript is server-authored
 /// and gets typed or pasted into whatever has focus — an editor, a commit message, a config file,
 /// a chat box — so a right-to-left override lets the server make the text that actually lands
 /// differ from the text the user watched appear. Trojan-Source, via dictation.

@@ -445,7 +445,6 @@ mod win_hover {
     }
 
     fn run(app: AppHandle) {
-        // Whether the window currently RECEIVES cursor events (= !ignore_cursor_events).
         loop {
             let visible = VISIBLE.load(Ordering::SeqCst);
             // 50 ms tracks hover-enter/leave comfortably; the per-tick cost is one

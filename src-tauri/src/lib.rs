@@ -156,7 +156,7 @@ pub fn run() {
             // Start hidden to the tray if requested (reachable via the tray menu) —
             // but only on login launches (--autostart), never on a manual start.
             if cfg.settings.general.start_minimized
-                && std::env::args().any(|a| a == "--autostart")
+                && std::env::args_os().any(|a| a == "--autostart")
             {
                 if let Some(win) = app.get_webview_window("main") {
                     let _ = win.hide();

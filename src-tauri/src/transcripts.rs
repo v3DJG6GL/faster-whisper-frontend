@@ -144,7 +144,7 @@ fn write_record_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
 /// NOT cheap — it reads and parses every record — so the caller runs it after a
 /// migration that moved something and once per install, not every launch.
 pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
-    let subs = ["dictations", "files", "links"];
+    let subs = crate::commands::AUDIO_SUBDIRS;
     let dirs = [transcripts_dir(app), dictations_dir(app)];
     let mut healed = 0;
     for dir in dirs.into_iter().flatten() {
@@ -310,16 +310,7 @@ pub fn save_transcript_record(
     crate::audio::create_dir_private(&dir)
         .map_err(|e| format!("could not create the transcripts folder: {e}"))?;
     let path = dir.join(format!("{id}.json"));
-    let tmp = dir.join(format!("{id}.json.tmp"));
-    if let Err(e) = crate::config::write_private(&tmp, &record) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    Ok(())
+    write_record_atomic(&path, &record).map_err(|e| e.to_string())
 }
 
 /// All history records, parsed but uninterpreted. Unreadable or unparseable
@@ -395,7 +386,7 @@ pub fn delete_transcript_record(
     std::fs::remove_file(rec_path).map_err(|e| e.to_string())
 }
 
-/// Copy a run's input audio next to its record (`media/<id>.<ext>`), so the
+/// Copy a run's input audio into `<base>/files/<id>.<ext>`, so the
 /// workbench can still play it after the original moves. Verbatim copy, no
 /// transcode; over-cap sources return Ok(None) ("no copy" — not an error).
 /// Runs on a blocking thread: a multi-GB copy must not park the runtime.
@@ -780,7 +771,7 @@ mod tests {
 
     #[test]
     fn prune_only_touches_old_json() {
-        let dir = std::env::temp_dir().join("fwf-transcripts-prune");
+        let dir = std::env::temp_dir().join(format!("fwf-transcripts-prune-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let old = dir.join("aaaa1111.json");

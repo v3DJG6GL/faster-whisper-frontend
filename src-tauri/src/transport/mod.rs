@@ -417,7 +417,8 @@ pub fn client() -> reqwest::Client {
                 // a 308 would have that key set POSTed to a host of its choosing.
                 //
                 // Same-host hops still follow, so a server that redirects http→https or normalizes
-                // a trailing slash keeps working; only the cross-host case is refused.
+                // a trailing slash keeps working. Cross-host, TLS-downgrade and same-scheme
+                // port changes are all refused — see each rule below.
                 // The same-host test alone was not enough, because it says nothing about the
                 // SCHEME. reqwest drops `Authorization` when host, port or scheme changes, but it
                 // replays the BODY verbatim on 307/308 — and the sync PUT body carries every
@@ -548,15 +549,20 @@ pub const MAX_META_BODY: usize = 1024 * 1024;
 /// reason the injection path strips them. Doing it here means every consumer of a bounded server
 /// string inherits it, instead of each render site remembering to sanitize.
 pub fn bounded_server_text(s: &str, n: usize) -> String {
-    let cleaned: String = s
-        .chars()
-        .filter(|c| !crate::inject::is_deceptive_format_char(*c))
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    match cleaned.char_indices().nth(n) {
-        Some((i, _)) => format!("{}…", &cleaned[..i]),
-        None => cleaned,
+    let mut out = String::with_capacity(n.min(s.len()));
+    let mut kept = 0usize;
+    for c in s.chars() {
+        if crate::inject::is_deceptive_format_char(c) {
+            continue;
+        }
+        if kept >= n {
+            out.push('…');
+            return out;
+        }
+        out.push(if c.is_control() { ' ' } else { c });
+        kept += 1;
     }
+    out
 }
 
 /// Target-language codes are short ISO-ish tags ("de", "pt-BR") — screened before they join

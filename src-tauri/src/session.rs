@@ -422,7 +422,6 @@ fn rms(samples: &[f32]) -> f32 {
 /// (streaming.ts MIC_LIVE_LEVEL) that quiet mics only hover AT, which held "warming up…" until the
 /// user actually spoke (the "~2s until the chip turns amber" complaint).
 const MIC_LIVE_RMS: f32 = 1.0e-5;
-/// Server-supplied "ignored override" notices are rendered one per row; bound how many arrive.
 /// Consecutive above-floor callbacks required before the mic counts as live (~30 ms), so the
 /// single open-click/DC blip a warming device can emit doesn't end the warm-up gate early.
 const MIC_LIVE_CONFIRM: u8 = 3;
@@ -640,17 +639,17 @@ impl RecordSession {
 
     /// Claim this session as the detached batch BEFORE the state lock is released.
     ///
-    /// `finish()` publishes the same value, but only after it has joined the capture thread —
-    /// a thread parked in a 33ms poll loop, so ~33-50ms on every stop, and `stop_record` has
-    /// already dropped the `RecordState` guard by then. A `cancel_record` landing in that gap
-    /// found `None`, took the no-live-session branch, and `cancel_detached_batch()` copied
-    /// whatever `DETACHED_BATCH_EPOCH` still held: 0 on a first session, otherwise the PREVIOUS
-    /// session's epoch. Both outcomes are the failure the branch exists to prevent — the
-    /// cancelled clip was uploaded and archived while the UI said cancelled, and an earlier
-    /// still-in-flight POST could be killed and its `.wav` deleted in its place.
+    /// `finish()` deliberately does NOT re-publish (see its comment on the removed re-store),
+    /// and `stop_record` has already dropped the `RecordState` guard by then. A `cancel_record`
+    /// landing in the gap between stop and finish found `None`, took the no-live-session branch,
+    /// and `cancel_detached_batch()` copied whatever `DETACHED_BATCH_EPOCH` still held: 0 on a
+    /// first session, otherwise the PREVIOUS session's epoch. Both outcomes are the failure the
+    /// branch exists to prevent — the cancelled clip was uploaded and archived while the UI said
+    /// cancelled, and an earlier still-in-flight POST could be killed and its `.wav` deleted in
+    /// its place.
     ///
-    /// Publishing early is safe: the value is `self.epoch` either way, the device-loss bail in
-    /// `finish()` stores the same epoch from the salvage arm, and nothing reads the value except
+    /// Publishing early is safe: the device-loss bail in `finish()` stores the same epoch from
+    /// the salvage arm, and nothing reads the value except
     /// `cancel_detached_batch` and `batch_cancelled`.
     pub fn claim_detached(&self) {
         DETACHED_BATCH_EPOCH.store(self.epoch, Ordering::SeqCst);

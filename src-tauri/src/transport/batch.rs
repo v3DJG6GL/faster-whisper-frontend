@@ -676,7 +676,7 @@ async fn post(
                 // capped at the translate target ceiling.
                 s.translations_kept = s.translations_kept.map(|v| {
                     v.iter()
-                        .take(8)
+                        .take(super::MAX_TARGETS)
                         .map(|k| super::bounded_server_text(k, 16))
                         .collect()
                 });
