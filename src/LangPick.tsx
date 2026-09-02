@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { abortLangPick, commitLangPick } from "@/lib/api";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
-import { applyTheme, setAccentHue, setAccentMotion, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
+import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import { safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
 import type { AccentMotion, ThemeName } from "@/lib/types";
@@ -86,9 +86,7 @@ export default function LangPick() {
           const s = e.payload ?? {};
           setSeed(s);
           themeRef.current = s.theme ?? "auto";
-          setAccentHue(typeof s.accentHue === "number" ? s.accentHue : DEFAULT_ACCENT_HUE);
-          setAccentMotion(s.accentMotion);
-          applyTheme(s.theme ?? "auto");
+          applyAccentAndTheme(typeof s.accentHue === "number" ? s.accentHue : undefined, s.accentMotion, s.theme ?? "auto");
           // Preselect the Profile's own targets: Enter with no keystrokes must reproduce
           // what would have happened without the picker. Anything else makes the prompt a
           // trap — confirming it by habit would silently change the outcome. (Esc is the

@@ -45,10 +45,9 @@ import {
 /** Bound the "server ignored N overrides" list — untrusted response, real DOM. */
 const MAX_IGNORED_SHOWN = 50;
 
-/** Below this window width the Studio (side-by-side) arrangement can't hold a
- *  360px config rail plus a readable transcript pane next to the fixed 228px
- *  sidebar, so the page stays stacked. Picking Studio on a narrower window
- *  grows the window to this width. */
+/** Below this window width the Studio (side-by-side) arrangement is too narrow
+ *  for the config rail and a readable transcript pane beside the 228px sidebar,
+ *  so the page stays stacked. Picking Studio on a narrower window grows it. */
 const STUDIO_MIN_WINDOW = 1400;
 
 /** Retro-translate runs whose transcript is NOT the one on screen: a slim
@@ -2363,8 +2362,8 @@ export default function Transcribe() {
 
       {result?.warnings && result.warnings.length > 0 && (
         <Notice className="mt-3">
-          {result.warnings.map((w, i) => (
-            <div key={i}>{w}</div>
+          {result.warnings.slice(0, 10).map((w, i) => (
+            <div key={i}>{safeDisplayText(w, 300)}</div>
           ))}
         </Notice>
       )}

@@ -28,7 +28,7 @@ import {
 import { resolveInjectionTarget } from "@/lib/streaming";
 import { effectiveServerUrl } from "@/lib/backends";
 import { IS_WINDOWS } from "@/lib/platform";
-import { applyTheme, setAccentHue, setAccentMotion, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
+import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import type { AppRule, GeneralSettings, PipelineFetch, ThemeName } from "@/lib/types";
 
 // Client-side ceilings on the two server-supplied lists this window renders. Both arrive as
@@ -186,9 +186,7 @@ export default function QuickAdd() {
       const cfg = (await loadConfig())?.config ?? null;
       if (!cfg) return;
       themeRef.current = cfg.settings.theme;
-      setAccentHue(cfg.settings.accentHue ?? DEFAULT_ACCENT_HUE);
-      setAccentMotion(cfg.settings.accentMotion);
-      applyTheme(cfg.settings.theme);
+      applyAccentAndTheme(cfg.settings.accentHue, cfg.settings.accentMotion, cfg.settings.theme);
       generalRef.current = cfg.settings.general;
       appRulesRef.current = normalizedAppRules(cfg.appRules);
     } catch (e) {
@@ -205,9 +203,7 @@ export default function QuickAdd() {
       if (gen !== loadGen.current) return; // superseded by a newer refresh/summon
       if (cfg) {
         themeRef.current = cfg.settings.theme;
-        setAccentHue(cfg.settings.accentHue ?? DEFAULT_ACCENT_HUE);
-        setAccentMotion(cfg.settings.accentMotion);
-        applyTheme(cfg.settings.theme);
+        applyAccentAndTheme(cfg.settings.accentHue, cfg.settings.accentMotion, cfg.settings.theme);
         generalRef.current = cfg.settings.general;
         appRulesRef.current = normalizedAppRules(cfg.appRules);
       }
@@ -683,7 +679,7 @@ async function replaceSelectionAfterClose(
   // Profile — the correction is a Quick-Add action, not a dictation — so it resolves
   // app-rule ← global exactly as it always has. Passing `undefined` states that rather
   // than leaving it to argument order.
-  const { rule, method, pasteShortcut } = resolveInjectionTarget(app ?? null, appRules, general, undefined);
+  const { rule, method, pasteShortcut, restoreClipboard } = resolveInjectionTarget(app ?? null, appRules, general, undefined);
   if (rule?.block) return; // the user marked this app "never type into" — don't correct into it at all (not even clipboard)
   // Clipboard-only (explicit per-app, or coerced for a non-editable target) puts the correction on the
   // clipboard with no keystroke; restore the prior clipboard only for a real paste.
@@ -697,7 +693,7 @@ async function replaceSelectionAfterClose(
     text: safe,
     method,
     autoEnter: false,
-    restoreClipboard: method === "paste",
+    restoreClipboard,
     pasteShortcut,
     expectAppId: app?.appId ?? null,
   });

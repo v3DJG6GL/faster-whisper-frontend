@@ -124,8 +124,9 @@ export default function Home() {
   // `model`/`language` are peer-authored and arrive on an unattended sync pull.
   const routeLang = shown?.language?.trim() ? shown.language : (shownBackend?.language ?? "auto");
   // Targets resolve as the chip's and the session's do: the bound Backend's translation
-  // defaults under the Profile's overrides — an inheriting profile must not read as "no
-  // translation" while it translates.
+  // defaults under the Profile's overrides. When `askTranslationTargets` is on, the real
+  // route is decided by the picker at session start; the readout shows the configured
+  // default, not the future pick.
   const route = routeParts(languageLabel(routeLang), configuredRouteTargets(shown, shownBackend));
   const routeReadout =
     (route.source || "auto") +
@@ -299,7 +300,7 @@ export default function Home() {
               unattended pull. The same two values go through `safeDisplayText` on the Backends
               screen; this readout tells the user which model and language the NEXT dictation
               uses, so it gets the same treatment. */}
-          <Readout label="model" value={safeDisplayText(shownBackend?.model, 80) || "—"} />
+          <Readout label="model" value={safeDisplayText(shown?.model?.trim() || shownBackend?.model, 80) || "—"} />
           <Readout label="endpoint" value={shown?.endpoint ?? shownBackend?.endpoint ?? "—"} accent />
           {/* The ROUTE, not just the input language: with translation on, "German" alone
               would describe words that land in French. Also the one surface that showed the

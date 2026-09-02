@@ -21,9 +21,7 @@ import { Segmented, Select } from "@/components/ui";
 import { SETTING } from "@/lib/settingsManifest";
 import type { InsertMethod, InsertionOverrides } from "@/lib/types";
 
-/** The inherit sentinel. One spelling everywhere — App Rules used to say "Inherit global",
- *  which stopped being true the moment a Profile layer existed between the two. */
-export const INHERIT = "inherit";
+const INHERIT = "inherit";
 
 export const METHOD_OPTIONS: { value: InsertMethod; label: string }[] = [
   { value: "paste", label: "Clipboard paste" },

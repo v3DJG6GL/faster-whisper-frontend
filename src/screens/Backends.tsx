@@ -791,8 +791,8 @@ export default function Backends() {
 
   const handleTest = async (b: Backend) => {
     setTesting((s) => new Set(s).add(b.id));
+    const testedUrl = effectiveServerUrl(b, useApp.getState().settings);
     try {
-      const testedUrl = effectiveServerUrl(b, useApp.getState().settings);
       const info = await testConnection({
         serverUrl: testedUrl,
         backendId: b.id,
@@ -814,7 +814,11 @@ export default function Backends() {
       }
     } catch (e) {
       console.error("test_connection failed", e);
-      setConnection(b.id, { ok: false, error: String(e) } as ConnectionInfo);
+      const cur2 = useApp.getState().backends.find((x) => x.id === b.id);
+      const curUrl2 = cur2 ? effectiveServerUrl(cur2, useApp.getState().settings) : null;
+      if (cur2 && cur2.serverUrl === b.serverUrl && cur2.hasApiKey === b.hasApiKey && curUrl2 === testedUrl) {
+        setConnection(b.id, { ok: false, error: String(e) } as ConnectionInfo);
+      }
     } finally {
       setTesting((s) => {
         const next = new Set(s);

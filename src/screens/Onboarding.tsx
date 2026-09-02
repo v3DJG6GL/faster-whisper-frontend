@@ -55,8 +55,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // (deleted backends, skipped steps) fall to the Home checklist instead.
   const finish = () => {
     // The component unmounts, but an in-flight testAndContinue keeps running —
-    // without this latch it would still mint the backend, write the keyring and
-    // pull sync against a server the user explicitly walked away from.
+    // without this latch it would pull sync and offer a restore against a server
+    // the user explicitly walked away from.
     abandoned.current = true;
     st.getState().updateSettings({ setupDismissed: true });
     onDone();
@@ -114,7 +114,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // Full backend → this account may have synced settings; discover, don't ask.
       if (res.bootId) {
         const p = await syncPull({ serverUrl, apiKey: key || null });
-        if (abandoned.current) return; // the user left during the pull
+        if (abandoned.current || normalizeUrl(urlRef.current) !== serverUrl) return;
         if (p.ok && p.state?.blob) {
           setPull(p);
           setStep("restore");

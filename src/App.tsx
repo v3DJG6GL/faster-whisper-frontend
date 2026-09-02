@@ -11,7 +11,7 @@ import { onTrigger, onSystemResumed, onOverlayAction, onAppNavigate } from "@/li
 import { dictate, runOverlayAction } from "@/lib/dictation";
 import { cancelLive, requestStopIfStarting } from "@/lib/streaming";
 import { SCREEN_PATH } from "@/lib/screens";
-import { applyTheme, setAccentHue, setAccentMotion, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
+import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import { initLogStatus, openLogsPrefiltered } from "@/lib/logs";
 import { flushRecordWrites } from "@/lib/transcriptHistory";
 import { tryNavigate } from "@/lib/navGuard";
@@ -245,11 +245,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    // The Signal colour must be set before the stamp: applyTheme derives its tokens for
-    // the resolved theme, and the OS-flip watcher below re-derives them the same way.
-    setAccentHue(accentHue ?? DEFAULT_ACCENT_HUE);
-    setAccentMotion(accentMotion);
-    applyTheme(theme);
+    applyAccentAndTheme(accentHue, accentMotion, theme);
     // While on "auto", track live OS scheme flips (Windows app-mode / desktop setting).
     return watchSystemTheme(() => useApp.getState().settings.theme);
   }, [theme, accentHue, accentMotion]);

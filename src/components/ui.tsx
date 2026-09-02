@@ -324,7 +324,7 @@ export function RouteBadge({ source, targets }: { source: string; targets?: stri
           <span className="px-1 text-faint" aria-hidden>
             →
           </span>
-          <span className="text-translate">{r.targets.join(", ")}</span>
+          <span className="text-accent">{r.targets.join(", ")}</span>
           {r.more > 0 && <span className="pl-1 text-faint">+{r.more}</span>}
         </>
       )}

@@ -728,7 +728,7 @@ function useCellTip() {
 
 function CellTip({ tip, boundsRef }: { tip: CellTipState | null; boundsRef: RefObject<HTMLDivElement | null> }) {
   if (!tip) return null;
-  const width = boundsRef.current?.clientWidth ?? 0;
+  const width = boundsRef.current?.scrollWidth ?? 0;
   const est = tip.text.length * 6.6 + 20;
   const flip = width > 0 && tip.x + 14 + est > width;
   // Above the cursor, or below it near the top so a scrolling wrapper does not clip it.
@@ -1203,7 +1203,7 @@ export function StatisticsView({
   const fresh = !!sig && view?.sig === sig;
   const stats = fresh ? view!.stats : (view?.stats ?? base);
   const win = useMemo(
-    () => (fresh && stats ? { from: stats.range.from, to: stats.range.to, days: stats.range.days } : resolveWindow(query, today, view?.stats?.range?.first_day)),
+    () => (fresh && stats ? { from: stats.range.from, to: stats.range.to, days: stats.range.days } : resolveWindow(query, today, stats?.range?.first_day)),
     [fresh, stats, query, today, view],
   );
   const dense = useMemo(

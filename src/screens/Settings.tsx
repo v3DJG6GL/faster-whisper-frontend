@@ -1032,6 +1032,7 @@ export default function Settings() {
     setStoreMsg(null);
   }, [tab]);
   const runStoreAction = (kind: "dict" | "files" | "links" | "clear") => {
+    if (dirBusyRef.current) return;
     // Nothing parked may land after the wipe: a coalesced record write, an 800 ms edit
     // debounce or a chunk merge otherwise re-created a JSON file Rust just removed.
     // Only the kinds that delete record JSONs; "files"/"links" empty a media folder and must

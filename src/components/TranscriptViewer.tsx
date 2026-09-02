@@ -1431,7 +1431,7 @@ export function TranscriptViewer({
   const togglePlay = () => {
     const a = audioRef.current;
     if (!a) return;
-    if (a.paused) void a.play().catch(() => setAudioBroken(true));
+    if (a.paused) void a.play().catch((e) => { if (e.name !== "AbortError") setAudioBroken(true); });
     else a.pause();
   };
 
@@ -2067,7 +2067,7 @@ export function TranscriptViewer({
             </>
           ) : null}
           {fileLabel ? ` · ${fileLabel}` : ""}
-          {result.language ? ` · ${result.language}` : ""}
+          {result.language ? ` · ${safeDisplayText(result.language, 16)}` : ""}
           {result.duration
             ? ` · ${result.duration < 60 ? `${result.duration.toFixed(1)}s` : fmtDurationExact(result.duration)}`
             : ""}
@@ -2342,7 +2342,7 @@ export function TranscriptViewer({
             )}
           >
             {visibleTracks.includes("orig") ? "✓ " : ""}
-            {(result.language ?? "??").toUpperCase()} · original
+            {safeDisplayText((result.language ?? "??").toUpperCase(), 16)} · original
           </button>
           {langs.map((lang) => (
             <button
@@ -2617,7 +2617,8 @@ export function TranscriptViewer({
                     type="button"
                     aria-pressed={on}
                     onClick={() => {
-                      const next = on ? eff.filter((x) => x !== t) : [...eff, t];
+                      const all = ["orig", ...langs];
+                      const next = on ? eff.filter((x) => x !== t) : all.filter((x) => eff.includes(x) || x === t);
                       if (!next.length) return;
                       setExportTracks(next);
                     }}
@@ -2630,7 +2631,7 @@ export function TranscriptViewer({
                         : "border-line bg-surface-2 text-dim hover:text-text",
                     )}
                   >
-                    {t === "orig" ? `${(result.language ?? "??").toUpperCase()} · original` : t.toUpperCase()}
+                    {t === "orig" ? `${safeDisplayText((result.language ?? "??").toUpperCase(), 16)} · original` : t.toUpperCase()}
                   </button>
                 );
               })}

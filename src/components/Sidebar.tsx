@@ -33,7 +33,7 @@ function TranslateRunBadge() {
   if (entries.length === 0) return null;
   const pct = Math.max(...entries.map((e) => e.run.pct));
   return (
-    <span className="ml-auto font-mono text-[10.5px] tabular-nums text-[color:var(--c-translate)]">
+    <span className="font-mono text-[10.5px] tabular-nums text-[color:var(--c-translate)]">
       {Math.round(pct * 100)}%
     </span>
   );

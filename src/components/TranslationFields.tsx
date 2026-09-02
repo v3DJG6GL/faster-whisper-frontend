@@ -69,7 +69,7 @@ export function TranslationTargetChips({
   // "DE", so removing/re-offering it must match on that code, not on the raw entry.
   const codeOf = (c: string) => chipCodes([c])[0] ?? "";
   const remaining = shownCandidates.filter((code) => !shown.includes(code));
-  const atCap = value.length >= max;
+  const atCap = shown.length >= max;
 
   return (
     <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={ariaLabel}>

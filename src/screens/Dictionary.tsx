@@ -982,6 +982,17 @@ export default function Dictionary() {
         </p>
       </Card>
 
+      {guard.asking && (
+        <ConfirmLeave
+          what="dictionary rules"
+          onSaveAndLeave={() => guard.saveAndLeave(save)}
+          onDiscard={() => {
+            discardAll();
+            guard.leave();
+          }}
+          onStay={guard.stay}
+        />
+      )}
       {/* States */}
       {candidates.length === 0 ? (
         <EmptyCard
@@ -1001,17 +1012,6 @@ export default function Dictionary() {
         />
       ) : (
         <Stack gap={4}>
-          {guard.asking && (
-            <ConfirmLeave
-              what="dictionary rules"
-              onSaveAndLeave={() => guard.saveAndLeave(save)}
-              onDiscard={() => {
-                discardAll();
-                guard.leave();
-              }}
-              onStay={guard.stay}
-            />
-          )}
           {/* result banner */}
           {result && <SaveBanner result={result} reloadDisabled={dirty.length > 0} onReload={() => backend && load(backend)} />}
 

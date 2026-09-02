@@ -221,7 +221,7 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
         ))}
 
         <div className="mt-4 flex items-center justify-end gap-3">
-          {confirmAll ? (
+          {confirmAll && totalChanged > 0 ? (
             <>
               <span className="text-[12px] text-warn">
                 Reset {totalChanged} sync {totalChanged === 1 ? "switch" : "switches"} to

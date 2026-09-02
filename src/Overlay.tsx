@@ -209,9 +209,9 @@ export default function Overlay() {
             phase: e.payload.phase ?? null,
             position: e.payload.position ?? "top",
             theme,
-            persistentDock: e.payload.persistentDock ?? false,
-            overlayPeek: e.payload.overlayPeek ?? false,
-            // Absent-field fallbacks mirror the store defaults (store.ts recording block).
+            persistentDock: e.payload.persistentDock ?? true,
+            overlayPeek: e.payload.overlayPeek ?? true,
+            // Absent-field fallbacks mirror defaults.ts (recording block).
             peekTimeoutSec: e.payload.peekTimeoutSec ?? 5,
             peekWhileActive: e.payload.peekWhileActive ?? false,
             dimAfterSec: e.payload.dimAfterSec ?? 2.5,
@@ -502,7 +502,7 @@ export default function Overlay() {
   // the route is in the ACCENT — the colour the picker teaches (its chosen chips) and the one
   // the chip already uses for "armed" — not the translate teal, which is reserved for the
   // translating STAGE row below (work in progress, not a promise).
-  const routeSlot = choosing ? (
+  const routeSlot = !routeGate ? null : choosing ? (
     <span className="whitespace-nowrap normal-case text-dim">choosing targets…</span>
   ) : originalShown && !showRoute && !pendingGlyph ? (
     <span className="whitespace-nowrap text-faint">· original</span>
