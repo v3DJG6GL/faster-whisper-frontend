@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "faster-whisper-frontend",
-        "width": 1040,
-        "height": 720,
+        "width": 1280,
+        "height": 800,
         "minWidth": 900,
         "minHeight": 600,
         "center": true,

@@ -1,33 +1,73 @@
 //! System tray icon + menu. The app lives in the background; the tray is the
-//! primary way to reveal the window or quit.
+//! primary way to reveal the window or quit. A left click on the icon shows the
+//! window where the platform reports clicks (Windows, macOS); the menu lists every
+//! screen so the right-click menu is a launcher too. On Linux the tray is a
+//! libappindicator item: it reports no click events and shows the menu on any
+//! click, so there the menu is the whole surface.
 
 use tauri::{
-    menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     App, AppHandle, Emitter, Manager,
 };
 
 /// Stable id so the tray can be looked up later to reflect dictation state.
 const TRAY_ID: &str = "fwf-tray";
 
+/// Menu item id prefix for a screen entry; the rest is the screen id the router's
+/// navigate bridge understands (lib/screens.tsx SCREENS, the same ids the overlay uses).
+const SCREEN_PREFIX: &str = "screen:";
+
+/// The screens the menu lists, in sidebar order (lib/screens.tsx). App rules is backed
+/// by the focused-app detector and only exists on Linux / Windows.
+const SCREENS: &[(&str, &str)] = &[
+    ("dashboard", "Dashboard"),
+    ("statistics", "Statistics"),
+    ("transcribe", "Transcribe"),
+    ("history", "History"),
+    ("profiles", "Profiles"),
+    ("backends", "Backends"),
+    ("dictionary", "Dictionary"),
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    ("app-rules", "App rules"),
+    ("logs", "Logs"),
+    ("settings", "Settings"),
+];
+
 pub fn create(app: &App) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show window", true, None::<&str>)?;
+    let mut items: Vec<MenuItem<tauri::Wry>> = Vec::with_capacity(SCREENS.len());
+    for (id, label) in SCREENS {
+        items.push(MenuItem::with_id(app, format!("{SCREEN_PREFIX}{id}"), *label, true, None::<&str>)?);
+    }
+    let sep = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
+    let mut refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<tauri::Wry>).collect();
+    refs.push(&sep);
+    refs.push(&quit);
+    let menu = Menu::with_items(app, &refs)?;
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("faster-whisper-frontend")
         .menu(&menu)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => show_main(app),
-            "quit" => {
+        // Left click reveals the window; the menu is the right-click surface. Ignored on
+        // Linux (libappindicator shows the menu on any button and reports no clicks).
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                show_main(tray.app_handle());
+            }
+        })
+        .on_menu_event(|app, event| {
+            let id = event.id.as_ref();
+            if let Some(screen) = id.strip_prefix(SCREEN_PREFIX) {
+                show_main_at_screen(app.clone(), screen.to_string());
+            } else if id == "quit" {
                 // Drop any live dictation first: app.exit ends the process without running
                 // managed-state destructors, so a mute_system session would otherwise leave
                 // the user's system audio muted after we're gone.
                 crate::session::cleanup_for_exit(app);
                 app.exit(0)
             }
-            _ => {}
         });
 
     if let Some(icon) = app.default_window_icon() {
@@ -55,7 +95,8 @@ pub(crate) fn show_main(app: &AppHandle) {
 
 /// Show + focus the main window and ask its router to navigate to `screen`. Used by
 /// the overlay chip's quick-launch (a separate window that can't drive the main
-/// window's router directly). The main window listens for `app://navigate` (App.tsx).
+/// window's router directly) and by the tray menu's screen entries. The main window
+/// listens for `app://navigate` (App.tsx).
 #[tauri::command]
 pub fn show_main_at_screen(app: AppHandle, screen: String) {
     show_main(&app);
