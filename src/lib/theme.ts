@@ -98,6 +98,9 @@ function alpha(hex: string, a: number): string {
 
 export interface DerivedAccent {
   accent: string;
+  /** The Rhythm calendar's four steps (`--c-cal-1..4`): one hue, fixed L/C per theme, so
+   *  the ramp stays a single-hue sequential scale whatever the Signal colour (D27–D29). */
+  cal: [string, string, string, string];
   /** Text on accent fills — flips with the accent's luminance (a lime needs dark ink). */
   ink: string;
   soft: string;
@@ -106,12 +109,18 @@ export interface DerivedAccent {
   glow0: string;
 }
 
+/** Calendar steps, [L, C] per step; at Amber (65°) they land on the app.css hexes. */
+const CAL_STEPS_DARK: ReadonlyArray<readonly [number, number]> = [[0.33, 0.07], [0.46, 0.1], [0.6, 0.14], [0.72, 0.16]];
+const CAL_STEPS_LIGHT: ReadonlyArray<readonly [number, number]> = [[0.84, 0.07], [0.74, 0.11], [0.62, 0.14], [0.47, 0.13]];
+
 /** The concrete tokens for a hue in one theme. Pure; the Settings swatches call it too. */
 export function deriveAccent(hue: number, dark: boolean): DerivedAccent {
   const h = ((hue % 360) + 360) % 360;
   const accent = dark ? oklchHex(0.78, 0.17, h) : oklchHex(0.58, 0.15, h);
+  const cal = (dark ? CAL_STEPS_DARK : CAL_STEPS_LIGHT).map(([L, C]) => oklchHex(L, C, h)) as DerivedAccent["cal"];
   return {
     accent,
+    cal,
     ink: lum(accent) > 0.4 ? "#1a1207" : "#fff8ec",
     soft: alpha(accent, dark ? 0.14 : 0.12),
     glowA: alpha(accent, dark ? 0.09 : 0.05),
@@ -128,6 +137,10 @@ const ACCENT_VARS = [
   "--c-glow-a",
   "--c-glow-b",
   "--c-glow-0",
+  "--c-cal-1",
+  "--c-cal-2",
+  "--c-cal-3",
+  "--c-cal-4",
 ] as const;
 
 /* ── Motion (the pure arithmetic every window runs) ───────────────────── */
@@ -288,6 +301,7 @@ function stampHue(hue: number, dark: boolean): void {
     style.setProperty("--c-glow-a", d.glowA);
     style.setProperty("--c-glow-b", d.glowB);
     style.setProperty("--c-glow-0", d.glow0);
+    d.cal.forEach((hex, i) => style.setProperty(`--c-cal-${i + 1}`, hex));
   }
   for (const fn of listeners) fn(hue);
 }

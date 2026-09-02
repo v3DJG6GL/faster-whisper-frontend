@@ -103,6 +103,9 @@
   --c-chart-text: #6f675c;
   /* The Rhythm calendar's four active steps (quartiles of active days), ~0.12 OKLCH L
      apart. Fixed like the kind colours: the ramp never follows the Signal colour. */
+  /* Rhythm calendar steps: the un-stamped Amber defaults; theme.ts restamps all four for
+     any other Signal colour (same OKLCH recipe, hue = the Signal hue), so they drift with
+     Motion like the accent. Kind and stage colours above never move. */
   --c-cal-1: #4a3418;
   --c-cal-2: #7a4f14;
   --c-cal-3: #ad6b0c;

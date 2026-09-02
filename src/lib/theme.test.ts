@@ -56,8 +56,25 @@ describe("deriveAccent", () => {
     // D13′: the translating stage, the speaker palette and the armed amber are fixed
     // app.css tokens; the accent must not be able to move them.
     expect(Object.keys(deriveAccent(185, true)).sort()).toEqual(
-      ["accent", "glow0", "glowA", "glowB", "ink", "soft"],
+      ["accent", "cal", "glow0", "glowA", "glowB", "ink", "soft"],
     );
+  });
+
+  it("the calendar steps are a single-hue ramp ordered by lightness, near the amber hexes at 65°", () => {
+    // Dark: darker → brighter; light: lighter → deeper (the deepest step is the busiest day).
+    const dark = deriveAccent(65, true).cal;
+    const light = deriveAccent(65, false).cal;
+    for (let i = 1; i < 4; i++) {
+      expect(lum(dark[i])).toBeGreaterThan(lum(dark[i - 1]));
+      expect(lum(light[i])).toBeLessThan(lum(light[i - 1]));
+    }
+    // The un-stamped defaults in app.css are the same recipe at Amber: within a few
+    // percent of luminance, so the default look does not move when the engine stamps.
+    const near = (a: string, b: string) => Math.abs(lum(a) - lum(b)) < 0.03;
+    expect(["#4a3418", "#7a4f14", "#ad6b0c", "#e0900e"].every((hex, i) => near(hex, dark[i]))).toBe(true);
+    expect(["#e9c7a0", "#d9a061", "#c37a2a", "#9a4f00"].every((hex, i) => near(hex, light[i]))).toBe(true);
+    // Another hue keeps the same lightness order with different hexes.
+    expect(deriveAccent(185, true).cal).not.toEqual(dark);
   });
 });
 
@@ -203,6 +220,7 @@ describe("applyTheme + setAccentHue", () => {
     applyTheme("auto");
     expect(dataset.theme).toBe("light");
     expect(props.get("--c-accent")).toBe(deriveAccent(275, false).accent);
+    expect(props.get("--c-cal-4")).toBe(deriveAccent(275, false).cal[3]);
     // Fixed state and kind tokens are never stamped, whatever the hue.
     expect(props.has("--c-chart-dict")).toBe(false);
     expect(props.has("--c-translate")).toBe(false);

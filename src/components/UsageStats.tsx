@@ -229,7 +229,7 @@ function tileSpecs(stats: UsageStats, dense: readonly UsageKinds[], scope: Usage
     {
       key: "words", label: "Words", icon: Type, value: fmtFull(today.words), tone: "dict",
       sub: <><Today /> · <Num>{fmtCompact(total.words)}</Num> {windowWord}</>,
-      spark: spark((p) => scopeTotals(p, scope).words), sparkColor: "var(--c-chart-dict)",
+      spark: spark((p) => scopeTotals(p, scope).words), sparkColor: "var(--c-accent)",
     },
     {
       key: "audio", label: "Audio", icon: Clock, value: fmtDurationExact(today.audio_s), tone: "text",
@@ -258,7 +258,9 @@ function tileSpecs(stats: UsageStats, dense: readonly UsageKinds[], scope: Usage
   return tiles;
 }
 
-const TONE: Record<TileSpec["tone"], string> = { dict: "text-chart-dict", ok: "text-ok", warn: "text-warn", text: "text-text" };
+// "dict" is the Words tile: a figure about you, not about the Dictation kind, so it wears the
+// Signal colour like the chip's readout (D27). Kind series keep --c-chart-* (kindFill).
+const TONE: Record<TileSpec["tone"], string> = { dict: "text-accent", ok: "text-ok", warn: "text-warn", text: "text-text" };
 
 function StatTile({ tile, spark }: { tile: TileSpec; spark: boolean }) {
   const Icon = tile.icon;
@@ -624,7 +626,7 @@ function HBars({ title, rows, empty }: { title: string; rows: FacetRow[]; empty?
           <div key={r.label} className="grid grid-cols-[96px_1fr_44px] items-center gap-2 py-[3px] text-[12px] text-dim">
             <span className="truncate" title={r.title ?? r.label}>{r.label}</span>
             <div className="h-2 overflow-hidden rounded-pill bg-line">
-              <i className="block h-full rounded-pill" style={{ width: `${r.pct}%`, background: r.dim ? "var(--c-faint)" : (r.colorVar ?? "var(--c-chart-dict)") }} />
+              <i className="block h-full rounded-pill" style={{ width: `${r.pct}%`, background: r.dim ? "var(--c-faint)" : (r.colorVar ?? "var(--c-accent)") }} />
             </div>
             <span className="text-right font-num text-text">{fmtCompact(r.value)}</span>
           </div>
