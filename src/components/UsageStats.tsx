@@ -16,6 +16,7 @@
 
 import {
   Fragment,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -23,8 +24,10 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { ArrowRight, Clock, Mic, Timer, Type, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -705,6 +708,44 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
 
 /* ── rhythm: the calendar + the hour grid ────────────────────────────────── */
 
+/* ── cell tooltip: instant, follows the cursor, styled like the chart's ───── */
+
+interface CellTipState { text: string; x: number; y: number }
+
+/** Delegated hover for a grid of level cells. Cells carry `data-tip`; the wrapper is `relative`. */
+function useCellTip() {
+  const [tip, setTip] = useState<CellTipState | null>(null);
+  const onMove = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
+    const el = (e.target as HTMLElement).closest?.("[data-tip]") as HTMLElement | null;
+    if (!el || !el.dataset.tip) { setTip(null); return; }
+    const box = e.currentTarget.getBoundingClientRect();
+    const host = e.currentTarget;
+    setTip({ text: el.dataset.tip, x: e.clientX - box.left + host.scrollLeft, y: e.clientY - box.top + host.scrollTop });
+  }, []);
+  const onLeave = useCallback(() => setTip(null), []);
+  return { tip, onMove, onLeave };
+}
+
+function CellTip({ tip, boundsRef }: { tip: CellTipState | null; boundsRef: RefObject<HTMLDivElement | null> }) {
+  if (!tip) return null;
+  const width = boundsRef.current?.clientWidth ?? 0;
+  const est = tip.text.length * 6.6 + 20;
+  const flip = width > 0 && tip.x + 14 + est > width;
+  // Above the cursor, or below it near the top so a scrolling wrapper does not clip it.
+  const top = tip.y < 44 ? tip.y + 18 : tip.y - 34;
+  return (
+    <div
+      className="pointer-events-none absolute z-20 whitespace-nowrap rounded-[8px] border border-line-strong bg-surface/95 px-2.5 py-1.5 text-[12px] text-dim shadow-[0_16px_40px_-16px_rgba(0,0,0,0.9)] backdrop-blur-sm"
+      style={flip ? { right: width - tip.x + 10, top } : { left: tip.x + 14, top }}
+      role="status"
+    >
+      {tip.text}
+    </div>
+  );
+}
+
+const CELL_HOVER = "hover:outline hover:outline-2 hover:outline-offset-1 hover:outline-text relative hover:z-10";
+
 const LEVEL_BG = ["var(--c-surface-2)", "var(--c-cal-1)", "var(--c-cal-2)", "var(--c-cal-3)", "var(--c-cal-4)"] as const;
 
 /** The five labelled steps: swatch, word range, count. Shared by both grids. */
@@ -735,6 +776,7 @@ function RhythmPanel({ stats, scope, withS, from, to, title, filtered }: { stats
   const cell = Math.max(12, Math.min(16, Math.floor((w - 44) / Math.max(1, cols.length)) - 3));
   const today = localTodayDay();
   const withWord = withS.length ? ` · with ${withS.map((k) => STAGE_CHIP_LABEL[k].toLowerCase()).join(" + ")}` : "";
+  const { tip, onMove, onLeave } = useCellTip();
   return (
     <Panel
       title={`Rhythm · ${title} · ${scope === "all" ? "all kinds" : KIND_LABEL[scope]}${withWord}`}
@@ -745,7 +787,8 @@ function RhythmPanel({ stats, scope, withS, from, to, title, filtered }: { stats
         </Pill>
       }
     >
-      <div ref={ref} className="overflow-x-auto pb-1">
+      <div ref={ref} className="relative overflow-x-auto pb-1" onMouseMove={onMove} onMouseLeave={onLeave}>
+        <CellTip tip={tip} boundsRef={ref} />
         <div
           className="grid w-max gap-[3px]"
           style={{ gridTemplateColumns: `max-content repeat(${cols.length}, ${cell}px)` }}
@@ -771,9 +814,9 @@ function RhythmPanel({ stats, scope, withS, from, to, title, filtered }: { stats
                 cellData ? (
                   <i
                     key={cellData.day}
-                    className={cn("block rounded-[3px]", cellData.day === today && "ring-[1.5px] ring-inset ring-text")}
+                    className={cn("block rounded-[3px]", CELL_HOVER, cellData.day === today && "ring-[1.5px] ring-inset ring-text")}
                     style={{ width: cell, height: cell, background: LEVEL_BG[cellData.level] }}
-                    title={`${fmtDateFull(cellData.day)} · ${fmtFull(cellData.words)} words${cellData.level ? ` · ${QUARTER_NAME[cellData.level]}` : ""}`}
+                    data-tip={`${fmtDateFull(cellData.day)} · ${fmtFull(cellData.words)} words${cellData.level ? ` · ${QUARTER_NAME[cellData.level]}` : ""}`}
                   />
                 ) : (
                   <i key={`e${c.monday}-${r}`} className="block" style={{ width: cell, height: cell }} />
@@ -792,6 +835,8 @@ function HoursPanel({ stats, scope, title }: { stats: UsageStats; scope: UsageSc
   const model = useMemo(() => hourModel(stats.hours, scope), [stats.hours, scope]);
   const peak = model.peak;
   const kindWord = scope === "all" ? "" : ` · ${KIND_LABEL[scope]}`;
+  const { tip, onMove, onLeave } = useCellTip();
+  const boundsRef = useRef<HTMLDivElement | null>(null);
   return (
     <Panel
       title={`When you dictate · ${title}${kindWord}`}
@@ -805,6 +850,8 @@ function HoursPanel({ stats, scope, title }: { stats: UsageStats; scope: UsageSc
         )
       }
     >
+      <div ref={boundsRef} className="relative" onMouseMove={onMove} onMouseLeave={onLeave}>
+      <CellTip tip={tip} boundsRef={boundsRef} />
       <div
         className="grid gap-[3px]"
         style={{ gridTemplateColumns: "34px repeat(24, minmax(0, 1fr))" }}
@@ -823,13 +870,14 @@ function HoursPanel({ stats, scope, title }: { stats: UsageStats; scope: UsageSc
             {row.map((c) => (
               <i
                 key={c.hour}
-                className="block aspect-square max-h-[20px] w-full rounded-[3px]"
+                className={cn("block aspect-square max-h-[20px] w-full rounded-[3px]", CELL_HOVER)}
                 style={{ background: LEVEL_BG[c.level] }}
-                title={`${DOW_SHORT[c.dow]} ${String(c.hour).padStart(2, "0")}:00–${String(c.hour + 1).padStart(2, "0")}:00 · ${fmtFull(c.words)} words${c.level ? ` · ${QUARTER_NAME[c.level]}` : ""}`}
+                data-tip={`${DOW_SHORT[c.dow]} ${String(c.hour).padStart(2, "0")}:00–${String(c.hour + 1).padStart(2, "0")}:00 · ${fmtFull(c.words)} words${c.level ? ` · ${QUARTER_NAME[c.level]}` : ""}`}
               />
             ))}
           </Fragment>
         ))}
+      </div>
       </div>
       <LevelLegend lead="Words per weekday hour · quarters of your active hour slots" breaks={model.breaks} counts={model.counts} unit={["slot", "slots"]} />
     </Panel>
