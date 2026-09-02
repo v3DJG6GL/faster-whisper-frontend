@@ -1,10 +1,12 @@
-import { useEffect, useState, type ComponentProps } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { Mic, Radio, Hand, Square, Pencil } from "lucide-react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { Mic, Radio, Hand, Square, Pencil, LayoutDashboard } from "lucide-react";
+import { screenEyebrow } from "@/lib/screens";
+import { cn } from "@/lib/cn";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
 import { dictationVisual, isActiveDictation, isGracefulStop, isProcessing } from "@/lib/dictationVisual";
-import { Button, Card, Notice, SectionLabel, Select, Toggle, routeParts } from "@/components/ui";
+import { Button, Card, Notice, Toggle, routeParts } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/UsageStats";
@@ -17,6 +19,17 @@ import { languageLabel } from "@/lib/languages";
 import type { Backend, Profile } from "@/lib/types";
 
 const GLYPH = { hold: Mic, handsfree: Hand } as const;
+
+/** The state word's colour by tone — the same tones the chip, the sidebar dot and the
+ *  waveform use (armed = the fixed amber, never the accent). */
+const STATE_TEXT: Record<string, string> = {
+  faint: "text-faint",
+  armed: "text-armed",
+  live: "text-live",
+  think: "text-think",
+  translate: "text-[color:var(--c-translate)]",
+  rec: "text-rec",
+};
 
 /** Subscribes to the high-frequency dictation `level` (~30Hz) on its own, so a level tick
  *  re-renders just this leaf — not all of Home + every ProfileCard. Waveform reads the level
@@ -31,52 +44,91 @@ function LiveWaveform(props: Omit<ComponentProps<typeof Waveform>, "level">) {
 // same amount, for consistent behaviour.
 const TRANSCRIPT_LINGER_MS = 10000;
 
-function ProfileCard({ p }: { p: Profile }) {
+/** The next dictation's route for one profile, resolved as the chip's and the session's
+ *  are: the profile's language over the bound backend's, the backend's translation
+ *  defaults under the profile's overrides. Both halves are peer-authored (a sync pull can
+ *  land them), so they go through `languageLabel` + routeParts' bounds. */
+function profileRoute(p: Profile | undefined, backend: Backend | undefined): string {
+  const lang = p?.language?.trim() ? p.language : (backend?.language ?? "auto");
+  const route = routeParts(languageLabel(lang), configuredRouteTargets(p, backend));
+  return (route.source || "auto") + (route.targets.length ? ` → ${route.targets.join(", ")}${route.more ? ` +${route.more}` : ""}` : "");
+}
+
+/** The same route as codes — "DE → EN, FR" — the way the chip and the tray write it, for
+ *  the row's narrow column; the full names ride on the cell's tooltip. */
+function profileRouteShort(p: Profile | undefined, backend: Backend | undefined): string {
+  const code = (v: string) => safeDisplayText(v.trim(), 8).toUpperCase();
+  const lang = p?.language?.trim() ? p.language : (backend?.language ?? "");
+  const source = lang && lang !== "auto" ? code(lang) : "auto";
+  const targets = (configuredRouteTargets(p, backend) ?? []).filter((t) => typeof t === "string" && t.trim()).map(code);
+  return source + (targets.length ? ` → ${targets.slice(0, 3).join(", ")}${targets.length > 3 ? ` +${targets.length - 3}` : ""}` : "");
+}
+
+/** The deck is ONE grid: the header and every row are subgrids of it, so each column is
+ *  at least as wide as its widest cell across all rows, so nothing truncates and the
+ *  columns line up. `auto` tracks then share the spare width EQUALLY on top of their
+ *  content (a single `fr` track would swallow it all instead); the edit + toggle column
+ *  is `max-content`, which never stretches. */
+const DECK_COLS = "grid-cols-[auto_auto_auto_auto_auto_max-content]";
+const ROW_COLS = "col-span-full grid-cols-subgrid";
+
+/** One profile as a row of the dictate card (D46 C): name and activation, hotkey, model,
+ *  endpoint, language, then edit + enable. Clicking an enabled row makes it the profile the
+ *  button dictates with; the chosen row is tinted, the one running a session carries the
+ *  state word. A disabled row is dimmed and not selectable — enable it first. */
+function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile; chosen: boolean; running: boolean; runningLabel: string; onChoose: () => void }) {
   const backends = useApp((s) => s.backends);
   const updateProfile = useApp((s) => s.updateProfile);
   const navigate = useNavigate();
   const backend = backends.find((b) => b.id === p.backendId);
   const Glyph = GLYPH[p.activation];
+  const name = safeDisplayText(p.name, 80);
   return (
-    <Card className="p-5">
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <div className="grid size-9 place-items-center rounded-xl bg-accent-soft text-accent">
-            <Glyph className="size-[18px]" />
-          </div>
-          <div>
-            <div className="text-[14px] font-semibold text-text">{safeDisplayText(p.name, 80)}</div>
-            <div className="text-[12px] text-dim">
-              {p.activation === "hold" ? "Hold the hotkey while you speak" : "Tap once to start, tap again to stop"}
-            </div>
-          </div>
+    <div
+      role="row"
+      aria-selected={chosen}
+      onClick={p.enabled ? onChoose : undefined}
+      onKeyDown={(e) => { if (p.enabled && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onChoose(); } }}
+      tabIndex={p.enabled ? 0 : -1}
+      title={p.enabled ? (chosen ? "The button dictates with this profile" : "Click: the button dictates with this profile") : "Enable the profile to use it"}
+      className={cn(
+        "ring-signal grid items-center border-t border-line px-6 py-3.5 outline-none transition-colors",
+        ROW_COLS,
+        p.enabled ? "cursor-pointer" : "opacity-50",
+        chosen ? "bg-accent-soft" : p.enabled && "hover:bg-surface-2/60",
+      )}
+    >
+      <div className="flex items-center gap-3">
+        <div className={cn("grid size-9 shrink-0 place-items-center rounded-xl", chosen ? "bg-accent text-accent-ink" : "bg-accent-soft text-accent")}>
+          <Glyph className="size-[18px]" />
         </div>
-        <div className="flex items-center gap-1.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            title="Edit profile"
-            onClick={() => navigate(`/profiles?edit=${p.id}`)}
-          >
-            <Pencil className="size-4" />
-          </Button>
-          <Toggle ariaLabel={`Enable ${safeDisplayText(p.name, 80)}`} checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
+        <div>
+          <div className="flex items-center gap-2">
+            {/* A name is user text (up to 80 chars): it alone is capped, so the column's
+                content minimum comes from the short activation hint or a sane name width. */}
+            <span className="max-w-[28ch] truncate text-[14px] font-semibold text-text" title={name}>{name}</span>
+            {running && <span className="rounded-pill border border-line px-2 py-px font-mono text-[10px] uppercase tracking-label text-dim">{runningLabel}</span>}
+          </div>
+          <div className="whitespace-nowrap text-[12px] text-dim">{p.activation === "hold" ? "Hold to talk" : "Tap to start and stop"}</div>
         </div>
       </div>
-      <div className="mt-5 flex items-center justify-between">
-        <HotkeyChips codes={p.hotkey} />
-        <div className="text-right">
-          <div className="font-mono text-[11px] uppercase tracking-label text-faint">{p.endpoint ?? backend?.endpoint ?? "—"}</div>
-          <div className="truncate text-[12.5px] text-dim">{safeDisplayText(backend?.name, 80) || "No backend"}</div>
-        </div>
+      <HotkeyChips codes={p.hotkey} />
+      <div className="whitespace-nowrap font-mono text-[12px] text-text">{safeDisplayText(p.model?.trim() || backend?.model, 40) || "—"}</div>
+      <div className="whitespace-nowrap font-mono text-[12px] text-accent">{p.endpoint ?? backend?.endpoint ?? "—"}</div>
+      <div className="whitespace-nowrap font-mono text-[12px] text-text" title={`${profileRoute(p, backend)}${backend ? ` · ${safeDisplayText(backend.name, 80)}` : " · No backend"}`}>{profileRouteShort(p, backend)}</div>
+      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+        <Button variant="ghost" size="sm" title="Edit profile" onClick={() => navigate(`/profiles?edit=${p.id}`)}>
+          <Pencil className="size-4" />
+        </Button>
+        <Toggle ariaLabel={`Enable ${name}`} checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
       </div>
-    </Card>
+    </div>
   );
 }
 
 // Subscribes to the live `partial` transcript itself, so the several-times-a-second partial
 // updates re-render ONLY this line — not the whole Home tree (the hero hotkey rows, the
-// profile-picker Select, and the ProfileCard grid don't depend on the transcript). Mirrors how
+// profile rows don't depend on the transcript). Mirrors how
 // the 30Hz level meter is isolated inside LiveWaveform.
 // The chip caps its own copy of this at 400 chars; the same cap has to exist here, because the
 // partial is 100% server-authored and this card is WRAPPING — a multi-megabyte partial becomes
@@ -92,7 +144,79 @@ function LiveTranscriptText() {
   return <>{stripControlChars(partial.slice(-MAX_PARTIAL_CHARS)) || <span className="text-faint">…</span>}</>;
 }
 
-export default function Home() {
+/** Free-software apps the hero names while hovered — the promise is "any field", so the
+ *  list is only apps whose fields the app can actually type into on a Linux desktop. */
+const HERO_APPS = [
+  "LibreWolf", "Betterbird", "Firefox", "Thunderbird", "LibreOffice", "Kate", "Signal", "Element",
+  "VSCodium", "Neovim", "GIMP", "Inkscape", "Joplin", "Logseq", "Konsole", "KMail", "Kdenlive", "Emacs",
+] as const;
+
+/** "Speak into any field." — while the pointer rests on the title, the last words cycle
+ *  through free apps in random order ("Speak into LibreWolf.", …), each sliding up out of
+ *  the previous one, and settle back on "any field." when it leaves. The hover target is
+ *  the whole title, not the changing word: a shorter name would otherwise shrink the
+ *  target from under the pointer and reset the cycle. Reduced motion swaps the word
+ *  without the slide. Pure decoration: the accessible name stays the static sentence. */
+function HeroTitle() {
+  const [hover, setHover] = useState(false);
+  const [i, setI] = useState(-1);
+  const reduced = useReducedMotion();
+  // A shuffled deck: every name is dealt once before any repeats; a fresh shuffle starts
+  // when the deck runs out, never opening with the name that just closed the last one.
+  const deck = useRef<number[]>([]);
+  useEffect(() => {
+    if (!hover) { setI(-1); return; }
+    const next = (cur: number) => {
+      if (deck.current.length === 0) {
+        const d = HERO_APPS.map((_, k) => k);
+        for (let a = d.length - 1; a > 0; a--) {
+          const b = Math.floor(Math.random() * (a + 1));
+          [d[a], d[b]] = [d[b], d[a]];
+        }
+        if (d[0] === cur && d.length > 1) [d[0], d[1]] = [d[1], d[0]];
+        deck.current = d;
+      }
+      return deck.current.shift() ?? 0;
+    };
+    // A moment of rest first, so a pointer passing over the title does not flip it.
+    let t: ReturnType<typeof setInterval> | undefined;
+    const d = setTimeout(() => {
+      setI((n) => (n < 0 ? next(-1) : n));
+      t = setInterval(() => setI(next), 2500);
+    }, 800);
+    return () => { clearTimeout(d); if (t) clearInterval(t); };
+  }, [hover]);
+  const word = i < 0 ? "any field" : HERO_APPS[i];
+  return (
+    <h1
+      className="mt-2 flex items-center gap-3 font-display text-[40px] font-bold leading-none tracking-tight text-text"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      aria-label="Speak into any field."
+    >
+      <LayoutDashboard className="size-8 text-accent" aria-hidden />
+      <span className="inline-flex items-baseline" aria-hidden>
+        <span>Speak into&nbsp;</span>
+        <span className="relative -mb-[0.12em] inline-grid overflow-hidden pb-[0.12em] align-baseline">
+          <AnimatePresence initial={false} mode="popLayout">
+            <motion.span
+              key={word}
+              className={cn("col-start-1 row-start-1 whitespace-nowrap", i >= 0 && "text-accent")}
+              initial={reduced ? { opacity: 0 } : { y: "110%", opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={reduced ? { opacity: 0 } : { y: "-110%", opacity: 0 }}
+              transition={reduced ? { duration: 0.12 } : { type: "spring", stiffness: 420, damping: 34 }}
+            >
+              {word}.
+            </motion.span>
+          </AnimatePresence>
+        </span>
+      </span>
+    </h1>
+  );
+}
+
+export default function Dashboard() {
   const profiles = useApp((s) => s.profiles);
   const backends = useApp((s) => s.backends);
   const status = useApp((s) => s.status);
@@ -114,23 +238,13 @@ export default function Home() {
   // While a session is live, the hero READOUTS (model / endpoint / language) describe the
   // RUNNING profile — like the chip + usage do — not the home-button target, which can drift if
   // the profile set changes mid-session (disabling the active profile, reordering, deleting). The
-  // button/start logic + the Select keep using `target` (the next-dictation pick, a config choice).
+  // button/start logic + the row choice keep using `target` (the next-dictation pick, a config choice).
   // activeProfile is null when idle, so this falls back to the home target then.
   const shown = (activeProfile ? profiles.find((p) => p.id === activeProfile) : undefined) ?? target;
-  const shownBackend: Backend | undefined = backendForProfile(shown, backends);
   // The next dictation's ROUTE: the language spoken → the languages it is turned into.
   // Effective language resolves exactly as the chip's does (profile override, else the
   // bound backend), and both halves go through `languageLabel` + routeParts' bounds —
   // `model`/`language` are peer-authored and arrive on an unattended sync pull.
-  const routeLang = shown?.language?.trim() ? shown.language : (shownBackend?.language ?? "auto");
-  // Targets resolve as the chip's and the session's do: the bound Backend's translation
-  // defaults under the Profile's overrides. When `askTranslationTargets` is on, the real
-  // route is decided by the picker at session start; the readout shows the configured
-  // default, not the future pick.
-  const route = routeParts(languageLabel(routeLang), configuredRouteTargets(shown, shownBackend));
-  const routeReadout =
-    (route.source || "auto") +
-    (route.targets.length ? ` → ${route.targets.join(", ")}${route.more ? ` +${route.more}` : ""}` : "");
 
   // "Busy" = any non-idle state; the hero button is a stop/cancel while busy. We keep
   // a graceful stop for "listening" (deliver the last words) but force a hard reset
@@ -206,11 +320,9 @@ export default function Home() {
     <div className="page page-cards">
       <div className="flex items-end justify-between">
         <div>
-          <div className="font-mono text-[11px] uppercase tracking-label text-accent">faster-whisper · dictation</div>
-          <h1 className="mt-2 font-display text-[40px] font-bold leading-none tracking-tight text-text">
-            Speak into any field.
-          </h1>
-          <p className="mt-3 max-w-md text-[14px] text-dim">
+          <div className="font-mono text-[11px] uppercase tracking-label text-accent">{screenEyebrow("dashboard")}</div>
+          <HeroTitle />
+          <p className="mt-3 text-[14px] text-dim">
             Push-to-talk or hands-free. Audio streams to your own faster-whisper backend and the text appears wherever your cursor is.
           </p>
         </div>
@@ -224,9 +336,11 @@ export default function Home() {
           profiles are missing (the dictate hero below is inert until then). */}
       <SetupChecklist />
 
-      {/* Hero instrument */}
+      {/* The dictate card (D46 C, the deck): the control strip on top — button, state word,
+          what pressing does, the meter — then every profile as a row. The tinted row is the
+          one the button dictates with; click another enabled row to switch. */}
       <Card className="mt-8 overflow-hidden p-0">
-        <div className="flex items-center gap-6 px-8 py-7">
+        <div className="flex items-center gap-6 px-6 py-6">
           <button
             type="button"
             onClick={(e) => {
@@ -255,58 +369,53 @@ export default function Home() {
           >
             {busy ? <Square className="size-6" /> : <Mic className="size-7" />}
           </button>
-          <div className="min-w-0 flex-1 space-y-1">
-            {enabled.length > 0 ? (
-              enabled.slice(0, 4).map((p) => (
-                <div key={p.id} className="flex items-center gap-2 text-[15px] text-text">
-                  <span className="text-dim">{p.activation === "hold" ? "Hold" : "Tap"}</span>
-                  <HotkeyChips codes={p.hotkey} />
-                  <span className="text-dim">{p.activation === "hold" ? "to talk" : "to start and stop"}</span>
-                  <span className="truncate text-[12.5px] text-faint">· {safeDisplayText(p.name, 80)}</span>
-                </div>
-              ))
-            ) : (
-              <div className="text-[15px] text-dim">Enable a profile below to begin.</div>
-            )}
-            {enabled.length > 0 && (
-              <div className="flex items-center gap-2 pt-1 text-[12.5px] text-dim">
-                <span className="shrink-0">The button dictates with</span>
-                <Select
-                  value={target?.id ?? ""}
-                  onChange={(v) => updateSettings({ homeProfileId: v })}
-                  options={enabled.map((p) => ({ value: p.id, label: safeDisplayText(p.name, 80) }))}
-                  className="w-40"
-                  ariaLabel="Profile the Home button dictates with"
-                />
-              </div>
-            )}
-            <div className="pt-0.5 text-[12.5px] text-faint">
-              The transcript appears wherever your cursor is.
+          <div className="min-w-0">
+            <div className={cn("flex items-center gap-2 font-mono text-[11px] uppercase tracking-label", STATE_TEXT[vis.tone] ?? "text-faint")}>
+              <i className={cn("inline-block size-[7px] rounded-full bg-current", vis.pulse && "animate-pulse")} aria-hidden />
+              {vis.label}
+            </div>
+            <div className="mt-1 text-[16px] font-semibold text-text">
+              {!enabled.length ? "Enable a profile to begin" : busy ? (isGracefulStop(status, isCapturing()) ? "Press again to stop" : "Press to cancel") : target ? `Press to dictate with ${safeDisplayText(target.name, 80)}` : "Press to dictate"}
+            </div>
+            <div className="mt-0.5 text-[12.5px] text-faint">
+              {enabled.length ? "Or use a profile’s hotkey from any app · the transcript appears wherever your cursor is." : "The button and the hotkeys stay off until a profile is enabled."}
             </div>
           </div>
           <LiveWaveform
             active={status === "listening" && !warming}
             processing={waveProcessing}
             tone={waveTone}
-            bars={28}
+            bars={40}
             variant="bars"
             pride
-            className="h-12 w-48"
+            className="ml-auto h-12 w-64 shrink-0"
           />
         </div>
-        <div className="grid grid-cols-3 border-t border-line font-mono text-[12px]">
-          {/* `model` and `language` are peer-authored (`sanitizeBackends` type-checks them and
-              nothing more) and neither raises a security-review prompt, so both arrive on an
-              unattended pull. The same two values go through `safeDisplayText` on the Backends
-              screen; this readout tells the user which model and language the NEXT dictation
-              uses, so it gets the same treatment. */}
-          <Readout label="model" value={safeDisplayText(shown?.model?.trim() || shownBackend?.model, 80) || "—"} />
-          <Readout label="endpoint" value={shown?.endpoint ?? shownBackend?.endpoint ?? "—"} accent />
-          {/* The ROUTE, not just the input language: with translation on, "German" alone
-              would describe words that land in French. Also the one surface that showed the
-              raw CODE (`de`) where every other shows the label — languageLabel fixes that. */}
-          <Readout label="language" value={routeReadout} last />
-        </div>
+        {profiles.length === 0 ? (
+          <div className="border-t border-line px-6 py-5 text-[13.5px] text-dim">No profiles yet — add one on the Profiles screen.</div>
+        ) : (
+          <div role="grid" aria-label="Profiles — the tinted row is the one the button dictates with" className={cn("grid gap-x-5", DECK_COLS)}>
+            <div role="row" className={cn("grid border-t border-line bg-surface/40 px-6 py-2 font-mono text-[10px] uppercase tracking-label text-faint", ROW_COLS)}>
+              <span>profile</span>
+              <span>hotkey</span>
+              <span>model</span>
+              <span>endpoint</span>
+              {/* Spans the language column AND the edit/toggle column, so the long header runs to
+                  the card's right edge instead of being squeezed by the buttons' track. */}
+              <span className="col-span-2 whitespace-nowrap" title="The language you speak → the languages the text is translated into">language · spoken → translated</span>
+            </div>
+            {profiles.map((p) => (
+              <ProfileRow
+                key={p.id}
+                p={p}
+                chosen={p.id === target?.id}
+                running={busy && p.id === shown?.id}
+                runningLabel={vis.label}
+                onChoose={() => updateSettings({ homeProfileId: p.id })}
+              />
+            ))}
+          </div>
+        )}
       </Card>
 
       {/* Live-transcript card: visible while busy/error, then lingers for a few
@@ -356,32 +465,10 @@ export default function Home() {
         </Notice>
       )}
 
-      <SectionLabel className="mb-3 mt-10">Profiles</SectionLabel>
-      {profiles.length === 0 ? (
-        <Card className="p-6 text-[13.5px] text-dim">
-          No profiles yet — add one on the Profiles screen.
-        </Card>
-      ) : (
-        <div className="grid grid-cols-2 gap-4">
-          {profiles.map((p) => (
-            <ProfileCard key={p.id} p={p} />
-          ))}
-        </div>
-      )}
-
       <div className="mt-4 flex items-center gap-2 px-1 text-[12px] text-faint">
         <Radio className="size-3.5" />
         Streaming backends show a live transcript in the chip while you speak.
       </div>
-    </div>
-  );
-}
-
-function Readout({ label, value, accent, last }: { label: string; value: string; accent?: boolean; last?: boolean }) {
-  return (
-    <div className={"px-8 py-4 " + (!last ? "border-r border-line" : "")}>
-      <div className="text-[10px] uppercase tracking-label text-faint">{label}</div>
-      <div className={"mt-1 truncate text-[13px] " + (accent ? "text-accent" : "text-text")}>{value}</div>
     </div>
   );
 }

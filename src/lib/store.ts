@@ -86,6 +86,9 @@ export function withSettingsDefaults(raw: unknown): AppSettings {
       // count would propagate a truncation to the user's other devices.
       .slice(0, MAX_QUICK_LAUNCH)
     : [];
+  // The Home screen became Dashboard (2026-09-02); a quick-launch entry saved before then
+  // still names it by its old id.
+  for (const e of recording.quickLaunch as { target?: string }[]) if (e.target === "home") e.target = "dashboard";
   const migratedCategories = completeCategories(s.sync?.categories);
   return {
     ...DEFAULT_SETTINGS,

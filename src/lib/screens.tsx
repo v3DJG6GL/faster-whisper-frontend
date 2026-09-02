@@ -3,7 +3,7 @@
 // quick-launch row, the Settings quick-launch editor, and the cross-window
 // navigation bridge (App.tsx). Keep `id`s in sync with the router paths in App.tsx.
 
-import { Home, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindow, BookA, BarChart3, Plus, History, ScrollText } from "lucide-react";
+import { LayoutDashboard, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindow, BookA, BarChart3, Plus, History, ScrollText } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { OverlayScreen, OverlayActionKind, OverlayQuickAction } from "./types";
 import { IS_LINUX, IS_WINDOWS } from "./platform";
@@ -20,7 +20,7 @@ export interface ScreenDef {
 }
 
 export const SCREENS: ScreenDef[] = [
-  { id: "home", label: "Home", path: "/", icon: Home, end: true },
+  { id: "dashboard", label: "Dashboard", path: "/", icon: LayoutDashboard, end: true },
   { id: "statistics", label: "Statistics", path: "/statistics", icon: BarChart3 },
   { id: "transcribe", label: "Transcribe", path: "/transcribe", icon: AudioLines },
   { id: "history", label: "History", path: "/history", icon: History },
@@ -40,6 +40,19 @@ export const SCREENS: ScreenDef[] = [
 export const VISIBLE_SCREENS: ScreenDef[] = SCREENS.filter(
   (s) => !s.needsFocusDetection || IS_LINUX || IS_WINDOWS,
 );
+
+/** The product name the page eyebrows carry. */
+export const APP_NAME = "faster-whisper-frontend";
+
+/** A screen's title is its sidebar label — the one name a screen has everywhere. */
+export function screenTitle(id: OverlayScreen): string {
+  return SCREENS.find((s) => s.id === id)?.label ?? id;
+}
+
+/** The eyebrow above a page title: "faster-whisper-frontend · Dashboard". */
+export function screenEyebrow(id: OverlayScreen): string {
+  return `${APP_NAME} · ${screenTitle(id)}`;
+}
 
 /** Screen id → router path, for the navigate bridge. */
 export const SCREEN_PATH = Object.fromEntries(SCREENS.map((s) => [s.id, s.path])) as Record<

@@ -4,7 +4,7 @@
 // one surface's hand-rolled map and not another's) is cheap to pin here.
 
 import { describe, expect, it } from "vitest";
-import homeSrc from "../screens/Home.tsx?raw";
+import homeSrc from "../screens/Dashboard.tsx?raw";
 // Raw source import (vite `?raw`), as settingsLabels.test.ts does: Overlay.tsx pulls in
 // motion/react and DOM globals, and there is no jsdom in this repo — but the maps'
 // COMPLETENESS is exactly what a missing entry breaks (a tone with no fill/glow renders
@@ -137,7 +137,7 @@ describe("the chip's tone maps", () => {
   });
 });
 
-describe("Home hero follows the tone, not only the state", () => {
+describe("Dashboard hero follows the tone, not only the state", () => {
   it("paints the fixed armed amber, not the accent", () => {
     // The Signal colour may be any hue and may drift; the armed state must not follow it.
     expect(/vis\.state === "armed"[\s\S]{0,400}bg-armed/.test(homeSrc)).toBe(true);

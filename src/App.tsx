@@ -17,7 +17,7 @@ import { flushRecordWrites } from "@/lib/transcriptHistory";
 import { tryNavigate } from "@/lib/navGuard";
 import { Onboarding } from "@/screens/Onboarding";
 import Logs from "@/screens/Logs";
-import Home from "@/screens/Home";
+import Dashboard from "@/screens/Dashboard";
 import Transcribe from "@/screens/Transcribe";
 import HistoryScreen from "@/screens/History";
 import Profiles from "@/screens/Profiles";
@@ -269,7 +269,7 @@ export default function App() {
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
           <Routes>
-            <Route path="/" element={<Home />} />
+            <Route path="/" element={<Dashboard />} />
             <Route path="/transcribe" element={<Transcribe />} />
             <Route path="/history" element={<HistoryScreen />} />
             <Route path="/profiles" element={<Profiles />} />
