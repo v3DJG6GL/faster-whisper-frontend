@@ -23,13 +23,14 @@ import {
   useMemo,
   useRef,
   useState,
+  type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
 } from "react";
-import { ArrowRight, Clock, Mic, Timer, Type, TriangleAlert } from "lucide-react";
+import { Activity, ArrowRight, Clock, Cpu, Mic, Timer, Type, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useApp } from "@/lib/store";
 import { Card, SectionLabel, Segmented } from "@/components/ui";
@@ -52,6 +53,8 @@ import {
   KINDS,
   KIND_LABEL,
   KIND_VAR,
+  METRIC_LABEL,
+  METRIC_UNIT,
   QUARTER_NAME,
   RANGE_LABEL,
   RANGE_PRESETS,
@@ -68,6 +71,7 @@ import {
   findStage,
   fmtTimeSaved,
   hourModel,
+  isDurationMetric,
   isFiltered,
   isoToDay,
   legendRanges,
@@ -75,6 +79,7 @@ import {
   niceMax,
   orderedStageRows,
   pct,
+  presentKinds,
   resolveWindow,
   runsBreakdown,
   safeTotals,
@@ -84,7 +89,9 @@ import {
   streakFor,
   targetShares,
   timeSavedS,
+  TYPING_WPM,
   weekColumns,
+  weekdayCounts,
   zeroKinds,
   MAX_SPAN_DAYS,
   type BucketMode,
@@ -99,7 +106,7 @@ import { homeTargetProfile } from "@/lib/dictation";
 import { ownProp } from "@/lib/own";
 import { safeDisplayText } from "@/lib/sanitize";
 import { BackendChips } from "@/components/BackendChips";
-import type { UsageKind, UsageKinds, UsageSeriesPoint, UsageStageKey, UsageStats } from "@/lib/types";
+import type { UsageKind, UsageKinds, UsageSeriesPoint, UsageStageKey, UsageStats, UsageStreaks } from "@/lib/types";
 
 const _spanDate = new Intl.DateTimeFormat("de-CH", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 const _monthYear = new Intl.DateTimeFormat("de-CH", { month: "long", year: "numeric", timeZone: "UTC" });
@@ -107,9 +114,15 @@ const _monthYear = new Intl.DateTimeFormat("de-CH", { month: "long", year: "nume
 const fmtSpanDate = (day: number) => _spanDate.format(new Date(day * 86_400_000));
 const fmtMonthYear = (day: number) => _monthYear.format(new Date(day * 86_400_000));
 
-const METRIC_LABEL: Record<ChartMetric, string> = { words: "words", minutes: "minutes", runs: "runs" };
-const metricTick = (m: ChartMetric, v: number) => (m === "minutes" ? fmtDurationAxis(v) : fmtCompact(v));
-const metricFull = (m: ChartMetric, v: number) => (m === "minutes" ? fmtDuration(v) : fmtFull(v));
+/* ── the measure's formatters: the two `_s` measures are durations, the rest counts ── */
+const metricTick = (m: ChartMetric, v: number) => (isDurationMetric(m) ? fmtDurationAxis(v) : fmtCompact(v));
+/** A value with its unit: `1,240 words` · `31h 12m` · `1 session`. */
+function metricText(m: ChartMetric, v: number, compact = false): string {
+  if (isDurationMetric(m)) return fmtDuration(v);
+  const u = METRIC_UNIT[m] ?? ["", ""];
+  return `${compact ? fmtCompact(v) : fmtFull(v)} ${Math.round(v) === 1 ? u[0] : u[1]}`;
+}
+const DOW_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 
 /* ── shared bits ─────────────────────────────────────────────────────────── */
 
@@ -214,50 +227,62 @@ interface TileSpec {
   sub: ReactNode;
   spark: number[];
   sparkColor: string;
+  /** The measure this tile mirrors (D35 A): clicking it measures the page in it. */
+  metric?: ChartMetric;
+  /** Time saved: a conclusion drawn from two measures, not a switch — spans two columns (D39 L1). */
+  wide?: boolean;
 }
 
 const Num = ({ children }: { children: ReactNode }) => <span className="font-num text-text">{children}</span>;
 /** The tile sub-line's "today" eyebrow (the only uppercased token on the line). */
 const Today = () => <span className="text-[10px] uppercase tracking-label text-faint">today</span>;
 
-/** The tile row for a scope: Words / Audio / Runs / (Time saved) / Errors. Time saved is
- *  dictation-only by definition (the server's figure is too), whatever the scope. */
+const TILE_ICON: Record<ChartMetric, typeof Type> = { audio_s: Clock, words: Type, sessions: Mic, requests: Activity, proc_s: Cpu, errors: TriangleAlert };
+
+/** The tile row for a scope: one tile per measure in measure order (Duration · Words ·
+ *  Sessions · Requests · Processing Time · Errors), then Time saved, which is dictation-only
+ *  by definition (the server's figure is too), whatever the scope. */
 function tileSpecs(stats: UsageStats, dense: readonly UsageKinds[], scope: UsageScope, withSaved: boolean, windowWord = "total"): TileSpec[] {
   const today = scopeTotals(stats.today, scope);
   const total = scopeTotals(stats.total, scope);
   const last30 = dense.slice(-30);
   const spark = (f: (p: UsageKinds) => number) => last30.map(f);
   const wpm = Math.round(stats.dictation?.wpm ?? 0);
-  const tiles: TileSpec[] = [
-    {
-      key: "words", label: "Words", icon: Type, value: fmtFull(today.words), tone: "dict",
-      sub: <><Today /> · <Num>{fmtCompact(total.words)}</Num> {windowWord}</>,
-      spark: spark((p) => scopeTotals(p, scope).words), sparkColor: "var(--c-accent)",
-    },
-    {
-      key: "audio", label: "Audio", icon: Clock, value: fmtDurationExact(today.audio_s), tone: "dict",
-      sub: <><Today /> · <Num>{fmtDuration(total.audio_s)}</Num> {windowWord}</>,
-      spark: spark((p) => scopeTotals(p, scope).audio_s), sparkColor: "var(--c-accent)",
-    },
-    {
-      key: "runs", label: "Runs", icon: Mic, value: fmtFull(today.sessions), tone: "dict",
-      sub: scope === "all" ? <><Today /> · <Num>{runsBreakdown(stats.today)}</Num></> : <><Today /> · <Num>{fmtCompact(total.sessions)}</Num> {windowWord}</>,
-      spark: spark((p) => scopeTotals(p, scope).sessions), sparkColor: "var(--c-accent)",
-    },
-  ];
+  const tiles: TileSpec[] = CHART_METRICS.map((m) => {
+    const dur = isDurationMetric(m);
+    const sub =
+      m === "sessions" && scope === "all" ? (
+        <><Today /> · <Num>{runsBreakdown(stats.today)}</Num></>
+      ) : m === "errors" ? (
+        <><Today /> · <Num>{fmtFull(total.errors)}</Num> {windowWord}</>
+      ) : (
+        <><Today /> · <Num>{dur ? fmtDuration(metricValue(total, m)) : fmtCompact(metricValue(total, m))}</Num> {windowWord}</>
+      );
+    return {
+      key: m,
+      metric: m,
+      label: METRIC_LABEL[m],
+      icon: TILE_ICON[m],
+      value: dur ? fmtDurationExact(metricValue(today, m)) : fmtFull(metricValue(today, m)),
+      tone: m === "errors" ? (today.errors > 0 ? "warn" : "ok") : "dict",
+      sub,
+      spark: spark((p) => metricValue(scopeTotals(p, scope), m)),
+      sparkColor: m === "errors" ? "var(--c-faint)" : "var(--c-accent)",
+    };
+  });
   if (withSaved) {
     const d = safeTotals(stats.today?.dictation);
     tiles.push({
-      key: "saved", label: "Time saved", icon: Timer, value: fmtTimeSaved(timeSavedS(d.words, d.audio_s)), tone: "dict",
-      sub: <><Today /> · vs typing at 40 wpm{wpm > 0 && <> · <Num>{wpm} wpm</Num> spoken</>}</>,
+      key: "saved", label: "Time saved", icon: Timer, value: fmtTimeSaved(timeSavedS(d.words, d.audio_s)), tone: "dict", wide: true,
+      sub: (
+        <>
+          <Today /> · <Num>{fmtTimeSaved(stats.time_saved_s ?? 0)}</Num> {windowWord} · dictation only
+          {wpm > 0 ? <> · <Num>{wpm} wpm</Num> spoken instead of <Num>{TYPING_WPM} wpm</Num> typed</> : <> · vs typing at <Num>{TYPING_WPM} wpm</Num></>}
+        </>
+      ),
       spark: spark((p) => timeSavedS(safeTotals(p.dictation).words, safeTotals(p.dictation).audio_s)), sparkColor: "var(--c-accent)",
     });
   }
-  tiles.push({
-    key: "errors", label: "Errors", icon: TriangleAlert, value: fmtFull(today.errors), tone: today.errors > 0 ? "warn" : "ok",
-    sub: <><Today /> · <Num>{fmtFull(total.errors)}</Num> {windowWord}</>,
-    spark: spark((p) => scopeTotals(p, scope).errors), sparkColor: "var(--c-faint)",
-  });
   return tiles;
 }
 
@@ -265,19 +290,37 @@ function tileSpecs(stats: UsageStats, dense: readonly UsageKinds[], scope: Usage
 // Signal colour like the chip's readout (D27). Kind series keep --c-chart-* (kindFill).
 const TONE: Record<TileSpec["tone"], string> = { dict: "text-accent", ok: "text-ok", warn: "text-warn" };
 
-function StatTile({ tile, spark }: { tile: TileSpec; spark: boolean }) {
+/** A stat tile. With `onPick` it is a button that sets the page's measure; the active one
+ *  wears the accent border and says "shown" (D35 A). */
+function StatTile({ tile, spark, active, onPick }: { tile: TileSpec; spark: boolean; active?: boolean; onPick?: () => void }) {
   const Icon = tile.icon;
-  return (
-    <Card className="p-4">
+  const body = (
+    <>
       <div className="flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-label text-faint">
-        <Icon className="size-3.5 opacity-80" />
-        {tile.label}
+        <Icon className="size-3.5 shrink-0 opacity-80" />
+        <span className="truncate">{tile.label}</span>
+        {active && <span className="ml-auto shrink-0 text-[9.5px] text-accent">shown</span>}
       </div>
-      <div className={cn("mt-2.5 font-num text-[26px] font-semibold leading-none", TONE[tile.tone])}>{tile.value}</div>
+      <div className={cn("mt-2.5 truncate font-num text-[26px] font-semibold leading-none", TONE[tile.tone])}>{tile.value}</div>
       <div className="mt-2 text-[12px] text-dim">{tile.sub}</div>
       {spark && <Sparkline vals={tile.spark} color={tile.sparkColor} />}
-    </Card>
+    </>
   );
+  const base = "relative min-w-0 rounded-card border bg-surface/80 p-4 text-left backdrop-blur-sm";
+  if (onPick) {
+    return (
+      <button
+        type="button"
+        onClick={onPick}
+        aria-pressed={!!active}
+        title={active ? `Every chart measures ${tile.label}` : `Measure ${tile.label} on every chart`}
+        className={cn(base, "ring-signal w-full transition-colors", active ? "border-accent" : "border-line hover:border-line-strong")}
+      >
+        {body}
+      </button>
+    );
+  }
+  return <div className={cn(base, "border-line", tile.wide && "col-span-2")}>{body}</div>;
 }
 
 /* ── stacked columns by kind ─────────────────────────────────────────────── */
@@ -298,8 +341,7 @@ function bucketTitle(b: UsageBucket, mode: BucketMode): string {
   return fmtMonthYear(b.from);
 }
 
-function StackedChart({ buckets, mode, scope }: { buckets: UsageBucket[]; mode: BucketMode; scope: UsageScope }) {
-  const [metric, setMetric] = useState<ChartMetric>("words");
+function StackedChart({ buckets, mode, scope, metric }: { buckets: UsageBucket[]; mode: BucketMode; scope: UsageScope; metric: ChartMetric }) {
   const [solo, setSolo] = useState<UsageKind | null>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [ref, w] = useWidth();
@@ -386,23 +428,15 @@ function StackedChart({ buckets, mode, scope }: { buckets: UsageBucket[]; mode: 
     <Panel
       title={`${METRIC_LABEL[metric]} per ${unit}, by kind`}
       right={
-        <>
-          <div className="flex flex-wrap gap-3.5" role="group" aria-label="Kinds (click to solo)">
-            {KINDS.map(legendButton)}
-          </div>
-          <Segmented
-            value={metric}
-            onChange={setMetric}
-            ariaLabel="Chart metric"
-            options={CHART_METRICS.map((m) => ({ value: m, label: METRIC_LABEL[m] }))}
-          />
-        </>
+        <div className="flex flex-wrap gap-3.5" role="group" aria-label="Kinds (click to solo)">
+          {KINDS.map(legendButton)}
+        </div>
       }
     >
       <div ref={ref} className="relative px-3 pb-1 pt-1">
         {allZero ? (
           <div className="grid h-[220px] place-items-center text-[13px] text-faint">
-            No {METRIC_LABEL[metric]} in this range
+            No {METRIC_LABEL[metric].toLowerCase()} in this range
           </div>
         ) : (
           <>
@@ -480,27 +514,17 @@ function StackedChart({ buckets, mode, scope }: { buckets: UsageBucket[]; mode: 
                 className="pointer-events-none absolute z-20 min-w-[150px] rounded-[10px] border border-line-strong bg-surface/95 px-3 py-2 text-[12px] shadow-[0_16px_40px_-16px_rgba(0,0,0,0.9)] backdrop-blur-sm"
                 style={{ left: tipLeft, top: tipTop, width: TIP_W }}
               >
-                <div className="mb-1 font-mono text-[10.5px] uppercase tracking-label text-faint">{bucketTitle(hp, mode)}</div>
-                {KINDS.map((k) => (
-                  <div key={k} className={cn("flex items-baseline justify-between gap-4 leading-relaxed", shown(k) ? "text-dim" : "text-faint")}>
-                    <span className="flex items-center gap-1.5"><Swatch kind={k} />{KIND_LABEL[k]}</span>
-                    <span className="font-num text-text">{metricFull(metric, metricValue(safeTotals(hp[k]), metric))}</span>
-                  </div>
-                ))}
-                <div className="mt-1 flex items-baseline justify-between gap-4 border-t border-line pt-1 leading-relaxed text-dim">
-                  <span>total</span>
-                  <span className="font-num font-semibold text-text">{metricFull(metric, totals[hover!])}</span>
-                </div>
+                <KindTip title={bucketTitle(hp, mode)} kinds={hp} metric={metric} scope={effSolo ?? "all"} total={totals[hover!]} />
               </div>
             )}
             <div className="sr-only" aria-live="polite">
-              {hp ? `${bucketTitle(hp, mode)}: ${metricFull(metric, totals[hover!])} ${METRIC_LABEL[metric]}` : ""}
+              {hp ? `${bucketTitle(hp, mode)}: ${metricText(metric, totals[hover!])}` : ""}
             </div>
           </>
         )}
       </div>
       <div className="mt-1.5 text-[11.5px] text-faint">
-        {scope === "all" ? "Click a legend entry to solo that kind. " : ""}Hover for the {unit}’s split.
+        {scope === "all" ? "Click a legend entry to solo that kind. " : ""}Hover for the {unit}’s split; the Measure switch in the filter bar (or a tile) changes what every chart counts.
         {mode !== "day" && ` One column per ${unit} at this range.`} Text imports are hatched neutral: they are rare and never a volume story.
       </div>
     </Panel>
@@ -532,8 +556,8 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
   const narrowed = withS.length > 0;
   return (
     <Panel
-      title={`Stages · share of runs that used them, ${rangeWord}`}
-      right={<Pill>{fmtFull(media)} file &amp; link runs · {fmtFull(win.dictation.sessions)} dictations</Pill>}
+      title={`Stages · share of sessions that used them, ${rangeWord}`}
+      right={<><Pill>{fmtFull(media)} file &amp; link sessions · {fmtFull(win.dictation.sessions)} dictations</Pill><Pill>counts sessions</Pill></>}
     >
       <div>
         {orderedStageRows(withS).map((row) => {
@@ -545,7 +569,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
                   <i className="inline-block size-2 rounded-full" style={{ background: "var(--c-line-strong)" }} />
                   {row.label}
                 </div>
-                <div className="text-faint">Files and links only — {SCOPE_LABEL[scope].toLowerCase()} runs never use it.</div>
+                <div className="text-faint">Files and links only — {SCOPE_LABEL[scope].toLowerCase()} sessions never use it.</div>
               </div>
             );
           }
@@ -562,7 +586,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
             );
           }
           const share = pct(st.runs, st.of_runs);
-          const runsWord = row.key === "translating" ? "runs" : "file runs";
+          const runsWord = row.key === "translating" ? "sessions" : "file sessions";
           let detail: ReactNode;
           if (row.key === "translating") {
             detail = <>avg <Num>+{(st.secs / st.runs).toFixed(1)} s</Num> / run</>;
@@ -599,7 +623,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
               <div className="text-dim">{detail}</div>
               {(targets.length > 0 || kept > 0 || (narrowed && !pinned)) && (
                 <div className="col-start-2 col-end-[-1] -mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] text-faint">
-                  {narrowed && !pinned && <span>of the filtered runs, {share} % were also {STAGE_CHIP_LABEL[row.key].toLowerCase()} ·</span>}
+                  {narrowed && !pinned && <span>of the filtered sessions, {share} % were also {STAGE_CHIP_LABEL[row.key].toLowerCase()} ·</span>}
                   {targets.map((t) => (
                     <span key={t.code} className="rounded-pill border border-line px-2 py-px font-mono text-[11px] text-dim">
                       {safeDisplayText(t.code)} {t.pct} %
@@ -651,7 +675,7 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
     return (
       <Card className="mt-3.5 flex flex-wrap items-center gap-2.5 px-4 py-3">
         <Eyebrow>Dictation</Eyebrow>
-        <span className="text-[12.5px] text-faint">Dictation details apply to dictation runs.</span>
+        <span className="text-[12.5px] text-faint">Dictation details apply to dictation sessions.</span>
         <button type="button" onClick={() => setOpen(true)} className="ring-signal rounded-md px-1 text-[12.5px] text-dim underline underline-offset-4 hover:text-text">
           show
         </button>
@@ -670,6 +694,7 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
       right={
         <>
           <Pill>{fmtFull(d?.sessions ?? 0)} sessions</Pill>
+          <Pill>counts sessions</Pill>
           {collapsible && (
             <button type="button" onClick={() => setOpen(false)} className="ring-signal rounded-md px-1 text-[12px] text-faint underline underline-offset-4 hover:text-text">
               hide
@@ -708,49 +733,148 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
 
 /* ── rhythm: the calendar + the hour grid ────────────────────────────────── */
 
-/* ── cell tooltip: instant, follows the cursor, styled like the chart's ───── */
+/* ── the per-kind tooltip (D31 T3 / D33): present kinds, a split bar, the total ── */
 
-interface CellTipState { text: string; x: number; y: number }
-
-/** Delegated hover for a grid of level cells. Cells carry `data-tip`; the wrapper is `relative`. */
-function useCellTip() {
-  const [tip, setTip] = useState<CellTipState | null>(null);
-  const onMove = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
-    const el = (e.target as HTMLElement).closest?.("[data-tip]") as HTMLElement | null;
-    if (!el || !el.dataset.tip) { setTip(null); return; }
-    const box = e.currentTarget.getBoundingClientRect();
-    const host = e.currentTarget;
-    setTip({ text: el.dataset.tip, x: e.clientX - box.left + host.scrollLeft, y: e.clientY - box.top + host.scrollTop });
-  }, []);
-  const onLeave = useCallback(() => setTip(null), []);
-  return { tip, onMove, onLeave };
+function KindTip({ title, kinds, metric, scope, total, quarter, extra }: {
+  title: string;
+  kinds: UsageKinds;
+  metric: ChartMetric;
+  scope: UsageScope;
+  total: number;
+  /** The cell's quarter name, on the total line (or the single row). */
+  quarter?: string;
+  /** One more faint line: `["≈ 40 words per Tuesday", "78 Tuesdays in range"]` (D32). */
+  extra?: [string, string] | null;
+}) {
+  const rows = presentKinds(kinds, metric, scope);
+  const single = rows.length === 1;
+  return (
+    <>
+      <div className="mb-1 font-mono text-[10.5px] uppercase tracking-label text-faint">{title}</div>
+      {!(total > 0) ? (
+        <div className="leading-relaxed text-faint">no {METRIC_LABEL[metric].toLowerCase()}</div>
+      ) : (
+        <>
+          {scope === "all" && rows.length > 1 && (
+            <div className="mb-1.5 mt-1 flex h-[5px] overflow-hidden rounded-[3px] bg-surface-2" aria-hidden>
+              {rows.map((r) => (
+                <i key={r.kind} className="block h-full" style={{ width: `${(r.value / total) * 100}%`, background: r.kind === "text" ? "var(--c-chart-text)" : KIND_VAR[r.kind] }} />
+              ))}
+            </div>
+          )}
+          {rows.map((r) => (
+            <div key={r.kind} className="flex items-baseline justify-between gap-4 leading-relaxed text-dim">
+              <span className="flex items-center gap-1.5"><Swatch kind={r.kind} />{KIND_LABEL[r.kind]}</span>
+              <span className="font-num text-text">{metricText(metric, r.value)}{single && quarter ? ` · ${quarter}` : ""}</span>
+            </div>
+          ))}
+          {!single && (
+            <div className={cn("flex items-baseline justify-between gap-4 leading-relaxed text-dim", rows.length > 0 && "mt-1 border-t border-line pt-1")}>
+              <span>total{quarter ? ` · ${quarter}` : ""}</span>
+              <span className="font-num font-semibold text-text">{metricText(metric, total)}</span>
+            </div>
+          )}
+          {extra && (
+            <div className="mt-0.5 flex items-baseline justify-between gap-4 text-[11.5px] leading-relaxed text-faint">
+              <span>{extra[0]}</span>
+              <span>{extra[1]}</span>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
 }
 
-function CellTip({ tip, boundsRef }: { tip: CellTipState | null; boundsRef: RefObject<HTMLDivElement | null> }) {
+/* ── cell tooltip: instant, follows the cursor or the focused cell ───────── */
+
+interface CellTipState { i: number; x: number; y: number }
+
+/** Delegated hover + focus for a grid of level cells. Cells carry `data-i`; the wrapper is
+ *  `relative`. The panel resolves `i` against its model and renders the content. */
+function useCellTip() {
+  const [tip, setTip] = useState<CellTipState | null>(null);
+  const at = (host: HTMLDivElement, el: HTMLElement, cx: number, cy: number) => {
+    const box = host.getBoundingClientRect();
+    setTip({ i: Number(el.dataset.i), x: cx - box.left + host.scrollLeft, y: cy - box.top + host.scrollTop });
+  };
+  const onMove = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
+    const el = (e.target as HTMLElement).closest?.("[data-i]") as HTMLElement | null;
+    if (!el?.dataset.i) { setTip(null); return; }
+    at(e.currentTarget, el, e.clientX, e.clientY);
+  }, []);
+  const onLeave = useCallback(() => setTip(null), []);
+  // Keyboard (D34): the tooltip sits over the focused cell's centre.
+  const onFocus = useCallback((e: ReactFocusEvent<HTMLDivElement>) => {
+    const el = (e.target as HTMLElement).closest?.("[data-i]") as HTMLElement | null;
+    if (!el?.dataset.i) return;
+    const r = el.getBoundingClientRect();
+    at(e.currentTarget, el, r.left + r.width / 2, r.top + r.height / 2);
+  }, []);
+  const onBlur = useCallback((e: ReactFocusEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setTip(null);
+  }, []);
+  return { tip, onMove, onLeave, onFocus, onBlur };
+}
+
+/** The floating shell: measured after render so a multi-line tip flips and clamps by its
+ *  real size; above the anchor, or below it near the top so a scrolling wrapper does not clip. */
+function CellTip({ tip, boundsRef, children }: { tip: CellTipState | null; boundsRef: RefObject<HTMLDivElement | null>; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!tip || !el) { setPos(null); return; }
+    const width = boundsRef.current?.scrollWidth ?? 0;
+    const tw = el.offsetWidth;
+    const th = el.offsetHeight;
+    let left = tip.x + 14;
+    if (width > 0 && left + tw > width - 4) left = tip.x - tw - 10;
+    let top = tip.y - th - 12;
+    if (top < 0) top = tip.y + 18;
+    const next = { left: Math.max(0, left), top };
+    // Same box → keep the object: a fresh one every render would re-run this effect forever.
+    setPos((p) => (p && p.left === next.left && p.top === next.top ? p : next));
+  }, [tip, children, boundsRef]);
   if (!tip) return null;
-  const width = boundsRef.current?.scrollWidth ?? 0;
-  const est = tip.text.length * 6.6 + 20;
-  const flip = width > 0 && tip.x + 14 + est > width;
-  // Above the cursor, or below it near the top so a scrolling wrapper does not clip it.
-  const top = tip.y < 44 ? tip.y + 18 : tip.y - 34;
   return (
     <div
-      className="pointer-events-none absolute z-20 whitespace-nowrap rounded-[8px] border border-line-strong bg-surface/95 px-2.5 py-1.5 text-[12px] text-dim shadow-[0_16px_40px_-16px_rgba(0,0,0,0.9)] backdrop-blur-sm"
-      style={flip ? { right: width - tip.x + 10, top } : { left: tip.x + 14, top }}
+      ref={ref}
+      className="pointer-events-none absolute z-20 min-w-[180px] whitespace-nowrap rounded-[10px] border border-line-strong bg-surface/95 px-3 py-2 text-[12px] shadow-[0_16px_40px_-16px_rgba(0,0,0,0.9)] backdrop-blur-sm"
+      style={{ left: pos?.left ?? tip.x, top: pos?.top ?? tip.y, visibility: pos ? "visible" : "hidden" }}
       role="status"
     >
-      {tip.text}
+      {children}
     </div>
   );
 }
 
-const CELL_HOVER = "hover:outline hover:outline-2 hover:outline-offset-1 hover:outline-text relative hover:z-10";
+/** Roving tabindex for a grid of `data-i` cells (D34): one tab stop, the arrow keys move by
+ *  `dx` (left/right) and `dy` (up/down) indexes, Home/End jump. */
+function useRovingGrid(count: number, dx: number, dy: number) {
+  const [focusIdx, setFocusIdx] = useState(0);
+  useEffect(() => { if (focusIdx >= count) setFocusIdx(0); }, [count, focusIdx]);
+  const onKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const el = (e.target as HTMLElement).closest?.("[data-i]") as HTMLElement | null;
+    if (!el?.dataset.i || count === 0) return;
+    const i = Number(el.dataset.i);
+    const step = e.key === "ArrowLeft" ? -dx : e.key === "ArrowRight" ? dx : e.key === "ArrowUp" ? -dy : e.key === "ArrowDown" ? dy : e.key === "Home" ? -i : e.key === "End" ? count - 1 - i : null;
+    if (step === null) return;
+    e.preventDefault();
+    const next = Math.max(0, Math.min(count - 1, i + step));
+    const target = e.currentTarget.querySelector<HTMLElement>(`[data-i="${next}"]`);
+    if (target) { setFocusIdx(next); target.focus(); }
+  }, [count, dx, dy]);
+  return { focusIdx, onKeyDown };
+}
+
+const CELL_HOVER = "hover:outline hover:outline-2 hover:outline-offset-1 hover:outline-text relative hover:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-text focus-visible:z-10";
 
 const LEVEL_BG = ["var(--c-surface-2)", "var(--c-cal-1)", "var(--c-cal-2)", "var(--c-cal-3)", "var(--c-cal-4)"] as const;
 
-/** The five labelled steps: swatch, word range, count. Shared by both grids. */
-function LevelLegend({ lead, breaks, counts, unit }: { lead: string; breaks: [number, number, number]; counts: readonly number[]; unit: [string, string] }) {
-  const ranges = legendRanges(breaks, fmtCompact);
+/** The five labelled steps: swatch, value range, count. Shared by both grids. */
+function LevelLegend({ lead, breaks, counts, unit, metric }: { lead: string; breaks: [number, number, number]; counts: readonly number[]; unit: [string, string]; metric: ChartMetric }) {
+  const ranges = legendRanges(breaks, (v) => metricTick(metric, v));
   return (
     <div className="mt-2.5 flex flex-wrap items-end gap-3.5 text-[11.5px] text-faint">
       <span>{lead}</span>
@@ -767,16 +891,31 @@ function LevelLegend({ lead, breaks, counts, unit }: { lead: string; breaks: [nu
   );
 }
 
-function RhythmPanel({ stats, scope, withS, from, to, title, filtered }: { stats: UsageStats; scope: UsageScope; withS: readonly UsageStageKey[]; from: number; to: number; title: string; filtered: boolean }) {
-  const model = useMemo(() => calendarModel(stats.calendar, scope, from, to), [stats.calendar, scope, from, to]);
+function RhythmPanel({ dense, streaks, scope, withS, from, to, title, filtered, metric }: {
+  dense: readonly UsageSeriesPoint[];
+  streaks: UsageStreaks | undefined;
+  scope: UsageScope;
+  withS: readonly UsageStageKey[];
+  from: number;
+  to: number;
+  title: string;
+  filtered: boolean;
+  metric: ChartMetric;
+}) {
+  const model = useMemo(() => calendarModel(dense, scope, from, to, metric), [dense, scope, from, to, metric]);
   const cols = useMemo(() => weekColumns(model.cells), [model.cells]);
-  const streak = streakFor(stats.streak, scope);
+  const streak = streakFor(streaks, scope);
   const [ref, w] = useWidth(900);
   // 16 px cells, shrinking to 12 px before the grid scrolls inside the panel.
   const cell = Math.max(12, Math.min(16, Math.floor((w - 44) / Math.max(1, cols.length)) - 3));
   const today = localTodayDay();
   const withWord = withS.length ? ` · with ${withS.map((k) => STAGE_CHIP_LABEL[k].toLowerCase()).join(" + ")}` : "";
-  const { tip, onMove, onLeave } = useCellTip();
+  const { tip, onMove, onLeave, onFocus, onBlur } = useCellTip();
+  // Index = position in the day list; a column is a week, so left/right step seven days.
+  const { focusIdx, onKeyDown } = useRovingGrid(model.cells.length, 7, 1);
+  const first = model.cells[0]?.day ?? 0;
+  const hovered = tip ? model.cells[tip.i] : undefined;
+  const label = METRIC_LABEL[metric];
   return (
     <Panel
       title={`Rhythm · ${title} · ${scope === "all" ? "all kinds" : KIND_LABEL[scope]}${withWord}`}
@@ -787,13 +926,15 @@ function RhythmPanel({ stats, scope, withS, from, to, title, filtered }: { stats
         </Pill>
       }
     >
-      <div ref={ref} className="relative overflow-x-auto pb-1" onMouseMove={onMove} onMouseLeave={onLeave}>
-        <CellTip tip={tip} boundsRef={ref} />
+      <div ref={ref} className="relative overflow-x-auto pb-1" onMouseMove={onMove} onMouseLeave={onLeave} onFocus={onFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
+        <CellTip tip={tip} boundsRef={ref}>
+          {hovered && <KindTip title={fmtDateFull(hovered.day)} kinds={hovered.kinds} metric={metric} scope={scope} total={hovered.value} quarter={hovered.level ? QUARTER_NAME[hovered.level] : undefined} />}
+        </CellTip>
         <div
           className="grid w-max gap-[3px]"
           style={{ gridTemplateColumns: `max-content repeat(${cols.length}, ${cell}px)` }}
-          role="img"
-          aria-label={`Words per day, ${model.cells.length} days, levelled by quartiles of the active days`}
+          role="grid"
+          aria-label={`${label} per day, ${model.cells.length} days, levelled by quartiles of the active days. Use the arrow keys to move between days.`}
         >
           <div />
           {cols.map((c) => (
@@ -810,76 +951,97 @@ function RhythmPanel({ stats, scope, withS, from, to, title, filtered }: { stats
           </div>
           {cols.map((c) => (
             <div key={c.monday} className="grid gap-[3px]" style={{ gridTemplateRows: `repeat(7, ${cell}px)` }}>
-              {c.cells.map((cellData, r) =>
-                cellData ? (
+              {c.cells.map((cellData, r) => {
+                if (!cellData) return <i key={`e${c.monday}-${r}`} className="block" style={{ width: cell, height: cell }} />;
+                const i = cellData.day - first;
+                return (
                   <i
                     key={cellData.day}
-                    className={cn("block rounded-[3px]", CELL_HOVER, cellData.day === today && "ring-[1.5px] ring-inset ring-text")}
+                    data-i={i}
+                    tabIndex={i === focusIdx ? 0 : -1}
+                    role="gridcell"
+                    aria-label={`${fmtDateFull(cellData.day)}: ${cellData.value > 0 ? metricText(metric, cellData.value) : `no ${label.toLowerCase()}`}${cellData.level ? `, ${QUARTER_NAME[cellData.level]}` : ""}`}
+                    className={cn("block rounded-[3px] outline-none", CELL_HOVER, cellData.day === today && "ring-[1.5px] ring-inset ring-text")}
                     style={{ width: cell, height: cell, background: LEVEL_BG[cellData.level] }}
-                    data-tip={`${fmtDateFull(cellData.day)} · ${fmtFull(cellData.words)} words${cellData.level ? ` · ${QUARTER_NAME[cellData.level]}` : ""}`}
                   />
-                ) : (
-                  <i key={`e${c.monday}-${r}`} className="block" style={{ width: cell, height: cell }} />
-                ),
-              )}
+                );
+              })}
             </div>
           ))}
         </div>
       </div>
-      <LevelLegend lead="Words per day · quarters of your active days" breaks={model.breaks} counts={model.counts} unit={["day", "days"]} />
+      <LevelLegend lead={`${label} per day · quarters of your active days`} breaks={model.breaks} counts={model.counts} unit={["day", "days"]} metric={metric} />
     </Panel>
   );
 }
 
-function HoursPanel({ stats, scope, title }: { stats: UsageStats; scope: UsageScope; title: string }) {
-  const model = useMemo(() => hourModel(stats.hours, scope), [stats.hours, scope]);
+function HoursPanel({ stats, scope, title, metric, from, to }: { stats: UsageStats; scope: UsageScope; title: string; metric: ChartMetric; from: number; to: number }) {
+  const model = useMemo(() => hourModel(stats.hours, scope, metric), [stats.hours, scope, metric]);
   const peak = model.peak;
   const kindWord = scope === "all" ? "" : ` · ${KIND_LABEL[scope]}`;
-  const { tip, onMove, onLeave } = useCellTip();
+  const label = METRIC_LABEL[metric];
+  const { tip, onMove, onLeave, onFocus, onBlur } = useCellTip();
+  const { focusIdx, onKeyDown } = useRovingGrid(7 * 24, 1, 24);
   const boundsRef = useRef<HTMLDivElement | null>(null);
+  // How often each weekday occurs in the window — "≈ N per Tuesday · 78 Tuesdays" (D32).
+  const occ = useMemo(() => weekdayCounts(from, to), [from, to]);
+  const hovered = tip ? model.rows[Math.floor(tip.i / 24)]?.[tip.i % 24] : undefined;
+  const slot = (dow: number, hour: number) => `${DOW_SHORT[dow]} ${String(hour).padStart(2, "0")}:00–${String(hour + 1).padStart(2, "0")}:00`;
+  const extra: [string, string] | null =
+    hovered && hovered.value > 0 && occ[hovered.dow] > 1
+      ? [`≈ ${metricText(metric, hovered.value / occ[hovered.dow], true)} per ${DOW_LONG[hovered.dow]}`, `${fmtFull(occ[hovered.dow])} ${DOW_LONG[hovered.dow]}s in range`]
+      : null;
   return (
     <Panel
       title={`When you dictate · ${title}${kindWord}`}
       right={
         peak ? (
           <Pill>
-            peak {DOW_SHORT[peak.dow]} {String(peak.hour).padStart(2, "0")}–{String(peak.hour + 1).padStart(2, "0")} · {fmtCompact(peak.words)} words
+            peak {DOW_SHORT[peak.dow]} {String(peak.hour).padStart(2, "0")}–{String(peak.hour + 1).padStart(2, "0")} · {metricText(metric, peak.value, true)}
           </Pill>
         ) : (
-          <Pill>no words in this range</Pill>
+          <Pill>no {label.toLowerCase()} in this range</Pill>
         )
       }
     >
-      <div ref={boundsRef} className="relative" onMouseMove={onMove} onMouseLeave={onLeave}>
-      <CellTip tip={tip} boundsRef={boundsRef} />
-      <div
-        className="grid gap-[3px]"
-        style={{ gridTemplateColumns: "34px repeat(24, minmax(0, 1fr))" }}
-        role="img"
-        aria-label="Words per weekday and hour, levelled by quartiles of the active hour slots"
-      >
-        <div />
-        {Array.from({ length: 24 }, (_, h) => (
-          <div key={h} className="font-mono text-[10px] text-faint">
-            {h % 3 === 0 ? String(h).padStart(2, "0") : ""}
-          </div>
-        ))}
-        {model.rows.map((row, d) => (
-          <Fragment key={d}>
-            <div className="flex items-center font-mono text-[10.5px] text-faint">{DOW_SHORT[d]}</div>
-            {row.map((c) => (
-              <i
-                key={c.hour}
-                className={cn("block aspect-square max-h-[20px] w-full rounded-[3px]", CELL_HOVER)}
-                style={{ background: LEVEL_BG[c.level] }}
-                data-tip={`${DOW_SHORT[c.dow]} ${String(c.hour).padStart(2, "0")}:00–${String(c.hour + 1).padStart(2, "0")}:00 · ${fmtFull(c.words)} words${c.level ? ` · ${QUARTER_NAME[c.level]}` : ""}`}
-              />
-            ))}
-          </Fragment>
-        ))}
+      <div ref={boundsRef} className="relative" onMouseMove={onMove} onMouseLeave={onLeave} onFocus={onFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
+        <CellTip tip={tip} boundsRef={boundsRef}>
+          {hovered && <KindTip title={slot(hovered.dow, hovered.hour)} kinds={hovered.kinds} metric={metric} scope={scope} total={hovered.value} quarter={hovered.level ? QUARTER_NAME[hovered.level] : undefined} extra={extra} />}
+        </CellTip>
+        <div
+          className="grid gap-[3px]"
+          style={{ gridTemplateColumns: "34px repeat(24, minmax(0, 1fr))" }}
+          role="grid"
+          aria-label={`${label} per weekday and hour, levelled by quartiles of the active hour slots. Use the arrow keys to move between slots.`}
+        >
+          <div />
+          {Array.from({ length: 24 }, (_, h) => (
+            <div key={h} className="font-mono text-[10px] text-faint">
+              {h % 3 === 0 ? String(h).padStart(2, "0") : ""}
+            </div>
+          ))}
+          {model.rows.map((row, d) => (
+            <Fragment key={d}>
+              <div className="flex items-center font-mono text-[10.5px] text-faint">{DOW_SHORT[d]}</div>
+              {row.map((c) => {
+                const i = c.dow * 24 + c.hour;
+                return (
+                  <i
+                    key={c.hour}
+                    data-i={i}
+                    tabIndex={i === focusIdx ? 0 : -1}
+                    role="gridcell"
+                    aria-label={`${slot(c.dow, c.hour)}: ${c.value > 0 ? metricText(metric, c.value) : `no ${label.toLowerCase()}`}${c.level ? `, ${QUARTER_NAME[c.level]}` : ""}`}
+                    className={cn("block aspect-square max-h-[20px] w-full rounded-[3px] outline-none", CELL_HOVER, peak && c.dow === peak.dow && c.hour === peak.hour && "ring-[1.5px] ring-inset ring-text")}
+                    style={{ background: LEVEL_BG[c.level] }}
+                  />
+                );
+              })}
+            </Fragment>
+          ))}
+        </div>
       </div>
-      </div>
-      <LevelLegend lead="Words per weekday hour · quarters of your active hour slots" breaks={model.breaks} counts={model.counts} unit={["slot", "slots"]} />
+      <LevelLegend lead={`${label} per weekday hour · quarters of your active hour slots`} breaks={model.breaks} counts={model.counts} unit={["slot", "slots"]} metric={metric} />
     </Panel>
   );
 }
@@ -947,24 +1109,80 @@ function CustomSpanPopover({ from, to, today, onApply, onCancel }: { from: numbe
   );
 }
 
+/** True while the sentinel above the bar has scrolled out of the nearest scroll ancestor —
+ *  i.e. the sticky bar is pinned. (`scroll-state()` container queries would do this in CSS,
+ *  but WebKitGTK does not ship them.) */
+function useStuck(): [RefObject<HTMLDivElement | null>, boolean] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    let root: HTMLElement | null = el.parentElement;
+    while (root && !/(auto|scroll)/.test(getComputedStyle(root).overflowY)) root = root.parentElement;
+    const io = new IntersectionObserver(([e]) => setStuck(!e.isIntersecting), { root, threshold: 0 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return [ref, stuck];
+}
+
+/** One value on the condensed rail: eyebrow + value, a button that reopens the full bar. */
+function RailChip({ label, accent, onClick, children }: { label: string; accent?: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "ring-signal inline-flex items-center gap-1.5 rounded-pill border bg-surface-2 px-2.5 py-0.5 text-[12px] text-text transition-colors hover:border-line-strong",
+        accent ? "border-accent" : "border-line",
+      )}
+    >
+      <span className="font-mono text-[9.5px] uppercase tracking-label text-faint">{label}</span>
+      {children}
+    </button>
+  );
+}
+
+/** The page's one filter bar: Range · Kind + With · Measure on three rows, pinned to the
+ *  top of the scroll container. Once pinned it condenses to a one-line rail of the current
+ *  values (D30 B); Edit or any chip reopens the full bar as an overlay beneath the rail, so
+ *  the page does not reflow; Escape or a click outside closes it. */
 function FilterBar({
   scope,
   onScope,
   query,
   onQuery,
+  metric,
+  onMetric,
   today,
   firstDay,
   retentionDays,
+  stale,
 }: {
   scope: UsageScope;
   onScope: (s: UsageScope) => void;
   query: UsagePageQuery;
   onQuery: (q: UsagePageQuery) => void;
+  metric: ChartMetric;
+  onMetric: (m: ChartMetric) => void;
   today: number;
   firstDay: number | null | undefined;
   retentionDays: number | undefined;
+  stale: boolean;
 }) {
   const [custom, setCustom] = useState(false);
+  const [sentinelRef, stuck] = useStuck();
+  const barRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  // Un-pinning shows the full bar inline again; the overlay has nothing left to do.
+  useEffect(() => { if (!stuck) setOpen(false); }, [stuck]);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (!barRef.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
   const win = resolveWindow(query, today, firstDay);
   const pickRange = (r: RangePreset) => {
     if (r === "custom") {
@@ -981,13 +1199,25 @@ function FilterBar({
     onQuery({ ...query, with: STAGE_KEYS.filter((x) => set.has(x)) });
   };
   const anySet = isFiltered(scope, query) || query.range !== "30";
+  const clearAll = () => {
+    setCustom(false);
+    onScope("all");
+    onQuery({ range: "30", with: [] });
+  };
   const spanText =
     query.range === "all"
       ? `${fmtSpanDate(win.from)} – ${fmtSpanDate(win.to)} · ${fmtFull(win.days)} days · since the first ${firstDay == null ? "run" : "dictation"}`
       : `${fmtSpanDate(win.from)} – ${fmtSpanDate(win.to)} · ${fmtFull(win.days)} ${win.days === 1 ? "day" : "days"}${query.range === "custom" ? " · custom" : ""}`;
-  return (
-    <div className="rounded-[12px] border border-line bg-surface px-3 py-2.5">
-      <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5">
+  const rangeChip = query.range === "all" ? "All time" : query.range === "custom" ? `${fmtSpanDate(win.from)} – ${fmtSpanDate(win.to)}` : RANGE_LABEL[query.range];
+  const clearButton = (
+    <button type="button" onClick={clearAll} className="ring-signal rounded-md px-1 text-[12px] text-faint underline underline-offset-4 hover:text-text">
+      Clear
+    </button>
+  );
+  const row = "flex flex-wrap items-center gap-x-3.5 gap-y-2.5";
+  const full = (
+    <>
+      <div className={row}>
         <Eyebrow>Range</Eyebrow>
         <Segmented
           value={custom ? "custom" : query.range}
@@ -995,6 +1225,12 @@ function FilterBar({
           ariaLabel="Range"
           options={RANGE_PRESETS.map((r) => ({ value: r, label: RANGE_LABEL[r] }))}
         />
+        <span className="ml-auto flex items-center gap-2">
+          <Pill>{spanText}</Pill>
+          {anySet && clearButton}
+        </span>
+      </div>
+      <div className={cn(row, "mt-2.5")}>
         <Eyebrow>Kind</Eyebrow>
         <Segmented
           value={scope}
@@ -1003,7 +1239,7 @@ function FilterBar({
           options={(["all", ...KINDS] as UsageScope[]).map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
         />
         <Eyebrow>With</Eyebrow>
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Stages every run must have used">
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Stages every session must have used">
           {STAGE_KEYS.map((k) => {
             const on = query.with.includes(k);
             return (
@@ -1023,22 +1259,15 @@ function FilterBar({
             );
           })}
         </div>
-        <span className="ml-auto flex items-center gap-2">
-          <Pill>{spanText}</Pill>
-          {anySet && (
-            <button
-              type="button"
-              onClick={() => {
-                setCustom(false);
-                onScope("all");
-                onQuery({ range: "30", with: [] });
-              }}
-              className="ring-signal rounded-md px-1 text-[12px] text-faint underline underline-offset-4 hover:text-text"
-            >
-              Clear
-            </button>
-          )}
-        </span>
+      </div>
+      <div className={cn(row, "mt-2.5")}>
+        <Eyebrow>Measure</Eyebrow>
+        <Segmented
+          value={metric}
+          onChange={onMetric}
+          ariaLabel="Measure — what every chart counts"
+          options={CHART_METRICS.map((m) => ({ value: m, label: METRIC_LABEL[m] }))}
+        />
       </div>
       {custom && (
         <CustomSpanPopover
@@ -1054,11 +1283,70 @@ function FilterBar({
       )}
       {query.with.length > 0 && (
         <div className="mt-2 text-[11.5px] text-faint">
-          Stage filters cover the last {fmtFull(retentionDays || 365)} days: every number on this page now counts only runs that were{" "}
+          Stage filters cover the last {fmtFull(retentionDays || 365)} days: every number on this page now counts only sessions that were{" "}
           {query.with.map((k) => STAGE_CHIP_LABEL[k].toLowerCase()).join(" and ")}.
         </div>
       )}
+    </>
+  );
+  const openBar = () => setOpen(true);
+  const rail = (
+    <div className="flex flex-wrap items-center gap-2">
+      <RailChip label="Range" onClick={openBar}>{rangeChip}</RailChip>
+      <RailChip label="Kind" onClick={openBar}>{SCOPE_LABEL[scope]}</RailChip>
+      {query.with.length > 0 && (
+        <RailChip label="With" onClick={openBar}>
+          {query.with.map((k) => (
+            <span key={k} className="inline-flex items-center gap-1">
+              <i className="inline-block size-2 rounded-full" style={{ background: STAGE_DOT[k] }} />
+              {STAGE_CHIP_LABEL[k]}
+            </span>
+          ))}
+        </RailChip>
+      )}
+      <RailChip label="Measure" accent onClick={openBar}>{METRIC_LABEL[metric]}</RailChip>
+      {stale && <Pill>updating…</Pill>}
+      <span className="ml-auto flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="ring-signal rounded-md border border-line-strong bg-surface px-2.5 py-0.5 text-[12px] text-text transition-colors hover:bg-surface-2"
+        >
+          {open ? "Done ▴" : "Edit filters ▾"}
+        </button>
+        {anySet && clearButton}
+      </span>
     </div>
+  );
+  return (
+    <>
+      <div ref={sentinelRef} className="h-px" aria-hidden />
+      <div
+        ref={barRef}
+        className="sticky top-0 z-30 mb-4"
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && open) {
+            e.stopPropagation();
+            setOpen(false);
+          }
+        }}
+      >
+        <div
+          className={cn(
+            "relative rounded-[12px] border border-line bg-surface/95 px-3 backdrop-blur-sm transition-shadow motion-reduce:transition-none",
+            stuck ? "rounded-t-none border-t-transparent py-1.5 shadow-[0_14px_34px_-20px_rgba(0,0,0,0.7)]" : "py-2.5",
+          )}
+        >
+          {stuck ? rail : full}
+          {stuck && open && (
+            <div className="absolute inset-x-[-1px] top-full rounded-b-[12px] border border-t-0 border-line-strong bg-surface px-3 py-2.5 shadow-[0_20px_40px_-20px_rgba(0,0,0,0.7)]">
+              {full}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -1125,6 +1413,8 @@ function KindMultiple({ kind, dense, max, hatchId }: { kind: UsageKind; dense: U
   );
 }
 
+const HOME_TILES = new Set(["words", "audio_s", "sessions", "errors"]);
+
 /** Home: four sparkline stat tiles + the "By kind · 30 days" small multiples, with the
  *  backend selector + "View statistics" link on the header row. Hidden entirely (no empty
  *  box) until some backend has usage stats. */
@@ -1132,7 +1422,8 @@ export function HomeUsageStrip() {
   const { statsBackends, viewBackend, setView, stats, dense } = useUsageView();
   const hatchId = useId();
   if (!viewBackend || !stats) return null;
-  const tiles = tileSpecs(stats, dense, "all", false, "in 30 days");
+  // Home keeps the four headline figures; the Statistics page shows every measure.
+  const tiles = tileSpecs(stats, dense, "all", false, "in 30 days").filter((t) => HOME_TILES.has(t.key));
   const last30 = dense.slice(-30);
   const max = Math.max(0, ...last30.flatMap((p) => KINDS.map((k) => safeTotals(p[k]).words)));
   const saved = last30.reduce((s, p) => s + timeSavedS(safeTotals(p.dictation).words, safeTotals(p.dictation).audio_s), 0);
@@ -1187,11 +1478,15 @@ export function StatisticsView({
   onScope,
   query,
   onQuery,
+  metric,
+  onMetric,
 }: {
   scope: UsageScope;
   onScope: (s: UsageScope) => void;
   query: UsagePageQuery;
   onQuery: (q: UsagePageQuery) => void;
+  metric: ChartMetric;
+  onMetric: (m: ChartMetric) => void;
 }) {
   const { statsBackends, viewBackend, setView, stats: base } = useUsageView();
   const view = useApp((s) => s.usageView);
@@ -1231,28 +1526,29 @@ export function StatisticsView({
         <BackendChips backends={statsBackends} selectedId={viewBackend.id} onSelect={setView} />
         {!fresh && <Pill>updating…</Pill>}
       </div>
-      <div className="mb-4">
-        <FilterBar
-          scope={scope}
-          onScope={onScope}
-          query={query}
-          onQuery={onQuery}
-          today={today}
-          firstDay={stats.range?.first_day}
-          retentionDays={stats.range?.jobs_retention_days}
-        />
-      </div>
-      <div className={cn("grid grid-cols-5 gap-3 max-[860px]:grid-cols-2", !fresh && "opacity-70")}>
+      <FilterBar
+        scope={scope}
+        onScope={onScope}
+        query={query}
+        onQuery={onQuery}
+        metric={metric}
+        onMetric={onMetric}
+        today={today}
+        firstDay={stats.range?.first_day}
+        retentionDays={stats.range?.jobs_retention_days}
+        stale={!fresh}
+      />
+      <div className={cn("grid grid-cols-4 gap-3 max-[860px]:grid-cols-2", !fresh && "opacity-70")}>
         {tiles.map((t) => (
-          <StatTile key={t.key} tile={t} spark />
+          <StatTile key={t.key} tile={t} spark active={t.metric === metric} onPick={t.metric ? () => onMetric(t.metric!) : undefined} />
         ))}
       </div>
       <div className={cn(!fresh && "opacity-70")}>
-        <StackedChart buckets={buckets} mode={mode} scope={scope} />
+        <StackedChart buckets={buckets} mode={mode} scope={scope} metric={metric} />
         <StagesPanel stats={stats} dense={dense} scope={scope} withS={query.with} rangeWord={word} />
         <DictationPanel stats={stats} scope={scope} />
-        <RhythmPanel stats={stats} scope={scope} withS={query.with} from={win.from} to={win.to} title={word} filtered={filtered} />
-        <HoursPanel stats={stats} scope={scope} title={word} />
+        <RhythmPanel dense={dense} streaks={stats.streak} scope={scope} withS={query.with} from={win.from} to={win.to} title={word} filtered={filtered} metric={metric} />
+        <HoursPanel stats={stats} scope={scope} title={word} metric={metric} from={win.from} to={win.to} />
       </div>
     </>
   );

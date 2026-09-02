@@ -6,7 +6,6 @@
 // lay these numbers out.
 
 import type {
-  UsageCalendarDay,
   UsageHourCell,
   UsageKind,
   UsageKinds,
@@ -85,12 +84,38 @@ export function scopeTotals(k: UsageKinds, scope: UsageScope): UsageKindTotals {
   return safeTotals(k[scope]);
 }
 
-/** The chart's y metric. `minutes` carries SECONDS (the axis formatter renders them). */
-export type ChartMetric = "words" | "minutes" | "runs";
-export const CHART_METRICS: readonly ChartMetric[] = ["words", "minutes", "runs"];
+/** The page-wide measure (D35/D38): the six counters every kind carries, keyed exactly as
+ *  the backend's own measure bar keys them (`?metric=`), so a link carries across. The two
+ *  `_s` measures are SECONDS; the formatters render them as durations. Client-side like the
+ *  kind filter — it never changes the fetch. */
+export type ChartMetric = "audio_s" | "words" | "sessions" | "requests" | "proc_s" | "errors";
+export const CHART_METRICS: readonly ChartMetric[] = ["audio_s", "words", "sessions", "requests", "proc_s", "errors"];
+export const METRIC_LABEL: Record<ChartMetric, string> = {
+  audio_s: "Duration",
+  words: "Words",
+  sessions: "Sessions",
+  requests: "Requests",
+  proc_s: "Processing Time",
+  errors: "Errors",
+};
+/** Singular/plural unit for the count measures; null for the two durations. */
+export const METRIC_UNIT: Record<ChartMetric, [string, string] | null> = {
+  audio_s: null,
+  words: ["word", "words"],
+  sessions: ["session", "sessions"],
+  requests: ["request", "requests"],
+  proc_s: null,
+  errors: ["error", "errors"],
+};
+export const isDurationMetric = (m: ChartMetric): boolean => m === "audio_s" || m === "proc_s";
+/** `?metric=` → a measure; anything else is Words. */
+export function parseMetric(v: string | null | undefined): ChartMetric {
+  return (CHART_METRICS as readonly string[]).includes(v ?? "") ? (v as ChartMetric) : "words";
+}
 
 export function metricValue(t: UsageKindTotals, m: ChartMetric): number {
-  return m === "words" ? t.words : m === "minutes" ? t.audio_s : t.sessions;
+  const v = t[m];
+  return typeof v === "number" && Number.isFinite(v) ? Math.max(0, v) : 0;
 }
 
 /** Densify the sparse per-kind series into one point per calendar day across the last
@@ -215,10 +240,11 @@ function parseStageList(v: string | null | undefined): UsageStageKey[] {
   return STAGE_KEYS.filter((k) => set.has(k));
 }
 
-/** `?kind=&with=&range=&from=&to=` (plus the older `?scope=`) → page state. Anything
+/** `?kind=&with=&range=&from=&to=&metric=` (plus the older `?scope=`) → page state. Anything
  *  unrecognised falls back to the default; a custom range without a usable span too. */
-export function parsePageQuery(get: (key: string) => string | null): { scope: UsageScope; query: UsagePageQuery } {
+export function parsePageQuery(get: (key: string) => string | null): { scope: UsageScope; query: UsagePageQuery; metric: ChartMetric } {
   const scope = parseScope(get("kind") ?? get("scope"));
+  const metric = parseMetric(get("metric"));
   const r = get("range");
   const withS = parseStageList(get("with"));
   let range: RangePreset = (RANGE_PRESETS as readonly string[]).includes(r ?? "") ? (r as RangePreset) : "30";
@@ -235,14 +261,15 @@ export function parsePageQuery(get: (key: string) => string | null): { scope: Us
       range = "30";
     }
   }
-  return { scope, query: { range, ...(range === "custom" ? { from, to } : {}), with: withS } };
+  return { scope, query: { range, ...(range === "custom" ? { from, to } : {}), with: withS }, metric };
 }
 
 /** The URL params for a page state — only what differs from the default, so a plain
  *  `/statistics` stays clean. */
-export function pageQueryParams(scope: UsageScope, q: UsagePageQuery): Record<string, string> {
+export function pageQueryParams(scope: UsageScope, q: UsagePageQuery, metric: ChartMetric = "words"): Record<string, string> {
   const out: Record<string, string> = {};
   if (scope !== "all") out.kind = scope;
+  if (metric !== "words") out.metric = metric;
   if (q.range !== "30") out.range = q.range;
   if (q.range === "custom" && q.from !== undefined && q.to !== undefined) {
     out.from = String(q.from);
@@ -402,16 +429,42 @@ export function levelOf(v: number, b: Breaks): Level {
   return !(v > 0) ? 0 : v <= b[0] ? 1 : v <= b[1] ? 2 : v <= b[2] ? 3 : 4;
 }
 
-/** Legend copy for the five steps: `0 · 1–b1 · b1–b2 · b2–b3 · b3+`. */
+/** Legend copy for the five steps: `0 · 1–b1 · b1–b2 · b2–b3 · b3+` (`fmt(1)` opens the
+ *  first active step, so a duration legend reads `1s–33m`). */
 export function legendRanges(b: Breaks, fmt: (n: number) => string): string[] {
-  return ["0", `1–${fmt(b[0])}`, `${fmt(b[0])}–${fmt(b[1])}`, `${fmt(b[1])}–${fmt(b[2])}`, `${fmt(b[2])}+`];
+  return ["0", `${fmt(1)}–${fmt(b[0])}`, `${fmt(b[0])}–${fmt(b[1])}`, `${fmt(b[1])}–${fmt(b[2])}`, `${fmt(b[2])}+`];
+}
+
+/* ── per-kind cells (D31/D33): what a grid cell's tooltip lists ──────────── */
+
+/** A cell's per-kind totals plus the scoped measure it is levelled on. */
+export interface KindSplit {
+  kinds: UsageKinds;
+  /** The scoped value of the page's measure (levelling + peak). */
+  value: number;
+}
+
+/** The kinds with a non-zero value of `m` in a split, in kind order — the tooltip's rows. */
+export function presentKinds(kinds: UsageKinds, m: ChartMetric, scope: UsageScope): { kind: UsageKind; value: number }[] {
+  return KINDS.filter((k) => scope === "all" || k === scope)
+    .map((kind) => ({ kind, value: metricValue(safeTotals(kinds[kind]), m) }))
+    .filter((r) => r.value > 0);
+}
+
+/** How many times each weekday (Mon=0) occurs in `[from, to]` — the hour tooltip's
+ *  "≈ N per Tuesday · 78 Tuesdays in range" line (D32). */
+export function weekdayCounts(from: number, to: number): [number, number, number, number, number, number, number] {
+  const out: [number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0];
+  if (!isDay(from) || !isDay(to) || from > to) return out;
+  const end = Math.min(to, from + MAX_SPAN_DAYS + 7);
+  for (let d = from; d <= end; d++) out[dowOf(d)]++;
+  return out;
 }
 
 /* ── calendar ───────────────────────────────────────────────────────────── */
 
-export interface CalendarCell {
+export interface CalendarCell extends KindSplit {
   day: number;
-  words: number;
   level: Level;
 }
 
@@ -422,25 +475,30 @@ export interface CalendarModel {
   counts: [number, number, number, number, number];
 }
 
-/** One cell per day of the window for the scoped kind, levelled by the quartiles of the
- *  window's active days. Cells outside `[from, to]` and malformed rows are ignored. */
-export function calendarModel(calendar: readonly UsageCalendarDay[] | undefined, scope: UsageScope, from: number, to: number): CalendarModel {
-  const byDay = new Map<number, number>();
-  for (const c of calendar ?? []) {
-    if (!c || !isDay(c.day) || c.day < from || c.day > to) continue;
-    const w = c[scope];
-    byDay.set(c.day, (byDay.get(c.day) ?? 0) + (typeof w === "number" && Number.isFinite(w) ? Math.max(0, w) : 0));
+/** One cell per day of the window for the scoped kind and the page's measure, levelled by
+ *  the quartiles of the window's active days. Reads the per-day SERIES (every measure per
+ *  kind) rather than the words-only calendar array. Points outside `[from, to]` and
+ *  malformed rows are ignored. */
+export function calendarModel(series: readonly UsageSeriesPoint[] | undefined, scope: UsageScope, from: number, to: number, metric: ChartMetric = "words"): CalendarModel {
+  const byDay = new Map<number, UsageKinds>();
+  for (const p of series ?? []) {
+    if (!p || !isDay(p.day) || p.day < from || p.day > to) continue;
+    const cur = byDay.get(p.day) ?? zeroKinds();
+    for (const k of ["all", ...KINDS] as const) addTotals(cur[k], safeTotals(p[k]));
+    byDay.set(p.day, cur);
   }
-  const breaks = quantileBreaks([...byDay.values()]);
+  const valueOf = (k: UsageKinds | undefined) => (k ? metricValue(k[scope], metric) : 0);
+  const breaks = quantileBreaks([...byDay.values()].map(valueOf));
   const cells: CalendarCell[] = [];
   const counts: CalendarModel["counts"] = [0, 0, 0, 0, 0];
   const start = Math.min(from, to);
   const end = Math.max(from, to);
   for (let d = start; d <= end && d - start < MAX_SPAN_DAYS + 7; d++) {
-    const words = byDay.get(d) ?? 0;
-    const level = levelOf(words, breaks);
+    const kinds = byDay.get(d) ?? zeroKinds();
+    const value = valueOf(kinds);
+    const level = levelOf(value, breaks);
     counts[level]++;
-    cells.push({ day: d, words, level });
+    cells.push({ day: d, kinds, value, level });
   }
   return { cells, breaks, counts };
 }
@@ -488,10 +546,9 @@ export function weekColumns(cells: readonly CalendarCell[]): CalendarColumn[] {
 
 /* ── hour grid ──────────────────────────────────────────────────────────── */
 
-export interface HourCell {
+export interface HourCell extends KindSplit {
   dow: number;
   hour: number;
-  words: number;
   level: Level;
 }
 
@@ -503,26 +560,47 @@ export interface HourModel {
   peak: HourCell | null;
 }
 
-/** The weekday × hour grid for the scoped kind, levelled by the quartiles of the active slots. */
-export function hourModel(hours: readonly UsageHourCell[] | undefined, scope: UsageScope): HourModel {
-  const grid = new Map<string, number>();
+/** A slot's per-kind totals: words sit flat on the slot (the original shape), the other
+ *  five measures are nested per-kind splits the backend added for its own busy-hours card. */
+function slotKinds(h: UsageHourCell): UsageKinds {
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, v) : 0);
+  const out = zeroKinds();
+  for (const k of ["all", ...KINDS] as const) {
+    out[k].words = num(h[k]);
+    out[k].audio_s = num(h.audio_s?.[k]);
+    out[k].proc_s = num(h.proc_s?.[k]);
+    out[k].sessions = num(h.sessions?.[k]);
+    out[k].requests = num(h.requests?.[k]);
+    out[k].errors = num(h.errors?.[k]);
+  }
+  return out;
+}
+
+/** The weekday × hour grid for the scoped kind and the page's measure, levelled by the
+ *  quartiles of the active slots. */
+export function hourModel(hours: readonly UsageHourCell[] | undefined, scope: UsageScope, metric: ChartMetric = "words"): HourModel {
+  const grid = new Map<string, UsageKinds>();
   for (const h of hours ?? []) {
     if (!h || !Number.isInteger(h.dow) || h.dow < 0 || h.dow > 6 || !Number.isInteger(h.hour) || h.hour < 0 || h.hour > 23) continue;
-    const w = h[scope];
-    const k = `${h.dow}:${h.hour}`;
-    grid.set(k, (grid.get(k) ?? 0) + (typeof w === "number" && Number.isFinite(w) ? Math.max(0, w) : 0));
+    const key = `${h.dow}:${h.hour}`;
+    const cur = grid.get(key) ?? zeroKinds();
+    const add = slotKinds(h);
+    for (const k of ["all", ...KINDS] as const) addTotals(cur[k], add[k]);
+    grid.set(key, cur);
   }
-  const breaks = quantileBreaks([...grid.values()]);
+  const valueOf = (k: UsageKinds | undefined) => (k ? metricValue(k[scope], metric) : 0);
+  const breaks = quantileBreaks([...grid.values()].map(valueOf));
   const counts: HourModel["counts"] = [0, 0, 0, 0, 0];
   let peak: HourCell | null = null;
   const rows: HourCell[][] = [];
   for (let d = 0; d < 7; d++) {
     const row: HourCell[] = [];
     for (let h = 0; h < 24; h++) {
-      const words = grid.get(`${d}:${h}`) ?? 0;
-      const cell: HourCell = { dow: d, hour: h, words, level: levelOf(words, breaks) };
+      const kinds = grid.get(`${d}:${h}`) ?? zeroKinds();
+      const value = valueOf(kinds);
+      const cell: HourCell = { dow: d, hour: h, kinds, value, level: levelOf(value, breaks) };
       counts[cell.level]++;
-      if (words > 0 && (!peak || words > peak.words)) peak = cell;
+      if (value > 0 && (!peak || value > peak.value)) peak = cell;
       row.push(cell);
     }
     rows.push(row);

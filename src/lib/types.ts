@@ -752,11 +752,18 @@ export interface UsageCalendarDay extends UsageKindWords {
   day: number;
 }
 
-/** One weekday × hour slot's words per kind over the window, in the caller's zone.
+/** One weekday × hour slot over the window, in the caller's zone. Words per kind sit flat
+ *  (the original shape); the other five measures are nested per-kind splits the backend
+ *  added for its own busy-hours card (absent on older servers → read as zero).
  *  `dow` 0 = Monday … 6 = Sunday. Sparse. */
 export interface UsageHourCell extends UsageKindWords {
   dow: number;
   hour: number;
+  audio_s?: Partial<UsageKindWords>;
+  proc_s?: Partial<UsageKindWords>;
+  sessions?: Partial<UsageKindWords>;
+  requests?: Partial<UsageKindWords>;
+  errors?: Partial<UsageKindWords>;
 }
 
 export interface UsageStreak {

@@ -3,6 +3,13 @@ import {
   bucketMode,
   bucketize,
   calendarModel,
+  CHART_METRICS,
+  isDurationMetric,
+  METRIC_LABEL,
+  metricValue,
+  parseMetric,
+  presentKinds,
+  weekdayCounts,
   dayToIso,
   densifyKinds,
   dowOf,
@@ -33,7 +40,7 @@ import {
   timeSavedS,
   zeroKinds,
 } from "./usageDerive";
-import type { UsageCalendarDay, UsageSeriesPoint, UsageStage } from "./types";
+import type { UsageHourCell, UsageSeriesPoint, UsageStage } from "./types";
 
 const T = (words = 0, sessions = 0, audio_s = 0) => ({ sessions, requests: sessions, errors: 0, words, audio_s, proc_s: 0 });
 const pt = (day: number, dict = 0, file = 0): UsageSeriesPoint => ({
@@ -126,21 +133,47 @@ describe("usageDerive", () => {
     expect(legendRanges([60, 400, 2100], String)).toEqual(["0", "1–60", "60–400", "400–2100", "2100+"]);
   });
 
-  it("calendarModel: one cell per window day for the scoped kind, quantile-levelled, counts per level", () => {
+  it("calendarModel: one cell per window day for the scoped kind and measure, quantile-levelled, per-kind split kept", () => {
     const today = 20_000;
-    const row = (day: number, dictation: number, file = 0): UsageCalendarDay => ({ day, all: dictation + file, dictation, file, url: 0, text: 0 });
-    const cal = [row(today, 1000, 5), row(today - 1, 100), row(today - 2, 400, 50), row(today - 3, 600), row(today - 4, 800), row(today - 90, 5)];
+    const cal = [pt(today, 1000, 5), pt(today - 1, 100), pt(today - 2, 400, 50), pt(today - 3, 600), pt(today - 4, 800), pt(today - 90, 5)];
     const m = calendarModel(cal, "all", today - 4, today);
     expect(m.cells.map((c) => c.day)).toEqual([today - 4, today - 3, today - 2, today - 1, today]);
     expect(m.breaks).toEqual([100, 450, 600]);
     expect(m.cells.map((c) => c.level)).toEqual([4, 3, 2, 1, 4]);
     expect(m.counts).toEqual([0, 1, 1, 1, 2]);
+    // The split rides on the cell (D33): the tooltip lists the kinds present.
+    expect(m.cells[2].kinds.file.words).toBe(50);
+    expect(presentKinds(m.cells[2].kinds, "words", "all")).toEqual([{ kind: "dictation", value: 400 }, { kind: "file", value: 50 }]);
+    expect(presentKinds(m.cells[2].kinds, "words", "file")).toEqual([{ kind: "file", value: 50 }]);
     // Scoped to files: only two active days; the rest are zero cells.
     const f = calendarModel(cal, "file", today - 4, today);
-    expect(f.cells.map((c) => c.words)).toEqual([0, 0, 50, 0, 5]);
+    expect(f.cells.map((c) => c.value)).toEqual([0, 0, 50, 0, 5]);
     expect(f.counts[0]).toBe(3);
+    // Another measure levels on that measure: sessions (pt gives one per kind with words).
+    const sess = calendarModel(cal, "all", today - 4, today, "sessions");
+    expect(sess.cells.map((c) => c.value)).toEqual([1, 1, 2, 1, 2]);
     // Malformed rows never throw.
-    expect(calendarModel([{ day: -1 } as UsageCalendarDay, null as unknown as UsageCalendarDay], "all", 1, 3).cells).toHaveLength(3);
+    expect(calendarModel([{ day: -1 } as UsageSeriesPoint, null as unknown as UsageSeriesPoint], "all", 1, 3).cells).toHaveLength(3);
+  });
+
+  it("measures: six backend keys, parse falls back to words, durations are the two `_s` keys", () => {
+    expect(CHART_METRICS).toEqual(["audio_s", "words", "sessions", "requests", "proc_s", "errors"]);
+    expect(parseMetric("proc_s")).toBe("proc_s");
+    expect(parseMetric("minutes")).toBe("words");
+    expect(parseMetric(null)).toBe("words");
+    expect(isDurationMetric("audio_s")).toBe(true);
+    expect(isDurationMetric("sessions")).toBe(false);
+    expect(metricValue({ ...T(10, 2), errors: -3 }, "errors")).toBe(0);
+    expect(metricValue(T(10, 2), "sessions")).toBe(2);
+    expect(METRIC_LABEL.proc_s).toBe("Processing Time");
+    expect(legendRanges([60, 400, 2100], (n) => `${n}s`)).toEqual(["0", "1s–60s", "60s–400s", "400s–2100s", "2100s+"]);
+  });
+
+  it("weekdayCounts: occurrences per weekday in a window (Mon = 0)", () => {
+    // Day 20_000 is a Friday: Fri..Thu is one of each; Fri..Fri two Fridays.
+    expect(weekdayCounts(20_000, 20_006)).toEqual([1, 1, 1, 1, 1, 1, 1]);
+    expect(weekdayCounts(20_000, 20_007)[4]).toBe(2);
+    expect(weekdayCounts(5, 1)).toEqual([0, 0, 0, 0, 0, 0, 0]);
   });
 
   it("weekColumns: Monday-first columns with leading blanks and month labels", () => {
@@ -156,22 +189,28 @@ describe("usageDerive", () => {
     expect(cols[0].month).not.toBeNull();
   });
 
-  it("hourModel: 7×24 grid for the scoped kind with a peak", () => {
-    const m = hourModel(
-      [
-        { dow: 1, hour: 10, all: 4200, dictation: 4000, file: 200, url: 0, text: 0 },
-        { dow: 4, hour: 15, all: 300, dictation: 300, file: 0, url: 0, text: 0 },
-        { dow: 9, hour: 10, all: 1, dictation: 1, file: 0, url: 0, text: 0 }, // bogus dow
-      ],
-      "all",
-    );
+  it("hourModel: 7×24 grid for the scoped kind and measure with a peak; nested splits feed the other measures", () => {
+    const hours: UsageHourCell[] = [
+      { dow: 1, hour: 10, all: 4200, dictation: 4000, file: 200, url: 0, text: 0, sessions: { all: 3, dictation: 2, file: 1 }, audio_s: { all: 1500, dictation: 300, file: 1200 } },
+      { dow: 4, hour: 15, all: 300, dictation: 300, url: 0, text: 0, file: 0 },
+      { dow: 9, hour: 10, all: 1, dictation: 1, file: 0, url: 0, text: 0 }, // bogus dow
+    ];
+    const m = hourModel(hours, "all");
     expect(m.rows).toHaveLength(7);
     expect(m.rows[1]).toHaveLength(24);
-    expect(m.peak).toMatchObject({ dow: 1, hour: 10, words: 4200 });
+    expect(m.peak).toMatchObject({ dow: 1, hour: 10, value: 4200 });
     expect(m.rows[1][10].level).toBe(4);
+    expect(m.rows[1][10].kinds.file.words).toBe(200);
     expect(m.rows[4][15].level).toBeGreaterThan(0);
     expect(m.counts[0]).toBe(168 - 2);
     expect(hourModel(undefined, "file").peak).toBeNull();
+    // Duration comes from the nested split; a slot without it reads as zero.
+    const a = hourModel(hours, "all", "audio_s");
+    expect(a.peak).toMatchObject({ dow: 1, hour: 10, value: 1500 });
+    expect(a.rows[4][15].value).toBe(0);
+    expect(presentKinds(a.rows[1][10].kinds, "audio_s", "all")).toEqual([{ kind: "dictation", value: 300 }, { kind: "file", value: 1200 }]);
+    // Scoped to files, in sessions.
+    expect(hourModel(hours, "file", "sessions").peak).toMatchObject({ dow: 1, hour: 10, value: 1 });
   });
 
   it("bucketing: days ≤ 120, ISO weeks ≤ 730, months beyond; sums per bucket", () => {
@@ -197,10 +236,12 @@ describe("usageDerive", () => {
 
   it("page query: URL parse/format round trip, wire form, window resolution", () => {
     const get = (o: Record<string, string>) => (k: string) => o[k] ?? null;
-    expect(parsePageQuery(get({}))).toEqual({ scope: "all", query: { range: "30", with: [] } });
+    expect(parsePageQuery(get({}))).toEqual({ scope: "all", query: { range: "30", with: [] }, metric: "words" });
+    expect(parsePageQuery(get({ metric: "sessions" })).metric).toBe("sessions");
+    expect(pageQueryParams("all", { range: "30", with: [] }, "audio_s")).toEqual({ metric: "audio_s" });
     expect(parsePageQuery(get({ scope: "file" })).scope).toBe("file"); // the older deep link
     const p = parsePageQuery(get({ kind: "url", range: "custom", from: "100", to: "200", with: "vad,translating,bogus" }));
-    expect(p).toEqual({ scope: "url", query: { range: "custom", from: 100, to: 200, with: ["translating", "vad"] } });
+    expect(p).toEqual({ scope: "url", query: { range: "custom", from: 100, to: 200, with: ["translating", "vad"] }, metric: "words" });
     expect(pageQueryParams(p.scope, p.query)).toEqual({ kind: "url", range: "custom", from: "100", to: "200", with: "translating,vad" });
     // A custom range without a usable span falls back.
     expect(parsePageQuery(get({ range: "custom", from: "200", to: "100" })).query.range).toBe("30");

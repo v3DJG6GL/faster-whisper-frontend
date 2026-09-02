@@ -4,14 +4,16 @@
 // dictate panels. Reached from the sidebar, the "View statistics →" link on Home, or a
 // Home small multiple (`?kind=file` preselects that kind). The filters live in the URL
 // (`?kind=&with=&range=&from=&to=`) so a reload or a deep link lands on the same view, and
-// in the store (`usageViewQuery`) so the controller fetches the matching document.
+// in the store (`usageViewQuery`) so the controller fetches the matching document. The kind
+// and the measure (`?kind=`, `?metric=`) are client-side: they change what the page shows of
+// the document it already has, never the fetch.
 
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { StatisticsView } from "@/components/UsageStats";
 import { PageHeader } from "@/components/ui";
 import { useApp } from "@/lib/store";
-import { pageQueryParams, parsePageQuery, type UsagePageQuery, type UsageScope } from "@/lib/usageDerive";
+import { pageQueryParams, parsePageQuery, type ChartMetric, type UsagePageQuery, type UsageScope } from "@/lib/usageDerive";
 
 export default function Statistics() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -24,19 +26,20 @@ export default function Statistics() {
   setParams.current = setSearchParams;
   useEffect(() => {
     setUsageViewQuery(state.query);
-    setParams.current(pageQueryParams(state.scope, state.query), { replace: true });
+    setParams.current(pageQueryParams(state.scope, state.query, state.metric), { replace: true });
   }, [state, setUsageViewQuery]);
   const setScope = (scope: UsageScope) => setState((s) => ({ ...s, scope }));
   const setQuery = (query: UsagePageQuery) => setState((s) => ({ ...s, query }));
+  const setMetric = (metric: ChartMetric) => setState((s) => ({ ...s, metric }));
   return (
     <div className="page page-cards">
       <PageHeader eyebrow="faster-whisper · usage" title="Statistics">
-        Everything you’ve dictated, transcribed and translated — by kind, with the stages each run used, how dictations
-        landed, and your rhythm over any range. One filter bar; every panel follows it.
+        Everything you’ve dictated, transcribed and translated — by kind, with the stages each session used, how
+        dictations landed, and your rhythm over any range. One filter bar and one measure; every panel follows them.
       </PageHeader>
 
       <div className="mt-8">
-        <StatisticsView scope={state.scope} onScope={setScope} query={state.query} onQuery={setQuery} />
+        <StatisticsView scope={state.scope} onScope={setScope} query={state.query} onQuery={setQuery} metric={state.metric} onMetric={setMetric} />
       </div>
     </div>
   );
