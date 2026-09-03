@@ -885,8 +885,8 @@ export default function Dictionary() {
             <BookA className="size-7 text-accent" aria-hidden /> {screenTitle("dictionary")}
           </h1>
           <p className="mt-2 text-[13.5px] text-dim">
-            Text rules your server applies to every transcription — replacements, word mappings,
-            punctuation tidy-up. Edit the ones your account is allowed to change.
+            Dictation rules a <strong className="font-semibold text-text">faster-whisper-backend</strong> server applies to every transcription,
+            including replacements, word mappings, punctuation, and tidying up.
           </p>
         </div>
       </header>

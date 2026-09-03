@@ -323,7 +323,9 @@ export default function Dashboard() {
           <div className="font-mono text-[11px] uppercase tracking-label text-accent">{screenEyebrow("dashboard")}</div>
           <HeroTitle />
           <p className="mt-3 text-[14px] text-dim">
-            Push-to-talk or hands-free. Audio streams to your own faster-whisper backend and the text appears wherever your cursor is.
+            Choose between push-to-talk and hands-free. Audio streams to your <strong className="font-semibold text-text">faster-whisper-backend</strong> server or any OpenAI API-compatible whisper server.
+            <br />
+            The result appears wherever your cursor is.
           </p>
         </div>
       </div>

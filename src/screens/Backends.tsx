@@ -855,8 +855,9 @@ export default function Backends() {
         addLabel="Add backend"
         onAdd={() => setFlow({ step: "connect" })}
       >
-        A backend is a connection to a transcription server, with its own model, default
-        language, and endpoint. Profiles point at one.
+        A backend that transcribes dictation and, with a <strong className="font-semibold text-text">faster-whisper-backend</strong> server,
+        also transcribes audio or video files, links to audio or video content, or text files,
+        and optionally even translates and diarises them.
       </ListScreenHeader>
 
       {flow ? (

@@ -753,8 +753,10 @@ export default function Profiles() {
         addLabel="Add profile"
         onAdd={startAdd}
       >
-        Each profile is a way to dictate: push-to-talk or hands-free, its own shortcut and backend,
-        with optional per-profile language and prompt.
+        Each profile allows you to dictate, push-to-talk or hands-free, with its own shortcut and backend,
+        and you can choose a different language and prompt for each profile, and — when using the{" "}
+        <strong className="font-semibold text-text">faster-whisper-backend</strong> server — you can even configure options to automatically translate
+        the transcriptions into your desired language!
       </ListScreenHeader>
 
       {draft ? (
