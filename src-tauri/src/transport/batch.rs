@@ -482,7 +482,7 @@ fn validate_media_url(source_url: &str) -> anyhow::Result<()> {
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         bail!("only http(s) links are supported");
     }
-    if parsed.host_str().is_none_or(|h| h.is_empty()) {
+    if parsed.host_str().map_or(true, |h| h.is_empty()) {
         bail!("the link has no host");
     }
     Ok(())

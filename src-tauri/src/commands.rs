@@ -442,13 +442,15 @@ pub async fn transcribe_file(
     // Per-run stage options (translate / diarization). None ≡ all absent.
     options: Option<transport::batch::BatchOptions>,
 ) -> Result<transport::batch::BatchResult, String> {
+    // Capture the epoch BEFORE the (potentially slow) keyring resolve so a
+    // cancel that lands during the D-Bus round-trip is never missed.
+    let epoch = FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
     let key = resolve_key(api_key, backend_id);
     // Cancellation: cancel_file_transcription bumps the epoch; this select
     // polls it and DROPS the reqwest future on a change, which closes the
     // connection (the server cancels its handler task on the disconnect —
     // the in-flight decode thread finishes server-side, but the request,
     // its semaphore slot and its progress entry all end).
-    let epoch = FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
     let fut = transport::batch::transcribe(
         &server_url,
         key.as_deref(),
@@ -549,8 +551,8 @@ pub async fn transcribe_url(
     source_url: String,
     options: Option<transport::batch::BatchOptions>,
 ) -> Result<transport::batch::BatchResult, String> {
-    let key = resolve_key(api_key, backend_id);
     let epoch = FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
+    let key = resolve_key(api_key, backend_id);
     let fut = transport::batch::transcribe_url(
         &server_url,
         key.as_deref(),
@@ -891,7 +893,11 @@ pub async fn read_backend_keys(
 #[tauri::command]
 pub fn export_settings_file(path: String, envelope: serde_json::Value) -> Result<(), String> {
     let path = PathBuf::from(path);
-    let tmp = path.with_extension("json.tmp");
+    let tmp = {
+        let mut t = path.as_os_str().to_owned();
+        t.push(".tmp");
+        PathBuf::from(t)
+    };
     let text =
         serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
     // Owner-only, and never leave the tmp behind: with "include API keys" ticked this envelope

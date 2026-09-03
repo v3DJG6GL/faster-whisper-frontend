@@ -2861,6 +2861,7 @@ export function deleteFailureMessage(r: { ok: boolean; status: number; error?: s
 /** For the Sync tab's "Delete server copy": forget local bookkeeping so the
  *  next push recreates from version 0. */
 export async function resetSyncState(): Promise<void> {
+  supersede();
   state = { deviceId: state.deviceId, serverBackendId: state.serverBackendId };
   await clearSnapshotSecrets(); // no snapshot left — drop its stashed keys with it
   await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
