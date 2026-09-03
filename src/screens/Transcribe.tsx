@@ -872,6 +872,7 @@ export default function Transcribe() {
     <div>
       <PageHeader eyebrow={screenEyebrow("transcribe")} title={screenTitle("transcribe")} icon={AudioLines}>
         Add audio or video files, links to audio or video content, or text files, then transcribe, translate and diarize them.
+        <br />A <strong className="font-semibold text-text">faster-whisper-backend</strong> server is needed.
       </PageHeader>
       <div className="page-content flex justify-start">
       <Segmented
