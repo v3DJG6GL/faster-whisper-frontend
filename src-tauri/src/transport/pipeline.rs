@@ -55,11 +55,8 @@ pub struct PipelineFetch {
 pub struct PipelineSave {
     pub ok: bool,
     pub status: u16,
-    #[serde(default)]
     pub saved: Vec<String>,
-    #[serde(default)]
     pub conflicts: serde_json::Value,
-    #[serde(default)]
     pub requires_restart: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errors: Option<serde_json::Value>,

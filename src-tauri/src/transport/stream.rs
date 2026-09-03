@@ -534,7 +534,7 @@ pub async fn run<F>(
             while let Some(chunk) = pcm_rx.recv().await {
                 let bytes = resampler.push(&chunk);
                 if !bytes.is_empty() {
-                    if params.save_dir.is_some() {
+                    if saving {
                         saved.extend_from_slice(&bytes);
                     }
                     let _ = write.send(Message::Binary(bytes.into())).await;
@@ -545,7 +545,7 @@ pub async fn run<F>(
             // (or the saved recording). The trailing zeros resample to a soft decay, not a click.
             let tail = resampler.flush();
             if !tail.is_empty() {
-                if params.save_dir.is_some() {
+                if saving {
                     saved.extend_from_slice(&tail);
                 }
                 let _ = write.send(Message::Binary(tail.into())).await;

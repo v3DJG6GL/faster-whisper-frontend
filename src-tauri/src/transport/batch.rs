@@ -320,7 +320,7 @@ pub async fn progress(
         model: parsed.model.map(|s| super::bounded_server_text(&s, 128)),
         device: parsed.device.map(|s| super::bounded_server_text(&s, 32)),
         compute: parsed.compute.map(|s| super::bounded_server_text(&s, 32)),
-        // Only two stage names are ever legitimate here — cap accordingly.
+        // ~4 stage names in the protocol; take(4) is defensive.
         skipped: parsed.skipped.map(|v| {
             v.into_iter()
                 .take(4)

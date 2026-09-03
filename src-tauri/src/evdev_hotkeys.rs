@@ -226,8 +226,6 @@ mod imp {
             tracing::info!("[evdev] no mappable chords; not starting");
             return; // guard drops → lock released; *g stays None (no listener)
         }
-        // Fixed for the life of the listener; each reader gets its own Engine
-        // (chord-family state is per-keyboard, like the held-key set).
         let mut tasks = Vec::new();
         for (path, dev) in evdev::enumerate() {
             if !is_keyboard(&dev) {
