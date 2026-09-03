@@ -159,11 +159,14 @@ pub fn start(g: &AtspiGuard) {
         if *started {
             return;
         }
-        *started = true;
         let snapshot = g.snapshot.clone();
-        let _ = std::thread::Builder::new()
+        match std::thread::Builder::new()
             .name("win-focus".into())
-            .spawn(move || win_focus::run(snapshot));
+            .spawn(move || win_focus::run(snapshot))
+        {
+            Ok(_) => *started = true,
+            Err(e) => tracing::warn!("[atspi] win-focus thread spawn failed: {e}"),
+        }
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {

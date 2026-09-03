@@ -234,14 +234,14 @@ export function ConfirmLeave({
 // length — and `languageLabel` returns an unknown code unchanged. Unbounded here, one
 // field pushed the Test/Edit/Remove controls off the card it labels.
 export const BADGE_BASE =
-  "inline-block align-bottom rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider max-w-[16ch] truncate";
+  "inline-block align-bottom rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider truncate";
 
 /** A small uppercase pill. `accent` = highlighted, `warn` = caution, default = dim. */
 export function Badge({ children, tone }: { children: ReactNode; tone?: "accent" | "dim" | "warn" }) {
   return (
     <span
       className={cn(
-        BADGE_BASE,
+        BADGE_BASE, "max-w-[16ch]",
         tone === "accent"
           ? "bg-accent-soft text-accent"
           : tone === "warn"

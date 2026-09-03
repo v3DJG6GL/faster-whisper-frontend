@@ -640,9 +640,11 @@ fn paste(
         // because no chord was pressed on this arm — the caller re-sends, and re-sending cannot
         // duplicate text that was never typed. (The `set_text` above went through a local
         // `Clipboard` that is dropped on return, so it is not a fallback.)
-        if let Err(e) = set_clipboard_persistent(text) {
-            tracing::warn!("[clip] paste: clipboard divert failed, reporting nothing written: {e}");
-            return Ok(Landed::NothingWritten);
+        if !remote_target {
+            if let Err(e) = set_clipboard_persistent(text) {
+                tracing::warn!("[clip] paste: clipboard divert failed, reporting nothing written: {e}");
+                return Ok(Landed::NothingWritten);
+            }
         }
         return Ok(Landed::OnClipboard);
     }

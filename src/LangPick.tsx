@@ -134,7 +134,7 @@ export default function LangPick() {
     const base = seed.allowed?.length
       ? seed.allowed
       : LANGUAGES.filter((l) => l.value !== "auto").map((l) => l.value);
-    return base.filter((c) => typeof c === "string" && c.length <= 64 && c !== seed.source);
+    return [...new Set(base.filter((c) => typeof c === "string" && c.length <= 64 && c !== seed.source))];
   }, [seed.allowed, seed.source]);
 
   // Recents first, then everything else. Grouped rather than merged: a flat list ranked by

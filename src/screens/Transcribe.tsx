@@ -1,6 +1,6 @@
 import { ownProp } from "@/lib/own";
 import { screenEyebrow, screenTitle } from "@/lib/screens";
-import { useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Link } from "react-router-dom";
 import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, Link2, AudioLines } from "lucide-react";
 import { useApp } from "@/lib/store";
@@ -649,17 +649,18 @@ export default function Transcribe() {
   // Pixel width of the timeline strip — the axis-label row assignment (top
   // row vs stagger row) needs real segment widths. Measured after every
   // commit (cheap; setState only on change) plus on window resize.
-  const stripBoxRef = useRef<HTMLDivElement | null>(null);
+  const stripRoRef = useRef<ResizeObserver | null>(null);
   const [stripW, setStripW] = useState(640);
-  useEffect(() => {
-    const el = stripBoxRef.current;
+  useEffect(() => () => { stripRoRef.current?.disconnect(); }, []);
+  const stripBoxRef = useCallback((el: HTMLDivElement | null) => {
+    stripRoRef.current?.disconnect();
     if (!el) return;
     const ro = new ResizeObserver(([entry]) => {
       const w = entry.contentRect.width;
       if (w > 0) setStripW(w);
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    stripRoRef.current = ro;
   }, []);
 
   const doneCount = queue.filter((it) => it.status === "done").length;

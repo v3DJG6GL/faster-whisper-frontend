@@ -434,9 +434,13 @@ mod win_hover {
         VISIBLE.store(true, Ordering::SeqCst);
         if !POLLER.swap(true, Ordering::SeqCst) {
             let app = app.clone();
-            let _ = std::thread::Builder::new()
+            if std::thread::Builder::new()
                 .name("chip-hover-poll".into())
-                .spawn(move || run(app));
+                .spawn(move || run(app))
+                .is_err()
+            {
+                POLLER.store(false, Ordering::SeqCst);
+            }
         }
     }
 

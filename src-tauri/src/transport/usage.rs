@@ -34,7 +34,7 @@ pub struct UsageOutcomeResult {
     pub status: String,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct OutcomeResponse {
     #[serde(default)]
     results: Vec<UsageOutcomeResult>,
