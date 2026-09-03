@@ -857,7 +857,7 @@ export default function Backends() {
       >
         A backend that transcribes dictation and, with a <strong className="font-semibold text-text">faster-whisper-backend</strong> server,
         also transcribes audio or video files, links to audio or video content, or text files,
-        and optionally even translates and diarises them.
+        and optionally even translates and diarizes them.
       </ListScreenHeader>
 
       {flow ? (
