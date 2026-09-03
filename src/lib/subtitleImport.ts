@@ -214,7 +214,11 @@ function parseJsonExport(body: string): ImportedText {
     }
   }
   if (segments.length === 0 && typeof obj.text === "string" && obj.text.trim()) {
-    return parsePlainText(obj.text);
+    const plain = parsePlainText(obj.text);
+    if (typeof obj.language === "string" && obj.language.trim()) {
+      (plain as { language?: string }).language = safeDisplayText(obj.language, 64) || undefined;
+    }
+    return plain;
   }
   return {
     segments,

@@ -17,5 +17,5 @@ export function deriveChipTag(name: string): string {
  *  re-laid-out several times a second. Display only; the stored tag is untouched. */
 export function chipTagFor(profile: { name: string; tag?: string }): string {
   const t = typeof profile.tag === "string" ? profile.tag.trim() : "";
-  return t ? [...t].slice(0, 10).join("") : deriveChipTag(profile.name);
+  return t ? [...t].slice(0, 10).join("").trimEnd() : deriveChipTag(profile.name);
 }

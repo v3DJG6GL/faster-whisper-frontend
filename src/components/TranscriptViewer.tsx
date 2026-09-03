@@ -71,7 +71,7 @@ function mediaMime(path: string): string {
     wma: "audio/x-ms-wma", mp4: "video/mp4", mkv: "video/x-matroska",
     webm: "video/webm", mov: "video/quicktime",
   };
-  return map[ext] ?? "application/octet-stream";
+  return Object.prototype.hasOwnProperty.call(map, ext) ? map[ext] : "application/octet-stream";
 }
 
 /** How much of a returned transcript to lay out before the user asks for the rest.
@@ -117,9 +117,6 @@ type ContractRow = {
   onToggle?: () => void;
 };
 
-/** Distinct speaker labels of a result, in first-appearance order — the
- *  export module owns the implementation (one resolver for viewer + exports). */
-export { speakerOrder as speakersOf } from "@/lib/transcriptExport";
 
 type EffSegment = {
   start: number;

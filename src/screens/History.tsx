@@ -943,7 +943,7 @@ export default function History() {
             {visible.length} match{visible.length === 1 ? "" : "es"} in {segLabel} —{" "}
             {hiddenMatches} more outside {segLabel}
           </span>
-          <Button variant="ghost" size="sm" onClick={() => setSegment("all")}>
+          <Button variant="ghost" size="sm" onClick={() => { setSegment("all"); setAppFilter(null); }}>
             Show all
           </Button>
         </div>
@@ -961,7 +961,7 @@ export default function History() {
             : `No ${segment === "all" ? "entries" : segLabel}${appFilter ? " for this app" : ""} yet.`}
           <div className="mt-3 flex items-center justify-center gap-2">
             {query.trim() && segment !== "all" && searched.length > visible.length && (
-              <Button variant="default" size="sm" onClick={() => setSegment("all")}>
+              <Button variant="default" size="sm" onClick={() => { setSegment("all"); setAppFilter(null); }}>
                 Show all types · {searched.length}
               </Button>
             )}

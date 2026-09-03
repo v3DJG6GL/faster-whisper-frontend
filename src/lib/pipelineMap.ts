@@ -76,7 +76,12 @@ export const nextRowId = (): number => _rowId++;
 export function mapRowsFromRule(rule: PipelineRule): MapRow[] {
   return Object.entries(rule.map ?? {})
     .map(([k, v]) => ({ id: nextRowId(), k, v }))
-    .sort((a, b) => (rule.map_meta?.[b.k] ?? 0) - (rule.map_meta?.[a.k] ?? 0));
+    .sort((a, b) => {
+      const meta = rule.map_meta;
+      const tb = meta && Object.prototype.hasOwnProperty.call(meta, b.k) ? (meta[b.k] as number) : 0;
+      const ta = meta && Object.prototype.hasOwnProperty.call(meta, a.k) ? (meta[a.k] as number) : 0;
+      return tb - ta;
+    });
 }
 
 /** Editor rows → the canonical `{ map }` body sent on PATCH. Keeps each key
