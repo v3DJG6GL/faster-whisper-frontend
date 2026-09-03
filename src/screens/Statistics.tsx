@@ -37,8 +37,9 @@ export default function Statistics() {
   return (
     <div className="page page-dense">
       <PageHeader eyebrow={screenEyebrow("statistics")} title={screenTitle("statistics")} icon={BarChart3}>
-        Everything you’ve dictated, transcribed and translated — by kind, with the stages each session used, how
-        dictations landed, and your rhythm over any range. One filter bar and one measure; every panel follows them.
+        Everything you've dictated, transcribed, translated, or diarized.
+        <br />
+        Filter them by time range and kind, with the stages each session used.
       </PageHeader>
 
       <div className="page-content">
