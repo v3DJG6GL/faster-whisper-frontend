@@ -40,7 +40,6 @@ import {
   fmtCompact,
   fmtDuration,
   fmtDurationAxis,
-  fmtDurationExact,
   fmtDateTick,
   fmtDateFull,
   localTodayDay,
@@ -86,7 +85,6 @@ import {
   DOW_LONG,
   type Rhythm,
   resolveWindow,
-  runsBreakdown,
   safeTotals,
   scopeTotals,
   spanPresets,
@@ -225,9 +223,16 @@ interface TileSpec {
   key: string;
   label: string;
   icon: typeof Type;
-  value: string;
   tone: "dict" | "ok" | "warn";
-  sub: ReactNode;
+  /** The ledger's three rows (D53 C): today, the page's range, and the per-day average. */
+  today: string;
+  range: string;
+  rangeLabel: string;
+  perDay: string;
+  /** Sessions only (D56 K1): the range's sessions per kind, a stacked bar + legend. */
+  split?: { kind: UsageKind; value: number }[];
+  /** One quiet line under the rows (Time saved: the spoken-vs-typed rate). */
+  note?: ReactNode;
   spark: number[];
   sparkColor: string;
   /** The measure this tile mirrors (D35 A): clicking it measures the page in it. */
@@ -236,53 +241,63 @@ interface TileSpec {
   wide?: boolean;
 }
 
+/** A per-day average: durations as durations, small counts with one decimal ("0.3"),
+ *  larger ones compact ("1.8k"). */
+function fmtPerDay(m: ChartMetric | "saved", v: number): string {
+  if (m === "audio_s" || m === "proc_s" || m === "saved") return fmtDuration(v);
+  return v > 0 && v < 10 ? (Math.round(v * 10) / 10).toLocaleString("en-US") : fmtCompact(v);
+}
+
 const Num = ({ children }: { children: ReactNode }) => <span className="font-num text-text">{children}</span>;
-/** The tile sub-line's "today" eyebrow (the only uppercased token on the line). */
-const Today = () => <span className="text-[10px] uppercase tracking-label text-faint">today</span>;
 
 const TILE_ICON: Record<ChartMetric, typeof Type> = { audio_s: Clock, words: Type, sessions: Mic, requests: Activity, proc_s: Cpu, errors: TriangleAlert };
 
 /** The tile row for a scope: one tile per measure in measure order (Duration · Words ·
  *  Sessions · Requests · Processing Time · Errors), then Time saved, which is dictation-only
- *  by definition (the server's figure is too), whatever the scope. */
-function tileSpecs(stats: UsageStats, dense: readonly UsageKinds[], scope: UsageScope, withSaved: boolean, windowWord = "total"): TileSpec[] {
+ *  by definition (the server's figure is too), whatever the scope. Each tile is a ledger
+ *  (D53 C): today, the range (`rangeLabel`, `days` calendar days) and the per-day average;
+ *  `dense` feeds the sparkline. */
+function tileSpecs(stats: UsageStats, dense: readonly UsageKinds[], scope: UsageScope, withSaved: boolean, rangeLabel: string, days: number): TileSpec[] {
   const today = scopeTotals(stats.today, scope);
   const total = scopeTotals(stats.total, scope);
   const last30 = dense.slice(-30);
   const spark = (f: (p: UsageKinds) => number) => last30.map(f);
   const wpm = Math.round(stats.dictation?.wpm ?? 0);
+  const per = (m: ChartMetric | "saved", v: number) => (days > 0 ? `≈ ${fmtPerDay(m, v / days)} per day` : "—");
   const tiles: TileSpec[] = CHART_METRICS.map((m) => {
     const dur = isDurationMetric(m);
-    const sub =
-      m === "sessions" && scope === "all" ? (
-        <><Today /> · <Num>{runsBreakdown(stats.today)}</Num></>
-      ) : m === "errors" ? (
-        <><Today /> · <Num>{fmtFull(total.errors)}</Num> {windowWord}</>
-      ) : (
-        <><Today /> · <Num>{dur ? fmtDuration(metricValue(total, m)) : fmtCompact(metricValue(total, m))}</Num> {windowWord}</>
-      );
+    // Durations round to the tile ("5h 59m", "47s"): the exact form ("5h 59m 03s") needs a
+    // wider column than the ledger has, and the seconds are noise at that scale.
+    const fmt = (v: number) => (dur ? fmtDuration(v) : fmtFull(v));
+    const split =
+      m === "sessions" && scope === "all"
+        ? KINDS.map((kind) => ({ kind, value: safeTotals(stats.total?.[kind]).sessions })).filter((r) => r.value > 0)
+        : undefined;
     return {
       key: m,
       metric: m,
       label: METRIC_LABEL[m],
       icon: TILE_ICON[m],
-      value: dur ? fmtDurationExact(metricValue(today, m)) : fmtFull(metricValue(today, m)),
       tone: m === "errors" ? (today.errors > 0 ? "warn" : "ok") : "dict",
-      sub,
+      today: fmt(metricValue(today, m)),
+      range: fmt(metricValue(total, m)),
+      rangeLabel,
+      perDay: per(m, metricValue(total, m)),
+      split,
       spark: spark((p) => metricValue(scopeTotals(p, scope), m)),
       sparkColor: m === "errors" ? "var(--c-faint)" : "var(--c-accent)",
     };
   });
   if (withSaved) {
     const d = safeTotals(stats.today?.dictation);
+    const saved = stats.time_saved_s ?? 0;
     tiles.push({
-      key: "saved", label: "Time saved", icon: Timer, value: fmtTimeSaved(timeSavedS(d.words, d.audio_s)), tone: "dict", wide: true,
-      sub: (
-        <>
-          <Today /> · <Num>{fmtTimeSaved(stats.time_saved_s ?? 0)}</Num> {windowWord} · dictation only
-          {wpm > 0 ? <> · <Num>{wpm} wpm</Num> spoken instead of <Num>{TYPING_WPM} wpm</Num> typed</> : <> · vs typing at <Num>{TYPING_WPM} wpm</Num></>}
-        </>
-      ),
+      key: "saved", label: "Time saved", icon: Timer, tone: "dict", wide: true,
+      today: fmtTimeSaved(timeSavedS(d.words, d.audio_s)),
+      range: fmtTimeSaved(saved),
+      rangeLabel,
+      perDay: `${per("saved", saved)} · dictation only`,
+      note: wpm > 0 ? <><Num>{wpm} wpm</Num> spoken instead of <Num>{TYPING_WPM} wpm</Num> typed</> : <>vs typing at <Num>{TYPING_WPM} wpm</Num></>,
       spark: spark((p) => timeSavedS(safeTotals(p.dictation).words, safeTotals(p.dictation).audio_s)), sparkColor: "var(--c-accent)",
     });
   }
@@ -292,6 +307,10 @@ function tileSpecs(stats: UsageStats, dense: readonly UsageKinds[], scope: Usage
 // "dict" is the Words tile: a figure about you, not about the Dictation kind, so it wears the
 // Signal colour like the chip's readout (D27). Kind series keep --c-chart-* (kindFill).
 const TONE: Record<TileSpec["tone"], string> = { dict: "text-accent", ok: "text-ok", warn: "text-warn" };
+
+/** A ledger figure's size: 22 px up to eight characters ("1h 04m", "51,239"), one step
+ *  down for longer ones ("1,234,567") so they fit the row instead of truncating. */
+const figureSize = (v: string) => (v.length > 8 ? "text-[18px]" : "text-[22px]");
 
 /** A stat tile. With `onPick` it is a button that sets the page's measure; the active one
  *  wears the accent border and says "shown" (D35 A). */
@@ -304,12 +323,36 @@ function StatTile({ tile, spark, active, onPick }: { tile: TileSpec; spark: bool
         <span className="truncate">{tile.label}</span>
         {active && <span className="ml-auto shrink-0 text-[9.5px] text-accent">shown</span>}
       </div>
-      <div className={cn("mt-2.5 truncate font-num text-[26px] font-semibold leading-none", TONE[tile.tone])}>{tile.value}</div>
-      <div className="mt-2 text-[12px] text-dim">{tile.sub}</div>
-      {spark && <Sparkline vals={tile.spark} color={tile.sparkColor} />}
+      {/* The ledger (D53 C): label / value rows at one size, right-aligned so the figures
+          line up across tiles; per day is the quiet third row. The sparkline is pinned to
+          the bottom so a tile with a legend does not push its neighbours' lines around. */}
+      <div className="mt-3 grid grid-cols-[auto_1fr] items-baseline gap-x-3.5 gap-y-1.5">
+        <span className="font-mono text-[10px] uppercase tracking-label text-faint">today</span>
+        <span className={cn("truncate text-right font-num font-semibold leading-none", figureSize(tile.today), TONE[tile.tone])}>{tile.today}</span>
+        <span className="font-mono text-[10px] uppercase tracking-label text-faint">{tile.rangeLabel}</span>
+        <span className={cn("truncate text-right font-num font-semibold leading-none", figureSize(tile.range), TONE[tile.tone])}>{tile.range}</span>
+        <span className="font-mono text-[10px] uppercase tracking-label text-faint">per day</span>
+        <span className="truncate text-right font-num text-[12px] text-text">{tile.perDay}</span>
+      </div>
+      {tile.split && tile.split.length > 0 && (
+        <>
+          <div className="mt-2.5 flex h-[5px] overflow-hidden rounded-[3px] bg-surface-2" aria-hidden>
+            {tile.split.map((r) => (
+              <i key={r.kind} className="block h-full" style={{ width: `${(r.value / tile.split!.reduce((a, x) => a + x.value, 0)) * 100}%`, background: r.kind === "text" ? "var(--c-chart-text)" : KIND_VAR[r.kind] }} />
+            ))}
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-x-2.5 gap-y-0.5 font-mono text-[11px] text-dim">
+            {tile.split.map((r) => (
+              <span key={r.kind} className="inline-flex items-center gap-1.5"><Swatch kind={r.kind} />{fmtFull(r.value)} {KIND_LABEL[r.kind].toLowerCase()}</span>
+            ))}
+          </div>
+        </>
+      )}
+      {tile.note && <div className="mt-2 text-[12px] text-dim">{tile.note}</div>}
+      {spark && <div className="mt-auto pt-2"><Sparkline vals={tile.spark} color={tile.sparkColor} /></div>}
     </>
   );
-  const base = "relative min-w-0 rounded-card border bg-surface/80 p-4 text-left backdrop-blur-sm";
+  const base = "relative flex min-w-0 flex-col rounded-card border bg-surface/80 p-4 text-left backdrop-blur-sm";
   if (onPick) {
     return (
       <button
@@ -1628,7 +1671,7 @@ export function HomeUsageStrip() {
   const hatchId = useId();
   if (!viewBackend || !stats) return null;
   // Home keeps the four headline figures; the Statistics page shows every measure.
-  const tiles = tileSpecs(stats, dense, "all", false, "in 30 days").filter((t) => HOME_TILES.has(t.key));
+  const tiles = tileSpecs(stats, dense, "all", false, "30 days", TREND_DAYS).filter((t) => HOME_TILES.has(t.key));
   const last30 = dense.slice(-30);
   const max = Math.max(0, ...last30.flatMap((p) => KINDS.map((k) => safeTotals(p[k]).words)));
   const saved = last30.reduce((s, p) => s + timeSavedS(safeTotals(p.dictation).words, safeTotals(p.dictation).audio_s), 0);
@@ -1739,7 +1782,7 @@ export function StatisticsView({
     );
   }
   const word = rangeWord(query, win);
-  const tiles = tileSpecs(stats, buckets, scope, true, query.range === "all" ? "all-time" : `in ${word}`);
+  const tiles = tileSpecs(stats, buckets, scope, true, query.range === "all" ? "all time" : query.range === "custom" ? "range" : word, win.days);
   const filtered = isFiltered(scope, query);
   return (
     <>
