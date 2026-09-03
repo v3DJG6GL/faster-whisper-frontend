@@ -290,8 +290,10 @@ export default function AppRules() {
         addLabel="Add rule"
         onAdd={startAdd}
       >
-        Override how dictation inserts into specific apps — block it entirely, force a method, or set the
-        paste shortcut (terminals need Ctrl+Shift+V). Matched by the focused window’s app id.
+        Override how dictation inserts into specific apps — block apps entirely, force a method, or set the
+        paste shortcut (e.g. <em>Ctrl+Shift+V</em> for terminals).
+        <br />
+        Matched by the focused window's app ID.
       </ListScreenHeader>
 
       {draft ? (
