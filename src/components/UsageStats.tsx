@@ -15,7 +15,7 @@
 // text in the text tokens, never a series colour; the legend is always present.
 
 import {
-  Fragment,
+
   useCallback,
   useEffect,
   useId,
@@ -339,7 +339,7 @@ function StatTile({ tile, spark, active, onPick }: { tile: TileSpec; spark: bool
         <>
           <div className="mt-2.5 flex h-[5px] overflow-hidden rounded-[3px] bg-surface-2" aria-hidden>
             {tile.split.map((r) => (
-              <i key={r.kind} className="block h-full" style={{ width: `${(r.value / tile.split!.reduce((a, x) => a + x.value, 0)) * 100}%`, background: r.kind === "text" ? "var(--c-chart-text)" : KIND_VAR[r.kind] }} />
+              <i key={r.kind} className="block h-full" style={{ width: `${(r.value / tile.split!.reduce((a, x) => a + x.value, 0)) * 100}%`, background: KIND_VAR[r.kind] }} />
             ))}
           </div>
           <div className="mt-1.5 flex flex-wrap gap-x-2.5 gap-y-0.5 font-mono text-[11px] text-dim">
@@ -810,7 +810,7 @@ function KindTip({ title, kinds, metric, scope, total, quarter, extra, companion
           {scope === "all" && rows.length > 1 && (
             <div className="mb-1.5 mt-1 flex h-[5px] overflow-hidden rounded-[3px] bg-surface-2" aria-hidden>
               {rows.map((r) => (
-                <i key={r.kind} className="block h-full" style={{ width: `${(r.value / total) * 100}%`, background: r.kind === "text" ? "var(--c-chart-text)" : KIND_VAR[r.kind] }} />
+                <i key={r.kind} className="block h-full" style={{ width: `${(r.value / total) * 100}%`, background: KIND_VAR[r.kind] }} />
               ))}
             </div>
           )}
@@ -1028,15 +1028,15 @@ function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, filtered,
               </div>
             );
           })}
-          <div className="grid h-full grid-rows-[repeat(7,1fr)] gap-[3px]" style={{ gridRow: 2, gridColumn: 1 }}>
+          <div role="row" className="grid h-full grid-rows-[repeat(7,1fr)] gap-[3px]" style={{ gridRow: 2, gridColumn: 1 }}>
             {DOW_SHORT.map((d, i) => (
-              <div key={d} className="flex items-center justify-end pr-1.5 font-mono text-[10.5px] text-faint">
+              <div key={d} role="presentation" className="flex items-center justify-end pr-1.5 font-mono text-[10.5px] text-faint">
                 {i % 2 === 0 ? d : ""}
               </div>
             ))}
           </div>
           {cols.map((c) => (
-            <div key={c.monday} className="grid gap-[3px]" style={{ gridRow: 2 }}>
+            <div key={c.monday} role="row" className="grid gap-[3px]" style={{ gridRow: 2 }}>
               {c.cells.map((cellData, r) => {
                 if (!cellData) return <i key={`e${c.monday}-${r}`} className="block aspect-square w-full" />;
                 const i = cellData.day - first;
@@ -1120,7 +1120,7 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
     const first = model.cells[row * L.cols];
     const occ = first ? model.occOf(first) : 1;
     if (rhythm === "hours" && v > 0 && occ > 1) extra.push([`≈ ${metricText(metric, v / occ, true)} per ${DOW_LONG[row]}`, `${fmtFull(occ)} ${DOW_LONG[row]}s in range`]);
-    return { title: `${L.rowLong(row)} · all ${L.colUnit}s`, kinds: sumKinds(model.cells.slice(row * L.cols, row * L.cols + L.cols)), total: v, quarter: undefined, extra };
+    return { title: `${L.rowLong(row)} · all ${L.colUnits}`, kinds: sumKinds(model.cells.slice(row * L.cols, row * L.cols + L.cols)), total: v, quarter: undefined, extra };
   }, [tip, model, L, N, metric, rhythm, from, to]);
   // Arrow keys move between cells only; the bars are plain tab stops.
   const keys = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1205,7 +1205,7 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
             role="grid"
             aria-label={`${label} per ${L.slotWord}, levelled by quartiles of the active slots, with each ${L.colUnit} and ${L.rowUnit} against a flat ${L.flatWord}. Use the arrow keys to move between slots.`}
           >
-            <div />
+            <div role="presentation" />
             {model.colIndex.map((idx, c) => (
               <div
                 key={`t${c}`}
@@ -1219,16 +1219,16 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
                 <i className="block w-full rounded-t-[2px]" style={{ height: `${barLen(idx, cMax)}%`, background: barBg(idx) }} />
               </div>
             ))}
-            <div />
-            <div />
-            <div />
+            <div role="presentation" />
+            <div role="presentation" />
+            <div role="presentation" />
             {Array.from({ length: L.cols }, (_, c) => (
-              <div key={`l${c}`} className="text-center font-mono text-[10px] text-faint">{L.colLabel(c)}</div>
+              <div key={`l${c}`} role="presentation" className="text-center font-mono text-[10px] text-faint">{L.colLabel(c)}</div>
             ))}
-            <div />
-            <div />
+            <div role="presentation" />
+            <div role="presentation" />
             {Array.from({ length: L.rows }, (_, r) => (
-              <Fragment key={r}>
+              <div key={r} role="row" className="contents">
                 <div className="flex items-center font-mono text-[10.5px] leading-none text-faint">{L.rowLabel(r)}</div>
                 {model.cells.slice(r * L.cols, r * L.cols + L.cols).map((c) => {
                   const i = r * L.cols + c.col;
@@ -1244,7 +1244,7 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
                     />
                   );
                 })}
-                <div />
+                <div role="presentation" />
                 <div
                   data-i={N + L.cols + r}
                   tabIndex={0}
@@ -1255,7 +1255,7 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
                 >
                   <i className="block h-[calc(100%-4px)] rounded-r-[2px]" style={{ width: `${barLen(model.rowIndex[r], rMax)}%`, background: barBg(model.rowIndex[r]) }} />
                 </div>
-              </Fragment>
+              </div>
             ))}
           </div>
           {ticks && (

@@ -377,7 +377,7 @@ export default function Logs() {
         </label>
       </div>
       {chips.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-line py-3" aria-label="Tag filters">
+        <div role="group" className="flex flex-wrap items-center gap-2 border-b border-line py-3" aria-label="Tag filters">
         {chips.map((tag) => {
             const on = tags.has(tag);
             return (
