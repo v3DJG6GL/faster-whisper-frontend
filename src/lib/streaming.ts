@@ -1240,6 +1240,8 @@ function settleToIdleAfterInjection(startedAt: number, cfg: InsertCfg | null): v
         captureDictationHistory();
         reportSessionOutcome(endOutcome());
         useApp.getState().setDictation({
+          sessionOutcome: endOutcome(),
+          translateFailure: sessionTranslateFailure,
           activeProfile: null,
           dictationPhase: null,
           sessionTargets: null,

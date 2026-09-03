@@ -373,6 +373,9 @@ pub fn apply_log_settings(app: &AppHandle, config: &Config) {
     let current = writer.0.lock().ok().and_then(|i| i.dir.clone());
     if current.as_deref() != Some(dir.as_path()) {
         open_session_file(&writer, &ring, &dir);
+        if let Some(old) = current.as_deref() {
+            prune_log_files(old, config.settings.logging.keep_days);
+        }
     }
     prune_log_files(&dir, config.settings.logging.keep_days);
     // The pre-viewer builds wrote `%LOCALAPPDATA%\faster-whisper-frontend\logs`; the

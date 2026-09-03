@@ -75,7 +75,9 @@ pub(super) fn run(snapshot: Arc<parking_lot::Mutex<Snapshot>>) {
         if hook.is_null() {
             tracing::warn!("[winfocus] SetWinEventHook failed; tracking by poll only");
         }
-        let _ = SetTimer(std::ptr::null_mut(), 0, POLL_MS, None);
+        if SetTimer(std::ptr::null_mut(), 0, POLL_MS, None) == 0 {
+            tracing::warn!("[winfocus] SetTimer failed; foreground poll disabled");
+        }
         tracing::info!("[winfocus] foreground-app tracker up");
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {

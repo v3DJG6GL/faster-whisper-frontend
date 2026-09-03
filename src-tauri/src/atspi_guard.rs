@@ -315,20 +315,14 @@ mod imp {
             // with an ERROR opens a new incident whose first warn must not be swallowed by a
             // counter an earlier outage left at 45.
             failures = next_failures(failures, started.elapsed() >= std::time::Duration::from_secs(60));
-            match outcome {
-                Ok(()) => {
-                    if should_log(failures) {
-                        tracing::warn!(
-                            "[atspi] event stream ended — reconnecting (failure #{failures}, logging first + every 30th)"
-                        );
-                    }
-                }
-                Err(e) => {
-                    if should_log(failures) {
-                        tracing::warn!(
-                            "[atspi] listener error: {e} — reconnecting (failure #{failures}, logging first + every 30th)"
-                        );
-                    }
+            if should_log(failures) {
+                match &outcome {
+                    Ok(()) => tracing::warn!(
+                        "[atspi] event stream ended — reconnecting (failure #{failures}, logging first + every 30th)"
+                    ),
+                    Err(e) => tracing::warn!(
+                        "[atspi] listener error: {e} — reconnecting (failure #{failures}, logging first + every 30th)"
+                    ),
                 }
             }
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
