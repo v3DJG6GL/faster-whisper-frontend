@@ -1914,12 +1914,11 @@ export function TranscriptViewer({
         state: "always",
         why: `machine-translated${result.translation?.model ? ` (${result.translation.model.split("/").pop()})` : ""} · timing from the original`,
       });
-      const warns = cpsWarn;
-      if (warns.length) {
+      if (cpsWarn.length) {
         rows.push({
           label: "Reading speed",
           state: "na",
-          why: `${warns.length} translated cue${warns.length === 1 ? "" : "s"} exceed 20 chars/sec (language expansion) — flagged, never reflowed`,
+          why: `${cpsWarn.length} translated cue${cpsWarn.length === 1 ? "" : "s"} exceed 20 chars/sec (language expansion) — flagged, never reflowed`,
         });
       }
     }

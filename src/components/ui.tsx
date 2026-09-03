@@ -325,9 +325,7 @@ export function RouteBadge({ source, targets }: { source: string; targets?: stri
   return (
     // max-w is raised over BADGE_BASE's 16ch because this pill legitimately holds a
     // route, not a single leaf — each PART is bounded by routeParts instead.
-    // `truncate` (overflow-hidden + text-ellipsis) clips when the combined parts still
-    // exceed the raised cap.
-    <span className={cn(BADGE_BASE, "max-w-[34ch] truncate bg-surface-2")}>
+    <span className={cn(BADGE_BASE, "max-w-[34ch] bg-surface-2")}>
       <span className="text-dim">{r.source || "auto"}</span>
       {r.targets.length > 0 && (
         <>
