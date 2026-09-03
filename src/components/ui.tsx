@@ -416,7 +416,6 @@ export function DisclosureCard({
   title,
   nested,
   className,
-  bodyClassName,
   children,
 }: {
   open: boolean;
@@ -425,7 +424,6 @@ export function DisclosureCard({
   title: ReactNode;
   nested?: boolean;
   className?: string;
-  bodyClassName?: string;
   children: ReactNode;
 }) {
   const panelId = useId();
@@ -452,7 +450,7 @@ export function DisclosureCard({
         <span className="min-w-0 flex-1">{title}</span>
       </button>
       {open && (
-        <div id={panelId} className={cn(nested ? "p-3.5" : "p-5", bodyClassName)}>
+        <div id={panelId} className={nested ? "p-3.5" : "p-5"}>
           {children}
         </div>
       )}

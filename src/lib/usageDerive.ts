@@ -133,7 +133,7 @@ export function densifyKinds(series: readonly UsageSeriesPoint[], days: number, 
     if (p.day > maxDay) maxDay = p.day;
   }
   const end = Number.isFinite(maxDay) ? Math.max(today, maxDay) : today;
-  const span = Math.max(1, Math.floor(days));
+  const span = Math.min(Math.max(1, Math.floor(days)), MAX_SPAN_DAYS);
   const start = end - (span - 1);
   const out: UsageSeriesPoint[] = [];
   for (let day = start; day <= end; day++) {

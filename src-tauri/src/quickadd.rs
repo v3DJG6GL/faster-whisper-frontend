@@ -236,7 +236,9 @@ pub fn show(app: &AppHandle) {
                     // would steal the RDP client's focus right after injection, the exact
                     // forwarding kill the grace exists to prevent.
                     let _ = ready_rx.recv_timeout(std::time::Duration::from_millis(5000));
-                    show_now(&handle);
+                    if rdv.is_current(generation) {
+                        show_now(&handle);
+                    }
                 });
                 return;
             }

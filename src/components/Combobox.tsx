@@ -214,7 +214,7 @@ export function Combobox({
         // Preserve the typed filter: clearing it here would discard a half-typed
         // query when the user clicks the field after Escape.
         onClick={() => { if (!disabled) setOpen(true); }}
-        onBlur={() => { setOpen(false); setActive(-1); }}
+        onBlur={() => { setOpen(false); setActive(-1); setTyped(false); }}
         onKeyDown={onKeyDown}
       />
       {showPopover && rect &&

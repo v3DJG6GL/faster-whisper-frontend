@@ -119,7 +119,7 @@ type ContractRow = {
 
 /** Distinct speaker labels of a result, in first-appearance order — the
  *  export module owns the implementation (one resolver for viewer + exports). */
-export { speakerOrder as speakersOf, prettySpeaker } from "@/lib/transcriptExport";
+export { speakerOrder as speakersOf } from "@/lib/transcriptExport";
 
 type EffSegment = {
   start: number;

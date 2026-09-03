@@ -712,9 +712,6 @@ export default function Profiles() {
     id === QUICK_ADD_PEER_ID
       ? "Quick add"
       : safeDisplayText(profiles.find((p) => p.id === id)?.name, 60) || "another profile";
-  const backendName = (id: string | null) =>
-    safeDisplayText(backends.find((b) => b.id === id)?.name, 80) || "No backend";
-
   const conflictText = (id: string): string | null => {
     const list = conflicts.get(id);
     if (!list || list.length === 0) return null;
@@ -828,7 +825,7 @@ export default function Profiles() {
                 <ProfileRow
                   key={p.id}
                   p={p}
-                  backendName={backendName(p.backendId)}
+                  backendName={safeDisplayText(backendForProfile(p, backends)?.name, 80) || "No backend"}
                   backendLanguage={backendForProfile(p, backends)?.language}
                   backendTargets={backendForProfile(p, backends)?.translationOverrides?.translateTo}
                   conflictText={conflictText(p.id)}

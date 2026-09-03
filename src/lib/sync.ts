@@ -280,6 +280,13 @@ export function migrateBlob(blob: SyncBlob): SyncBlob {
       }
     }
   }
+  if (isPlainObject(out.recording)) {
+    const rec = out.recording as Record<string, unknown>;
+    if (hasOwn(rec, "latchAutoStopMin") && !hasOwn(rec, "handsFreeAutoStopMin")) {
+      rec.handsFreeAutoStopMin = rec.latchAutoStopMin;
+      delete rec.latchAutoStopMin;
+    }
+  }
   const b = out.backends as (SyncBackends & { quickAddList?: unknown }) | undefined;
   if (isPlainObject(b) && hasOwn(b, "quickAddList")) {
     const { quickAddList, ...rest } = b;

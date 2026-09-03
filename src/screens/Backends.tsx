@@ -824,7 +824,7 @@ export default function Backends() {
       const cur2 = useApp.getState().backends.find((x) => x.id === b.id);
       const curUrl2 = cur2 ? effectiveServerUrl(cur2, useApp.getState().settings) : null;
       if (cur2 && cur2.serverUrl === b.serverUrl && cur2.hasApiKey === b.hasApiKey && curUrl2 === testedUrl) {
-        setConnection(b.id, { ok: false, error: String(e) } as ConnectionInfo);
+        setConnection(b.id, { ok: false, openMode: false, models: [], error: String(e) } as ConnectionInfo);
       }
     } finally {
       setTesting((s) => {

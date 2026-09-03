@@ -346,9 +346,17 @@ mod imp {
             *t = Some(tx);
         }
         let worker_app = app.clone();
-        let _ = std::thread::Builder::new()
+        if std::thread::Builder::new()
             .name("win-hotkeys-match".into())
-            .spawn(move || worker(worker_app, held_keys, rx, Engine::new(chords)));
+            .spawn(move || worker(worker_app, held_keys, rx, Engine::new(chords)))
+            .is_err()
+        {
+            tracing::warn!("[winhook] failed to spawn matcher thread");
+            if let Ok(mut t) = TX.lock() {
+                *t = None;
+            }
+            return;
+        }
 
         let (ready_tx, ready_rx) = channel::<Option<u32>>();
         let abandoned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

@@ -477,7 +477,7 @@ export default function Transcribe() {
       applyBackendPick(backends[0].id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the resets are stable setters
-  }, [backends, backendId]);
+  }, [backends, backendId, queue]);
 
   const backend = backends.find((b) => b.id === backendId) ?? backends[0];
   const serverKind = backend ? effectiveServerKind(backend, ownProp(connections, backend.id)) : "unknown";
