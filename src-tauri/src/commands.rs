@@ -101,8 +101,10 @@ fn move_dir_contents(
     to: &std::path::Path,
     map: &mut Vec<(String, String)>,
 ) -> Result<(), String> {
-    let Ok(entries) = std::fs::read_dir(from) else {
-        return Ok(()); // nothing there yet
+    let entries = match std::fs::read_dir(from) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("could not read {}: {e}", from.display())),
     };
     crate::audio::create_dir_private(to).map_err(|e| e.to_string())?;
     for entry in entries.flatten() {
