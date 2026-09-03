@@ -1147,7 +1147,7 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
           </CellTip>
           <div
             className={cn("grid", rhythm === "days" ? "gap-[2px]" : "gap-[3px]")}
-            style={{ gridTemplateColumns: `34px repeat(${L.cols}, minmax(0, 1fr)) 30px` }}
+            style={{ gridTemplateColumns: `34px repeat(${L.cols}, minmax(0, 1fr)) 10px 30px` }}
             role="grid"
             aria-label={`${label} per ${L.slotWord}, levelled by quartiles of the active slots, with each ${L.colUnit} and ${L.rowUnit} against a flat ${L.flatWord}. Use the arrow keys to move between slots.`}
           >
@@ -1168,10 +1168,12 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
             <div />
             <div />
             {Array.from({ length: L.cols }, (_, c) => (
+            <div />
               <div key={`l${c}`} className="font-mono text-[10px] text-faint">{L.colLabel(c)}</div>
             ))}
             <div />
             {Array.from({ length: L.rows }, (_, r) => (
+            <div />
               <Fragment key={r}>
                 <div className="flex items-center font-mono text-[10.5px] text-faint">{L.rowLabel(r)}</div>
                 {model.cells.slice(r * L.cols, r * L.cols + L.cols).map((c) => {
@@ -1189,6 +1191,7 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
                   );
                 })}
                 <div
+                <div />
                   data-i={N + L.cols + r}
                   tabIndex={0}
                   role="img"
@@ -1196,7 +1199,7 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
                   data-track="side"
                   className={cn("relative flex items-center rounded-[2px] outline-none", CELL_HOVER, tip?.i === N + L.cols + r && CELL_HOT)}
                 >
-                  <i className="block h-[60%] rounded-r-[2px]" style={{ width: `${barLen(model.rowIndex[r], rMax)}%`, background: barBg(model.rowIndex[r]) }} />
+                  <i className="block h-[calc(100%-4px)] rounded-r-[2px]" style={{ width: `${barLen(model.rowIndex[r], rMax)}%`, background: barBg(model.rowIndex[r]) }} />
                 </div>
               </Fragment>
             ))}
