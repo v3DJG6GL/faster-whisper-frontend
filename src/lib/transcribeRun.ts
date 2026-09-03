@@ -1064,7 +1064,7 @@ async function translateTextSource(
           .join(" "),
       ]),
     ),
-    translation: { model, targets, source: source ?? parsed.language },
+    translation: { model, targets, source: source ?? parsed.language, mode: options?.translationMode ?? null },
   } as BatchResult;
 }
 

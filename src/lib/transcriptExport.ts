@@ -154,7 +154,9 @@ interface Ctx {
 function trOf(seg: TranscriptSegment, lang: string): string | null {
   if (seg.translationsKept?.includes(lang)) return null;
   const t = seg.translations?.[lang];
-  return t?.trim() ? clean(t) : null;
+  if (!t?.trim()) return null;
+  const cleaned = clean(t);
+  return cleaned.trim() ? cleaned : null;
 }
 
 /** Is this export carrying more than one translated track?

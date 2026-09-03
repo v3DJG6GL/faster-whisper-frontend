@@ -107,7 +107,11 @@ function parseVtt(body: string): ImportedText {
     const lines = block.split(/\r?\n/).filter((l) => l.trim().length);
     if (!lines.length) continue;
     const first = lines[0].trim();
-    if (/^WEBVTT/.test(first) || first === "STYLE" || first === "NOTE" || first === "REGION") continue;
+    if (first === "STYLE" || first === "NOTE" || first === "REGION") continue;
+    if (/^WEBVTT/.test(first)) {
+      lines.shift();
+      if (!lines.length) continue;
+    }
     let i = lines.findIndex((l) => l.includes("-->"));
     if (i === -1) continue;
     const times = /^(.+?)\s+--&?>\s+(.+?)(?:\s+.*)?$/.exec(lines[i]);

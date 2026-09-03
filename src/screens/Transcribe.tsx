@@ -1602,12 +1602,12 @@ export default function Transcribe() {
           panelItem?.kind === "text" ||
           (panelItem && !forUrl ? isTextSourcePath(panelItem.path) : false);
         const stages = railStages(lastOptions, forUrl, forText);
-        const active = complete
-          ? stages.length
-          : activeRailIndex(progress, stageTimes, stages);
         // Requested stages the server jumped over (feature disabled there) —
         // shown as "skipped", never as done, and worth no progress credit.
         const skipped = skippedStages({ progress, stageTimes, lastOptions, forUrl, forText });
+        const active = complete
+          ? stages.length
+          : activeRailIndex(progress, stageTimes, stages, skipped);
         const now = Date.now();
         const fileIdx = queue.findIndex((it) => it.status === "running");
         const overall = complete
