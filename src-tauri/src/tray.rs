@@ -35,14 +35,17 @@ const SCREENS: &[(&str, &str)] = &[
 ];
 
 pub fn create(app: &App) -> tauri::Result<()> {
+    let show = MenuItem::with_id(app, "show", "Show window", true, None::<&str>)?;
+    let sep1 = PredefinedMenuItem::separator(app)?;
     let mut items: Vec<MenuItem<tauri::Wry>> = Vec::with_capacity(SCREENS.len());
     for (id, label) in SCREENS {
         items.push(MenuItem::with_id(app, format!("{SCREEN_PREFIX}{id}"), *label, true, None::<&str>)?);
     }
-    let sep = PredefinedMenuItem::separator(app)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let mut refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<tauri::Wry>).collect();
-    refs.push(&sep);
+    let mut refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&show as &dyn tauri::menu::IsMenuItem<tauri::Wry>, &sep1];
+    refs.extend(items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<tauri::Wry>));
+    refs.push(&sep2);
     refs.push(&quit);
     let menu = Menu::with_items(app, &refs)?;
 
@@ -59,7 +62,9 @@ pub fn create(app: &App) -> tauri::Result<()> {
         })
         .on_menu_event(|app, event| {
             let id = event.id.as_ref();
-            if let Some(screen) = id.strip_prefix(SCREEN_PREFIX) {
+            if id == "show" {
+                show_main(app);
+            } else if let Some(screen) = id.strip_prefix(SCREEN_PREFIX) {
                 show_main_at_screen(app.clone(), screen.to_string());
             } else if id == "quit" {
                 // Drop any live dictation first: app.exit ends the process without running

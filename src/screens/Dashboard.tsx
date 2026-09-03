@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
-import { dictationVisual, isActiveDictation, isGracefulStop, isProcessing } from "@/lib/dictationVisual";
+import { dictationVisual, isActiveDictation, isGracefulStop, isProcessing, type DictationTone } from "@/lib/dictationVisual";
 import { Button, Card, Notice, Toggle, routeParts } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
@@ -22,8 +22,9 @@ const GLYPH = { hold: Mic, handsfree: Hand } as const;
 
 /** The state word's colour by tone — the same tones the chip, the sidebar dot and the
  *  waveform use (armed = the fixed amber, never the accent). */
-const STATE_TEXT: Record<string, string> = {
+const STATE_TEXT: Record<DictationTone, string> = {
   faint: "text-faint",
+  dim: "text-dim",
   armed: "text-armed",
   live: "text-live",
   think: "text-think",
@@ -98,25 +99,23 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
         chosen ? "bg-accent-soft" : p.enabled && "hover:bg-surface-2/60",
       )}
     >
-      <div className="flex items-center gap-3">
+      <div role="gridcell" className="flex items-center gap-3">
         <div className={cn("grid size-9 shrink-0 place-items-center rounded-xl", chosen ? "bg-accent text-accent-ink" : "bg-accent-soft text-accent")}>
           <Glyph className="size-[18px]" />
         </div>
         <div>
           <div className="flex items-center gap-2">
-            {/* A name is user text (up to 80 chars): it alone is capped, so the column's
-                content minimum comes from the short activation hint or a sane name width. */}
             <span className="max-w-[28ch] truncate text-[14px] font-semibold text-text" title={name}>{name}</span>
             {running && <span className="rounded-pill border border-line px-2 py-px font-mono text-[10px] uppercase tracking-label text-dim">{runningLabel}</span>}
           </div>
           <div className="whitespace-nowrap text-[12px] text-dim">{p.activation === "hold" ? "Hold to talk" : "Tap to start and stop"}</div>
         </div>
       </div>
-      <HotkeyChips codes={p.hotkey} />
-      <div className="whitespace-nowrap font-mono text-[12px] text-text">{safeDisplayText(p.model?.trim() || backend?.model, 40) || "—"}</div>
-      <div className="whitespace-nowrap font-mono text-[12px] text-accent">{p.endpoint ?? backend?.endpoint ?? "—"}</div>
-      <div className="whitespace-nowrap font-mono text-[12px] text-text" title={`${profileRoute(p, backend)}${backend ? ` · ${safeDisplayText(backend.name, 80)}` : " · No backend"}`}>{profileRouteShort(p, backend)}</div>
-      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+      <div role="gridcell"><HotkeyChips codes={p.hotkey} /></div>
+      <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text">{safeDisplayText(p.model?.trim() || backend?.model, 40) || "—"}</div>
+      <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-accent">{p.endpoint ?? backend?.endpoint ?? "—"}</div>
+      <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text" title={`${profileRoute(p, backend)}${backend ? ` · ${safeDisplayText(backend.name, 80)}` : " · No backend"}`}>{profileRouteShort(p, backend)}</div>
+      <div role="gridcell" className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
         <Button variant="ghost" size="sm" title="Edit profile" onClick={() => navigate(`/profiles?edit=${p.id}`)}>
           <Pencil className="size-4" />
         </Button>
@@ -164,25 +163,27 @@ function HeroTitle() {
   // A shuffled deck: every name is dealt once before any repeats; a fresh shuffle starts
   // when the deck runs out, never opening with the name that just closed the last one.
   const deck = useRef<number[]>([]);
+  const cur = useRef(-1);
   useEffect(() => {
-    if (!hover) { setI(-1); return; }
-    const next = (cur: number) => {
+    if (!hover) { setI(-1); cur.current = -1; return; }
+    const next = () => {
       if (deck.current.length === 0) {
         const d = HERO_APPS.map((_, k) => k);
         for (let a = d.length - 1; a > 0; a--) {
           const b = Math.floor(Math.random() * (a + 1));
           [d[a], d[b]] = [d[b], d[a]];
         }
-        if (d[0] === cur && d.length > 1) [d[0], d[1]] = [d[1], d[0]];
+        if (d[0] === cur.current && d.length > 1) [d[0], d[1]] = [d[1], d[0]];
         deck.current = d;
       }
-      return deck.current.shift() ?? 0;
+      const n = deck.current.shift() ?? 0;
+      cur.current = n;
+      setI(n);
     };
-    // A moment of rest first, so a pointer passing over the title does not flip it.
     let t: ReturnType<typeof setInterval> | undefined;
     const d = setTimeout(() => {
-      setI((n) => (n < 0 ? next(-1) : n));
-      t = setInterval(() => setI(next), 2500);
+      if (cur.current < 0) next();
+      t = setInterval(next, 2500);
     }, 800);
     return () => { clearTimeout(d); if (t) clearInterval(t); };
   }, [hover]);
@@ -241,10 +242,6 @@ export default function Dashboard() {
   // button/start logic + the row choice keep using `target` (the next-dictation pick, a config choice).
   // activeProfile is null when idle, so this falls back to the home target then.
   const shown = (activeProfile ? profiles.find((p) => p.id === activeProfile) : undefined) ?? target;
-  // The next dictation's ROUTE: the language spoken → the languages it is turned into.
-  // Effective language resolves exactly as the chip's does (profile override, else the
-  // bound backend), and both halves go through `languageLabel` + routeParts' bounds —
-  // `model`/`language` are peer-authored and arrive on an unattended sync pull.
 
   // "Busy" = any non-idle state; the hero button is a stop/cancel while busy. We keep
   // a graceful stop for "listening" (deliver the last words) but force a hard reset
@@ -400,13 +397,13 @@ export default function Dashboard() {
         ) : (
           <div role="grid" aria-label="Profiles — the tinted row is the one the button dictates with" className={cn("grid gap-x-5", DECK_COLS)}>
             <div role="row" className={cn("grid border-t border-line bg-surface/40 px-6 py-2 font-mono text-[10px] uppercase tracking-label text-faint", ROW_COLS)}>
-              <span>profile</span>
-              <span>hotkey</span>
-              <span>model</span>
-              <span>endpoint</span>
+              <span role="columnheader">profile</span>
+              <span role="columnheader">hotkey</span>
+              <span role="columnheader">model</span>
+              <span role="columnheader">endpoint</span>
               {/* Spans the language column AND the edit/toggle column, so the long header runs to
                   the card's right edge instead of being squeezed by the buttons' track. */}
-              <span className="col-span-2 whitespace-nowrap" title="The language you speak → the languages the text is translated into">language · spoken → translated</span>
+              <span role="columnheader" className="col-span-2 whitespace-nowrap" title="The language you speak → the languages the text is translated into">language · spoken → translated</span>
             </div>
             {profiles.map((p) => (
               <ProfileRow

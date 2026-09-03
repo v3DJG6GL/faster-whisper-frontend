@@ -53,6 +53,9 @@ const STUDIO_MIN_WINDOW = 1400;
 const STUDIO_RAIL_DEFAULT = 520;
 const STUDIO_RAIL_MIN = 360;
 const STUDIO_PANE_MIN = 560;
+/** Width consumed by the sidebar, page padding, flex gaps and splitter gutter that sits
+ *  between window.innerWidth and the two content panes. */
+const STUDIO_CHROME = 340;
 
 /** Retro-translate runs whose transcript is NOT the one on screen: a slim
  *  strip in the Processing-card design language, so a run started on another
@@ -677,7 +680,7 @@ export default function Transcribe() {
   // The studio splitter: the rail width lives in the transcribe settings (local, never
   // synced); while a drag is in flight the live value is local state, persisted on release.
   const [railDrag, setRailDrag] = useState<number | null>(null);
-  const railMax = Math.max(STUDIO_RAIL_MIN, winW - STUDIO_PANE_MIN);
+  const railMax = Math.max(STUDIO_RAIL_MIN, winW - STUDIO_CHROME - STUDIO_PANE_MIN);
   const clampRail = (px: number) => Math.round(Math.min(railMax, Math.max(STUDIO_RAIL_MIN, px)));
   const railPx = clampRail(railDrag ?? settings.transcribe?.studioRailPx ?? STUDIO_RAIL_DEFAULT);
   const onRailPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -694,7 +697,8 @@ export default function Transcribe() {
       el.removeEventListener("pointercancel", up);
       const final = clampRail(start + ev.clientX - startX);
       setRailDrag(null);
-      persistOptions({ studioRailPx: final });
+      const { settings: cur } = useApp.getState();
+      updateSettings({ transcribe: { ...cur.transcribe, studioRailPx: final } });
     };
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);
