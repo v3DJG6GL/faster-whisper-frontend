@@ -215,7 +215,8 @@ export function initUsageController(): void {
   useApp.subscribe((state, prev) => {
     // Refetch when the set of backends changes (added / removed / url edited). The init-time
     // refreshAll() above covers the first load, so comparing against prev suffices.
-    const bKey = (bs: typeof state.backends) => bs.map((b) => b.id + "\0" + b.serverUrl).join("\n");
+    const bKey = (bs: typeof state.backends) =>
+      bs.map((b) => b.id + "\0" + b.serverUrl + "\0" + b.hasApiKey).join("\n");
     if (bKey(state.backends) !== bKey(prev.backends)) {
       void refreshAll();
     }

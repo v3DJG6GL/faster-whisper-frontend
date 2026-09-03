@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { safeDisplayText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
-import { backendOptions } from "@/lib/backends";
+import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import {
   BookA, Loader2, RefreshCw, Plus, Trash2, Lock, RotateCcw, ChevronRight,
   ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair,
@@ -28,7 +28,6 @@ import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf } 
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { effectiveServerUrl } from "@/lib/backends";
 import { getPipelineRules, getRecentWords, savePipelineRules } from "@/lib/api";
 import type {
   Backend, PipelineFetch, PipelineRule, PipelineSaveResult, RuleType,

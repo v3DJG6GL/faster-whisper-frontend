@@ -301,7 +301,7 @@ pub async fn translate_texts(
         warnings: parsed
             .warnings
             .iter()
-            .take(20)
+            .take(super::MAX_NOTICES)
             .map(|w| bounded_server_text(w, MAX_ERROR_TEXT))
             .collect(),
     })

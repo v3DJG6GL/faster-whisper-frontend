@@ -96,7 +96,11 @@ pub fn run() {
                 // never run. Nudge the webview to run the same closeNow Esc/X do (its own hide is
                 // then a no-op since we already hid above).
                 if window.label() == "quickadd" {
-                    use tauri::Emitter;
+                    use tauri::{Emitter, Manager};
+                    window
+                        .app_handle()
+                        .state::<crate::quickadd::SeedRendezvous>()
+                        .clear();
                     let _ = window.emit("quickadd://closing", ());
                 }
                 // Same for the language picker: its asker in the main webview awaits

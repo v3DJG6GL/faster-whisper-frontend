@@ -59,7 +59,7 @@ const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
 /** The renderable rows of an inbound backend list: an array whose elements are objects.
  *  Everything else is dropped before the render body dereferences it. */
-export function displayableBackends(list: unknown): Backend[] {
+function displayableBackends(list: unknown): Backend[] {
   return arr<unknown>(list).filter((b): b is Backend => !!b && typeof b === "object");
 }
 

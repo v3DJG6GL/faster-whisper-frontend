@@ -259,7 +259,7 @@ mod imp {
     /// `chord_mods` = the firing chord's OWN modifier keycodes, so `inject_text` can tell "the
     /// user has not let go of the dictation chord" (divert to clipboard) from "an unrelated
     /// modifier is down" (type anyway). This backend feeds `HeldKeys`, so without the snapshot
-    /// the gate was dead here — see `triggers::snapshot_trigger_mods`. Empty for a teardown-
+    /// the gate was dead here — see `triggers::snapshot_trigger_mods`. `None` for a teardown-
     /// emitted stop, which is not a user chord release.
     fn emit(app: &AppHandle, profile_id: &str, action: &str, chord_mods: Option<&[u16]>) {
         // `None` = a teardown-emitted stop, which is not a user chord release: leave the existing

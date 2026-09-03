@@ -156,9 +156,6 @@ const OTHER_BUCKET: "linux" | "windows" = IS_WINDOWS ? "linux" : "windows";
 
 // ── canonical hash ──────────────────────────────────────────────────────────
 
-// stableStringify moved to stable.ts (pure module, shared with the settings
-// manifest); re-exported here so existing importers don't churn.
-export { stableStringify } from "./stable";
 import { stableStringify } from "./stable";
 
 /** FNV-1a over the canonical string — a compact change-detection token (NOT
