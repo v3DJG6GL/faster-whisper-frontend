@@ -25,9 +25,10 @@ const lastFetchAt = new Map<string, number>();
 const inFlight = new Map<string, Promise<void>>();
 
 /** Refresh a Backend's cached capabilities. Best-effort and never throws: a
- *  standard/old server or any error stores null ("fetched and unsupported").
- *  `force` bypasses the min-interval coalescing (used when a job is starting and
- *  the freshness of `loaded` is the whole point). */
+ *  standard/old server stores null ("fetched and unsupported"); a transient error
+ *  leaves the cache entry absent so the next trigger re-probes instead of latching
+ *  a stale negative. `force` bypasses the min-interval coalescing (used when a job
+ *  is starting and the freshness of `loaded` is the whole point). */
 export async function refreshCaps(backend: Backend, opts?: { force?: boolean }): Promise<void> {
   const now = Date.now();
   const prev = lastFetchAt.get(backend.id);

@@ -86,6 +86,7 @@ export function newCaptureIdBook(
       const waiting = waiters.get(utterance);
       if (waiting?.length) {
         waiters.delete(utterance);
+        spent.add(utterance);
         // Exactly one claimant per receipt: the first waiter takes the id, and
         // any other (there is none today) is released empty-handed rather than
         // handed a duplicate that would claim the same receipt twice.

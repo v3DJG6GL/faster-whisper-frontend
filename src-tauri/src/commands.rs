@@ -1442,9 +1442,17 @@ pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
 pub async fn cancel_stream(app: AppHandle, user_initiated: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<StreamState>();
-        let sess = state.0.lock().map_err(|_| "stream state poisoned".to_string())?.take();
-        let had_session = sess.is_some();
-        drop(sess); // Drop (not finish) runs OUTSIDE the lock — the guard released on the line above
+        let (sess, had_session) = {
+            let mut guard = state.0.lock().map_err(|_| "stream state poisoned".to_string())?;
+            let sess = guard.take();
+            let had = sess.is_some();
+            // Retire while the lock is held: start_stream claims its epoch under the same lock, so
+            // this prevents a race where a new session claims epoch N+1, the lock drops, and THEN
+            // the stale retire bumps to N+2 — silencing the new session's emissions.
+            session::retire_active_epoch();
+            (sess, had)
+        };
+        drop(sess); // Drop (not finish) runs OUTSIDE the lock — capture join, mute release, etc.
         // …and abandon any transcript still being typed out. The typing paths emit one key at a
         // time, so without this a cancel only stopped FUTURE inserts while the current one kept
         // going into whatever window had focus.
@@ -1460,7 +1468,6 @@ pub async fn cancel_stream(app: AppHandle, user_initiated: bool) -> Result<(), S
         if had_session || user_initiated {
             crate::inject::cancel_injection();
         }
-        session::retire_active_epoch(); // discarded session (+ any detached drain) must never emit again
         Ok(())
     })
     .await
@@ -1575,6 +1582,7 @@ pub async fn cancel_record(app: AppHandle, user_initiated: bool) -> Result<(), S
             if !had_session {
                 session::cancel_detached_batch();
             }
+            session::retire_active_epoch();
             (sess, had_session)
         };
         // discard() (not finish, not a bare drop) runs OUTSIDE the lock: it marks the clip discarded
@@ -1590,7 +1598,6 @@ pub async fn cancel_record(app: AppHandle, user_initiated: bool) -> Result<(), S
         if had_session || user_initiated {
             crate::inject::cancel_injection();
         }
-        session::retire_active_epoch(); // discarded session (+ any in-flight transcribe POST) must never emit again
         Ok(())
     })
     .await

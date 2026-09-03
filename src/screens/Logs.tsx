@@ -331,6 +331,7 @@ export default function Logs() {
       await navigator.clipboard.writeText(report);
     } catch (e) {
       console.error("bug report copy failed:", e);
+      setCopied(false);
       setCopyError(true);
       clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => setCopyError(false), 1600);
@@ -416,12 +417,14 @@ export default function Logs() {
           {rows.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-1.5 text-center">
               <span className="text-[13.5px] font-medium text-dim">
-                {all.length === 0 ? "Nothing logged yet this session" : "No lines match the filters"}
+                {all.length === 0 ? "Nothing logged yet this session" : cleared > 0 ? "View cleared" : "No lines match the filters"}
               </span>
               <span className="max-w-[380px] text-[12.5px] text-faint">
                 {all.length === 0
                   ? "Lines appear here as you dictate or transcribe. Earlier sessions live in the log folder."
-                  : "Loosen the level, tags, or text filter to see more."}
+                  : cleared > 0
+                    ? `${cleared} earlier lines hidden. New lines will appear as they arrive.`
+                    : "Loosen the level, tags, or text filter to see more."}
               </span>
             </div>
           ) : (
