@@ -888,7 +888,12 @@ const LEVEL_BG = ["var(--c-surface-2)", "var(--c-cal-1)", "var(--c-cal-2)", "var
 
 /** The five labelled steps: swatch, value range, count. Shared by both grids. */
 function LevelLegend({ lead, breaks, counts, unit, metric }: { lead: string; breaks: [number, number, number]; counts: readonly number[]; unit: [string, string]; metric: ChartMetric }) {
-  const ranges = legendRanges(breaks, (v) => metricTick(metric, v));
+  // Duration quartiles can sit under ten seconds (processing time per day); the axis
+  // formatter rounds those to "0s", which read as "1s–0s". Sub-ten-second bounds keep a
+  // decimal, and the first step opens at 0.1 s instead of 1 s when the break is below it.
+  const dur = isDurationMetric(metric);
+  const fmt = (v: number) => (dur && v > 0 && v < 10 ? `${Math.round(v * 10) / 10}s` : metricTick(metric, v));
+  const ranges = legendRanges(breaks, fmt, dur && breaks[0] < 1 ? 0.1 : 1);
   return (
     <div className="mt-2.5 flex flex-wrap items-end gap-3.5 text-[11.5px] text-faint">
       <span>{lead}</span>
@@ -924,9 +929,9 @@ function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, filtered,
   const model = useMemo(() => calendarModel(dense, scope, from, to, metric), [dense, scope, from, to, metric]);
   const cols = useMemo(() => weekColumns(model.cells), [model.cells]);
   const streak = streakFor(streaks, scope);
-  const [ref, w] = useWidth(900);
-  // 16 px cells, shrinking to 12 px before the grid scrolls inside the panel.
-  const cell = Math.max(12, Math.min(16, Math.floor((w - 44) / Math.max(1, cols.length)) - 3));
+  const ref = useRef<HTMLDivElement | null>(null);
+  // Cells are sized by CSS: one 1fr track per week column, square cells — they fill the
+  // panel's width exactly and shrink to 12 px before the strip scrolls sideways.
   const today = localTodayDay();
   const withWord = withS.length ? ` · with ${withS.map((k) => STAGE_CHIP_LABEL[k].toLowerCase()).join(" + ")}` : "";
   const { tip, onMove, onLeave, onFocus, onBlur } = useCellTip();
@@ -954,18 +959,31 @@ function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, filtered,
           {hovered && <KindTip title={fmtDateFull(hovered.day)} kinds={hovered.kinds} metric={metric} scope={scope} total={hovered.value} quarter={hovered.level ? QUARTER_NAME[hovered.level] : undefined} />}
         </CellTip>
         <div
-          className="grid w-max gap-[3px]"
-          style={{ gridTemplateColumns: `max-content repeat(${cols.length}, ${cell}px)` }}
+          className="grid w-full gap-[3px]"
+          style={{ gridTemplateColumns: `max-content repeat(${cols.length}, minmax(12px, 1fr))` }}
           role="grid"
           aria-label={`${label} per day, ${model.cells.length} days, levelled by quartiles of the active days. Use the arrow keys to move between days.`}
         >
           <div />
-          {cols.map((c) => (
-            <div key={`m${c.monday}`} className="h-[14px] whitespace-nowrap font-mono text-[10.5px] text-faint">
-              {c.month ?? ""}
-            </div>
-          ))}
-          <div className="grid gap-[3px]" style={{ gridTemplateRows: `repeat(7, ${cell}px)` }}>
+          {/* Each month label spans the columns up to the next label, so a label is never
+              wider than its cell (a 12 px track holding "Sep" would spill past the grid and
+              hand the strip a scrollbar). */}
+          {cols.map((c, i) => {
+            if (!c.month) return null;
+            let span = 1;
+            while (i + span < cols.length && !cols[i + span].month) span++;
+            // The year's last month may own one or two week columns — too narrow for its
+            // name — so it borrows columns to its LEFT (they hold no text at their right
+            // end) and aligns to the right edge instead of being clipped.
+            const short = span < 3;
+            const start = short ? Math.max(0, i + span - 3) : i;
+            return (
+              <div key={`m${c.monday}`} className={cn("h-[14px] overflow-hidden whitespace-nowrap font-mono text-[10.5px] text-faint", short && "text-right")} style={{ gridColumn: `${start + 2} / span ${i + span - start}`, gridRow: 1 }}>
+                {c.month}
+              </div>
+            );
+          })}
+          <div className="grid h-full grid-rows-[repeat(7,1fr)] gap-[3px]" style={{ gridRow: 2, gridColumn: 1 }}>
             {DOW_SHORT.map((d, i) => (
               <div key={d} className="flex items-center justify-end pr-1.5 font-mono text-[10.5px] text-faint" style={{ height: cell }}>
                 {i % 2 === 0 ? d : ""}
@@ -973,9 +991,9 @@ function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, filtered,
             ))}
           </div>
           {cols.map((c) => (
-            <div key={c.monday} className="grid gap-[3px]" style={{ gridTemplateRows: `repeat(7, ${cell}px)` }}>
+            <div key={c.monday} className="grid gap-[3px]" style={{ gridRow: 2 }}>
               {c.cells.map((cellData, r) => {
-                if (!cellData) return <i key={`e${c.monday}-${r}`} className="block" style={{ width: cell, height: cell }} />;
+                if (!cellData) return <i key={`e${c.monday}-${r}`} className="block aspect-square w-full" />;
                 const i = cellData.day - first;
                 return (
                   <i

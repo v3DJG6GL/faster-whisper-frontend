@@ -433,8 +433,8 @@ export function levelOf(v: number, b: Breaks): Level {
 
 /** Legend copy for the five steps: `0 · 1–b1 · b1–b2 · b2–b3 · b3+` (`fmt(1)` opens the
  *  first active step, so a duration legend reads `1s–33m`). */
-export function legendRanges(b: Breaks, fmt: (n: number) => string): string[] {
-  return ["0", `${fmt(1)}–${fmt(b[0])}`, `${fmt(b[0])}–${fmt(b[1])}`, `${fmt(b[1])}–${fmt(b[2])}`, `${fmt(b[2])}+`];
+export function legendRanges(b: Breaks, fmt: (n: number) => string, lo = 1): string[] {
+  return ["0", `${fmt(lo)}–${fmt(b[0])}`, `${fmt(b[0])}–${fmt(b[1])}`, `${fmt(b[1])}–${fmt(b[2])}`, `${fmt(b[2])}+`];
 }
 
 /* ── per-kind cells (D31/D33): what a grid cell's tooltip lists ──────────── */
