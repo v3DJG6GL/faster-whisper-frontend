@@ -564,7 +564,7 @@ export function companionMetric(m: ChartMetric): ChartMetric {
 export const DOW_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 const MONTH_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
-const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
+export const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
 const ymdOf = (day: number): [number, number, number] => {
   const d = dayDate(day);
   return [d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()];

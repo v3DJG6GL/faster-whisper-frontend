@@ -103,6 +103,7 @@ import {
   type UsageBucket,
   type UsagePageQuery,
   type UsageScope,
+  ordinal,
 } from "@/lib/usageDerive";
 import { homeTargetProfile } from "@/lib/dictation";
 import { ownProp } from "@/lib/own";
@@ -1097,6 +1098,7 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
     if (i < N) {
       const c = model.cells[i];
       if (!c) return null;
+      if (!c.inWindow) return { title: L.cellName(i), kinds: c.kinds, total: 0, quarter: undefined, extra: [], out: `the ${ordinal(c.col + 1)} does not occur between ${fmtDateFull(from)} and ${fmtDateFull(to)}` };
       const occ = model.occOf(c);
       const extra: [string, string][] = [];
       if (c.value > 0 && occ > 1) extra.push([`≈ ${metricText(metric, c.value / occ, true)} per ${model.occWord(c)}`, `${fmtFull(occ)} ${rhythm === "hours" ? `${model.occWord(c)}s` : "months"} in range`]);
@@ -1187,7 +1189,15 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
       ) : (
         <div ref={boundsRef} className="relative" onMouseMove={onMove} onMouseLeave={onLeave} onFocus={onFocus} onBlur={onBlur} onKeyDown={keys}>
           <CellTip tip={tip} boundsRef={boundsRef}>
-            {hov && <KindTip title={hov.title} kinds={hov.kinds} metric={metric} scope={scope} total={hov.total} quarter={hov.quarter} extra={hov.extra} companion={comp} />}
+            {hov && "out" in hov && hov.out ? (
+              <>
+                <div className="mb-1 font-mono text-[10.5px] uppercase tracking-label text-faint">{hov.title}</div>
+                <div className="leading-relaxed text-dim">not in this window</div>
+                <div className="text-[11.5px] leading-relaxed text-faint">{hov.out}</div>
+              </>
+            ) : (
+              hov && <KindTip title={hov.title} kinds={hov.kinds} metric={metric} scope={scope} total={hov.total} quarter={hov.quarter} extra={hov.extra} companion={comp} />
+            )}
           </CellTip>
           <div
             className={cn("grid", rhythm === "days" ? "gap-[2px]" : "gap-[3px]")}
@@ -1228,9 +1238,9 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
                       data-i={i}
                       tabIndex={i === focusIdx ? 0 : -1}
                       role="gridcell"
-                      aria-label={`${L.cellName(i)}: ${c.value > 0 ? `${metricText(metric, c.value)} · ${metricText(comp, c.companion)}` : `no ${label.toLowerCase()}`}${c.level ? `, ${QUARTER_NAME[c.level]}` : ""}`}
-                      className={cn("block w-full rounded-[3px] outline-none", cellClass, CELL_HOVER, peak === c && "ring-[1.5px] ring-inset ring-text", !c.inWindow && "invisible", tip?.i === i && CELL_HOT)}
-                      style={{ background: LEVEL_BG[c.level] }}
+                      aria-label={`${L.cellName(i)}: ${!c.inWindow ? "not in this window" : c.value > 0 ? `${metricText(metric, c.value)} · ${metricText(comp, c.companion)}` : `no ${label.toLowerCase()}`}${c.level ? `, ${QUARTER_NAME[c.level]}` : ""}`}
+                      className={cn("block w-full rounded-[3px] outline-none", cellClass, CELL_HOVER, peak === c && "ring-[1.5px] ring-inset ring-text", tip?.i === i && CELL_HOT)}
+                      style={{ background: c.inWindow ? LEVEL_BG[c.level] : "repeating-linear-gradient(135deg, var(--c-line-strong) 0 2px, var(--c-surface-2) 2px 5px)" }}
                     />
                   );
                 })}
