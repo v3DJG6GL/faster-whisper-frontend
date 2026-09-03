@@ -30,7 +30,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Activity, ArrowRight, Clock, Cpu, Mic, Timer, Type, TriangleAlert } from "lucide-react";
+import { Activity, ArrowRight, ChevronDown, ChevronUp, Clock, Cpu, Mic, Timer, Type, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useApp } from "@/lib/store";
 import { Card, SectionLabel, Segmented } from "@/components/ui";
@@ -925,6 +925,7 @@ function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, filtered,
   mark: { from: number; to: number; word: string } | null;
   filtered: boolean;
   metric: ChartMetric;
+  stale: boolean;
 }) {
   const model = useMemo(() => calendarModel(dense, scope, from, to, metric), [dense, scope, from, to, metric]);
   const cols = useMemo(() => weekColumns(model.cells), [model.cells]);
@@ -985,7 +986,7 @@ function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, filtered,
           })}
           <div className="grid h-full grid-rows-[repeat(7,1fr)] gap-[3px]" style={{ gridRow: 2, gridColumn: 1 }}>
             {DOW_SHORT.map((d, i) => (
-              <div key={d} className="flex items-center justify-end pr-1.5 font-mono text-[10.5px] text-faint" style={{ height: cell }}>
+              <div key={d} className="flex items-center justify-end pr-1.5 font-mono text-[10.5px] text-faint">
                 {i % 2 === 0 ? d : ""}
               </div>
             ))}
@@ -1167,13 +1168,13 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
             ))}
             <div />
             <div />
-            {Array.from({ length: L.cols }, (_, c) => (
             <div />
+            {Array.from({ length: L.cols }, (_, c) => (
               <div key={`l${c}`} className="font-mono text-[10px] text-faint">{L.colLabel(c)}</div>
             ))}
             <div />
-            {Array.from({ length: L.rows }, (_, r) => (
             <div />
+            {Array.from({ length: L.rows }, (_, r) => (
               <Fragment key={r}>
                 <div className="flex items-center font-mono text-[10.5px] text-faint">{L.rowLabel(r)}</div>
                 {model.cells.slice(r * L.cols, r * L.cols + L.cols).map((c) => {
@@ -1190,8 +1191,8 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
                     />
                   );
                 })}
-                <div
                 <div />
+                <div
                   data-i={N + L.cols + r}
                   tabIndex={0}
                   role="img"
@@ -1404,10 +1405,13 @@ function FilterBar({
           ariaLabel="Range"
           options={RANGE_PRESETS.map((r) => ({ value: r, label: RANGE_LABEL[r] }))}
         />
-        <span className="ml-auto flex items-center gap-2">
-          <Pill>{spanText}</Pill>
-          {anySet && clearButton}
-        </span>
+        {/* While pinned, the rail's top line carries the span and Clear. */}
+        {!stuck && (
+          <span className="ml-auto flex items-center gap-2">
+            {anySet && clearButton}
+            <Pill>{spanText}</Pill>
+          </span>
+        )}
       </div>
       <div className={cn(row, "mt-2.5")}>
         <Eyebrow>Kind</Eyebrow>
@@ -1468,13 +1472,22 @@ function FilterBar({
       )}
     </>
   );
-  const openBar = () => setOpen(true);
+  // The whole top line toggles the full bar. Its buttons handle their own clicks — the
+  // chips and Show / Hide toggle too, Clear clears — so the line ignores a click that
+  // started on a button rather than toggling twice (or undoing a Clear's intent).
+  const toggleBar = () => setOpen((o) => !o);
   const rail = (
-    <div className="flex flex-wrap items-center gap-2">
-      <RailChip label="Range" onClick={openBar}>{rangeChip}</RailChip>
-      <RailChip label="Kind" onClick={openBar}>{SCOPE_LABEL[scope]}</RailChip>
+    <div
+      className="flex cursor-pointer flex-wrap items-center gap-2"
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest("button")) return;
+        toggleBar();
+      }}
+    >
+      <RailChip label="Range" onClick={toggleBar}>{rangeChip}</RailChip>
+      <RailChip label="Kind" onClick={toggleBar}>{SCOPE_LABEL[scope]}</RailChip>
       {query.with.length > 0 && (
-        <RailChip label="With" onClick={openBar}>
+        <RailChip label="With" onClick={toggleBar}>
           {query.with.map((k) => (
             <span key={k} className="inline-flex items-center gap-1">
               <i className="inline-block size-2 rounded-full" style={{ background: STAGE_DOT[k] }} />
@@ -1483,18 +1496,27 @@ function FilterBar({
           ))}
         </RailChip>
       )}
-      <RailChip label="Measure" accent onClick={openBar}>{METRIC_LABEL[metric]}</RailChip>
+      <RailChip label="Measure" accent onClick={toggleBar}>{METRIC_LABEL[metric]}</RailChip>
       {stale && <Pill>updating…</Pill>}
+      {/* Top-right: the resolved span (the full bar's Range row shows it while open, so the
+          rail drops it then) and the one button that opens / closes the full bar. Clear
+          lives in the full bar only. */}
       <span className="ml-auto flex items-center gap-2">
+        {/* Clear only while the full bar is open under the rail (its own Clear steps aside
+            then), left of Hide: the collapsed rail is a readout, not a place to reset from. */}
+        {open && anySet && clearButton}
+        <Pill>{spanText}</Pill>
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={toggleBar}
           aria-expanded={open}
-          className="ring-signal rounded-md border border-line-strong bg-surface px-2.5 py-0.5 text-[12px] text-text transition-colors hover:bg-surface-2"
+          className="ring-signal inline-flex items-center gap-1 rounded-md border border-line-strong bg-surface py-0.5 pl-2.5 pr-1.5 text-[12px] text-text transition-colors hover:bg-surface-2"
         >
-          {open ? "Done ▴" : "Edit filters ▾"}
+          {/* "Show" and "Hide" differ by a pixel or two; a fixed label width keeps the
+              button (and Clear beside it) from shifting on every toggle. */}
+          <span className="inline-block w-[2.6em] text-left">{open ? "Hide" : "Show"}</span>
+          {open ? <ChevronUp className="size-3.5 text-dim" aria-hidden /> : <ChevronDown className="size-3.5 text-dim" aria-hidden />}
         </button>
-        {anySet && clearButton}
       </span>
     </div>
   );
@@ -1515,6 +1537,10 @@ function FilterBar({
           className={cn(
             "relative rounded-[12px] border border-line bg-surface/95 px-3 backdrop-blur-sm transition-shadow motion-reduce:transition-none",
             stuck ? "rounded-t-none border-t-transparent py-1.5 shadow-[0_14px_34px_-20px_rgba(0,0,0,0.7)]" : "py-2.5",
+            // Open: the full bar hangs off this line's bottom edge, so its bottom corners
+            // square off and its own bottom border goes — otherwise the rail's rounded
+            // corners peek out above the panel underneath.
+            stuck && open && "rounded-b-none border-b-transparent shadow-none",
           )}
         >
           {stuck ? rail : full}
@@ -1690,6 +1716,18 @@ export function StatisticsView({
   );
   const mode = bucketMode(win.days);
   const buckets = useMemo(() => bucketize(dense, mode), [dense, mode]);
+  // The calendar's year: the page's own document when its range spans one, else the
+  // separate 365-day document (lib/usage.ts refreshYear), which may still be on its way.
+  const year = useApp((s) => s.usageYear);
+  const yearQ = yearPageQuery(query);
+  const yearSig = yearQ && viewBackend ? viewSignature(viewBackend, effectiveServerUrl(viewBackend, settings), yearQ, viewerTimeZone()) : null;
+  const yearFresh = !yearQ ? fresh : !!yearSig && year?.sig === yearSig;
+  const yearStats = !yearQ ? stats : (year?.stats ?? null);
+  const yearWin = { from: today - 364, to: today };
+  const yearDense = useMemo(
+    () => (yearStats ? densifyKinds(Array.isArray(yearStats.series) ? yearStats.series : [], 365, today).filter((p) => p.day >= yearWin.from && p.day <= yearWin.to) : []),
+    [yearStats, today, yearWin.from, yearWin.to],
+  );
   if (!viewBackend || !stats) {
     return (
       <Card className="grid place-items-center p-12 text-center">
@@ -1747,15 +1785,3 @@ export function StatisticsView({
     </>
   );
 }
-  // The calendar's year: the page's own document when its range spans one, else the
-  // separate 365-day document (lib/usage.ts refreshYear), which may still be on its way.
-  const year = useApp((s) => s.usageYear);
-  const yearQ = yearPageQuery(query);
-  const yearSig = yearQ && viewBackend ? viewSignature(viewBackend, effectiveServerUrl(viewBackend, settings), yearQ, viewerTimeZone()) : null;
-  const yearFresh = !yearQ ? fresh : !!yearSig && year?.sig === yearSig;
-  const yearStats = !yearQ ? stats : (year?.stats ?? null);
-  const yearWin = { from: today - 364, to: today };
-  const yearDense = useMemo(
-    () => (yearStats ? densifyKinds(Array.isArray(yearStats.series) ? yearStats.series : [], 365, today).filter((p) => p.day >= yearWin.from && p.day <= yearWin.to) : []),
-    [yearStats, today, yearWin.from, yearWin.to],
-  );
