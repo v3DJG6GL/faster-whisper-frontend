@@ -435,6 +435,10 @@ interface AppState {
    *  answers so a stale response is ignored. null = nothing fetched yet / unsupported.
    *  Runtime-only. Fed by lib/usage.ts. */
   usageView: { sig: string; stats: UsageStats | null } | null;
+  /** The Statistics calendar's own document: the last 365 days under the page's stage
+   *  filter, whatever range the page shows, so the calendar is always a year (the page's
+   *  own document is used instead when its range already covers one). Runtime-only. */
+  usageYear: { sig: string; stats: UsageStats | null } | null;
   /** What the Statistics page asked for (range preset or custom span, stage filter).
    *  Per-device view state — never synced, never persisted. */
   usageViewQuery: UsagePageQuery;
@@ -513,6 +517,7 @@ interface AppState {
   setUsageViewBackend: (id: string | null) => void;
   /** Store the Statistics page's fetched document for a query signature. */
   setUsageView: (sig: string, stats: UsageStats | null) => void;
+  setUsageYear: (sig: string, stats: UsageStats | null) => void;
   /** Change what the Statistics page asks for (the controller refetches). */
   setUsageViewQuery: (q: UsagePageQuery) => void;
 
@@ -645,6 +650,7 @@ export const useApp = create<AppState>((set) => ({
   caps: {},
   usageViewBackendId: null,
   usageView: null,
+  usageYear: null,
   usageViewQuery: DEFAULT_PAGE_QUERY,
   saveError: null,
   saveErrorKind: null,
@@ -829,6 +835,11 @@ export const useApp = create<AppState>((set) => ({
       // identical document; keep the reference so the page does not re-render for nothing.
       if (s.usageView && s.usageView.sig === sig && JSON.stringify(s.usageView.stats) === JSON.stringify(stats)) return {};
       return { usageView: { sig, stats } };
+    }),
+  setUsageYear: (sig, stats) =>
+    set((s) => {
+      if (s.usageYear && s.usageYear.sig === sig && JSON.stringify(s.usageYear.stats) === JSON.stringify(stats)) return {};
+      return { usageYear: { sig, stats } };
     }),
   setUsageViewQuery: (q) => set({ usageViewQuery: q }),
 

@@ -67,6 +67,34 @@ export function viewSignature(backend: Backend, target: string, q: UsagePageQuer
   return JSON.stringify([backend.id, target, toUsageQuery(q, tz)]);
 }
 
+/** The calendar's query for a page query: the last 365 days under the same stage filter.
+ *  Null when the page's own document already spans a year (the 365 / All presets). */
+export function yearPageQuery(q: UsagePageQuery): UsagePageQuery | null {
+  if (q.range === "365" || q.range === "all") return null;
+  return { range: "365", with: q.with };
+}
+
+/** Fetch the calendar's year document beside the page's, under the same rules. */
+async function refreshYear(): Promise<void> {
+  const s = useApp.getState();
+  const backend = viewStatsBackend(s);
+  if (!backend) return;
+  const q = yearPageQuery(s.usageViewQuery);
+  if (!q) return;
+  const target = effectiveServerUrl(backend, s.settings);
+  const tz = viewerTimeZone();
+  const sig = viewSignature(backend, target, q, tz);
+  if (s.usageYear?.sig === sig && s.usageYear.stats && !pollingAll) return; // the poll refreshes it; a filter change reuses it
+  const stats = await getUsageStats({ serverUrl: target, backendId: backend.id, query: toUsageQuery(q, tz) });
+  const now = useApp.getState();
+  const cur = viewStatsBackend(now);
+  if (!cur || cur.id !== backend.id) return;
+  const nq = yearPageQuery(now.usageViewQuery);
+  if (!nq || viewSignature(cur, effectiveServerUrl(cur, now.settings), nq, tz) !== sig) return;
+  if (stats === null && now.usageYear?.sig === sig) return;
+  now.setUsageYear(sig, stats);
+}
+
 /** Fetch the Statistics page's document for the current query against the viewed
  *  backend. A response for a query that is no longer current is dropped. */
 async function refreshView(): Promise<void> {
@@ -163,6 +191,11 @@ async function refreshAll(): Promise<void> {
       } catch {
         /* the page keeps its last document */
       }
+      try {
+        await refreshYear();
+      } catch {
+        /* the calendar keeps its last year */
+      }
     } while (rerunRequested); // re-reads the latest backends snapshot on the rerun
   } finally {
     pollingAll = false;
@@ -196,6 +229,7 @@ export function initUsageController(): void {
     // that document now rather than on the next 30 s tick.
     if (state.usageViewQuery !== prev.usageViewQuery || state.usageViewBackendId !== prev.usageViewBackendId) {
       void refreshView().catch(() => {});
+      void refreshYear().catch(() => {});
     }
   });
 }

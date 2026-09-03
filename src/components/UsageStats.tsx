@@ -45,7 +45,7 @@ import {
   fmtDateFull,
   localTodayDay,
 } from "@/lib/format";
-import { TREND_DAYS, viewSignature, viewerTimeZone } from "@/lib/usage";
+import { TREND_DAYS, viewSignature, viewerTimeZone, yearPageQuery } from "@/lib/usage";
 import { effectiveServerUrl } from "@/lib/backends";
 import {
   CHART_METRICS,
@@ -905,14 +905,19 @@ function LevelLegend({ lead, breaks, counts, unit, metric }: { lead: string; bre
   );
 }
 
-function CalendarPanel({ dense, streaks, scope, withS, from, to, title, filtered, metric }: {
+/** The calendar is always the last 12 months (its own year document, or the page's when
+ *  that already spans a year), whatever range the page shows: a week of squares says
+ *  nothing and its quartiles less. The page's range is MARKED on it instead — days outside
+ *  it are dimmed — so the strip also shows where the filter sits. */
+function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, filtered, metric, stale }: {
   dense: readonly UsageSeriesPoint[];
   streaks: UsageStreaks | undefined;
   scope: UsageScope;
   withS: readonly UsageStageKey[];
   from: number;
   to: number;
-  title: string;
+  /** The page's range, when it is narrower than the year; null = the whole year. */
+  mark: { from: number; to: number; word: string } | null;
   filtered: boolean;
   metric: ChartMetric;
 }) {
@@ -932,15 +937,19 @@ function CalendarPanel({ dense, streaks, scope, withS, from, to, title, filtered
   const label = METRIC_LABEL[metric];
   return (
     <Panel
-      title={`Calendar · ${title} · ${scope === "all" ? "all kinds" : KIND_LABEL[scope]}${withWord}`}
+      title={`Calendar · last 12 months · ${scope === "all" ? "all kinds" : KIND_LABEL[scope]}${withWord}`}
       right={
-        <Pill>
-          streak {fmtFull(streak.current)} {streak.current === 1 ? "day" : "days"} · best {fmtFull(streak.best)}
-          {filtered ? " · filtered" : ""}
-        </Pill>
+        <>
+          {mark && <Pill>{mark.word} marked</Pill>}
+          {stale && <Pill>loading…</Pill>}
+          <Pill>
+            streak {fmtFull(streak.current)} {streak.current === 1 ? "day" : "days"} · best {fmtFull(streak.best)}
+            {filtered ? " · filtered" : ""}
+          </Pill>
+        </>
       }
     >
-      <div ref={ref} className="relative overflow-x-auto pb-1" onMouseMove={onMove} onMouseLeave={onLeave} onFocus={onFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
+      <div ref={ref} className={cn("relative overflow-x-auto pb-1", stale && "opacity-70")} onMouseMove={onMove} onMouseLeave={onLeave} onFocus={onFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
         <CellTip tip={tip} boundsRef={ref}>
           {hovered && <KindTip title={fmtDateFull(hovered.day)} kinds={hovered.kinds} metric={metric} scope={scope} total={hovered.value} quarter={hovered.level ? QUARTER_NAME[hovered.level] : undefined} />}
         </CellTip>
@@ -975,8 +984,8 @@ function CalendarPanel({ dense, streaks, scope, withS, from, to, title, filtered
                     tabIndex={i === focusIdx ? 0 : -1}
                     role="gridcell"
                     aria-label={`${fmtDateFull(cellData.day)}: ${cellData.value > 0 ? metricText(metric, cellData.value) : `no ${label.toLowerCase()}`}${cellData.level ? `, ${QUARTER_NAME[cellData.level]}` : ""}`}
-                    className={cn("block rounded-[3px] outline-none", CELL_HOVER, cellData.day === today && "ring-[1.5px] ring-inset ring-text", tip?.i === i && CELL_HOT)}
-                    style={{ width: cell, height: cell, background: LEVEL_BG[cellData.level] }}
+                    className={cn("block aspect-square w-full rounded-[3px] outline-none", CELL_HOVER, cellData.day === today && "ring-[1.5px] ring-inset ring-text", mark && (cellData.day < mark.from || cellData.day > mark.to) && "opacity-30", tip?.i === i && CELL_HOT)}
+                    style={{ background: LEVEL_BG[cellData.level] }}
                   />
                 );
               })}
@@ -984,7 +993,7 @@ function CalendarPanel({ dense, streaks, scope, withS, from, to, title, filtered
           ))}
         </div>
       </div>
-      <LevelLegend lead={`${label} per day · quarters of your active days`} breaks={model.breaks} counts={model.counts} unit={["day", "days"]} metric={metric} />
+      <LevelLegend lead={`${label} per day · quarters of your active days in the year${mark ? " · dimmed days are outside the range" : ""}`} breaks={model.breaks} counts={model.counts} unit={["day", "days"]} metric={metric} />
     </Panel>
   );
 }
@@ -1700,9 +1709,32 @@ export function StatisticsView({
         <StackedChart buckets={buckets} mode={mode} scope={scope} metric={metric} />
         <StagesPanel stats={stats} dense={dense} scope={scope} withS={query.with} rangeWord={word} />
         <DictationPanel stats={stats} scope={scope} />
-        <CalendarPanel dense={dense} streaks={stats.streak} scope={scope} withS={query.with} from={win.from} to={win.to} title={word} filtered={filtered} metric={metric} />
+        <CalendarPanel
+          dense={yearDense}
+          streaks={(yearStats ?? stats).streak}
+          scope={scope}
+          withS={query.with}
+          from={yearWin.from}
+          to={yearWin.to}
+          mark={win.from <= yearWin.from && win.to >= yearWin.to ? null : { from: win.from, to: win.to, word }}
+          filtered={filtered}
+          metric={metric}
+          stale={!yearFresh}
+        />
         <BusyPanel stats={stats} dense={dense} scope={scope} title={word} metric={metric} rhythm={rhythm} onRhythm={onRhythm} from={win.from} to={win.to} />
       </div>
     </>
   );
 }
+  // The calendar's year: the page's own document when its range spans one, else the
+  // separate 365-day document (lib/usage.ts refreshYear), which may still be on its way.
+  const year = useApp((s) => s.usageYear);
+  const yearQ = yearPageQuery(query);
+  const yearSig = yearQ && viewBackend ? viewSignature(viewBackend, effectiveServerUrl(viewBackend, settings), yearQ, viewerTimeZone()) : null;
+  const yearFresh = !yearQ ? fresh : !!yearSig && year?.sig === yearSig;
+  const yearStats = !yearQ ? stats : (year?.stats ?? null);
+  const yearWin = { from: today - 364, to: today };
+  const yearDense = useMemo(
+    () => (yearStats ? densifyKinds(Array.isArray(yearStats.series) ? yearStats.series : [], 365, today).filter((p) => p.day >= yearWin.from && p.day <= yearWin.to) : []),
+    [yearStats, today, yearWin.from, yearWin.to],
+  );
