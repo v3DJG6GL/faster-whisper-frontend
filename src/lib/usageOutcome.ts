@@ -191,10 +191,10 @@ function persist(): void {
 /** Load the persisted queue (once) and post whatever is due. */
 export async function initOutcomeQueue(): Promise<void> {
   if (!isTauri || loaded) return;
-  loaded = true;
   try {
     const persisted = pruneQueue(parseQueue(await loadUsageOutcomes()), Date.now());
     queue = { ...persisted, items: [...persisted.items, ...queue.items] };
+    loaded = true;
   } catch (e) {
     console.error("usage outcome queue load failed:", e);
   }
@@ -233,7 +233,7 @@ export async function flushOutcomes(): Promise<void> {
         // keyring with it): its outcomes have nowhere to go.  Guard on configLoaded so
         // the empty boot-time list doesn't look like "all backends removed."
         const st = useApp.getState();
-        if (st.configLoaded && !st.backends.some((b) => b.id === batch.backendId)) {
+        if (st.configLoaded && !st.configLoadFailed && !st.backends.some((b) => b.id === batch.backendId)) {
           queue = applyPost(queue, ids, "drop", now);
           persist();
           continue;

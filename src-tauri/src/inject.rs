@@ -659,6 +659,11 @@ fn paste(
     // skip-restore-on-failure contract. No-op when restore is off (`previous` is None).
     if res.is_ok() {
         restore_clipboard_later(previous);
+    } else if !remote_target {
+        // The local arboard Clipboard is dropped when this function returns — on X11/Wayland
+        // without a clipboard manager that destroys the selection. Hand it to the persistent
+        // owner so "it's on the clipboard to paste manually" stays true.
+        let _ = set_clipboard_persistent(text);
     }
     res.map(|()| Landed::Yes)
 }

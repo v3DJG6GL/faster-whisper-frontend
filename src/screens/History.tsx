@@ -407,7 +407,7 @@ export default function History() {
    *  dictated text IS the injected join, so that is what the clipboard gets;
    *  a single language stays one hover away on each track. */
   const copyText = (rec: TranscriptRecord) => {
-    const text = rec.translatedText ?? recordText(rec);
+    const text = rec.translatedText || recordText(rec);
     void navigator.clipboard
       .writeText(stripControlChars(text))
       .then(() => flashCopied(rec.id))
@@ -685,7 +685,7 @@ export default function History() {
               model <span className="text-dim">{safeDisplayText(rec.model.split("/").pop() ?? rec.model, 40)}</span>
             </span>
           )}
-          {rec.insertMethod && (
+          {rec.insertMethod && rec.insertMethod !== "none" && (
             <span className="font-mono text-[11px] text-faint">
               inserted <span className="text-dim">{rec.insertMethod}</span>
             </span>

@@ -191,9 +191,10 @@ const catEqual = (a: unknown, b: unknown) => stableStringify(a ?? null) === stab
  *  promise). Degrading to `fallback` (push without secrets) is always safer
  *  than never pushing again. */
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
-    p,
-    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+    p.finally(() => clearTimeout(timer)),
+    new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), ms); }),
   ]);
 }
 
@@ -1164,6 +1165,27 @@ function sanitizeBackends(list: unknown): Backend[] {
       // fails the typed parse like its two siblings above. Keep undefined = "infer from the
       // connection test", which is what an absent key already means.
       kind: b.kind == null ? undefined : oneOf<BackendKind>(b.kind, BACKEND_KINDS, "auto"),
+      decodeOverrides: b.decodeOverrides && typeof b.decodeOverrides === "object"
+        ? {
+            ...Object.fromEntries(Object.entries(b.decodeOverrides).filter(([, v]) => typeof v === "number" || typeof v === "boolean")),
+            hotwords: typeof b.decodeOverrides.hotwords === "string" ? b.decodeOverrides.hotwords.slice(0, 2000) : undefined,
+            prepend_punctuations: typeof b.decodeOverrides.prepend_punctuations === "string" ? b.decodeOverrides.prepend_punctuations.slice(0, 200) : undefined,
+            append_punctuations: typeof b.decodeOverrides.append_punctuations === "string" ? b.decodeOverrides.append_punctuations.slice(0, 200) : undefined,
+            suppress_tokens: typeof b.decodeOverrides.suppress_tokens === "string" ? b.decodeOverrides.suppress_tokens.slice(0, 500) : undefined,
+          }
+        : undefined,
+      translationOverrides: b.translationOverrides && typeof b.translationOverrides === "object"
+        ? {
+            translateTo: Array.isArray(b.translationOverrides.translateTo)
+              ? b.translationOverrides.translateTo.filter((c: unknown): c is string => typeof c === "string").slice(0, 8)
+              : undefined,
+            model: typeof b.translationOverrides.model === "string" ? b.translationOverrides.model.slice(0, 200) : undefined,
+            contextSegments: typeof b.translationOverrides.contextSegments === "number" ? b.translationOverrides.contextSegments : undefined,
+            glossary: typeof b.translationOverrides.glossary === "string" ? b.translationOverrides.glossary.slice(0, 4000) : undefined,
+            mode: b.translationOverrides.mode === "fluent" || b.translationOverrides.mode === "faithful" ? b.translationOverrides.mode : undefined,
+            includeOriginal: b.translationOverrides.includeOriginal == null ? undefined : b.translationOverrides.includeOriginal === true,
+          }
+        : undefined,
     }))
     )
     .slice(0, MAX_SYNCED_ENTRIES);

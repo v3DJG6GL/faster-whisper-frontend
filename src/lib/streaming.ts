@@ -2441,7 +2441,7 @@ function flashError(message: string): void {
   resetPartialPreview();
   // Same call as the status move (see settleIdle): the error supersedes whatever
   // the cold-translate phase was reporting.
-  useApp.getState().setDictation({ status: "error", dictationError: message, level: 0, partial: "", warming: false, dictationPhase: null });
+  useApp.getState().setDictation({ status: "error", dictationError: message, level: 0, partial: "", warming: false, dictationPhase: null, sessionTargets: null, routePending: null });
   // Failure doorway: the dictation error itself lingers only briefly (chip/Home);
   // the banner persists with a "View logs" path to the full story.
   useApp.getState().setLogsDoorway("Dictation failed — the log has the details.");

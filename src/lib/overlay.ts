@@ -96,13 +96,13 @@ function validRouteTargets(sessionTargets: string[] | null, profileTargets: stri
  *  the two surfaces can't disagree — and the spoken language from the active Profile, which is
  *  the only piece the session state doesn't already carry. */
 function trayRoute(state: ReturnType<typeof useApp.getState>): string {
-  const targets = state.sessionTargets ?? [];
+  const profile = state.activeProfile ? state.profiles.find((p) => p.id === state.activeProfile) : undefined;
+  const targets = validRouteTargets(state.sessionTargets, profile?.translationOverrides?.translateTo);
   // A push-to-talk session that asks at release has no targets yet, but it does have a
   // route — an undecided one, "DE → ?" — and the tray is the only surface on a chip-less
   // desktop. Ask-standby (no session) stays empty, like every other idle tooltip.
   const undecided = state.routePending === "undecided";
   if (targets.length === 0 && !undecided) return "";
-  const profile = state.activeProfile ? state.profiles.find((p) => p.id === state.activeProfile) : undefined;
   const backend = backendForProfile(profile, state.backends);
   const src = (profile?.language?.trim() ? profile.language : backend?.language) ?? "";
   if (targets.length === 0) return `${src.toUpperCase() || "AUTO"} → ?`;
