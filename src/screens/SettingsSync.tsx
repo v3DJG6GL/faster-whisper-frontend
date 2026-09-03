@@ -204,7 +204,11 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     setApplying(true);
     setError(null);
     try {
-      await applyImport(sel, result);
+      const applied = await applyImport(sel, result);
+      if (!applied) {
+        setError("Settings could not be applied right now — try again in a moment.");
+        return;
+      }
       onClose();
     } catch (e) {
       setError(

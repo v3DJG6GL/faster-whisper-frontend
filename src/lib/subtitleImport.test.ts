@@ -94,6 +94,17 @@ describe("plain text + errors", () => {
 
 // The picker's dialog filter and the drag-and-drop accept test read ONE list;
 // a text source the parser handles must never be droppable-but-rejected.
+describe("parseClock via SRT import", () => {
+  it("parses cues without fractional seconds", () => {
+    const srt = "1\r\n00:00:10 --> 00:00:14\r\nHello world.\r\n";
+    const result = parseImportedText("srt", srt);
+    expect(result.segments.length).toBe(1);
+    expect(result.segments[0].start).toBe(10);
+    expect(result.segments[0].end).toBe(14);
+    expect(result.segments[0].text).toBe("Hello world.");
+  });
+});
+
 describe("isAcceptedSourcePath", () => {
   it("accepts audio and text sources regardless of extension case", () => {
     expect(isAcceptedSourcePath("/tmp/a.mp3")).toBe(true);

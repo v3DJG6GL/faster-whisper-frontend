@@ -263,7 +263,8 @@ pub fn log_dir(app: &AppHandle, config: &Config) -> Option<PathBuf> {
         .logging
         .log_dir
         .as_deref()
-        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
     {
         return Some(PathBuf::from(dir));
     }

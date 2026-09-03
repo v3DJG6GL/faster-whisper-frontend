@@ -12,7 +12,7 @@ import {
   CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipExpansion, chipTuckHold, currentPhase,
   phaseClock, phaseElapsedMs,
 } from "@/lib/chipRules";
-import { applyTheme, setAccentHue, setAccentMotion, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
+import { applyAccentAndTheme, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
 import type { AccentMotion, DictationPhase, DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
 
 interface ChipState {
@@ -209,9 +209,12 @@ export default function Overlay() {
           // Only re-apply accent/theme when the values actually change —
           // the level stream fires ~30 Hz and each call tears down the drift
           // timer and writes ~11 custom properties on the document root.
-          if (hue !== prevHueRef.current) { prevHueRef.current = hue; setAccentHue(hue); }
-          if (mot !== prevMotionRef.current) { prevMotionRef.current = mot; setAccentMotion(mot); }
-          if (theme !== prevThemeRef.current) { prevThemeRef.current = theme; applyTheme(theme); }
+          if (hue !== prevHueRef.current || mot !== prevMotionRef.current || theme !== prevThemeRef.current) {
+            prevHueRef.current = hue;
+            prevMotionRef.current = mot;
+            prevThemeRef.current = theme;
+            applyAccentAndTheme(hue, mot, theme);
+          }
           setState({
             ...e.payload,
             warming: e.payload.warming ?? false,

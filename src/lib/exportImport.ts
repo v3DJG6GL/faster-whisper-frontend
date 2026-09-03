@@ -49,11 +49,12 @@ export async function exportToFile(path: string, includeSecrets: boolean): Promi
 /** Apply the user's per-category selection from a parsed import. Secrets ride
  *  inside the blob (applyBlob writes them to the keyring and re-derives
  *  hasApiKey from keyring truth). Throws "dictating" if a session is live —
- *  the preview dialog blocks on that instead of silently deferring. */
+ *  the preview dialog blocks on that instead of silently deferring. Returns
+ *  false when applyBlob deferred or its retries exhausted (nothing was applied). */
 export async function applyImport(
   selection: Record<SyncCategory, boolean>,
   result: ImportResult,
-): Promise<void> {
+): Promise<boolean> {
   if (useApp.getState().status !== "idle") throw new Error("dictating");
   // Normalize a file written before the category split (chip fields inside
   // recording, the quick-add chord/pin under general/backends).
@@ -61,5 +62,5 @@ export async function applyImport(
   if (selection.backends && blob.backends && Object.keys(result.secrets).length > 0) {
     blob.backends = { ...blob.backends, secrets: result.secrets };
   }
-  await applyBlob(blob, selection, 2, { ignoreGates: true });
+  return applyBlob(blob, selection, 2, { ignoreGates: true });
 }

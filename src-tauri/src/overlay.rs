@@ -488,13 +488,17 @@ mod win_hover {
     pub fn cursor_in_chip(app: &AppHandle) -> Option<bool> {
         let (x, y, w, h) = (*REGION.lock().ok()?)?;
         let cur = app.cursor_position().ok()?;
-        let (scale, px, py) = match *GEOM.lock().ok()? {
+        let cached_geom = *GEOM.lock().ok()?;
+        let (scale, px, py) = match cached_geom {
             Some(g) => g,
             None => {
-                // No cached geometry yet (a caller before the first show): one live fetch.
                 let win = app.get_webview_window("overlay")?;
                 let pos = win.outer_position().ok()?;
-                (win.scale_factor().ok()?, pos.x, pos.y)
+                let fetched = (win.scale_factor().ok()?, pos.x, pos.y);
+                if let Ok(mut g) = GEOM.lock() {
+                    *g = Some(fetched);
+                }
+                fetched
             }
         };
         let pad = 10.0 * scale;

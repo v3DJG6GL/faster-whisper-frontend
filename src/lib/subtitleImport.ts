@@ -57,12 +57,13 @@ export function parseImportedText(ext: string, content: string): ImportedText {
   return out;
 }
 
-/** "01:02:03,450" / "01:02:03.450" / "02:03.450" → seconds. */
+/** "01:02:03,450" / "01:02:03.450" / "02:03.450" / "02:03" → seconds. */
 function parseClock(s: string): number | undefined {
-  const m = /^(?:(\d+):)?(\d+):(\d+)[.,](\d{1,3})$/.exec(s.trim());
+  const m = /^(?:(\d+):)?(\d+):(\d+)(?:[.,](\d{1,3}))?$/.exec(s.trim());
   if (!m) return undefined;
   const h = m[1] ? parseInt(m[1], 10) : 0;
-  return h * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10) + parseInt(m[4].padEnd(3, "0"), 10) / 1000;
+  const frac = m[4] ? parseInt(m[4].padEnd(3, "0"), 10) / 1000 : 0;
+  return h * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10) + frac;
 }
 
 /** Strip markup a cue line may carry and split a leading "Name:" speaker. */
