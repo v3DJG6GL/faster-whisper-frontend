@@ -406,7 +406,7 @@ export function RestoreFromServer({
       <div className="text-[15px] font-semibold text-text">Restore from server</div>
       <div className="mt-1 text-[12.5px] text-dim">
         Last synced{state.device ? ` from ${safeText(state.device, 60)}` : ""}
-        {state.updated_at ? ` · ${relTime(state.updated_at * 1000)}` : ""}
+        {state.updated_ts ? ` · ${relTime(state.updated_ts * 1000)}` : ""}
       </div>
 
       <div className="mt-4">

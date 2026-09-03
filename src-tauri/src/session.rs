@@ -793,7 +793,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
     }
     // Save the captured clip FIRST, regardless of length — exactly as the streaming save path
     // does (it saves any non-empty buffer, with no minimum-duration gate). Whether a too-short
-    // recording is worth keeping is the BACKEND's call (CAPTURE_RECORDINGS_MIN_DURATION_SEC),
+    // recording is worth keeping is the BACKEND's call (CAPTURES_RECORDING_MIN_DURATION_S),
     // not ours, so "Save recordings" produces the same files on a streaming and a batch backend.
     // "Trim silence" affects ONLY the saved file — the full clip is still sent for transcription
     // below — and trim_silence_16k can reduce an all-silence clip to nothing, which save_recording
@@ -809,7 +809,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
         // Nothing captured at all (an instant tap / misfire) — there's no audio to transcribe, and
         // the streaming path likewise closes an empty session without sending anything. We do NOT
         // gate on a minimum DURATION here: any actual audio, however short, is sent so the BACKEND
-        // decides whether it's worth transcribing (its CAPTURE_RECORDINGS_MIN_DURATION_SEC etc.) —
+        // decides whether it's worth transcribing (its CAPTURES_RECORDING_MIN_DURATION_S etc.) —
         // keeping batch and streaming identical.
         emit_if_active(&app, epoch, "stream://status", "closed");
         return;

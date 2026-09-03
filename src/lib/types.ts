@@ -684,7 +684,7 @@ export interface UsageKindTotals {
   /** Seconds of audio (render as minutes/hours). */
   audio_s: number;
   /** Seconds of server processing time. */
-  proc_s: number;
+  processing_s: number;
 }
 
 /** The per-kind split attached to today / total / every series day. */
@@ -762,7 +762,7 @@ export interface UsageHourCell extends UsageKindWords {
   dom?: number;
   hour: number;
   audio_s?: Partial<UsageKindWords>;
-  proc_s?: Partial<UsageKindWords>;
+  processing_s?: Partial<UsageKindWords>;
   sessions?: Partial<UsageKindWords>;
   requests?: Partial<UsageKindWords>;
   errors?: Partial<UsageKindWords>;

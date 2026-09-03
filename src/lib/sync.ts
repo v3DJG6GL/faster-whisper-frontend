@@ -2188,7 +2188,7 @@ export async function pushNow(manual = false): Promise<void> {
       if (res.ok && res.state) {
         await persistState({
           version: res.state.version,
-          updatedAt: res.state.updated_at ?? null,
+          updatedAt: res.state.updated_ts ?? null,
           device: device?.hostname ?? null,
           hash: hashBlob(blob),
           snapshot: blob,
@@ -2276,7 +2276,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     await applyBlob(merged, heldBack(applyCats, risky));
     raiseReview({
       changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
-      version: remote.version, updatedAt: remote.updated_at ?? null,
+      version: remote.version, updatedAt: remote.updated_ts ?? null,
       device: remote.device ?? null, pushAfter: true,
     });
     return;
@@ -2296,7 +2296,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   // construction, so compose-from-snapshot preservation is unaffected.)
   await persistState({
     version: remote.version,
-    updatedAt: remote.updated_at ?? null,
+    updatedAt: remote.updated_ts ?? null,
     device: remote.device ?? null,
     hash: hashBlob(remoteBlob),
     snapshot: remoteBlob,

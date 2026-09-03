@@ -262,7 +262,7 @@ export interface SyncState {
 export interface SyncRemoteState {
   version: number;
   blob: SyncBlob | null;
-  updated_at?: number | null;
+  updated_ts?: number | null;
   device?: string | null;
 }
 

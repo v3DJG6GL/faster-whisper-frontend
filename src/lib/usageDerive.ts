@@ -48,7 +48,7 @@ export const ZERO_TOTALS: Readonly<UsageKindTotals> = Object.freeze({
   errors: 0,
   words: 0,
   audio_s: 0,
-  proc_s: 0,
+  processing_s: 0,
 });
 
 export function zeroKinds(): UsageKinds {
@@ -65,7 +65,7 @@ export function safeTotals(t: Partial<UsageKindTotals> | null | undefined): Usag
     errors: n(t?.errors),
     words: n(t?.words),
     audio_s: n(t?.audio_s),
-    proc_s: n(t?.proc_s),
+    processing_s: n(t?.processing_s),
   };
 }
 
@@ -88,14 +88,14 @@ export function scopeTotals(k: UsageKinds, scope: UsageScope): UsageKindTotals {
  *  the backend's own measure bar keys them (`?metric=`), so a link carries across. The two
  *  `_s` measures are SECONDS; the formatters render them as durations. Client-side like the
  *  kind filter — it never changes the fetch. */
-export type ChartMetric = "audio_s" | "words" | "sessions" | "requests" | "proc_s" | "errors";
-export const CHART_METRICS: readonly ChartMetric[] = ["audio_s", "words", "sessions", "requests", "proc_s", "errors"];
+export type ChartMetric = "audio_s" | "words" | "sessions" | "requests" | "processing_s" | "errors";
+export const CHART_METRICS: readonly ChartMetric[] = ["audio_s", "words", "sessions", "requests", "processing_s", "errors"];
 export const METRIC_LABEL: Record<ChartMetric, string> = {
   audio_s: "Duration",
   words: "Words",
   sessions: "Sessions",
   requests: "Requests",
-  proc_s: "Processing Time",
+  processing_s: "Processing Time",
   errors: "Errors",
 };
 /** Singular/plural unit for the count measures; null for the two durations. */
@@ -104,10 +104,10 @@ export const METRIC_UNIT: Record<ChartMetric, [string, string] | null> = {
   words: ["word", "words"],
   sessions: ["session", "sessions"],
   requests: ["request", "requests"],
-  proc_s: null,
+  processing_s: null,
   errors: ["error", "errors"],
 };
-export const isDurationMetric = (m: ChartMetric): boolean => m === "audio_s" || m === "proc_s";
+export const isDurationMetric = (m: ChartMetric): boolean => m === "audio_s" || m === "processing_s";
 /** `?metric=` → a measure; anything else is Words. */
 export function parseMetric(v: string | null | undefined): ChartMetric {
   return (CHART_METRICS as readonly string[]).includes(v ?? "") ? (v as ChartMetric) : "words";
@@ -361,7 +361,7 @@ function addTotals(a: UsageKindTotals, b: UsageKindTotals): void {
   a.errors += b.errors;
   a.words += b.words;
   a.audio_s += b.audio_s;
-  a.proc_s += b.proc_s;
+  a.processing_s += b.processing_s;
 }
 
 /** Sum a dense day series into columns for the mode. Day mode returns the days as they are. */
@@ -542,7 +542,7 @@ export function parseRhythm(v: string | null | undefined): Rhythm {
 /** The count beside the measure in the busy tooltip and peak line (D45 C1): sessions, or
  *  processing time when the measure IS sessions — the backend's pairing. */
 export function companionMetric(m: ChartMetric): ChartMetric {
-  return m === "sessions" ? "proc_s" : "sessions";
+  return m === "sessions" ? "processing_s" : "sessions";
 }
 
 export const DOW_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
@@ -629,7 +629,7 @@ function slotKinds(h: UsageHourCell): UsageKinds {
   for (const k of ["all", ...KINDS] as const) {
     out[k].words = num(h[k]);
     out[k].audio_s = num(h.audio_s?.[k]);
-    out[k].proc_s = num(h.proc_s?.[k]);
+    out[k].processing_s = num(h.processing_s?.[k]);
     out[k].sessions = num(h.sessions?.[k]);
     out[k].requests = num(h.requests?.[k]);
     out[k].errors = num(h.errors?.[k]);

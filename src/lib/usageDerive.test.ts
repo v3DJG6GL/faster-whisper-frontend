@@ -44,7 +44,7 @@ import {
 } from "./usageDerive";
 import type { UsageHourCell, UsageSeriesPoint, UsageStage } from "./types";
 
-const T = (words = 0, sessions = 0, audio_s = 0) => ({ sessions, requests: sessions, errors: 0, words, audio_s, proc_s: 0 });
+const T = (words = 0, sessions = 0, audio_s = 0) => ({ sessions, requests: sessions, errors: 0, words, audio_s, processing_s: 0 });
 const pt = (day: number, dict = 0, file = 0): UsageSeriesPoint => ({
   day,
   all: T(dict + file, (dict ? 1 : 0) + (file ? 1 : 0)),
@@ -150,15 +150,15 @@ describe("usageDerive", () => {
   });
 
   it("measures: six backend keys, parse falls back to words, durations are the two `_s` keys", () => {
-    expect(CHART_METRICS).toEqual(["audio_s", "words", "sessions", "requests", "proc_s", "errors"]);
-    expect(parseMetric("proc_s")).toBe("proc_s");
+    expect(CHART_METRICS).toEqual(["audio_s", "words", "sessions", "requests", "processing_s", "errors"]);
+    expect(parseMetric("processing_s")).toBe("processing_s");
     expect(parseMetric("minutes")).toBe("words");
     expect(parseMetric(null)).toBe("words");
     expect(isDurationMetric("audio_s")).toBe(true);
     expect(isDurationMetric("sessions")).toBe(false);
     expect(metricValue({ ...T(10, 2), errors: -3 }, "errors")).toBe(0);
     expect(metricValue(T(10, 2), "sessions")).toBe(2);
-    expect(METRIC_LABEL.proc_s).toBe("Processing Time");
+    expect(METRIC_LABEL.processing_s).toBe("Processing Time");
     expect(legendRanges([60, 400, 2100], (n) => `${n}s`)).toEqual(["0", "1s–60s", "60s–400s", "400s–2100s", "2100s+"]);
   });
 
@@ -214,7 +214,7 @@ describe("usageDerive", () => {
     expect(a.cells[4 * 24 + 15].value).toBe(0);
     expect(presentKinds(a.cells[34].kinds, "audio_s", "all")).toEqual([{ kind: "dictation", value: 300 }, { kind: "file", value: 1200 }]);
     // Scoped to files, in sessions — the companion flips to processing time.
-    expect(companionMetric("sessions")).toBe("proc_s");
+    expect(companionMetric("sessions")).toBe("processing_s");
     expect(companionMetric("errors")).toBe("sessions");
     expect(rhythmModel("hours", { hours }, "file", "sessions", 20_000, 20_013).peak).toMatchObject({ row: 1, col: 10, value: 1 });
   });

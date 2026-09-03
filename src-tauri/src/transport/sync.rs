@@ -41,7 +41,7 @@ const SYNC_TIMEOUT: Duration = Duration::from_secs(15);
 /// merged, never rendered, and never persisted.
 pub const SYNC_MAX_BODY: usize = 4 * 1024 * 1024;
 
-/// The GET (and PUT-200 / PUT-409) wire shape: `{version, blob, updated_at,
+/// The GET (and PUT-200 / PUT-409) wire shape: `{version, blob, updated_ts,
 /// device}`. `version: 0, blob: null` = nothing stored yet.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct SyncRemoteState {
@@ -50,7 +50,7 @@ pub struct SyncRemoteState {
     #[serde(default)]
     pub blob: serde_json::Value,
     #[serde(default)]
-    pub updated_at: Option<f64>,
+    pub updated_ts: Option<f64>,
     #[serde(default)]
     pub device: Option<String>,
 }
@@ -333,7 +333,7 @@ pub async fn delete(server_url: &str, api_key: Option<&str>) -> SyncDelete {
 }
 
 /// Room the push body leaves under the ceiling: the RESPONSE echoing the same blob carries a
-/// different, larger envelope (`version` + `updated_at`) and is read at the same ceiling, so a
+/// different, larger envelope (`version` + `updated_ts`) and is read at the same ceiling, so a
 /// body that just fits must not produce a stored blob whose echo — and every later pull — no
 /// longer does.
 const SYNC_RESPONSE_MARGIN: usize = 4096;

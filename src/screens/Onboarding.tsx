@@ -261,7 +261,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               <div className="text-[13.5px] font-semibold">This account has synced settings</div>
               <div className="mt-1 font-mono text-[11px] text-dim">
                 last synced{pull.state.device ? ` from ${safeDisplayText(pull.state.device, 60)}` : ""}
-                {pull.state.updated_at ? ` · ${relTime(pull.state.updated_at * 1000)}` : ""}
+                {pull.state.updated_ts ? ` · ${relTime(pull.state.updated_ts * 1000)}` : ""}
               </div>
               <div className="mt-2.5 flex flex-wrap gap-1.5">
                 {/* Migrate the raw blob so pre-split categories (chip, dictionary,

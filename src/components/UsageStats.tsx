@@ -245,13 +245,13 @@ interface TileSpec {
 /** A per-day average: durations as durations, small counts with one decimal ("0.3"),
  *  larger ones compact ("1.8k"). */
 function fmtPerDay(m: ChartMetric | "saved", v: number): string {
-  if (m === "audio_s" || m === "proc_s" || m === "saved") return fmtDuration(v);
+  if (m === "audio_s" || m === "processing_s" || m === "saved") return fmtDuration(v);
   return v > 0 && v < 10 ? (Math.round(v * 10) / 10).toLocaleString("en-US") : fmtCompact(v);
 }
 
 const Num = ({ children }: { children: ReactNode }) => <span className="font-num text-text">{children}</span>;
 
-const TILE_ICON: Record<ChartMetric, typeof Type> = { audio_s: Clock, words: Type, sessions: Mic, requests: Activity, proc_s: Cpu, errors: TriangleAlert };
+const TILE_ICON: Record<ChartMetric, typeof Type> = { audio_s: Clock, words: Type, sessions: Mic, requests: Activity, processing_s: Cpu, errors: TriangleAlert };
 
 /** The tile row for a scope: one tile per measure in measure order (Duration · Words ·
  *  Sessions · Requests · Processing Time · Errors), then Time saved, which is dictation-only
@@ -591,7 +591,7 @@ function windowKinds(dense: readonly UsageKinds[]): UsageKinds {
       out[k].audio_s += t.audio_s;
       out[k].errors += t.errors;
       out[k].requests += t.requests;
-      out[k].proc_s += t.proc_s;
+      out[k].processing_s += t.processing_s;
     }
   }
   return out;

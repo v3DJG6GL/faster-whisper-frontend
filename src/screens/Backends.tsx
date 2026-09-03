@@ -726,7 +726,7 @@ function RestoreOffer({
         <div className="text-[13.5px] font-semibold text-text">This account has synced settings</div>
         <div className="mt-1 font-mono text-[11px] text-dim">
           last synced{remote.device ? ` from ${safeDisplayText(remote.device, 60)}` : ""}
-          {remote.updated_at ? ` · ${relTime(remote.updated_at * 1000)}` : ""}
+          {remote.updated_ts ? ` · ${relTime(remote.updated_ts * 1000)}` : ""}
         </div>
         <div className="mt-2.5 flex flex-wrap gap-1.5">
           {ALL_CATEGORIES.filter((c) => (remote.blob ? migrateBlob(remote.blob) : {})[c] !== undefined).map((c) => (

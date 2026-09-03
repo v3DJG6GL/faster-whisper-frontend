@@ -148,7 +148,7 @@ pub struct UsageKindTotals {
     pub audio_s: f64,
     /// Seconds of server processing time.
     #[serde(default)]
-    pub proc_s: f64,
+    pub processing_s: f64,
 }
 
 /// The per-kind split the server attaches to today / total / every series day.
@@ -310,7 +310,7 @@ pub struct UsageCalendarDay {
     pub kinds: UsageKindWords,
 }
 
-/// One measure split per kind — the hour grid's nested `audio_s` / `proc_s` /
+/// One measure split per kind — the hour grid's nested `audio_s` / `processing_s` /
 /// `sessions` / `requests` / `errors` blocks (backend `SLOT_MEASURES`). Floats
 /// throughout: seconds are fractional and the counts round-trip exactly.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -345,7 +345,7 @@ pub struct UsageHourCell {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_s: Option<UsageKindSplit>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub proc_s: Option<UsageKindSplit>,
+    pub processing_s: Option<UsageKindSplit>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sessions: Option<UsageKindSplit>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -686,7 +686,7 @@ mod usage_hour_cell_tests {
     fn nested_measure_splits_survive_the_typed_mirror() {
         let body = r#"{"hours":[{"dow":1,"hour":9,"all":120,"dictation":100,"file":20,"url":0,"text":0,
             "audio_s":{"all":61.5,"dictation":41.5,"file":20.0,"url":0.0,"text":0.0},
-            "proc_s":{"all":3.25,"dictation":2.0,"file":1.25,"url":0.0,"text":0.0},
+            "processing_s":{"all":3.25,"dictation":2.0,"file":1.25,"url":0.0,"text":0.0},
             "sessions":{"all":3,"dictation":2,"file":1,"url":0,"text":0},
             "requests":{"all":5,"dictation":4,"file":1,"url":0,"text":0},
             "errors":{"all":1,"dictation":0,"file":1,"url":0,"text":0}}]}"#;
@@ -694,7 +694,7 @@ mod usage_hour_cell_tests {
         let out = serde_json::to_value(&u.hours[0]).unwrap();
         assert_eq!(out["dictation"], 100);
         assert_eq!(out["audio_s"]["dictation"], 41.5);
-        assert_eq!(out["proc_s"]["all"], 3.25);
+        assert_eq!(out["processing_s"]["all"], 3.25);
         assert_eq!(out["sessions"]["file"], 1.0);
         assert_eq!(out["requests"]["all"], 5.0);
         assert_eq!(out["errors"]["file"], 1.0);
