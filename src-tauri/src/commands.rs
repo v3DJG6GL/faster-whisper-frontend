@@ -1049,7 +1049,13 @@ pub struct ImportResult {
 /// structs so garbage fails here — with a clear message — instead of
 /// hydrating a broken store later.
 #[tauri::command]
-pub fn import_settings_file(path: String) -> Result<ImportResult, String> {
+pub async fn import_settings_file(path: String) -> Result<ImportResult, String> {
+    tauri::async_runtime::spawn_blocking(move || import_settings_file_inner(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
     const MAX_IMPORT_BYTES: u64 = 20_000_000; // sanity cap, not a format limit
     // Entry-count ceiling, matching the sync path's own (`MAX_SYNCED_ENTRIES` in lib/sync.ts).
     // The byte cap alone admits ~130k well-formed backends, and every one with a key becomes a

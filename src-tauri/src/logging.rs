@@ -307,7 +307,8 @@ fn format_line(l: &LogLine) -> String {
 /// current contents first so the file is complete from launch. Reused for a
 /// live folder change — the new file again starts with the full history.
 pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
-    if crate::audio::create_dir_private(dir).is_err() {
+    if let Err(e) = crate::audio::create_dir_private(dir) {
+        tracing::warn!("[log] cannot create session log dir {}: {e}", dir.display());
         return;
     }
     let name = format!(
@@ -316,6 +317,7 @@ pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
     );
     let path = dir.join(name);
     let Ok(mut file) = std::fs::File::create(&path) else {
+        tracing::warn!("[log] cannot create session log file {}", path.display());
         return;
     };
     #[cfg(unix)]

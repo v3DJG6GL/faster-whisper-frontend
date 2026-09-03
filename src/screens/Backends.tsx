@@ -639,8 +639,9 @@ function ConnectStep({
           </Button>
         </div>
         <button
-          className="ring-signal rounded text-[12px] text-dim underline decoration-line underline-offset-2 hover:text-text"
+          className="ring-signal rounded text-[12px] text-dim underline decoration-line underline-offset-2 hover:text-text disabled:pointer-events-none disabled:opacity-40"
           onClick={onManual}
+          disabled={busy}
         >
           Enter details manually
         </button>

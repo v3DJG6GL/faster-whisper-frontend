@@ -525,8 +525,9 @@ export async function composeBlob(
         // (the server's own last content, unchanged). NOT `undefined`: the transport is a
         // whole-blob PUT and the client does the merge, so an omitted key does not "leave the
         // server's copy alone" — JSON.stringify drops it and the stored list AND its keys are
-        // erased, then recorded as the new merge base.
-        blob.backends = snapshot?.backends;
+        // erased, then recorded as the new merge base. On the export path (no snapshot) the
+        // local list travels without secrets — a backup must never silently lose the server list.
+        blob.backends = snapshot ? snapshot.backends : { list: cfg.backends };
       }
     }
   } else {
@@ -1694,7 +1695,7 @@ export async function applyBlob(
       if (
         gates.pinnedMappings &&
         cats.backends &&
-        blob.backends &&
+        isPlainObject(blob.backends) &&
         hasOwn(blob.dictionary as Record<string, unknown>, "quickAddList")
       ) {
         nextSettings = { ...nextSettings, quickAddList: safeQuickAddTarget(d.quickAddList) };

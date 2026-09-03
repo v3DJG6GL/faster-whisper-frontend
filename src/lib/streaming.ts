@@ -174,6 +174,11 @@ let clipBaseline = "";
  *  re-copies the whole window — so each booking replaces the window's earlier one instead of
  *  appending "A", then "A B". Null = nothing booked in this window yet. */
 let clipBooked: { text: string | null; ctxLen: number } | null = null;
+/** The per-language tracks for the current clipboard window.  Each final in a clipboard-live
+ *  window re-translates the GROWING window, so `accumulateByLang` must receive the LAST
+ *  (complete) translation only — not every growing prefix. This buffer replaces on each
+ *  final; `bumpPhraseEnd` / `clearPhraseEnd` flush it into `sessionByLang` once. */
+let clipByLang: Record<string, string> | undefined;
 // Insertion config captured at dictation start.
 interface InsertCfg {
   /** Whether the session inserts at all. "off" is gone from the UI; it survives here only
@@ -398,6 +403,7 @@ const PHRASE_CONTEXT_MAX = 3;
 interface PhraseOut {
   text: string;
   translated: boolean;
+  byLang?: Record<string, string>;
 }
 
 /** The gap between consecutive PHRASES of a translated live session.
@@ -566,11 +572,7 @@ async function maybeTranslate(
       // END, and reporting a failure when every phrase after the cold start translated fine
       // (the normal trajectory) misleads both the chip marker and the history record.
       sessionTranslateFailure = null;
-      // Keep the tracks apart while we still can. r.text is the joined string
-      // that gets injected and is unsplittable afterwards; this is the only
-      // point where the language keys are still attached.
-      accumulateByLang(r.byLang);
-      return { text: r.text, translated: true };
+      return { text: r.text, translated: true, byLang: r.byLang };
     }
     sessionTranslateFailure = r.cause ?? "error";
     console.error("dictation translation failed:", r.error ?? r.cause);
@@ -801,6 +803,7 @@ function bumpPhraseEnd(): void {
     // "Clipboard only" holds just your latest phrase instead of the whole hard-break window.
     clipBaseline = committedDoc;
     clipBooked = null;
+    if (clipByLang) { accumulateByLang(clipByLang); clipByLang = undefined; }
   }, PHRASE_END_QUIET_MS);
 }
 
@@ -821,6 +824,7 @@ function clearPhraseEnd(): void {
   clipHoldsOurs = false; // session reset — start clean
   clipBaseline = "";
   clipBooked = null;
+  if (clipByLang) { accumulateByLang(clipByLang); clipByLang = undefined; }
 }
 
 /** Must this injection go to the CLIPBOARD rather than the keyboard?
@@ -1109,6 +1113,8 @@ function settleIdle(): void {
   // (cancelLive / stopLive-reject / stream://error / teardownAfterFatalInject)
   // are the ones that abandon work mid-flight, and they all cancel.
   //
+  // Flush any buffered clipboard-window translations before capture reads them.
+  if (clipByLang) { accumulateByLang(clipByLang); clipByLang = undefined; }
   // Before the state flip: the capture reads the session docs (reset only by
   // the NEXT startLiveInner / cancelLive) and must run while they're intact.
   const saved = captureDictationHistory();
@@ -1574,7 +1580,7 @@ async function ensureListeners(): Promise<void> {
           if (phraseClip.length > 0 && grew) {
             // T2T live: translate the outbound copy only; clipBaseline and the
             // grew guard keep working in original text.
-            const { text: clipOut, translated } = await translatePhrase(phraseClip, cfg, {
+            const { text: clipOut, translated, byLang } = await translatePhrase(phraseClip, cfg, {
               queued: queuedAtEnqueue,
               utterance,
             });
@@ -1617,6 +1623,10 @@ async function ensureListeners(): Promise<void> {
               sessionTranslatedText = clipBooked.text
                 ? clipBooked.text + PHRASE_GAP + clipOut.trim()
                 : clipOut.trim();
+              // Per-language tracks: each final in this window translates the GROWING window,
+              // so the latest byLang supersedes every earlier one. Buffer it here; bumpPhraseEnd
+              // / clearPhraseEnd flush the final version into sessionByLang once per window.
+              if (byLang) clipByLang = byLang;
             }
             if (!t.isSelf && landed) {
               sessionClipboard = true;
@@ -1773,6 +1783,7 @@ async function ensureListeners(): Promise<void> {
                 sessionTranslatedText = sessionTranslatedText
                   ? sessionTranslatedText + PHRASE_GAP + phrase.text.trim()
                   : phrase.text.trim();
+                accumulateByLang(phrase.byLang);
               }
               // Tell the truth about WHERE it went. Rust can divert a typed/pasted insert to the
               // clipboard — the trigger chord is still held, or focus moved to another app — and
@@ -2124,7 +2135,10 @@ async function ensureListeners(): Promise<void> {
             const one = await maybeTranslate(text, cfg, { oneShot: true });
             if (insertCfg !== cfg) return;
             outText = one.text;
-            if (one.translated) sessionTranslatedText = one.text;
+            if (one.translated) {
+              sessionTranslatedText = one.text;
+              accumulateByLang(one.byLang);
+            }
           }
           // Unconditionally, not only after a translate: the status was set to "translating"
           // above whenever the Profile had targets, and an EMPTY settle-time pick (a real
@@ -2599,6 +2613,7 @@ async function startLiveInner(
     sessionTranslation = trTargets.length ? { ...sessionTranslationBase, targets: trTargets } : null;
     sessionTranslatedText = null;
     sessionByLang = {};
+    clipByLang = undefined;
     sessionPerUtteranceDeclared = false;
     captureIds.reset();
     sessionTranslateWarned = false;
