@@ -674,9 +674,9 @@ function rhythmLayout(rhythm: Rhythm, from: number, to: number): RhythmLayout & 
     const dayName = (c: number) => (oneMonth ? `${c + 1} ${MONTH[fm]}` : `the ${ordinal(c + 1)}`);
     return {
       rows: 24, cols, y0: fy, fm, oneMonth, colOcc,
-      rowLabel: (r) => (r % 3 === 0 ? String(r).padStart(2, "0") : ""),
+      rowLabel: (r) => (r % 2 === 0 ? String(r).padStart(2, "0") : ""),
       rowLong: (r) => `${hh(r)}–${hh(r + 1)}`,
-      colLabel: (c) => ((c + 1) % 5 === 0 || c === 0 ? String(c + 1) : ""),
+      colLabel: (c) => String(c + 1),
       colLong: (c) => (oneMonth ? `${c + 1} ${MONTH_LONG[fm]}` : `the ${ordinal(c + 1)} of each month`),
       cellName: (i) => `${dayName(i % cols)} ${hh(Math.floor(i / cols))}–${hh(Math.floor(i / cols) + 1)}`,
       colUnit: "day of month", rowUnit: "hour of day", slotWord: "day-of-month hour", flatWord: "month",
@@ -698,7 +698,7 @@ function rhythmLayout(rhythm: Rhythm, from: number, to: number): RhythmLayout & 
     rows: 7, cols: 24, y0: fy, fm, oneMonth: false, colOcc: null,
     rowLabel: (r) => DOW_SHORT[r],
     rowLong: (r) => `${DOW_LONG[r]}s`,
-    colLabel: (c) => (c % 3 === 0 ? String(c).padStart(2, "0") : ""),
+    colLabel: (c) => String(c).padStart(2, "0"),
     colLong: (c) => `${hh(c)}–${hh(c + 1)}`,
     cellName: (i) => `${DOW_SHORT[Math.floor(i / 24)]} ${hh(i % 24)}–${hh(i % 24 + 1)}`,
     colUnit: "hour of day", rowUnit: "weekday", slotWord: "weekday hour", flatWord: "week",

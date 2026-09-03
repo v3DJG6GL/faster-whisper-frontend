@@ -1130,7 +1130,7 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
   const rMax = Math.max(1, ...model.rowIndex);
   const barLen = (idx: number, max: number) => (idx > 0 ? Math.max(6, (idx / max) * 100) : 0).toFixed(1);
   const barBg = (idx: number) => (idx > 1 ? "var(--c-accent)" : "var(--c-line-strong)");
-  const cellClass = rhythm === "hours" ? "aspect-square max-h-[20px]" : rhythm === "days" ? "h-[11px]" : "h-[22px]";
+  const cellClass = rhythm === "hours" ? "aspect-square max-h-[20px]" : rhythm === "days" ? "h-[12px]" : "h-[22px]";
   const tz = stats.tz === "local" ? "server time" : stats.tz;
   const peakOcc = peak ? model.occOf(peak) : 0;
   // The two average ticks are drawn once across each track (a per-cell dash would break
@@ -1213,13 +1213,13 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
             <div />
             <div />
             {Array.from({ length: L.cols }, (_, c) => (
-              <div key={`l${c}`} className="font-mono text-[10px] text-faint">{L.colLabel(c)}</div>
+              <div key={`l${c}`} className="text-center font-mono text-[10px] text-faint">{L.colLabel(c)}</div>
             ))}
             <div />
             <div />
             {Array.from({ length: L.rows }, (_, r) => (
               <Fragment key={r}>
-                <div className="flex items-center font-mono text-[10.5px] text-faint">{L.rowLabel(r)}</div>
+                <div className="flex items-center font-mono text-[10.5px] leading-none text-faint">{L.rowLabel(r)}</div>
                 {model.cells.slice(r * L.cols, r * L.cols + L.cols).map((c) => {
                   const i = r * L.cols + c.col;
                   return (
