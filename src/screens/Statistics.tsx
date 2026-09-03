@@ -37,9 +37,10 @@ export default function Statistics() {
   return (
     <div className="page page-dense">
       <PageHeader eyebrow={screenEyebrow("statistics")} title={screenTitle("statistics")} icon={BarChart3}>
-        Everything you've dictated, transcribed, translated, or diarized.
+        Everything you've dictated, transcribed, translated or diarized.
         <br />
         Filter them by time range and kind, with the stages each session used.
+        <br />A <strong className="font-semibold text-text">faster-whisper-backend</strong> server is needed.
       </PageHeader>
 
       <div className="page-content">
