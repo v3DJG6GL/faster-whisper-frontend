@@ -845,7 +845,9 @@ export default function History() {
   return (
     <div ref={rootRef} className="page page-prose">
       <PageHeader eyebrow={screenEyebrow("history")} title={screenTitle("history")} icon={HistoryIcon}>
-        Everything you've dictated, transcribed, translated, or diarized. Only stored locally on this machine.
+        Everything you've dictated, transcribed, translated, or diarized.
+        <br />
+        Only stored locally on this machine.
       </PageHeader>
 
       <div className="page-content flex items-center gap-3">
