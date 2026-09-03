@@ -814,9 +814,9 @@ export function sanitizeProfiles(list: unknown): Profile[] {
             translateTo: Array.isArray(p.translationOverrides.translateTo)
               ? p.translationOverrides.translateTo.filter((c: unknown): c is string => typeof c === "string").slice(0, 8)
               : undefined,
-            model: typeof p.translationOverrides.model === "string" ? p.translationOverrides.model : undefined,
+            model: typeof p.translationOverrides.model === "string" ? p.translationOverrides.model.slice(0, 200) : undefined,
             contextSegments: typeof p.translationOverrides.contextSegments === "number" ? p.translationOverrides.contextSegments : undefined,
-            glossary: typeof p.translationOverrides.glossary === "string" ? p.translationOverrides.glossary : undefined,
+            glossary: typeof p.translationOverrides.glossary === "string" ? p.translationOverrides.glossary.slice(0, 4000) : undefined,
             mode: p.translationOverrides.mode === "fluent" || p.translationOverrides.mode === "faithful" ? p.translationOverrides.mode : undefined,
             includeOriginal: p.translationOverrides.includeOriginal == null ? undefined : p.translationOverrides.includeOriginal === true,
           }

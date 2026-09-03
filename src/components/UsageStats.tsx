@@ -1760,7 +1760,7 @@ export function StatisticsView({
   const fresh = !!sig && view?.sig === sig;
   const stats = fresh ? view!.stats : (view?.stats ?? base);
   const win = useMemo(
-    () => (fresh && stats ? { from: stats.range.from, to: stats.range.to, days: stats.range.days } : resolveWindow(query, today, stats?.range?.first_day)),
+    () => (fresh && stats?.range ? { from: stats.range.from, to: stats.range.to, days: stats.range.days } : resolveWindow(query, today, stats?.range?.first_day)),
     [fresh, stats, query, today, view],
   );
   const dense = useMemo(

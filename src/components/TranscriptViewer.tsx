@@ -1338,21 +1338,20 @@ export function TranscriptViewer({
         decodePendingRef.current = true;
         decodeMediaFile(p)
           .then((wavPath) => {
+            decodePendingRef.current = false;
             if (stale()) return;
             if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
             blobUrlRef.current = null;
             setBlobSrc(convertFileSrc(wavPath));
           })
           .catch((e) => {
-            if (stale()) return;
+            if (stale()) { decodePendingRef.current = false; return; }
             if (next) return next();
+            decodePendingRef.current = false;
             fail(
               String(e).includes("gone") ? "gone" : "codec",
               `decode failed: ${String(e)}`,
             );
-          })
-          .finally(() => {
-            decodePendingRef.current = false;
           });
       };
       if (urlSource) tryDecode(mediaPath);

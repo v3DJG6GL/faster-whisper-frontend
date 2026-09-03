@@ -66,7 +66,7 @@ export async function refreshCaps(backend: Backend, opts?: { force?: boolean }):
     // …and the URL OVERRIDE, which is where this request actually went — the third
     // trigger `setUrlOverride` invalidates on.
     if (effectiveServerUrl(cur, st.settings) !== target) return;
-    st.setCaps(backend.id, fetched);
+    if (fetched !== null) st.setCaps(backend.id, fetched);
   })();
   inFlight.set(backend.id, run);
   try {
