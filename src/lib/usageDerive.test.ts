@@ -36,7 +36,7 @@ import {
   niceMax,
   parseScope,
   pct,
-  runsBreakdown,
+
   scopeTotals,
   targetShares,
   timeSavedS,
@@ -106,15 +106,6 @@ describe("usageDerive", () => {
     expect(fmtTimeSaved(0)).toBe("0 min");
     expect(fmtTimeSaved(38 * 60)).toBe("38 min");
     expect(fmtTimeSaved(14 * 3600 + 2 * 60)).toBe("14h 02m");
-  });
-
-  it("runsBreakdown lists non-zero kinds with plurals", () => {
-    const k = zeroKinds();
-    expect(runsBreakdown(k)).toBe("no runs");
-    k.dictation.sessions = 14;
-    k.file.sessions = 2;
-    k.url.sessions = 1;
-    expect(runsBreakdown(k)).toBe("14 dictations · 2 files · 1 link");
   });
 
   it("quantileBreaks: quarters of the active values, upper-median rule; zero is its own step", () => {

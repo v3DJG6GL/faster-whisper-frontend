@@ -754,10 +754,6 @@ export interface UsageCalendarDay extends UsageKindWords {
   day: number;
 }
 
-/** One weekday × hour slot over the window, in the caller's zone. Words per kind sit flat
- *  (the original shape); the other five measures are nested per-kind splits the backend
- *  added for its own busy-hours card (absent on older servers → read as zero).
- *  `dow` 0 = Monday … 6 = Sunday. Sparse. */
 /** One hour slot: a weekday × hour slot (`dow` 0 = Monday, in `hours`) or a day-of-month ×
  *  hour slot (`dom` 1..31, in `dom_hours`). Words per kind sit flat; the other five
  *  measures are nested per-kind splits a server from 2 Sep 2026 on sends (absent before). */

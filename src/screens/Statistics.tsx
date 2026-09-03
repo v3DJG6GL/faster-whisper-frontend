@@ -1,8 +1,8 @@
-// Dedicated Statistics page — the full usage document lifted off Home so the home
-// screen stays focused on dictation: one filter bar (range · kind · with-stages), the
-// per-kind tiles, the stacked columns by kind, the Stages / Dictation / Rhythm / When-you-
-// dictate panels. Reached from the sidebar, the "View statistics →" link on Home, or a
-// Home small multiple (`?kind=file` preselects that kind). The filters live in the URL
+// Dedicated Statistics page — the full usage document lifted off Dashboard so the
+// dashboard stays focused on dictation: one filter bar (range · kind · with-stages), the
+// per-kind tiles, the stacked columns by kind, the Stages / Dictation / Calendar / Busy
+// panels. Reached from the sidebar, the "View statistics →" link on Dashboard, or a
+// Dashboard small multiple (`?kind=file` preselects that kind). The filters live in the URL
 // (`?kind=&with=&range=&from=&to=`) so a reload or a deep link lands on the same view, and
 // in the store (`usageViewQuery`) so the controller fetches the matching document. The kind
 // and the measure (`?kind=`, `?metric=`) are client-side: they change what the page shows of

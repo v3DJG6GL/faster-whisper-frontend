@@ -174,22 +174,6 @@ export function fmtTimeSaved(seconds: number): string {
   return `${h}h ${String(m).padStart(2, "0")}m`;
 }
 
-/** `14 dictations · 2 files · 1 link` (kinds with runs, in kind order), or `no runs`. */
-export function runsBreakdown(k: UsageKinds): string {
-  const parts: string[] = [];
-  const one: Record<UsageKind, [string, string]> = {
-    dictation: ["dictation", "dictations"],
-    file: ["file", "files"],
-    url: ["link", "links"],
-    text: ["text", "texts"],
-  };
-  for (const kind of KINDS) {
-    const n = safeTotals(k[kind]).sessions;
-    if (n > 0) parts.push(`${n.toLocaleString("en-US")} ${one[kind][n === 1 ? 0 : 1]}`);
-  }
-  return parts.length ? parts.join(" · ") : "no runs";
-}
-
 /* ── the page query: range · with-stages ────────────────────────────────── */
 
 /** Range presets in display order; `custom` carries `from`/`to`. */
@@ -591,6 +575,7 @@ export interface RhythmLayout {
   colLong: (c: number) => string;
   cellName: (i: number) => string;
   colUnit: string;
+  colUnits: string;
   rowUnit: string;
   /** The legend's slot word: "weekday hour" / "day-of-month hour" / "month". */
   slotWord: string;
@@ -606,7 +591,6 @@ export interface RhythmLayout {
 export type RhythmSent = "yes" | "no-measure" | "no-grid";
 
 export interface RhythmModel {
-  rhythm: Rhythm;
   layout: RhythmLayout;
   /** rows × cols, row-major (index = row * cols + col). */
   cells: RhythmCell[];
@@ -662,7 +646,7 @@ export function sumKinds(cells: readonly KindSplit[]): UsageKinds {
 
 const daysInMonth = (y: number, m: number) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
 
-function rhythmLayout(rhythm: Rhythm, from: number, to: number): RhythmLayout & { y0: number; fm: number; oneMonth: boolean } {
+function rhythmLayout(rhythm: Rhythm, from: number, to: number): RhythmLayout & { y0: number } {
   const [fy, fm] = ymdOf(from);
   const [ty, tm] = ymdOf(to);
   if (rhythm === "days") {
@@ -673,35 +657,35 @@ function rhythmLayout(rhythm: Rhythm, from: number, to: number): RhythmLayout & 
     for (let d = from; d <= end; d++) colOcc[ymdOf(d)[2] - 1]++;
     const dayName = (c: number) => (oneMonth ? `${c + 1} ${MONTH[fm]}` : `the ${ordinal(c + 1)}`);
     return {
-      rows: 24, cols, y0: fy, fm, oneMonth, colOcc,
+      rows: 24, cols, y0: fy, colOcc,
       rowLabel: (r) => (r % 2 === 0 ? String(r).padStart(2, "0") : ""),
       rowLong: (r) => `${hh(r)}–${hh(r + 1)}`,
       colLabel: (c) => String(c + 1),
       colLong: (c) => (oneMonth ? `${c + 1} ${MONTH_LONG[fm]}` : `the ${ordinal(c + 1)} of each month`),
       cellName: (i) => `${dayName(i % cols)} ${hh(Math.floor(i / cols))}–${hh(Math.floor(i / cols) + 1)}`,
-      colUnit: "day of month", rowUnit: "hour of day", slotWord: "day-of-month hour", flatWord: "month",
+      colUnit: "day of month", colUnits: "days of the month", rowUnit: "hour of day", slotWord: "day-of-month hour", flatWord: "month",
     };
   }
   if (rhythm === "months") {
     const years = Math.max(1, ty - fy + 1);
     return {
-      rows: years, cols: 12, y0: fy, fm, oneMonth: false, colOcc: null,
+      rows: years, cols: 12, y0: fy, colOcc: null,
       rowLabel: (r) => String(fy + r),
       rowLong: (r) => String(fy + r),
       colLabel: (c) => MONTH[c],
       colLong: (c) => MONTH_LONG[c],
       cellName: (i) => `${MONTH[i % 12]} ${fy + Math.floor(i / 12)}`,
-      colUnit: "month", rowUnit: "year", slotWord: "month", flatWord: "year",
+      colUnit: "month", colUnits: "months", rowUnit: "year", slotWord: "month", flatWord: "year",
     };
   }
   return {
-    rows: 7, cols: 24, y0: fy, fm, oneMonth: false, colOcc: null,
+    rows: 7, cols: 24, y0: fy, colOcc: null,
     rowLabel: (r) => DOW_SHORT[r],
     rowLong: (r) => `${DOW_LONG[r]}s`,
     colLabel: (c) => String(c).padStart(2, "0"),
     colLong: (c) => `${hh(c)}–${hh(c + 1)}`,
     cellName: (i) => `${DOW_SHORT[Math.floor(i / 24)]} ${hh(i % 24)}–${hh(i % 24 + 1)}`,
-    colUnit: "hour of day", rowUnit: "weekday", slotWord: "weekday hour", flatWord: "week",
+    colUnit: "hour of day", colUnits: "hours of the day", rowUnit: "weekday", slotWord: "weekday hour", flatWord: "week",
   };
 }
 
@@ -814,9 +798,9 @@ export function rhythmModel(rhythm: Rhythm, src: RhythmSource, scope: UsageScope
   const colIndex = colTotals.map((v) => (sum > 0 ? v / (sum / liveCols) : 0));
   const rowIndex = rowTotals.map((v) => (sum > 0 ? v / (sum / L.rows) : 0));
   const wd = rhythm === "hours" ? weekdayCounts(f, t) : null;
-  const { y0: _y0, fm: _fm, oneMonth: _one, ...layout } = L;
+  const { y0: _y0, ...layout } = L;
   return {
-    rhythm, layout, cells, breaks, counts, peak, colTotals, rowTotals, colIndex, rowIndex, sum, sent,
+    layout, cells, breaks, counts, peak, colTotals, rowTotals, colIndex, rowIndex, sum, sent,
     occOf: (c) => (wd ? wd[c.row] : L.colOcc ? L.colOcc[c.col] : 1),
     occWord: (c) => (rhythm === "hours" ? DOW_LONG[c.row] : rhythm === "days" ? "month" : ""),
     phrase: rhythmPhrase(rhythm, cells.map((c) => c.value), colTotals, rowTotals, L.cols),
