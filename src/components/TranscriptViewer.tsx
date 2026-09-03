@@ -1405,7 +1405,7 @@ export function TranscriptViewer({
           setBrokenWhy("gone");
           return;
         }
-        readMediaFile(mediaPath)
+        return readMediaFile(mediaPath)
           .then((buf) => {
             if (stale()) return;
             asBlob(buf, mediaPath);
@@ -1416,11 +1416,9 @@ export function TranscriptViewer({
             if (isTooLargeToBuffer(e2)) return onAudioError(String(e2));
             setAudioBroken(true);
             setBrokenWhy("gone");
-          })
-          .finally(() => { bufferPendingRef.current = false; });
-        return;
+          });
       })
-      .finally(() => { if (!mediaPath) bufferPendingRef.current = false; });
+      .finally(() => { bufferPendingRef.current = false; });
   };
 
   // WebKitGTK doesn't reliably fire `error` for an unsupported container —

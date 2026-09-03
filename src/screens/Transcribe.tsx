@@ -691,12 +691,19 @@ export default function Transcribe() {
     const startX = e.clientX;
     const start = railPx;
     el.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => setRailDrag(clampRail(start + ev.clientX - startX));
+    // Use window.innerWidth at event time so a resize during the drag does not
+    // persist a value wider than the now-smaller window (the render-time clampRail
+    // captures a stale railMax).
+    const liveClamp = (px: number) => {
+      const max = Math.max(STUDIO_RAIL_MIN, window.innerWidth - STUDIO_CHROME - STUDIO_PANE_MIN);
+      return Math.round(Math.min(max, Math.max(STUDIO_RAIL_MIN, px)));
+    };
+    const move = (ev: PointerEvent) => setRailDrag(liveClamp(start + ev.clientX - startX));
     const up = (ev: PointerEvent) => {
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);
       el.removeEventListener("pointercancel", up);
-      const final = clampRail(start + ev.clientX - startX);
+      const final = liveClamp(start + ev.clientX - startX);
       setRailDrag(null);
       const { settings: cur } = useApp.getState();
       updateSettings({ transcribe: { ...cur.transcribe, studioRailPx: final } });

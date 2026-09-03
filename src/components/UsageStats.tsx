@@ -1154,7 +1154,7 @@ function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from,
         top: { x1: t0.left - box.left, x2: t1.right - box.left, y: t0.bottom - box.top - t0.height / cMax },
         side: { x: s0.left - box.left + s0.width / rMax, y1: s0.top - box.top, y2: s1.bottom - box.top },
       };
-      setTicks((p) => (p && JSON.stringify(p) === JSON.stringify(next) ? p : next));
+      setTicks((p) => (p && p.top.x1 === next.top.x1 && p.top.x2 === next.top.x2 && p.top.y === next.top.y && p.side.x === next.side.x && p.side.y1 === next.side.y1 && p.side.y2 === next.side.y2 ? p : next));
     };
     measure();
     const ro = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
