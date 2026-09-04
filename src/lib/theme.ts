@@ -121,7 +121,12 @@ export function deriveAccent(hue: number, dark: boolean): DerivedAccent {
   return {
     accent,
     cal,
-    ink: lum(accent) > 0.4 ? "#1a1207" : "#fff8ec",
+    // Decided by theme, not by the clipped sRGB luminance: OKLCH L is fixed per
+    // theme (0.78 dark / 0.58 light), so the ink was never meant to vary with hue.
+    // The old `lum(accent) > 0.4` rule oscillated 8 times at hues 14-29° because
+    // gamut clipping of red-orange values created non-monotonic sRGB luminance
+    // around the threshold — flashing accent-ink buttons white during motion.
+    ink: dark ? "#1a1207" : "#fff8ec",
     soft: alpha(accent, dark ? 0.14 : 0.12),
     glowA: alpha(accent, dark ? 0.09 : 0.05),
     glowB: alpha(accent, dark ? 0.05 : 0.03),

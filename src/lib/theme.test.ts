@@ -29,10 +29,16 @@ import {
 } from "./theme";
 
 describe("deriveAccent", () => {
-  it("ink flips with the accent's luminance", () => {
-    // A light lime reads dark ink; a deep indigo on the light theme reads light ink.
+  it("ink is constant per theme (dark ink on the bright dark-theme accent, light ink on the dim light-theme accent)", () => {
     expect(deriveAccent(120, true).ink).toBe("#1a1207");
     expect(deriveAccent(275, false).ink).toBe("#fff8ec");
+  });
+
+  it("ink never changes within a theme across the full hue wheel", () => {
+    for (let h = 0; h < 360; h++) {
+      expect(deriveAccent(h, true).ink).toBe("#1a1207");
+      expect(deriveAccent(h, false).ink).toBe("#fff8ec");
+    }
   });
 
   it("the six presets are six distinct accents in both themes", () => {
