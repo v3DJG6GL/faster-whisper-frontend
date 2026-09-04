@@ -116,7 +116,17 @@ pub fn show_overlay(app: AppHandle, position: String) {
         return;
     }
 
+    // On Windows, apply cursor pass-through BEFORE show: tao's
+    // set_ignore_cursor_events adds WS_EX_LAYERED, and toggling that on an
+    // already-visible window leaves a stale (white) composite until the next
+    // SWP_FRAMECHANGED. The "must call after show" hazard (comment above) is
+    // GTK/KDE-Wayland-only and does not apply on Windows.
+    #[cfg(windows)]
+    ignore_cursor(&win);
+
     let _ = win.show();
+
+    #[cfg(not(windows))]
     ignore_cursor(&win);
     #[cfg(target_os = "linux")]
     reapply_last_hit_region(&win);
