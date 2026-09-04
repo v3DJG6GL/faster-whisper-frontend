@@ -107,6 +107,30 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             libasound2-dev libxkbcommon-dev
 
+      # Linux only: a CARGO_HOME of this job's own. On the dind runner
+      # /root/.cargo and /root/.rustup persist across job containers (every run
+      # logs "existing rustup settings file" and "using existing install"), so
+      # two Linux jobs running at once share one cargo/bin and one registry.
+      # rust-cache's post step prunes exactly those: it deletes every binary
+      # that was in cargo/bin when the job started — cargo, rustc and the other
+      # rustup proxies included; on a throwaway runner that merely keeps them out
+      # of the tarball — and the registry sources its own build did not use. So
+      # whichever job finished first took `cargo` away from the other: three
+      # PR runs on 2026-09-04 (web run 704 among them) died with "cargo: command
+      # not found" in the very second the neighbouring master run's post step
+      # ran, after the same steps had passed minutes earlier. RUNNER_TEMP is
+      # container-local; rustup-init and rust-cache both honour CARGO_HOME
+      # (dtolnay/rust-toolchain re-exports it and puts $CARGO_HOME/bin on PATH),
+      # so bin + registry come out of the cache tarball as designed and nothing
+      # this job does can reach another job's cargo. RUSTUP_HOME stays shared —
+      # the toolchain is read-only between stable releases, and a per-job copy
+      # would re-download it every run.
+      # Not on Windows: the host-mode VM shares its CARGO_HOME on purpose and
+      # runs no rust-cache (see the comment below).
+      - name: Per-job CARGO_HOME
+        if: runner.os == 'Linux'
+        run: echo "CARGO_HOME=${RUNNER_TEMP:-/tmp}/cargo-home" >> "$GITHUB_ENV"
+
       - uses: dtolnay/rust-toolchain@stable
 
       # Linux only. On the windows leg this action never once restored anything —
