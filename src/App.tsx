@@ -69,6 +69,12 @@ function ScrollReset() {
 // that into a route change. Must live within <HashRouter> to use useNavigate.
 function NavigationBridge() {
   const navigate = useNavigate();
+  // navigate changes identity on every route change under HashRouter (useNavigateUnstable
+  // deps include the pathname); subscribing once with a ref keeps the app://navigate
+  // listener registered for the router's lifetime instead of re-issuing listen() per
+  // navigation and opening a drop window.
+  const navRef = useRef(navigate);
+  navRef.current = navigate;
   useTauriListener(
     () =>
       onAppNavigate((screen) => {
@@ -76,11 +82,11 @@ function NavigationBridge() {
         // Same unsaved-work guard the sidebar runs: the overlay chip can fire
         // this while a list editor is open.
         if (path) {
-          const go = () => navigate(path);
+          const go = () => navRef.current(path);
           if (tryNavigate(go)) go();
         }
       }),
-    [navigate],
+    [],
   );
   return null;
 }

@@ -1045,7 +1045,9 @@ export function TranscriptViewer({
     try {
       await runChunkedTranslate({
         indexes,
-        textOf: (i) => (fileEdits[i] ?? result.segments?.[i]?.text ?? "").trim(),
+        // Read the store, not the render closure: the chunk loop outlives this render and a
+        // correction made mid-run must be translated as it is NOW (the merge clears its stale mark).
+        textOf: (i) => (useTranscribeRun.getState().edits[okey]?.[i] ?? result.segments?.[i]?.text ?? "").trim(),
         translate: (texts) =>
           translateText({
             serverUrl,
@@ -1283,6 +1285,9 @@ export function TranscriptViewer({
     // denied" line (or a still-ticking "Saved") must not sit next to B's button.
     setSaveError(null);
     setSaved(false);
+    // An open rename editor belongs to the previous record: its blur would commit A's draft onto B's speaker.
+    setEditingSpeaker(null);
+    setRenameDraft("");
   }, [path, okey]);
 
   // Translate-panel state belongs to the PREVIOUS record's backend — a record
@@ -1330,8 +1335,17 @@ export function TranscriptViewer({
       // Decode lands in a cached WAV file played through the asset
       // protocol — streaming from disk like every dictation, instead of a
       // ~240 MB in-memory blob (which freezes the WebKitGTK web process).
-      const tryDecode = (p: string | null | undefined, next?: () => void) => {
-        if (!p) return next ? next() : fail();
+      const tryDecode = (
+        p: string | null | undefined,
+        next?: (why: "gone" | "codec", detail: string) => void,
+        prior?: { why: "gone" | "codec"; detail: string },
+      ) => {
+        if (!p) {
+          decodePendingRef.current = false;
+          return next
+            ? next(prior?.why ?? "codec", prior?.detail ?? "no media path to decode")
+            : fail(prior?.why ?? "codec", prior?.detail);
+        }
         decodePendingRef.current = true;
         decodeMediaFile(p)
           .then((wavPath) => {
@@ -1343,12 +1357,11 @@ export function TranscriptViewer({
           })
           .catch((e) => {
             if (stale()) { decodePendingRef.current = false; return; }
-            if (next) return next();
             decodePendingRef.current = false;
-            fail(
-              String(e).includes("gone") ? "gone" : "codec",
-              `decode failed: ${String(e)}`,
-            );
+            const why = String(e).includes("gone") ? "gone" : "codec";
+            const detail = `decode failed: ${String(e)}`;
+            if (next) return next(why, detail);
+            fail(why, detail);
           });
       };
       if (urlSource) tryDecode(mediaPath);
@@ -1356,7 +1369,7 @@ export function TranscriptViewer({
       // stored copy — don't pay a second round trip into a path known to be gone (and
       // let ITS failure decide the "gone"-vs-"codec" wording).
       else if (audioNote === "copy" && mediaPath) tryDecode(mediaPath);
-      else tryDecode(path, () => tryDecode(mediaPath));
+      else tryDecode(path, (why, detail) => tryDecode(mediaPath, undefined, { why, detail }));
       return;
     }
     blobTriedRef.current = true;
@@ -1745,7 +1758,7 @@ export function TranscriptViewer({
   useEffect(() => {
     setCopied(false);
     clearCopiedTimer();
-  }, [path]);
+  }, [path, okey]);
 
   const copy = async () => {
     try {

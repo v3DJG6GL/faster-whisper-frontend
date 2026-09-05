@@ -8,7 +8,8 @@
 // Not a command palette. The candidate set is small and bounded (8 targets out of ~20
 // languages), so the fast path is a NUMBERED quick-pick: every candidate keeps a stable
 // digit, the profile's own targets are preselected, and the whole decision is "2 3 Enter"
-// without looking. Typing still filters, for the long tail.
+// without looking. Typing still filters, for the long tail; Enter on a filtered row picks
+// it and clears the filter.
 //
 // The rail across the top assembles the same `source → targets` route the chip will show a
 // second later — same arrow, same accent — so the picker teaches the chip rather than
@@ -16,7 +17,8 @@
 // the chip's translating STAGE, work in progress; a chosen target is a promise, and the chip
 // shows its resolved route in the accent too.)
 //
-// Three answers, and only three: Enter commits the chosen targets, `0` commits none (insert
+// Three answers, and only three: Enter commits the chosen targets (or, while a filter is
+// typed, picks the highlighted row), `0` commits none (insert
 // the original only), and Esc / Cancel / a closed window ABORT the whole action — no session
 // starts (hands-free), or the finished transcript is not inserted (push-to-talk; it still
 // goes to History). There is no "dismiss and quietly use the Profile's preset": every way
@@ -182,9 +184,17 @@ export default function LangPick() {
       // Abort the whole action (don't start / don't insert) — see the header comment.
       abort();
     } else if (e.key === "Enter") {
-      commit(chosen);
+      if (typing && rows[active]) {
+        // A live filter means the user is hunting for a row, not confirming the
+        // preset: pick it and clear the filter so the NEXT Enter commits.
+        toggle(rows[active].code);
+        setQuery("");
+        setActive(0);
+      } else {
+        commit(chosen);
+      }
     } else if (e.key === "ArrowDown") {
-      setActive((i) => Math.min(rows.length - 1, i + 1));
+      setActive((i) => Math.max(0, Math.min(rows.length - 1, i + 1)));
     } else if (e.key === "ArrowUp") {
       setActive((i) => Math.max(0, i - 1));
     } else if (e.key === " " && !typing) {
@@ -358,6 +368,7 @@ export default function LangPick() {
           (hands-free: nothing starts; push-to-talk: the transcript is not inserted). */}
       <div className="flex flex-wrap items-center gap-2 border-t border-line bg-surface px-4 py-2.5 text-[11.5px] text-faint">
         <Hint k="1–9">pick</Hint>
+        {query.length > 0 && <Hint k="↵">pick filtered</Hint>}
         {chosen.length >= MAX_TARGETS && <span className="text-warn">max {MAX_TARGETS}</span>}
         <span className="flex-1" aria-hidden />
         <FooterButton tone="danger" k="esc" onClick={abort}>

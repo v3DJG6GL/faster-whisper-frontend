@@ -1299,8 +1299,13 @@ export default function Overlay() {
                                 {/* Code-point-safe tail: slice(-400) counts UTF-16 units and
                                     can split a surrogate pair, producing a lone low surrogate
                                     that renders as U+FFFD. Spread → slice → join iterates
-                                    code points, matching safeDisplayText's contract. */}
-                                {stripControlChars([...state.partial].slice(-400).join(""))}
+                                    code points, matching safeDisplayText's contract.
+                                    `state.partial` is the whole unbounded document and this
+                                    runs on every ~30 Hz update, so the string is cut to 800
+                                    UTF-16 units first (>=400 code points; a lone leading low
+                                    surrogate from the unit cut is dropped by the code-point
+                                    slice). */}
+                                {stripControlChars([...state.partial.slice(-800)].slice(-400).join(""))}
                               </span>
                             </div>
                             {faded && (
