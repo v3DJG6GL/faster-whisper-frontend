@@ -438,6 +438,17 @@ describe("applyBlob keep-local (baseline)", () => {
     ).toBe(true);
   });
 
+  it("a non-numeric dictationRetentionDays on the wire is 'no change' — the apply side drops it", () => {
+    const local = { recording: { dictationRetentionDays: 30 } } as never;
+    for (const bad of [null, "7", Number.NaN]) {
+      expect(
+        securityChanges({ recording: { dictationRetentionDays: bad } } as never, local, CATS_ALL).some(
+          (c) => c.kind === "dictation-retention",
+        ),
+      ).toBe(false);
+    }
+  });
+
   it("the Pinned word mappings switch gates the pin on apply", async () => {
     const base = settings();
     useApp.setState({

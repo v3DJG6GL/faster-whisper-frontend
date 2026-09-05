@@ -137,7 +137,14 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // Normalize a pre-split server blob first — the apply arms filter fields to their new
       // categories, so an unmigrated old blob would silently drop the chip settings, the
       // quick-add chord, and the pin (they'd sit in locations the arms no longer read).
-      await applyBlob(migrateBlob(blob), ALL_ON, 2, { ignoreGates: true });
+      // `false` = nothing landed (dictation started meanwhile, or the apply was dropped stale
+      // after its retries). Binding sync to a state that never hydrated would push this
+      // device's pre-restore config over the server copy — same guard as the Sync tab's restore.
+      const ok = await applyBlob(migrateBlob(blob), ALL_ON, 2, { ignoreGates: true });
+      if (!ok) {
+        setError("Nothing was restored — stop dictation or avoid changing settings while restoring, then try again.");
+        return;
+      }
       // Turn sync on for this device, against the restored backend that matches
       // the gate's URL (the restore may have replaced Backend #1's entry).
       const s = st.getState();

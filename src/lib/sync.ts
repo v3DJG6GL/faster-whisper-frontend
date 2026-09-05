@@ -2298,11 +2298,7 @@ export async function pushNow(manual = false): Promise<void> {
         // opt-outs like the other two applyBlob callers.
         const pushCats = syncCats();
         // A 409 merge adopts remote values too, so it gets the same consent gate as a pull.
-        const riskyPush = securityChanges(
-          gateScalars(merged, settingGates()),
-          gateScalars(localForReview(blob), settingGates()),
-          pushCats,
-        );
+        const riskyPush = gatedSecurityCheck(merged, blob, pushCats);
         if (riskyPush.length > 0) {
           await applyBlob(merged, heldBack(pushCats, riskyPush));
           raiseReview({
@@ -2356,7 +2352,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   }
   // This pull is unattended (startup + every window focus). If it would repoint a backend or
   // swap a stored key, hold it for confirmation instead of adopting it silently.
-  const risky = securityChanges(gateScalars(merged, settingGates()), gateScalars(localForReview(local), settingGates()), cats);
+  const risky = gatedSecurityCheck(merged, local, cats);
   if (risky.length > 0) {
     // Everything else still applies — only the backends category waits. Deliberately no
     // persistState here: adopting the server's version as the new base would drop the held-back
@@ -2483,6 +2479,20 @@ function localForReview(local: SyncBlob): SyncBlob {
   return { ...local, backends: { list: useApp.getState().backends, secrets: {} } };
 }
 
+/**
+ * `securityChanges` over an incoming blob and the local one, both gated by the SAME
+ * `settingGates()` snapshot — the three consent sites (409 merge, unattended pull, conflict
+ * resolution) must never diverge in how they gate the two sides.
+ */
+function gatedSecurityCheck(
+  incoming: SyncBlob,
+  localBlob: SyncBlob,
+  cats: Record<SyncCategory, boolean>,
+): SecurityChange[] {
+  const g = settingGates();
+  return securityChanges(gateScalars(incoming, g), gateScalars(localForReview(localBlob), g), cats);
+}
+
 export function securityChanges(
   incoming: SyncBlob,
   local: SyncBlob,
@@ -2562,9 +2572,13 @@ export function securityChanges(
     // must not be read as the app default here — a peer with this row's sync switch off
     // omits it, and the fallback raised a consent dialog for a deletion that can't happen.
     if (rawNext === undefined) return;
-    const nextDays = typeof rawNext === "number" && Number.isFinite(rawNext) ? rawNext : fallback;
     const rawHere = isPlainObject(localContainer) ? ownProp(localContainer, key) : undefined;
     const hereDays = typeof rawHere === "number" ? rawHere : fallback;
+    // A non-numeric value (null, a string) is dropped by the apply side, which keeps the local
+    // days — so it reads as "no change" here too, same as the recordingsRetentionDays check
+    // above. Falling back to the app default raised a consent dialog for a deletion window that
+    // could never be applied.
+    const nextDays = typeof rawNext === "number" && Number.isFinite(rawNext) ? rawNext : hereDays;
     if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
       out.push({
         kind,
@@ -2751,7 +2765,7 @@ export async function resolveSyncConflicts(
   // unreviewed. The conflict dialog only ever showed the CONFLICTING category names, never the
   // address change. Same shape as reconcileRemote: apply everything else, hold backends, and
   // persist no base so a rejection is re-offered on the next pull.
-  const risky = securityChanges(gateScalars(final, settingGates()), gateScalars(localForReview(c.local), settingGates()), applyCats);
+  const risky = gatedSecurityCheck(final, c.local, applyCats);
   if (risky.length > 0) {
     await applyBlob(final, heldBack(applyCats, risky));
     raiseReview({
