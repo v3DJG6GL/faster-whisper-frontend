@@ -17,16 +17,14 @@
 // Pure functions only (no store/api imports) — unit-tested in isolation.
 
 import {
-  MANIFEST,
+  DEFS,
   settingsOfCategory,
-  type SettingDef,
   type SettingId,
   type WireCategory,
 } from "./settingsManifest";
 
 export type Gates = Record<SettingId, boolean>;
 
-const DEFS: readonly SettingDef[] = MANIFEST;
 
 /** Scalar wire categories where payload keys equal store field keys. The ONE list —
  *  sync.ts's compose and apply gating both iterate it, so a new scalar category is added here

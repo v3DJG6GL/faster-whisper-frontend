@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SETTING_SYNC,
+  DEFS,
   GENERAL_COVERAGE,
   LOCAL,
   LOGGING_COVERAGE,
-  MANIFEST,
   RECORDING_COVERAGE,
   SETTING,
   SYNC_GROUPS,
@@ -12,10 +12,8 @@ import {
   TRANSCRIBE_COVERAGE,
   settingsOfGroup,
   type FieldRef,
-  type SettingDef,
 } from "./settingsManifest";
 
-const DEFS: readonly SettingDef[] = MANIFEST;
 
 describe("manifest integrity", () => {
   it("ids are unique", () => {

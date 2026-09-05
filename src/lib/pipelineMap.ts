@@ -3,6 +3,7 @@
 // newest-first ordering and the canonical (key-sorted) PATCH body stay identical.
 
 import type { PipelineFetch, PipelineRule } from "./types";
+import { hasOwn, ownProp } from "./own";
 
 /** The pipeline `rules` as PipelineRule[]. Rust forwards the server's payload opaque
  *  (#[serde(default)] serde_json::Value), so a buggy/old/proxied server can deliver a non-array
@@ -39,8 +40,8 @@ export function ruleListOf(res: PipelineFetch): PipelineRule[] {
       // before any render cap (those bound the DOM, not this array). A 32 MiB string field
       // is tens of millions of allocations plus an O(n log n) sort on the UI thread, and
       // QuickAdd reaches it from a mount effect at startup with no user gesture.
-      map: plainMap(rule.map),
-      map_meta: plainMap(rule.map_meta),
+      map: plainMap(rule.map, (x): x is string => typeof x === "string"),
+      map_meta: plainMap(rule.map_meta, (x): x is number => typeof x === "number" && Number.isFinite(x)),
     }));
 }
 
@@ -50,13 +51,15 @@ const MAX_RULES = 500;
  *  Anything else (a string, an array, a scalar) becomes undefined rather than being
  *  enumerated. The entry ceiling is deliberately generous — this map is the user's own
  *  word list and the editor PATCHes it back whole, so a tight cap would delete their
- *  entries on the next save; it only has to keep the enumeration finite. */
-function plainMap<T>(v: unknown): Record<string, T> | undefined {
+ *  entries on the next save; it only has to keep the enumeration finite. Values that are
+ *  not the declared leaf type are dropped, not coerced (a dropped map entry means the
+ *  server's value was unusable anyway). */
+function plainMap<T>(v: unknown, ok: (x: unknown) => x is T): Record<string, T> | undefined {
   if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
-  const entries = Object.entries(v as Record<string, T>);
-  return entries.length <= MAX_MAP_ENTRIES
-    ? (v as Record<string, T>)
-    : Object.fromEntries(entries.slice(0, MAX_MAP_ENTRIES));
+  const entries = Object.entries(v as Record<string, unknown>)
+    .filter((e): e is [string, T] => ok(e[1]))
+    .slice(0, MAX_MAP_ENTRIES);
+  return Object.fromEntries(entries);
 }
 
 const MAX_MAP_ENTRIES = 20_000;
@@ -77,9 +80,8 @@ export function mapRowsFromRule(rule: PipelineRule): MapRow[] {
   return Object.entries(rule.map ?? {})
     .map(([k, v]) => ({ id: nextRowId(), k, v }))
     .sort((a, b) => {
-      const meta = rule.map_meta;
-      const tb = meta && Object.prototype.hasOwnProperty.call(meta, b.k) ? (meta[b.k] as number) : 0;
-      const ta = meta && Object.prototype.hasOwnProperty.call(meta, a.k) ? (meta[a.k] as number) : 0;
+      const tb = ownProp(rule.map_meta, b.k) ?? 0;
+      const ta = ownProp(rule.map_meta, a.k) ?? 0;
       return tb - ta;
     });
 }
@@ -101,7 +103,7 @@ export function mapBodyFromRows(rows: MapRow[]): { map: Record<string, string> }
   // silently overridden by the older (further-down) entry. hasOwnProperty (not `in`) so a key like
   // "toString" isn't falsely treated as already-present.
   for (const r of rows) {
-    if (r.k.trim() && !Object.prototype.hasOwnProperty.call(map, r.k)) map[r.k] = r.v;
+    if (r.k.trim() && !hasOwn(map, r.k)) map[r.k] = r.v;
   }
   const sorted: Record<string, string> = {};
   for (const k of Object.keys(map).sort()) sorted[k] = map[k];

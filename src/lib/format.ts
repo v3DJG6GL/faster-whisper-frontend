@@ -45,7 +45,9 @@ export function fmtDurationExact(seconds: number): string {
 export function fmtTimestamp(seconds: number): string {
   // Round to the tenth ONCE, then split — otherwise a remainder that rounds to 60.0
   // renders as "1:60.0" while the minute field was already floored (fmtDuration's rule).
-  const s = Math.round(Math.max(0, seconds) * 10) / 10;
+  // Non-finite input (a WebM without a duration header reports Infinity) renders as 0:00.0,
+  // not "Infinity:NaN:0NaN".
+  const s = Math.round(Math.max(0, Number.isFinite(seconds) ? seconds : 0) * 10) / 10;
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;

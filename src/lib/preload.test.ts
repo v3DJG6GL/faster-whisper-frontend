@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RENEW_MS, acquireWarm, preloadPlanFor, resetWarmDebounceForTests, setPreloadTransport } from "./preload";
+import { useApp } from "./store";
+import type { Capabilities } from "./types";
 
 describe("preloadPlanFor", () => {
   it("maps each rail stage onto its model family", () => {
@@ -50,13 +52,16 @@ describe("acquireWarm", () => {
     models: [{ family: "whisper" as const, id: "large-v3" }],
   };
   let calls: number;
+  let sentModels: { family: string; id: string }[][];
 
   beforeEach(() => {
     vi.useFakeTimers();
     resetWarmDebounceForTests();
     calls = 0;
-    setPreloadTransport(async () => {
+    sentModels = [];
+    setPreloadTransport(async (args) => {
       calls += 1;
+      sentModels.push(args.models);
       return true;
     });
   });
@@ -64,7 +69,15 @@ describe("acquireWarm", () => {
   afterEach(() => {
     vi.useRealTimers();
     setPreloadTransport();
+    useApp.setState({ caps: {} });
   });
+
+  const translationOff = {
+    can_request_override_profile: false,
+    can_request_decode_overrides: false,
+    allowed_override_profiles: [],
+    translation_enabled: false,
+  } as Capabilities;
 
   it("fires once immediately and once per renew tick", () => {
     const lease = acquireWarm("k", spec);
@@ -183,6 +196,25 @@ describe("acquireWarm", () => {
 
   it("sends nothing for an empty plan", () => {
     const lease = acquireWarm("k", { ...spec, models: [] });
+    vi.advanceTimersByTime(RENEW_MS);
+    expect(calls).toBe(0);
+    lease.release();
+  });
+
+  it("strips only the translation entries when the server reports translation off", () => {
+    useApp.setState({ caps: { b1: translationOff } });
+    const lease = acquireWarm("k", {
+      ...spec,
+      models: [...spec.models, { family: "translation" as const, id: "gemma" }],
+    });
+    expect(calls).toBe(1);
+    expect(sentModels[0]).toEqual([{ family: "whisper", id: "large-v3" }]);
+    lease.release();
+  });
+
+  it("sends nothing when translation off leaves the plan empty", () => {
+    useApp.setState({ caps: { b1: translationOff } });
+    const lease = acquireWarm("k", { ...spec, models: [{ family: "translation" as const, id: "gemma" }] });
     vi.advanceTimersByTime(RENEW_MS);
     expect(calls).toBe(0);
     lease.release();

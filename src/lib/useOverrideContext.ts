@@ -58,10 +58,13 @@ export function useOverrideContext(args: {
     const backend = st.backends.find((b) => b.id === backendId);
     const savedTarget = backend ? effectiveServerUrl(backend, st.settings) : null;
     const typedTarget = serverUrl.trim();
+    // A typed key is always an edit: the Backends editor leaves the field blank to keep the
+    // stored key, and /v1/me is per-caller, so a rotated key must be probed live rather than
+    // read from the cache filled with the old credential.
     const editing =
       !backend ||
       (!!typedTarget && normalizeUrl(typedTarget) !== normalizeUrl(savedTarget ?? "")) ||
-      (!!apiKey && !backend.hasApiKey);
+      !!apiKey;
     if (!editing) {
       setLive(false);
       // Absent ⇒ never fetched; the store is invalidated at the sites that repoint or

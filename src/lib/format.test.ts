@@ -13,6 +13,8 @@ describe("fmtTimestamp", () => {
     expect(fmtTimestamp(83.4)).toBe("1:23.4");
     expect(fmtTimestamp(3725)).toBe("1:02:05.0");
     expect(fmtTimestamp(-3)).toBe("0:00.0");
+    expect(fmtTimestamp(Infinity)).toBe("0:00.0");
+    expect(fmtTimestamp(NaN)).toBe("0:00.0");
   });
 });
 

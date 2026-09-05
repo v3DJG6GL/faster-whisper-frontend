@@ -434,31 +434,27 @@ const PHRASE_GAP = "\n\n\n";
 // a wedged one) and hands each reading here, so one poll now serves both. The
 // early-out below is what keeps a live phrase's polling invisible — the phase
 // card only exists for the cold one-shot.
+// Same vocabulary as the retro-translate card. BatchProgress.stage is a plain
+// string, so an unknown stage (no entry yet — the request hasn't registered the
+// id) is absent here and keeps what we show.
+const TRANSLATE_PHASE_LABEL: Partial<Record<string, string>> = {
+  downloading: "Downloading the translation model…",
+  loading: "Loading the translation model…",
+  translating: "Translating…",
+};
 function foldTranslatePhase(p: BatchProgress): void {
   const cur = useApp.getState().dictationPhase;
   if (!cur) return; // the phase was cleared (settled/cancelled) — a late poll adds nothing
-  const pct = typeof p.progress === "number" ? Math.min(1, Math.max(0, p.progress)) : undefined;
-  switch (p.stage) {
-    case "downloading":
-      useApp.getState().setDictation({
-        dictationPhase: { ...cur, label: "Downloading the translation model…", pct },
-      });
-      break;
-    case "loading":
-      // No fraction exists for a GGUF load — leave the bar indeterminate rather
-      // than inventing one from the elapsed time.
-      useApp.getState().setDictation({
-        dictationPhase: { ...cur, label: "Loading the translation model…", pct: undefined },
-      });
-      break;
-    case "translating":
-      useApp.getState().setDictation({
-        dictationPhase: { ...cur, label: "Translating…", pct },
-      });
-      break;
-    default:
-      break; // no entry yet (the request hasn't registered the id) — keep what we show
-  }
+  const label = p.stage ? TRANSLATE_PHASE_LABEL[p.stage] : undefined;
+  if (!label) return;
+  // No fraction exists for a GGUF load — leave the bar indeterminate rather
+  // than inventing one from the elapsed time.
+  const pct =
+    p.stage !== "loading" && typeof p.progress === "number"
+      ? Math.min(1, Math.max(0, p.progress))
+      : undefined;
+  if (cur.label === label && cur.pct === pct) return; // identical reading — keep the overlay gate transition-driven (overlay.ts `phase` comment)
+  useApp.getState().setDictation({ dictationPhase: { ...cur, label, pct } });
 }
 /** Translate `text` for injection, or return it unchanged (no target set,
  *  timeout, failure, superseded session). Never throws; warns once.
@@ -1098,8 +1094,11 @@ function consumePendingHoldStart(): void {
  *  clearing the active profile — the single definition of the end-of-session contract so its
  *  four call sites can't drift. `partial` is deliberately NOT cleared here: the chip's 2 s
  *  collapse linger and Home's 10 s "done" card both keep showing the finished transcript
- *  after settle (the next startLive clears it). Fires a queued fast re-press start last. */
-function settleIdle(): void {
+ *  after settle (the next startLive clears it). Fires a queued fast re-press start last.
+ *  `keepError` is true from settleToIdleAfterInjection's error branch: same bookkeeping, but
+ *  status/dictationError stay so flashError's linger can show the hint; flashError's timer
+ *  idles later. */
+function settleIdle(keepError = false): void {
   // The success end of a session: the models this run asked the server to keep
   // hot are no longer ours to hold. Unlike the cancel below this is NOT paired
   // with cancelDictationTranslate — releasing a lease stops a renew timer, it
@@ -1130,7 +1129,7 @@ function settleIdle(): void {
   // Without it a session that inserted the ORIGINAL because the translate timed out shows
   // an unqualified "typed" — indistinguishable from one that translated successfully.
   useApp.getState().setDictation({
-    status: "idle",
+    ...(keepError ? {} : { status: "idle" as const }),
     sessionOutcome: endOutcome(),
     translateFailure: sessionTranslateFailure,
     // A push-to-talk session whose picker was aborted ends with outcome "none" like a
@@ -1242,19 +1241,7 @@ function settleToIdleAfterInjection(startedAt: number, cfg: InsertCfg | null): v
         // Run the same bookkeeping settleIdle does (lease, history, outcome, session fields)
         // but leave status/dictationError intact so the user can read the recovery hint.
         // flashError's own timer will clear to idle when it expires.
-        releaseWarmLease();
-        captureDictationHistory();
-        reportSessionOutcome(endOutcome());
-        useApp.getState().setDictation({
-          sessionOutcome: endOutcome(),
-          translateFailure: sessionTranslateFailure,
-          activeProfile: null,
-          dictationPhase: null,
-          sessionTargets: null,
-          routePending: null,
-        });
-        askTargetsAtSettle = null;
-        consumePendingHoldStart();
+        settleIdle(true);
       }
     }, wait);
   });
@@ -2951,7 +2938,10 @@ export async function stopLive(): Promise<void> {
   // written out) → "idle" — so the chip shows progress the whole way through.
   // Clear `warming` too: stopping DURING warm-up (before the mic went live) otherwise
   // left the chip stuck on "warming up…" instead of showing "finalizing…".
-  useApp.getState().setDictation({ status: "transcribing", warming: false });
+  // micLive:false marks the mic-closed edge for the overlay's stop cue — a stop landing
+  // DURING a per-phrase translate (translating->transcribing) is a real session end, while
+  // translatePhrase's post-stop status restore is not; only the store can tell them apart.
+  useApp.getState().setDictation({ status: "transcribing", warming: false, micLive: false });
   // Guard against a `closed` that never comes (socket died mid-finalize).
   armStuckWatchdog();
   try {

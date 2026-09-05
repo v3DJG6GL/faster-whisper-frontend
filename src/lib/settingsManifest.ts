@@ -326,7 +326,7 @@ export type SettingId = (typeof MANIFEST)[number]["id"];
 /** The manifest widened to the interface type — the literal tuple keeps its
  *  narrow per-entry types (good for `SettingId`), but derived helpers want
  *  the uniform shape (optional props present on every entry). */
-const DEFS: readonly SettingDef[] = MANIFEST;
+export const DEFS: readonly SettingDef[] = MANIFEST;
 
 export const SETTING = Object.fromEntries(DEFS.map((d) => [d.id, d])) as unknown as Record<
   SettingId,
@@ -335,7 +335,9 @@ export const SETTING = Object.fromEntries(DEFS.map((d) => [d.id, d])) as unknown
 
 /* ── Coverage maps: the exhaustiveness guarantee ───────────────────────── */
 
-/** Sentinel for fields that are deliberately machine-local and never sync. */
+/** Sentinel for fields with no sync switch of their own: machine-local ones that never
+ *  reach the wire, and retired ones that still ride their category as a passthrough
+ *  (`insertTiming` — see GENERAL_COVERAGE; `autoEnter` is stripped on apply). */
 export const LOCAL = Symbol("machine-local");
 type Covered = SettingId | typeof LOCAL;
 

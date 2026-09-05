@@ -62,7 +62,7 @@ function bodyAfter(src: string, anchor: string): string {
 
 describe("the settle picker is armed for exactly one session", () => {
   it("every session end disarms it", () => {
-    expect(mask(bodyAfter(streamingSrc, "function settleIdle()"))).toContain("askTargetsAtSettle = null");
+    expect(mask(bodyAfter(streamingSrc, "function settleIdle("))).toContain("askTargetsAtSettle = null");
     expect(mask(bodyAfter(streamingSrc, "async function cancelLive("))).toContain("askTargetsAtSettle = null");
   });
 
@@ -77,7 +77,7 @@ describe("the settle picker is armed for exactly one session", () => {
 
 describe("the session route dies with the session", () => {
   it("settleIdle clears sessionTargets like cancelLive does", () => {
-    expect(mask(bodyAfter(streamingSrc, "function settleIdle()"))).toContain("sessionTargets: null");
+    expect(mask(bodyAfter(streamingSrc, "function settleIdle("))).toContain("sessionTargets: null");
     expect(mask(bodyAfter(streamingSrc, "async function cancelLive("))).toContain("sessionTargets: null");
   });
 

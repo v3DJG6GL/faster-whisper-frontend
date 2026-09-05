@@ -19,12 +19,16 @@ export function isDirty(draft: unknown, initial: unknown): boolean {
 /** `false` = the save aborted and nothing was persisted; anything else = saved. */
 export type SaveResult = boolean | void;
 
-/** Run the pending navigation after a save — unless the save reported it did not persist. */
+/** Run the pending navigation after a save — unless the save reported it did not persist.
+ *  A save that REJECTS counts as "did not persist" too: the editor stays (the error is
+ *  logged) instead of the navigation escaping as an unhandled rejection. */
 export function afterSave(result: SaveResult | Promise<SaveResult>, go: () => void): void {
   if (result && typeof (result as Promise<SaveResult>).then === "function") {
-    void (result as Promise<SaveResult>).then((ok) => {
-      if (ok !== false) go();
-    });
+    void (result as Promise<SaveResult>)
+      .then((ok) => {
+        if (ok !== false) go();
+      })
+      .catch((e) => console.error("save failed — staying on the editor", e));
   } else if (result !== false) {
     go();
   }

@@ -27,6 +27,17 @@ describe("afterSave", () => {
     await Promise.resolve();
     expect(go).toHaveBeenCalledTimes(2);
   });
+
+  it("stays after a save that rejects", async () => {
+    const go = vi.fn();
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    afterSave(Promise.reject(new Error("x")), go);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(go).not.toHaveBeenCalled();
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
+  });
 });
 
 describe("isDirty", () => {

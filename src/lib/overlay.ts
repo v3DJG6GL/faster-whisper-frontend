@@ -344,11 +344,17 @@ export async function initOverlayController(): Promise<void> {
         // Only chime "stop" if the mic actually went live this session — a session ENDED during
         // warm-up (stopLive sets {transcribing, warming:false} in one update, mic never live) would
         // otherwise play a "stop" with no preceding "start".
-        // "translating" is NOT included: translatePhrase stamps status:"translating" and
-        // restores the displaced status in its finally block, so a final queued segment
-        // after stopLive produces a translating->transcribing transition that is NOT a
-        // session end — including it fires a second "stop" chime inside one session.
-        if (state.status === "transcribing" && prev.status === "listening" && state.micLive)
+        // "translating" IS included, but only on the micLive:false edge that stopLive stamps:
+        // a stop landing DURING a per-phrase translate is a real session end. translatePhrase's
+        // finally restores the displaced status after a stop (translating->transcribing with
+        // micLive already false) and must stay silent — including that would fire a second
+        // "stop" chime inside one session. A capture-death `closed` (listening->transcribing,
+        // micLive untouched) still chimes via prev.micLive.
+        if (
+          state.status === "transcribing" &&
+          prev.micLive &&
+          (prev.status === "listening" || (prev.status === "translating" && !state.micLive))
+        )
           void playCue("stop").catch((e) => console.error("playCue failed:", e));
         else if (state.status === "error") void playCue("error").catch((e) => console.error("playCue failed:", e));
       }

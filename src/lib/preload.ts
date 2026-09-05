@@ -105,22 +105,22 @@ export function preloadPlanFor(opts: {
   return out;
 }
 
-/** Whether it is worth sending this plan at all. A PROVEN-standard server has no
- *  such endpoint; a server that explicitly reports translation off would defer a
- *  translation entry anyway. An ABSENT capability is never a denial here, per the
- *  codebase rule — unknown means try. */
-function worthSending(spec: PreloadSpec): boolean {
-  if (!spec.models.length) return false;
+/** The part of this plan worth sending. A PROVEN-standard server has no such
+ *  endpoint, so nothing goes; a server that explicitly reports translation off
+ *  would defer a translation entry, so those are stripped and the rest still
+ *  sent (the whisper pre-warm is the one the first phrase feels). An ABSENT
+ *  capability is never a denial here, per the codebase rule — unknown means try. */
+function sendableModels(spec: PreloadSpec): PreloadSpec["models"] {
+  if (!spec.models.length) return [];
   const st = useApp.getState();
   const backend = st.backends.find((b) => b.id === spec.backendId);
   if (backend && effectiveServerKind(backend, ownProp(st.connections, backend.id)) === "standard") {
-    return false;
+    return [];
   }
-  if (spec.models.some((m) => m.family === "translation")) {
-    const caps = ownProp(st.caps, spec.backendId);
-    if (caps?.translation_enabled === false) return false;
+  if (ownProp(st.caps, spec.backendId)?.translation_enabled === false) {
+    return spec.models.filter((m) => m.family !== "translation");
   }
-  return true;
+  return spec.models;
 }
 
 function fire(entry: Entry, force: boolean): void {
@@ -132,7 +132,8 @@ function fire(entry: Entry, force: boolean): void {
   if (!force && key === entry.sentKey && now - entry.sentAt < RENEW_MS) return;
   // Checked BEFORE the send is recorded: a plan we declined because caps aren't
   // known yet must still be sent once they are, rather than being debounced out.
-  if (!worthSending(entry.spec)) return;
+  const models = sendableModels(entry.spec);
+  if (!models.length) return;
   entry.sentKey = key;
   entry.sentAt = now;
   lastSent.set(entry.key, { sentKey: key, sentAt: now });
@@ -142,7 +143,7 @@ function fire(entry: Entry, force: boolean): void {
   void transport({
     serverUrl: entry.spec.serverUrl,
     backendId: entry.spec.backendId,
-    models: entry.spec.models,
+    models,
   }).catch(() => {});
 }
 

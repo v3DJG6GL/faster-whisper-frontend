@@ -173,6 +173,7 @@ export function parseQueue(raw: unknown): OutcomeQueue {
 
 let queue: OutcomeQueue = EMPTY_QUEUE;
 let loaded = false;
+let loading = false; // the persisted file is being read — a save now would clobber its backlog
 let flushing = false;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let flushAgain = false;
@@ -180,7 +181,7 @@ let flushAgain = false;
 /** Debounced persist — an enqueue and the flush that follows it a moment later would
  *  otherwise write the file twice. */
 function persist(): void {
-  if (!isTauri) return;
+  if (!isTauri || loading) return; // initOutcomeQueue writes the merged queue once the read lands
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = undefined;
@@ -191,12 +192,18 @@ function persist(): void {
 /** Load the persisted queue (once) and post whatever is due. */
 export async function initOutcomeQueue(): Promise<void> {
   if (!isTauri || loaded) return;
+  loading = true;
   try {
     const persisted = pruneQueue(parseQueue(await loadUsageOutcomes()), Date.now());
     queue = { ...persisted, items: [...persisted.items, ...queue.items] };
     loaded = true;
   } catch (e) {
     console.error("usage outcome queue load failed:", e);
+  } finally {
+    loading = false;
+    // The merged queue — including anything enqueued while the read was in flight — is
+    // written once now; an enqueue's own persist() during the load was a no-op.
+    persist();
   }
   await flushOutcomes();
 }

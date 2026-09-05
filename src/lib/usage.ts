@@ -208,15 +208,16 @@ export function initUsageController(): void {
 
   // The persisted queue loads before the first pass, so a restart posts what the
   // previous run could not — refreshAll flushes again on every pass.
-  void initOutcomeQueue().finally(() => void refreshAll());
+  void initOutcomeQueue().finally(() => void refreshAll()).catch(() => {});
   setInterval(() => void refreshAll(), POLL_MS);
 
   let afterTimer: ReturnType<typeof setTimeout> | undefined;
   useApp.subscribe((state, prev) => {
-    // Refetch when the set of backends changes (added / removed / url edited). The init-time
-    // refreshAll() above covers the first load, so comparing against prev suffices.
+    // Refetch when the set of backends changes (added / removed / url, key presence or
+    // server-type edited). The init-time refreshAll() above covers the first load, so
+    // comparing against prev suffices.
     const bKey = (bs: typeof state.backends) =>
-      bs.map((b) => b.id + "\0" + b.serverUrl + "\0" + b.hasApiKey).join("\n");
+      bs.map((b) => b.id + "\0" + b.serverUrl + "\0" + b.hasApiKey + "\0" + (b.kind ?? "")).join("\n");
     if (bKey(state.backends) !== bKey(prev.backends)) {
       void refreshAll();
     }
