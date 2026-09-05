@@ -935,6 +935,10 @@ mod imp {
     /// `apply_bindings` calls it before the old listener is dropped — so a teardown Stop is
     /// emitted only if the hold is still unclaimed, and with no chord mods: HeldKeys was wiped by
     /// the successor's start, so a snapshot taken here would clear a fresh session's trigger mods.
+    /// The claimed Stop goes through `manufactured_stop`: the parked key IS released, but a
+    /// staggered chord may still have its other modifier down when the post-loop wipes it from
+    /// HeldKeys, and the OS check is what decides whether the loss latch arms — the same rule the
+    /// other two teardown sites apply.
     fn commit(
         app: &AppHandle,
         held_keys: &crate::held_keys::HeldKeysWriter,
@@ -976,7 +980,7 @@ mod imp {
                 Fire::Stop(pid) => {
                     if teardown {
                         if take_hold(&pid) {
-                            emit(app, &pid, "stop", None);
+                            manufactured_stop(app, &pid, &engine.keys_for_profile(&pid));
                         }
                     } else {
                         emit(app, &pid, "stop", Some(&chord_mods(&pid)));

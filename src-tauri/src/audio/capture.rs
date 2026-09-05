@@ -230,7 +230,7 @@ fn run(
 
     stream.play().map_err(|e| e.to_string())?;
 
-    super::publish_levels(&app, "audio://level", &level_bits, &stop);
+    super::publish_levels_with_live(&app, "audio://level", &level_bits, &stop, None);
     // `stream` is dropped here, on the capture thread, stopping the device.
     Ok(())
 }

@@ -522,6 +522,10 @@ pub async fn run<F>(
         // The writes get one flat bound (a half-open socket can't park them);
         // the reads below get an ACTIVITY-based window instead.
         const DRAIN_WRITE_DEADLINE: Duration = Duration::from_secs(10);
+        // Sub-cap on the PCM drain alone: the capture thread closes the channel within ~one
+        // buffer; the cap exists so a cpal Stream drop that stalls (device yanked, wedged audio
+        // service) cannot starve the flush/stop sends below out of the whole write budget.
+        const PCM_DRAIN_CAP: Duration = Duration::from_secs(2);
         if tokio::time::timeout(DRAIN_WRITE_DEADLINE, async {
             // Drain the PCM the capture thread queued but the main loop hadn't consumed when the stop
             // signal won the (non-biased) select — push it through the resampler and send it, so the
@@ -529,9 +533,20 @@ pub async fn run<F>(
             // one-shot try_recv) keeps draining until the channel CLOSES, so we also catch the chunks
             // the capture callback enqueues during its own shutdown: finish()/Drop set capture_stop
             // BEFORE ws_stop, so the capture thread is already exiting and drops its sender within
-            // ~one buffer; the writes are bounded by DRAIN_WRITE_DEADLINE regardless. Saved (when
-            // recording) like the flush tail below: the end-of-stream sliver isn't speech-gated.
-            while let Some(chunk) = pcm_rx.recv().await {
+            // ~one buffer. The drain has its own sub-cap (PCM_DRAIN_CAP, one flat deadline so a
+            // trickle of chunks can't extend it) so the flush/stop frames below always run under
+            // the remaining DRAIN_WRITE_DEADLINE budget. Saved (when recording) like the flush tail
+            // below: the end-of-stream sliver isn't speech-gated.
+            let pcm_deadline = tokio::time::Instant::now() + PCM_DRAIN_CAP;
+            loop {
+                let chunk = match tokio::time::timeout_at(pcm_deadline, pcm_rx.recv()).await {
+                    Ok(Some(c)) => c,
+                    Ok(None) => break,
+                    Err(_) => {
+                        tracing::warn!("[stream] capture thread did not close the PCM channel within {PCM_DRAIN_CAP:?} — sending flush/stop without the remaining tail");
+                        break;
+                    }
+                };
                 let bytes = resampler.push(&chunk);
                 if !bytes.is_empty() {
                     if saving {

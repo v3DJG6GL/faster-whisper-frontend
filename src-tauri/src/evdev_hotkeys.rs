@@ -383,7 +383,12 @@ mod imp {
     ///
     /// `teardown`: the post-loop drain of parked releases — a Stop is then emitted only if the
     /// hold is still unclaimed (`take_hold`), since `stop_held_sessions` may already have
-    /// manufactured it; see the win_hotkeys twin.
+    /// manufactured it; see the win_hotkeys twin. The claimed Stop goes through
+    /// `manufactured_stop`: the parked key IS released, but a staggered chord may still have its
+    /// other modifier down when the post-loop wipes it from HeldKeys, and the kernel check is what
+    /// decides whether the loss latch arms — the same rule the other two teardown sites apply.
+    /// (`chord_mod_still_down` enumerates /dev/input; the drain runs on the reader task, not the
+    /// GTK thread, so that warning does not apply here.)
     fn commit(
         app: &AppHandle,
         held_keys: &crate::held_keys::HeldKeysWriter,
@@ -420,7 +425,7 @@ mod imp {
                 Fire::Stop(pid) => {
                     if teardown {
                         if take_hold(&pid) {
-                            emit(app, &pid, "stop", None);
+                            manufactured_stop(app, &pid, &engine.keys_for_profile(&pid));
                         }
                     } else {
                         emit(app, &pid, "stop", Some(&chord_mods(&pid)));

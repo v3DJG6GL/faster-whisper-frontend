@@ -112,6 +112,12 @@ fn move_dir_contents(
         if !src.is_file() {
             continue;
         }
+        // An in-progress media copy (`<id>.<ext>.tmp`, see save_transcript_media) finishes in
+        // the old base and its record keeps a valid absolute path; moving it under the writer
+        // fails the copier's final rename and strands a `.tmp` every sweep skips forever.
+        if src.extension().and_then(|e| e.to_str()) == Some("tmp") {
+            continue;
+        }
         let Some(name) = src.file_name() else { continue };
         let dest = to.join(name);
         // Never clobber (the layout migration's rule, applied to the relocation too): a base
@@ -484,6 +490,11 @@ pub async fn transcribe_file(
 /// long-job timeout; cancellation goes through `cancel_text_translation`
 /// with the same `progress_id` the request carried. The latency-critical
 /// dictation path still applies its own short JS-side budget.
+///
+/// `cancel_with_file_epoch` (opt-in, file-workbench callers only): also poll
+/// `FILE_TRANSCRIBE_EPOCH` like `transcribe_file` and DROP the request when
+/// `cancel_file_transcription` bumps it — otherwise a cancelled text-source
+/// run stays parked on a long chunk until the server answers.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn translate_text(
@@ -499,9 +510,12 @@ pub async fn translate_text(
     context_segments: Option<u32>,
     progress_id: Option<String>,
     captured_id: Option<String>,
+    cancel_with_file_epoch: Option<bool>,
 ) -> Result<transport::text::TextTranslationResult, String> {
+    // Captured BEFORE the keyring resolve, as in `transcribe_file`.
+    let epoch = FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
     let key = resolve_key(api_key, backend_id);
-    transport::text::translate_texts(
+    let fut = transport::text::translate_texts(
         &server_url,
         key.as_deref(),
         &texts,
@@ -513,9 +527,22 @@ pub async fn translate_text(
         context_segments,
         progress_id.as_deref(),
         captured_id.as_deref(),
-    )
-    .await
-    .map_err(|e| e.to_string())
+    );
+    if cancel_with_file_epoch == Some(true) {
+        tokio::pin!(fut);
+        loop {
+            tokio::select! {
+                r = &mut fut => return r.map_err(|e| e.to_string()),
+                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
+                    if FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                        return Err("cancelled".into());
+                    }
+                }
+            }
+        }
+    } else {
+        fut.await.map_err(|e| e.to_string())
+    }
 }
 
 /// Ask the SERVER to abort the in-flight text translation behind
@@ -892,33 +919,39 @@ pub async fn read_backend_keys(
 
 /// Write a settings-export envelope (built by the TS side) to the path the
 /// user picked in the save dialog. Atomic tmp+rename like `config::save`.
+/// async + spawn_blocking: a sync command runs on the main thread and this fsyncs into a
+/// user-picked sink (USB stick, network share).
 #[tauri::command]
-pub fn export_settings_file(path: String, envelope: serde_json::Value) -> Result<(), String> {
-    let path = PathBuf::from(path);
-    let tmp = {
-        let mut t = path.as_os_str().to_owned();
-        t.push(".tmp");
-        PathBuf::from(t)
-    };
-    let text =
-        serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
-    // Owner-only, and never leave the tmp behind: with "include API keys" ticked this envelope
-    // holds the raw keyring secrets, and it lands wherever the user pointed the save dialog.
-    // A4 cleaned up the tmp on a rename failure but not on a write failure — and `write_private`
-    // fails AFTER creating and truncating the file (write_all / sync_all hitting ENOSPC, EIO or
-    // EDQUOT), which is the realistic case for this sink: the user points the save dialog at a
-    // nearly-full USB stick or a network share. What survives is a PARTIAL plaintext-credential
-    // file in a directory the user chose, and they see only an error toast. The 0600 does not
-    // cover it there either — FAT/exFAT removable media and most SMB mounts carry no Unix mode.
-    if let Err(e) = config::write_private(&tmp, &text) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    Ok(())
+pub async fn export_settings_file(path: String, envelope: serde_json::Value) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let path = PathBuf::from(path);
+        let tmp = {
+            let mut t = path.as_os_str().to_owned();
+            t.push(".tmp");
+            PathBuf::from(t)
+        };
+        let text =
+            serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
+        // Owner-only, and never leave the tmp behind: with "include API keys" ticked this envelope
+        // holds the raw keyring secrets, and it lands wherever the user pointed the save dialog.
+        // A4 cleaned up the tmp on a rename failure but not on a write failure — and `write_private`
+        // fails AFTER creating and truncating the file (write_all / sync_all hitting ENOSPC, EIO or
+        // EDQUOT), which is the realistic case for this sink: the user points the save dialog at a
+        // nearly-full USB stick or a network share. What survives is a PARTIAL plaintext-credential
+        // file in a directory the user chose, and they see only an error toast. The 0600 does not
+        // cover it there either — FAT/exFAT removable media and most SMB mounts carry no Unix mode.
+        if let Err(e) = config::write_private(&tmp, &text) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// The exact refusal text the viewer matches on to fall back to the decode path.
@@ -985,27 +1018,33 @@ pub async fn decode_media_file(
 /// in the save dialog. Same atomic tmp+rename + cleanup-on-both-failures shape
 /// as `export_settings_file`, minus the 0600 secrecy (a transcript is what the
 /// user is deliberately exporting — plain permissions are correct).
+/// async + spawn_blocking: a sync command runs on the main thread and this fsyncs into a
+/// user-picked sink (USB stick, network share).
 #[tauri::command]
-pub fn save_text_file(path: String, contents: String) -> Result<(), String> {
-    use std::io::Write as _;
-    let path = PathBuf::from(path);
-    let mut tmp = path.clone().into_os_string();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
-    let write = || -> std::io::Result<()> {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(contents.as_bytes())?;
-        f.sync_all()
-    };
-    if let Err(e) = write() {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    Ok(())
+pub async fn save_text_file(path: String, contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        use std::io::Write as _;
+        let path = PathBuf::from(path);
+        let mut tmp = path.clone().into_os_string();
+        tmp.push(".tmp");
+        let tmp = PathBuf::from(tmp);
+        let write = || -> std::io::Result<()> {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(contents.as_bytes())?;
+            f.sync_all()
+        };
+        if let Err(e) = write() {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Read a text/subtitle source file for a translate-only run. Size-capped —
@@ -2490,6 +2529,13 @@ pub async fn inject_text(
                 tracing::warn!("[inject] divert to clipboard failed: {e}");
                 return Ok(InjectOutcome { landed: false, diverted: false });
             }
+            // Third recovery write: an error abort that fell through the gate above has just put the
+            // transcript on the clipboard; arm the session-restore guard like the two paste-path
+            // writes so end_injection does not serve `prev` over it. Not armed on a plain divert —
+            // that session is still live.
+            if crate::inject::injection_cancelled(epoch) && crate::inject::cancel_wants_recovery(epoch) {
+                crate::inject::note_recovery_on_clipboard();
+            }
         }
         // The one site that reports a DIVERT: the caller asked to type or paste and we did neither.
         return Ok(InjectOutcome { landed: true, diverted: true });
@@ -2766,4 +2812,37 @@ pub async fn inject_text(
         crate::inject::Landed::NothingWritten => InjectOutcome { landed: false, diverted: false },
         crate::inject::Landed::OnClipboard => InjectOutcome { landed: true, diverted: true },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::move_dir_contents;
+
+    #[test]
+    fn move_dir_contents_leaves_inflight_tmp_behind() {
+        let base = std::env::temp_dir().join(format!(
+            "fwf-move-dir-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let from = base.join("from");
+        let to = base.join("to");
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::write(from.join("a.wav"), b"riff").unwrap();
+        std::fs::write(from.join("b.m4a.tmp"), b"partial").unwrap();
+
+        let mut map = Vec::new();
+        move_dir_contents(&from, &to, &mut map).unwrap();
+
+        assert!(to.join("a.wav").is_file(), "regular media moves");
+        assert!(!to.join("b.m4a.tmp").exists(), "an in-flight .tmp is never moved");
+        assert!(from.join("b.m4a.tmp").is_file(), "the .tmp stays in the old base for its writer");
+        assert_eq!(map.len(), 1);
+        assert!(map[0].0.ends_with("a.wav") && map[0].1.ends_with("a.wav"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

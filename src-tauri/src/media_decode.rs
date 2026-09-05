@@ -155,11 +155,11 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
             MetadataOptions::default(),
         )
         .map_err(|e| format!("unrecognized container: {e}"))?;
-    let (track_id, params) = format
+    let (track_id, params, num_frames) = format
         .tracks()
         .iter()
         .find_map(|t| match &t.codec_params {
-            Some(CodecParameters::Audio(p)) => Some((t.id, p.clone())),
+            Some(CodecParameters::Audio(p)) => Some((t.id, p.clone(), t.num_frames)),
             _ => None,
         })
         .ok_or("no audio track")?;
@@ -177,6 +177,21 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
     // full PCM buffer afterwards doubled the peak (two ~640 MiB buffers live
     // at once) on the very path that exists to keep big decodes off the heap.
     let mut pcm: Vec<u8> = vec![0u8; 44];
+    // Size the buffer from the header's frame count so the extend loop below
+    // doesn't leave Vec's doubling slack (up to ~2x) behind a big decode. A
+    // hint only — mid-stream channel changes and missing num_frames still
+    // grow normally; +1 MiB absorbs padding/priming frames so the last
+    // extend doesn't trigger a full doubling. `try_reserve_exact` (never
+    // `reserve_exact`): the count is untrusted, so a bogus header must not
+    // abort the process — it just falls back to normal growth.
+    if let Some(n) = num_frames {
+        let hint = n
+            .saturating_mul(channels as u64)
+            .saturating_mul(2)
+            .saturating_add(1 << 20)
+            .min(MAX_PCM_BYTES as u64) as usize;
+        let _ = pcm.try_reserve_exact(hint);
+    }
     let mut interleaved: Vec<i16> = Vec::new();
     loop {
         let packet = match format.next_packet() {
@@ -208,10 +223,10 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
                 interleaved.len() * std::mem::size_of::<i16>(),
             )
         };
-        pcm.extend_from_slice(byte_slice);
-        if pcm.len() - 44 > MAX_PCM_BYTES {
+        if pcm.len() - 44 + byte_slice.len() > MAX_PCM_BYTES {
             return Err("audio too long to decode for playback".into());
         }
+        pcm.extend_from_slice(byte_slice);
     }
     if pcm.len() == 44 {
         return Err("no decodable audio in the file".into());

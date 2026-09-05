@@ -88,7 +88,8 @@ pub fn injection_cancelled(epoch: u64) -> bool {
 /// cancel or an abort, so `RECOVER_AT_EPOCH == INJECT_EPOCH` stays true indefinitely after one
 /// error abort and would suppress every later legitimate restore.
 ///
-/// Armed at BOTH recovery writes, and consumed at the top of `end_injection` — unconditionally,
+/// Armed at all three recovery writes (the two in the paste path and the mid-function divert
+/// arm), and consumed at the top of `end_injection` — unconditionally,
 /// above its snapshot test, so a session that never took a snapshot still clears it — or by
 /// `discard_injection_snapshot`, the other way a session ends. Those two are the only session
 /// teardowns, so the flag cannot outlive the session that armed it, which is what makes it safe

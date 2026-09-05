@@ -18,11 +18,8 @@ pub mod resample;
 /// atomic f32-bits cell the capture callbacks write. The one cadence + bit-decode shared by all three
 /// capture loops (mic-test "audio://level", plus streaming and batch "stream://level"), so the refresh
 /// rate / decode protocol lives in one place. Runs on the caller's capture thread until stop flips.
-pub fn publish_levels(app: &AppHandle, event: &str, level: &AtomicU32, stop: &AtomicBool) {
-    publish_levels_with_live(app, event, level, stop, None);
-}
-
-/// Like [`publish_levels`], but also announces the mic going LIVE: when `mic_live` (fed by the
+///
+/// Optionally also announces the mic going LIVE: when `mic_live` (fed by the
 /// capture callback's raw-RMS detector, see `session::LiveDetect`) flips true, emit a one-shot
 /// `stream://mic-live`. The frontend clears its "warming up…" gate on it — the smoothed+gained
 /// level it also receives passes through an EMA from 0 and a threshold a quiet mic's noise floor

@@ -351,7 +351,7 @@ fn open_input(
 
 /// Build a cpal stream error callback that signals `stop` on a TERMINAL device error. A mid-session
 /// device disconnect surfaces as StreamError::DeviceNotAvailable and then no more data callbacks
-/// fire — without this the capture thread stays blocked in publish_levels (loops until stop), its
+/// fire — without this the capture thread stays blocked in publish_levels_with_live (loops until stop), its
 /// pcm sender never drops, and the session wedges at "listening" with a frozen meter until the user
 /// cancels. Tripping stop unblocks it so the channel closes and the session drains to Closed (the
 /// same teardown a user stop triggers). A transient BackendSpecific glitch is recoverable, so it is
