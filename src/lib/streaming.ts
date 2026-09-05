@@ -331,7 +331,12 @@ let sessionTranslatedText: string | null = null;
  *  blank-line boundaries destroyed at every phrase seam. Accumulating by
  *  language instead keeps each track continuous and readable, and is what
  *  History renders. */
-let sessionByLang: Record<string, string[]> = {};
+// Null-prototype: the keys are language codes from `translateTo`, which sanitizeProfiles
+// type-checks but does not allowlist, and the server echoes them back. On a plain `{}` a code
+// spelled like an inherited member ("constructor", "toString"…) reads a non-nullish function,
+// `??=` never fires and `.push` throws — inside settleIdle, before the history capture and the
+// idle store write, wedging the session. Same class of hazard `ownProp` / effectiveServerUrl guard.
+let sessionByLang: Record<string, string[]> = Object.create(null) as Record<string, string[]>;
 /** This session's capture ids, keyed by the utterance ordinal both the `final`
  *  and `captured` frames carry. See captureIds.ts for why the pairing has to be
  *  by ordinal and not by arrival order. */
@@ -1856,8 +1861,21 @@ async function ensureListeners(): Promise<void> {
     committedDoc = "";
     clipBaseline = "";
     clipBooked = null;
-    injectedText = "";
     seenDoc = "";
+    // The TYPED baseline is cleared IN the inject chain, not here: a phrase task enqueued before
+    // this boundary diffs against `injectedText` at DRAIN time (deliberately — see the final
+    // handler's skip-and-retype note), so a synchronous clear made it re-type everything already
+    // in the window — the flush final at hands-free end re-typed the whole document, and a real
+    // final that raced the boundary re-typed the earlier phrases too. The clipboard path never
+    // had this exposure (its baseline is read synchronously at enqueue). Chained directly rather
+    // than via enqueueInject so the flood cap can never drop the reset; the session token guards
+    // a cancel-then-restart landing while it waits (the restart resets the baseline itself).
+    {
+      const cfg = insertCfg;
+      injectChain = injectChain.then(() => {
+        if (insertCfg === cfg) injectedText = "";
+      });
+    }
     // Same reason as the final handler's: a pending tick would undo this clear.
     resetPartialPreview();
     setDictation({ partial: "" });
@@ -2600,7 +2618,7 @@ async function startLiveInner(
     };
     sessionTranslation = trTargets.length ? { ...sessionTranslationBase, targets: trTargets } : null;
     sessionTranslatedText = null;
-    sessionByLang = {};
+    sessionByLang = Object.create(null) as Record<string, string[]>;
     clipByLang = undefined;
     sessionPerUtteranceDeclared = false;
     captureIds.reset();
