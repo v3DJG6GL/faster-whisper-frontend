@@ -222,7 +222,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={applying ? () => {} : onClose}>
       <div className="text-[15px] font-semibold text-text">Import settings</div>
       <div className="mt-1 text-[12.5px] text-dim">
         From {safeText(result.hostname, 60) || "unknown device"} · {safeText(result.platform, 40) || "?"} · v
@@ -296,7 +296,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
       </div>
 
       <div className="mt-5 flex justify-end gap-2">
-        <Button variant="ghost" onClick={onClose}>
+        <Button variant="ghost" onClick={onClose} disabled={applying}>
           Cancel
         </Button>
         <Button
@@ -402,7 +402,7 @@ export function RestoreFromServer({
   };
 
   return (
-    <Modal onClose={onCancel}>
+    <Modal onClose={applying ? () => {} : onCancel}>
       <div className="text-[15px] font-semibold text-text">Restore from server</div>
       <div className="mt-1 text-[12.5px] text-dim">
         Last synced{state.device ? ` from ${safeText(state.device, 60)}` : ""}

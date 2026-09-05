@@ -17,9 +17,10 @@ import { normalizeAppId, safeIdentityText } from "@/lib/sanitize";
 const APP_ID_PLACEHOLDER = IS_WINDOWS
   ? "e.g. chrome, code, notepad"
   : "e.g. org.kde.konsole, signal, code";
-const DETECT_FAILED_MSG = IS_WINDOWS
-  ? "Couldn’t detect a focused app yet. Click into the target app once, come back, and retry — or type the id manually."
-  : "Couldn’t detect a focused app (needs KWin/Plasma). Type the id manually.";
+// Same null case on both platforms (the "other app" is only recorded at the transition into our
+// window), so the same advice applies; Linux detection reads AT-SPI, not KWin/Plasma.
+const DETECT_FAILED_MSG =
+  "Couldn’t detect a focused app yet. Click into the target app once, come back, and retry — or type the id manually.";
 
 function blankAppRule(): AppRule {
   return { id: crypto.randomUUID(), appId: "", name: "", block: false };

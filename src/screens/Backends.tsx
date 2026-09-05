@@ -86,14 +86,15 @@ function Editor({
   // Drop a connection-test result once the tested target changes (URL or key edited): the in-flight
   // liveTarget guard only stops a result that RESOLVES after the edit — one that already committed
   // would keep showing the OLD server's classification / models / "Connected" under the new URL.
-  // Skipped on mount: a connect-first add arrives with the connect step's still-valid result, which
-  // this effect's initial run would otherwise wipe.
-  const resultIsInitial = useRef(true);
+  // Skipped while the target the result belongs to is unchanged — which covers the mount (a
+  // connect-first add arrives with the connect step's still-valid result) AND StrictMode's double
+  // mount, where a "first run" flag would already be spent on the second pass and wipe it.
+  // `runTest` moves this ref onto the target it actually tested, and `doSave` only writes the
+  // result to the store when the ref still matches what was just persisted.
+  const resultTarget = useRef({ url: effUrl, key });
   useEffect(() => {
-    if (resultIsInitial.current) {
-      resultIsInitial.current = false;
-      return;
-    }
+    if (resultTarget.current.url === effUrl && resultTarget.current.key === key) return;
+    resultTarget.current = { url: effUrl, key };
     setResult(null);
     // Keyed on the EFFECTIVE address, not the canonical one. Q13 moved `liveTarget` and
     // `runTest` onto `effectiveServerUrl` (which prefers `settings.sync.urlOverrides`) precisely
@@ -141,11 +142,11 @@ function Editor({
   // The EFFECTIVE url on both sides: this screen shows the effective address, so a verdict earned
   // by testing `b.serverUrl` while an override points somewhere else described a different host
   // than the one displayed next to it.
-  const liveTarget = useRef({ url: effectiveServerUrl(b, useApp.getState().settings), key });
-  liveTarget.current = { url: effectiveServerUrl(b, useApp.getState().settings), key };
+  const liveTarget = useRef({ url: effUrl, key });
+  liveTarget.current = { url: effUrl, key };
 
   const runTest = async () => {
-    const testedUrl = effectiveServerUrl(b, useApp.getState().settings);
+    const testedUrl = effUrl;
     const testedKey = key;
     setTesting(true);
     try {
@@ -154,14 +155,19 @@ function Editor({
         backendId: b.id,
         apiKey: testedKey || null,
       });
+      // Local only — the store gets this verdict in `doSave`, once the target it describes is the
+      // one persisted. Writing it here cached a DRAFT's verdict under the backend id: edit X, retype
+      // the URL, Test, Cancel → `connections[X]` held the other host's answer while X still routed
+      // to the old one (and a tested-then-cancelled connect-first draft left an orphan entry).
       if (liveTarget.current.url === testedUrl && liveTarget.current.key === testedKey) {
+        resultTarget.current = { url: testedUrl, key: testedKey };
         setResult(info);
-        setConnection(b.id, info);
       }
     } catch (e) {
       // IPC reject (same guard the list card's handleTest carries) — surface the
       // failure so the editor doesn't just silently stop.
       if (liveTarget.current.url === testedUrl && liveTarget.current.key === testedKey) {
+        resultTarget.current = { url: testedUrl, key: testedKey };
         setResult({ ok: false, openMode: false, models: [], error: String(e) });
       }
     } finally {
@@ -199,6 +205,12 @@ function Editor({
       model: b.model.trim(),
       overrideProfile: b.overrideProfile?.trim() ? b.overrideProfile.trim() : undefined,
     });
+    // Now that the target is persisted (upsertBackend's eviction has run inside onSave, and a
+    // typed key reached the keyring above), cache the in-editor verdict — only if it still
+    // describes the address + key that were just saved.
+    if (result && resultTarget.current.url === effUrl && resultTarget.current.key === key) {
+      setConnection(b.id, result);
+    }
     return true;
   };
 
@@ -586,7 +598,11 @@ function ConnectStep({
       }
       onDone({ draft, key: typedKey, info });
     } catch (e) {
-      setError(String(e));
+      // Same guard as the resolved branches: a reject for an address the user has since retyped
+      // must not be shown under the new one.
+      if (liveTarget.current.url === typedUrl && liveTarget.current.key === typedKey) {
+        setError(String(e));
+      }
     } finally {
       setBusy(false);
     }

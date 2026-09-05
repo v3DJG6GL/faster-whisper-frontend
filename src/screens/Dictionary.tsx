@@ -769,10 +769,19 @@ export default function Dictionary() {
         setLoading(false);
       })
       // A transport-level reject (rare; get_pipeline_rules is a non-Result command) would otherwise
-      // leave the screen stuck on `loading` + an unhandled rejection. Mirror the getRecentWords
-      // sibling's .catch and clear loading so the empty/error state can render.
-      .catch(() => {
-        if (!stale()) setLoading(false);
+      // leave the screen stuck on `loading` + an unhandled rejection. The previous backend's
+      // document must NOT survive a failed switch either: clearing only `loading` left backend A's
+      // rules/edits/base on screen under backend B, and `save()` would then PATCH B with them.
+      // Reset the document and surface a status-0 fetch error so the FetchError branch (with a
+      // working Retry for B) renders instead of the ambiguous "No rules to manage".
+      .catch((err) => {
+        if (stale()) return;
+        setFetchRes({ ok: false, status: 0, error: err instanceof Error ? err.message : String(err) });
+        setRules([]);
+        setEdits({});
+        setBase({});
+        setExpanded(new Set());
+        setLoading(false);
       });
     getRecentWords({
       serverUrl: effectiveServerUrl(backend, useApp.getState().settings),

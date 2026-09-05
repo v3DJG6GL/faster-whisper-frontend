@@ -58,6 +58,12 @@ import {
 } from "@/lib/theme";
 import type { AccentMotion, ThemeName } from "@/lib/types";
 import { SyncTab } from "@/screens/SettingsSync";
+import {
+  DICTATION_RETENTION_OPTIONS,
+  HISTORY_RETENTION_OPTIONS,
+  LOG_RETENTION_OPTIONS,
+  withCurrentDay,
+} from "@/screens/retentionOptions";
 
 /** "1.2 GB" / "84 MB" for the audio-copy usage readout. */
 function fmtBytes(n: number): string {
@@ -495,7 +501,14 @@ function LoggingSection() {
   const [folder, setFolder] = useState<string | null>(null);
   const logDir = logging?.logDir ?? null;
   useEffect(() => {
-    void logFolderPath(logDir).then(setFolder);
+    // Change… then Reset race two lookups; only the latest may land.
+    let live = true;
+    void logFolderPath(logDir).then((p) => {
+      if (live) setFolder(p);
+    });
+    return () => {
+      live = false;
+    };
   }, [logDir]);
 
   return (
@@ -525,14 +538,7 @@ function LoggingSection() {
           value={String(logging?.keepDays ?? 30)}
           onChange={(v) => updateLogging({ keepDays: Number(v) })}
           ariaLabel="Keep log files"
-          options={[
-            { value: "7", label: "7 days" },
-            { value: "14", label: "14 days" },
-            { value: "30", label: "30 days" },
-            { value: "90", label: "90 days" },
-            { value: "180", label: "180 days" },
-            { value: "0", label: "Keep forever" },
-          ]}
+          options={withCurrentDay(LOG_RETENTION_OPTIONS, logging?.keepDays ?? 30)}
         />
       </SettingRow>
       <SettingRow
@@ -1101,13 +1107,20 @@ export default function Settings() {
   // whole store first and persist the setting only on success.
   const [recDirDisplay, setRecDirDisplay] = useState<string | null>(null);
   useEffect(() => {
+    // Change… then Reset race two lookups; only the latest may land.
+    let live = true;
     void audioDirPath(basePref)
-      .then(setRecDirDisplay)
+      .then((p) => {
+        if (live) setRecDirDisplay(p);
+      })
       .catch((e) => {
         // Don't hang forever on "resolving…" if the path lookup fails.
         console.error("resolve audio dir:", e);
-        setRecDirDisplay(basePref ?? "—");
+        if (live) setRecDirDisplay(basePref ?? "—");
       });
+    return () => {
+      live = false;
+    };
   }, [basePref]);
   const openRecDir = () =>
     void openAudioDir(basePref).catch((e) => console.error("open audio dir:", e));
@@ -1494,14 +1507,7 @@ export default function Settings() {
                   updateTranscribe({ dictationRetentionDays: n });
                 }}
                 ariaLabel="Delete dictations after"
-                options={[
-                  { value: "0", label: "Keep forever" },
-                  { value: "1", label: "1 day" },
-                  { value: "7", label: "7 days" },
-                  { value: "30", label: "30 days" },
-                  { value: "90", label: "90 days" },
-                  { value: "365", label: "1 year" },
-                ]}
+                options={withCurrentDay(DICTATION_RETENTION_OPTIONS, dictDays)}
               />
             </SettingRow>
 
@@ -1560,13 +1566,10 @@ export default function Settings() {
                 value={String(s.transcribe?.historyRetentionDays ?? 0)}
                 onChange={(v) => updateTranscribe({ historyRetentionDays: Number(v) })}
                 ariaLabel="Delete transcriptions after"
-                options={[
-                  { value: "0", label: "Keep forever" },
-                  { value: "7", label: "7 days" },
-                  { value: "30", label: "30 days" },
-                  { value: "90", label: "90 days" },
-                  { value: "365", label: "1 year" },
-                ]}
+                options={withCurrentDay(
+                  HISTORY_RETENTION_OPTIONS,
+                  s.transcribe?.historyRetentionDays ?? 0,
+                )}
               />
             </SettingRow>
 

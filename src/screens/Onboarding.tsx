@@ -449,14 +449,21 @@ function QuickAddStep({
   const quickAddHotkey = useApp((s) => s.settings.general.quickAddHotkey);
   const [rules, setRules] = useState<PipelineRule[] | null>(null);
   const [slug, setSlug] = useState<string | null>(null);
+  // `ruleListOf` yields [] for a failed/gated fetch too (status 0/401/403/404/500), which the
+  // empty-list notice below would otherwise report as "no editable list on this server".
+  const [loadFailed, setLoadFailed] = useState(false);
   useEffect(() => {
     void getPipelineRules({ serverUrl, backendId })
       .then((res) => {
+        if (!res.ok) setLoadFailed(true);
         const maps = ruleListOf(res).filter((r) => r.type === "callback:map");
         setRules(maps);
         setSlug(maps[0]?.name ?? null);
       })
-      .catch(() => setRules([]));
+      .catch(() => {
+        setLoadFailed(true);
+        setRules([]);
+      });
   }, [serverUrl, backendId]);
 
   const options = useMemo(
@@ -480,7 +487,12 @@ function QuickAddStep({
         done. Mappings live in your server’s Dictionary — every device shares them.
       </p>
       <div className="mt-6 flex w-full max-w-[430px] flex-col gap-4 text-left">
-        {rules !== null && rules.length === 0 ? (
+        {loadFailed ? (
+          <Notice>
+            Couldn’t load this server’s word-mapping lists right now — you can pick one on the
+            Dictionary screen later.
+          </Notice>
+        ) : rules !== null && rules.length === 0 ? (
           <Notice>
             This server doesn’t share an editable word-mapping list yet — an admin can add one
             (Dictionary explains how). You can set this up there later.

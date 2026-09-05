@@ -115,7 +115,7 @@ function recentMeta(rec: TranscriptRecord): string {
   }
   if (rec.result?.duration) parts.push(fmtDurationExact(rec.result.duration));
   if (rec.language) parts.push(safeDisplayText(rec.language, 12));
-  const spk = rec.result?.speakers?.length ?? 0;
+  const spk = rec.result ? speakersOf(rec.result).length : 0;
   if (spk > 1) parts.push(`${spk} speakers`);
   const trLangs = rec.result?.translation?.targets?.length ?? 0;
   if (trLangs > 0) parts.push(`${trLangs} translation${trLangs === 1 ? "" : "s"}`);
@@ -123,7 +123,7 @@ function recentMeta(rec: TranscriptRecord): string {
 }
 
 /** Human label for a server progress stage (absent/unknown ⇒ generic). */
-function stageLabel(p: BatchProgress | null): string {
+function stageLabel(p: BatchProgress | null, forText = false): string {
   switch (p?.stage) {
     case "waiting":
       return "Waiting for a server slot…";
@@ -139,10 +139,14 @@ function stageLabel(p: BatchProgress | null): string {
       return "Transcribing…";
     case "diarizing":
       return "Identifying speakers…";
+    case "loading":
+      return "Loading translation model…";
     case "translating":
       return "Translating…";
     default:
-      return "Transcribing…";
+      // A text (translate-only) run has no transcribing stage, so before the
+      // first poll lands the generic word would be the wrong one.
+      return forText ? "Translating…" : "Transcribing…";
   }
 }
 
@@ -475,7 +479,7 @@ export default function Transcribe() {
       // effect fires on store changes (applyBlob, conflict resolution) with no such gate.
       const isRunning = queue.some((it) => it.status === "running" || it.status === "queued");
       if (isRunning) return;
-      applyBackendPick(backends[0].id);
+      applyBackendPick(savedBackend ?? backends[0].id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the resets are stable setters
   }, [backends, backendId, queue]);
@@ -518,6 +522,10 @@ export default function Transcribe() {
   // unsupported (the run would then just soft-fail into a "skipped" rail row).
   const bgmAvailable = caps?.bgm_separation_enabled !== false;
   const diarAvailable = caps?.diarization_enabled !== false;
+  // The two stages as the run will actually request them: a standard server
+  // has neither, whatever the persisted toggles say.
+  const effDiarize = diarize && diarAvailable && !isStandard;
+  const effBgm = separateBgm && bgmAvailable && !isStandard;
   // Transcribe-from-URL is opt-in, unlike the two stage gates above: absent
   // means the endpoint does not exist (older backend / standard server), so
   // only an explicit true shows the link affordance.
@@ -548,8 +556,8 @@ export default function Transcribe() {
     const stages = railStages(
       {
         ...(t2t ? { translateTo } : {}),
-        ...(diarize && diarAvailable && !isStandard ? { diarize: true } : {}),
-        ...(separateBgm && bgmAvailable && !isStandard ? { separateBgm: true } : {}),
+        ...(effDiarize ? { diarize: true } : {}),
+        ...(effBgm ? { separateBgm: true } : {}),
       },
       forUrl,
       forText,
@@ -573,15 +581,12 @@ export default function Transcribe() {
     busy,
     backend,
     settings,
-    isStandard,
     translationAvailable,
     translateTo,
     translationModel,
-    diarize,
-    diarAvailable,
+    effDiarize,
     diarizationModel,
-    separateBgm,
-    bgmAvailable,
+    effBgm,
     separationModel,
     model,
   ]);
@@ -742,6 +747,22 @@ export default function Transcribe() {
     removeFileAction(path);
   };
 
+  // Whisper's translate task is mutually exclusive with the T2T stage:
+  // switching this on switches Translation off (and says so). Shared by the
+  // standard and full-backend rows, so translateTo never survives a backend
+  // switch with both toggles on.
+  const onWhisperTranslate = (v: boolean) => {
+    setTranslate(v);
+    if (v && translateTo.length) {
+      setTranslateTo([]);
+      setTranslateExclNotice("t2t");
+      persistOptions({ translate: v, translateTo: [] });
+    } else {
+      setTranslateExclNotice(null);
+      persistOptions({ translate: v });
+    }
+  };
+
   /** Everything the detached pump needs, frozen at run/retry time. */
   const buildCtx = (overrides: DecodeOverrides): RunContext | null => {
     if (!backend) return null;
@@ -797,7 +818,7 @@ export default function Transcribe() {
               ? { task: "translate" as const, useTranslationsEndpoint: isStandard }
               : {}),
             ...t2tOptions,
-            ...(diarize && diarAvailable && !isStandard
+            ...(effDiarize
               ? {
                   diarize: true,
                   ...(speakerMode === "count" ? { numSpeakers } : {}),
@@ -805,7 +826,7 @@ export default function Transcribe() {
                   ...(diarizationModel ? { diarizationModel } : {}),
                 }
               : {}),
-            ...(separateBgm && bgmAvailable && !isStandard
+            ...(effBgm
               ? { separateBgm: true, ...(separationModel ? { separationModel } : {}) }
               : {}),
           }
@@ -1176,10 +1197,7 @@ export default function Transcribe() {
               <Toggle
                 checked={translate}
                 ariaLabel="Translate to English"
-                onChange={(v) => {
-                  setTranslate(v);
-                  persistOptions({ translate: v });
-                }}
+                onChange={onWhisperTranslate}
               />
             </SettingRow>
           ) : (
@@ -1202,7 +1220,7 @@ export default function Transcribe() {
                   }
                   disabled={!bgmAvailable}
                   expand={
-                    separateBgm && bgmAvailable && (caps?.separation_models?.length ?? 0) > 1 ? (
+                    effBgm && (caps?.separation_models?.length ?? 0) > 1 ? (
                       <SettingExpand>
                         <div>
                           <MicroLabel>model</MicroLabel>
@@ -1221,7 +1239,7 @@ export default function Transcribe() {
                   }
                 >
                   <Toggle
-                    checked={separateBgm && bgmAvailable}
+                    checked={effBgm}
                     disabled={!bgmAvailable}
                     ariaLabel="Music source separation"
                     onChange={(v) => {
@@ -1287,19 +1305,7 @@ export default function Transcribe() {
                   <Toggle
                     checked={translate}
                     ariaLabel="Translate to English"
-                    onChange={(v) => {
-                      setTranslate(v);
-                      // Mutually exclusive with the T2T stage: switching this
-                      // on switches Translation off (and says so).
-                      if (v && translateTo.length) {
-                        setTranslateTo([]);
-                        setTranslateExclNotice("t2t");
-                        persistOptions({ translate: v, translateTo: [] });
-                      } else {
-                        setTranslateExclNotice(null);
-                        persistOptions({ translate: v });
-                      }
-                    }}
+                    onChange={onWhisperTranslate}
                   />
                 </SettingRow>
                 {translateExclNotice === "whisper" && (
@@ -1323,7 +1329,7 @@ export default function Transcribe() {
                   disabled={!diarAvailable}
                   last={!translationAvailable}
                   expand={
-                    diarize && diarAvailable ? (
+                    effDiarize ? (
                       <SettingExpand>
                         <div>
                           <MicroLabel>speakers</MicroLabel>
@@ -1408,7 +1414,7 @@ export default function Transcribe() {
                   }
                 >
                   <Toggle
-                    checked={diarize && diarAvailable}
+                    checked={effDiarize}
                     disabled={!diarAvailable}
                     ariaLabel="Speaker diarization"
                     onChange={(v) => {
@@ -2324,7 +2330,7 @@ export default function Transcribe() {
                           polled) shows the stage word: the row's only liveness signal. */}
                       {typeof runningOverall === "number" && runningOverall > 0
                         ? `${Math.round(runningOverall * 100)}%`
-                        : stageLabel(progress).toLowerCase()}
+                        : stageLabel(progress, it.kind === "text" || isTextSourcePath(it.path)).toLowerCase()}
                     </span>
                   )}
                   {it.status === "cancelled" && (
