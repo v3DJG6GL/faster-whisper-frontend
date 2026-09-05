@@ -89,6 +89,8 @@ describe("plain text + errors", () => {
   it("empty input throws a user-facing message", () => {
     expect(() => parseImportedText("srt", "")).toThrow(/No text found/);
     expect(() => parseImportedText("json", "not json")).toThrow(/Not valid JSON/);
+    // `null` parses fine, then the property read on it threw a raw TypeError.
+    expect(() => parseImportedText("json", "null")).toThrow(/No text found/);
   });
 });
 

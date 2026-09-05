@@ -188,7 +188,7 @@ function parseJsonExport(body: string): ImportedText {
   } catch {
     throw new Error("Not valid JSON — export files from this app parse; other JSON may not.");
   }
-  const obj = parsed as {
+  const obj = (typeof parsed === "object" && parsed !== null ? parsed : {}) as {
     language?: unknown;
     segments?: unknown;
     text?: unknown;

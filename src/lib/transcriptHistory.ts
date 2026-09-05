@@ -129,10 +129,15 @@ function newestFirst(records: TranscriptRecord[]): TranscriptRecord[] {
 }
 
 let loading: Promise<void> | null = null;
+/** Mirror changes (upsert → record, delete → null) made while a listing is in flight;
+ *  replayed over the snapshot when it lands, since the snapshot predates them. */
+let touchedSinceListing: Map<string, TranscriptRecord | null> | null = null;
 
 /** Load the history from disk (once; later calls are no-ops unless forced). A FORCED call
  *  chains onto an in-flight listing instead of adopting it: every forced caller just changed
- *  the files on disk, and the listing already running was taken before that change. */
+ *  the files on disk, and the listing already running was taken before that change.
+ *  Mirror changes made while a listing is in flight are replayed over the snapshot — the
+ *  snapshot predates them. */
 export function loadHistory(force = false): Promise<void> {
   if (loading) {
     if (!force) return loading;
@@ -143,10 +148,17 @@ export function loadHistory(force = false): Promise<void> {
   // orders the two IPC calls), but without this a just-edited record trailed the listing by
   // the whole debounce window and reverted to its older on-disk text in the UI.
   flushRecordWrites();
+  touchedSinceListing = new Map();
   loading = listTranscriptRecords()
     .then((raw) => {
+      const touched = touchedSinceListing ?? new Map<string, TranscriptRecord | null>();
+      const byId = new Map(raw.filter(isRecord).map((r) => [r.id, r]));
+      for (const [id, rec] of touched) {
+        if (rec) byId.set(id, rec);
+        else byId.delete(id);
+      }
       useTranscriptHistory.setState({
-        records: newestFirst(raw.filter(isRecord)),
+        records: newestFirst([...byId.values()]),
         loaded: true,
       });
     })
@@ -156,6 +168,7 @@ export function loadHistory(force = false): Promise<void> {
     })
     .finally(() => {
       loading = null;
+      touchedSinceListing = null;
     });
   return loading;
 }
@@ -208,6 +221,7 @@ export function flushRecordWrites(): void {
 }
 
 export function upsertRecord(rec: TranscriptRecord): void {
+  touchedSinceListing?.set(rec.id, rec);
   useTranscriptHistory.setState((s) => ({
     records: newestFirst([rec, ...s.records.filter((r) => r.id !== rec.id)]),
   }));
@@ -313,6 +327,7 @@ export function deleteRecord(id: string): void {
   pendingWrite.delete(id);
   lastWriteAt.delete(id);
   forgetHook?.(id);
+  touchedSinceListing?.set(id, null);
   useTranscriptHistory.setState((s) => ({
     records: s.records.filter((r) => r.id !== id),
   }));

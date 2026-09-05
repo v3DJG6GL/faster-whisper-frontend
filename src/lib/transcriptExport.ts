@@ -652,6 +652,8 @@ export function cpsWarnings(
   result: BatchResult,
   tracks?: string[],
 ): { lang: string; index: number; cps: number }[] {
+  // Synthesized 1 s clocks (plain-text source) would flag every line over 20 chars.
+  if (result.timingSynthesized) return [];
   const langs = (tracks ?? []).filter((t) => t !== "orig");
   const out: { lang: string; index: number; cps: number }[] = [];
   (result.segments ?? []).forEach((seg, index) => {

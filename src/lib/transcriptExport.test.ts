@@ -432,6 +432,15 @@ describe("kept-original translations (quality guard)", () => {
     };
     expect(cpsWarnings(long, ["de"])).toEqual([]);
   });
+
+  it("cps warnings are silent when the source carried no timing (synthesized 1 s clocks)", () => {
+    const synth: BatchResult = {
+      ...KEPT,
+      timingSynthesized: true,
+      segments: [{ start: 0, end: 1, text: "Hello there.", translations: { de: "x".repeat(60) } }],
+    };
+    expect(cpsWarnings(synth, ["de"])).toEqual([]);
+  });
 });
 
 // ── multi-target: the flattening bug ────────────────────────────────────────

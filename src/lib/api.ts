@@ -160,6 +160,9 @@ export async function translateText(args: {
    *  block. Omitted by every non-dictation caller; an older backend ignores
    *  the unknown field. */
   capturedId?: string | null;
+  /** Drop the request when cancelFileTranscription bumps Rust's epoch — the
+   *  Transcribe pump's text-source path only. */
+  fileEpochCancel?: boolean;
 }): Promise<TextTranslationResult> {
   if (!isTauri) throw new Error("Translation requires the desktop app.");
   return invoke<TextTranslationResult>("translate_text", {
@@ -175,6 +178,7 @@ export async function translateText(args: {
     contextSegments: args.contextSegments ?? null,
     progressId: args.progressId ?? null,
     capturedId: args.capturedId ?? null,
+    cancelWithFileEpoch: args.fileEpochCancel ?? null,
   });
 }
 
@@ -1076,7 +1080,7 @@ export async function pickAudioFiles(): Promise<string[]> {
 }
 
 /** Native "choose folder" dialog → absolute path (or null if cancelled / not in Tauri).
- *  Used to pick a custom recordings folder. */
+ *  Generic directory picker — used for the audio base folder (Settings, Onboarding) and the log folder (Settings → Logging). */
 export async function pickRecordingsDir(): Promise<string | null> {
   if (!isTauri) return null;
   const { open } = await import("@tauri-apps/plugin-dialog");

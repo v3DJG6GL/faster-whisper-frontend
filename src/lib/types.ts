@@ -970,6 +970,9 @@ export interface BatchResult {
   translations?: Record<string, string>;
   /** Provenance of the translating stage when it ran. */
   translation?: TranslationInfo;
+  /** Text-source run whose input carried no cue timing — the segment clocks are
+   *  synthesized (1 s per line) and must not feed reading-speed checks. */
+  timingSynthesized?: boolean;
 }
 
 /** Provenance block of a T2T translation (verbose_json `translation`). */

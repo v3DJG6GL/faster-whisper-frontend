@@ -14,11 +14,11 @@ import {
 } from "./api";
 import { transportErrorDoorway } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
-import { isTextSourcePath, parseImportedText } from "./subtitleImport";
+import { isTextSourcePath, parseImportedText, type ImportedText } from "./subtitleImport";
 import { useApp } from "./store";
 import { setRecordForgetHook, upsertRecord, type TranscriptRecord } from "./transcriptHistory";
 import type {
-  BatchProgress, BatchResult, DecodeOverrides, TranscribeOptions,
+  BatchProgress, BatchResult, DecodeOverrides, TranscribeOptions, TranscriptSegment,
 } from "./types";
 
 export type ItemStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -1040,6 +1040,7 @@ async function translateTextSource(
       mode: options.translationMode ?? null,
       glossary: options.translationGlossary ?? null,
       progressId: progressId ?? null,
+      fileEpochCancel: true,
     });
     results.push(...r.results);
     // Dense and aligned with results — a chunk from an older backend that omits
@@ -1064,7 +1065,13 @@ async function translateTextSource(
           .join(" "),
       ]),
     ),
-    translation: { model, targets, source: source ?? parsed.language, mode: options?.translationMode ?? null },
+    translation: {
+      model, targets, source: source ?? parsed.language,
+      ...(options.translationMode ? { mode: options.translationMode } : {}),
+    },
+    ...(parsed.segments.every((seg) => seg.start === undefined && seg.end === undefined)
+      ? { timingSynthesized: true }
+      : {}),
   } as BatchResult;
 }
 
@@ -1074,10 +1081,10 @@ async function translateTextSource(
  *  flagged" finds them and the exports drop them. Without the mark a kept line was stored
  *  and exported as a genuine translation. */
 export function assembleTranslatedSegments(
-  parsed: { start?: number; end?: number; text: string; speaker?: string }[],
+  parsed: ImportedText["segments"],
   results: Record<string, string>[],
   keptAll: string[][],
-): { start: number; end: number; text: string; speaker?: string; translations?: Record<string, string>; translationsKept?: string[] }[] {
+): TranscriptSegment[] {
   return parsed.map((seg, i) => ({
     start: seg.start ?? i,
     end: seg.end ?? (parsed[i + 1]?.start ?? (seg.start !== undefined ? seg.start + 1 : i + 1)),

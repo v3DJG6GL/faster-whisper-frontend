@@ -274,6 +274,39 @@ describe("loadHistory(force) chains onto an in-flight listing", () => {
   });
 });
 
+describe("loadHistory replays mirror changes made while the listing was in flight", () => {
+  const deferred = () => {
+    let resolve: (v: unknown[]) => void = () => {};
+    const promise = new Promise<unknown[]>((r) => { resolve = r; });
+    return { promise, resolve };
+  };
+  const A: TranscriptRecord = {
+    schemaVersion: 1, kind: "file", id: "A", createdAt: "2026-08-30T12:00:00Z",
+    sourcePath: "/a.mp3", sourceName: "a.mp3", status: "done",
+  };
+
+  it("an upsert during the listing survives the snapshot", async () => {
+    const d = deferred();
+    listTranscriptRecords.mockReturnValueOnce(d.promise);
+    const load = loadHistory(true);
+    upsertRecord(A); // landed after the listing was taken
+    d.resolve([]);
+    await load;
+    expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["A"]);
+  });
+
+  it("a delete during the listing is not resurrected by the snapshot", async () => {
+    const d = deferred();
+    listTranscriptRecords.mockReturnValueOnce(d.promise);
+    upsertRecord(A);
+    const load = loadHistory(true);
+    deleteRecord("A"); // file + media already gone
+    d.resolve([A]);
+    await load;
+    expect(useTranscriptHistory.getState().records).toEqual([]);
+  });
+});
+
 describe("deleteRecord", () => {
   it("cancels a coalesced write so the deleted record cannot come back", () => {
     vi.useFakeTimers();
