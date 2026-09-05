@@ -2499,30 +2499,52 @@ export function securityChanges(
   cats: Record<SyncCategory, boolean>,
 ): SecurityChange[] {
   const out: SecurityChange[] = [];
+  // The three retention clocks drive sweeps that DELETE stored data (saved
+  // recordings; dictation sessions incl. audio; file transcripts incl. their
+  // audio copies). Only a change that starts deleting, or deletes sooner, needs
+  // consent — lengthening the window (or turning retention off) destroys
+  // nothing. The recording and dictation clocks ride the `recording` category;
+  // the file clock its own category. Typed reads: the merged blob reaches here
+  // before applyBlob's typedLike pass, so a string `"3"` would otherwise raise
+  // a review (and park the whole category) for a change that never applies.
+  const clockCheck = (
+    container: unknown,
+    localContainer: unknown,
+    key: "recordingsRetentionDays" | "dictationRetentionDays" | "historyRetentionDays",
+    fallback: number,
+    what: string,
+    kind: SecurityChange["kind"],
+  ) => {
+    if (!isPlainObject(container)) return;
+    const rawNext = ownProp(container, key);
+    // An ABSENT key is "no change" on the apply side (the arms merge over current), so it
+    // must not be read as the app default here — a peer with this row's sync switch off
+    // omits it, and the fallback raised a consent dialog for a deletion that can't happen.
+    if (rawNext === undefined) return;
+    const rawHere = isPlainObject(localContainer) ? ownProp(localContainer, key) : undefined;
+    const hereDays = typeof rawHere === "number" && Number.isFinite(rawHere) ? rawHere : fallback;
+    // A non-numeric value (null, a string) is dropped by the apply side, which keeps the local
+    // days — so it reads as "no change" here too. Falling back to the app default raised a
+    // consent dialog for a deletion window that could never be applied.
+    const nextDays = typeof rawNext === "number" && Number.isFinite(rawNext) ? rawNext : hereDays;
+    if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
+      out.push({
+        kind,
+        backend: "",
+        detail:
+          hereDays === 0
+            ? `${what} older than ${nextDays} day(s) would start being deleted (currently kept forever)`
+            : `${what} would be deleted after ${nextDays} day(s) instead of ${hereDays}`,
+      });
+    }
+  };
   // The `recording` category looks like styling but carries two settings with real consequences:
   // the retention window drives a sweep that DELETES saved recordings and their transcripts, and
   // `saveRecordings` turns on a permanent plaintext archive of everything dictated. Both applied
   // silently on an unattended pull. They get the same confirmation as a repointed server.
   if (cats.recording && incoming.recording) {
-    // Typed reads, as clockCheck does: the merged blob reaches here before applyBlob's typedLike
-    // pass, so a string `"3"` would otherwise raise a review (and park the whole category) for a
-    // change that never applies. Absent/malformed = no change.
-    const rawNext = ownProp(incoming.recording as Record<string, unknown>, "recordingsRetentionDays");
-    const rawHere = local.recording?.recordingsRetentionDays;
-    const hereDays = typeof rawHere === "number" && Number.isFinite(rawHere) ? rawHere : 0;
-    const nextDays = typeof rawNext === "number" && Number.isFinite(rawNext) ? rawNext : hereDays;
-    // Only a change that starts deleting, or deletes sooner, needs consent — lengthening the
-    // window (or turning retention off) destroys nothing.
-    if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
-      out.push({
-        kind: "recording-retention",
-        backend: "",
-        detail:
-          hereDays === 0
-            ? `saved recordings older than ${nextDays} day(s) would start being deleted`
-            : `saved recordings would be deleted after ${nextDays} day(s) instead of ${hereDays}`,
-      });
-    }
+    clockCheck(incoming.recording, local.recording, "recordingsRetentionDays", 0,
+      "saved recordings", "recording-retention");
     if (incoming.recording.saveRecordings === true && local.recording?.saveRecordings !== true) {
       out.push({
         kind: "save-recordings",
@@ -2553,43 +2575,6 @@ export function securityChanges(
       });
     }
   }
-  // The two history retention clocks drive sweeps that DELETE stored history
-  // (dictation sessions incl. audio; file transcripts incl. their audio
-  // copies). Same rule as the recording clock above: only a change that
-  // starts deleting, or deletes sooner, needs consent. The dictation clock
-  // rides the `recording` category; the file clock its own category.
-  const clockCheck = (
-    container: unknown,
-    localContainer: unknown,
-    key: "dictationRetentionDays" | "historyRetentionDays",
-    fallback: number,
-    what: string,
-    kind: SecurityChange["kind"],
-  ) => {
-    if (!isPlainObject(container)) return;
-    const rawNext = ownProp(container, key);
-    // An ABSENT key is "no change" on the apply side (the arms merge over current), so it
-    // must not be read as the app default here — a peer with this row's sync switch off
-    // omits it, and the fallback raised a consent dialog for a deletion that can't happen.
-    if (rawNext === undefined) return;
-    const rawHere = isPlainObject(localContainer) ? ownProp(localContainer, key) : undefined;
-    const hereDays = typeof rawHere === "number" ? rawHere : fallback;
-    // A non-numeric value (null, a string) is dropped by the apply side, which keeps the local
-    // days — so it reads as "no change" here too, same as the recordingsRetentionDays check
-    // above. Falling back to the app default raised a consent dialog for a deletion window that
-    // could never be applied.
-    const nextDays = typeof rawNext === "number" && Number.isFinite(rawNext) ? rawNext : hereDays;
-    if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
-      out.push({
-        kind,
-        backend: "",
-        detail:
-          hereDays === 0
-            ? `${what} older than ${nextDays} day(s) would start being deleted (currently kept forever)`
-            : `${what} would be deleted after ${nextDays} day(s) instead of ${hereDays}`,
-      });
-    }
-  };
   if (cats.recording) {
     clockCheck(incoming.recording, local.recording, "dictationRetentionDays", 7,
       "dictations", "dictation-retention");
