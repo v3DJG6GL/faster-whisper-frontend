@@ -147,7 +147,8 @@ jobs:
         with:
           # On a bump run, build the tagged commit (not the pre-bump dispatch ref).
           ref: ${{ needs.version.outputs.tag || github.ref }}
-          # Same reasoning as ci.yml's `git remote set-url` and the windows leg's: with the
+          # Same reasoning as ci.yml's manual token checkout (direct `git fetch` from the
+          # credentialed URL, nothing persisted) and this workflow's windows leg: with the
           # default, checkout leaves `http.<server>/.extraheader` — the run token, base64'd — in
           # .git/config for the whole job. THIS job is the one that then runs `pnpm install`,
           # tauri-action on a mutable tag, and `cargo build` (every dependency's build.rs and
@@ -231,9 +232,17 @@ jobs:
           rel=$(curl -sS -H "$hdr" "$api/repos/$REPO/releases/tags/$TAG")
           id=$(jq -r '.id // empty' <<<"$rel")
           if [ -z "$id" ]; then
-            id=$(curl -fsS -H "$hdr" -X POST "$api/repos/$REPO/releases" \
+            id=$(curl -sS -H "$hdr" -X POST "$api/repos/$REPO/releases" \
               -H 'Content-Type: application/json' \
-              -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"draft\":true}" | jq -r '.id')
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"draft\":true}" | jq -r '.id // empty')
+          fi
+          # empty again = lost the create race to the Windows job — re-read
+          if [ -z "$id" ]; then
+            id=$(curl -sS -H "$hdr" "$api/repos/$REPO/releases/tags/$TAG" | jq -r '.id // empty')
+          fi
+          if [ -z "$id" ]; then
+            echo "::error::could not resolve a release id for $TAG"
+            exit 1
           fi
           echo "release id: $id"
           shopt -s nullglob
