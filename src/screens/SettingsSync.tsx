@@ -103,8 +103,10 @@ function presentSel(blob: SyncBlob): Record<SyncCategory, boolean> {
 export function relTime(ms: number): string {
   const d = Date.now() - ms;
   if (d < 60_000) return "just now";
-  if (d < 3_600_000) return `${Math.round(d / 60_000)}m ago`;
-  if (d < 86_400_000) return `${Math.round(d / 3_600_000)}h ago`;
+  // floor, not round: 59.5 min rounded up read "60m ago" (and 23.5 h "24h ago") — a value
+  // the next tier owns.
+  if (d < 3_600_000) return `${Math.floor(d / 60_000)}m ago`;
+  if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}h ago`;
   return new Date(ms).toLocaleDateString();
 }
 

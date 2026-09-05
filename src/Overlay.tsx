@@ -15,6 +15,11 @@ import {
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
 import type { AccentMotion, DictationPhase, DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
 
+/** Value identity for an AccentMotion — see `prevMotionRef` below. */
+function motionKey(m: AccentMotion | undefined): string {
+  return m ? `${m.period}:${m.range}:${m.arcFrom ?? ""}:${m.arcHue ?? ""}` : "";
+}
+
 interface ChipState {
   status: DictationStatus;
   // Mic opening but not yet capturing (e.g. Bluetooth profile switch) → show "warming up…".
@@ -192,7 +197,10 @@ export default function Overlay() {
   // re-stamp the whole accent engine on every sample (setAccentMotion tears down
   // and re-arms the drift interval, applyTheme writes ~11 custom properties).
   const prevHueRef = useRef<number>(DEFAULT_ACCENT_HUE);
-  const prevMotionRef = useRef<AccentMotion | undefined>(undefined);
+  // A KEY, not the object: the payload crosses Tauri IPC, so `accentMotion` is a fresh
+  // deserialised object on every tick and a reference compare never blocks (which quietly
+  // defeated this guard for the motion term).
+  const prevMotionRef = useRef<string>("");
   const prevThemeRef = useRef<string>("auto");
 
   // Live updates from the Rust core when running under Tauri.
@@ -206,12 +214,13 @@ export default function Overlay() {
           const theme = e.payload.theme ?? "auto";
           const hue = e.payload.accentHue ?? DEFAULT_ACCENT_HUE;
           const mot = e.payload.accentMotion;
+          const motKey = motionKey(mot);
           // Only re-apply accent/theme when the values actually change —
           // the level stream fires ~30 Hz and each call tears down the drift
           // timer and writes ~11 custom properties on the document root.
-          if (hue !== prevHueRef.current || mot !== prevMotionRef.current || theme !== prevThemeRef.current) {
+          if (hue !== prevHueRef.current || motKey !== prevMotionRef.current || theme !== prevThemeRef.current) {
             prevHueRef.current = hue;
-            prevMotionRef.current = mot;
+            prevMotionRef.current = motKey;
             prevThemeRef.current = theme;
             applyAccentAndTheme(hue, mot, theme);
           }

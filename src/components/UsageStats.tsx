@@ -116,6 +116,7 @@ const _monthYear = new Intl.DateTimeFormat("de-CH", { month: "long", year: "nume
 /** `1. Aug. 2026`, for the range pill and the custom-span popover. */
 const fmtSpanDate = (day: number) => _spanDate.format(new Date(day * 86_400_000));
 const fmtMonthYear = (day: number) => _monthYear.format(new Date(day * 86_400_000));
+const fmtDateRange = (from: number, to: number) => `${fmtSpanDate(from)} – ${fmtSpanDate(to)}`;
 
 /* ── the measure's formatters: the two `_s` measures are durations, the rest counts ── */
 const metricTick = (m: ChartMetric, v: number) => (isDurationMetric(m) ? fmtDurationAxis(v) : fmtCompact(v));
@@ -1439,9 +1440,9 @@ function FilterBar({
   };
   const spanText =
     query.range === "all"
-      ? `${fmtSpanDate(win.from)} – ${fmtSpanDate(win.to)} · ${fmtFull(win.days)} days · since the first ${firstDay == null ? "run" : "dictation"}`
-      : `${fmtSpanDate(win.from)} – ${fmtSpanDate(win.to)} · ${fmtFull(win.days)} ${win.days === 1 ? "day" : "days"}${query.range === "custom" ? " · custom" : ""}`;
-  const rangeChip = query.range === "all" ? "All time" : query.range === "custom" ? `${fmtSpanDate(win.from)} – ${fmtSpanDate(win.to)}` : RANGE_LABEL[query.range];
+      ? `${fmtDateRange(win.from, win.to)} · ${fmtFull(win.days)} days · since the first ${firstDay == null ? "run" : "dictation"}`
+      : `${fmtDateRange(win.from, win.to)} · ${fmtFull(win.days)} ${win.days === 1 ? "day" : "days"}${query.range === "custom" ? " · custom" : ""}`;
+  const rangeChip = query.range === "all" ? "All time" : query.range === "custom" ? fmtDateRange(win.from, win.to) : RANGE_LABEL[query.range];
   const clearButton = (
     <button type="button" onClick={clearAll} className="ring-signal rounded-md px-1 text-[12px] text-faint underline underline-offset-4 hover:text-text">
       Clear
@@ -1724,7 +1725,7 @@ export function HomeUsageStrip() {
 /** The range as the panels name it: `30 days` · `1 year` · `since 14 Feb 2025` · a span. */
 function rangeWord(q: UsagePageQuery, win: { from: number; to: number; days: number }): string {
   if (q.range === "all") return `since ${fmtSpanDate(win.from)}`;
-  if (q.range === "custom") return `${fmtSpanDate(win.from)} – ${fmtSpanDate(win.to)}`;
+  if (q.range === "custom") return fmtDateRange(win.from, win.to);
   if (q.range === "365") return "1 year";
   return `${q.range} days`;
 }

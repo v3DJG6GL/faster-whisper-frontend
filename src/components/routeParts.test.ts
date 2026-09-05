@@ -41,6 +41,7 @@ describe("routeParts", () => {
     const astral = "😀".repeat(200);
     const a = routeParts(astral, [astral]);
     expect([...a.source].length).toBeLessThanOrEqual(24);
-    for (const t of r.targets) expect(t.length).toBeLessThanOrEqual(24);
+    for (const t of a.targets) expect([...t].length).toBeLessThanOrEqual(24);
+    for (const t of r.targets) expect([...t].length).toBeLessThanOrEqual(24);
   });
 });
