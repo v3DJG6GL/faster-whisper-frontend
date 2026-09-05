@@ -724,7 +724,7 @@ async fn post(
 
 /// Re-key a translations map through the server-string bound (values are the
 /// translated output and stay untouched, like `text`).
-fn bound_translation_keys(
+pub(crate) fn bound_translation_keys(
     m: std::collections::BTreeMap<String, String>,
 ) -> std::collections::BTreeMap<String, String> {
     m.into_iter()

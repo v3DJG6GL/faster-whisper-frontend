@@ -270,19 +270,17 @@ pub async fn translate_texts(
     let mut kept: Vec<Vec<String>> = (0..texts.len()).map(|_| Vec::new()).collect();
     for seg in parsed.segments {
         if let Some(slot) = results.get_mut(seg.id) {
-            *slot = seg
-                .translations
-                .into_iter()
-                .map(|(k, v)| (bounded_server_text(&k, 16), v))
-                .collect();
+            *slot = super::batch::bound_translation_keys(seg.translations);
             // Kept-original markers are language codes — bound like the
             // translation keys, capped at the target ceiling.
-            kept[seg.id] = seg
-                .kept_original
-                .iter()
-                .take(MAX_TARGETS)
-                .map(|k| bounded_server_text(k, 16))
-                .collect();
+            if let Some(k) = kept.get_mut(seg.id) {
+                *k = seg
+                    .kept_original
+                    .iter()
+                    .take(MAX_TARGETS)
+                    .map(|k| bounded_server_text(k, 16))
+                    .collect();
+            }
         }
     }
     Ok(TextTranslationResult {
