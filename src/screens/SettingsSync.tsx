@@ -41,6 +41,7 @@ import {
 } from "@/lib/sync";
 import { authorityOf, backendOptions, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
 import { ownProp } from "@/lib/own";
+import { relTime } from "@/lib/format";
 import { conflicts as chordConflicts, quickAddPeer } from "@/lib/conflicts";
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
@@ -97,17 +98,6 @@ function presentSel(blob: SyncBlob): Record<SyncCategory, boolean> {
   return Object.fromEntries(
     ALL_CATEGORIES.map((c) => [c, blob[c] !== undefined]),
   ) as Record<SyncCategory, boolean>;
-}
-
-/** "just now" / "4m ago" / "3h ago" / a date — for the last-synced line. */
-export function relTime(ms: number): string {
-  const d = Date.now() - ms;
-  if (d < 60_000) return "just now";
-  // floor, not round: 59.5 min rounded up read "60m ago" (and 23.5 h "24h ago") — a value
-  // the next tier owns.
-  if (d < 3_600_000) return `${Math.floor(d / 60_000)}m ago`;
-  if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}h ago`;
-  return new Date(ms).toLocaleDateString();
 }
 
 function Modal({ children, onClose }: { children: ReactNode; onClose: () => void }) {

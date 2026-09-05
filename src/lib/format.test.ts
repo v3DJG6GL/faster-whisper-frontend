@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fmtBytes, fmtTimestamp } from "./format";
+import { fmtBytes, fmtTimestamp, relTime } from "./format";
 
 describe("fmtTimestamp", () => {
   it("never renders 60.0 seconds — rounds to the tenth before splitting", () => {
@@ -29,5 +29,19 @@ describe("fmtBytes", () => {
     expect(fmtBytes(980 * 1024)).toBe("980 KB");
     expect(fmtBytes(41.2 * 1024 * 1024)).toBe("41.2 MB");
     expect(fmtBytes(-1)).toBe("");
+  });
+});
+
+describe("relTime", () => {
+  it("floors at the tier edges — never '60m ago' or '24h ago'", () => {
+    expect(relTime(0, 59.5 * 60_000)).toBe("59m ago");
+    expect(relTime(0, 3_600_000 - 1)).toBe("59m ago");
+    expect(relTime(0, 23.5 * 3_600_000)).toBe("23h ago");
+    expect(relTime(0, 86_400_000 - 1)).toBe("23h ago");
+  });
+  it("keeps the ordinary shapes", () => {
+    expect(relTime(0, 30_000)).toBe("just now");
+    expect(relTime(0, 4 * 60_000 + 20_000)).toBe("4m ago");
+    expect(relTime(0, 3 * 3_600_000)).toBe("3h ago");
   });
 });

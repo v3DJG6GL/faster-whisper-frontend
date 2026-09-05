@@ -26,7 +26,8 @@ import { useApp } from "@/lib/store";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText } from "@/lib/sanitize";
-import { ImportPreview, IncomingAddresses, relTime } from "./SettingsSync";
+import { ImportPreview, IncomingAddresses } from "./SettingsSync";
+import { relTime } from "@/lib/format";
 import type { ImportResult, SyncPullResult } from "@/lib/syncTypes";
 import type { Backend, ConnectionInfo, PipelineRule, Profile } from "@/lib/types";
 

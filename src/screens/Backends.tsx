@@ -21,7 +21,8 @@ import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, in
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import { RestoreFromServer, relTime } from "./SettingsSync";
+import { RestoreFromServer } from "./SettingsSync";
+import { relTime } from "@/lib/format";
 
 function Editor({
   initial,
