@@ -5,18 +5,19 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ALL_CATEGORIES,
   applyBlob,
+  categorySelection,
   composeBlob,
   mergeBlobs,
   migrateBlob,
+  sanitizeProfiles,
   securityChanges,
 } from "./sync";
 import { useApp } from "./store";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { IS_WINDOWS } from "./platform";
 import type { SyncBlob } from "./syncTypes";
-import type { AppSettings, Backend, Profile, SyncCategory, SyncSubSettings } from "./types";
+import type { AppSettings, Backend, Profile, SyncSubSettings } from "./types";
 
 /** Test seam for the ONE await inside applyBlob (the keyring reconciliation): while it is
  *  parked, the store is live and the user can keep editing. Default is passthrough. */
@@ -29,10 +30,7 @@ vi.mock("./api", async (importOriginal) => {
   };
 });
 
-const CATS_ALL = Object.fromEntries(ALL_CATEGORIES.map((c) => [c, true])) as Record<
-  SyncCategory,
-  boolean
->;
+const CATS_ALL = categorySelection(true);
 const LEGACY_SUB: SyncSubSettings = {
   recordingsDir: false,
   profileHotkeys: true,
@@ -190,6 +188,10 @@ describe("migrateBlob (baseline)", () => {
       dictionary: "y".repeat(1000) as never,
     });
     expect(Object.keys(out2.dictionary as object)).toEqual(["quickAddList"]);
+  });
+
+  it("a non-object ROOT is treated as an empty blob, never spread per code unit", () => {
+    expect(migrateBlob("abc" as never)).toEqual({});
   });
 });
 
@@ -576,5 +578,57 @@ describe("applyBlob keep-local (baseline)", () => {
     const rec = useApp.getState().settings.recording;
     expect(rec.saveRecordings).toBe(false); // omitted key did NOT reset to factory default
     expect(rec.trimSilence).toBe(false);
+  });
+
+  it("a wrong-typed recording leaf raises no review (it would never apply)", () => {
+    // securityChanges runs on the merged blob BEFORE applyBlob's typed pass. A string "3" or
+    // a truthy non-bool must not park the whole recording category for a no-op change.
+    const local = { recording: { recordingsRetentionDays: 0, saveRecordings: false } } as never;
+    expect(
+      securityChanges(
+        { recording: { recordingsRetentionDays: "3", saveRecordings: "yes" } } as never,
+        local,
+        CATS_ALL,
+      ).filter((c) => c.kind === "recording-retention" || c.kind === "save-recordings"),
+    ).toEqual([]);
+    // The typed input still raises both.
+    expect(
+      securityChanges(
+        { recording: { recordingsRetentionDays: 3, saveRecordings: true } } as never,
+        local,
+        CATS_ALL,
+      ).map((c) => c.kind).sort(),
+    ).toEqual(["recording-retention", "save-recordings"]);
+  });
+
+  it("sanitizeProfiles clamps decodeOverrides like its Backend twin", () => {
+    const [junk, mixed] = sanitizeProfiles([
+      profile({ id: "p1", decodeOverrides: "abc" as never }),
+      profile({ id: "p2", decodeOverrides: { beam_size: 5, hotwords: "x", nested: {} } as never }),
+    ]);
+    expect(junk.decodeOverrides).toBeUndefined();
+    expect(mixed.decodeOverrides).toEqual({ beam_size: 5, hotwords: "x" });
+  });
+
+  it("a timed-out keyring read-back keeps the local hasApiKey flag instead of demoting", async () => {
+    // A degraded read re-derived `hasApiKey: false` for every backend, which the next push
+    // took as "no backend claims a key" — bypassing composeBlob's erase guard.
+    vi.useFakeTimers();
+    keyring.park = new Promise(() => {}); // never settles: the locked-wallet case
+    try {
+      useApp.setState({ settings: settings(), backends: [backend({ hasApiKey: true })] });
+      const applying = applyBlob(
+        { backends: { list: [backend({ hasApiKey: true, name: "from-peer" })] } },
+        { ...CATS_ALL, profiles: false },
+      );
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await applying).toBe(true);
+    } finally {
+      keyring.park = null;
+      vi.useRealTimers();
+    }
+    const b1 = useApp.getState().backends.find((b) => b.id === "b1")!;
+    expect(b1.name).toBe("from-peer"); // the blob landed
+    expect(b1.hasApiKey).toBe(true); // but the degraded read did not demote the flag
   });
 });

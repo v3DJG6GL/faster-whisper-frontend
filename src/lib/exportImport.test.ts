@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CONFIG_VERSION } from "./store";
-import { ALL_CATEGORIES } from "./sync";
+import { categorySelection } from "./sync";
 import type { SyncCategory } from "./types";
 import type { ImportResult, SyncBlob } from "./syncTypes";
 
@@ -24,8 +24,7 @@ vi.mock("./sync", async (importOriginal) => {
   };
 });
 
-const allOff = (): Record<SyncCategory, boolean> =>
-  Object.fromEntries(ALL_CATEGORIES.map((c) => [c, false])) as Record<SyncCategory, boolean>;
+const allOff = (): Record<SyncCategory, boolean> => categorySelection(false);
 
 const emptyResult = (): ImportResult => ({
   formatVersion: 1,

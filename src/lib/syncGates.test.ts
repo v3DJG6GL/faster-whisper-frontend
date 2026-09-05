@@ -3,19 +3,16 @@
 // wire-neutrality proof (all gates on ≡ ungated compose).
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { ALL_CATEGORIES, applyBlob, backendsBlobIncomplete, composeBlob, mergeBlobs } from "./sync";
+import { applyBlob, backendsBlobIncomplete, categorySelection, composeBlob, mergeBlobs } from "./sync";
 import { completeGates, DEFAULT_SETTING_SYNC } from "./settingsManifest";
 import { catsFromGates, gateApplyScalar, gateComposeScalar } from "./syncGates";
 import { stableStringify } from "./stable";
 import { useApp } from "./store";
 import { DEFAULT_SETTINGS } from "./defaults";
 import type { SyncBlob } from "./syncTypes";
-import type { AppSettings, Backend, Profile, SyncCategory, SyncSubSettings } from "./types";
+import type { AppSettings, Backend, Profile, SyncSubSettings } from "./types";
 
-const CATS_ALL = Object.fromEntries(ALL_CATEGORIES.map((c) => [c, true])) as Record<
-  SyncCategory,
-  boolean
->;
+const CATS_ALL = categorySelection(true);
 const SUB_ALL: SyncSubSettings = {
   recordingsDir: true,
   profileHotkeys: true,

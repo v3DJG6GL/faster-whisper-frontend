@@ -45,6 +45,7 @@ import type {
   Backend,
   BackendKind,
   Config,
+  DecodeOverrides,
   EndpointKind,
   IndicatorPosition,
   InsertMethod,
@@ -107,6 +108,11 @@ export const ALL_CATEGORIES: SyncCategory[] = [
   "fileTranscriptions",
   "logging",
 ];
+
+/** Every category set to `on` — the all-included export selection and test fixtures. */
+export function categorySelection(on: boolean): Record<SyncCategory, boolean> {
+  return Object.fromEntries(ALL_CATEGORIES.map((c) => [c, on])) as Record<SyncCategory, boolean>;
+}
 
 /** This device's field-level opt-outs (Settings → Sync sub-toggles), with the
  *  behavior-preserving defaults for configs from before they existed. */
@@ -231,6 +237,8 @@ function omitFields(obj: Record<string, unknown>, fields: ReadonlySet<string>): 
  * category. Existing new-shape entries win over migrated legacy ones.
  */
 export function migrateBlob(blob: SyncBlob): SyncBlob {
+  // A non-object root (a server-sent string) would spread into one key per code unit here.
+  if (!isPlainObject(blob)) return {};
   const out: SyncBlob = { ...blob };
   if (isPlainObject(out.recording)) {
     const rec = out.recording as Record<string, unknown>;
@@ -738,6 +746,21 @@ function isReservedBackendId(id: unknown): boolean {
  *  reaches consumers that deref it unguarded (`p.hotkey.length`, `deriveChipTag(p.name)`), and
  *  with no error boundary in the tree a throw during render unmounts the window. Drop malformed
  *  entries here so both paths share the same floor. */
+/** The `decodeOverrides` leaf, shared by the profile and backend sanitizers: numeric/boolean
+ *  entries pass, the four string leaves are length-capped, anything else (a string root, an
+ *  array, nested objects) is dropped. Rust holds it as opaque JSON and forwards it into every
+ *  session request, so this is the only floor it gets. */
+function clampDecodeOverrides(v: unknown): DecodeOverrides | undefined {
+  if (!isPlainObject(v)) return undefined;
+  return {
+    ...Object.fromEntries(Object.entries(v).filter(([, x]) => typeof x === "number" || typeof x === "boolean")),
+    hotwords: typeof v.hotwords === "string" ? v.hotwords.slice(0, 2000) : undefined,
+    prepend_punctuations: typeof v.prepend_punctuations === "string" ? v.prepend_punctuations.slice(0, 200) : undefined,
+    append_punctuations: typeof v.append_punctuations === "string" ? v.append_punctuations.slice(0, 200) : undefined,
+    suppress_tokens: typeof v.suppress_tokens === "string" ? v.suppress_tokens.slice(0, 500) : undefined,
+  };
+}
+
 export function sanitizeProfiles(list: unknown): Profile[] {
   if (!Array.isArray(list)) return [];
   return dedupeById(list
@@ -832,7 +855,10 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       // typed parse, and its Backend twin below is already clamped this way.
       enabled: p.enabled === true,
       overrideProfile: typeof p.overrideProfile === "string" ? p.overrideProfile : undefined,
-      // The last leaf still riding the `...p` spread. Rust's `backend_id` is `Option<String>`,
+      // Same clamp as the Backend twin: the leaf rode the `...p` spread untouched, and Rust
+      // forwards it into every session request as opaque JSON.
+      decodeOverrides: clampDecodeOverrides(p.decodeOverrides),
+      // `backendId` rode the `...p` spread too. Rust's `backend_id` is `Option<String>`,
       // and the dangling-reference scrub in `applyBlob` is NOT a type check standing in for one:
       // it is gated on `p.backendId &&`, so a FALSY non-string (`0`, `false`) skips it entirely
       // and reaches the typed parse, which rejects the whole `Config`. `null` is the app's own
@@ -1166,15 +1192,7 @@ function sanitizeBackends(list: unknown): Backend[] {
       // fails the typed parse like its two siblings above. Keep undefined = "infer from the
       // connection test", which is what an absent key already means.
       kind: b.kind == null ? undefined : oneOf<BackendKind>(b.kind, BACKEND_KINDS, "auto"),
-      decodeOverrides: b.decodeOverrides && typeof b.decodeOverrides === "object"
-        ? {
-            ...Object.fromEntries(Object.entries(b.decodeOverrides).filter(([, v]) => typeof v === "number" || typeof v === "boolean")),
-            hotwords: typeof b.decodeOverrides.hotwords === "string" ? b.decodeOverrides.hotwords.slice(0, 2000) : undefined,
-            prepend_punctuations: typeof b.decodeOverrides.prepend_punctuations === "string" ? b.decodeOverrides.prepend_punctuations.slice(0, 200) : undefined,
-            append_punctuations: typeof b.decodeOverrides.append_punctuations === "string" ? b.decodeOverrides.append_punctuations.slice(0, 200) : undefined,
-            suppress_tokens: typeof b.decodeOverrides.suppress_tokens === "string" ? b.decodeOverrides.suppress_tokens.slice(0, 500) : undefined,
-          }
-        : undefined,
+      decodeOverrides: clampDecodeOverrides(b.decodeOverrides),
       translationOverrides: b.translationOverrides && typeof b.translationOverrides === "object"
         ? {
             translateTo: Array.isArray(b.translationOverrides.translateTo)
@@ -1308,15 +1326,22 @@ async function reconcileBackendSecrets(
   const present = await withTimeout(
     readBackendKeys(list.map((b) => b.id)),
     10_000,
-    {} as Record<string, string>,
+    null as Record<string, string> | null,
   );
+  // A degraded read (locked wallet, timed out) must NOT demote: re-deriving `hasApiKey: false`
+  // for every backend would be hydrated and persisted, and the next push would then see no
+  // backend claiming a key — bypassing `composeBlob`'s erase guard and PUTting a keyless list
+  // that also clears the local stash. Keep each backend's pre-apply local flag instead (false
+  // for a backend new to this device, even if its secret was just written; the next pull
+  // re-derives it).
+  const localFlag = new Map(useApp.getState().backends.map((b) => [b.id, b.hasApiKey]));
   // Own-property test, not `in`: `present` is JSON-parsed, so it carries `Object.prototype`, and a
   // backend whose id is `constructor`/`toString`/… would be re-derived as `hasApiKey: true` with
   // nothing in the keyring — defeating the exact promise this function makes. Downstream that
   // phantom also makes `composeBlob`'s erase guard fire forever on a device holding no real keys,
   // silently dropping the backends category from every push.
   return list.map((b) => {
-    const held = hasOwn(present, b.id);
+    const held = present === null ? (localFlag.get(b.id) ?? false) : hasOwn(present, b.id);
     return b.hasApiKey === held ? b : { ...b, hasApiKey: held };
   });
 }
@@ -1324,8 +1349,12 @@ async function reconcileBackendSecrets(
 /**
  * Apply a blob's toggled-ON categories to the running app through the single
  * whole-config path (`hydrate()`), preserving every machine-local field.
- * Runs under `applyingRemote` so the push subscriber ignores the resulting
- * store change; the persistence auto-save still persists it (that's wanted).
+ * Only the `hydrate` call runs under `applyingRemote` (so the push subscriber
+ * ignores that one store change; the persistence auto-save still persists it,
+ * which is wanted). The flag deliberately does NOT span the keyring wait: a
+ * sync-OFF or server-switch edit made while the apply is parked must reach
+ * the subscriber's supersede() branches, or the stale restart re-applies the
+ * blob after the user disconnected.
  * While dictating, the apply is DEFERRED to the next idle transition — a mid-
  * session hydrate would yank profiles/backends out from under the session.
  */
@@ -1347,7 +1376,11 @@ export async function applyBlob(
     pendingApply = { blob, cats, opts };
     return false;
   }
-  applyingRemote = true;
+  // The epoch this apply belongs to: a supersede during the keyring wait (sync switched off,
+  // server changed, a category toggled on and re-pulled) means the blob is for a state that no
+  // longer exists — drop rather than restart, or the stale restart would hydrate over the new
+  // pull's apply.
+  const myGen = gen;
   let staleRestart = false;
   let staleAbort = false;
   // A thrown sentinel (not `return`) is the only way to leave the try AND still
@@ -1623,9 +1656,10 @@ export async function applyBlob(
         live.settings !== settings ||
         live.backends !== st.backends ||
         live.profiles !== st.profiles ||
-        live.appRules !== st.appRules
+        live.appRules !== st.appRules ||
+        gen !== myGen
       ) {
-        staleRestart = retries > 0;
+        staleRestart = retries > 0 && gen === myGen;
         staleAbort = true;
         throw STALE;
       }
@@ -1772,15 +1806,22 @@ export async function applyBlob(
       nextSettings = { ...nextSettings, sync: { ...sync, urlOverrides } };
     }
 
-    useApp.getState().hydrate({
-      settings: nextSettings,
-      backends: nextBackends,
-      profiles: nextProfiles,
-      appRules: nextAppRules,
-      // The blob's `general` block was validated field-by-field above (including the
-      // retired `insertTiming`), so no schema migration must run on it here.
-      version: CONFIG_VERSION,
-    });
+    // The only store write in this function, and the only stretch the flag covers: `hydrate`
+    // is a plain synchronous zustand `set`, so the subscriber sees the flag for exactly that.
+    applyingRemote = true;
+    try {
+      useApp.getState().hydrate({
+        settings: nextSettings,
+        backends: nextBackends,
+        profiles: nextProfiles,
+        appRules: nextAppRules,
+        // The blob's `general` block was validated field-by-field above (including the
+        // retired `insertTiming`), so no schema migration must run on it here.
+        version: CONFIG_VERSION,
+      });
+    } finally {
+      applyingRemote = false;
+    }
 
     // Side effects hydrate() doesn't cover: deep-field detection is pushed to
     // Rust imperatively by its Settings toggle, so mirror that here. (Autostart
@@ -1794,11 +1835,9 @@ export async function applyBlob(
     }
   } catch (e) {
     if (e !== STALE) throw e;
-  } finally {
-    applyingRemote = false;
   }
-  // The retry runs OUTSIDE the try so `applyingRemote` is false around it (the
-  // recursive call manages its own flag).
+  // The retry runs OUTSIDE the try so the STALE sentinel of the recursive call is its own
+  // (`applyingRemote` wraps only `hydrate`, so nothing is held across the recursion).
   if (staleRestart) return applyBlob(blob, cats, retries - 1, opts);
   // Retries exhausted: the apply was dropped stale, so report "not applied" —
   // the caller must leave the base alone and let the next pull re-offer it.
@@ -2132,9 +2171,25 @@ export async function pullNow(manual = false): Promise<void> {
       return;
     }
     if (remote.blob === null) {
-      // First-ever contact: nothing stored server-side yet — seed it.
+      // Nothing stored server-side: first-ever contact, or the server copy was deleted (a
+      // peer's "Delete server copy", or a wipe) — seed it.
+      if ((state.version ?? 0) > 0 || state.snapshot !== undefined) {
+        // The old base is meaningless against an empty document: keeping it makes the next
+        // push skip on the hash match (server stays empty, status reads synced) and a later
+        // PUT carry a stale baseVersion whose 409 merges against a null remote. Re-seed from
+        // version 0, as resetSyncState does for the deleting device.
+        await clearSnapshotSecrets();
+        if (myGen !== gen) return;
+        await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
+        if (myGen !== gen) return;
+        setRuntime({ lastSyncedAt: null, lastSyncDevice: null });
+      }
       setRuntime({ syncStatus: "ok" });
       schedulePush(0);
+      return;
+    }
+    if (!isPlainObject(remote.blob)) {
+      handleTransportFailure(0, "The server sent settings this app cannot read.");
       return;
     }
     if (!manual && remote.version === state.version) {
@@ -2226,6 +2281,10 @@ export async function pushNow(manual = false): Promise<void> {
       }
       if (res.status === 409 && res.conflict) {
         const remote = res.conflict;
+        if (remote.blob !== null && !isPlainObject(remote.blob)) {
+          handleTransportFailure(res.status, "The server sent settings this app cannot read.");
+          return;
+        }
         // Normalize a pre-split peer's blob before merging — the 3-way base and the local
         // compose are already in the current shape.
         const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
@@ -2253,7 +2312,14 @@ export async function pushNow(manual = false): Promise<void> {
           });
           return;
         }
-        if (!(await applyBlob(merged, pushCats))) return;
+        const applied = await applyBlob(merged, pushCats);
+        if (myGen !== gen) return; // superseded during the apply wait
+        if (!applied) {
+          // Deferred/dropped: no base adopted, the next pull re-offers it. Clear the
+          // 'syncing' this call set, as reconcileRemote's twin does.
+          setRuntime({ syncStatus: "ok" });
+          return;
+        }
         blob = merged;
         base = remote.version;
         continue;
@@ -2288,23 +2354,22 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
       remoteVersion: remote.version, remoteDevice: remote.device ?? null });
     return;
   }
-  const applyCats = cats;
   // This pull is unattended (startup + every window focus). If it would repoint a backend or
   // swap a stored key, hold it for confirmation instead of adopting it silently.
-  const risky = securityChanges(gateScalars(merged, settingGates()), gateScalars(localForReview(local), settingGates()), applyCats);
+  const risky = securityChanges(gateScalars(merged, settingGates()), gateScalars(localForReview(local), settingGates()), cats);
   if (risky.length > 0) {
     // Everything else still applies — only the backends category waits. Deliberately no
     // persistState here: adopting the server's version as the new base would drop the held-back
     // change, so the next pull re-offers it until the user decides.
-    await applyBlob(merged, heldBack(applyCats, risky));
+    await applyBlob(merged, heldBack(cats, risky));
     raiseReview({
-      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
+      changes: risky, blob: merged, cats, remote: remoteBlob,
       version: remote.version, updatedAt: remote.updated_ts ?? null,
       device: remote.device ?? null, pushAfter: true,
     });
     return;
   }
-  if (!(await applyBlob(merged, applyCats))) {
+  if (!(await applyBlob(merged, cats))) {
     // Deferred (dictation live). Persist no base so the next pull re-offers the
     // blob — the same rule the held-back-review path documents above.
     setRuntime({ syncStatus: "ok" });
@@ -2429,8 +2494,13 @@ export function securityChanges(
   // `saveRecordings` turns on a permanent plaintext archive of everything dictated. Both applied
   // silently on an unattended pull. They get the same confirmation as a repointed server.
   if (cats.recording && incoming.recording) {
-    const nextDays = incoming.recording.recordingsRetentionDays ?? 0;
-    const hereDays = local.recording?.recordingsRetentionDays ?? 0;
+    // Typed reads, as clockCheck does: the merged blob reaches here before applyBlob's typedLike
+    // pass, so a string `"3"` would otherwise raise a review (and park the whole category) for a
+    // change that never applies. Absent/malformed = no change.
+    const rawNext = ownProp(incoming.recording as Record<string, unknown>, "recordingsRetentionDays");
+    const rawHere = local.recording?.recordingsRetentionDays;
+    const hereDays = typeof rawHere === "number" && Number.isFinite(rawHere) ? rawHere : 0;
+    const nextDays = typeof rawNext === "number" && Number.isFinite(rawNext) ? rawNext : hereDays;
     // Only a change that starts deleting, or deletes sooner, needs consent — lengthening the
     // window (or turning retention off) destroys nothing.
     if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
@@ -2443,7 +2513,7 @@ export function securityChanges(
             : `saved recordings would be deleted after ${nextDays} day(s) instead of ${hereDays}`,
       });
     }
-    if (incoming.recording.saveRecordings && !local.recording?.saveRecordings) {
+    if (incoming.recording.saveRecordings === true && local.recording?.saveRecordings !== true) {
       out.push({
         kind: "save-recordings",
         backend: "",
@@ -2749,7 +2819,7 @@ export async function initSync(): Promise<void> {
   // Normalize a pre-split snapshot to the current category layout. Without this the 3-way
   // base stays old-shape while fresh composes are new-shape, so the first sync after an
   // upgrade would read EVERY category as changed-on-both-sides and raise spurious conflicts.
-  if (state.snapshot) state.snapshot = migrateBlob(state.snapshot);
+  if (state.snapshot) state.snapshot = migrateBlob(state.snapshot); // non-object snapshot → {}
   await restoreSnapshotSecrets();
   // Migrate a pre-split state file: it still holds the keys in cleartext and records no ids.
   // Rewriting now moves them to the keyring and strips the file, rather than waiting for

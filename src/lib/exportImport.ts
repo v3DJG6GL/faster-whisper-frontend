@@ -4,7 +4,7 @@
 
 import { CONFIG_VERSION, useApp } from "./store";
 import { appVersion, exportSettingsFile, syncDeviceInfo } from "./api";
-import { ALL_CATEGORIES, applyBlob, composeBlob, migrateBlob } from "./sync";
+import { applyBlob, categorySelection, composeBlob, migrateBlob } from "./sync";
 import type { SyncCategory } from "./types";
 import type { ExportEnvelope, ImportResult, SyncBlob } from "./syncTypes";
 
@@ -16,10 +16,7 @@ import type { ExportEnvelope, ImportResult, SyncBlob } from "./syncTypes";
  *  chord-less profiles), the machine-specific recordings folder never does. */
 export async function buildEnvelope(includeSecrets: boolean): Promise<ExportEnvelope> {
   const s = useApp.getState();
-  const allOn = Object.fromEntries(ALL_CATEGORIES.map((c) => [c, true])) as Record<
-    SyncCategory,
-    boolean
-  >;
+  const allOn = categorySelection(true);
   const blob = await composeBlob(
     { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
     allOn,
