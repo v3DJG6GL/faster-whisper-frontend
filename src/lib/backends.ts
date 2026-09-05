@@ -145,6 +145,18 @@ export function backendPrompt(b: Pick<Backend, "prompt" | "promptCleared">): str
   return b.promptCleared ? "" : undefined;
 }
 
+/**
+ * Effective language: a set per-Profile override wins; else the Backend's. Trims the
+ * override so a padded value never reaches a server request — five call sites used to
+ * open-code this and only one of them trimmed the value it returned.
+ */
+export function effectiveLanguage<B extends string | undefined>(
+  profileLang: string | undefined,
+  backendLang: B,
+): string | B {
+  return profileLang?.trim() || backendLang;
+}
+
 /** Write `backendPrompt`'s tri-state back onto a Backend — spread the result into
  *  the draft (both keys always, so a reset drops a stale flag). */
 export function backendPromptFields(

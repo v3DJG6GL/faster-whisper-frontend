@@ -1102,6 +1102,12 @@ async function pump(
 ) {
   if (get().running) return;
   set({ running: true });
+  // One failure path for the queue item AND its history record — the three sites below
+  // used to spell the pair out (and one repeated the message literal in both calls).
+  const failFile = (path: string, error: string) => {
+    patchItem(path, { status: "failed", error });
+    recordRun(path, ctx, options, { status: "failed", error });
+  };
   try {
     while (epoch === get().epoch) {
       const next = get().queue.find((it) => it.status === "queued");
@@ -1112,14 +1118,7 @@ async function pump(
       // server-side). A stale queue on a standard server fails locally with
       // a clear message instead of a confusing server 4xx.
       if (isUrl && ctx.standard) {
-        patchItem(next.path, {
-          status: "failed",
-          error: "This server can't download links — pick a full backend.",
-        });
-        recordRun(next.path, ctx, options, {
-          status: "failed",
-          error: "This server can't download links — pick a full backend.",
-        });
+        failFile(next.path, "This server can't download links — pick a full backend.");
         continue;
       }
       // A text source runs the translation stage ONLY — it needs targets and
@@ -1128,8 +1127,7 @@ async function pump(
         const error = ctx.standard
           ? "Text files need a full backend with translation enabled."
           : "Text files need at least one translation target — turn on Translation.";
-        patchItem(next.path, { status: "failed", error });
-        recordRun(next.path, ctx, options, { status: "failed", error });
+        failFile(next.path, error);
         continue;
       }
       patchItem(next.path, { status: "running" });
@@ -1215,8 +1213,7 @@ async function pump(
         }
       } catch (e) {
         if (epoch !== get().epoch) return;
-        patchItem(next.path, { status: "failed", error: String(e) });
-        recordRun(next.path, ctx, options, { status: "failed", error: String(e) });
+        failFile(next.path, String(e));
         // Failure doorway banner → Logs screen (pre-filtered to Warn+). The
         // queue item keeps the raw error; the doorway gets the truthful
         // template (cause + backend + one fix). A text source only ran the

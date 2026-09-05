@@ -12,6 +12,7 @@ import {
 import type { TargetPick } from "./streaming";
 import { getFocusedApp, isTauri, showLangPick, showQuickAdd } from "./api";
 import { ownProp } from "./own";
+import { effectiveLanguage } from "./backends";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
 import { configuredRouteTargets } from "./overlay";
 import type { Backend, Profile } from "./types";
@@ -158,7 +159,7 @@ export function dictate(profileId: string, action: TriggerAction): void {
     profile.askTranslationTargets && profile.activation === "hold"
       ? () =>
           askTranslationTargets({
-            source: profile.language?.trim() ? profile.language : backend.language,
+            source: effectiveLanguage(profile.language, backend.language),
             preset: configuredRouteTargets(profile, backend) ?? [],
             recent: useApp.getState().settings.recentTranslationTargets ?? [],
             tag: profile.tag?.trim() || profile.name,
@@ -217,7 +218,7 @@ async function startWithPickedTargets(
     const targetApp = await getFocusedApp().catch(() => null);
     useApp.getState().setDictation({ activeProfile: profile.id, routePending: "choosing" });
     const pick = await askTranslationTargets({
-      source: profile.language?.trim() ? profile.language : backendLang,
+      source: effectiveLanguage(profile.language, backendLang),
       preset,
       recent: s.settings.recentTranslationTargets ?? [],
       tag: profile.tag?.trim() || profile.name,

@@ -23,7 +23,7 @@ import { useApp } from "./store";
 import { translateFailureDoorway } from "./errors";
 import { attachRecordingPath, recordDictation } from "./transcriptHistory";
 import { enqueueOutcome } from "./usageOutcome";
-import { backendPrompt, effectiveServerUrl } from "./backends";
+import { backendPrompt, effectiveLanguage, effectiveServerUrl } from "./backends";
 import { effectiveServerKind } from "./serverKind";
 import { refreshCaps, translationWarm } from "./capabilities";
 import { acquireWarm, preloadPlanFor, type WarmLease } from "./preload";
@@ -2564,7 +2564,7 @@ async function startLiveInner(
   autoStopMs = activation !== "hold" && rec.handsFreeAutoStopMin > 0 ? rec.handsFreeAutoStopMin * 60_000 : 0;
   // Effective values: a set per-Profile override wins; else inherit the Backend.
   const model = pov?.model?.trim() ? pov.model.trim() : backend.model;
-  const language = pov?.language?.trim() ? pov.language.trim() : backend.language;
+  const language = effectiveLanguage(pov?.language, backend.language);
   // prompt is a 3-state sentinel sent to the backend: undefined → omit (inherit the
   // server DEFAULT_PROMPT); "" → explicit clear (no initial_prompt); value → use it.
   // A profile that set its prompt (incl. an explicit "" clear) wins; else the backend's
@@ -2742,6 +2742,7 @@ async function startLiveInner(
   sessionInsertSkipped = false;
   clearPhraseEnd();
   injectChain = Promise.resolve();
+  injectDepth = 0; // the old chain's finallys may drive it negative; only `>= MAX` reads it
   clearStuckWatchdog(); // fresh session — drop any leftover backstop
 
   // P16/D: surface the injection target + why (if at all) it's coerced to clipboard, for the
@@ -2892,6 +2893,11 @@ function applyReclassify(profile: Profile): void {
   const st = useApp.getState();
   if (insertCfg) {
     insertCfg.activation = "handsfree";
+    // The per-phrase cascade (insert method, paste shortcut, auto-Enter, clipboard restore)
+    // reads this layer on every resolveTarget — leave it and every phrase after the upgrade
+    // resolves from the HOLD profile's overrides while activation/live/sessionMeta already
+    // come from the hands-free one. Same initialisation as startLiveInner.
+    insertCfg.profileInsertion = profile.insertionOverrides ?? {};
     // The chord gets released now the session is hands-free, so live TYPING becomes
     // safe — recompute `live` exactly as startLiveInner does (activation is no longer
     // "hold"). The append-only delta insert catches up anything committed before the
@@ -2909,7 +2915,7 @@ function applyReclassify(profile: Profile): void {
         // `activeEndpoint` is null only with no transport open, and this runs on a live
         // session — but "batch" is the safe read either way (it forbids live typing).
         endpoint: activeEndpoint ?? "batch",
-        activation: insertCfg.activation ?? "handsfree",
+        activation: insertCfg.activation,
         method: insertCfg.method,
       });
     }
@@ -3063,6 +3069,7 @@ export async function cancelLive(): Promise<void> {
   clearPhraseEnd();
   insertCfg = null;
   injectChain = Promise.resolve();
+  injectDepth = 0;
   askTargetsAtSettle = null; // see settleIdle
   routeHint = null;
   useApp

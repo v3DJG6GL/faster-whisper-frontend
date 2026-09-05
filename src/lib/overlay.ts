@@ -14,6 +14,7 @@ import { backendForProfile, homeTargetProfile } from "./dictation";
 import { activeStatsBackend } from "./usage";
 import { fmtCompact, fmtDuration } from "./format";
 import { ownProp } from "./own";
+import { effectiveLanguage } from "./backends";
 import { isActiveDictation } from "./dictationVisual";
 import type { OverlayStatsMetric, UsageStats } from "./types";
 
@@ -104,7 +105,7 @@ function trayRoute(state: ReturnType<typeof useApp.getState>): string {
   const undecided = state.routePending === "undecided";
   if (targets.length === 0 && !undecided) return "";
   const backend = backendForProfile(profile, state.backends);
-  const src = (profile?.language?.trim() ? profile.language : backend?.language) ?? "";
+  const src = effectiveLanguage(profile?.language, backend?.language) ?? "";
   if (targets.length === 0) return `${src.toUpperCase() || "AUTO"} → ?`;
   const shown = targets.slice(0, CHIP_ROUTE_TARGETS).map((t) => t.toUpperCase());
   const more = targets.length - shown.length;
@@ -154,7 +155,7 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     chip = {
       profileTag: chipTagFor(chipProfile),
       // Effective language: a set per-Profile override wins; else the Backend's.
-      language: chipProfile.language?.trim() ? chipProfile.language : chipBackend?.language,
+      language: effectiveLanguage(chipProfile.language, chipBackend?.language),
       // Effective endpoint likewise (a Profile may override stream/batch).
       mode: chipProfile.endpoint ?? chipBackend?.endpoint,
     };
