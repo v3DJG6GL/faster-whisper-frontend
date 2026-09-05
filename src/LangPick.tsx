@@ -25,14 +25,12 @@
 // out of this window is a decision the user can see.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { abortLangPick, commitLangPick } from "@/lib/api";
+import { abortLangPick, commitLangPick, isTauri } from "@/lib/api";
 import { LANGUAGES, languageLabel } from "@/lib/languages";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import { safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
 import type { AccentMotion, ThemeName } from "@/lib/types";
-
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /** Mirrors TRANSLATION_MAX_TARGETS — the server translates every context segment once per
  *  target, so the cost is linear in this number and the cap is a real one. */

@@ -233,7 +233,7 @@ export function ConfirmLeave({
 // language, a profile's tag) whose sanitizers bound the LIST length, not the per-field
 // length — and `languageLabel` returns an unknown code unchanged. Unbounded here, one
 // field pushed the Test/Edit/Remove controls off the card it labels.
-export const BADGE_BASE =
+const BADGE_BASE =
   "inline-block align-bottom rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider truncate";
 
 /** A small uppercase pill. `accent` = highlighted, `warn` = caution, default = dim. */

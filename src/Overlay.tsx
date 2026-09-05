@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, ty
 import { motion, AnimatePresence, MotionConfig } from "motion/react";
 import { Target, X } from "lucide-react";
 import { Waveform } from "@/components/Waveform";
-import { setChipHitRegion, chipPointerOver, emitOverlayAction, showMainAtScreen } from "@/lib/api";
+import { setChipHitRegion, chipPointerOver, emitOverlayAction, showMainAtScreen, isTauri } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { safeDisplayText, safeIdentityText, stripControlChars } from "@/lib/sanitize";
 import { quickLaunchMeta } from "@/lib/screens";
@@ -92,8 +92,6 @@ interface ChipState {
   hoverRevealMs: number;
   quickLaunch: OverlayQuickAction[];
 }
-
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 // Maps a dictationVisual() tone token → the chip's dot fill class. The chip layers
 // its own edge-tuck (peeked) / standby-dock presentation on top — see dotColorClass.
