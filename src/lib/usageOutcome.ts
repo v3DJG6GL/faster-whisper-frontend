@@ -201,10 +201,12 @@ export async function initOutcomeQueue(): Promise<void> {
     console.error("usage outcome queue load failed:", e);
   } finally {
     loading = false;
-    // The merged queue — including anything enqueued while the read was in flight — is
-    // written once now; an enqueue's own persist() during the load was a no-op.
-    persist();
   }
+  // The merged queue — including anything enqueued while the read was in flight — is
+  // written once now (an enqueue's own persist() during the load was a no-op). Only after a
+  // SUCCESSFUL read: a failed one would write the near-empty in-memory queue over the on-disk
+  // backlog it could not read — the next enqueue persists what this session adds either way.
+  if (loaded) persist();
   await flushOutcomes();
 }
 

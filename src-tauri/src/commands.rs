@@ -470,17 +470,7 @@ pub async fn transcribe_file(
         &file_path,
         options,
     );
-    tokio::pin!(fut);
-    loop {
-        tokio::select! {
-            r = &mut fut => return r.map_err(|e| e.to_string()),
-            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
-                if FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst) != epoch {
-                    return Err("cancelled".into());
-                }
-            }
-        }
-    }
+    until_file_epoch_bumps(epoch, fut).await
 }
 
 /// Translate segment texts via POST /v1/text/translations (T2T, no audio).
@@ -529,17 +519,7 @@ pub async fn translate_text(
         captured_id.as_deref(),
     );
     if cancel_with_file_epoch == Some(true) {
-        tokio::pin!(fut);
-        loop {
-            tokio::select! {
-                r = &mut fut => return r.map_err(|e| e.to_string()),
-                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
-                    if FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst) != epoch {
-                        return Err("cancelled".into());
-                    }
-                }
-            }
-        }
+        until_file_epoch_bumps(epoch, fut).await
     } else {
         fut.await.map_err(|e| e.to_string())
     }
@@ -593,17 +573,7 @@ pub async fn transcribe_url(
         &source_url,
         options,
     );
-    tokio::pin!(fut);
-    loop {
-        tokio::select! {
-            r = &mut fut => return r.map_err(|e| e.to_string()),
-            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
-                if FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst) != epoch {
-                    return Err("cancelled".into());
-                }
-            }
-        }
-    }
+    until_file_epoch_bumps(epoch, fut).await
 }
 
 /// Metadata preview of a pasted media link (title / duration / thumbnail) —
@@ -656,6 +626,28 @@ pub async fn fetch_url_media(
 /// shape as session.rs's CANCELLED_BATCH_EPOCH for dictation clips.
 static FILE_TRANSCRIBE_EPOCH: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
+
+/// Drive `fut` to completion unless `cancel_file_transcription` bumps the epoch captured as
+/// `epoch` first — then DROP the future, which closes the connection (the server cancels its
+/// handler task on the disconnect; the in-flight decode thread finishes server-side, but the
+/// request, its semaphore slot and its progress entry all end). Polled at 250 ms. Shared by
+/// `transcribe_file`, `transcribe_url` and the opt-in `translate_text` path.
+async fn until_file_epoch_bumps<T, E: std::fmt::Display>(
+    epoch: u64,
+    fut: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, String> {
+    tokio::pin!(fut);
+    loop {
+        tokio::select! {
+            r = &mut fut => return r.map_err(|e| e.to_string()),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
+                if FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                    return Err("cancelled".into());
+                }
+            }
+        }
+    }
+}
 
 /// Abort every in-flight file transcription (the Transcribe screen's Cancel).
 #[tauri::command]

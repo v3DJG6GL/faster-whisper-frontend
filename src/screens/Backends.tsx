@@ -162,6 +162,15 @@ function Editor({
       if (liveTarget.current.url === testedUrl && liveTarget.current.key === testedKey) {
         resultTarget.current = { url: testedUrl, key: testedKey };
         setResult(info);
+        // The one case the store may take it now: the tested target is exactly the persisted
+        // one (stored keyring key, same effective address, backend already saved), so the
+        // verdict describes what the list card routes to — a Test-then-Cancel on an unedited
+        // backend still refreshes "server came back / went away".
+        const live = useApp.getState();
+        const stored = live.backends.find((x) => x.id === b.id);
+        if (stored && !testedKey && normalizeUrl(testedUrl) === normalizeUrl(effectiveServerUrl(stored, live.settings))) {
+          setConnection(b.id, info);
+        }
       }
     } catch (e) {
       // IPC reject (same guard the list card's handleTest carries) — surface the

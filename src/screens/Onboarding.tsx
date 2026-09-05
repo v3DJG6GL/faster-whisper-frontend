@@ -19,7 +19,7 @@ import {
 } from "@/lib/api";
 import { insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
 import { quickAddPeer } from "@/lib/conflicts";
-import { ALL_CATEGORIES, applyBlob, migrateBlob } from "@/lib/sync";
+import { ALL_CATEGORIES, applyBlob, categorySelection, migrateBlob } from "@/lib/sync";
 import { starterProfiles } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
@@ -28,12 +28,12 @@ import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText } from "@/lib/sanitize";
 import { ImportPreview, IncomingAddresses, relTime } from "./SettingsSync";
 import type { ImportResult, SyncPullResult } from "@/lib/syncTypes";
-import type { Backend, ConnectionInfo, PipelineRule, Profile, SyncCategory } from "@/lib/types";
+import type { Backend, ConnectionInfo, PipelineRule, Profile } from "@/lib/types";
 
 
 type Step = "gate" | "restore" | "starters" | "quickadd";
 
-const ALL_ON = Object.fromEntries(ALL_CATEGORIES.map((c) => [c, true])) as Record<SyncCategory, boolean>;
+const ALL_ON = categorySelection(true);
 
 export function Onboarding({ onDone }: { onDone: () => void }) {
   const st = useApp;
@@ -453,17 +453,24 @@ function QuickAddStep({
   // empty-list notice below would otherwise report as "no editable list on this server".
   const [loadFailed, setLoadFailed] = useState(false);
   useEffect(() => {
+    // A re-run for a new target starts clean, and only the latest request may set state.
+    let live = true;
+    setLoadFailed(false);
+    setRules(null);
     void getPipelineRules({ serverUrl, backendId })
       .then((res) => {
+        if (!live) return;
         if (!res.ok) setLoadFailed(true);
         const maps = ruleListOf(res).filter((r) => r.type === "callback:map");
         setRules(maps);
         setSlug(maps[0]?.name ?? null);
       })
       .catch(() => {
+        if (!live) return;
         setLoadFailed(true);
         setRules([]);
       });
+    return () => { live = false; };
   }, [serverUrl, backendId]);
 
   const options = useMemo(

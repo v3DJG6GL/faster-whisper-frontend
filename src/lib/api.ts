@@ -1080,7 +1080,7 @@ export async function pickAudioFiles(): Promise<string[]> {
 }
 
 /** Native "choose folder" dialog → absolute path (or null if cancelled / not in Tauri).
- *  Generic directory picker — used for the audio base folder (Settings, Onboarding) and the log folder (Settings → Logging). */
+ *  Generic directory picker — used for the audio base folder and the log folder (both Settings). */
 export async function pickRecordingsDir(): Promise<string | null> {
   if (!isTauri) return null;
   const { open } = await import("@tauri-apps/plugin-dialog");

@@ -184,12 +184,17 @@ export default function LangPick() {
       // Abort the whole action (don't start / don't insert) — see the header comment.
       abort();
     } else if (e.key === "Enter") {
-      if (typing && rows[active]) {
+      if (typing) {
         // A live filter means the user is hunting for a row, not confirming the
-        // preset: pick it and clear the filter so the NEXT Enter commits.
-        toggle(rows[active].code);
-        setQuery("");
-        setActive(0);
+        // preset: pick it and clear the filter so the NEXT Enter commits. No match
+        // (a mistyped filter) is a no-op — committing the preset here would be the
+        // very habit trap the footer hint says this key avoids.
+        const row = rows[active];
+        if (row) {
+          toggle(row.code);
+          setQuery("");
+          setActive(0);
+        }
       } else {
         commit(chosen);
       }

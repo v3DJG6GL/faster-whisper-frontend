@@ -140,7 +140,7 @@ function stageLabel(p: BatchProgress | null, forText = false): string {
     case "diarizing":
       return "Identifying speakers…";
     case "loading":
-      return "Loading translation model…";
+      return "Loading the translation model…";
     case "translating":
       return "Translating…";
     default:
@@ -464,6 +464,7 @@ export default function Transcribe() {
   const applyBackendPick = (id: string) => {
     resetForInputChange();
     setBackendId(id);
+    setTranslateExclNotice(null); // per-screen notice about a toggle made on the OLD server
     clearBackendScopedPicks(); // model, profile and stage models all name ONE server
     const b = backends.find((x) => x.id === id);
     const lang = b?.language ?? "auto";
@@ -748,14 +749,16 @@ export default function Transcribe() {
   };
 
   // Whisper's translate task is mutually exclusive with the T2T stage:
-  // switching this on switches Translation off (and says so). Shared by the
-  // standard and full-backend rows, so translateTo never survives a backend
-  // switch with both toggles on.
+  // switching this on switches Translation off (and, on a full backend, says
+  // so — the standard row has no T2T section to hang the notice on, so there
+  // the persisted targets are just dropped). Shared by the standard and
+  // full-backend rows, so translateTo never survives a backend switch with
+  // both toggles on.
   const onWhisperTranslate = (v: boolean) => {
     setTranslate(v);
     if (v && translateTo.length) {
       setTranslateTo([]);
-      setTranslateExclNotice("t2t");
+      if (!isStandard) setTranslateExclNotice("t2t");
       persistOptions({ translate: v, translateTo: [] });
     } else {
       setTranslateExclNotice(null);

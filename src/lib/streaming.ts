@@ -434,7 +434,8 @@ const PHRASE_GAP = "\n\n\n";
 // a wedged one) and hands each reading here, so one poll now serves both. The
 // early-out below is what keeps a live phrase's polling invisible — the phase
 // card only exists for the cold one-shot.
-// Same vocabulary as the retro-translate card. BatchProgress.stage is a plain
+// Same stages as the retro-translate card (its labels are shorter — it sits under
+// a translate-only heading). BatchProgress.stage is a plain
 // string, so an unknown stage (no entry yet — the request hasn't registered the
 // id) is absent here and keeps what we show.
 const TRANSLATE_PHASE_LABEL: Partial<Record<string, string>> = {
@@ -1092,7 +1093,7 @@ function consumePendingHoldStart(): void {
 
 /** Settle the chip to idle, stamping the session's insert outcome (typed/clipboard/none) and
  *  clearing the active profile — the single definition of the end-of-session contract so its
- *  four call sites can't drift. `partial` is deliberately NOT cleared here: the chip's 2 s
+ *  call sites can't drift. `partial` is deliberately NOT cleared here: the chip's 2 s
  *  collapse linger and Home's 10 s "done" card both keep showing the finished transcript
  *  after settle (the next startLive clears it). Fires a queued fast re-press start last.
  *  `keepError` is true from settleToIdleAfterInjection's error branch: same bookkeeping, but

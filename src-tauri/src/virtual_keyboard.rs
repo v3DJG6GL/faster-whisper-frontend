@@ -256,9 +256,9 @@ mod imp {
             if order.is_empty() {
                 return Ok(crate::inject::Landed::Yes);
             }
-            // Before the keymap upload, not only between keys: a bare auto-Enter job is a
-            // single-element `order`, so the in-loop check below (which requires `emitted`)
-            // never fires for it and the Enter went out even after a cancel. `Ok(())` and not
+            // Before the keymap upload, not only between keys: a cancel that already landed
+            // then costs no memfd / keymap roundtrip (the in-loop check covers the bare
+            // auto-Enter job's single element either way). `Ok(())` and not
             // an error, because an error here reports `after_typing: false` and the portal
             // fallback would then type the very text the user cancelled.
             if crate::inject::injection_cancelled(epoch) {
