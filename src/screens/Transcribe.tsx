@@ -4,10 +4,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Key
 import { Link } from "react-router-dom";
 import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, Link2, AudioLines } from "lucide-react";
 import { useApp } from "@/lib/store";
-import {
-  Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select,
-  SettingExpand, SettingRow, Stepper, TextInput, Toggle,
-} from "@/components/ui";
+import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingExpand, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -24,9 +21,7 @@ import {
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, skippedStages, startRun, useTranscribeRun,
   type RailStage, type RunContext, type StepState, settledPanelItem, runTotals } from "@/lib/transcribeRun";
-import {
-  displayLabel, formatLabel, isSourceUrl, normalizeMediaUrl, urlHost, type UrlPreview,
-} from "@/lib/urlSource";
+import { displayLabel, formatLabel, isSourceUrl, normalizeMediaUrl, pickRung, type UrlPreview, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcriptHistory";
@@ -386,6 +381,10 @@ export default function Transcribe() {
   const [urlPreviewData, setUrlPreviewData] = useState<UrlPreview | null>(null);
   const [urlPreviewErr, setUrlPreviewErr] = useState<string | null>(null);
   const [urlPreviewLoading, setUrlPreviewLoading] = useState(false);
+  // The link card's per-item video choice, seeded from Settings on every new
+  // link (a pick here never writes the setting back — it is this link's).
+  const [linkKeepVideo, setLinkKeepVideo] = useState<boolean | null>(null);
+  const [linkVideoHeight, setLinkVideoHeight] = useState<number | null | undefined>(undefined);
   const urlPreviewSeq = useRef(0);
   // Prevents a double-click from opening two native file dialogs.
   const picking = useRef(false);
@@ -593,6 +592,8 @@ export default function Transcribe() {
     const url = normalizeMediaUrl(urlDraft);
     setUrlPreviewData(null);
     setUrlPreviewErr(null);
+    setLinkKeepVideo(null);
+    setLinkVideoHeight(undefined);
     const seq = ++urlPreviewSeq.current;
     if (!url || !urlAvailable || !backend) {
       setUrlPreviewLoading(false);
@@ -631,6 +632,12 @@ export default function Transcribe() {
         extractor: urlPreviewData.extractor ?? undefined,
         estimatedBytes: urlPreviewData.estimated_bytes ?? undefined,
         format: formatLabel(urlPreviewData.ext, urlPreviewData.abr) ?? undefined,
+        videoLadder: urlPreviewData.video_ladder ?? undefined,
+        mediaMaxBytes: urlPreviewData.media_max_bytes ?? undefined,
+        // Only an explicit pick rides along; absent = the Settings default
+        // at run time (so a later Settings change still applies).
+        ...(linkKeepVideo !== null ? { keepVideo: linkKeepVideo } : {}),
+        ...(linkVideoHeight !== undefined ? { videoMaxHeight: linkVideoHeight } : {}),
       });
     }
     addFiles([url]);
@@ -781,6 +788,7 @@ export default function Transcribe() {
       overrideProfile: runOverrideProfile || backend.overrideProfile,
       standard:
         effectiveServerKind(backend, ownProp(useApp.getState().connections, backend.id)) === "standard",
+      urlVideoEnabled: urlAvailable && caps?.url_video_enabled === true,
     };
   };
 
@@ -1101,6 +1109,62 @@ export default function Transcribe() {
                     </span>
                   )}
                 </div>
+                {/* Keep the video too: only when the server can and the link
+                    has one. The quality select lists the site's own rungs;
+                    a rung over the server's cap stays visible but disabled. */}
+                {caps?.url_video_enabled === true &&
+                  (urlPreviewData.video_ladder ?? []).some((r) => r.kind === "video") && (() => {
+                    const ladder = urlPreviewData.video_ladder ?? [];
+                    const keep = linkKeepVideo ?? settings.transcribe?.keepUrlVideoCopies ?? false;
+                    const height =
+                      linkVideoHeight !== undefined
+                        ? linkVideoHeight
+                        : settings.transcribe?.urlVideoMaxHeight ?? null;
+                    const best = pickRung(ladder, null);
+                    const chosen = pickRung(ladder, height);
+                    const rungOpts = [
+                      {
+                        value: "best",
+                        label: `Best available${best?.label ? ` (${safeDisplayText(best.label, 16)}${
+                          best?.approx_bytes ? ` · ≈ ${fmtBytes(best.approx_bytes)}` : ""})` : ""}`,
+                      },
+                      ...ladder
+                        .filter((r) => r.kind === "video" && typeof r.height === "number")
+                        .map((r) => ({
+                          value: String(r.height),
+                          label: `${safeDisplayText(r.label ?? `${r.height}p`, 16)}${
+                            r.approx_bytes ? ` · ≈ ${fmtBytes(r.approx_bytes)}` : ""}${
+                            r.container ? ` · ${r.container}` : ""}${
+                            r.over_cap ? " · over the server limit" : ""}`,
+                        })),
+                    ];
+                    return (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+                        <label className="inline-flex items-center gap-2 text-[12.5px] text-text">
+                          <Toggle
+                            checked={keep}
+                            onChange={(v) => setLinkKeepVideo(v)}
+                            ariaLabel="Also keep the video"
+                          />
+                          Also keep the video
+                        </label>
+                        {keep && (
+                          <Select
+                            value={height == null ? "best" : String(height)}
+                            onChange={(v) => setLinkVideoHeight(v === "best" ? null : Number(v))}
+                            options={rungOpts}
+                            ariaLabel="Video quality"
+                            className="min-w-[220px]"
+                          />
+                        )}
+                        {keep && chosen?.over_cap && (
+                          <span className="text-[12px] text-warn">
+                            Over the server's size limit — pick a smaller size.
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
               </div>
             </div>
           )}
@@ -2088,6 +2152,64 @@ export default function Transcribe() {
                           />
                         </div>
                       )}
+                      {/* keep_video runs: the video fetch is a second, quieter
+                          bar under the audio download (it runs beside the
+                          pipeline, so this row can show it while later stages
+                          run), then a receipt or the client-safe error. */}
+                      {st === "downloading" && meta?.video && (() => {
+                        const v = meta.video;
+                        const terminal = v.state === "done" || v.state === "failed" || v.state === "cancelled";
+                        const vElapsed = meta.videoDlStart ? now - meta.videoDlStart : 0;
+                        const vRate =
+                          v.state === "downloading" && v.downloadedBytes && vElapsed > 2000
+                            ? v.downloadedBytes / (vElapsed / 1000)
+                            : null;
+                        const label = `video${v.height ? ` · ${v.height}p` : ""}${v.container ? ` · ${v.container}` : ""}`;
+                        return (
+                          <div className="mt-2">
+                            <div className="flex items-baseline justify-between gap-3 font-mono text-[11px] tabular-nums text-faint">
+                              <span>{label}</span>
+                              <span className={cn(v.state === "failed" && "text-warn")}>
+                                {v.state === "queued"
+                                  ? "waiting for a download slot…"
+                                  : v.state === "downloading"
+                                    ? `${v.downloadedBytes ? fmtBytes(v.downloadedBytes) : "0 B"}${
+                                        v.totalBytes ? ` of ~${fmtBytes(v.totalBytes)}` : ""}${
+                                        vRate ? ` · ${fmtBytes(vRate)}/s` : ""}`
+                                    : v.state === "merging"
+                                      ? "merging…"
+                                      : v.state === "registering"
+                                        ? "saving on the server…"
+                                        : v.state === "done"
+                                          ? `done${v.bytes ? ` · ${fmtBytes(v.bytes)}` : ""}`
+                                          : v.state === "cancelled"
+                                            ? "cancelled"
+                                            : safeDisplayText(v.error ?? "failed", 120)}
+                              </span>
+                            </div>
+                            {!terminal && (
+                              <div className="mt-1 h-1 overflow-hidden rounded-pill bg-surface-2">
+                                <div
+                                  className={cn(
+                                    "h-full rounded-pill transition-[width] duration-500",
+                                    (v.state === "merging" || v.state === "registering" || v.state === "queued") &&
+                                      "animate-pulse",
+                                  )}
+                                  style={{
+                                    width: `${
+                                      v.state === "downloading" && typeof v.progress === "number"
+                                        ? Math.max(2, Math.round(v.progress * 100))
+                                        : 100
+                                    }%`,
+                                    background: STAGE_COLORS.downloading,
+                                    opacity: 0.6,
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {/* Language ledger: one line per target while the
                           translate stage runs — status word, its own bar,
                           elapsed and what is left — in the rail's own
@@ -2200,6 +2322,14 @@ export default function Transcribe() {
                                 <span className="font-medium text-text">{fmtBytes(dlAvg)}/s</span> avg
                               </span>
                             ) : null}
+                            {st === "downloading" && meta?.video?.state === "done" && (
+                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
+                                <span className="font-medium text-text">
+                                  video{meta.video.height ? ` ${meta.video.height}p` : ""}
+                                </span>
+                                {meta.video.bytes ? ` · ${fmtBytes(meta.video.bytes)}` : ""}
+                              </span>
+                            )}
                             {state === "done" && st === "separating" && (
                               <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
                                 vocals isolated

@@ -95,6 +95,43 @@ export interface UrlPreview {
   ext?: string | null;
   /** Audio bitrate of that format, kbps. */
   abr?: number | null;
+  /** The video heights the site offers (highest first) plus a trailing
+   *  "audio only" entry; [] when video is off or the link has none. */
+  video_ladder?: VideoRung[] | null;
+  /** The server's one media ceiling, for labelling over-cap rungs. */
+  media_max_bytes?: number | null;
+}
+
+/** One rung of a link's video ladder (server-built from yt-dlp's formats). */
+export interface VideoRung {
+  kind: "video" | "audio";
+  height: number | null;
+  width?: number | null;
+  fps?: number | null;
+  hdr?: boolean | null;
+  vcodec?: string | null;
+  acodec?: string | null;
+  /** The container a merge would produce ("mp4" | "mkv"). */
+  container?: string | null;
+  ext?: string | null;
+  abr?: number | null;
+  approx_bytes?: number | null;
+  over_cap?: boolean | null;
+  label?: string | null;
+}
+
+/** The rung a height cap selects: the highest video rung at or under it
+ *  (null = best available); the smallest one when nothing fits; null when
+ *  the ladder has no video at all. Mirrors the server's pick_rung. */
+export function pickRung(ladder: VideoRung[] | null | undefined, maxHeight: number | null): VideoRung | null {
+  const rungs = (ladder ?? []).filter((r) => r.kind === "video" && typeof r.height === "number");
+  if (!rungs.length) return null;
+  if (maxHeight != null) {
+    const fitting = rungs.filter((r) => (r.height as number) <= maxHeight);
+    if (fitting.length) return fitting.reduce((a, b) => ((b.height as number) > (a.height as number) ? b : a));
+    return rungs.reduce((a, b) => ((b.height as number) < (a.height as number) ? b : a));
+  }
+  return rungs.reduce((a, b) => ((b.height as number) > (a.height as number) ? b : a));
 }
 
 /** "m4a · 128 kbps" — the download row's format chip, from preview fields. */

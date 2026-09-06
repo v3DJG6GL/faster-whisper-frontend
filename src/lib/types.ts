@@ -415,6 +415,12 @@ export interface TranscribeSettings {
   /** Keep the downloaded audio of link transcriptions (the ONLY playable
    *  source for those records). Absent = true. */
   keepUrlAudioCopies?: boolean;
+  /** Also fetch and keep the VIDEO of link transcriptions (video/ in the
+   *  audio folder). Absent = FALSE — the inverse default of the audio key:
+   *  video is 10–50× the bytes and only ever for export. */
+  keepUrlVideoCopies?: boolean;
+  /** Height cap for kept videos; null/absent = best available. */
+  urlVideoMaxHeight?: number | null;
 }
 
 /** Capture threshold for the in-app log ring + session file — lower levels
@@ -536,6 +542,13 @@ export interface Capabilities {
   /** Installed yt-dlp version on the server (newer backends, only when the
    *  feature is on) — surfaced in download-failure guidance. */
   yt_dlp_version?: string | null;
+  /** Whether a link's VIDEO can be kept/fetched. ABSENT means the feature
+   *  does not exist — the switch shows only on `=== true`. */
+  url_video_enabled?: boolean;
+  /** Server-side height ceiling for kept videos; null = best available. */
+  url_video_default_max_height?: number | null;
+  /** The one media ceiling (uploads, link audio/video), in bytes. */
+  media_max_bytes?: number;
   /** Whether this server runs the T2T translating stage. Like
    *  url_download_enabled, ABSENT means the feature does not exist —
    *  translation UI shows only on `=== true` (deliberate opt-in). */
@@ -911,6 +924,10 @@ export interface TranscribeOptions {
   separationModel?: string;
   /** Client-generated hex id for live progress polling (full backend only). */
   progressId?: string;
+  /** URL runs: also fetch the VIDEO (best video + best audio merged) beside
+   *  the audio, capped at this height (null/absent = best available). */
+  keepVideo?: boolean;
+  videoMaxHeight?: number | null;
 }
 
 /** Live progress of an in-flight file transcription. */
@@ -984,6 +1001,24 @@ export interface BatchProgress {
   plan?: PlanStage[] | null;
   overall?: number | null;
   etaS?: number | null;
+  /** keep_video runs: the secondary video download's own state. */
+  video?: VideoProgress | null;
+}
+
+/** The progress entry's `video` sub-object: a link run's optional video
+ *  fetch, reported beside the audio download. `state` in done | failed |
+ *  cancelled is terminal. */
+export interface VideoProgress {
+  state: "queued" | "downloading" | "merging" | "registering" | "done" | "failed" | "cancelled";
+  progress?: number | null;
+  downloadedBytes?: number | null;
+  totalBytes?: number | null;
+  height?: number | null;
+  container?: string | null;
+  mediaId?: string | null;
+  expiresAt?: number | null;
+  bytes?: number | null;
+  error?: string | null;
 }
 
 /** Result of a batch transcription. */
@@ -1008,6 +1043,17 @@ export interface BatchResult {
    *  via fetchUrlMedia for local playback) + its advisory unix expiry. */
   sourceMediaId?: string;
   sourceMediaExpiresAt?: number;
+  /** keep_video runs: the retained VIDEO's id + expiry once the fetch
+   *  finished before the transcript did; `sourceVideoPending` when it still
+   *  runs (poll the progress id for `video.state`); `sourceVideoError` when
+   *  it failed (client-safe text). */
+  sourceVideoMediaId?: string;
+  sourceVideoExpiresAt?: number;
+  sourceVideoHeight?: number;
+  sourceVideoContainer?: string;
+  sourceVideoBytes?: number;
+  sourceVideoPending?: boolean;
+  sourceVideoError?: string;
   /** Full translated texts keyed by target language (joined per-segment). */
   translations?: Record<string, string>;
   /** Provenance of the translating stage when it ran. */

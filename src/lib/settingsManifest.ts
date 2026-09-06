@@ -180,6 +180,15 @@ export const MANIFEST = [
   { id: "keepUrlAudioCopies", label: "Keep audio from links",
     group: "recordingHistory", section: "Transcriptions", category: "fileTranscriptions",
     fields: [t("keepUrlAudioCopies")] },
+  { id: "keepUrlVideoCopies", label: "Also keep the video",
+    group: "recordingHistory", section: "Transcriptions", category: "fileTranscriptions",
+    desc: "Fetch a link's video beside the audio, for export. Off: fetched only when you export it.",
+    fields: [t("keepUrlVideoCopies")] },
+  { id: "urlVideoQuality", label: "Video quality for links",
+    group: "recordingHistory", section: "Transcriptions", category: "fileTranscriptions",
+    parent: "keepUrlVideoCopies",
+    desc: "Best available, or the largest size up to this height.",
+    fields: [t("urlVideoMaxHeight")] },
   { id: "transcriptionRetention", label: "Delete transcriptions after",
     group: "recordingHistory", section: "Transcriptions", category: "fileTranscriptions",
     fields: [t("historyRetentionDays")] },
@@ -419,6 +428,8 @@ export const TRANSCRIBE_COVERAGE = {
   dictationRetentionDays: "dictationRetention",
   keepAudioCopies: "keepAudioCopies",
   keepUrlAudioCopies: "keepUrlAudioCopies",
+  keepUrlVideoCopies: "keepUrlVideoCopies",
+  urlVideoMaxHeight: "urlVideoQuality",
 } as const satisfies Record<keyof TranscribeSettings, Covered>;
 
 export const LOGGING_COVERAGE = {

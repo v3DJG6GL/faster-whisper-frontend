@@ -84,6 +84,8 @@ const AUDIO_STORE_TYPES = [
     color: "var(--c-ok)", bytesKey: "fileMediaBytes", filesKey: "fileMediaFiles" },
   { key: "links", sub: "links/", label: "link transcriptions",
     color: "#6faed9", bytesKey: "linkMediaBytes", filesKey: "linkMediaFiles" },
+  { key: "video", sub: "video/", label: "link videos",
+    color: "#c68fb4", bytesKey: "videoMediaBytes", filesKey: "videoMediaFiles" },
 ] as const satisfies readonly {
   key: string; sub: string; label: string; color: string;
   bytesKey: keyof TranscriptStoreStats; filesKey: keyof TranscriptStoreStats;
@@ -1027,7 +1029,7 @@ export default function Settings() {
   }, [tab, refreshStoreStats]);
   // Inline two-step confirmation for the destructive store actions — the
   // confirm names the exact count/size (never a bare "are you sure").
-  const [confirming, setConfirming] = useState<null | "dict" | "files" | "links" | "clear">(null);
+  const [confirming, setConfirming] = useState<null | "dict" | "files" | "links" | "video" | "clear">(null);
   const [storeMsg, setStoreMsg] = useState<{ text: string; error?: boolean } | null>(null);
   const [dirBusy, setDirBusy] = useState(false);
   const dirBusyRef = useRef(false);
@@ -1037,7 +1039,7 @@ export default function Settings() {
     setConfirming(null);
     setStoreMsg(null);
   }, [tab]);
-  const runStoreAction = (kind: "dict" | "files" | "links" | "clear") => {
+  const runStoreAction = (kind: "dict" | "files" | "links" | "video" | "clear") => {
     if (dirBusyRef.current) return;
     // Nothing parked may land after the wipe: a coalesced record write, an 800 ms edit
     // debounce or a chunk merge otherwise re-created a JSON file Rust just removed.
@@ -1067,6 +1069,10 @@ export default function Settings() {
     } else if (kind === "links") {
       void removeTranscriptMedia("url", basePref)
         .then((n) => done(n, "downloaded file(s)"))
+        .catch(fail);
+    } else if (kind === "video") {
+      void removeTranscriptMedia("video", basePref)
+        .then((n) => done(n, "video file(s)"))
         .catch(fail);
     } else {
       void clearFileTranscriptions(basePref)
@@ -1559,6 +1565,36 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
+              title={SETTING.keepUrlVideoCopies.label}
+              desc="Fetch a link's video beside the audio on every link run, so it is ready to export with its subtitles (video/ in the audio folder). Off: the video is fetched only when you export it. The link card can override this per link."
+            >
+              <Toggle
+                checked={s.transcribe?.keepUrlVideoCopies ?? false}
+                onChange={(v) => updateTranscribe({ keepUrlVideoCopies: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              title={SETTING.urlVideoQuality.label}
+              desc="Best available, or the largest size the site offers up to this height. Bigger sizes mean larger files; the server's size limit still applies."
+            >
+              <Select
+                value={s.transcribe?.urlVideoMaxHeight == null ? "best" : String(s.transcribe.urlVideoMaxHeight)}
+                onChange={(v) =>
+                  updateTranscribe({ urlVideoMaxHeight: v === "best" ? null : Number(v) })
+                }
+                ariaLabel={SETTING.urlVideoQuality.label}
+                options={[
+                  { value: "best", label: "Best available" },
+                  { value: "2160", label: "Up to 2160p (4K)" },
+                  { value: "1440", label: "Up to 1440p" },
+                  { value: "1080", label: "Up to 1080p" },
+                  { value: "720", label: "Up to 720p" },
+                  { value: "480", label: "Up to 480p" },
+                  { value: "360", label: "Up to 360p" },
+                ]}
+              />
+            </SettingRow>
+            <SettingRow
               title={SETTING.transcriptionRetention.label}
               desc="Files and links alike — transcript, corrections, speaker names and the audio copy leave together. Link audio removed this way can't be re-downloaded."
             >
@@ -1619,6 +1655,32 @@ export default function Settings() {
                   onClick={() => {
                     setStoreMsg(null);
                     setConfirming("links");
+                  }}
+                >
+                  Delete…
+                </Button>
+              )}
+            </SettingRow>
+            <SettingRow
+              title="Delete videos from link transcriptions"
+              desc={`Frees ${storeStats ? fmtBytes(storeStats.videoMediaBytes) : "0 KB"}. Transcripts and audio stay; a video can be fetched again from its link when you export.`}
+            >
+              {confirming === "video" ? (
+                <span className="flex items-center gap-2">
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("video")}>
+                    Delete {storeStats?.videoMediaFiles ?? 0} files
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                    Cancel
+                  </Button>
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => {
+                    setStoreMsg(null);
+                    setConfirming("video");
                   }}
                 >
                   Delete…

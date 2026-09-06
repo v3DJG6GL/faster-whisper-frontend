@@ -17,7 +17,7 @@ use std::time::Duration;
 /// the server was still working, losing the result. Still bounded so a black-holed server
 /// can't hang the screen forever. The dictation batch path keeps the 120 s default (its only
 /// stuck-session backstop).
-const FILE_TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(3600);
+pub(crate) const FILE_TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// Mirrors `session.rs`'s cap on the same list from the dictation path.
 /// A BCP-47 tag; the longest real ones are ~35 characters.
@@ -81,6 +81,10 @@ pub struct BatchOptions {
     /// Per-run diarization pipeline / MSS model overrides.
     pub diarization_model: Option<String>,
     pub separation_model: Option<String>,
+    /// URL runs: also fetch the VIDEO (best video + best audio merged) beside
+    /// the audio, capped at this height (None = best available).
+    pub keep_video: Option<bool>,
+    pub video_max_height: Option<u32>,
     /// Client-generated hex id the server keys live progress under
     /// (GET /v1/audio/transcriptions/progress/<id> while the POST runs).
     pub progress_id: Option<String>,
@@ -129,6 +133,22 @@ pub struct BatchResult {
     pub source_media_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_media_expires_at: Option<i64>,
+    /// keep_video runs: the retained video's id + facts once fetched, or
+    /// `pending` while it still runs, or the client-safe error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_video_media_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_video_expires_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_video_height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_video_container: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_video_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_video_pending: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_video_error: Option<String>,
     /// Full translated texts keyed by target language (translating stage).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub translations: Option<std::collections::BTreeMap<String, String>>,
@@ -177,6 +197,20 @@ struct VerboseJson {
     source_media_id: Option<String>,
     #[serde(default)]
     source_media_expires_at: Option<i64>,
+    #[serde(default)]
+    source_video_media_id: Option<String>,
+    #[serde(default)]
+    source_video_expires_at: Option<i64>,
+    #[serde(default)]
+    source_video_height: Option<u32>,
+    #[serde(default)]
+    source_video_container: Option<String>,
+    #[serde(default)]
+    source_video_bytes: Option<u64>,
+    #[serde(default)]
+    source_video_pending: Option<bool>,
+    #[serde(default)]
+    source_video_error: Option<String>,
     #[serde(default)]
     translations: Option<std::collections::BTreeMap<String, String>>,
     #[serde(default)]
@@ -235,6 +269,22 @@ mod wire_field_tests {
         let plan = p.plan.expect("plan kept");
         assert_eq!(plan.len(), 8);
         assert_eq!(plan[0].stage.as_deref().map(|s| s.chars().count()), Some(33));
+    }
+
+    #[test]
+    fn video_progress_and_ladder_are_bounded() {
+        let json = r#"{"stage":"downloading","video":{"state":"downloading","progress":2.0,
+            "downloaded_bytes":10,"total_bytes":100,"height":99999,"container":"mkvmkvmkvmkv",
+            "media_id":"../etc","error":"x"}}"#;
+        let parsed: BatchProgress = serde_json::from_str(json).expect("parses");
+        let v = bound_progress(parsed).video.expect("video kept");
+        assert_eq!(v.progress, Some(1.0));
+        assert_eq!(v.height, None);
+        assert_eq!(v.media_id, None);
+        assert_eq!(v.downloaded_bytes, Some(10));
+        assert_eq!(v.container.as_deref().map(|s| s.chars().count()), Some(9)); // 8 + "…"
+        let out = serde_json::to_string(&v).expect("serializes");
+        assert!(out.contains("\"downloadedBytes\":10"), "{out}");
     }
 
     #[test]
@@ -388,6 +438,47 @@ pub(crate) fn bound_plan(plan: Vec<PlanStage>) -> Vec<PlanStage> {
         .collect()
 }
 
+/// The progress entry's `video` sub-object (keep_video runs): the secondary
+/// video fetch's state, reported beside the audio download. Snake_case on
+/// the wire, camelCase to the webview.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoProgress {
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub progress: Option<f64>,
+    #[serde(default, alias = "downloaded_bytes")]
+    pub downloaded_bytes: Option<u64>,
+    #[serde(default, alias = "total_bytes")]
+    pub total_bytes: Option<u64>,
+    #[serde(default)]
+    pub height: Option<u32>,
+    #[serde(default)]
+    pub container: Option<String>,
+    #[serde(default, alias = "media_id")]
+    pub media_id: Option<String>,
+    #[serde(default, alias = "expires_at")]
+    pub expires_at: Option<i64>,
+    #[serde(default)]
+    pub bytes: Option<u64>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+fn bound_video(v: VideoProgress) -> VideoProgress {
+    VideoProgress {
+        state: v.state.map(|s| super::bounded_server_text(&s, 16)),
+        progress: fin_frac(v.progress),
+        container: v.container.map(|s| super::bounded_server_text(&s, 8)),
+        height: v.height.filter(|h| (1..=8192).contains(h)),
+        // Screened like a progress id: it gets interpolated into a URL path.
+        media_id: v.media_id.filter(|s| is_progress_id(s)),
+        error: v.error.map(|s| super::bounded_server_text(&s, super::MAX_ERROR_TEXT)),
+        ..v
+    }
+}
+
 /// Live progress of an in-flight file transcription (see BatchOptions::progress_id).
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -443,6 +534,9 @@ pub struct BatchProgress {
     pub overall: Option<f64>,
     #[serde(default, alias = "eta_s")]
     pub eta_s: Option<f64>,
+    /// keep_video runs: the secondary video download's own state.
+    #[serde(default)]
+    pub video: Option<VideoProgress>,
 }
 
 /// Bound a parsed progress poll: every server string rendered as a UI label,
@@ -472,6 +566,7 @@ pub(crate) fn bound_progress(parsed: BatchProgress) -> BatchProgress {
         plan: parsed.plan.map(bound_plan),
         overall: fin_frac(parsed.overall),
         eta_s: fin_secs(parsed.eta_s),
+        video: parsed.video.map(bound_video),
         ..parsed
     }
 }
@@ -759,6 +854,14 @@ async fn post(
             form = form.text("progress_id", pid.to_string());
         }
     }
+    if let Some(k) = opts.keep_video {
+        form = form.text("keep_video", if k { "true" } else { "false" });
+        // The height cap rides only with keep_video, and only in the range the
+        // server accepts (it clamps too — this keeps nonsense off the wire).
+        if let Some(h) = opts.video_max_height.filter(|h| (144..=4320).contains(h)) {
+            form = form.text("video_max_height", h.to_string());
+        }
+    }
 
     // /v1/audio/translations auto-detects the source and always outputs
     // English — `language` is undefined there.
@@ -886,6 +989,17 @@ async fn post(
         // would interpolate into a URL path.
         source_media_id: parsed.source_media_id.filter(|s| is_progress_id(s)),
         source_media_expires_at: parsed.source_media_expires_at,
+        source_video_media_id: parsed.source_video_media_id.filter(|s| is_progress_id(s)),
+        source_video_expires_at: parsed.source_video_expires_at,
+        source_video_height: parsed.source_video_height.filter(|h| (1..=8192).contains(h)),
+        source_video_container: parsed
+            .source_video_container
+            .map(|s| super::bounded_server_text(&s, 8)),
+        source_video_bytes: parsed.source_video_bytes,
+        source_video_pending: parsed.source_video_pending,
+        source_video_error: parsed
+            .source_video_error
+            .map(|s| super::bounded_server_text(&s, super::MAX_ERROR_TEXT)),
         translations: parsed.translations.map(bound_translation_keys),
         translation: parsed.translation.map(|t| TranslationInfo {
             model: t.model.map(|m| super::bounded_server_text(&m, 128)),
@@ -939,6 +1053,61 @@ pub struct UrlPreview {
     /// Audio bitrate of that format, kbps.
     #[serde(default)]
     pub abr: Option<f64>,
+    /// The video heights the site offers (server-built), highest first, plus
+    /// a trailing "audio only" entry; empty when video is off.
+    #[serde(default)]
+    pub video_ladder: Vec<VideoRung>,
+    /// The server's one media ceiling, for labelling over-cap rungs.
+    #[serde(default)]
+    pub media_max_bytes: Option<u64>,
+}
+
+/// One rung of a link's video ladder — advisory for the client's picker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoRung {
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub height: Option<u32>,
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub fps: Option<u32>,
+    #[serde(default)]
+    pub hdr: Option<bool>,
+    #[serde(default)]
+    pub vcodec: Option<String>,
+    #[serde(default)]
+    pub acodec: Option<String>,
+    #[serde(default)]
+    pub container: Option<String>,
+    #[serde(default)]
+    pub ext: Option<String>,
+    #[serde(default)]
+    pub abr: Option<f64>,
+    #[serde(default)]
+    pub approx_bytes: Option<u64>,
+    #[serde(default)]
+    pub over_cap: Option<bool>,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// A ladder is a select, not a table: a handful of rungs, every string a
+/// label the webview renders.
+const MAX_LADDER_RUNGS: usize = 16;
+
+fn bound_rung(r: VideoRung) -> VideoRung {
+    VideoRung {
+        kind: r.kind.map(|s| super::bounded_server_text(&s, 8)),
+        vcodec: r.vcodec.map(|s| super::bounded_server_text(&s, 32)),
+        acodec: r.acodec.map(|s| super::bounded_server_text(&s, 32)),
+        container: r.container.map(|s| super::bounded_server_text(&s, 8)),
+        ext: r.ext.map(|s| super::bounded_server_text(&s, 16)),
+        label: r.label.map(|s| super::bounded_server_text(&s, 32)),
+        height: r.height.filter(|h| (1..=8192).contains(h)),
+        ..r
+    }
 }
 
 /// The preview probe is interactive (debounced keystrokes) — cap it well
@@ -982,6 +1151,80 @@ pub async fn url_preview(
         thumbnail: parsed.thumbnail.filter(|t| {
             t.len() <= MAX_THUMBNAIL_DATA_URI && t.starts_with("data:image/")
         }),
+        video_ladder: parsed
+            .video_ladder
+            .into_iter()
+            .take(MAX_LADDER_RUNGS)
+            .map(bound_rung)
+            .collect(),
+        ..parsed
+    })
+}
+
+/// What `POST /v1/audio/url-media/video` answers.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UrlVideoDownload {
+    #[serde(alias = "media_id")]
+    pub media_id: String,
+    #[serde(default, alias = "expires_at")]
+    pub expires_at: Option<i64>,
+    #[serde(default)]
+    pub height: Option<u32>,
+    #[serde(default)]
+    pub container: Option<String>,
+    #[serde(default)]
+    pub bytes: Option<u64>,
+}
+
+/// A 10 GB video on a slow uplink: the server's own wall clock for one video
+/// download is an hour by default; give the request room past that.
+const URL_VIDEO_TIMEOUT: Duration = Duration::from_secs(4 * 3600);
+
+/// Ask the server to fetch a link's VIDEO into its media store on demand
+/// (the export panel's path for a run that did not keep it). Progress rides
+/// on `progress_id` through the shared progress route.
+pub async fn url_video_download(
+    server_url: &str,
+    api_key: Option<&str>,
+    url: &str,
+    max_height: Option<u32>,
+    progress_id: Option<&str>,
+) -> anyhow::Result<UrlVideoDownload> {
+    validate_media_url(url)?;
+    let base = base_url(server_url);
+    let mut body = serde_json::json!({ "url": url });
+    if let Some(h) = max_height.filter(|h| (144..=4320).contains(h)) {
+        body["max_height"] = serde_json::json!(h);
+    }
+    if let Some(pid) = progress_id.filter(|p| is_progress_id(p)) {
+        body["progress_id"] = serde_json::json!(pid);
+    }
+    let resp = with_auth(
+        client().post(format!("{base}/v1/audio/url-media/video")).json(&body),
+        api_key,
+    )
+    .timeout(URL_VIDEO_TIMEOUT)
+    .send()
+    .await
+    .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = body_capped_to(resp, MAX_ERROR_BODY)
+            .await
+            .unwrap_or_else(|reason| reason);
+        bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
+    }
+    let parsed: UrlVideoDownload = json_capped_to::<UrlVideoDownload>(resp, MAX_META_BODY)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))
+        .context("decoding the video download answer")?;
+    if !is_progress_id(&parsed.media_id) {
+        bail!("the server answered with a malformed media id");
+    }
+    Ok(UrlVideoDownload {
+        container: parsed.container.map(|s| super::bounded_server_text(&s, 8)),
+        height: parsed.height.filter(|h| (1..=8192).contains(h)),
         ..parsed
     })
 }
@@ -999,6 +1242,7 @@ pub async fn download_result_media(
     dest_dir: &Path,
     record_id: &str,
     max_bytes: u64,
+    timeout: Duration,
 ) -> anyhow::Result<Option<String>> {
     if !is_progress_id(media_id) {
         bail!("malformed media id");
@@ -1008,8 +1252,9 @@ pub async fn download_result_media(
         client().get(format!("{base}/v1/audio/url-media/{media_id}")),
         api_key,
     )
-    // A 2 GB pull on a slow LAN can be slow; same generous ceiling as the run.
-    .timeout(FILE_TRANSCRIBE_TIMEOUT)
+    // A multi-GB pull on a slow LAN can be slow: the caller sizes the ceiling
+    // (the run's own for audio, hours for a video).
+    .timeout(timeout)
     .send()
     .await
     .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
@@ -1034,7 +1279,11 @@ pub async fn download_result_media(
         Some("audio/webm") => "webm",
         Some("audio/flac") => "flac",
         Some("audio/aac") => "aac",
-        Some("audio/x-matroska") | Some("video/x-matroska") => "mka",
+        Some("audio/x-matroska") => "mka",
+        Some("video/mp4") => "mp4",
+        Some("video/webm") => "webm",
+        Some("video/x-matroska") => "mkv",
+        Some("video/quicktime") => "mov",
         _ => "bin",
     };
     // Owner-only like every other media folder this app creates (`save_transcript_media`,
@@ -1072,7 +1321,7 @@ pub async fn download_result_media(
             f.write_all(&chunk).await.context("writing the media file")?;
         }
         if total == 0 {
-            bail!("the server sent no audio");
+            bail!("the server sent no media");
         }
         // tokio::fs::File defers writes to a blocking op — a late ENOSPC/EIO
         // surfaces here, not on the write_all that queued it. Swallowing it

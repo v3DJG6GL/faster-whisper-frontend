@@ -217,6 +217,8 @@ pub fn run() {
             commands::cancel_text_translation, // tell the server to stop an in-flight T2T run
             commands::url_preview,          // link metadata preview (Transcribe screen)
             commands::fetch_url_media,      // pull downloaded audio for local playback
+            commands::fetch_url_video,      // pull a link run's kept video for export
+            commands::url_video_download,   // fetch a link's video on demand (export panel)
             commands::import_settings_file, // P30: settings import (parse+validate)
             commands::list_audio_devices,
             commands::start_mic_test,

@@ -14,7 +14,7 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 /// Names of the per-type subfolders inside the audio base folder.
-pub(crate) const AUDIO_SUBDIRS: [&str; 3] = ["dictations", "files", "links"];
+pub(crate) const AUDIO_SUBDIRS: [&str; 4] = ["dictations", "files", "links", "video"];
 
 /// The one base folder for ALL stored audio (dictations/, files/, links/
 /// inside it). A non-empty `custom` (audioBaseDir, with the legacy
@@ -617,6 +617,59 @@ pub async fn fetch_url_media(
         &dir,
         &record_id,
         crate::transcripts::MAX_MEDIA_BYTES,
+        transport::batch::FILE_TRANSCRIBE_TIMEOUT,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Pull the server-retained VIDEO of a link run into `<base>/video/<record_id>.<ext>`.
+/// Same contract as `fetch_url_media`; a video pull gets hours, not the run's ceiling.
+#[tauri::command]
+pub async fn fetch_url_video(
+    app: tauri::AppHandle,
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    media_id: String,
+    record_id: String,
+    audio_base: Option<String>,
+) -> Result<Option<String>, String> {
+    if !crate::transcripts::valid_id(&record_id) {
+        return Err("malformed record id".into());
+    }
+    let key = resolve_key(api_key, backend_id);
+    let dir = crate::transcripts::video_media_dir(&app, audio_base)?;
+    transport::batch::download_result_media(
+        &server_url,
+        key.as_deref(),
+        &media_id,
+        &dir,
+        &record_id,
+        crate::transcripts::MAX_MEDIA_BYTES,
+        transport::batch::FILE_TRANSCRIBE_TIMEOUT * 4,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Ask the server to fetch a link's VIDEO on demand (POST /v1/audio/url-media/video).
+#[tauri::command]
+pub async fn url_video_download(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    url: String,
+    max_height: Option<u32>,
+    progress_id: Option<String>,
+) -> Result<transport::batch::UrlVideoDownload, String> {
+    let key = resolve_key(api_key, backend_id);
+    transport::batch::url_video_download(
+        &server_url,
+        key.as_deref(),
+        &url,
+        max_height,
+        progress_id.as_deref(),
     )
     .await
     .map_err(|e| e.to_string())

@@ -54,6 +54,14 @@ pub(crate) fn links_media_dir(app: &AppHandle, custom: Option<String>) -> Result
         .ok_or_else(|| "could not resolve the audio folder".into())
 }
 
+/// Downloaded VIDEO of link transcriptions: `<base>/video/<id>.<ext>` — kept
+/// for export (no in-app video playback yet).
+pub(crate) fn video_media_dir(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
+    crate::commands::resolve_audio_base(app, custom)
+        .map(|b| b.join(crate::commands::AUDIO_SUBDIRS[3]))
+        .ok_or_else(|| "could not resolve the audio folder".into())
+}
+
 /// The `kind` field of one record ("file" | "url" | "dictation"), if the
 /// record exists and parses. Used by the layout migration to route media.
 pub(crate) fn record_kind(app: &AppHandle, id: &str) -> Option<String> {
@@ -94,7 +102,7 @@ pub(crate) fn rewrite_media_paths(
             // records under `mediaPath` — a moved file must be re-pointed in
             // whichever field carries it.
             let mut changed = false;
-            for key in ["mediaPath", "sourcePath"] {
+            for key in ["mediaPath", "videoPath", "sourcePath"] {
                 let Some(old) = v.get(key).and_then(|m| m.as_str()) else {
                     continue;
                 };
@@ -168,7 +176,7 @@ pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
                 continue;
             };
             let mut changed = false;
-            for key in ["mediaPath", "sourcePath"] {
+            for key in ["mediaPath", "videoPath", "sourcePath"] {
                 let Some(old) = v.get(key).and_then(|m| m.as_str()) else {
                     continue;
                 };
@@ -208,7 +216,7 @@ pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
 
 /// Copy cap — beyond this the copy is silently skipped (the record keeps
 /// playing from the original while it exists).
-pub(crate) const MAX_MEDIA_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+pub(crate) const MAX_MEDIA_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
 /// Record ids are frontend-generated UUIDs — hex + dashes only, so an id can
 /// never traverse out of the transcripts directory.
@@ -364,7 +372,8 @@ pub fn delete_transcript_record(
     }
     for dir in [
         files_media_dir(&app, audio_base.clone()),
-        links_media_dir(&app, audio_base),
+        links_media_dir(&app, audio_base.clone()),
+        video_media_dir(&app, audio_base),
     ]
     .into_iter()
     .flatten()
@@ -471,6 +480,7 @@ pub fn transcript_store_stats(
     }
     let (file_bytes, file_files) = owned_dir_bytes(&files_media_dir(&app, audio_base.clone())?, is_own_media);
     let (link_bytes, link_files) = owned_dir_bytes(&links_media_dir(&app, audio_base.clone())?, is_own_media);
+    let (video_bytes, video_files) = owned_dir_bytes(&video_media_dir(&app, audio_base.clone())?, is_own_media);
     let (rec_bytes, rec_files) = crate::commands::resolve_recordings_dir(&app, audio_base)
         .map(|d| {
             owned_dir_bytes(&d, |p| {
@@ -488,6 +498,8 @@ pub fn transcript_store_stats(
         "fileMediaFiles": file_files,
         "linkMediaBytes": link_bytes,
         "linkMediaFiles": link_files,
+        "videoMediaBytes": video_bytes,
+        "videoMediaFiles": video_files,
         "recordingsBytes": rec_bytes,
         "recordingsFiles": rec_files,
     }))
@@ -541,9 +553,11 @@ pub fn remove_transcript_media(
     match kind.as_deref() {
         Some("file") => dirs.push(files_media_dir(&app, audio_base)?),
         Some("url") => dirs.push(links_media_dir(&app, audio_base)?),
+        Some("video") => dirs.push(video_media_dir(&app, audio_base)?),
         _ => {
             dirs.push(files_media_dir(&app, audio_base.clone())?);
-            dirs.push(links_media_dir(&app, audio_base)?);
+            dirs.push(links_media_dir(&app, audio_base.clone())?);
+            dirs.push(video_media_dir(&app, audio_base)?);
         }
     }
     let mut removed = 0u32;
@@ -584,7 +598,8 @@ fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
     let mut removed = 0;
     for dir in [
         files_media_dir(app, audio_base.clone()),
-        links_media_dir(app, audio_base),
+        links_media_dir(app, audio_base.clone()),
+        video_media_dir(app, audio_base),
     ]
     .into_iter()
     .flatten()

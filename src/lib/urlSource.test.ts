@@ -83,3 +83,21 @@ describe("urlHost", () => {
     expect(urlHost("not a url")).toBe("");
   });
 });
+
+describe("pickRung (the video ladder pick)", () => {
+  const ladder = [
+    { kind: "video", height: 1080, container: "mkv" },
+    { kind: "video", height: 720, container: "mp4" },
+    { kind: "video", height: 360, container: "mp4" },
+    { kind: "audio", height: null },
+  ] as import("./urlSource").VideoRung[];
+  it("best when uncapped, the highest at or under a cap, the smallest when nothing fits", async () => {
+    const { pickRung } = await import("./urlSource");
+    expect(pickRung(ladder, null)?.height).toBe(1080);
+    expect(pickRung(ladder, 720)?.height).toBe(720);
+    expect(pickRung(ladder, 900)?.height).toBe(720);
+    expect(pickRung(ladder, 144)?.height).toBe(360);
+    expect(pickRung([{ kind: "audio", height: null }], null)).toBeNull();
+    expect(pickRung(undefined, null)).toBeNull();
+  });
+});

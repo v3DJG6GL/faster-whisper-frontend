@@ -251,6 +251,59 @@ export async function urlPreview(args: {
   });
 }
 
+/** Pull the server-retained VIDEO of a link run into the local media store
+ *  (video/<recordId>.<ext>). Null when the server no longer has it. */
+export async function fetchUrlVideo(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  mediaId: string;
+  recordId: string;
+  audioBase?: string | null;
+}): Promise<string | null> {
+  if (!isTauri) return null;
+  return invoke<string | null>("fetch_url_video", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    mediaId: args.mediaId,
+    recordId: args.recordId,
+    audioBase: args.audioBase ?? null,
+  });
+}
+
+/** What the server answers when a video was fetched on demand. */
+export interface UrlVideoDownload {
+  mediaId: string;
+  expiresAt: number | null;
+  height: number | null;
+  container: string | null;
+  bytes: number | null;
+}
+
+/** Fetch a link's VIDEO on demand (a run that did not keep it, or whose copy
+ *  expired) into the server's media store; the id can then be pulled with
+ *  fetchUrlVideo. Long-running: progress via getTranscribeProgress on
+ *  `progressId` (stage downloading + the `video` sub-object). */
+export async function fetchUrlVideoOnDemand(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  url: string;
+  maxHeight?: number | null;
+  progressId?: string | null;
+}): Promise<UrlVideoDownload> {
+  if (!isTauri) throw new Error("Video download requires the desktop app.");
+  return invoke<UrlVideoDownload>("url_video_download", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    url: args.url,
+    maxHeight: args.maxHeight ?? null,
+    progressId: args.progressId ?? null,
+  });
+}
+
 /** Pull the server-retained audio of a finished URL run into the local media
  *  store (media/<recordId>.<ext>). Returns the local path, or null when the
  *  server no longer has the file (retention expired) — the transcript stays
@@ -1251,13 +1304,16 @@ export interface TranscriptStoreStats {
   fileMediaFiles: number;
   linkMediaBytes: number;
   linkMediaFiles: number;
+  videoMediaBytes: number;
+  videoMediaFiles: number;
   recordingsBytes: number;
   recordingsFiles: number;
 }
 
 const EMPTY_STORE_STATS: TranscriptStoreStats = {
   dictationCount: 0, fileCount: 0, fileMediaBytes: 0, fileMediaFiles: 0,
-  linkMediaBytes: 0, linkMediaFiles: 0, recordingsBytes: 0, recordingsFiles: 0,
+  linkMediaBytes: 0, linkMediaFiles: 0, videoMediaBytes: 0, videoMediaFiles: 0,
+  recordingsBytes: 0, recordingsFiles: 0,
 };
 
 export async function transcriptStoreStats(
@@ -1283,7 +1339,7 @@ export async function clearFileTranscriptions(audioBase: string | null): Promise
 /** "Delete audio from … transcriptions" — empties one media subfolder
  *  ("file" → files/, "url" → links/); transcripts stay. */
 export async function removeTranscriptMedia(
-  kind: "file" | "url",
+  kind: "file" | "url" | "video",
   audioBase: string | null,
 ): Promise<number> {
   if (!isTauri) return 0;

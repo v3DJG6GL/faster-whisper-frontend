@@ -667,3 +667,28 @@ describe("forgetRecord (a deleted record must stay deleted)", () => {
     }
   });
 });
+
+describe("keep_video: the secondary download folds into the Download row's meta", () => {
+  it("keeps the video state and stamps its own rate clock, never reopening the stage clock", () => {
+    useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(10_000);
+      foldProgress({ stage: "transcribing", progress: 0.1,
+        video: { state: "queued" } });
+      expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
+      expect(useTranscribeRun.getState().stageMeta.downloading?.videoDlStart).toBeUndefined();
+      vi.setSystemTime(12_000);
+      foldProgress({ stage: "transcribing", progress: 0.2,
+        video: { state: "downloading", progress: 0.4, downloadedBytes: 40, totalBytes: 100 } });
+      const meta = useTranscribeRun.getState().stageMeta.downloading;
+      expect(meta?.video?.progress).toBe(0.4);
+      expect(meta?.videoDlStart).toBe(12_000);
+      // The download stage's own clock is untouched by the video fetch.
+      expect(useTranscribeRun.getState().stageTimes.downloading).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
+    }
+  });
+});

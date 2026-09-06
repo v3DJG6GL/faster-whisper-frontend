@@ -9,8 +9,8 @@
 import { create } from "zustand";
 import {
   audioBasePref, cancelBackendTranscription, cancelFileTranscription, fetchUrlMedia,
-  getTranscribeProgress, readTextFile, saveTranscriptMedia, transcribeFile, transcribeUrl,
-  translateText,
+  fetchUrlVideo, getTranscribeProgress, readTextFile, saveTranscriptMedia, transcribeFile,
+  transcribeUrl, translateText,
 } from "./api";
 import { transportErrorDoorway } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
@@ -19,8 +19,9 @@ import { useApp } from "./store";
 import { setRecordForgetHook, upsertRecord, type TranscriptRecord } from "./transcriptHistory";
 import type {
   BatchProgress, BatchResult, DecodeOverrides, PlanStage, PlanUnit, TranscribeOptions,
-  TranscriptSegment,
+  TranscriptSegment, VideoProgress,
 } from "./types";
+import type { VideoRung } from "./urlSource";
 
 export type ItemStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
@@ -77,6 +78,11 @@ export interface StageMeta {
    *  stamped when a poll first names it — the ledger's per-language elapsed
    *  ticks between polls off this, like the stage clocks. */
   unitStarts?: Record<string, number>;
+  /** Download stage only (keep_video runs): the secondary video fetch's
+   *  last reported state, and when it first reported downloading (its own
+   *  rate clock, like dlStart). */
+  video?: VideoProgress;
+  videoDlStart?: number;
 }
 
 /** Canonical pipeline order — used to close seeded clocks of stages the server
@@ -366,6 +372,9 @@ export interface RunContext {
   overrideProfile?: string;
   /** Proven-standard server: skip full-backend progress polling. */
   standard: boolean;
+  /** The server can keep a link's video (caps.url_video_enabled): only then
+   *  does a URL item's keep-video choice go on the wire. */
+  urlVideoEnabled?: boolean;
 }
 
 interface TranscribeRunState {
@@ -407,6 +416,12 @@ interface TranscribeRunState {
     estimatedBytes?: number;
     /** "m4a · 128 kbps" — the audio format the download fetches. */
     format?: string;
+    /** The link card's per-item video choice (absent = the Settings
+     *  default) and the preview's ladder + cap for the rail's chips. */
+    keepVideo?: boolean;
+    videoMaxHeight?: number | null;
+    videoLadder?: VideoRung[];
+    mediaMaxBytes?: number;
   }>;
   /** Options/overrides of the current or last run (rail layout + Retry). */
   lastOptions?: TranscribeOptions;
@@ -724,6 +739,86 @@ function fetchRunUrlMedia(path: string, rec: TranscriptRecord, ctx: RunContext, 
     .catch((e) => console.error("url media fetch failed:", e));
 }
 
+/** Pull the server-retained VIDEO of a link run into the local video store
+ *  (keepUrlVideoCopies gate is the run's own keep_video choice — the server
+ *  only holds a video the user asked for) and stamp it on the record as
+ *  `videoPath`. Same double registration as the audio copy. */
+function fetchRunUrlVideo(path: string, rec: TranscriptRecord, ctx: RunContext, mediaId: string) {
+  const s = useApp.getState().settings;
+  void fetchUrlVideo({
+    serverUrl: ctx.serverUrl,
+    backendId: ctx.backendId,
+    mediaId,
+    recordId: rec.id,
+    audioBase: audioBasePref(s.recording),
+  })
+    .then((videoPath) => {
+      if (!videoPath) return;
+      const cur = recordById[rec.id] ?? historyByPath[path];
+      if (cur && cur.id === rec.id) {
+        const updated = { ...cur, videoPath };
+        registerRecord(updated);
+        upsertRecord(updated);
+      }
+    })
+    .catch((e) => console.error("url video fetch failed:", e));
+}
+
+/** The transcript returned while its video was still downloading: keep
+ *  polling the run's progress id (its own 1 s poller — the run poller is
+ *  gone) until the `video` sub-object reaches a terminal state, folding it
+ *  into the rail only while this run is still the one on screen, then pull
+ *  the file. Gives up when the entry vanishes (server restart / stale
+ *  sweep) or after two hours. */
+function awaitRunUrlVideo(
+  path: string,
+  rec: TranscriptRecord,
+  ctx: RunContext,
+  pid: string,
+  epoch: number,
+) {
+  const startedAt = Date.now();
+  let inFlight = false;
+  const timer = window.setInterval(() => {
+    if (inFlight) return;
+    if (Date.now() - startedAt > 2 * 60 * 60 * 1000) {
+      window.clearInterval(timer);
+      return;
+    }
+    inFlight = true;
+    getTranscribeProgress({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, progressId: pid })
+      .then((p) => {
+        if (p.stage === "unknown" || !p.stage) {
+          // Entry gone without a terminal state: the fetch is lost to us
+          // (the export panel can still fetch on demand).
+          if (!p.video) {
+            window.clearInterval(timer);
+            return;
+          }
+        }
+        if (p.video && epoch === get().epoch) {
+          set((s) => ({
+            stageMeta: {
+              ...s.stageMeta,
+              downloading: {
+                ...s.stageMeta.downloading,
+                video: p.video ?? undefined,
+                videoDlStart: s.stageMeta.downloading?.videoDlStart ?? Date.now(),
+              },
+            },
+          }));
+        }
+        const st = p.video?.state;
+        if (st === "done" || st === "failed" || st === "cancelled") {
+          window.clearInterval(timer);
+          if (st === "done" && p.video?.mediaId) fetchRunUrlVideo(path, rec, ctx, p.video.mediaId);
+        }
+      })
+      .catch(() => {})
+      .finally(() => { inFlight = false; });
+  }, 1000);
+}
+
 /** Load a history record back into the workbench: one settled queue row,
  *  selected, with its overlays restored. Refused mid-run (the pump owns the
  *  queue then). */
@@ -996,6 +1091,21 @@ export function foldProgress(p: BatchProgress) {
         downloading: { ...stageMeta.downloading, dlStart: now },
       };
     }
+    // keep_video runs: the secondary video fetch rides in the entry's
+    // `video` sub-object on every poll (also after the transcript returned,
+    // via awaitRunUrlVideo). It never reopens the download row's clock.
+    if (p.video) {
+      stageMeta = {
+        ...stageMeta,
+        downloading: {
+          ...stageMeta.downloading,
+          video: p.video,
+          videoDlStart:
+            stageMeta.downloading?.videoDlStart ??
+            (p.video.state === "downloading" ? now : undefined),
+        },
+      };
+    }
     // Per-language clock: the first poll naming a target starts its lane's
     // elapsed ticker (the server's elapsed_s only moves per poll).
     if (p.target && cur === "translating" && !stageMeta.translating?.unitStarts?.[p.target]) {
@@ -1217,6 +1327,20 @@ async function pump(
           }, 1000)
         : undefined;
       try {
+        // A URL item's keep-video choice: the link card's per-item pick,
+        // else the Settings default — only when the server can do it.
+        let itemOptions = options;
+        if (isUrl && ctx.urlVideoEnabled) {
+          const meta = get().urlMeta[next.path];
+          const st = useApp.getState().settings.transcribe;
+          const keepVideo = meta?.keepVideo ?? st?.keepUrlVideoCopies ?? false;
+          if (keepVideo) {
+            const videoMaxHeight = meta?.videoMaxHeight !== undefined
+              ? meta.videoMaxHeight
+              : st?.urlVideoMaxHeight ?? null;
+            itemOptions = { ...(options ?? {}), keepVideo: true, videoMaxHeight };
+          }
+        }
         const common = {
           serverUrl: ctx.serverUrl,
           backendId: ctx.backendId,
@@ -1225,7 +1349,7 @@ async function pump(
           prompt: ctx.prompt,
           decodeOverrides: ctx.decodeOverrides,
           overrideProfile: ctx.overrideProfile,
-          options: pid ? { ...options, progressId: pid } : options,
+          options: pid ? { ...itemOptions, progressId: pid } : itemOptions,
         };
         const res = isText
           ? await translateTextSource(next.path, options!, ctx, pid, epoch)
@@ -1243,6 +1367,13 @@ async function pump(
         const rec = recordRun(next.path, ctx, options, { status: "done", result: res, tookMs });
         if (isUrl) {
           if (res.sourceMediaId) fetchRunUrlMedia(next.path, rec, ctx, res.sourceMediaId);
+          if (res.sourceVideoMediaId) {
+            fetchRunUrlVideo(next.path, rec, ctx, res.sourceVideoMediaId);
+          } else if (res.sourceVideoPending && pid) {
+            // The transcript came back before the video did: keep polling
+            // the same id (the server leaves the entry to the video task).
+            awaitRunUrlVideo(next.path, rec, ctx, pid, epoch);
+          }
         } else if (!isText) {
           copyRunMedia(next.path, rec);
         }

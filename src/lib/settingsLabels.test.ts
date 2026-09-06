@@ -26,6 +26,7 @@ describe("manifest labels match the screens' literal labels", () => {
     ["screens/Transcribe.tsx", "translate"],
     ["screens/Transcribe.tsx", "translateTo"],
     ["screens/Transcribe.tsx", "separateBgm"],
+    ["screens/Transcribe.tsx", "keepUrlVideoCopies"], // the link card's per-link switch
     ["components/TranscriptViewer.tsx", "showTimestamps"],
     ["components/TranscriptViewer.tsx", "showSpeakerNames"],
     ["components/TranscriptViewer.tsx", "colorizeSpeakers"],
