@@ -70,7 +70,10 @@
       "devCsp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": {
+          "allow": ["**", "$APPDATA/**"],
+          "deny": []
+        }
       }
     }
   },

@@ -35,7 +35,7 @@ import {
 } from "@/lib/transcriptExport";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { urlHost } from "@/lib/urlSource";
-import { isVideoSourcePath } from "@/lib/mediaExport";
+import { exportStem, isVideoSourcePath } from "@/lib/mediaExport";
 import { cn } from "@/lib/cn";
 
 /** "Today" / "Yesterday" / a local date — the bucket a record sorts under. */
@@ -434,10 +434,7 @@ export default function History() {
     const t = settings.transcribe ?? {};
     const format = (t.exportFormat ?? "srt") as ExportFormat;
     const ext = EXPORT_EXTENSIONS[format];
-    const stem =
-      rec.kind === "url"
-        ? rec.sourceName.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) || "transcript"
-        : rec.sourceName.replace(/\.[^.]+$/, "");
+    const stem = exportStem(rec.title, rec.sourceName);
     let path: string | null;
     try {
       path = await pickExportPath(`${stem}.${ext}`, format.toUpperCase(), ext);

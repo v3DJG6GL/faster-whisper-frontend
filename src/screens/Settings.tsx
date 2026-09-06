@@ -1566,10 +1566,10 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title={SETTING.keepUrlVideoCopies.label}
-              desc="Fetch a link's video beside the audio on every link run, so it is ready to export with its subtitles (video/ in the audio folder). Off: the video is fetched only when you export it. The link card can override this per link."
+              desc="Fetch a link's video beside the audio on every link run, ready to export with its subtitles (video/ in the audio folder). Off: the video is fetched only when you export it. The link card can override this per link."
             >
               <Toggle
-                checked={s.transcribe?.keepUrlVideoCopies ?? false}
+                checked={s.transcribe?.keepUrlVideoCopies ?? true}
                 onChange={(v) => updateTranscribe({ keepUrlVideoCopies: v })}
               />
             </SettingRow>

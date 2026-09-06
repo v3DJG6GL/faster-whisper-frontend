@@ -416,8 +416,8 @@ export interface TranscribeSettings {
    *  source for those records). Absent = true. */
   keepUrlAudioCopies?: boolean;
   /** Also fetch and keep the VIDEO of link transcriptions (video/ in the
-   *  audio folder). Absent = FALSE — the inverse default of the audio key:
-   *  video is 10–50× the bytes and only ever for export. */
+   *  audio folder). Absent = TRUE, like the audio key: the video is ready
+   *  to export the moment the run finishes. */
   keepUrlVideoCopies?: boolean;
   /** Height cap for kept videos; null/absent = best available. */
   urlVideoMaxHeight?: number | null;
@@ -944,6 +944,9 @@ export interface TranscribeOptions {
    *  the audio, capped at this height (null/absent = best available). */
   keepVideo?: boolean;
   videoMaxHeight?: number | null;
+  /** The rung's yt-dlp format id when the user picked one on the link card;
+   *  absent = the Settings height cap decides (best available by default). */
+  videoFormat?: string | null;
   /** File runs: keep the uploaded video on the server for a while so a
    *  packaging export right after needs no second upload. */
   retainMedia?: boolean;
@@ -1032,8 +1035,16 @@ export interface VideoProgress {
   progress?: number | null;
   downloadedBytes?: number | null;
   totalBytes?: number | null;
+  /** True when totalBytes is an estimate: the row prints "≈" and, past the
+   *  estimate, holds at 99 % with "received · finishing…". */
+  totalApprox?: boolean | null;
   height?: number | null;
   container?: string | null;
+  /** The rung's label ("1080p Premium") and codecs, for the Video row. */
+  label?: string | null;
+  vcodec?: string | null;
+  acodec?: string | null;
+  formatId?: string | null;
   mediaId?: string | null;
   expiresAt?: number | null;
   bytes?: number | null;

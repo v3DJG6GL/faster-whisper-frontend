@@ -16,7 +16,7 @@ import {
   activeRailIndex, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
   overallOf, etaSecOf, planOf, planTimeline, unitsFraction,
   railIndex, railOf, railStages, selectPath, setRename, skippedStages,
-  useTranscribeRun,
+  useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
   cancelRun, retryFile, runBadgeFraction, runTotals, settledPanelItem,
 } from "./transcribeRun";
@@ -331,6 +331,40 @@ describe("planTimeline (the proportional strip)", () => {
     expect(tl[2].fill).toBeCloseTo(0.2, 5);
     expect(tl[2].overrun).toBe(false);
     expect(tl[3].estMs).toBe(101_000);
+  });
+
+  it("does not fill a warm-up phase by the clock", () => {
+    const base = {
+      stages: ["transcribing"] as RailStage[],
+      skipped: new Set<RailStage>(),
+      stageTimes: { transcribing: { start: 0, observed: true } },
+      complete: false,
+      now: 30_000,
+    };
+    // "skipping silence…": the registry says analyzing, the plan names the phase.
+    const warm = planTimeline({
+      ...base,
+      plan: [{ stage: "transcribing", state: "active", estS: 200, elapsedS: 30, phase: "analyzing" }],
+      progress: { stage: "analyzing" },
+    });
+    expect(warm[0].fill).toBe(0);
+    expect(warm[0].overrun).toBe(false);
+    // Separation's transcode rides as a step on the plain stage.
+    const prep = planTimeline({
+      ...base,
+      stages: ["separating"] as RailStage[],
+      stageTimes: { separating: { start: 0, observed: true } },
+      plan: [{ stage: "separating", state: "active", estS: 100, elapsedS: 30 }],
+      progress: { stage: "separating", step: "preparing" },
+    });
+    expect(prep[0].fill).toBe(0);
+    // The decoder's plain tick with no fraction yet still fills by time.
+    const work = planTimeline({
+      ...base,
+      plan: [{ stage: "transcribing", state: "active", estS: 200, elapsedS: 30 }],
+      progress: { stage: "transcribing" },
+    });
+    expect(work[0].fill).toBeCloseTo(0.15, 5);
   });
 
   it("gives the translate segment one lane per non-instant target", () => {

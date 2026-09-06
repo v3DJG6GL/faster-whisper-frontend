@@ -100,4 +100,48 @@ describe("pickRung (the video ladder pick)", () => {
     expect(pickRung([{ kind: "audio", height: null }], null)).toBeNull();
     expect(pickRung(undefined, null)).toBeNull();
   });
+  it("honours an explicit format id while it is on the ladder, and keeps the ladder's rank order", async () => {
+    const { pickRung } = await import("./urlSource");
+    const ranked = [
+      { kind: "video", height: 1080, format_id: "616", note: "Premium" },
+      { kind: "video", height: 1080, format_id: "399" },
+      { kind: "video", height: 720, format_id: "398" },
+    ] as import("./urlSource").VideoRung[];
+    // Best = the first rung (the server ranks Premium above plain 1080p).
+    expect(pickRung(ranked, null)?.format_id).toBe("616");
+    expect(pickRung(ranked, 1080)?.format_id).toBe("616");
+    expect(pickRung(ranked, null, "399")?.format_id).toBe("399");
+    // A stale id falls back to the height rule.
+    expect(pickRung(ranked, 720, "gone")?.format_id).toBe("398");
+    // A height-less "Best available" rung is what any pick returns.
+    const best = [{ kind: "video", height: null, format_id: null }] as import("./urlSource").VideoRung[];
+    expect(pickRung(best, 720)).toBe(best[0]);
+  });
+});
+
+describe("tierWords (D68: the seven-word scale, collapsed from the middle)", () => {
+  it("never repeats a word and always keeps the ends", async () => {
+    const { tierWords } = await import("./urlSource");
+    expect(tierWords(1)).toEqual(["Best available"]);
+    expect(tierWords(2)).toEqual(["Highest", "Lowest"]);
+    expect(tierWords(3)).toEqual(["Highest", "Medium", "Lowest"]);
+    expect(tierWords(4)).toEqual(["Highest", "High", "Low", "Lowest"]);
+    expect(tierWords(5)).toEqual(["Highest", "High", "Medium", "Low", "Lowest"]);
+    expect(tierWords(7)).toEqual(["Highest", "Very high", "High", "Medium", "Low", "Very low", "Lowest"]);
+    // Past seven the tail shows facts only.
+    expect(tierWords(9).slice(7)).toEqual([null, null]);
+    expect(tierWords(0)).toEqual([]);
+  });
+});
+
+describe("rungFacts", () => {
+  it("marks estimated bitrates and sizes with ≈ and leaves exact ones bare", async () => {
+    const { rungFacts } = await import("./urlSource");
+    const fmt = { bytes: (n: number) => `${(n / 1e6).toFixed(0)} MB`, bitrate: (k: number) => `${(k / 1000).toFixed(1)} Mbit/s` };
+    expect(rungFacts({ kind: "video", height: 1080, label: "1080p", tbr_kbps: 2190, bitrate_approx: true,
+      approx_bytes: 340e6, bytes_approx: true, container: "mkv" }, fmt)).toBe("1080p · ≈2.2 Mbit/s · ≈340 MB · mkv");
+    expect(rungFacts({ kind: "video", height: 1080, label: "1080p", tbr_kbps: 809, bitrate_approx: false,
+      approx_bytes: 139e6, bytes_approx: false, container: "mp4" }, fmt)).toBe("1080p · 0.8 Mbit/s · 139 MB · mp4");
+    expect(rungFacts({ kind: "video", height: null, label: "Best available", container: "mkv" }, fmt)).toBe("Best available · mkv");
+  });
 });

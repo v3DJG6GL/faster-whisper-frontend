@@ -661,6 +661,7 @@ pub async fn url_video_download(
     api_key: Option<String>,
     url: String,
     max_height: Option<u32>,
+    format_id: Option<String>,
     progress_id: Option<String>,
 ) -> Result<transport::batch::UrlVideoDownload, String> {
     let key = resolve_key(api_key, backend_id);
@@ -669,6 +670,7 @@ pub async fn url_video_download(
         key.as_deref(),
         &url,
         max_height,
+        format_id.as_deref(),
         progress_id.as_deref(),
     )
     .await
@@ -760,6 +762,9 @@ pub async fn package_media(
     container: String,
     subtitles: Vec<transport::media::SubtitleTrack>,
     default_track: Option<u32>,
+    original_track: Option<u32>,
+    audio_lang: Option<String>,
+    audio_label: Option<String>,
     dest_path: String,
     filename: String,
     max_upload_bytes: Option<u64>,
@@ -774,16 +779,28 @@ pub async fn package_media(
     if subtitles.len() > media::MAX_TRACKS {
         return Err(format!("at most {} subtitle tracks", media::MAX_TRACKS));
     }
+    let lang_ok = |l: &str| {
+        (2..=12).contains(&l.len()) && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    };
     for t in &subtitles {
         if t.srt.len() > media::MAX_SRT_BYTES {
             return Err("a subtitle track is too large".into());
         }
-        let ok = (2..=12).contains(&t.lang.len())
-            && t.lang.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
-        if !ok {
+        if !lang_ok(&t.lang) {
             return Err("a subtitle track has a malformed language code".into());
         }
     }
+    for (name, idx) in [("default_track", default_track), ("original_track", original_track)] {
+        if idx.is_some_and(|i| i as usize >= subtitles.len()) {
+            return Err(format!("{name} is out of range"));
+        }
+    }
+    // An unusable audio language is dropped, not fatal: the mux still works,
+    // only the audio stream keeps whatever tag the source carried.
+    let audio_lang = audio_lang.filter(|l| lang_ok(l));
+    let audio_label = audio_label
+        .map(|l| l.chars().filter(|c| !c.is_control()).take(64).collect::<String>())
+        .filter(|l| !l.trim().is_empty());
     let dest = PathBuf::from(&dest_path);
     let Some(parent) = dest.parent().filter(|p| p.is_dir()) else {
         return Err("the export folder does not exist".into());
@@ -856,6 +873,9 @@ pub async fn package_media(
             &container,
             &subtitles,
             default_track,
+            original_track,
+            audio_lang.as_deref(),
+            audio_label.as_deref(),
             &filename,
             &dest,
             crate::transcripts::MAX_MEDIA_BYTES,

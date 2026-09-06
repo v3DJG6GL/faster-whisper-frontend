@@ -1,8 +1,8 @@
 import { ownProp } from "@/lib/own";
 import { screenEyebrow, screenTitle } from "@/lib/screens";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, Link2, AudioLines } from "lucide-react";
+import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, ChevronDown, Link2, AudioLines, Film } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingExpand, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
@@ -14,18 +14,18 @@ import { TranscriptViewer } from "@/components/TranscriptViewer";
 import { speakerOrder as speakersOf } from "@/lib/transcriptExport";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useBackendModels } from "@/lib/useBackendModels";
-import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
+import { fmtBitrate, fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
   activeRailIndex, addFiles, cancelRun, etaSecOf, overallOf, planOf, planTimeline, railStages, runBadgeFraction, unitsFraction,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, skippedStages, startRun, useTranscribeRun,
   type RailStage, type RunContext, type StepState, settledPanelItem, runTotals } from "@/lib/transcribeRun";
-import { displayLabel, formatLabel, isSourceUrl, normalizeMediaUrl, pickRung, type UrlPreview, urlHost } from "@/lib/urlSource";
+import { displayLabel, formatLabel, isSourceUrl, normalizeMediaUrl, pickRung, rungFacts, tierWords, type UrlPreview, type VideoRung, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcriptHistory";
-import { closeRecord, openHistoryRecord } from "@/lib/transcribeRun";
+import { closeRecord, openHistoryRecord, retryRunVideo } from "@/lib/transcribeRun";
 import { backendOptions, backendPrompt, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/subtitleImport";
@@ -34,7 +34,7 @@ import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
 import {
   NO_OVERRIDE_PROFILE,
-  type BatchProgress, type DecodeOverrides, type TranscribeOptions,
+  type BatchProgress, type DecodeOverrides, type TranscribeOptions, type VideoProgress,
 } from "@/lib/types";
 
 /** Bound the "server ignored N overrides" list — untrusted response, real DOM. */
@@ -160,14 +160,14 @@ function fmtElapsed(ms: number): string {
 /** Display names + one-line explanations for the rail rows (the stage order
  *  itself lives in transcribeRun.railStages). */
 const RAIL_NAMES: Record<RailStage, string> = {
-  downloading: "Download",
+  downloading: "Audio",
   separating: "Music source separation",
   transcribing: "Transcribe",
   diarizing: "Speaker diarization",
   translating: "Translation",
 };
 const RAIL_DESCRIPTIONS: Record<RailStage, string> = {
-  downloading: "Fetches the audio from the link on the server before the pipeline runs.",
+  downloading: "The server fetches the link's audio before the pipeline runs.",
   separating: "Vocals kept, music removed — the transcript decodes from the clean stem.",
   transcribing: "",
   diarizing: "Labels each segment with who is speaking.",
@@ -185,6 +185,263 @@ export const SKIPPED_EXPLANATIONS: Record<RailStage, string> = {
   translating: " — the transcript stays in its source language.",
 };
 
+/** Plain names for the diarizing stage's units — pyannote's step names
+ *  ride as `target`; the technical name stays beside the plain one so a
+ *  server log line and a ledger line can be matched. */
+const UNIT_LABELS: Record<string, string> = {
+  segmentation: "Finding speech turns",
+  embeddings: "Voice fingerprints",
+  clustering: "Grouping speakers",
+};
+const UNIT_NOUN: Partial<Record<RailStage, string>> = {
+  translating: "languages",
+  diarizing: "steps",
+};
+
+/** The link card's quality picker (D67 B): a listbox whose rows carry the
+ *  tier word on top and the facts beneath — resolution, bitrate, size,
+ *  container — so nothing truncates and each rung reads in one glance. The
+ *  ladder arrives rank-ordered from the server; the tier words follow that
+ *  order and never repeat (tierWords). */
+function RungPicker({
+  ladder,
+  chosen,
+  onChange,
+}: {
+  ladder: VideoRung[];
+  chosen: VideoRung | null;
+  onChange: (rung: VideoRung) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const rungs = ladder.filter((r) => r.kind === "video");
+  const words = tierWords(rungs.length);
+  const idx = Math.max(0, chosen ? rungs.indexOf(chosen) : 0);
+  const cur = rungs[idx];
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  const fmt = { bytes: fmtBytes, bitrate: fmtBitrate };
+  const spec = (r: VideoRung) =>
+    r.note && r.label ? r.label.replace(r.note, "").trim() : r.label ?? "";
+  const move = (dir: 1 | -1) => {
+    let i = idx;
+    for (let n = 0; n < rungs.length; n++) {
+      i = Math.min(rungs.length - 1, Math.max(0, i + dir));
+      if (!rungs[i]?.over_cap) break;
+    }
+    if (rungs[i] && !rungs[i].over_cap) onChange(rungs[i]);
+  };
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Video quality"
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setOpen(false);
+          else if (e.key === "ArrowDown") { e.preventDefault(); move(1); }
+          else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+        }}
+        className="ring-signal inline-flex h-9 min-w-[250px] items-center justify-between gap-3 rounded-xl border border-line-strong bg-surface-2 px-3 text-[13px] text-text"
+      >
+        <span className="truncate">
+          {words[idx] ? `${words[idx]}${rungs.length > 1 ? " quality" : ""}` : "Quality"}
+          {cur && spec(cur) ? <span className="text-dim"> · {safeDisplayText(spec(cur), 20)}</span> : null}
+        </span>
+        <ChevronDown className="size-3.5 shrink-0 text-faint" />
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          aria-label="Video quality"
+          className="absolute left-0 top-full z-20 mt-1 max-h-[340px] w-[400px] overflow-auto rounded-xl border border-line-strong bg-panel p-1.5 shadow-lg"
+        >
+          {rungs.map((r, i) => {
+            const selected = i === idx;
+            const facts = rungFacts({ ...r, label: spec(r) }, fmt);
+            return (
+              <li
+                key={r.format_id ?? `${r.height ?? "best"}-${i}`}
+                role="option"
+                aria-selected={selected}
+                aria-disabled={!!r.over_cap}
+                onClick={() => {
+                  if (r.over_cap) return;
+                  onChange(r);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "cursor-pointer rounded-lg px-2.5 py-1.5",
+                  selected && "bg-accent-soft",
+                  r.over_cap && "cursor-not-allowed opacity-50",
+                )}
+              >
+                <div className="flex items-baseline gap-2 text-[13px] text-text">
+                  {words[i] ? `${words[i]}${rungs.length > 1 ? " quality" : ""}` : "\u00a0"}
+                  {r.note && (
+                    <span className="rounded-md bg-[color:var(--c-download)]/15 px-1.5 font-mono text-[10px] uppercase tracking-label text-[color:var(--c-download)]">
+                      {safeDisplayText(r.note, 10)}
+                    </span>
+                  )}
+                </div>
+                <div className="font-mono text-[11px] text-dim">
+                  {safeDisplayText(facts, 64)}
+                  {r.over_cap ? " · over the server limit" : ""}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** The Video row: the kept copy's own download, hanging off the Audio
+ *  stage by a dashed connector — its own status word, its own clock, a
+ *  thinner bar. Past an approximate total the bar holds at 99 % and the
+ *  label says what arrived, never a number the picture contradicts. */
+function VideoBranchRow({
+  v,
+  dlStart,
+  now,
+  onRetry,
+}: {
+  v: VideoProgress;
+  dlStart?: number;
+  now: number;
+  onRetry?: () => void;
+}) {
+  const terminal = v.state === "done" || v.state === "failed" || v.state === "cancelled";
+  const elapsed = dlStart ? Math.max(0, now - dlStart) : 0;
+  const total = v.totalBytes ?? null;
+  const got = v.downloadedBytes ?? 0;
+  const over = v.state === "downloading" && !!total && got >= total;
+  const rate =
+    v.state === "downloading" && got > 0 && elapsed > 5000 ? got / (elapsed / 1000) : null;
+  const left =
+    !over && rate && total && got < total ? ((total - got) / rate) * 1000 : null;
+  const fill =
+    v.state === "downloading"
+      ? over ? 0.99
+        : Math.max(0.02, Math.min(0.99, typeof v.progress === "number" ? v.progress : total ? got / total : 0.02))
+      : 1;
+  const busy = v.state === "queued" || v.state === "merging" || v.state === "registering";
+  const codec = v.vcodec ? v.vcodec.split(".")[0].replace(/^vp09$/, "vp9").replace(/^av01$/, "av1") : null;
+  const spec = [v.label, codec, v.container].filter(Boolean).map((x) => safeDisplayText(String(x), 20)).join(" · ");
+  const tone =
+    v.state === "failed" ? "text-warn" : v.state === "done" ? "text-ok" : "text-faint";
+  const word =
+    v.state === "queued" ? "queued"
+      : v.state === "downloading" ? "downloading"
+        : v.state === "merging" ? "merging"
+          : v.state === "registering" ? "saving"
+            : v.state;
+  return (
+    <div className="relative flex gap-3.5 border-b border-line py-3 pl-0 last:border-b-0">
+      <span className="absolute left-3 top-0 h-2.5 border-l border-dashed border-line-strong" aria-hidden />
+      <span
+        className={cn(
+          "mt-1 grid size-6 shrink-0 place-items-center rounded-full border-[1.5px] border-dashed",
+          v.state === "done" ? "border-ok/60 text-ok"
+            : v.state === "failed" ? "border-warn/60 text-warn"
+              : "border-line-strong text-[color:var(--c-download)]",
+        )}
+      >
+        {v.state === "done" ? <Check className="size-3.5" /> : <Film className="size-3" />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-[13px] font-medium text-dim">
+            Video
+            {v.state === "failed" && v.error ? (
+              <span className="font-normal text-faint"> — {safeDisplayText(v.error, 120)}</span>
+            ) : null}
+          </span>
+          <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
+            <span className={tone}>{word}</span>
+            {elapsed > 0 || terminal ? ` · ${fmtElapsed(elapsed)}` : ""}
+          </span>
+        </div>
+        {!terminal && (
+          <div
+            role="progressbar"
+            aria-label="Video"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={v.state === "downloading" && !over ? Math.round(fill * 100) : undefined}
+            className="mt-2 h-1 overflow-hidden rounded-pill bg-surface-2"
+          >
+            <div
+              className={cn(
+                "h-full rounded-pill transition-[width] duration-500",
+                (busy || over) && "animate-pulse motion-reduce:animate-none motion-reduce:opacity-80",
+              )}
+              style={{
+                width: `${Math.round(fill * 100)}%`,
+                background: STAGE_COLORS.downloading,
+                opacity: 0.85,
+              }}
+            />
+          </div>
+        )}
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 font-mono text-[11px] tabular-nums text-faint">
+          {spec ? <span>{spec}</span> : null}
+          {v.state === "downloading" && (
+            <>
+              <span>
+                <span className="text-text">{fmtBytes(got)}</span>
+                {over
+                  ? " received · finishing…"
+                  : total ? ` of ${v.totalApprox ? "≈" : ""}${fmtBytes(total)}` : ""}
+              </span>
+              {rate ? <span>{fmtBytes(rate)}/s</span> : null}
+              {left !== null && left > 0 ? <span>{aboutLeft(left)}</span> : null}
+            </>
+          )}
+          {v.state === "queued" && <span>waiting for a download slot…</span>}
+          {v.state === "done" && (
+            <>
+              {v.bytes ? (
+                <span className="rounded-md bg-surface-2 px-2 py-0.5 text-[10.5px] text-dim">
+                  <span className="font-medium text-text">{fmtBytes(v.bytes)}</span>
+                </span>
+              ) : null}
+              {v.bytes && elapsed > 1000 ? (
+                <span className="rounded-md bg-surface-2 px-2 py-0.5 text-[10.5px] text-dim">
+                  <span className="font-medium text-text">{fmtBytes(v.bytes / (elapsed / 1000))}/s</span> avg
+                </span>
+              ) : null}
+            </>
+          )}
+          {v.state === "failed" && (
+            <>
+              <span className="rounded-md bg-warn/15 px-2 py-0.5 text-[10.5px] text-warn">the transcript is unaffected</span>
+              {onRetry && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="ring-signal rounded-md border border-line-strong px-2 py-0.5 text-[10.5px] text-text hover:bg-surface-2"
+                >
+                  Try again
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Timeline-strip identity: a muted hue and a compact lowercase axis name
  *  per stage. Identity is carried by position + name — hue is redundant
  *  reinforcement, never the only channel. */
@@ -196,7 +453,7 @@ const STAGE_COLORS: Record<RailStage, string> = {
   translating: "var(--c-translate)",
 };
 const AXIS_NAMES: Record<RailStage, string> = {
-  downloading: "download",
+  downloading: "audio",
   separating: "music source separation (MSS)",
   transcribing: "transcribe",
   diarizing: "speaker diarization",
@@ -395,6 +652,7 @@ export default function Transcribe() {
   // link (a pick here never writes the setting back — it is this link's).
   const [linkKeepVideo, setLinkKeepVideo] = useState<boolean | null>(null);
   const [linkVideoHeight, setLinkVideoHeight] = useState<number | null | undefined>(undefined);
+  const [linkVideoFormat, setLinkVideoFormat] = useState<string | null | undefined>(undefined);
   const urlPreviewSeq = useRef(0);
   // Prevents a double-click from opening two native file dialogs.
   const picking = useRef(false);
@@ -648,6 +906,7 @@ export default function Transcribe() {
         // at run time (so a later Settings change still applies).
         ...(linkKeepVideo !== null ? { keepVideo: linkKeepVideo } : {}),
         ...(linkVideoHeight !== undefined ? { videoMaxHeight: linkVideoHeight } : {}),
+        ...(linkVideoFormat !== undefined ? { videoFormat: linkVideoFormat } : {}),
       });
     }
     addFiles([url]);
@@ -1126,46 +1385,33 @@ export default function Transcribe() {
                 {caps?.url_video_enabled === true &&
                   (urlPreviewData.video_ladder ?? []).some((r) => r.kind === "video") && (() => {
                     const ladder = urlPreviewData.video_ladder ?? [];
-                    const keep = linkKeepVideo ?? settings.transcribe?.keepUrlVideoCopies ?? false;
+                    const keep = linkKeepVideo ?? settings.transcribe?.keepUrlVideoCopies ?? true;
                     const height =
                       linkVideoHeight !== undefined
                         ? linkVideoHeight
                         : settings.transcribe?.urlVideoMaxHeight ?? null;
-                    const best = pickRung(ladder, null);
-                    const chosen = pickRung(ladder, height);
-                    const rungOpts = [
-                      {
-                        value: "best",
-                        label: `Best available${best?.label ? ` (${safeDisplayText(best.label, 16)}${
-                          best?.approx_bytes ? ` · ≈ ${fmtBytes(best.approx_bytes)}` : ""})` : ""}`,
-                      },
-                      ...ladder
-                        .filter((r) => r.kind === "video" && typeof r.height === "number")
-                        .map((r) => ({
-                          value: String(r.height),
-                          label: `${safeDisplayText(r.label ?? `${r.height}p`, 16)}${
-                            r.approx_bytes ? ` · ≈ ${fmtBytes(r.approx_bytes)}` : ""}${
-                            r.container ? ` · ${r.container}` : ""}${
-                            r.over_cap ? " · over the server limit" : ""}`,
-                        })),
-                    ];
+                    // An explicit pick names the rung; otherwise the Settings
+                    // height cap decides, best available by default.
+                    const chosen = pickRung(ladder, height, linkVideoFormat ?? null);
                     return (
                       <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
                         <label className="inline-flex items-center gap-2 text-[12.5px] text-text">
                           <Toggle
                             checked={keep}
                             onChange={(v) => setLinkKeepVideo(v)}
-                            ariaLabel="Also keep the video"
+                            ariaLabel="Download video"
                           />
-                          Also keep the video
+                          Download video
                         </label>
                         {keep && (
-                          <Select
-                            value={height == null ? "best" : String(height)}
-                            onChange={(v) => setLinkVideoHeight(v === "best" ? null : Number(v))}
-                            options={rungOpts}
-                            ariaLabel="Video quality"
-                            className="min-w-[220px]"
+                          <RungPicker
+                            ladder={ladder}
+                            chosen={chosen}
+                            onChange={(r) => {
+                              setLinkVideoFormat(r.format_id ?? null);
+                              // The id decides; no cap on top of it.
+                              setLinkVideoHeight(null);
+                            }}
                           />
                         )}
                         {keep && chosen?.over_cap && (
@@ -1966,11 +2212,12 @@ export default function Transcribe() {
                         : i > active ? "pending" : "done";
                 // The translate row's fraction is unit-weighted (done
                 // languages in full, the running one by its own progress).
+                const hasUnits = st === "translating" || st === "diarizing";
                 const frac =
                   state !== "active" ? null
-                    : (st === "translating" ? unitsFraction(planStage?.units) : null) ??
+                    : (hasUnits ? unitsFraction(planStage?.units) : null) ??
                       (typeof progress?.progress === "number" ? progress.progress : null);
-                const units = st === "translating" ? planStage?.units ?? null : null;
+                const units = hasUnits ? planStage?.units ?? null : null;
                 const unitsDone = units
                   ? units.filter((u) => u.state === "done" || u.state === "instant").length
                   : 0;
@@ -2045,8 +2292,8 @@ export default function Transcribe() {
                     : null;
                 const vadWarn = vr !== null && vr < 0.3;
                 return (
+                  <Fragment key={st}>
                   <div
-                    key={st}
                     className={cn(
                       "flex gap-3.5 border-b border-line py-3.5 last:border-b-0",
                       state === "pending" && "opacity-55",
@@ -2126,7 +2373,7 @@ export default function Transcribe() {
                             <span className="text-text">{Math.round(frac * 100)}%</span>
                           )}
                           {state === "active" && units && units.length > 1
-                            ? ` · ${unitsDone} of ${units.length} languages`
+                            ? ` · ${unitsDone} of ${units.length} ${UNIT_NOUN[st] ?? "units"}`
                             : ""}
                           {st === "diarizing" && state === "active" && progress?.step
                             ? ` · ${safeDisplayText(progress.step)}`
@@ -2152,7 +2399,36 @@ export default function Transcribe() {
                           {SKIPPED_EXPLANATIONS[st]}
                         </div>
                       )}
-                      {frac !== null && (
+                      {/* One segment per unit, sized by what it took or
+                          should take (like the strip's translate segment),
+                          each filling on its own — a 4 % step completes
+                          visibly instead of vanishing into one bar. */}
+                      {frac !== null && units && units.length > 0 ? (
+                        <div className="mt-2 flex h-1.5 gap-[3px]">
+                          {units.map((u) => {
+                            const w = Math.max(u.tookS ?? u.estS ?? 0, 0.5);
+                            const uFill =
+                              u.state === "done" || u.state === "instant" ? 1
+                                : u.state === "running" ? Math.max(u.progress ?? 0, 0.02) : 0;
+                            return (
+                              <span
+                                key={u.target}
+                                className="overflow-hidden rounded-pill bg-surface-2"
+                                style={{ flex: w }}
+                              >
+                                <span
+                                  className="block h-full rounded-pill transition-[width] duration-500"
+                                  style={{
+                                    width: `${Math.round(uFill * 100)}%`,
+                                    background: STAGE_COLORS[st],
+                                    opacity: u.state === "instant" ? 0.45 : 1,
+                                  }}
+                                />
+                              </span>
+                            );
+                          })}
+                        </div>
+                      ) : frac !== null ? (
                         <div className="mt-2 h-1.5 overflow-hidden rounded-pill bg-surface-2">
                           <div
                             className="h-full rounded-pill transition-[width] duration-500"
@@ -2162,65 +2438,7 @@ export default function Transcribe() {
                             }}
                           />
                         </div>
-                      )}
-                      {/* keep_video runs: the video fetch is a second, quieter
-                          bar under the audio download (it runs beside the
-                          pipeline, so this row can show it while later stages
-                          run), then a receipt or the client-safe error. */}
-                      {st === "downloading" && meta?.video && (() => {
-                        const v = meta.video;
-                        const terminal = v.state === "done" || v.state === "failed" || v.state === "cancelled";
-                        const vElapsed = meta.videoDlStart ? now - meta.videoDlStart : 0;
-                        const vRate =
-                          v.state === "downloading" && v.downloadedBytes && vElapsed > 2000
-                            ? v.downloadedBytes / (vElapsed / 1000)
-                            : null;
-                        const label = `video${v.height ? ` · ${v.height}p` : ""}${v.container ? ` · ${v.container}` : ""}`;
-                        return (
-                          <div className="mt-2">
-                            <div className="flex items-baseline justify-between gap-3 font-mono text-[11px] tabular-nums text-faint">
-                              <span>{label}</span>
-                              <span className={cn(v.state === "failed" && "text-warn")}>
-                                {v.state === "queued"
-                                  ? "waiting for a download slot…"
-                                  : v.state === "downloading"
-                                    ? `${v.downloadedBytes ? fmtBytes(v.downloadedBytes) : "0 B"}${
-                                        v.totalBytes ? ` of ~${fmtBytes(v.totalBytes)}` : ""}${
-                                        vRate ? ` · ${fmtBytes(vRate)}/s` : ""}`
-                                    : v.state === "merging"
-                                      ? "merging…"
-                                      : v.state === "registering"
-                                        ? "saving on the server…"
-                                        : v.state === "done"
-                                          ? `done${v.bytes ? ` · ${fmtBytes(v.bytes)}` : ""}`
-                                          : v.state === "cancelled"
-                                            ? "cancelled"
-                                            : safeDisplayText(v.error ?? "failed", 120)}
-                              </span>
-                            </div>
-                            {!terminal && (
-                              <div className="mt-1 h-1 overflow-hidden rounded-pill bg-surface-2">
-                                <div
-                                  className={cn(
-                                    "h-full rounded-pill transition-[width] duration-500",
-                                    (v.state === "merging" || v.state === "registering" || v.state === "queued") &&
-                                      "animate-pulse",
-                                  )}
-                                  style={{
-                                    width: `${
-                                      v.state === "downloading" && typeof v.progress === "number"
-                                        ? Math.max(2, Math.round(v.progress * 100))
-                                        : 100
-                                    }%`,
-                                    background: STAGE_COLORS.downloading,
-                                    opacity: 0.6,
-                                  }}
-                                />
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
+                      ) : null}
                       {/* Language ledger: one line per target while the
                           translate stage runs — status word, its own bar,
                           elapsed and what is left — in the rail's own
@@ -2245,20 +2463,26 @@ export default function Transcribe() {
                               <div key={u.target} className="contents">
                                 <span
                                   className={cn(
-                                    "uppercase",
-                                    u.state === "running"
-                                      ? "text-[color:var(--c-translate)]"
-                                      : u.state === "queued" ? "text-faint" : "text-text",
+                                    st === "translating" && "uppercase",
+                                    u.state === "queued" ? "text-faint" : u.state === "running" ? "" : "text-text",
                                   )}
+                                  style={u.state === "running" ? { color: STAGE_COLORS[st] } : undefined}
                                 >
-                                  {safeDisplayText(u.target, 8)}
+                                  {st === "diarizing" ? (
+                                    <>
+                                      {UNIT_LABELS[u.target] ?? safeDisplayText(u.target, 16)}
+                                      <span className="ml-1.5 text-faint">{safeDisplayText(u.target, 16)}</span>
+                                    </>
+                                  ) : (
+                                    safeDisplayText(u.target, 8)
+                                  )}
                                 </span>
                                 <span className="h-[5px] overflow-hidden rounded-pill bg-surface-2">
                                   <span
                                     className="block h-full rounded-pill transition-[width] duration-500"
                                     style={{
                                       width: `${Math.round(uFill * 100)}%`,
-                                      background: STAGE_COLORS.translating,
+                                      background: STAGE_COLORS[st],
                                       opacity: u.state === "instant" ? 0.45 : 1,
                                     }}
                                   />
@@ -2268,7 +2492,7 @@ export default function Transcribe() {
                                     "instant · same language"
                                   ) : u.state === "done" ? (
                                     <>
-                                      <span style={{ color: STAGE_COLORS.translating }}>done</span>
+                                      <span style={{ color: STAGE_COLORS[st] }}>done</span>
                                       {u.tookS != null ? ` · ${fmtElapsed(u.tookS * 1000)}` : ""}
                                     </>
                                   ) : u.state === "running" ? (
@@ -2333,14 +2557,6 @@ export default function Transcribe() {
                                 <span className="font-medium text-text">{fmtBytes(dlAvg)}/s</span> avg
                               </span>
                             ) : null}
-                            {st === "downloading" && meta?.video?.state === "done" && (
-                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
-                                <span className="font-medium text-text">
-                                  video{meta.video.height ? ` ${meta.video.height}p` : ""}
-                                </span>
-                                {meta.video.bytes ? ` · ${fmtBytes(meta.video.bytes)}` : ""}
-                              </span>
-                            )}
                             {state === "done" && st === "separating" && (
                               <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
                                 vocals isolated
@@ -2367,13 +2583,13 @@ export default function Transcribe() {
                             )}
                             {/* Per-language receipts: what each target took,
                                 kept after the run like every other chip. */}
-                            {state === "done" && st === "translating" && planStage?.units?.map((u) => (
+                            {state === "done" && hasUnits && planStage?.units?.map((u) => (
                               <span
                                 key={u.target}
                                 className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim"
                               >
-                                <span className="font-medium uppercase text-text">
-                                  {safeDisplayText(u.target, 8)}
+                                <span className={cn("font-medium text-text", st === "translating" && "uppercase")}>
+                                  {st === "diarizing" ? safeDisplayText(u.target, 16) : safeDisplayText(u.target, 8)}
                                 </span>
                                 {u.state === "instant" || u.instant
                                   ? " instant"
@@ -2468,6 +2684,22 @@ export default function Transcribe() {
                       )}
                     </div>
                   </div>
+                  {st === "downloading" && meta?.video && (
+                    <VideoBranchRow
+                      v={meta.video}
+                      dlStart={meta.videoDlStart}
+                      now={now}
+                      onRetry={
+                        panelItem && !runningItem
+                          ? () => {
+                              const ctx = buildCtx(useTranscribeRun.getState().lastOverrides);
+                              if (ctx) retryRunVideo(panelItem.path, ctx);
+                            }
+                          : undefined
+                      }
+                    />
+                  )}
+                  </Fragment>
                 );
               })}
             </div>

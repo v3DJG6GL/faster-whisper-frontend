@@ -9,8 +9,8 @@
 import { create } from "zustand";
 import {
   audioBasePref, cancelBackendTranscription, cancelFileTranscription, fetchUrlMedia,
-  fetchUrlVideo, getTranscribeProgress, readTextFile, saveTranscriptMedia, transcribeFile,
-  transcribeUrl, translateText,
+  fetchUrlVideo, fetchUrlVideoOnDemand, getTranscribeProgress, readTextFile, saveTranscriptMedia,
+  transcribeFile, transcribeUrl, translateText,
 } from "./api";
 import { transportErrorDoorway } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
@@ -317,11 +317,20 @@ export function planTimeline(s: {
     }
     if (state === "active") {
       const elapsed = t ? Math.max(s.now - t.start, 0) : (p?.elapsedS ?? 0) * 1000;
+      // Warm-up (resolving, waiting, skipping silence, a model fetch,
+      // separation's transcode): the stage has no fraction because none of
+      // its work has happened — the segment stays empty rather than filling
+      // by the clock, matching the row's spinner. Mirrors the server's
+      // overall rule.
+      const warmup =
+        !!p?.phase ||
+        (s.progress?.stage != null && s.progress.stage !== st) ||
+        s.progress?.step === "preparing";
       const frac =
         unitsFraction(p?.units) ??
         (typeof s.progress?.progress === "number" ? s.progress.progress : null) ??
-        (estMs ? Math.min(elapsed / estMs, 0.95) : 0);
-      const over = estMs != null && elapsed > estMs;
+        (warmup ? 0 : estMs ? Math.min(elapsed / estMs, 0.95) : 0);
+      const over = !warmup && estMs != null && elapsed > estMs;
       out.push({
         stage: st,
         // Never narrower than the time already spent: a stage past its
@@ -425,6 +434,9 @@ interface TranscribeRunState {
      *  default) and the preview's ladder + cap for the rail's chips. */
     keepVideo?: boolean;
     videoMaxHeight?: number | null;
+    /** The link card's explicit rung (a yt-dlp format id); absent = the
+     *  Settings height cap decides at run time. */
+    videoFormat?: string | null;
     videoLadder?: VideoRung[];
     mediaMaxBytes?: number;
   }>;
@@ -824,6 +836,52 @@ function awaitRunUrlVideo(
   }, 1000);
 }
 
+/** The Video row's "Try again": fetch the link's video on demand for the
+ *  panel's finished link run, folding the server's progress into the same
+ *  `video` sub-object the run used, then pull the file like a kept one.
+ *  Runs through the run's own progress id so the rail keeps one clock. */
+export function retryRunVideo(path: string, ctx: RunContext): void {
+  const s = get();
+  const rec = historyByPath[path];
+  const meta = s.urlMeta[path];
+  if (!rec || !s.stageMeta.downloading?.video) return;
+  const epoch = s.epoch;
+  const pid = crypto.randomUUID().replace(/-/g, "");
+  const st = useApp.getState().settings.transcribe;
+  set((st2) => ({
+    stageMeta: {
+      ...st2.stageMeta,
+      downloading: {
+        ...st2.stageMeta.downloading,
+        video: { ...(st2.stageMeta.downloading?.video as VideoProgress), state: "queued",
+                 progress: null, downloadedBytes: null, error: null },
+        videoDlStart: Date.now(),
+      },
+    },
+  }));
+  awaitRunUrlVideo(path, rec, ctx, pid, epoch);
+  void fetchUrlVideoOnDemand({
+    serverUrl: ctx.serverUrl,
+    backendId: ctx.backendId,
+    url: path,
+    maxHeight: meta?.videoMaxHeight !== undefined ? meta.videoMaxHeight : st?.urlVideoMaxHeight ?? null,
+    formatId: meta?.videoFormat ?? null,
+    progressId: pid,
+  }).catch((e) => {
+    if (epoch !== get().epoch) return;
+    set((st2) => ({
+      stageMeta: {
+        ...st2.stageMeta,
+        downloading: {
+          ...st2.stageMeta.downloading,
+          video: { ...(st2.stageMeta.downloading?.video as VideoProgress), state: "failed",
+                   error: String(e).replace(/^Error:\s*/, "").slice(0, 200) },
+        },
+      },
+    }));
+  });
+}
+
 /** Load a history record back into the workbench: one settled queue row,
  *  selected, with its overlays restored. Refused mid-run (the pump owns the
  *  queue then). */
@@ -1111,14 +1169,16 @@ export function foldProgress(p: BatchProgress) {
         },
       };
     }
-    // Per-language clock: the first poll naming a target starts its lane's
-    // elapsed ticker (the server's elapsed_s only moves per poll).
-    if (p.target && cur === "translating" && !stageMeta.translating?.unitStarts?.[p.target]) {
+    // Per-unit clock (a translation target, a diarization step): the first
+    // poll naming it starts its ledger line's elapsed ticker (the server's
+    // elapsed_s only moves per poll).
+    if (p.target && (cur === "translating" || cur === "diarizing") &&
+        !stageMeta[cur]?.unitStarts?.[p.target]) {
       stageMeta = {
         ...stageMeta,
-        translating: {
-          ...stageMeta.translating,
-          unitStarts: { ...stageMeta.translating?.unitStarts, [p.target]: now },
+        [cur]: {
+          ...stageMeta[cur],
+          unitStarts: { ...stageMeta[cur]?.unitStarts, [p.target]: now },
         },
       };
     }
@@ -1338,12 +1398,17 @@ async function pump(
         if (isUrl && ctx.urlVideoEnabled) {
           const meta = get().urlMeta[next.path];
           const st = useApp.getState().settings.transcribe;
-          const keepVideo = meta?.keepVideo ?? st?.keepUrlVideoCopies ?? false;
+          const keepVideo = meta?.keepVideo ?? st?.keepUrlVideoCopies ?? true;
           if (keepVideo) {
             const videoMaxHeight = meta?.videoMaxHeight !== undefined
               ? meta.videoMaxHeight
               : st?.urlVideoMaxHeight ?? null;
-            itemOptions = { ...(options ?? {}), keepVideo: true, videoMaxHeight };
+            itemOptions = {
+              ...(options ?? {}),
+              keepVideo: true,
+              videoMaxHeight,
+              ...(meta?.videoFormat ? { videoFormat: meta.videoFormat } : {}),
+            };
           }
         }
         if (!isUrl && !isText && ctx.mediaPackageEnabled && isVideoSourcePath(next.path)) {

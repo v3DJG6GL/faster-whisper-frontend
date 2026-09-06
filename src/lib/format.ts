@@ -99,12 +99,21 @@ export function localTodayDay(): number {
 /** Human byte size for download progress readouts ("41.2 MB", "980 KB"). */
 export function fmtBytes(n: number): string {
   if (!Number.isFinite(n) || n < 0) return "";
-  // Classify on the ROUNDED mantissa, or a value just under a boundary saturates into
-  // the next unit's territory ("1024 KB" — the same slip fmtCompact guards against).
-  if (Math.round(n) < 1024) return `${Math.round(n)} B`;
-  if (Math.round(n / 1024) < 1024) return `${Math.round(n / 1024)} KB`;
-  if (Number((n / (1024 * 1024)).toFixed(1)) < 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  // Decimal units (1 MB = 1 000 000 B): what yt-dlp's tables, the server
+  // log and the Linux/macOS file managers print, so the card, the log and
+  // the file on disk agree. Classify on the ROUNDED mantissa, or a value
+  // just under a boundary saturates into the next unit ("1000 KB").
+  if (Math.round(n) < 1000) return `${Math.round(n)} B`;
+  if (Math.round(n / 1e3) < 1000) return `${Math.round(n / 1e3)} KB`;
+  if (Number((n / 1e6).toFixed(1)) < 1000) return `${(n / 1e6).toFixed(1)} MB`;
+  return `${(n / 1e9).toFixed(2)} GB`;
+}
+
+/** "0.7 Mbit/s" / "129 kbit/s" — whole kbit/s below 1 000, one decimal above. */
+export function fmtBitrate(kbps: number | null | undefined): string {
+  if (kbps == null || !Number.isFinite(kbps) || kbps <= 0) return "";
+  if (kbps < 1000) return `${Math.round(kbps)} kbit/s`;
+  return `${(kbps / 1000).toFixed(1)} Mbit/s`;
 }
 
 /** "just now" / "4m ago" / "3h ago" / a date — for the last-synced lines (Sync tab,

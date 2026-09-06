@@ -85,6 +85,9 @@ pub struct BatchOptions {
     /// the audio, capped at this height (None = best available).
     pub keep_video: Option<bool>,
     pub video_max_height: Option<u32>,
+    /// The rung's yt-dlp format id from the link card (regex-gated before it
+    /// rides the form; the server ignores an id no longer on the ladder).
+    pub video_format: Option<String>,
     /// File runs: keep the uploaded video on the server (packaging follows).
     pub retain_media: Option<bool>,
     /// Client-generated hex id the server keys live progress under
@@ -242,7 +245,7 @@ fn translate_to_field(requested: Option<&[String]>) -> Option<String> {
 
 #[cfg(test)]
 mod wire_field_tests {
-    use super::{bound_progress, translate_to_field, BatchProgress};
+    use super::{bound_progress, bound_rung, is_format_id, translate_to_field, BatchProgress, VideoRung};
 
     #[test]
     fn plan_and_progress_numbers_are_bounded() {
@@ -287,6 +290,38 @@ mod wire_field_tests {
         assert_eq!(v.container.as_deref().map(|s| s.chars().count()), Some(9)); // 8 + "…"
         let out = serde_json::to_string(&v).expect("serializes");
         assert!(out.contains("\"downloadedBytes\":10"), "{out}");
+        // The rung facts ride through; a hostile format id does not.
+        let json = r#"{"stage":"downloading","video":{"state":"downloading","total_approx":true,
+            "label":"1080p Premium","vcodec":"vp09.00.40.08","format_id":"616 --exec"}}"#;
+        let parsed: BatchProgress = serde_json::from_str(json).expect("parses");
+        let v = bound_progress(parsed).video.expect("video kept");
+        assert_eq!(v.total_approx, Some(true));
+        assert_eq!(v.label.as_deref(), Some("1080p Premium"));
+        assert_eq!(v.format_id, None);
+        let out = serde_json::to_string(&v).expect("serializes");
+        assert!(out.contains("\"totalApprox\":true"), "{out}");
+    }
+
+    #[test]
+    fn rungs_keep_their_format_ids_only_when_they_look_like_ids() {
+        let r: VideoRung = serde_json::from_str(
+            r#"{"kind":"video","height":1080,"format_id":"616","audio_format_id":"140-drc",
+                "tbr_kbps":2190,"bytes_approx":true,"note":"Premium","protocol":"m3u8"}"#,
+        )
+        .expect("parses");
+        let b = bound_rung(r);
+        assert_eq!(b.format_id.as_deref(), Some("616"));
+        assert_eq!(b.audio_format_id.as_deref(), Some("140-drc"));
+        assert_eq!(b.tbr_kbps, Some(2190));
+        assert_eq!(b.note.as_deref(), Some("Premium"));
+        let r: VideoRung = serde_json::from_str(
+            r#"{"kind":"video","height":720,"format_id":"a/b","audio_format_id":""}"#,
+        )
+        .expect("parses");
+        let b = bound_rung(r);
+        assert_eq!(b.format_id, None);
+        assert_eq!(b.audio_format_id, None);
+        assert!(is_format_id("hls-1080p") && is_format_id("DASH_720") && !is_format_id("x y"));
     }
 
     #[test]
@@ -454,10 +489,22 @@ pub struct VideoProgress {
     pub downloaded_bytes: Option<u64>,
     #[serde(default, alias = "total_bytes")]
     pub total_bytes: Option<u64>,
+    /// Whether total_bytes is an estimate (a fragmented stream lists none).
+    #[serde(default, alias = "total_approx")]
+    pub total_approx: Option<bool>,
     #[serde(default)]
     pub height: Option<u32>,
     #[serde(default)]
     pub container: Option<String>,
+    /// The rung's label and codecs, for the Video row's facts line.
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub vcodec: Option<String>,
+    #[serde(default)]
+    pub acodec: Option<String>,
+    #[serde(default, alias = "format_id")]
+    pub format_id: Option<String>,
     #[serde(default, alias = "media_id")]
     pub media_id: Option<String>,
     #[serde(default, alias = "expires_at")]
@@ -474,6 +521,10 @@ fn bound_video(v: VideoProgress) -> VideoProgress {
         progress: fin_frac(v.progress),
         container: v.container.map(|s| super::bounded_server_text(&s, 8)),
         height: v.height.filter(|h| (1..=8192).contains(h)),
+        label: v.label.map(|s| super::bounded_server_text(&s, 32)),
+        vcodec: v.vcodec.map(|s| super::bounded_server_text(&s, 32)),
+        acodec: v.acodec.map(|s| super::bounded_server_text(&s, 32)),
+        format_id: v.format_id.filter(|s| is_format_id(s)),
         // Screened like a progress id: it gets interpolated into a URL path.
         media_id: v.media_id.filter(|s| is_progress_id(s)),
         error: v.error.map(|s| super::bounded_server_text(&s, super::MAX_ERROR_TEXT)),
@@ -872,6 +923,9 @@ async fn post(
         if let Some(h) = opts.video_max_height.filter(|h| (144..=4320).contains(h)) {
             form = form.text("video_max_height", h.to_string());
         }
+        if let Some(f) = opts.video_format.as_deref().filter(|f| is_format_id(f)) {
+            form = form.text("video_format", f.to_string());
+        }
     }
 
     // /v1/audio/translations auto-detects the source and always outputs
@@ -1098,6 +1152,23 @@ pub struct VideoRung {
     pub abr: Option<f64>,
     #[serde(default)]
     pub approx_bytes: Option<u64>,
+    #[serde(default, alias = "bytes_approx")]
+    pub bytes_approx: Option<bool>,
+    #[serde(default, alias = "tbr_kbps")]
+    pub tbr_kbps: Option<u32>,
+    #[serde(default, alias = "bitrate_approx")]
+    pub bitrate_approx: Option<bool>,
+    /// The site's own name for a rung ("Premium", "Source").
+    #[serde(default)]
+    pub note: Option<String>,
+    /// yt-dlp format ids the download fetches: what the card priced. They
+    /// ride back on the form, so they are regex-gated on the way in too.
+    #[serde(default, alias = "format_id")]
+    pub format_id: Option<String>,
+    #[serde(default, alias = "audio_format_id")]
+    pub audio_format_id: Option<String>,
+    #[serde(default)]
+    pub protocol: Option<String>,
     #[serde(default)]
     pub over_cap: Option<bool>,
     #[serde(default)]
@@ -1108,6 +1179,14 @@ pub struct VideoRung {
 /// label the webview renders.
 const MAX_LADDER_RUNGS: usize = 16;
 
+/// A yt-dlp format id as the server's selector accepts it: itags,
+/// "hls-1080p", "DASH_720", "http-2500k". Same regex as the server's gate.
+pub(crate) fn is_format_id(s: &str) -> bool {
+    let n = s.chars().count();
+    (1..=40).contains(&n)
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
+}
+
 fn bound_rung(r: VideoRung) -> VideoRung {
     VideoRung {
         kind: r.kind.map(|s| super::bounded_server_text(&s, 8)),
@@ -1116,7 +1195,12 @@ fn bound_rung(r: VideoRung) -> VideoRung {
         container: r.container.map(|s| super::bounded_server_text(&s, 8)),
         ext: r.ext.map(|s| super::bounded_server_text(&s, 16)),
         label: r.label.map(|s| super::bounded_server_text(&s, 32)),
+        note: r.note.map(|s| super::bounded_server_text(&s, 16)),
+        protocol: r.protocol.map(|s| super::bounded_server_text(&s, 8)),
+        format_id: r.format_id.filter(|s| is_format_id(s)),
+        audio_format_id: r.audio_format_id.filter(|s| is_format_id(s)),
         height: r.height.filter(|h| (1..=8192).contains(h)),
+        tbr_kbps: r.tbr_kbps.filter(|t| *t <= 1_000_000),
         ..r
     }
 }
@@ -1200,6 +1284,7 @@ pub async fn url_video_download(
     api_key: Option<&str>,
     url: &str,
     max_height: Option<u32>,
+    format_id: Option<&str>,
     progress_id: Option<&str>,
 ) -> anyhow::Result<UrlVideoDownload> {
     validate_media_url(url)?;
@@ -1207,6 +1292,9 @@ pub async fn url_video_download(
     let mut body = serde_json::json!({ "url": url });
     if let Some(h) = max_height.filter(|h| (144..=4320).contains(h)) {
         body["max_height"] = serde_json::json!(h);
+    }
+    if let Some(f) = format_id.filter(|f| is_format_id(f)) {
+        body["format_id"] = serde_json::json!(f);
     }
     if let Some(pid) = progress_id.filter(|p| is_progress_id(p)) {
         body["progress_id"] = serde_json::json!(pid);

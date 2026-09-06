@@ -20,14 +20,16 @@ describe("fmtTimestamp", () => {
 
 describe("fmtBytes", () => {
   it("classifies on the rounded mantissa, so a boundary value moves up a unit", () => {
-    expect(fmtBytes(1023.6)).toBe("1 KB");
-    expect(fmtBytes(1048575)).toBe("1.0 MB");
-    expect(fmtBytes(1073741000)).toBe("1.00 GB");
+    expect(fmtBytes(999.6)).toBe("1 KB");
+    expect(fmtBytes(999_950)).toBe("1.0 MB");
+    expect(fmtBytes(999_995_000)).toBe("1.00 GB");
+    // Decimal, like yt-dlp and the server log: 139 240 575 B is 139.2 MB.
+    expect(fmtBytes(139_240_575)).toBe("139.2 MB");
   });
   it("keeps the ordinary shapes", () => {
     expect(fmtBytes(0)).toBe("0 B");
-    expect(fmtBytes(980 * 1024)).toBe("980 KB");
-    expect(fmtBytes(41.2 * 1024 * 1024)).toBe("41.2 MB");
+    expect(fmtBytes(980 * 1000)).toBe("980 KB");
+    expect(fmtBytes(41.2 * 1e6)).toBe("41.2 MB");
     expect(fmtBytes(-1)).toBe("");
   });
 });
