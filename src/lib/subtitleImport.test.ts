@@ -114,8 +114,11 @@ describe("isAcceptedSourcePath", () => {
     expect(isAcceptedSourcePath("/tmp/a.srt")).toBe(true);
     expect(isAcceptedSourcePath("/tmp/a.SRT")).toBe(true);
   });
-  it("rejects containers we cannot decode, documents, and extensionless paths", () => {
-    expect(isAcceptedSourcePath("/tmp/a.mkv")).toBe(false);
+  it("accepts the video containers the server decodes (and the export panel packages)", () => {
+    for (const ext of ["mkv", "mov", "m4v", "MP4"]) expect(isAcceptedSourcePath(`/tmp/a.${ext}`)).toBe(true);
+  });
+  it("rejects containers we do not accept, documents, and extensionless paths", () => {
+    expect(isAcceptedSourcePath("/tmp/a.avi")).toBe(false);
     expect(isAcceptedSourcePath("/tmp/a.doc")).toBe(false);
     expect(isAcceptedSourcePath("/tmp/README")).toBe(false);
   });

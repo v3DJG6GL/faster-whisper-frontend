@@ -421,6 +421,10 @@ export interface TranscribeSettings {
   keepUrlVideoCopies?: boolean;
   /** Height cap for kept videos; null/absent = best available. */
   urlVideoMaxHeight?: number | null;
+  /** The export panel's Media section defaults. */
+  exportMedia?: "none" | "audio" | "video";
+  exportContainer?: "mkv" | "mp4";
+  exportSubtitleMode?: "embedded" | "sidecar" | "both";
 }
 
 /** Capture threshold for the in-app log ring + session file — lower levels
@@ -549,6 +553,18 @@ export interface Capabilities {
   url_video_default_max_height?: number | null;
   /** The one media ceiling (uploads, link audio/video), in bytes. */
   media_max_bytes?: number;
+  /** Subtitle packaging (server-side ffmpeg mux). ABSENT = the feature does
+   *  not exist; the Media section's Video card shows only on `=== true`,
+   *  with `media_package.reason` explaining a false. */
+  media_package_enabled?: boolean;
+  media_package?: {
+    containers: ("mkv" | "mp4")[];
+    max_tracks: number;
+    max_srt_bytes: number;
+    max_upload_bytes: number;
+    reason: string | null;
+    ffmpeg_version: string | null;
+  };
   /** Whether this server runs the T2T translating stage. Like
    *  url_download_enabled, ABSENT means the feature does not exist —
    *  translation UI shows only on `=== true` (deliberate opt-in). */
@@ -928,6 +944,9 @@ export interface TranscribeOptions {
    *  the audio, capped at this height (null/absent = best available). */
   keepVideo?: boolean;
   videoMaxHeight?: number | null;
+  /** File runs: keep the uploaded video on the server for a while so a
+   *  packaging export right after needs no second upload. */
+  retainMedia?: boolean;
 }
 
 /** Live progress of an in-flight file transcription. */

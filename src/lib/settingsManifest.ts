@@ -227,6 +227,9 @@ export const MANIFEST = [
     fields: [t("wordTimestamps")] },
   { id: "exportFormat", label: "Export format", group: "transcribeDefaults", category: "transcription",
     fields: [t("exportFormat")] },
+  { id: "exportMedia", label: "Export media", group: "transcribeDefaults", category: "transcription",
+    desc: "What the Save also writes: nothing, the audio, or the video (with its subtitle tracks).",
+    fields: [t("exportMedia"), t("exportContainer"), t("exportSubtitleMode")] },
   { id: "transcribePicks", label: "Last-used server, model & language",
     group: "transcribeDefaults", category: "transcription",
     desc: "What the Transcribe screen last used, not a setting you chose.",
@@ -430,6 +433,9 @@ export const TRANSCRIBE_COVERAGE = {
   keepUrlAudioCopies: "keepUrlAudioCopies",
   keepUrlVideoCopies: "keepUrlVideoCopies",
   urlVideoMaxHeight: "urlVideoQuality",
+  exportMedia: "exportMedia",
+  exportContainer: "exportMedia",
+  exportSubtitleMode: "exportMedia",
 } as const satisfies Record<keyof TranscribeSettings, Covered>;
 
 export const LOGGING_COVERAGE = {

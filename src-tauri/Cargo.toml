@@ -35,7 +35,7 @@ serde_json = "1"
 
 # HTTP client for the backend (batch transcription + model discovery). rustls to
 # avoid a system OpenSSL dependency.
-reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls-no-provider"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "stream", "rustls-no-provider"] }
 # reqwest 0.13 renamed `rustls-tls` -> `rustls`, and that new feature brings the
 # aws-lc-rs provider (a C/NASM native build the Windows runner lacks, and a second
 # crypto stack beside the ring that tokio-tungstenite already uses). So: TLS with

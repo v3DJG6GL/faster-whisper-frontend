@@ -1,7 +1,7 @@
 import { ownProp } from "@/lib/own";
 import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, Link2, AudioLines } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingExpand, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
@@ -282,6 +282,16 @@ function aboutLeft(ms: number): string {
 }
 
 export default function Transcribe() {
+  // History's "Save audio…/Save video…" open the workbench straight onto the
+  // export panel: the choice rides in router state and is consumed once.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const initialExport = (location.state as { openExport?: { media: "none" | "audio" | "video" } } | null)
+    ?.openExport;
+  useEffect(() => {
+    if (initialExport) navigate(".", { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialExport]);
   const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
   const settings = useApp((s) => s.settings);
@@ -789,6 +799,7 @@ export default function Transcribe() {
       standard:
         effectiveServerKind(backend, ownProp(useApp.getState().connections, backend.id)) === "standard",
       urlVideoEnabled: urlAvailable && caps?.url_video_enabled === true,
+      mediaPackageEnabled: !isStandard && caps?.media_package_enabled === true,
     };
   };
 
@@ -2646,6 +2657,7 @@ export default function Transcribe() {
         createdAt={selected?.createdAt}
         onClose={busy ? undefined : closeRecord}
         overlayKey={openRecordId ?? undefined}
+        initialExport={initialExport}
         fileLabel={
           queue.length > 1 || isSourceUrl(selectedPath)
             ? displayLabel(selectedPath, selected?.title ?? urlMeta[selectedPath]?.title)

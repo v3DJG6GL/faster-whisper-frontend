@@ -22,8 +22,7 @@ import { Button, LangTag } from "@/components/ui";
 import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import { lastStartedAt, seekKeyTarget } from "@/lib/seekKeys";
 import {
-  cancelTextTranslation, decodeMediaFile, getTranscribeProgress, openSourceUrl,
-  pickExportPath, readMediaFile, saveTextFile, isTauri, translateText,
+  cancelTextTranslation, decodeMediaFile, getTranscribeProgress, openSourceUrl, pickExportPath, readMediaFile, saveTextFile, isTauri, translateText, audioBasePref, cancelMediaExport, copyMediaTo, fetchUrlMedia, fetchUrlVideo, fetchUrlVideoOnDemand, getMediaStreams, onMediaExportProgress, packageMedia,
 } from "@/lib/api";
 import {
   beginChunk, foldPollFailure, foldTranslatePoll, newTranslateRun,
@@ -38,15 +37,19 @@ import {
 } from "@/lib/transcribeRun";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
-  cpsWarnings, DEFAULT_SPEAKER_COLORS, EXPORT_EXTENSIONS, generateExports,
-  prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
-  type ExportFormat, type ExportOptions, exportFileNames } from "@/lib/transcriptExport";
+  cpsWarnings, DEFAULT_SPEAKER_COLORS, generateExports, prettySpeaker, speakerColorIndex, speakerHex, speakerOrder, type ExportFormat, type ExportOptions, exportFileNames } from "@/lib/transcriptExport";
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
+import {
+  derivePickedStem, embeddedSubtitleTracks, isVideoSourcePath, languageLabel, mediaExportPlan,
+  mp4Disabled, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaStreams,
+  type SubtitleMode,
+} from "@/lib/mediaExport";
+import { upsertRecord } from "@/lib/transcriptHistory";
 import { useTranscriptHistory } from "@/lib/transcriptHistory";
-import type { BatchResult, TranscriptWord } from "@/lib/types";
+import type { BatchResult, TranscribeSettings, TranscriptWord } from "@/lib/types";
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;
@@ -599,6 +602,7 @@ export function TranscriptViewer({
   createdAt,
   onClose,
   overlayKey,
+  initialExport,
   fill,
   className,
 }: {
@@ -619,6 +623,9 @@ export function TranscriptViewer({
    *  record id when one exists. Falls back to `path`, but two same-URL
    *  records share their path, so id-keying keeps their edits apart. */
   overlayKey?: string;
+  /** Open straight onto the export panel with this Media choice (History's
+   *  "Save audio…/Save video…" hand-off). Consumed when it changes. */
+  initialExport?: { media: MediaChoice };
   /** Studio pane: fill the available height instead of capping at 65vh. */
   fill?: boolean;
   className?: string;
@@ -646,6 +653,27 @@ export function TranscriptViewer({
   const [exportTracks, setExportTracks] = useState<string[] | null>(null);
   const [lineOrder, setLineOrder] = useState<"orig-first" | "trans-first">("orig-first");
   const [wordTs, setWordTs] = useState(() => settings.transcribe?.wordTimestamps ?? false);
+  // Media section (audio / video / video + subtitle tracks), seeded from the
+  // persisted defaults like the format card.
+  const [mediaChoice, setMediaChoice] = useState<MediaChoice>(
+    () => settings.transcribe?.exportMedia ?? "none",
+  );
+  const [container, setContainer] = useState<MediaContainer>(
+    () => settings.transcribe?.exportContainer ?? "mkv",
+  );
+  const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>(
+    () => settings.transcribe?.exportSubtitleMode ?? "embedded",
+  );
+  const [mediaJob, setMediaJob] = useState<{
+    jobId: string; phase: MediaExportPhase; done: number; total: number | null;
+  } | null>(null);
+  const [mediaError, setMediaError] = useState<{ kind: string; msg: string; reason?: string } | null>(null);
+  const [streams, setStreams] = useState<MediaStreams | null>(null);
+  useEffect(() => {
+    if (!initialExport) return;
+    setShowExport(true);
+    setMediaChoice(initialExport.media);
+  }, [initialExport]);
   // Export-preview height: null = auto up to 40vh; a number once the user
   // drags the visible resize handle (WebKitGTK's native corner grip is
   // invisible on dark UIs, so the handle row IS the affordance).
@@ -1177,6 +1205,48 @@ export function TranscriptViewer({
   // Subtitle/text sources have no audio, ever — no player, no karaoke, and
   // none of the "audio missing" notices (nothing is missing).
   const textSource = isTextSourcePath(path);
+  // ── Media section facts ──────────────────────────────────────────────────
+  // The record behind this transcript (its local copies + server ids).
+  const records = useTranscriptHistory((s) => s.records);
+  const rec = overlayKey ? records.find((r) => r.id === overlayKey) : undefined;
+  const nowSec = Date.now() / 1000;
+  // The server's retained VIDEO: a link run's kept video, or the upload a
+  // file run retained (retain_media) — either way, packaging needs no upload.
+  const serverVideoId =
+    rec?.result?.sourceVideoMediaId && (rec.result.sourceVideoExpiresAt ?? 0) > nowSec
+      ? rec.result.sourceVideoMediaId
+      : !urlSource && rec?.result?.sourceMediaId && (rec.result.sourceMediaExpiresAt ?? 0) > nowSec
+        ? rec.result.sourceMediaId
+        : null;
+  const serverVideoUntil =
+    serverVideoId === rec?.result?.sourceVideoMediaId
+      ? rec?.result?.sourceVideoExpiresAt
+      : rec?.result?.sourceMediaExpiresAt;
+  // The local VIDEO: the app's copy of a link's video, or the file itself.
+  const localVideo = rec?.videoPath ?? (!urlSource && !textSource && isVideoSourcePath(path) ? path : null);
+  const packageOn = trCaps?.media_package_enabled === true;
+  const urlVideoOnDemand = urlSource && trCaps?.url_video_enabled === true;
+  const hasVideoSource = !!(serverVideoId || localVideo || urlVideoOnDemand);
+  const showMedia = !textSource && (urlSource || isVideoSourcePath(path));
+  const audioExt = mediaPath ? (/\.([a-z0-9]+)$/i.exec(mediaPath)?.[1]?.toLowerCase() ?? "m4a") : null;
+  const mp4Why = mediaChoice === "video" ? mp4Disabled(streams, trCaps ?? null) : null;
+  // Codec facts for the MP4 verdict, fetched once the panel wants them.
+  useEffect(() => {
+    if (!showExport || mediaChoice !== "video" || !serverVideoId || streams || !trBackend) return;
+    let alive = true;
+    getMediaStreams({
+      serverUrl: effectiveServerUrl(trBackend, settings), backendId: trBackend.id, mediaId: serverVideoId,
+    })
+      .then((st) => { if (alive && st) setStreams(st); })
+      .catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showExport, mediaChoice, serverVideoId]);
+  // A different record: forget its predecessor's facts and outcome.
+  useEffect(() => {
+    setStreams(null);
+    setMediaError(null);
+  }, [overlayKey, path]);
   // "29 Aug 18:03" — the viewer's identity stamp (same-URL records are
   // otherwise indistinguishable).
   const stamp = useMemo(() => {
@@ -1977,48 +2047,197 @@ export function TranscriptViewer({
     return generateExports(sample, exportOpts())[0].content;
   };
 
-  const exportFileName = () => {
-    const stem = basename(path).replace(/\.[^.]+$/, "");
-    // Names only — generateExports serializes every file's content, in a render path.
-    const names = exportFileNames(exportOpts()).map((n) => n(stem));
-    if (names.length > 1) return `${names.length} files · ${names.join(" · ")}`;
-    return names[0];
+
+  /** The files one Save writes (the media file first, then the text files),
+   *  from the panel's current choices. */
+  const exportPlanNow = () => {
+    const opts = exportOpts();
+    return mediaExportPlan({
+      choice: mediaChoice, container, subtitleMode, format: exportFormat,
+      textFileNames: exportFileNames(opts),
+      audioExt,
+      tracks: effTracks.length ? effTracks : ["orig"],
+      hasVideoSource,
+    });
+  };
+
+  const persistMedia = (patch: Partial<TranscribeSettings>) => persistOptions(patch);
+
+  /** Plain copy of the audio (the app's local copy; a link's is fetched
+   *  first when the copy is missing and the server still has it). */
+  const exportAudioTo = async (dest: string) => {
+    let src = mediaPath ?? null;
+    if (!src && urlSource && rec?.result?.sourceMediaId && trBackend) {
+      setMediaJob({ jobId: "", phase: "fetching", done: 0, total: null });
+      src = await fetchUrlMedia({
+        serverUrl: effectiveServerUrl(trBackend, settings), backendId: trBackend.id,
+        mediaId: rec.result.sourceMediaId, recordId: rec.id, audioBase: audioBasePref(settings.recording),
+      });
+      setMediaJob(null);
+    }
+    if (!src) throw new Error("No audio is stored for this transcription.");
+    if (!rec) throw new Error("This transcription has no record to export from.");
+    setMediaJob({ jobId: "", phase: "copying", done: 0, total: null });
+    try {
+      await copyMediaTo({ src, dest, recordId: rec.id, audioBase: audioBasePref(settings.recording) });
+    } finally {
+      setMediaJob(null);
+    }
+  };
+
+  /** The video: a plain copy when no tracks ride inside it and a local copy
+   *  exists; otherwise the server packages it (uploading a local file first,
+   *  or fetching a link's video on demand). False = stopped with an error
+   *  the panel now shows. */
+  const exportVideoTo = async (dest: string, embedded: string[]): Promise<boolean> => {
+    if (!rec) throw new Error("This transcription has no record to export from.");
+    const audioBase = audioBasePref(settings.recording);
+    if (!embedded.length && localVideo) {
+      setMediaJob({ jobId: "", phase: "copying", done: 0, total: null });
+      try {
+        await copyMediaTo({ src: localVideo, dest, recordId: rec.id, audioBase });
+      } finally {
+        setMediaJob(null);
+      }
+      return true;
+    }
+    if (!trBackend) throw new Error("No backend is selected.");
+    const serverUrl = effectiveServerUrl(trBackend, settings);
+    let source: { sourceMediaId?: string; sourcePath?: string };
+    if (serverVideoId) source = { sourceMediaId: serverVideoId };
+    else if (localVideo) source = { sourcePath: localVideo };
+    else if (urlVideoOnDemand) {
+      setMediaJob({ jobId: "", phase: "fetching", done: 0, total: null });
+      try {
+        const got = await fetchUrlVideoOnDemand({
+          serverUrl, backendId: trBackend.id, url: path,
+          maxHeight: settings.transcribe?.urlVideoMaxHeight ?? null,
+        });
+        source = { sourceMediaId: got.mediaId };
+        upsertRecord({
+          ...rec,
+          result: {
+            ...(rec.result ?? { text: "" }),
+            sourceVideoMediaId: got.mediaId,
+            sourceVideoExpiresAt: got.expiresAt ?? undefined,
+          },
+        });
+        // Keep a local copy too (the Settings' video store), best effort.
+        void fetchUrlVideo({ serverUrl, backendId: trBackend.id, mediaId: got.mediaId, recordId: rec.id, audioBase })
+          .then((vp) => { if (vp) upsertRecord({ ...rec, videoPath: vp }); })
+          .catch(() => {});
+      } catch (e) {
+        setMediaJob(null);
+        setMediaError({ kind: "fetch", msg: safeDisplayText(String(e), 300) || "The video could not be fetched." });
+        return false;
+      }
+    } else {
+      setMediaError({ kind: "none", msg: "No video is available for this transcription." });
+      return false;
+    }
+    const opts = exportOpts();
+    const subtitles = embedded.length ? embeddedSubtitleTracks(editedResult, opts, embedded) : [];
+    const defaultTrack = subtitles.length ? Math.max(0, embedded.indexOf("orig")) : null;
+    const jobId = crypto.randomUUID().replace(/-/g, "");
+    setMediaJob({ jobId, phase: source.sourcePath ? "uploading" : "packaging", done: 0, total: null });
+    const unsub = await onMediaExportProgress((p) => {
+      if (p.jobId !== jobId) return;
+      setMediaJob({ jobId, phase: p.phase, done: p.done, total: p.total });
+    });
+    let outcome;
+    try {
+      outcome = await packageMedia({
+        serverUrl, backendId: trBackend.id, jobId,
+        ...source,
+        container, subtitles, defaultTrack,
+        destPath: dest, filename: basename(dest).replace(/\.[^.]+$/, ""),
+        maxUploadBytes: trCaps?.media_package?.max_upload_bytes ?? null,
+      });
+    } finally {
+      unsub();
+      setMediaJob(null);
+    }
+    if (outcome.kind === "ok") {
+      // An uploaded file's server copy is reusable for a while: remember it
+      // so "Save as MKV" or a second export skips the upload.
+      if (source.sourcePath && outcome.mediaId) {
+        upsertRecord({
+          ...rec,
+          result: {
+            ...(rec.result ?? { text: "" }),
+            sourceMediaId: outcome.mediaId,
+            sourceMediaExpiresAt: outcome.expiresAt ?? undefined,
+          },
+        });
+      }
+      return true;
+    }
+    if (outcome.kind === "expired") {
+      // The server dropped it: forget the id; a local copy carries on.
+      if (rec.result?.sourceVideoMediaId === serverVideoId || rec.result?.sourceMediaId === serverVideoId) {
+        const r = { ...(rec.result ?? { text: "" }) };
+        delete r.sourceVideoMediaId; delete r.sourceVideoExpiresAt;
+        if (!urlSource) { delete r.sourceMediaId; delete r.sourceMediaExpiresAt; }
+        upsertRecord({ ...rec, result: r });
+      }
+      setMediaError({
+        kind: "expired",
+        msg: localVideo
+          ? "The server no longer has this video — save again to upload the local copy."
+          : "The server no longer has this video — save again to fetch it from the link.",
+      });
+      return false;
+    }
+    if (outcome.kind === "mp4_incompatible") {
+      setStreams({ mp4Ok: false, mp4Reason: outcome.reason ?? outcome.detail });
+      setMediaError({ kind: "mp4", msg: outcome.reason ?? outcome.detail, reason: outcome.reason ?? undefined });
+      return false;
+    }
+    setMediaError({
+      kind: outcome.kind,
+      msg: outcome.kind === "cancelled" ? "Export cancelled." : safeDisplayText(outcome.detail, 300) || "Export failed.",
+    });
+    return false;
   };
 
   const doExport = async () => {
     setSaveError(null);
-    const ext = EXPORT_EXTENSIONS[exportFormat];
+    setMediaError(null);
     const stem = basename(path).replace(/\.[^.]+$/, "");
     const opts = exportOpts();
     const files = generateExports(editedResult, opts);
+    const plan = exportPlanNow();
     let target: string | null;
     try {
-      target = await pickExportPath(files[0].name(stem), exportFormat.toUpperCase(), ext);
+      target = await pickExportPath(
+        plan.primary.name(stem),
+        plan.primary.kind === "video"
+          ? `${plan.primaryExt.toUpperCase()} video`
+          : plan.primary.kind === "audio" ? "Audio" : exportFormat.toUpperCase(),
+        plan.primaryExt,
+      );
     } catch (e) {
       console.error("export save dialog failed:", e);
       return;
     }
     if (!target) return; // cancelled
+    // The picked path names the FIRST file; siblings land beside it under
+    // the stem the user actually chose in the dialog.
+    const { dir, stem: pickedStem } = derivePickedStem(target, plan.primary.name(""), plan.primaryExt);
     try {
-      if (files.length === 1) {
-        await saveTextFile(target, files[0].content);
-      } else {
-        // Multi-file (LRC per track): the picked path names the FIRST file;
-        // siblings land beside it with their track suffixes, keyed off the
-        // stem the user actually chose in the dialog.
-        const sep = target.includes("\\") ? "\\" : "/";
-        const dir = target.slice(0, target.lastIndexOf(sep) + 1);
-        // The dialog was seeded with files[0]'s name — strip that exact
-        // suffix (e.g. ".de.lrc") from whatever the user confirmed, so the
-        // siblings never double-suffix and files[0] lands on the picked path.
-        const firstSuffix = files[0].name("");
-        const base = target.slice(dir.length);
-        const pickedStem = base.endsWith(firstSuffix)
-          ? base.slice(0, -firstSuffix.length)
-          : base.replace(/\.lrc$/i, "");
-        for (const f of files) await saveTextFile(dir + f.name(pickedStem), f.content);
+      let textIdx = 0;
+      for (const f of plan.files) {
+        const dest = dir + f.name(pickedStem);
+        if (f.kind === "text") {
+          await saveTextFile(dest, files[textIdx++].content);
+        } else if (f.kind === "audio") {
+          await exportAudioTo(dest);
+        } else if (!(await exportVideoTo(dest, plan.embedded))) {
+          return;
+        }
       }
     } catch (e) {
+      setMediaJob(null);
       setSaveError(String(e));
       return;
     }
@@ -2682,6 +2901,116 @@ export function TranscriptViewer({
             </div>
           )}
 
+          {/* Media: what the Save also writes. Audio = the app's copy of a
+              link's audio; Video = the kept/uploaded video, with the tracks
+              chosen above muxed in as subtitle streams (server-side), as
+              sidecars, or both. Cards keep the format cards' radio idiom. */}
+          {showMedia && (() => {
+            const audioAvailable = urlSource && !!(mediaPath || rec?.result?.sourceMediaId);
+            const videoWhy = !hasVideoSource
+              ? "no video is available for this transcription"
+              : !packageOn && subtitleMode !== "sidecar" && !localVideo
+                ? (trCaps?.media_package?.reason ?? "this server can't package subtitles")
+                : null;
+            const sourceLine =
+              mediaChoice !== "video" ? null
+                : localVideo && !urlSource ? `${basename(localVideo)} · ${serverVideoId ? "already on the server" : "will be uploaded"}`
+                  : rec?.videoPath ? "local copy"
+                    : serverVideoId && serverVideoUntil
+                      ? `on the server until ${new Date(serverVideoUntil * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                      : urlVideoOnDemand ? "fetched from the link when you save" : null;
+            const cardCls = (on: boolean, off: boolean) => cn(
+              "ring-signal min-w-0 flex-1 rounded-xl border px-3 py-2 text-left transition-colors",
+              on ? "border-accent/55 bg-accent-soft" : "border-line bg-surface-2 hover:border-line-strong",
+              off && "cursor-not-allowed opacity-50 hover:border-line",
+            );
+            const pick = (c: MediaChoice) => { setMediaChoice(c); persistMedia({ exportMedia: c }); };
+            return (
+              <div className="mt-3 rounded-xl border border-line bg-surface/50 px-4 py-3">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="font-mono text-[10.5px] uppercase tracking-label text-faint">media</span>
+                  {sourceLine && <span className="text-[11.5px] text-faint">video: {safeDisplayText(sourceLine, 120)}</span>}
+                </div>
+                <div role="radiogroup" aria-label="Export media" className="mt-2 flex gap-2.5">
+                  <button type="button" role="radio" aria-checked={mediaChoice === "none"}
+                    onClick={() => pick("none")} className={cardCls(mediaChoice === "none", false)}>
+                    <span className={cn("block text-[13px] font-medium", mediaChoice === "none" ? "text-accent" : "text-text")}>None</span>
+                    <span className="mt-0.5 block text-[10.5px] leading-snug text-faint">the text file only</span>
+                  </button>
+                  {urlSource && (
+                    <button type="button" role="radio" aria-checked={mediaChoice === "audio"} disabled={!audioAvailable}
+                      title={audioAvailable ? undefined : "no audio is stored for this link"}
+                      onClick={() => audioAvailable && pick("audio")} className={cardCls(mediaChoice === "audio", !audioAvailable)}>
+                      <span className={cn("block text-[13px] font-medium", mediaChoice === "audio" ? "text-accent" : "text-text")}>Audio</span>
+                      <span className="mt-0.5 block text-[10.5px] leading-snug text-faint">
+                        {mediaPath ? `the app's copy · ${audioExt}` : audioAvailable ? "fetched from the server" : "not stored"}
+                      </span>
+                    </button>
+                  )}
+                  <button type="button" role="radio" aria-checked={mediaChoice === "video"} disabled={!!videoWhy}
+                    title={videoWhy ?? undefined}
+                    onClick={() => !videoWhy && pick("video")} className={cardCls(mediaChoice === "video", !!videoWhy)}>
+                    <span className={cn("block text-[13px] font-medium", mediaChoice === "video" ? "text-accent" : "text-text")}>Video</span>
+                    <span className="mt-0.5 block text-[10.5px] leading-snug text-faint">
+                      {videoWhy ?? "with the subtitle tracks chosen above"}
+                    </span>
+                  </button>
+                </div>
+                {mediaChoice === "video" && !videoWhy && (
+                  <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px]">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="font-mono text-[10.5px] uppercase tracking-label text-faint">container</span>
+                      {(["mkv", "mp4"] as const).map((c) => {
+                        const off = subtitleMode === "sidecar" && !!localVideo && !serverVideoId
+                          ? c !== (/\.([a-z0-9]+)$/i.exec(localVideo)?.[1]?.toLowerCase() === "mp4" ? "mp4" : "mkv")
+                          : c === "mp4" && !!mp4Why;
+                        const on = container === c;
+                        return (
+                          <button key={c} type="button" aria-pressed={on} disabled={off}
+                            title={c === "mp4" && mp4Why ? mp4Why : subtitleMode === "sidecar" && !!localVideo && !serverVideoId ? "a plain copy keeps the original container" : undefined}
+                            onClick={() => { if (!off) { setContainer(c); persistMedia({ exportContainer: c }); } }}
+                            className={cn(
+                              "ring-signal inline-flex h-6 items-center rounded-pill border px-2.5 font-mono text-[11px] font-medium",
+                              on ? "border-accent/45 text-accent" : "border-line bg-surface-2 text-dim hover:text-text",
+                              off && "cursor-not-allowed opacity-50 hover:text-dim",
+                            )}>
+                            {c.toUpperCase()}
+                          </button>
+                        );
+                      })}
+                    </span>
+                    <span className="inline-flex items-center gap-2">
+                      <span className="font-mono text-[10.5px] uppercase tracking-label text-faint">subtitles</span>
+                      {([["embedded", "embedded tracks"], ["sidecar", "sidecar files"], ["both", "both"]] as const).map(([v, l]) => (
+                        <button key={v} type="button" aria-pressed={subtitleMode === v}
+                          disabled={v !== "sidecar" && !packageOn}
+                          title={v !== "sidecar" && !packageOn ? (trCaps?.media_package?.reason ?? "this server can't package subtitles") : undefined}
+                          onClick={() => { setSubtitleMode(v); persistMedia({ exportSubtitleMode: v }); }}
+                          className={cn(
+                            "ring-signal inline-flex h-6 items-center rounded-pill border px-2.5 font-mono text-[11px] font-medium",
+                            subtitleMode === v ? "border-accent/45 text-accent" : "border-line bg-surface-2 text-dim hover:text-text",
+                            v !== "sidecar" && !packageOn && "cursor-not-allowed opacity-50",
+                          )}>
+                          {l}
+                        </button>
+                      ))}
+                    </span>
+                    {mp4Why && container === "mkv" && (
+                      <span className="text-[11.5px] text-faint">{safeDisplayText(mp4Why, 160)}</span>
+                    )}
+                  </div>
+                )}
+                {mediaChoice === "video" && !videoWhy && subtitleMode !== "sidecar" && (
+                  <div className="mt-1.5 text-[11.5px] text-faint">
+                    Embedded tracks: {(effTracks.length ? effTracks : ["orig"]).map((t) =>
+                      t === "orig" ? `${languageLabel(result.language ?? "und")} · original` : languageLabel(t)).join(", ")}
+                    {" · "}speaker colours ride in MKV as SRT tags, in MP4 as styled text (player-dependent).
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* "In this file": the contract. Rows mirror the view toggles
               (clicking flips them, live); impossible rows say why. */}
           <div className="mt-3 rounded-xl border border-line bg-surface/50 px-4 py-2">
@@ -2773,27 +3102,68 @@ export function TranscriptViewer({
             />
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <span className="font-mono text-[11.5px] text-faint">
-              {exportFileName()}
-              {(result.segments?.length ?? 0) > PREVIEW_CUES
-                ? ` · first ${PREVIEW_CUES} of ${result.segments?.length} cues`
-                : ""}
-            </span>
-            <span className="flex-1" />
-            {editCount > 0 && (
-              <span className="font-mono text-[11px] text-faint">
-                {editCount} correction{editCount === 1 ? "" : "s"} included
-              </span>
-            )}
-            {saveError && (
-              <span className="text-[12px] text-warn">{safeDisplayText(saveError, 300)}</span>
-            )}
-            <Button variant="accent" size="sm" onClick={doExport}>
-              {saved ? <Check className="size-4" /> : <Download className="size-4" />}
-              {saved ? "Saved" : `Save ${exportFormat.toUpperCase()}`}
-            </Button>
-          </div>
+          {(() => {
+            const plan = exportPlanNow();
+            const stem = basename(path).replace(/\.[^.]+$/, "");
+            const names = plan.files.map((f) => f.name(stem));
+            const phaseText =
+              mediaJob?.phase === "fetching" ? "fetching the video from the link…"
+                : mediaJob?.phase === "uploading" ? "uploading the video"
+                  : mediaJob?.phase === "packaging" ? "packaging on the server…"
+                    : mediaJob?.phase === "downloading" ? "receiving the packaged video"
+                      : mediaJob?.phase === "copying" ? "copying…" : "writing…";
+            const pct = mediaJob && mediaJob.total ? Math.round((mediaJob.done / mediaJob.total) * 100) : null;
+            return (
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <span className="font-mono text-[11.5px] text-faint">
+                  {names.length > 1 ? `${names.length} files · ${names.join(" · ")}` : names[0]}
+                  {(result.segments?.length ?? 0) > PREVIEW_CUES
+                    ? ` · first ${PREVIEW_CUES} of ${result.segments?.length} cues`
+                    : ""}
+                </span>
+                <span className="flex-1" />
+                {editCount > 0 && (
+                  <span className="font-mono text-[11px] text-faint">
+                    {editCount} correction{editCount === 1 ? "" : "s"} included
+                  </span>
+                )}
+                {saveError && (
+                  <span className="text-[12px] text-warn">{safeDisplayText(saveError, 300)}</span>
+                )}
+                {mediaError && (
+                  <span className="text-[12px] text-warn">
+                    {safeDisplayText(mediaError.msg, 300)}
+                    {mediaError.kind === "mp4" && (
+                      <button type="button" className="ml-2 underline"
+                        onClick={() => { setContainer("mkv"); persistMedia({ exportContainer: "mkv" }); setMediaError(null); }}>
+                        Save as MKV
+                      </button>
+                    )}
+                  </span>
+                )}
+                {mediaJob ? (
+                  <span className="inline-flex items-center gap-2 font-mono text-[11px] tabular-nums text-dim">
+                    <span className="inline-block h-1 w-24 overflow-hidden rounded-pill bg-surface-2">
+                      <span
+                        className={cn("block h-full rounded-pill bg-accent transition-[width]", pct === null && "animate-pulse")}
+                        style={{ width: `${pct ?? 100}%` }}
+                      />
+                    </span>
+                    {phaseText}{pct !== null ? ` ${pct}%` : ""}
+                    {mediaJob.total ? ` · ${fmtBytes(mediaJob.done)} of ${fmtBytes(mediaJob.total)}` : ""}
+                    {mediaJob.jobId && (
+                      <Button variant="ghost" size="sm" onClick={() => void cancelMediaExport()}>Cancel</Button>
+                    )}
+                  </span>
+                ) : (
+                  <Button variant="accent" size="sm" onClick={doExport}>
+                    {saved ? <Check className="size-4" /> : <Download className="size-4" />}
+                    {saved ? "Saved" : plan.saveLabel}
+                  </Button>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 

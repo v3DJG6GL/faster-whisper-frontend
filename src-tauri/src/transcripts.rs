@@ -62,6 +62,30 @@ pub(crate) fn video_media_dir(app: &AppHandle, custom: Option<String>) -> Result
         .ok_or_else(|| "could not resolve the audio folder".into())
 }
 
+/// The media paths one file/url record names (`sourcePath`, `mediaPath`,
+/// `videoPath`) — what `copy_media_to` may read on the record's behalf.
+pub(crate) fn record_media_paths(app: &AppHandle, id: &str) -> Vec<PathBuf> {
+    if !valid_id(id) {
+        return Vec::new();
+    }
+    let Ok(dir) = transcripts_dir(app) else {
+        return Vec::new();
+    };
+    let path = dir.join(format!("{id}.json"));
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    ["sourcePath", "mediaPath", "videoPath"]
+        .iter()
+        .filter_map(|k| v.get(*k).and_then(|p| p.as_str()))
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
 /// The `kind` field of one record ("file" | "url" | "dictation"), if the
 /// record exists and parses. Used by the layout migration to route media.
 pub(crate) fn record_kind(app: &AppHandle, id: &str) -> Option<String> {

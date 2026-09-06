@@ -25,6 +25,7 @@ import type {
   UsageQuery,
 } from "./types";
 import type { UrlPreview } from "./urlSource";
+import type { MediaExportProgress, MediaStreams } from "./mediaExport";
 import type {
   ExportEnvelope,
   ImportResult,
@@ -248,6 +249,108 @@ export async function urlPreview(args: {
     backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
     url: args.url,
+  });
+}
+
+// ── Media export (audio / video / video + subtitle tracks) ─────────────────
+
+export interface SubtitleTrackIn {
+  lang: string;
+  label?: string;
+  srt: string;
+}
+export type PackageOutcomeKind =
+  | "ok" | "expired" | "mp4_incompatible" | "no_video" | "too_large"
+  | "rate_limited" | "disabled" | "cancelled" | "error";
+export interface PackageOutcome {
+  kind: PackageOutcomeKind;
+  detail: string;
+  bytes: number;
+  mediaId: string | null;
+  expiresAt: number | null;
+  reason: string | null;
+  streams: MediaStreams | null;
+}
+
+/** Package a retained (or local) video with subtitle tracks straight to
+ *  `destPath`: uploads a local file first (streamed), then muxes on the
+ *  server and streams the result down. Progress on onMediaExportProgress
+ *  filtered by `jobId`; cancel with cancelMediaExport. */
+export async function packageMedia(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  jobId: string;
+  sourceMediaId?: string | null;
+  sourcePath?: string | null;
+  container: "mkv" | "mp4";
+  subtitles: SubtitleTrackIn[];
+  defaultTrack: number | null;
+  destPath: string;
+  filename: string;
+  maxUploadBytes?: number | null;
+}): Promise<PackageOutcome> {
+  if (!isTauri) throw new Error("Video export requires the desktop app.");
+  return invoke<PackageOutcome>("package_media", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    jobId: args.jobId,
+    sourceMediaId: args.sourceMediaId ?? null,
+    sourcePath: args.sourcePath ?? null,
+    container: args.container,
+    subtitles: args.subtitles,
+    defaultTrack: args.defaultTrack,
+    destPath: args.destPath,
+    filename: args.filename,
+    maxUploadBytes: args.maxUploadBytes ?? null,
+  });
+}
+
+export async function cancelMediaExport(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("cancel_media_export");
+}
+
+/** Subscribe to export progress events; returns the unsubscribe. */
+export async function onMediaExportProgress(
+  cb: (p: MediaExportProgress) => void,
+): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<MediaExportProgress>("media://export-progress", (e) => cb(e.payload));
+}
+
+/** Codec facts for a retained file; null when the server no longer has it. */
+export async function getMediaStreams(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  mediaId: string;
+}): Promise<MediaStreams | null> {
+  if (!isTauri) return null;
+  return invoke<MediaStreams | null>("get_media_streams", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    mediaId: args.mediaId,
+  });
+}
+
+/** Plain copy of one of a record's media files (source, audio copy or
+ *  video copy) to a user-picked path. Returns the bytes copied. */
+export async function copyMediaTo(args: {
+  src: string;
+  dest: string;
+  recordId: string;
+  audioBase?: string | null;
+}): Promise<number> {
+  if (!isTauri) throw new Error("Not running in the desktop app.");
+  return invoke<number>("copy_media_to", {
+    src: args.src,
+    dest: args.dest,
+    recordId: args.recordId,
+    audioBase: args.audioBase ?? null,
   });
 }
 

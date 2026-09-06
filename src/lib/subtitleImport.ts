@@ -14,7 +14,7 @@ export interface ImportedText {
 export const TEXT_SOURCE_EXTS = ["srt", "vtt", "lrc", "txt", "json"] as const;
 /** The audio/video containers the file picker accepts — ONE list for the picker's dialog
  *  filter and the drag-and-drop accept test, which used to carry separate copies. */
-export const AUDIO_SOURCE_EXTS = ["wav", "mp3", "m4a", "mp4", "aac", "ogg", "opus", "webm", "flac"] as const;
+export const AUDIO_SOURCE_EXTS = ["wav", "mp3", "m4a", "mp4", "aac", "ogg", "opus", "webm", "flac", "mkv", "mov", "m4v"] as const;
 export const ACCEPTED_EXTS: readonly string[] = [...AUDIO_SOURCE_EXTS, ...TEXT_SOURCE_EXTS];
 
 /** Is this something the Transcribe screen accepts (dropped or picked)? */

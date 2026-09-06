@@ -14,6 +14,7 @@ use std::time::Duration;
 
 pub mod batch;
 pub mod discovery;
+pub mod media;
 pub mod pipeline;
 pub mod preload;
 pub mod stream;
@@ -785,4 +786,29 @@ pub async fn get_json<T: serde::de::DeserializeOwned>(url: String, api_key: Opti
         Ok(resp) if resp.status().is_success() => json_capped_to::<T>(resp, MAX_META_BODY).await.ok(),
         _ => None,
     }
+}
+
+/// A file as a stream of 1 MiB chunks for a request body — the upload is
+/// never resident (a MEDIA_MAX_BYTES video is gigabytes). `on_read` sees the
+/// running byte count after every chunk (progress).
+pub(crate) fn file_stream(
+    file: tokio::fs::File,
+    on_read: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
+) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> + Send + 'static {
+    futures_util::stream::unfold((file, 0u64, on_read), |(mut f, sent, cb)| async move {
+        use tokio::io::AsyncReadExt as _;
+        let mut buf = vec![0u8; 1024 * 1024];
+        match f.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                let sent = sent + n as u64;
+                if let Some(cb) = cb.as_ref() {
+                    cb(sent);
+                }
+                Some((Ok(buf), (f, sent, cb)))
+            }
+            Err(e) => Some((Err(e), (f, sent, cb))),
+        }
+    })
 }

@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useNavigate } from "react-router-dom";
-import { Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, FileText, Link2, Mic, MicOff, Pause, Play, RotateCcw, Search, Trash2, X, History as HistoryIcon } from "lucide-react";
+import { Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, FileText, Film, Link2, Mic, MicOff, Pause, Play, RotateCcw, Search, Trash2, X, History as HistoryIcon } from "lucide-react";
 import {
   Badge,
   Button,
@@ -35,6 +35,7 @@ import {
 } from "@/lib/transcriptExport";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { urlHost } from "@/lib/urlSource";
+import { isVideoSourcePath } from "@/lib/mediaExport";
 import { cn } from "@/lib/cn";
 
 /** "Today" / "Yesterday" / a local date — the bucket a record sorts under. */
@@ -421,6 +422,13 @@ export default function History() {
       .catch((e) => console.error("history track copy failed:", e));
   };
 
+  /** "Save audio…/Save video…": open the workbench straight onto the export
+   *  panel with that Media choice (the panel holds the container and
+   *  subtitle options — a row button cannot). */
+  const openExport = (rec: TranscriptRecord, media: "audio" | "video") => {
+    if (openHistoryRecord(rec)) navigate("/transcribe", { state: { openExport: { media } } });
+  };
+
   const quickExport = async (rec: TranscriptRecord) => {
     setExportError(null);
     const t = settings.transcribe ?? {};
@@ -800,6 +808,28 @@ export default function History() {
             onClick={() => void quickExport(rec)}
           >
             <Download className="size-3.5" />
+          </Button>
+        )}
+        {ok && rec.kind === "url" && (rec.mediaPath || rec.result?.sourceMediaId) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={running}
+            title={running ? "Wait for the current run to finish" : "Save the audio…"}
+            onClick={() => openExport(rec, "audio")}
+          >
+            <FileAudio className="size-3.5" />
+          </Button>
+        )}
+        {ok && (rec.kind === "url" || (rec.kind !== "dictation" && rec.kind !== "text" && isVideoSourcePath(rec.sourcePath))) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={running}
+            title={running ? "Wait for the current run to finish" : "Save the video (with subtitles)…"}
+            onClick={() => openExport(rec, "video")}
+          >
+            <Film className="size-3.5" />
           </Button>
         )}
         {exportError?.id === rec.id && (

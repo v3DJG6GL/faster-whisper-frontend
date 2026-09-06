@@ -85,6 +85,8 @@ pub struct BatchOptions {
     /// the audio, capped at this height (None = best available).
     pub keep_video: Option<bool>,
     pub video_max_height: Option<u32>,
+    /// File runs: keep the uploaded video on the server (packaging follows).
+    pub retain_media: Option<bool>,
     /// Client-generated hex id the server keys live progress under
     /// (GET /v1/audio/transcriptions/progress/<id> while the POST runs).
     pub progress_id: Option<String>,
@@ -335,7 +337,7 @@ mod wire_field_tests {
 
 /// Progress ids are client-generated lowercase hex (a UUID without dashes) —
 /// validated before they reach a form field or, critically, a URL path.
-fn is_progress_id(s: &str) -> bool {
+pub(crate) fn is_progress_id(s: &str) -> bool {
     (8..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
@@ -670,14 +672,20 @@ pub async fn transcribe(
         .unwrap_or("audio")
         .to_string();
     let mime = mime_for(path);
-    // Read off the runtime's worker pool: a large file on slow/network storage shouldn't park a
-    // tokio worker thread that's also servicing other IPC (chip focus, audio-level events).
-    let read_path = file_path.to_string();
-    let bytes = tokio::task::spawn_blocking(move || std::fs::read(&read_path))
+    // Streamed, never resident: the media cap is 10 GB, and reading a file
+    // that size into a Vec would take the app down with it. Async reads
+    // off tokio's file pool, 1 MiB at a time, with the length declared so
+    // the server's early 413 fires before a byte is sent.
+    let file = tokio::fs::File::open(path)
         .await
-        .context("file-read task panicked")?
-        .with_context(|| format!("reading {file_path}"))?;
-    let part = Part::bytes(bytes).file_name(filename).mime_str(mime)?;
+        .with_context(|| format!("opening {file_path}"))?;
+    let len = file
+        .metadata()
+        .await
+        .with_context(|| format!("reading {file_path}"))?
+        .len();
+    let body = reqwest::Body::wrap_stream(super::file_stream(file, None));
+    let part = Part::stream_with_length(body, len).file_name(filename).mime_str(mime)?;
     // File upload (Transcribe screen): a long recording can decode for many minutes — allow it.
     post(server_url, api_key, model, language, prompt, overrides, override_profile, SourcePart::File(part), Some(FILE_TRANSCRIBE_TIMEOUT), options).await
 }
@@ -853,6 +861,9 @@ async fn post(
         if is_progress_id(pid) {
             form = form.text("progress_id", pid.to_string());
         }
+    }
+    if let Some(r) = opts.retain_media {
+        form = form.text("retain_media", if r { "true" } else { "false" });
     }
     if let Some(k) = opts.keep_video {
         form = form.text("keep_video", if k { "true" } else { "false" });

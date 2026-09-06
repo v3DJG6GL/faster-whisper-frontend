@@ -219,6 +219,10 @@ pub fn run() {
             commands::fetch_url_media,      // pull downloaded audio for local playback
             commands::fetch_url_video,      // pull a link run's kept video for export
             commands::url_video_download,   // fetch a link's video on demand (export panel)
+            commands::package_media,        // export a video with subtitle tracks (server mux)
+            commands::cancel_media_export,
+            commands::get_media_streams,
+            commands::copy_media_to,        // plain copy of a record's media to a picked path
             commands::import_settings_file, // P30: settings import (parse+validate)
             commands::list_audio_devices,
             commands::start_mic_test,

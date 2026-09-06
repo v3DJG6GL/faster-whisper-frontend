@@ -689,18 +689,272 @@ async fn until_file_epoch_bumps<T, E: std::fmt::Display>(
     epoch: u64,
     fut: impl std::future::Future<Output = Result<T, E>>,
 ) -> Result<T, String> {
+    until_epoch_bumps(&FILE_TRANSCRIBE_EPOCH, epoch, fut).await
+}
+
+/// The generic half of `until_file_epoch_bumps`: any epoch counter.
+async fn until_epoch_bumps<T, E: std::fmt::Display>(
+    counter: &'static std::sync::atomic::AtomicU64,
+    epoch: u64,
+    fut: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, String> {
     tokio::pin!(fut);
     loop {
         tokio::select! {
             r = &mut fut => return r.map_err(|e| e.to_string()),
             _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
-                if FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+                if counter.load(std::sync::atomic::Ordering::SeqCst) != epoch {
                     return Err("cancelled".into());
                 }
             }
         }
     }
 }
+
+/// Epoch for aborting an in-flight media export (`package_media`): bumping it
+/// drops the future, which closes the upload/download connection.
+static MEDIA_EXPORT_EPOCH: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Abort the in-flight media export (the export panel's Cancel).
+#[tauri::command]
+pub fn cancel_media_export() {
+    MEDIA_EXPORT_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn under(dir: &std::path::Path, path: &std::path::Path) -> bool {
+    match (dir.canonicalize(), path.canonicalize()) {
+        (Ok(d), Ok(p)) => p.starts_with(&d),
+        _ => false,
+    }
+}
+
+/// Whether `path` sits inside any folder this app manages (the audio base or
+/// the app data dir) — an export must never land there, and a copy source
+/// must come from there or from the record's own files.
+fn inside_app_storage(app: &tauri::AppHandle, audio_base: Option<String>, path: &std::path::Path) -> bool {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(b) = resolve_audio_base(app, audio_base) {
+        dirs.push(b);
+    }
+    if let Ok(d) = app.path().app_data_dir() {
+        dirs.push(d);
+    }
+    dirs.iter().any(|d| under(d, path))
+}
+
+/// Package a retained (or local) video with subtitle tracks to `dest_path`.
+/// Exactly one of `source_media_id` (the server already holds it) or
+/// `source_path` (a local file, uploaded first) names the video. Progress
+/// lands on `media://export-progress` tagged with `job_id`.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn package_media(
+    app: tauri::AppHandle,
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    job_id: String,
+    source_media_id: Option<String>,
+    source_path: Option<String>,
+    container: String,
+    subtitles: Vec<transport::media::SubtitleTrack>,
+    default_track: Option<u32>,
+    dest_path: String,
+    filename: String,
+    max_upload_bytes: Option<u64>,
+) -> Result<transport::media::PackageOutcome, String> {
+    use transport::media::{self as media, PackageOutcome, UploadOutcome};
+    if !job_id.is_empty() && !transport::batch::is_progress_id(&job_id) {
+        return Err("malformed job id".into());
+    }
+    if !matches!(container.as_str(), "mkv" | "mp4") {
+        return Err("container must be mkv or mp4".into());
+    }
+    if subtitles.len() > media::MAX_TRACKS {
+        return Err(format!("at most {} subtitle tracks", media::MAX_TRACKS));
+    }
+    for t in &subtitles {
+        if t.srt.len() > media::MAX_SRT_BYTES {
+            return Err("a subtitle track is too large".into());
+        }
+        let ok = (2..=12).contains(&t.lang.len())
+            && t.lang.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+        if !ok {
+            return Err("a subtitle track has a malformed language code".into());
+        }
+    }
+    let dest = PathBuf::from(&dest_path);
+    let Some(parent) = dest.parent().filter(|p| p.is_dir()) else {
+        return Err("the export folder does not exist".into());
+    };
+    if inside_app_storage(&app, None, parent) {
+        return Err("choose a folder outside the app's own storage".into());
+    }
+    let (media_id, path) = match (source_media_id, source_path) {
+        (Some(id), None) => {
+            if !transport::batch::is_progress_id(&id) {
+                return Err("malformed media id".into());
+            }
+            (Some(id), None)
+        }
+        (None, Some(p)) => {
+            let p = PathBuf::from(p);
+            let meta = std::fs::metadata(&p).map_err(|e| e.to_string())?;
+            if !meta.is_file() {
+                return Err("the video is not a file".into());
+            }
+            if meta.len() > max_upload_bytes.unwrap_or(crate::transcripts::MAX_MEDIA_BYTES) {
+                return Ok(PackageOutcome::err_pub(
+                    "too_large",
+                    "the video is larger than the server's upload limit",
+                ));
+            }
+            (None, Some(p))
+        }
+        _ => return Err("name exactly one of a media id or a local file".into()),
+    };
+    let key = resolve_key(api_key, backend_id);
+    let epoch = MEDIA_EXPORT_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
+    let emit_app = app.clone();
+    let job = job_id.clone();
+    let progress: media::Progress = std::sync::Arc::new(move |phase, done, total| {
+        let _ = emit_app.emit(
+            "media://export-progress",
+            media::ExportProgress { job_id: job.clone(), phase, done, total },
+        );
+    });
+    let max_upload = max_upload_bytes.unwrap_or(crate::transcripts::MAX_MEDIA_BYTES);
+    let dest_for_cleanup = dest.clone();
+    let fut = async {
+        let mut uploaded_expiry: Option<i64> = None;
+        let mid = match (media_id, path) {
+            (Some(id), _) => id,
+            (None, Some(p)) => {
+                match media::upload_media(&server_url, key.as_deref(), &p, max_upload, progress.clone()).await? {
+                    UploadOutcome::Ok { media_id, expires_at } => {
+                        uploaded_expiry = expires_at;
+                        media_id
+                    }
+                    UploadOutcome::Http { status, detail } => {
+                        let kind = match status {
+                            413 => "too_large",
+                            429 => "rate_limited",
+                            403 | 503 => "disabled",
+                            _ => "error",
+                        };
+                        return Ok::<_, anyhow::Error>(PackageOutcome::err_pub(kind, detail));
+                    }
+                }
+            }
+            _ => unreachable!(),
+        };
+        let mut out = media::package_to_path(
+            &server_url,
+            key.as_deref(),
+            &mid,
+            &container,
+            &subtitles,
+            default_track,
+            &filename,
+            &dest,
+            crate::transcripts::MAX_MEDIA_BYTES,
+            progress.clone(),
+        )
+        .await?;
+        if out.kind == "ok" && out.expires_at.is_none() {
+            out.expires_at = uploaded_expiry;
+        }
+        Ok(out)
+    };
+    let r = until_epoch_bumps(&MEDIA_EXPORT_EPOCH, epoch, fut).await;
+    if r.is_err() {
+        // A cancelled or failed export leaves no half-written file behind.
+        let mut tmp = dest_for_cleanup.as_os_str().to_owned();
+        tmp.push(".tmp");
+        let _ = std::fs::remove_file(PathBuf::from(tmp));
+    }
+    match r {
+        Ok(out) => Ok(out),
+        Err(e) if e == "cancelled" => Ok(PackageOutcome::err_pub("cancelled", "export cancelled")),
+        Err(e) => Err(e),
+    }
+}
+
+/// Codec facts for a retained file (`None` when the server no longer has it).
+#[tauri::command]
+pub async fn get_media_streams(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    media_id: String,
+) -> Result<Option<transport::media::MediaStreams>, String> {
+    let key = resolve_key(api_key, backend_id);
+    transport::media::get_streams(&server_url, key.as_deref(), &media_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Copy one of a record's media files (its source, its audio copy or its
+/// video copy — or any file inside the app's media folders) to a user-picked
+/// path. Plain copy via tmp + rename; returns the bytes copied. The
+/// destination must lie OUTSIDE the app's own storage.
+#[tauri::command]
+pub async fn copy_media_to(
+    app: tauri::AppHandle,
+    src: String,
+    dest: String,
+    record_id: String,
+    audio_base: Option<String>,
+) -> Result<u64, String> {
+    if !crate::transcripts::valid_id(&record_id) {
+        return Err("malformed record id".into());
+    }
+    let src_path = PathBuf::from(&src);
+    let dest_path = PathBuf::from(&dest);
+    let src_real = src_path.canonicalize().map_err(|e| format!("reading the media file: {e}"))?;
+    if !src_real.is_file() {
+        return Err("the media file is missing".into());
+    }
+    let owned = crate::transcripts::record_media_paths(&app, &record_id)
+        .iter()
+        .any(|p| p.canonicalize().map(|c| c == src_real).unwrap_or(false));
+    let in_store = resolve_audio_base(&app, audio_base.clone())
+        .map(|b| AUDIO_SUBDIRS.iter().any(|s| under(&b.join(s), &src_real)))
+        .unwrap_or(false);
+    if !owned && !in_store {
+        return Err("that file does not belong to this transcription".into());
+    }
+    let Some(parent) = dest_path.parent().filter(|p| p.is_dir()) else {
+        return Err("the export folder does not exist".into());
+    };
+    if inside_app_storage(&app, audio_base, parent) {
+        return Err("choose a folder outside the app's own storage".into());
+    }
+    if dest_path.canonicalize().map(|c| c == src_real).unwrap_or(false) {
+        return Err("that is the file itself".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
+        let mut tmp = dest_path.as_os_str().to_owned();
+        tmp.push(".tmp");
+        let tmp = PathBuf::from(tmp);
+        let n = match std::fs::copy(&src_real, &tmp) {
+            Ok(n) => n,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e.to_string());
+            }
+        };
+        if let Err(e) = std::fs::rename(&tmp, &dest_path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+        Ok(n)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 
 /// Abort every in-flight file transcription (the Transcribe screen's Cancel).
 #[tauri::command]

@@ -22,6 +22,7 @@ import type {
   TranscriptSegment, VideoProgress,
 } from "./types";
 import type { VideoRung } from "./urlSource";
+import { isVideoSourcePath } from "./mediaExport";
 
 export type ItemStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
@@ -375,6 +376,10 @@ export interface RunContext {
   /** The server can keep a link's video (caps.url_video_enabled): only then
    *  does a URL item's keep-video choice go on the wire. */
   urlVideoEnabled?: boolean;
+  /** The server packages subtitles (caps.media_package_enabled): a local
+   *  VIDEO file then asks the server to retain the upload for a while, so
+   *  an export right after needs no second upload. */
+  mediaPackageEnabled?: boolean;
 }
 
 interface TranscribeRunState {
@@ -1340,6 +1345,9 @@ async function pump(
               : st?.urlVideoMaxHeight ?? null;
             itemOptions = { ...(options ?? {}), keepVideo: true, videoMaxHeight };
           }
+        }
+        if (!isUrl && !isText && ctx.mediaPackageEnabled && isVideoSourcePath(next.path)) {
+          itemOptions = { ...(itemOptions ?? {}), retainMedia: true };
         }
         const common = {
           serverUrl: ctx.serverUrl,
