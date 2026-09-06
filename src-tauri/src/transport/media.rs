@@ -235,6 +235,9 @@ pub async fn package_to_path(
     container: &str,
     subtitles: &[SubtitleTrack],
     default_track: Option<u32>,
+    original_track: Option<u32>,
+    audio_lang: Option<&str>,
+    audio_label: Option<&str>,
     filename: &str,
     dest: &Path,
     max_bytes: u64,
@@ -250,6 +253,9 @@ pub async fn package_to_path(
             "lang": t.lang, "label": t.label, "srt": t.srt,
         })).collect::<Vec<_>>(),
         "default_track": default_track,
+        "original_track": original_track,
+        "audio_lang": audio_lang,
+        "audio_label": audio_label,
         "filename": filename,
     });
     progress("packaging", 0, None);

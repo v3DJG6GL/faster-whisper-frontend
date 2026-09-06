@@ -286,6 +286,11 @@ export async function packageMedia(args: {
   container: "mkv" | "mp4";
   subtitles: SubtitleTrackIn[];
   defaultTrack: number | null;
+  /** Index of the original-language track (Matroska FlagOriginal). */
+  originalTrack: number | null;
+  /** The spoken language, tagged onto every audio stream. */
+  audioLang?: string | null;
+  audioLabel?: string | null;
   destPath: string;
   filename: string;
   maxUploadBytes?: number | null;
@@ -301,6 +306,9 @@ export async function packageMedia(args: {
     container: args.container,
     subtitles: args.subtitles,
     defaultTrack: args.defaultTrack,
+    originalTrack: args.originalTrack,
+    audioLang: args.audioLang ?? null,
+    audioLabel: args.audioLabel ?? null,
     destPath: args.destPath,
     filename: args.filename,
     maxUploadBytes: args.maxUploadBytes ?? null,
@@ -394,6 +402,7 @@ export async function fetchUrlVideoOnDemand(args: {
   apiKey?: string | null;
   url: string;
   maxHeight?: number | null;
+  formatId?: string | null;
   progressId?: string | null;
 }): Promise<UrlVideoDownload> {
   if (!isTauri) throw new Error("Video download requires the desktop app.");
@@ -403,6 +412,7 @@ export async function fetchUrlVideoOnDemand(args: {
     apiKey: args.apiKey ?? null,
     url: args.url,
     maxHeight: args.maxHeight ?? null,
+    formatId: args.formatId ?? null,
     progressId: args.progressId ?? null,
   });
 }

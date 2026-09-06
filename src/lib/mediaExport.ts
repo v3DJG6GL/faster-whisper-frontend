@@ -9,6 +9,14 @@ import type { BatchResult, Capabilities } from "./types";
 export type MediaChoice = "none" | "audio" | "video";
 export type MediaContainer = "mkv" | "mp4";
 export type SubtitleMode = "embedded" | "sidecar" | "both";
+/** The two text formats a video player loads beside (or inside) a video.
+ *  TXT, LRC and JSON are not subtitles: with Video on, the format row
+ *  narrows to these two (D69 A). */
+export type SubtitleFormat = "srt" | "vtt";
+export const SUBTITLE_FORMATS: readonly SubtitleFormat[] = ["srt", "vtt"];
+export function isSubtitleFormat(format: string): format is SubtitleFormat {
+  return (SUBTITLE_FORMATS as readonly string[]).includes(format);
+}
 
 /** Video containers the picker accepts and the packaging route can read. */
 export const VIDEO_SOURCE_EXTS = ["mp4", "mkv", "webm", "mov", "m4v"] as const;
@@ -47,8 +55,23 @@ export function mp4Disabled(
 
 export interface EmbeddedTrack {
   lang: string;
+  /** The plain language name — "German". The original is marked by the
+   *  container's original-language flag, never by the name. */
   label: string;
   srt: string;
+  original: boolean;
+}
+
+/** One sidecar subtitle file, single-language, named `stem.<code>.<ext>` —
+ *  the dot + ISO 639-1 form every player parses (VLC, mpv, Plex, Jellyfin,
+ *  Kodi, Emby, Infuse, MPC-HC). The original file carries the result's
+ *  language code; there is no player convention for "original", so the
+ *  panel says it instead. */
+export interface SidecarFile {
+  track: string;
+  lang: string;
+  name: (stem: string) => string;
+  content: string;
 }
 
 /** English names for the track titles — the same short table the viewer's
@@ -68,6 +91,12 @@ export function languageLabel(code: string): string {
   return (LANG_LABELS[base] ?? base.toUpperCase()) + region;
 }
 
+/** The language code a track is filed under: the result's language for
+ *  the original ("und" when unknown), the target code otherwise. */
+export function trackLang(result: BatchResult, track: string): string {
+  return track === "orig" ? (result.language ?? "").trim() || "und" : track;
+}
+
 /** One single-language SRT per chosen track, generated exactly as the
  *  panel's own SRT export would (edits, renames and speaker colouring
  *  included), so the embedded tracks match the sidecars byte for byte. */
@@ -81,14 +110,37 @@ export function embeddedSubtitleTracks(
     const files = generateExports(result, { ...opts, format: "srt", tracks: [t] });
     const srt = files[0]?.content ?? "";
     if (!srt.trim()) continue;
-    if (t === "orig") {
-      const lang = (result.language ?? "").trim() || "und";
-      out.push({ lang, label: `${languageLabel(lang)} · original`, srt });
-    } else {
-      out.push({ lang: t, label: languageLabel(t), srt });
-    }
+    const lang = trackLang(result, t);
+    out.push({ lang, label: languageLabel(lang), srt, original: t === "orig" });
   }
   return out;
+}
+
+/** One sidecar file per chosen track, in track order, in the panel's
+ *  subtitle format — the same per-language content the embedded tracks
+ *  carry, so "both" writes the same subtitles twice, once inside and once
+ *  beside the video. */
+export function sidecarFiles(
+  result: BatchResult,
+  opts: ExportOptions,
+  tracks: string[],
+  format: SubtitleFormat,
+): SidecarFile[] {
+  const out: SidecarFile[] = [];
+  for (const t of tracks) {
+    const files = generateExports(result, { ...opts, format, tracks: [t] });
+    const content = files[0]?.content ?? "";
+    if (!content.trim()) continue;
+    const lang = trackLang(result, t);
+    out.push({ track: t, lang, name: sidecarName(lang, format), content });
+  }
+  return out;
+}
+
+/** `stem.de.srt` — codes are user/server-authored, so keep them path-safe. */
+export function sidecarName(lang: string, format: SubtitleFormat): (stem: string) => string {
+  const code = lang.replace(/[^A-Za-z0-9-]/g, "").slice(0, 12) || "und";
+  return (stem) => `${stem}.${code}.${format}`;
 }
 
 export interface PlannedFile {
@@ -103,6 +155,9 @@ export interface MediaExportPlan {
   primaryExt: string;
   /** Tracks that go INTO the video as subtitle streams ([] = none). */
   embedded: string[];
+  /** Per-language sidecar files beside the video, or null when the text
+   *  files come from the plain text export (Media = None / Audio). */
+  sidecars: { tracks: string[]; format: SubtitleFormat } | null;
   saveLabel: string;
   /** Whether the container choice matters for this plan. */
   containerRelevant: boolean;
@@ -119,6 +174,8 @@ export function mediaExportPlan(a: {
   textFileNames: ((stem: string) => string)[];
   audioExt: string | null;
   tracks: string[];
+  /** The original track's language code (names its sidecar). */
+  origLang: string;
   hasVideoSource: boolean;
 }): MediaExportPlan {
   const text: PlannedFile[] = a.textFileNames.map((name) => ({ name, kind: "text" }));
@@ -127,22 +184,30 @@ export function mediaExportPlan(a: {
     const audio: PlannedFile = { name: (stem) => `${stem}.${a.audioExt}`, kind: "audio" };
     const files = [audio, ...text];
     return {
-      files, primary: audio, primaryExt: a.audioExt, embedded: [],
+      files, primary: audio, primaryExt: a.audioExt, embedded: [], sidecars: null,
       saveLabel: label(files.length, "Save audio"), containerRelevant: false,
     };
   }
   if (a.choice === "video" && a.hasVideoSource) {
     const video: PlannedFile = { name: (stem) => `${stem}.${a.container}`, kind: "video" };
     const embedded = a.subtitleMode === "sidecar" ? [] : a.tracks;
-    const files = a.subtitleMode === "embedded" ? [video] : [video, ...text];
+    // Sidecars are one file per language (a player lists each as a track);
+    // the format row is narrowed to SRT/VTT while Video is on, and a stale
+    // non-subtitle format still yields SRT rather than a file nobody loads.
+    const format: SubtitleFormat = a.format === "vtt" ? "vtt" : "srt";
+    const sidecars = a.subtitleMode === "embedded" ? null : { tracks: a.tracks, format };
+    const side: PlannedFile[] = sidecars
+      ? a.tracks.map((t) => ({ name: sidecarName(t === "orig" ? a.origLang : t, format), kind: "text" }))
+      : [];
+    const files = [video, ...side];
     return {
-      files, primary: video, primaryExt: a.container, embedded,
+      files, primary: video, primaryExt: a.container, embedded, sidecars,
       saveLabel: label(files.length, "Save video"), containerRelevant: a.subtitleMode !== "sidecar",
     };
   }
   const primary = text[0] ?? { name: (stem) => `${stem}.${a.format}`, kind: "text" as const };
   return {
-    files: text.length ? text : [primary], primary, primaryExt: a.format, embedded: [],
+    files: text.length ? text : [primary], primary, primaryExt: a.format, embedded: [], sidecars: null,
     saveLabel: label(Math.max(text.length, 1), `Save ${a.format.toUpperCase()}`),
     containerRelevant: false,
   };
@@ -152,6 +217,22 @@ export function mediaExportPlan(a: {
  *  FIRST file; strip that exact suffix (e.g. ".de.lrc") from what the user
  *  confirmed so siblings never double-suffix and the first file lands on
  *  the picked path. Extracted from the viewer's and History's exports. */
+/** The save dialog's default file stem: the record's title, cleaned for
+ *  every file system, else the source file's own name. A link's basename is
+ *  its URL tail ("watch?v=…"), which is why the title leads. */
+export function exportStem(title: string | null | undefined, path: string): string {
+  const clean = (title ?? "")
+    .replace(/[\u0000-\u001f\u007f/\\:*?"<>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/, "")
+    .slice(0, 120)
+    .replace(/[. ]+$/, "");
+  if (clean) return clean;
+  const base = path.split(/[\\/]/).pop() ?? "";
+  return base.replace(/\.[^.]+$/, "") || "transcript";
+}
+
 export function derivePickedStem(
   target: string,
   firstSuffix: string,

@@ -43,9 +43,9 @@ import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
 import {
-  derivePickedStem, embeddedSubtitleTracks, isVideoSourcePath, languageLabel, mediaExportPlan,
-  mp4Disabled, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaStreams,
-  type SubtitleMode,
+  derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath, languageLabel,
+  mediaExportPlan, mp4Disabled, sidecarFiles, trackLang, type MediaChoice, type MediaContainer,
+  type MediaExportPhase, type MediaStreams, type SubtitleMode,
 } from "@/lib/mediaExport";
 import { upsertRecord } from "@/lib/transcriptHistory";
 import { useTranscriptHistory } from "@/lib/transcriptHistory";
@@ -669,6 +669,17 @@ export function TranscriptViewer({
   } | null>(null);
   const [mediaError, setMediaError] = useState<{ kind: string; msg: string; reason?: string } | null>(null);
   const [streams, setStreams] = useState<MediaStreams | null>(null);
+  /** D69 A: with Video on, only subtitle formats stay live. A lit TXT/LRC/JSON
+   *  card moves to SRT and the footer says so once (cleared on the next
+   *  card or media click). */
+  const [switchNote, setSwitchNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (mediaChoice !== "video" || isSubtitleFormat(exportFormat)) return;
+    setSwitchNote(`SRT — switched from ${exportFormat.toUpperCase()}, which can't ride with a video`);
+    setExportFormat("srt");
+    persistOptions({ exportFormat: "srt" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaChoice, exportFormat]);
   useEffect(() => {
     if (!initialExport) return;
     setShowExport(true);
@@ -1993,6 +2004,32 @@ export function TranscriptViewer({
       }
     })();
     const mtLangs = effTracks.filter((t) => t !== "orig");
+    if (langs.length && exportFormat !== "json") {
+      // D70 A: one row for the original, mirroring its track chip — the file
+      // can be translations only, and then this row is the one place saying so.
+      const origCode = safeDisplayText((result.language ?? "??").toUpperCase(), 16);
+      const video = mediaChoice === "video" && hasVideoSource;
+      const why = !origInExport
+        ? "off — click to include"
+        : video
+          ? subtitleMode === "sidecar" ? "on — its own file" : "on — default track"
+          : !mtLangs.length
+            ? "on — the only track"
+            : exportFormat === "lrc"
+              ? "on — its own file"
+              : lineOrder === "orig-first" ? "on — first line of each cue" : "on — last line of each cue";
+      rows.push({
+        label: `${origCode} · original`,
+        state: origInExport ? "on" : "off",
+        why,
+        onToggle: mtLangs.length
+          ? () => {
+              const all = ["orig", ...langs];
+              setExportTracks(origInExport ? effTracks.filter((t) => t !== "orig") : all.filter((t) => t === "orig" || effTracks.includes(t)));
+            }
+          : undefined,
+      });
+    }
     if (mtLangs.length && exportFormat !== "json") {
       rows.push({
         label: `${mtLangs.map((l) => l.toUpperCase()).join(" + ")} translation`,
@@ -2057,6 +2094,7 @@ export function TranscriptViewer({
       textFileNames: exportFileNames(opts),
       audioExt,
       tracks: effTracks.length ? effTracks : ["orig"],
+      origLang: trackLang(editedResult, "orig"),
       hasVideoSource,
     });
   };
@@ -2137,7 +2175,12 @@ export function TranscriptViewer({
     }
     const opts = exportOpts();
     const subtitles = embedded.length ? embeddedSubtitleTracks(editedResult, opts, embedded) : [];
-    const defaultTrack = subtitles.length ? Math.max(0, embedded.indexOf("orig")) : null;
+    const origIdx = subtitles.findIndex((t) => t.original);
+    const defaultTrack = subtitles.length ? Math.max(0, origIdx) : null;
+    const originalTrack = origIdx >= 0 ? origIdx : null;
+    // The spoken language is known here; the source file's audio tag is
+    // whatever the uploader's default was ("en" on a German video).
+    const audioLang = (editedResult.language ?? "").trim() || null;
     const jobId = crypto.randomUUID().replace(/-/g, "");
     setMediaJob({ jobId, phase: source.sourcePath ? "uploading" : "packaging", done: 0, total: null });
     const unsub = await onMediaExportProgress((p) => {
@@ -2149,7 +2192,8 @@ export function TranscriptViewer({
       outcome = await packageMedia({
         serverUrl, backendId: trBackend.id, jobId,
         ...source,
-        container, subtitles, defaultTrack,
+        container, subtitles, defaultTrack, originalTrack,
+        audioLang, audioLabel: audioLang ? languageLabel(audioLang) : null,
         destPath: dest, filename: basename(dest).replace(/\.[^.]+$/, ""),
         maxUploadBytes: trCaps?.media_package?.max_upload_bytes ?? null,
       });
@@ -2203,10 +2247,14 @@ export function TranscriptViewer({
   const doExport = async () => {
     setSaveError(null);
     setMediaError(null);
-    const stem = basename(path).replace(/\.[^.]+$/, "");
+    const stem = exportStem(rec?.title, path);
     const opts = exportOpts();
-    const files = generateExports(editedResult, opts);
     const plan = exportPlanNow();
+    // Beside a video the text files are one subtitle file per language; the
+    // plain text export stays the (possibly bilingual) reading file.
+    const files = plan.sidecars
+      ? sidecarFiles(editedResult, opts, plan.sidecars.tracks, plan.sidecars.format)
+      : generateExports(editedResult, opts);
     let target: string | null;
     try {
       target = await pickExportPath(
@@ -2363,6 +2411,8 @@ export function TranscriptViewer({
             size="sm"
             onClick={() => setShowExport((v) => !v)}
             aria-expanded={showExport}
+            // Open = the same active tint Focus, Follow and the chips wear.
+            className={cn(showExport && "border-accent/35 bg-accent-soft text-accent hover:border-accent/35 hover:bg-accent-soft hover:text-accent")}
           >
             <Download className="size-4" />
             Export
@@ -2823,13 +2873,17 @@ export function TranscriptViewer({
           <div role="radiogroup" aria-label="Export format" className="flex gap-2.5">
             {FORMAT_CARDS.map((f) => {
               const on = exportFormat === f.value;
+              const notSubtitle = mediaChoice === "video" && !isSubtitleFormat(f.value);
               return (
                 <button
                   key={f.value}
                   type="button"
                   role="radio"
                   aria-checked={on}
+                  disabled={notSubtitle}
                   onClick={() => {
+                    if (notSubtitle) return;
+                    setSwitchNote(null);
                     setExportFormat(f.value);
                     persistOptions({ exportFormat: f.value });
                   }}
@@ -2838,6 +2892,7 @@ export function TranscriptViewer({
                     on
                       ? "border-accent/55 bg-accent-soft"
                       : "border-line bg-surface-2 hover:border-line-strong",
+                    notSubtitle && "cursor-not-allowed opacity-50 hover:border-line",
                   )}
                 >
                   <span
@@ -2848,8 +2903,8 @@ export function TranscriptViewer({
                   >
                     {f.label}
                   </span>
-                  <span className="mt-0.5 block text-[10.5px] leading-snug text-faint">
-                    {f.use}
+                  <span className={cn("mt-0.5 block text-[10.5px] leading-snug", notSubtitle ? "text-warn" : "text-faint")}>
+                    {notSubtitle ? "not a subtitle format" : f.use}
                   </span>
                 </button>
               );
@@ -2924,7 +2979,7 @@ export function TranscriptViewer({
               on ? "border-accent/55 bg-accent-soft" : "border-line bg-surface-2 hover:border-line-strong",
               off && "cursor-not-allowed opacity-50 hover:border-line",
             );
-            const pick = (c: MediaChoice) => { setMediaChoice(c); persistMedia({ exportMedia: c }); };
+            const pick = (c: MediaChoice) => { setSwitchNote(null); setMediaChoice(c); persistMedia({ exportMedia: c }); };
             return (
               <div className="mt-3 rounded-xl border border-line bg-surface/50 px-4 py-3">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -2998,13 +3053,6 @@ export function TranscriptViewer({
                     {mp4Why && container === "mkv" && (
                       <span className="text-[11.5px] text-faint">{safeDisplayText(mp4Why, 160)}</span>
                     )}
-                  </div>
-                )}
-                {mediaChoice === "video" && !videoWhy && subtitleMode !== "sidecar" && (
-                  <div className="mt-1.5 text-[11.5px] text-faint">
-                    Embedded tracks: {(effTracks.length ? effTracks : ["orig"]).map((t) =>
-                      t === "orig" ? `${languageLabel(result.language ?? "und")} · original` : languageLabel(t)).join(", ")}
-                    {" · "}speaker colours ride in MKV as SRT tags, in MP4 as styled text (player-dependent).
                   </div>
                 )}
               </div>
@@ -3104,7 +3152,7 @@ export function TranscriptViewer({
 
           {(() => {
             const plan = exportPlanNow();
-            const stem = basename(path).replace(/\.[^.]+$/, "");
+            const stem = exportStem(rec?.title, path);
             const names = plan.files.map((f) => f.name(stem));
             const phaseText =
               mediaJob?.phase === "fetching" ? "fetching the video from the link…"
@@ -3120,6 +3168,7 @@ export function TranscriptViewer({
                   {(result.segments?.length ?? 0) > PREVIEW_CUES
                     ? ` · first ${PREVIEW_CUES} of ${result.segments?.length} cues`
                     : ""}
+                  {switchNote && <span className="text-warn"> · {switchNote}</span>}
                 </span>
                 <span className="flex-1" />
                 {editCount > 0 && (
