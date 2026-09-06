@@ -204,6 +204,7 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     caps.llama_cpp_version = caps
         .llama_cpp_version
         .map(|v| super::bounded_server_text(&v, 32));
+    caps.media_package = caps.media_package.map(bound_media_package);
     // Per-stage model lists feed pickers — same treatment as `models`.
     let bound_models = |list: Option<Vec<ServerModel>>| {
         list.map(|mut v| {
@@ -228,6 +229,25 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
         v.iter().map(|s| super::bounded_server_text(s, 16)).collect()
     });
     Some(caps)
+}
+
+/// The packaging detail block carries two server strings rendered as UI
+/// labels (the off-reason and the ffmpeg version) and a container list the
+/// export panel matches by name — bound all three, clamp the counts.
+fn bound_media_package(m: super::MediaPackageCaps) -> super::MediaPackageCaps {
+    super::MediaPackageCaps {
+        containers: m
+            .containers
+            .into_iter()
+            .filter(|c| c == "mkv" || c == "mp4")
+            .take(2)
+            .collect(),
+        max_tracks: m.max_tracks.min(64),
+        max_srt_bytes: m.max_srt_bytes,
+        max_upload_bytes: m.max_upload_bytes,
+        reason: m.reason.map(|r| super::bounded_server_text(&r, 200)),
+        ffmpeg_version: m.ffmpeg_version.map(|v| super::bounded_server_text(&v, 32)),
+    }
 }
 
 /// Ceiling on the list blocks of the usage document (stages / targets-per-stage / apps).
@@ -416,6 +436,42 @@ pub async fn get_override_profile(
 #[cfg(test)]
 mod tests {
     use super::UsageQuery;
+
+    /// The typed mirror drops what it does not name: the video/packaging
+    /// keys the frontend gates its UI on must survive the round trip.
+    #[test]
+    fn capabilities_keep_the_video_and_packaging_keys() {
+        let raw = serde_json::json!({
+            "url_download_enabled": true,
+            "url_video_enabled": true,
+            "url_video_default_max_height": null,
+            "media_max_bytes": 10_000_000_000u64,
+            "media_package_enabled": true,
+            "media_package": {
+                "containers": ["mkv", "mp4", "avi"],
+                "max_tracks": 12,
+                "max_srt_bytes": 2_097_152,
+                "max_upload_bytes": 10_000_000_000u64,
+                "reason": null,
+                "ffmpeg_version": "7.0.2"
+            }
+        });
+        let caps: super::super::Capabilities = serde_json::from_value(raw).unwrap();
+        assert_eq!(caps.url_video_enabled, Some(true));
+        assert_eq!(caps.url_video_default_max_height, None);
+        assert_eq!(caps.media_max_bytes, Some(10_000_000_000));
+        assert_eq!(caps.media_package_enabled, Some(true));
+        let pk = super::bound_media_package(caps.media_package.unwrap());
+        assert_eq!(pk.containers, vec!["mkv", "mp4"]);
+        assert_eq!(pk.max_tracks, 12);
+        assert_eq!(pk.ffmpeg_version.as_deref(), Some("7.0.2"));
+        let out = serde_json::to_value(super::super::Capabilities {
+            media_package: Some(pk),
+            ..serde_json::from_value(serde_json::json!({})).unwrap()
+        })
+        .unwrap();
+        assert_eq!(out["media_package"]["containers"], serde_json::json!(["mkv", "mp4"]));
+    }
 
     #[test]
     fn usage_query_validates_every_value_before_it_reaches_the_url() {

@@ -89,6 +89,24 @@ pub struct Capabilities {
     /// — surfaced in download-failure guidance. Bounded in discovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub yt_dlp_version: Option<String>,
+    /// Whether a link's VIDEO can be kept/fetched (keep_video on the form,
+    /// POST /v1/audio/url-media/video). Same `Some(true)`-only contract as
+    /// `url_download_enabled`. A typed struct drops what it does not name,
+    /// so every additive key the frontend reads must be listed here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_video_enabled: Option<bool>,
+    /// Server-side height ceiling for kept videos; `null` = best available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_video_default_max_height: Option<u32>,
+    /// The one media ceiling (uploads, link audio/video), in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_max_bytes: Option<u64>,
+    /// Subtitle packaging (server-side ffmpeg mux): the flag, then the
+    /// detail block (bounded in discovery) that says why it is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_package_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_package: Option<MediaPackageCaps>,
     /// Whether the server runs the T2T translating stage. Shown only on
     /// `Some(true)` — absence means the feature does not exist (url_download
     /// pattern). The lists below are bounded in discovery.
@@ -106,6 +124,24 @@ pub struct Capabilities {
     pub diarization_models: Option<Vec<ServerModel>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub separation_models: Option<Vec<ServerModel>>,
+}
+
+/// `capabilities.media_package` from `GET /v1/me` — what the packaging
+/// route accepts and, when it is off, why.
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct MediaPackageCaps {
+    #[serde(default)]
+    pub containers: Vec<String>,
+    #[serde(default)]
+    pub max_tracks: u32,
+    #[serde(default)]
+    pub max_srt_bytes: u64,
+    #[serde(default)]
+    pub max_upload_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ffmpeg_version: Option<String>,
 }
 
 /// A single override-profile's decode-relevant values + locked client keys,
