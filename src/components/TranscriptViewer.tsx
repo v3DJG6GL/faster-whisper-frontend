@@ -530,6 +530,12 @@ function TranslateProgressCard({
           </span>
         )}
         <span className="text-[12px] text-dim">{stageText}</span>
+        {run.target && !done && (
+          <span className="rounded-pill border border-[color:var(--c-translate)]/40 px-1.5 font-mono text-[10px] uppercase text-[color:var(--c-translate)]">
+            {safeDisplayText(run.target, 8)}
+            {typeof run.targetProgress === "number" ? ` ${Math.round(run.targetProgress * 100)}%` : ""}
+          </span>
+        )}
         {run.step && !done && (
           <span className="font-mono text-[11px] text-faint">{safeDisplayText(run.step, 48)}</span>
         )}

@@ -281,3 +281,20 @@ describe("translateOptsFrom", () => {
     expect(translateOptsFrom(undefined)).toEqual({ mode: undefined, model: undefined });
   });
 });
+
+describe("per-target ticks", () => {
+  it("the frontier follows targetProgress when the server reports it, and the tag rides along", () => {
+    let s = newTranslateRun(10, ["en", "fr"], 0);
+    s = beginChunk(s, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 0);
+    // Global fraction 0.75 with two targets would put the derived sweep at 0.5;
+    // the server says French is at 0.9.
+    const next = foldTranslatePoll(s, { stage: "translating", progress: 0.75, target: "fr", targetProgress: 0.9 }, 1);
+    expect(next.frontierIdx).toBe(9);
+    expect(next.target).toBe("fr");
+    expect(next.targetProgress).toBeCloseTo(0.9, 5);
+    // Without it, the old derivation stands.
+    const derived = foldTranslatePoll(s, { stage: "translating", progress: 0.75 }, 1);
+    expect(derived.frontierIdx).toBe(5);
+    expect(derived.target).toBeUndefined();
+  });
+});

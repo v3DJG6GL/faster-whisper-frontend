@@ -134,6 +134,10 @@ pub struct BatchResult {
     pub translations: Option<std::collections::BTreeMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub translation: Option<TranslationInfo>,
+    /// The run plan's receipt (verbose_json `plan`): every stage with its
+    /// measured wall time and the per-language units.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<Vec<PlanStage>>,
 }
 
 /// Provenance block of the translating stage (verbose_json `translation`).
@@ -177,6 +181,8 @@ struct VerboseJson {
     translations: Option<std::collections::BTreeMap<String, String>>,
     #[serde(default)]
     translation: Option<TranslationInfo>,
+    #[serde(default)]
+    plan: Option<Vec<PlanStage>>,
 }
 
 /// The `translate_to` form value, as the three states the server distinguishes:
@@ -200,7 +206,56 @@ fn translate_to_field(requested: Option<&[String]>) -> Option<String> {
 
 #[cfg(test)]
 mod wire_field_tests {
-    use super::translate_to_field;
+    use super::{bound_progress, translate_to_field, BatchProgress};
+
+    #[test]
+    fn plan_and_progress_numbers_are_bounded() {
+        let stages: Vec<String> = (0..12)
+            .map(|i| format!(r#"{{"stage":"{}","state":"pending","est_s":{}}}"#, "s".repeat(80), i))
+            .collect();
+        let json = format!(
+            r#"{{"stage":"translating","progress":0.5,"target":"{}","target_progress":7.0,
+                "overall":-3.0,"eta_s":"nope","plan":[{}, {{"stage":"translating","state":"active",
+                "elapsed_s":-1.0,"units":[{{"target":"fr","state":"running","progress":9e9,"est_s":12.5}}]}}]}}"#,
+            "x".repeat(40),
+            stages.join(",")
+        );
+        // eta_s as a string is a type error for the field: serde rejects the document, which
+        // the poller treats like any other bad poll (an out-of-range literal such as 1e999 is
+        // refused the same way, so infinities never reach the bounding). A negative clock
+        // does parse — and must be dropped.
+        assert!(serde_json::from_str::<BatchProgress>(&json).is_err());
+        let json = json.replace(r#""eta_s":"nope""#, r#""eta_s":-2.0"#);
+        let parsed: BatchProgress = serde_json::from_str(&json).expect("progress parses");
+        let p = bound_progress(parsed);
+        assert_eq!(p.target.as_deref().map(|s| s.chars().count()), Some(17)); // 16 + "…"
+        assert_eq!(p.target_progress, Some(1.0));
+        assert_eq!(p.overall, Some(0.0));
+        assert_eq!(p.eta_s, None); // negative → dropped
+        let plan = p.plan.expect("plan kept");
+        assert_eq!(plan.len(), 8);
+        assert_eq!(plan[0].stage.as_deref().map(|s| s.chars().count()), Some(33));
+    }
+
+    #[test]
+    fn plan_units_are_bounded_and_snake_case_aliases_parse() {
+        let json = r#"{"stage":"translating","plan":[{"stage":"translating","state":"active",
+            "est_s":40.0,"took_s":null,"elapsed_s":-5.0,
+            "units":[{"target":"fr","state":"running","progress":9e9,"est_s":12.5,"elapsed_s":3.0}]}]}"#;
+        let parsed: BatchProgress = serde_json::from_str(json).expect("progress parses");
+        let p = bound_progress(parsed);
+        let st = &p.plan.as_ref().expect("plan")[0];
+        assert_eq!(st.est_s, Some(40.0));
+        assert_eq!(st.elapsed_s, None);
+        let u = &st.units.as_ref().expect("units")[0];
+        assert_eq!(u.progress, Some(1.0));
+        assert_eq!(u.est_s, Some(12.5));
+        assert_eq!(u.elapsed_s, Some(3.0));
+        // Re-emitted to the webview as camelCase.
+        let out = serde_json::to_string(&p).expect("serializes");
+        assert!(out.contains("\"estS\":40.0"), "{out}");
+        assert!(out.contains("\"etaS\""), "{out}");
+    }
 
     #[test]
     fn absent_is_omitted_but_an_empty_list_is_sent_empty() {
@@ -232,6 +287,105 @@ mod wire_field_tests {
 /// validated before they reach a form field or, critically, a URL path.
 fn is_progress_id(s: &str) -> bool {
     (8..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+/// One translation target inside the run plan's translating stage. The server
+/// speaks snake_case (`est_s`); we re-emit camelCase to the webview.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanUnit {
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub instant: Option<bool>,
+    #[serde(default, alias = "est_s")]
+    pub est_s: Option<f64>,
+    #[serde(default, alias = "took_s")]
+    pub took_s: Option<f64>,
+    #[serde(default, alias = "elapsed_s")]
+    pub elapsed_s: Option<f64>,
+    #[serde(default)]
+    pub progress: Option<f64>,
+}
+
+/// One stage of the server-owned run plan: expected seconds while pending or
+/// active, measured seconds once done, model/device, and (translating) the
+/// per-language units.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanStage {
+    #[serde(default)]
+    pub stage: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub device: Option<String>,
+    #[serde(default)]
+    pub compute: Option<String>,
+    #[serde(default)]
+    pub phase: Option<String>,
+    #[serde(default, alias = "est_s")]
+    pub est_s: Option<f64>,
+    #[serde(default, alias = "took_s")]
+    pub took_s: Option<f64>,
+    #[serde(default, alias = "elapsed_s")]
+    pub elapsed_s: Option<f64>,
+    #[serde(default)]
+    pub units: Option<Vec<PlanUnit>>,
+}
+
+/// The pipeline has five stages; a plan longer than that is not ours.
+const MAX_PLAN_STAGES: usize = 8;
+/// Matches the server's TRANSLATION_MAX_TARGETS ceiling with headroom.
+const MAX_PLAN_UNITS: usize = 16;
+
+/// A finite, non-negative seconds value — anything else is dropped rather
+/// than rendered as "NaNs left".
+fn fin_secs(v: Option<f64>) -> Option<f64> {
+    v.filter(|x| x.is_finite() && *x >= 0.0)
+}
+
+/// A finite 0..1 fraction, clamped.
+fn fin_frac(v: Option<f64>) -> Option<f64> {
+    v.filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 1.0))
+}
+
+/// Bound every server string and number in a plan: the webview renders these
+/// as labels and bar widths, and a hostile server must not get a 100 KB stage
+/// name or an infinite estimate through.
+pub(crate) fn bound_plan(plan: Vec<PlanStage>) -> Vec<PlanStage> {
+    plan.into_iter()
+        .take(MAX_PLAN_STAGES)
+        .map(|st| PlanStage {
+            stage: st.stage.map(|s| super::bounded_server_text(&s, 32)),
+            state: st.state.map(|s| super::bounded_server_text(&s, 16)),
+            model: st.model.map(|s| super::bounded_server_text(&s, 128)),
+            device: st.device.map(|s| super::bounded_server_text(&s, 32)),
+            compute: st.compute.map(|s| super::bounded_server_text(&s, 32)),
+            phase: st.phase.map(|s| super::bounded_server_text(&s, 32)),
+            est_s: fin_secs(st.est_s),
+            took_s: fin_secs(st.took_s),
+            elapsed_s: fin_secs(st.elapsed_s),
+            units: st.units.map(|us| {
+                us.into_iter()
+                    .take(MAX_PLAN_UNITS)
+                    .map(|u| PlanUnit {
+                        target: u.target.map(|s| super::bounded_server_text(&s, 16)),
+                        state: u.state.map(|s| super::bounded_server_text(&s, 16)),
+                        instant: u.instant,
+                        est_s: fin_secs(u.est_s),
+                        took_s: fin_secs(u.took_s),
+                        elapsed_s: fin_secs(u.elapsed_s),
+                        progress: fin_frac(u.progress),
+                    })
+                    .collect()
+            }),
+        })
+        .collect()
 }
 
 /// Live progress of an in-flight file transcription (see BatchOptions::progress_id).
@@ -275,6 +429,51 @@ pub struct BatchProgress {
     /// wire like `last_text`.
     #[serde(default, alias = "total_bytes")]
     pub total_bytes: Option<u64>,
+    /// Translating stage: the language being translated and how far along
+    /// it is (0..1 within that language).
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default, alias = "target_progress")]
+    pub target_progress: Option<f64>,
+    /// The server-owned run plan, the overall 0..1 fraction it derives and
+    /// the ETA in seconds — all absent on a server without a plan.
+    #[serde(default)]
+    pub plan: Option<Vec<PlanStage>>,
+    #[serde(default)]
+    pub overall: Option<f64>,
+    #[serde(default, alias = "eta_s")]
+    pub eta_s: Option<f64>,
+}
+
+/// Bound a parsed progress poll: every server string rendered as a UI label,
+/// every number a bar width or a clock. Split out of `progress()` so the
+/// bounding is unit-testable without a socket.
+pub(crate) fn bound_progress(parsed: BatchProgress) -> BatchProgress {
+    BatchProgress {
+        stage: parsed
+            .stage
+            .map(|s| super::bounded_server_text(&s, 32)),
+        step: parsed.step.map(|s| super::bounded_server_text(&s, 48)),
+        last_text: parsed
+            .last_text
+            .map(|s| super::bounded_server_text(&s, 400)),
+        model: parsed.model.map(|s| super::bounded_server_text(&s, 128)),
+        device: parsed.device.map(|s| super::bounded_server_text(&s, 32)),
+        compute: parsed.compute.map(|s| super::bounded_server_text(&s, 32)),
+        // ~4 stage names in the protocol; take(4) is defensive.
+        skipped: parsed.skipped.map(|v| {
+            v.into_iter()
+                .take(4)
+                .map(|s| super::bounded_server_text(&s, 32))
+                .collect()
+        }),
+        target: parsed.target.map(|s| super::bounded_server_text(&s, 16)),
+        target_progress: fin_frac(parsed.target_progress),
+        plan: parsed.plan.map(bound_plan),
+        overall: fin_frac(parsed.overall),
+        eta_s: fin_secs(parsed.eta_s),
+        ..parsed
+    }
 }
 
 /// A progress poll fires every second from an unguarded interval, so it must fail well
@@ -308,27 +507,7 @@ pub async fn progress(
     let parsed: BatchProgress = json_capped_to::<BatchProgress>(resp, MAX_META_BODY)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
-    Ok(BatchProgress {
-        // Server strings rendered as UI labels — bound every one of them.
-        stage: parsed
-            .stage
-            .map(|s| super::bounded_server_text(&s, 32)),
-        step: parsed.step.map(|s| super::bounded_server_text(&s, 48)),
-        last_text: parsed
-            .last_text
-            .map(|s| super::bounded_server_text(&s, 400)),
-        model: parsed.model.map(|s| super::bounded_server_text(&s, 128)),
-        device: parsed.device.map(|s| super::bounded_server_text(&s, 32)),
-        compute: parsed.compute.map(|s| super::bounded_server_text(&s, 32)),
-        // ~4 stage names in the protocol; take(4) is defensive.
-        skipped: parsed.skipped.map(|v| {
-            v.into_iter()
-                .take(4)
-                .map(|s| super::bounded_server_text(&s, 32))
-                .collect()
-        }),
-        ..parsed
-    })
+    Ok(bound_progress(parsed))
 }
 
 /// Ask the server to abort the in-flight transcription posted with this
@@ -719,6 +898,7 @@ async fn post(
             source: t.source.map(|s| super::bounded_server_text(&s, 16)),
             mode: t.mode.map(|m| super::bounded_server_text(&m, 16)),
         }),
+        plan: parsed.plan.map(bound_plan),
     })
 }
 

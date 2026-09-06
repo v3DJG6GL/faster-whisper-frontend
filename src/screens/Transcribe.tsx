@@ -20,7 +20,7 @@ import { useBackendModels } from "@/lib/useBackendModels";
 import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
-  activeRailIndex, addFiles, cancelRun, overallFraction, railStages, runBadgeFraction, stageTimeline,
+  activeRailIndex, addFiles, cancelRun, etaSecOf, overallOf, planOf, planTimeline, railStages, runBadgeFraction, unitsFraction,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, skippedStages, startRun, useTranscribeRun,
   type RailStage, type RunContext, type StepState, settledPanelItem, runTotals } from "@/lib/transcribeRun";
@@ -84,6 +84,9 @@ function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | null)[] })
             </span>
             <span className="shrink-0 font-mono text-[11px] uppercase text-dim">
               {run.targets.join(", ")}
+              {run.target && run.phase !== "done" ? (
+                <span className="text-[color:var(--c-translate)]"> → {safeDisplayText(run.target, 8)}</span>
+              ) : null}
             </span>
             <span className="shrink-0 font-mono text-[11px] tabular-nums text-[color:var(--c-translate)]">
               {run.phase === "done" ? "done" : `${Math.round(run.pct * 100)}%`}
@@ -268,14 +271,6 @@ export function axisLayout(
     x += w + 2;
   });
   return out;
-}
-
-/** Remaining-time estimate in ms: linear projection from the current rate,
- *  only once it is stable (≥5% done, ≥10 s elapsed) so it never appears as
- *  a wild early guess. */
-function etaMs(frac: number | null, elapsedMs: number): number | null {
-  if (frac === null || frac < 0.05 || frac >= 1 || elapsedMs < 10_000) return null;
-  return (elapsedMs * (1 - frac)) / frac;
 }
 
 /** "about X left", rounded coarsely (5 s under ten minutes, whole minutes
@@ -1620,9 +1615,12 @@ export default function Transcribe() {
           : activeRailIndex(progress, stageTimes, stages, skipped);
         const now = Date.now();
         const fileIdx = queue.findIndex((it) => it.status === "running");
-        const overall = complete
-          ? 1
-          : overallFraction({ queue, progress, stageTimes, lastOptions, forUrl, forText }) ?? 0;
+        // The server-owned plan behind this file (live poll while it runs,
+        // the response's receipt once settled) and the numbers it derives:
+        // the overall fraction and the ETA are the server's, verbatim.
+        const plan = planOf(progress, panelItem?.result);
+        const planBy = new Map((plan ?? []).map((p) => [p.stage, p] as const));
+        const overall = complete ? 1 : overallOf({ queue, progress }) ?? 0;
         const starts = Object.values(stageTimes).map((t) => t.start);
         const ends = Object.values(stageTimes).map((t) => t.end ?? t.start);
         const runElapsed = starts.length
@@ -1654,7 +1652,8 @@ export default function Transcribe() {
         const queuedCount = queue.filter((it) => it.status === "queued").length;
         // Whole-run estimate: the current file's projection plus the average
         // measured wall time of the finished files for each queued one.
-        const curLeft = etaMs(overall, runElapsed);
+        const etaS = complete ? null : etaSecOf(progress);
+        const curLeft = etaS !== null ? etaS * 1000 : null;
         const tooks = doneItems.map((it) => it.tookMs).filter((t): t is number => !!t);
         const avgTook = tooks.length ? tooks.reduce((a, b) => a + b, 0) / tooks.length : null;
         const runLeft =
@@ -1668,9 +1667,8 @@ export default function Transcribe() {
         // Timeline strip: segment widths proportional to each stage's share
         // of wall time (measured when finished, estimated ahead), with one
         // axis label anchored below each segment. Skipped stages are absent.
-        const timeline = stageTimeline({
-          stages, skipped, stageTimes, progress,
-          audioDurSec: audioDur ?? null, complete, now,
+        const timeline = planTimeline({
+          stages, skipped, plan, stageTimes, progress, complete, now,
         });
         const totalMs = timeline.reduce((a, e) => a + e.ms, 0) || 1;
         const stripAvail = Math.max(
@@ -1682,7 +1680,7 @@ export default function Transcribe() {
           let dur = "";
           let extra = "";
           if (e.state === "done") {
-            dur = fmtElapsed(e.elapsedMs || e.ms);
+            dur = fmtElapsed(e.ms);
             if (complete) extra = `${Math.round((e.ms / totalMs) * 100)}%`;
           } else if (e.state === "active") {
             dur = fmtElapsed(e.elapsedMs);
@@ -1760,7 +1758,31 @@ export default function Transcribe() {
                       : {}),
                   }}
                 >
-                  {e.state !== "pending" && (
+                  {e.state !== "pending" && e.lanes ? (
+                    // One lane per target language, each filling on its own:
+                    // the segment's shape says "three things" before any
+                    // label does.
+                    <div className="flex h-full gap-px">
+                      {e.lanes.map((lane) => (
+                        <div
+                          key={lane.target}
+                          className="h-full overflow-hidden rounded-[2px] bg-surface-2"
+                          style={{ flexGrow: lane.ms, flexBasis: 0 }}
+                        >
+                          <div
+                            className={cn(
+                              "h-full transition-[width] duration-500 motion-reduce:transition-none",
+                              e.overrun && lane.state === "running" && "animate-pulse",
+                            )}
+                            style={{
+                              width: `${Math.round(lane.fill * 100)}%`,
+                              background: STAGE_COLORS[e.stage],
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : e.state !== "pending" ? (
                     <div
                       className={cn(
                         "h-full rounded-pill transition-[width] duration-500 motion-reduce:transition-none",
@@ -1771,7 +1793,7 @@ export default function Transcribe() {
                         background: STAGE_COLORS[e.stage],
                       }}
                     />
-                  )}
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -1859,14 +1881,30 @@ export default function Transcribe() {
                 // Skipped wins over pending too: the server may announce a
                 // decline for a stage the rail hasn't reached yet (diarization
                 // is declined moments before its slot).
+                const planStage = planBy.get(st);
                 const state: StepState =
                   skipped.has(st) ? "skipped"
-                    : i === active ? "active"
-                      : i > active ? "pending" : "done";
+                    : planStage
+                      ? planStage.state === "active" ? "active"
+                        : planStage.state === "pending" ? "pending" : "done"
+                      : i === active ? "active"
+                        : i > active ? "pending" : "done";
+                // The translate row's fraction is unit-weighted (done
+                // languages in full, the running one by its own progress).
                 const frac =
-                  state === "active" && typeof progress?.progress === "number"
-                    ? progress.progress
-                    : null;
+                  state !== "active" ? null
+                    : (st === "translating" ? unitsFraction(planStage?.units) : null) ??
+                      (typeof progress?.progress === "number" ? progress.progress : null);
+                const units = st === "translating" ? planStage?.units ?? null : null;
+                const unitsDone = units
+                  ? units.filter((u) => u.state === "done" || u.state === "instant").length
+                  : 0;
+                // Cold MT model fetch/load mid-stage: the registry flips to
+                // "downloading"; the plan keeps the translate row active and
+                // labels the phase.
+                const fetchingModel =
+                  state === "active" && st === "translating" &&
+                  (planStage?.phase === "downloading" || planStage?.phase === "loading");
                 const waiting = state === "active" && progress?.stage === "waiting";
                 // Inside model.transcribe() before the first segment: audio
                 // decode + Silero VAD (used to be misattributed to "waiting").
@@ -1884,8 +1922,13 @@ export default function Transcribe() {
                   state === "active" && time ? now - time.start
                     : state === "done" && time?.end ? time.end - time.start
                       : null;
+                // The server's estimate less what has elapsed; nothing once
+                // the stage has run past it (no claim beats a wrong one).
                 const stageLeft =
-                  state === "active" && stageElapsedMs !== null ? etaMs(frac, stageElapsedMs) : null;
+                  state === "active" && planStage?.estS != null && stageElapsedMs !== null &&
+                  stageElapsedMs < planStage.estS * 1000
+                    ? planStage.estS * 1000 - stageElapsedMs
+                    : null;
                 // ×-realtime: live from the decoded position; finished stages
                 // from the audio duration once the decoder reports it.
                 const speed =
@@ -1988,6 +2031,11 @@ export default function Transcribe() {
                           {preparing && (
                             <span className="font-normal text-faint"> — preparing audio…</span>
                           )}
+                          {fetchingModel && (
+                            <span className="font-normal text-faint">
+                              {" "}— {planStage?.phase === "loading" ? "loading the model…" : "fetching the model…"}
+                            </span>
+                          )}
                         </span>
                         <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
                           {state === "done" && (
@@ -2002,6 +2050,9 @@ export default function Transcribe() {
                           {frac !== null && (
                             <span className="text-text">{Math.round(frac * 100)}%</span>
                           )}
+                          {state === "active" && units && units.length > 1
+                            ? ` · ${unitsDone} of ${units.length} languages`
+                            : ""}
                           {st === "diarizing" && state === "active" && progress?.step
                             ? ` · ${safeDisplayText(progress.step)}`
                             : ""}
@@ -2035,6 +2086,72 @@ export default function Transcribe() {
                               background: STAGE_COLORS[st],
                             }}
                           />
+                        </div>
+                      )}
+                      {/* Language ledger: one line per target while the
+                          translate stage runs — status word, its own bar,
+                          elapsed and what is left — in the rail's own
+                          vocabulary. Instant = same-language verbatim copy. */}
+                      {state === "active" && units && units.length > 0 && (
+                        <div className="mt-2 grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 font-mono text-[11px] tabular-nums">
+                          {units.map((u) => {
+                            const started = meta?.unitStarts?.[u.target];
+                            const uElapsed =
+                              u.state === "running"
+                                ? started ? now - started : (u.elapsedS ?? 0) * 1000
+                                : null;
+                            const uLeft =
+                              u.state === "running" && u.estS != null && uElapsed !== null &&
+                              uElapsed < u.estS * 1000
+                                ? u.estS * 1000 - uElapsed
+                                : null;
+                            const uFill =
+                              u.state === "done" || u.state === "instant" ? 1
+                                : u.state === "running" ? Math.max(u.progress ?? 0, 0.02) : 0;
+                            return (
+                              <div key={u.target} className="contents">
+                                <span
+                                  className={cn(
+                                    "uppercase",
+                                    u.state === "running"
+                                      ? "text-[color:var(--c-translate)]"
+                                      : u.state === "queued" ? "text-faint" : "text-text",
+                                  )}
+                                >
+                                  {safeDisplayText(u.target, 8)}
+                                </span>
+                                <span className="h-[5px] overflow-hidden rounded-pill bg-surface-2">
+                                  <span
+                                    className="block h-full rounded-pill transition-[width] duration-500"
+                                    style={{
+                                      width: `${Math.round(uFill * 100)}%`,
+                                      background: STAGE_COLORS.translating,
+                                      opacity: u.state === "instant" ? 0.45 : 1,
+                                    }}
+                                  />
+                                </span>
+                                <span className="text-right text-faint">
+                                  {u.state === "instant" ? (
+                                    "instant · same language"
+                                  ) : u.state === "done" ? (
+                                    <>
+                                      <span style={{ color: STAGE_COLORS.translating }}>done</span>
+                                      {u.tookS != null ? ` · ${fmtElapsed(u.tookS * 1000)}` : ""}
+                                    </>
+                                  ) : u.state === "running" ? (
+                                    <>
+                                      <span className="text-text">running</span>
+                                      {` · ${Math.round((u.progress ?? 0) * 100)}%`}
+                                      {uElapsed !== null ? ` · ${fmtElapsed(uElapsed)}` : ""}
+                                      {uLeft !== null ? ` · ${aboutLeft(uLeft)}` : ""}
+                                    </>
+                                  ) : (
+                                    <>queued{u.estS != null ? ` · ~${fmtElapsed(u.estS * 1000)}` : ""}</>
+                                  )}
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                       {(meta || stageElapsedMs !== null ||
@@ -2107,6 +2224,21 @@ export default function Transcribe() {
                                 </span>
                               )
                             )}
+                            {/* Per-language receipts: what each target took,
+                                kept after the run like every other chip. */}
+                            {state === "done" && st === "translating" && planStage?.units?.map((u) => (
+                              <span
+                                key={u.target}
+                                className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim"
+                              >
+                                <span className="font-medium uppercase text-text">
+                                  {safeDisplayText(u.target, 8)}
+                                </span>
+                                {u.state === "instant" || u.instant
+                                  ? " instant"
+                                  : u.tookS != null ? ` ${fmtElapsed(u.tookS * 1000)}` : ""}
+                              </span>
+                            ))}
                             {state === "done" && st === "diarizing" && speakerCount > 0 && (
                               <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
                                 <span className="font-medium text-text">{speakerCount}</span>
@@ -2178,6 +2310,11 @@ export default function Transcribe() {
                       {(st === "transcribing" || st === "translating") && state === "active" && progress?.lastText && (
                         <div className="mt-2 flex items-center gap-2.5 rounded-lg bg-surface-2/60 px-3 py-1.5">
                           <span className="size-[7px] shrink-0 rounded-full bg-live" />
+                          {st === "translating" && progress.target ? (
+                            <span className="shrink-0 rounded-pill border border-[color:var(--c-translate)]/40 px-1.5 font-mono text-[10px] uppercase text-[color:var(--c-translate)]">
+                              {safeDisplayText(progress.target, 8)}
+                            </span>
+                          ) : null}
                           {progress.position ? (
                             <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
                               {fmtTimestamp(progress.position)}

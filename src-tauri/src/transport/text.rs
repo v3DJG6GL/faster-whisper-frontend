@@ -65,6 +65,8 @@ struct ResponseBody {
     translation: Option<super::batch::TranslationInfo>,
     #[serde(default)]
     warnings: Vec<String>,
+    #[serde(default)]
+    plan: Option<Vec<super::batch::PlanStage>>,
 }
 
 #[derive(serde::Deserialize)]
@@ -94,6 +96,10 @@ pub struct TextTranslationResult {
     pub source: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// The run plan's receipt for this request (one translating stage whose
+    /// units are the targets), bounded like every other plan.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<Vec<super::batch::PlanStage>>,
 }
 
 /// Assemble the request body, applying each field's own present-vs-absent rule.
@@ -302,5 +308,6 @@ pub async fn translate_texts(
             .take(super::MAX_NOTICES)
             .map(|w| bounded_server_text(w, MAX_ERROR_TEXT))
             .collect(),
+        plan: parsed.plan.map(super::batch::bound_plan),
     })
 }

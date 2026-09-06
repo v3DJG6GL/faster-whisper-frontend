@@ -4,6 +4,7 @@
 import { AUDIO_SOURCE_EXTS, TEXT_SOURCE_EXTS } from "./subtitleImport";
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  PlanStage,
   AudioDevice,
   BatchProgress,
   BatchResult,
@@ -136,6 +137,9 @@ export interface TextTranslationResult {
   model?: string;
   source?: string;
   warnings?: string[];
+  /** The run plan's receipt for this request (one translating stage whose
+   *  units are the targets) — the settled rail of a text-source run. */
+  plan?: PlanStage[];
 }
 
 /** Translate segment texts (T2T, no audio): dictation settle-time

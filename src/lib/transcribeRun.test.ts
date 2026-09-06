@@ -14,11 +14,13 @@ vi.mock("./api", async (importOriginal) => ({
 
 import {
   activeRailIndex, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
-  overallFraction, railIndex, railOf, railStages, selectPath, setRename, skippedStages,
-  stageEstimateMs, stageTimeline, useTranscribeRun, _resetStageRtfForTests,
+  overallOf, etaSecOf, planOf, planTimeline, unitsFraction,
+  railIndex, railOf, railStages, selectPath, setRename, skippedStages,
+  useTranscribeRun,
   assembleTranslatedSegments,
   cancelRun, retryFile, runBadgeFraction, runTotals, settledPanelItem,
 } from "./transcribeRun";
+import type { PlanStage } from "./types";
 import type { QueueItem } from "./transcribeRun";
 import type { TranscriptRecord } from "./transcriptHistory";
 
@@ -135,12 +137,12 @@ describe("foldProgress stage clocks (the phantom-transcribe regression)", () => 
     foldProgress({ stage, ...extra });
   };
 
-  it("the request-entry 'waiting' seed never teaches the transcribe realtime factor", () => {
-    _resetStageRtfForTests();
-    const before = stageEstimateMs("transcribing", 1000);
+  it("the request-entry 'waiting' seed never marks the transcribe clock observed", () => {
     at(0, "waiting", { duration: 1000 }); // phantom transcribing clock
-    at(11_000, "resolving", { duration: 1000 }); // closes it 11 s later with a duration
-    expect(stageEstimateMs("transcribing", 1000)).toBe(before); // not ~11 s
+    expect(useTranscribeRun.getState().stageTimes.transcribing?.observed).toBeFalsy();
+    at(11_000, "resolving", { duration: 1000 }); // closes it 11 s later
+    // Closed but never observed: a seeded phantom, not a stage that ran.
+    expect(useTranscribeRun.getState().stageTimes.transcribing?.observed).toBeFalsy();
   });
 
   it("re-entering a closed stage restarts its clock (the request-entry" +
@@ -216,164 +218,196 @@ describe("skippedStages with a download rail", () => {
   });
 });
 
-describe("overallFraction with a download rail", () => {
+describe("overallOf / etaSecOf (the server's numbers, verbatim)", () => {
   const queue: QueueItem[] = [{ path: "https://x/", status: "running", kind: "url" }];
-  it("credits the download stage by its own fraction", () => {
-    const frac = overallFraction({
-      queue,
-      progress: { stage: "downloading", progress: 0.5 },
-      stageTimes: {},
-      lastOptions: undefined,
-      forUrl: true,
-    });
-    // weights: downloading 15, transcribing 60 → 7.5/75
-    expect(frac).toBeCloseTo(0.1, 5);
+  it("is the server's overall while something runs, 0 before the first poll", () => {
+    expect(overallOf({ queue, progress: { stage: "translating", progress: 0.9, overall: 0.47 } }))
+      .toBeCloseTo(0.47, 5);
+    expect(overallOf({ queue, progress: null })).toBe(0);
+    expect(overallOf({ queue, progress: { stage: "transcribing", progress: 0.5 } })).toBe(0);
   });
-  it("counts a finished download in full once transcribe runs", () => {
-    const frac = overallFraction({
-      queue,
-      progress: { stage: "transcribing", progress: 0.5 },
-      stageTimes: { downloading: { start: 1, end: 2, observed: true } },
-      lastOptions: undefined,
-      forUrl: true,
-    });
-    // (15 + 0.5*60) / 75
-    expect(frac).toBeCloseTo(0.6, 5);
+  it("clamps a bad value and is null when nothing runs", () => {
+    expect(overallOf({ queue, progress: { stage: "x", overall: 3 } })).toBe(1);
+    expect(overallOf({ queue: [{ path: "/a", status: "done" }], progress: { overall: 0.5 } })).toBeNull();
   });
-  it("matches the file-only math when forUrl is absent", () => {
-    const fileQueue: QueueItem[] = [{ path: "/a.mp3", status: "running" }];
-    const frac = overallFraction({
-      queue: fileQueue,
-      progress: { stage: "transcribing", progress: 0.25 },
-      stageTimes: {},
-      lastOptions: undefined,
-    });
-    expect(frac).toBeCloseTo(0.25, 5);
+  it("the sidebar badge equals the header number", () => {
+    useTranscribeRun.setState({ queue, progress: { stage: "translating", overall: 0.61 } });
+    expect(runBadgeFraction(useTranscribeRun.getState())).toBeCloseTo(0.61, 5);
+    useTranscribeRun.setState({ queue: [], progress: null });
   });
-  it("credits a running translating stage by its own fraction", () => {
-    const fileQueue: QueueItem[] = [{ path: "/a.mp3", status: "running" }];
-    const frac = overallFraction({
-      queue: fileQueue,
-      progress: { stage: "translating", progress: 0.5 },
-      stageTimes: { transcribing: { start: 1, end: 2, observed: true } },
-      lastOptions: { translateTo: ["de"] },
-    });
-    // weights: transcribing 60, translating 12 → (60 + 0.5*12) / 72
-    expect(frac).toBeCloseTo(66 / 72, 5);
+  it("etaSecOf drops missing, negative and non-finite values", () => {
+    expect(etaSecOf({ etaS: 42 })).toBe(42);
+    expect(etaSecOf({ etaS: -1 })).toBeNull();
+    expect(etaSecOf({})).toBeNull();
+    expect(etaSecOf(null)).toBeNull();
   });
 });
 
-describe("stageTimeline (the proportional strip)", () => {
-  beforeEach(() => _resetStageRtfForTests());
-  const stages = railStages(
-    { separateBgm: true, diarize: true } as never, true);
-
-  it("sizes finished segments by measured wall time on a completed run", () => {
-    const tl = stageTimeline({
-      stages,
-      skipped: new Set(),
-      stageTimes: {
-        downloading: { start: 0, end: 18_000, observed: true },
-        separating: { start: 18_000, end: 184_000, observed: true },
-        transcribing: { start: 184_000, end: 405_000, observed: true },
-        diarizing: { start: 405_000, end: 523_000, observed: true },
-      },
-      progress: { stage: "diarizing", progress: 1 },
-      audioDurSec: 1348,
-      complete: true,
-      now: 523_000,
-    });
-    expect(tl.map((e) => e.state)).toEqual(["done", "done", "done", "done"]);
-    expect(tl.map((e) => e.ms)).toEqual([18_000, 166_000, 221_000, 118_000]);
-    const total = tl.reduce((a, e) => a + e.ms, 0);
-    expect(Math.round((tl[2].ms / total) * 100)).toBe(42);
+describe("planOf", () => {
+  const live: PlanStage[] = [
+    { stage: "transcribing", state: "done", tookS: 10 },
+    { stage: "translating", state: "active", estS: 30, elapsedS: 5 },
+  ];
+  const receipt: PlanStage[] = [
+    { stage: "transcribing", state: "done", tookS: 10 },
+    { stage: "translating", state: "done", tookS: 33 },
+  ];
+  it("prefers the live poll, the receipt once a stage is still active in the last snapshot", () => {
+    expect(planOf({ plan: live }, undefined)).toBe(live);
+    expect(planOf({ plan: live }, { text: "", plan: receipt })).toBe(receipt);
+    expect(planOf(null, { text: "", plan: receipt })).toBe(receipt);
+    expect(planOf({ stage: "transcribing" }, { text: "" })).toBeNull();
   });
+});
 
-  it("estimates active and pending stages from the audio duration", () => {
-    const tl = stageTimeline({
+describe("unitsFraction", () => {
+  it("weights done and running units by their cost and ignores instant copies", () => {
+    expect(unitsFraction([
+      { target: "de", state: "instant", instant: true, tookS: 0 },
+      { target: "en", state: "done", tookS: 100 },
+      { target: "fr", state: "running", estS: 100, progress: 0.5 },
+      { target: "fi", state: "queued", estS: 100 },
+    ])).toBeCloseTo(0.5, 5);
+    expect(unitsFraction([])).toBeNull();
+    expect(unitsFraction([{ target: "de", state: "instant", instant: true }])).toBeNull();
+  });
+});
+
+describe("skippedStages / activeRailIndex read the plan first", () => {
+  const stages = railStages({ separateBgm: true, diarize: true } as never, true);
+  it("a plan's skipped stage is authoritative", () => {
+    const skipped = skippedStages({
+      progress: { stage: "transcribing", plan: [
+        { stage: "downloading", state: "done", tookS: 5 },
+        { stage: "separating", state: "skipped" },
+        { stage: "transcribing", state: "active" },
+        { stage: "diarizing", state: "pending" },
+      ] },
+      stageTimes: {},
+      lastOptions: { separateBgm: true, diarize: true } as never,
+      forUrl: true,
+    });
+    expect([...skipped]).toEqual(["separating"]);
+  });
+  it("the active row is the plan's active stage, past the end once all are done", () => {
+    const plan: PlanStage[] = [
+      { stage: "downloading", state: "done" },
+      { stage: "separating", state: "done" },
+      { stage: "transcribing", state: "active" },
+      { stage: "diarizing", state: "pending" },
+    ];
+    expect(activeRailIndex({ stage: "downloading", plan }, {}, stages)).toBe(2);
+    const done = plan.map((p) => ({ ...p, state: "done" as const }));
+    expect(activeRailIndex({ stage: "diarizing", plan: done }, {}, stages)).toBe(stages.length);
+  });
+});
+
+describe("planTimeline (the proportional strip)", () => {
+  const stages = railStages({ separateBgm: true, diarize: true } as never, true);
+
+  it("sizes segments by the plan's measured and estimated seconds", () => {
+    const tl = planTimeline({
       stages,
       skipped: new Set(),
+      plan: [
+        { stage: "downloading", state: "done", tookS: 9 },
+        { stage: "separating", state: "done", tookS: 108 },
+        { stage: "transcribing", state: "active", estS: 191, elapsedS: 40 },
+        { stage: "diarizing", state: "pending", estS: 101 },
+      ],
       stageTimes: {
-        downloading: { start: 0, end: 18_000, observed: true },
-        separating: { start: 18_000, observed: true },
+        downloading: { start: 0, end: 9_000, observed: true },
+        separating: { start: 9_000, end: 117_000, observed: true },
+        transcribing: { start: 117_000, observed: true },
       },
-      progress: { stage: "separating", progress: 0.4 },
-      audioDurSec: 1348,
+      progress: { stage: "transcribing", progress: 0.2 },
       complete: false,
-      now: 78_000,
+      now: 157_000,
     });
-    expect(tl[0]).toMatchObject({ state: "done", ms: 18_000 });
-    // active: default separating RTF 8 → est 168.5 s, elapsed 60 s < est
-    expect(tl[1].state).toBe("active");
-    expect(tl[1].ms).toBeCloseTo((1348 / 8) * 1000, 3);
-    expect(tl[1].fill).toBeCloseTo(0.4, 5);
-    expect(tl[1].overrun).toBe(false);
-    // pending stages carry tilde-able estimates
-    expect(tl[2]).toMatchObject({ state: "pending", fill: 0 });
-    expect(tl[2].estMs).toBeCloseTo((1348 / 6) * 1000, 3);
-    expect(tl[3].estMs).toBeCloseTo((1348 / 11) * 1000, 3);
+    expect(tl.map((e) => e.state)).toEqual(["done", "done", "active", "pending"]);
+    expect(tl.map((e) => e.ms)).toEqual([9_000, 108_000, 191_000, 101_000]);
+    expect(tl.map((e) => e.estimated)).toEqual([false, false, true, true]);
+    expect(tl[2].elapsedMs).toBe(40_000);
+    expect(tl[2].fill).toBeCloseTo(0.2, 5);
+    expect(tl[2].overrun).toBe(false);
+    expect(tl[3].estMs).toBe(101_000);
   });
 
-  it("widens an overrunning stage in 15 s steps and clamps its fill", () => {
-    const est = stageEstimateMs("separating", 100)!; // 12.5 s
-    const tl = stageTimeline({
+  it("gives the translate segment one lane per non-instant target", () => {
+    const tl = planTimeline({
+      stages: ["transcribing", "translating"],
+      skipped: new Set(),
+      plan: [
+        { stage: "transcribing", state: "done", tookS: 191 },
+        { stage: "translating", state: "active", estS: 330, units: [
+          { target: "de", state: "instant", instant: true, tookS: 0 },
+          { target: "en", state: "done", tookS: 160 },
+          { target: "fr", state: "running", estS: 170, progress: 0.5 },
+        ] },
+      ],
+      stageTimes: { translating: { start: 0, observed: true } },
+      progress: { stage: "translating", progress: 0.4 },
+      complete: false,
+      now: 200_000,
+    });
+    expect(tl[1].lanes?.map((l) => l.target)).toEqual(["en", "fr"]);
+    expect(tl[1].lanes?.map((l) => l.fill)).toEqual([1, 0.5]);
+    // unit-weighted: 160 done of 330 → ~0.48 + half of 170
+    expect(tl[1].fill).toBeCloseTo((160 + 85) / 330, 5);
+  });
+
+  it("widens an overrunning stage in 15 s steps, never narrower than elapsed, and clamps the fill", () => {
+    const tl = planTimeline({
       stages: ["separating", "transcribing"],
       skipped: new Set(),
+      plan: [
+        { stage: "separating", state: "active", estS: 12.5 },
+        { stage: "transcribing", state: "pending", estS: 100 },
+      ],
       stageTimes: { separating: { start: 0, observed: true } },
       progress: { stage: "separating", progress: 0.9 },
-      audioDurSec: 100,
       complete: false,
-      now: Math.round(est) + 20_000,
+      now: 32_500,
     });
     expect(tl[0].overrun).toBe(true);
     expect(tl[0].fill).toBe(0.96);
-    // one whole 15 s step past the estimate, not per-tick creep
-    expect(tl[0].ms).toBeCloseTo(est + 30_000, 0);
+    expect(tl[0].ms).toBe(45_000);
   });
 
-  it("drops skipped stages from the strip entirely", () => {
-    const tl = stageTimeline({
+  it("drops skipped stages and falls back to the stage clocks without a plan", () => {
+    const tl = planTimeline({
       stages,
       skipped: new Set(["separating"] as const),
-      stageTimes: { downloading: { start: 0, end: 5_000, observed: true } },
+      plan: null,
+      stageTimes: {
+        downloading: { start: 0, end: 5_000, observed: true },
+        transcribing: { start: 5_000, observed: true },
+      },
       progress: { stage: "transcribing", progress: 0.1 },
-      audioDurSec: 600,
       complete: false,
       now: 20_000,
     });
-    expect(tl.map((e) => e.stage)).toEqual(
-      ["downloading", "transcribing", "diarizing"]);
+    expect(tl.map((e) => e.stage)).toEqual(["downloading", "transcribing", "diarizing"]);
+    expect(tl[0]).toMatchObject({ state: "done", ms: 5_000, estimated: false });
+    expect(tl[1]).toMatchObject({ state: "active", elapsedMs: 15_000, estMs: null });
   });
+});
 
-  it("falls back to weight-scaled widths with no estMs when the audio duration is unknown", () => {
-    const tl = stageTimeline({
-      stages: ["transcribing", "diarizing"],
-      skipped: new Set(),
-      stageTimes: { transcribing: { start: 0, observed: true } },
-      progress: { stage: "transcribing", progress: 0.2 },
-      audioDurSec: null,
-      complete: false,
-      now: 10_000,
-    });
-    expect(tl[0].ms).toBe(120_000); // 60 * 2000
-    expect(tl[0].estMs).toBeNull();
-    expect(tl[1].ms).toBe(30_000); // 15 * 2000
-    expect(tl[1].estMs).toBeNull();
-  });
-
-  it("learns a stage's realtime factor from a finished, observed clock", () => {
+describe("foldProgress no longer learns; it stamps per-language clocks", () => {
+  it("stamps a unit's start the first time a poll names the target", () => {
     useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
     vi.useFakeTimers();
     try {
-      vi.setSystemTime(0);
-      foldProgress({ stage: "separating", progress: 0.1, duration: 1000 });
-      vi.setSystemTime(100_000);
-      // transition closes the separating clock: 100 s wall for 1000 s audio
-      foldProgress({ stage: "transcribing", progress: 0, duration: 1000 });
+      vi.setSystemTime(1_000);
+      foldProgress({ stage: "translating", progress: 0.1, target: "en", targetProgress: 0.2 });
+      vi.setSystemTime(5_000);
+      foldProgress({ stage: "translating", progress: 0.3, target: "en", targetProgress: 0.6 });
+      foldProgress({ stage: "translating", progress: 0.5, target: "fr", targetProgress: 0.0 });
     } finally {
       vi.useRealTimers();
     }
-    expect(stageEstimateMs("separating", 1000)).toBeCloseTo(100_000, 0);
+    expect(useTranscribeRun.getState().stageMeta.translating?.unitStarts).toEqual({ en: 1_000, fr: 5_000 });
+    useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
   });
 });
 
@@ -575,29 +609,27 @@ describe("runBadgeFraction (the sidebar badge)", () => {
     useTranscribeRun.setState({ queue: [], progress: null, stageTimes: {}, stageMeta: {} });
   });
 
-  it("derives the running item's own rail — nothing running is null, a URL keeps its download row", () => {
+  it("is the server's overall for the running item, null when nothing runs", () => {
     // Nothing running or queued: there is no run to describe.
     expect(runBadgeFraction(state({ queue: [{ path: "/a.mp3", status: "done" }] as QueueItem[] }))).toBeNull();
 
-    // A plain file: the transcribe row is the whole rail, so the badge is the stage fraction.
+    // Whatever the server's plan says, verbatim — a URL mid-download, a file
+    // mid-decode and a text source all read the same field.
+    expect(runBadgeFraction(state({
+      queue: [{ path: "https://x/v", status: "running", kind: "url" }] as QueueItem[],
+      progress: { stage: "downloading", progress: 0.5, overall: 0.04 },
+    }))).toBeCloseTo(0.04, 5);
+    expect(runBadgeFraction(state({
+      queue: [{ path: "/s.srt", status: "running", kind: "text" }] as QueueItem[],
+      progress: { stage: "translating", progress: 0.5, overall: 0.5 },
+      lastOptions: { translateTo: ["de"] },
+    }))).toBeCloseTo(0.5, 5);
+
+    // Before the first poll answers there is no number yet: 0, never a guess.
     expect(runBadgeFraction(state({
       queue: [{ path: "/a.mp3", status: "running" }] as QueueItem[],
       progress: { stage: "transcribing", progress: 0.25 },
-    }))).toBeCloseTo(0.25, 5);
-
-    // A URL item mid-download: the download row is its OWN weight (15 of 75), which is the
-    // bug this exists for — passing the bare store credited it to transcribing (80% → 0%).
-    expect(runBadgeFraction(state({
-      queue: [{ path: "https://x/v", status: "running", kind: "url" }] as QueueItem[],
-      progress: { stage: "downloading", progress: 0.5 },
-    }))).toBeCloseTo(0.1, 5);
-
-    // A text source runs the translating rail alone, so its stage fraction IS the badge.
-    expect(runBadgeFraction(state({
-      queue: [{ path: "/s.srt", status: "running", kind: "text" }] as QueueItem[],
-      progress: { stage: "translating", progress: 0.5 },
-      lastOptions: { translateTo: ["de"] },
-    }))).toBeCloseTo(0.5, 5);
+    }))).toBe(0);
   });
 });
 

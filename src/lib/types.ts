@@ -914,6 +914,38 @@ export interface TranscribeOptions {
 }
 
 /** Live progress of an in-flight file transcription. */
+/** One translation target inside the run plan's translating stage. */
+export interface PlanUnit {
+  target: string;
+  state: "queued" | "running" | "done" | "instant";
+  /** Same-language verbatim copy — no model call, no measurable time. */
+  instant?: boolean;
+  estS?: number | null;
+  tookS?: number | null;
+  elapsedS?: number | null;
+  /** 0..1 within THIS language while running. */
+  progress?: number | null;
+}
+
+/** One stage of the server-owned run plan: what the server expects it to
+ *  cost (`estS`, pending/active), what it cost (`tookS`, done/failed), and
+ *  the model/device it ran on. Skipped stages carry only their state. */
+export interface PlanStage {
+  stage: string;
+  state: "pending" | "active" | "done" | "failed" | "skipped";
+  model?: string | null;
+  device?: string | null;
+  /** Whisper compute type, or the translation mode ("fluent"/"faithful"). */
+  compute?: string | null;
+  /** Active sub-phase label: waiting | analyzing | resolving | downloading | loading. */
+  phase?: string | null;
+  estS?: number | null;
+  tookS?: number | null;
+  elapsedS?: number | null;
+  /** Translating stage only: one entry per target language. */
+  units?: PlanUnit[] | null;
+}
+
 export interface BatchProgress {
   /** waiting | resolving | downloading | separating | analyzing |
    *  transcribing | diarizing | unknown */
@@ -942,6 +974,16 @@ export interface BatchProgress {
   /** URL flow, downloading stage: bytes expected (progress is then the
    *  downloaded fraction; null total on fragmented streams). */
   totalBytes?: number | null;
+  /** Translating stage: the language being translated and how far along
+   *  it is (0..1 within that language). */
+  target?: string | null;
+  targetProgress?: number | null;
+  /** The server-owned run plan (core/run_plan.py) behind this run, the
+   *  overall 0..1 fraction it derives (held monotone) and the ETA in
+   *  seconds. All null on a server without a plan. */
+  plan?: PlanStage[] | null;
+  overall?: number | null;
+  etaS?: number | null;
 }
 
 /** Result of a batch transcription. */
@@ -973,6 +1015,10 @@ export interface BatchResult {
   /** Text-source run whose input carried no cue timing — the segment clocks are
    *  synthesized (1 s per line) and must not feed reading-speed checks. */
   timingSynthesized?: boolean;
+  /** The run plan's receipt: every stage with its measured wall time and the
+   *  per-language units. The progress entry is gone before the response
+   *  arrives, so this is the only complete copy. */
+  plan?: PlanStage[];
 }
 
 /** Provenance block of a T2T translation (verbose_json `translation`). */

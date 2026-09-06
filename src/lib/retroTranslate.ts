@@ -90,6 +90,10 @@ export interface TranslateRunUi {
   lastText?: string;
   model?: string;
   device?: string;
+  /** The language being translated right now and how far along it is
+   *  (0..1 within that language) — from the server's per-target ticks. */
+  target?: string;
+  targetProgress?: number;
 }
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
@@ -139,12 +143,19 @@ export function beginChunk(
  *  segment list. The server counts segments×targets, so with T targets the
  *  position sweeps the chunk T times — take the position within the current
  *  sweep. */
-function frontierAt(s: TranslateRunUi, progress: number): number {
+function frontierAt(s: TranslateRunUi, progress: number, targetProgress?: number | null): number {
   const idxs = s.chunkIdxs;
   if (!idxs || !idxs.length) return s.frontierIdx;
-  const T = Math.max(1, s.targets.length);
-  const scaled = clamp01(progress) * T;
-  const within = scaled >= T ? 1 : scaled % 1;
+  // A server that reports the per-target fraction says exactly where the
+  // sweep is; otherwise derive it from the global fraction.
+  let within: number;
+  if (typeof targetProgress === "number" && Number.isFinite(targetProgress)) {
+    within = clamp01(targetProgress);
+  } else {
+    const T = Math.max(1, s.targets.length);
+    const scaled = clamp01(progress) * T;
+    within = scaled >= T ? 1 : scaled % 1;
+  }
   return idxs[Math.min(idxs.length - 1, Math.floor(within * idxs.length))];
 }
 
@@ -177,7 +188,7 @@ export function foldTranslatePoll(
       if (next.modelPhaseSeen) next.modelPct = 1;
       if (typeof p.progress === "number") {
         next.pct = clamp01((s.done + clamp01(p.progress) * s.chunkLen) / s.total);
-        next.frontierIdx = frontierAt(s, p.progress);
+        next.frontierIdx = frontierAt(s, p.progress, p.targetProgress);
       }
       break;
     default:
@@ -190,6 +201,8 @@ export function foldTranslatePoll(
       break;
   }
   if (p.step) next.step = p.step;
+  if (p.target) next.target = p.target;
+  if (typeof p.targetProgress === "number") next.targetProgress = clamp01(p.targetProgress);
   if (p.lastText) next.lastText = p.lastText;
   if (p.model) next.model = p.model;
   if (p.device) next.device = p.device;

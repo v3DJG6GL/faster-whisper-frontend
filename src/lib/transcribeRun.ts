@@ -18,7 +18,8 @@ import { isTextSourcePath, parseImportedText, type ImportedText } from "./subtit
 import { useApp } from "./store";
 import { setRecordForgetHook, upsertRecord, type TranscriptRecord } from "./transcriptHistory";
 import type {
-  BatchProgress, BatchResult, DecodeOverrides, TranscribeOptions, TranscriptSegment,
+  BatchProgress, BatchResult, DecodeOverrides, PlanStage, PlanUnit, TranscribeOptions,
+  TranscriptSegment,
 } from "./types";
 
 export type ItemStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -72,22 +73,16 @@ export interface StageMeta {
    *  model load) in, which is right for elapsed but poisons byte rates —
    *  21.8 MB over an 18s row is "1.1 MB/s" when the transfer took 4s. */
   dlStart?: number;
+  /** Translating stage only: client wall-clock start per target language,
+   *  stamped when a poll first names it — the ledger's per-language elapsed
+   *  ticks between polls off this, like the stage clocks. */
+  unitStarts?: Record<string, number>;
 }
 
 /** Canonical pipeline order — used to close seeded clocks of stages the server
  *  jumped over (e.g. a seeded "separating" clock when the backend declines BGM
  *  separation and jumps straight to "transcribing"). */
 const RAIL_ORDER: RailStage[] = ["downloading", "separating", "transcribing", "diarizing", "translating"];
-
-/** Rough share of a run's wall time per stage — sizes the segments of the
- *  overall pipeline bar and weights the overall percentage. */
-export const STAGE_WEIGHTS: Record<RailStage, number> = {
-  downloading: 15,
-  separating: 25,
-  transcribing: 60,
-  diarizing: 15,
-  translating: 12,
-};
 
 /** The stages of a run in server order — transcribe always, the optional
  *  stages only when the run switched them on, and (URL items) the leading
@@ -127,6 +122,24 @@ export function activeRailIndex(
   stages: RailStage[],
   skipped?: ReadonlySet<RailStage>,
 ): number {
+  // A server plan is authoritative: the row it marks active is the active
+  // row, and once every stage is done the rail is past its end.
+  const plan = progress?.plan;
+  if (plan?.length) {
+    const active = plan.find((p) => p.state === "active");
+    if (active) {
+      const i = stages.indexOf(active.stage as RailStage);
+      if (i >= 0) return i;
+    }
+    const pending = plan.find((p) => p.state === "pending");
+    if (pending) {
+      const i = stages.indexOf(pending.stage as RailStage);
+      if (i >= 0) return i;
+    }
+    if (plan.every((p) => p.state === "done" || p.state === "failed" || p.state === "skipped")) {
+      return stages.length;
+    }
+  }
   if (!progress?.stage) return 0;
   if (progress.stage === "waiting") {
     // Find the first stage whose clock hasn't closed AND isn't skipped.
@@ -159,6 +172,13 @@ export function skippedStages(s: {
 }): Set<RailStage> {
   const out = new Set<RailStage>();
   const stages = railStages(s.lastOptions, s.forUrl, s.forText);
+  // The server plan names its skipped stages outright.
+  if (s.progress?.plan?.length) {
+    for (const p of s.progress.plan) {
+      if (p.state === "skipped" && (stages as string[]).includes(p.stage)) out.add(p.stage as RailStage);
+    }
+    return out;
+  }
   for (const r of s.progress?.skipped ?? []) {
     if ((stages as string[]).includes(r)) out.add(r as RailStage);
   }
@@ -177,152 +197,161 @@ export function skippedStages(s: {
   return out;
 }
 
-/** Weighted 0..1 fraction across the whole pipeline (done stages count in
- *  full, the active stage by its own fraction, skipped stages drop out of the
- *  denominator entirely — no credit for work that never happened). Null when
- *  nothing runs. */
-export function overallFraction(s: {
-  queue: QueueItem[];
-  progress: BatchProgress | null;
-  stageTimes: Partial<Record<RailStage, StageTime>>;
-  lastOptions?: TranscribeOptions;
-  forUrl?: boolean;
-  forText?: boolean;
-}): number | null {
+/** The run's overall 0..1 fraction: the SERVER's number (core/run_plan.py
+ *  weighs every stage by what it cost or is expected to cost, and holds it
+ *  monotone), 0 until the first poll answers. Null when nothing runs. */
+export function overallOf(s: { queue: QueueItem[]; progress: BatchProgress | null }): number | null {
   if (!s.queue.some((it) => it.status === "running" || it.status === "queued")) return null;
-  const stages = railStages(s.lastOptions, s.forUrl, s.forText);
-  const skipped = skippedStages(s);
-  const active = activeRailIndex(s.progress, s.stageTimes, stages, skipped);
-  let total = 0;
-  let done = 0;
-  stages.forEach((st, i) => {
-    if (skipped.has(st)) return;
-    const w = STAGE_WEIGHTS[st];
-    total += w;
-    if (i < active) done += w;
-    else if (i === active && typeof s.progress?.progress === "number") {
-      done += w * s.progress.progress;
-    }
-  });
-  return total > 0 ? done / total : 0;
+  const v = s.progress?.overall;
+  return typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0;
 }
 
-/** Per-stage realtime factors (audio seconds ÷ stage wall seconds) learned
- *  from finished stages, EWMA'd across runs in this session. They only size
- *  the estimated segments of the timeline strip; the seeds are a measured
- *  GPU run and get replaced by real numbers as stages complete. */
-const DEFAULT_STAGE_RTF: Record<RailStage, number> = {
-  downloading: 75,
-  separating: 8,
-  transcribing: 6,
-  diarizing: 11,
-  translating: 25,
-};
-const stageRtf: Partial<Record<RailStage, number>> = {};
-
-function learnStageRtf(stage: RailStage, wallMs: number, audioSec: number | null | undefined) {
-  if (!audioSec || wallMs < 500) return;
-  const rtf = audioSec / (wallMs / 1000);
-  if (!Number.isFinite(rtf) || rtf <= 0) return;
-  const prev = stageRtf[stage];
-  stageRtf[stage] = prev ? prev * 0.5 + rtf * 0.5 : rtf;
+/** Seconds the server expects the run still needs, or null when it has no
+ *  evidence yet (the panel then prints "estimating…"). */
+export function etaSecOf(progress: BatchProgress | null): number | null {
+  const v = progress?.etaS;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
 
-/** Estimated wall ms for a stage, or null without an audio duration to
- *  scale from. */
-export function stageEstimateMs(
-  stage: RailStage,
-  audioDurSec: number | null | undefined,
-): number | null {
-  if (!audioDurSec) return null;
-  return (audioDurSec / (stageRtf[stage] ?? DEFAULT_STAGE_RTF[stage])) * 1000;
+/** The plan that describes the panel's file: the live poll's while it runs,
+ *  the response's receipt once it settled (the progress entry is popped
+ *  before the response leaves, so the last poll never sees the final stage
+ *  close), null before the first poll answers or on a server without one. */
+export function planOf(progress: BatchProgress | null, result?: BatchResult | null): PlanStage[] | null {
+  if (progress?.plan?.length) {
+    // A settled run's receipt wins over the last live snapshot: it is the
+    // only copy where every stage and unit carries its took_s.
+    if (result?.plan?.length && progress.plan.some((p) => p.state === "active")) return result.plan;
+    return progress.plan;
+  }
+  return result?.plan?.length ? result.plan : null;
 }
 
-export function _resetStageRtfForTests() {
-  for (const k of Object.keys(stageRtf) as RailStage[]) delete stageRtf[k];
+/** One lane of the translate segment on the timeline strip. */
+export interface TimelineLane {
+  target: string;
+  ms: number;
+  state: PlanUnit["state"];
+  fill: number;
 }
 
 /** One segment of the overall timeline strip. `ms` is the segment's relative
- *  size: measured wall time once a stage finished, an estimate before that
- *  (weight-scaled pseudo-time when no audio duration exists to estimate
- *  from). Skipped stages are absent — the strip shows only time actually
- *  spent or still expected. */
+ *  size: the server's measured wall time once a stage finished, its estimate
+ *  before that. Skipped stages are absent — the strip shows only time
+ *  actually spent or still expected. */
 export interface TimelineEntry {
   stage: RailStage;
   ms: number;
   /** Wall ms spent so far — full span when done, ticking while active. */
   elapsedMs: number;
   state: "done" | "active" | "pending";
-  /** Inner fill of the active segment (stage-local server fraction). */
+  /** Inner fill of the active segment (stage-local fraction; unit-weighted
+   *  for the translate stage). */
   fill: number;
-  /** Active stage running past its estimate — the view pulses the fill and
-   *  the segment widens in deliberate 15 s steps, never per tick. */
+  /** Active stage running past the server's estimate — the view pulses the
+   *  fill and the segment widens in whole 15 s steps, never per tick. */
   overrun: boolean;
-  /** Audio-scaled estimate for the label ("~2m 40s"); null when unknowable. */
+  /** The server's estimate for the label ("~2m 40s"); null when unknown. */
   estMs: number | null;
+  /** True while the width is an estimate rather than a measurement. */
+  estimated: boolean;
+  /** Translate segment: one lane per target language. */
+  lanes?: TimelineLane[];
 }
 
-export function stageTimeline(s: {
+/** Unit-weighted fraction of an active translate stage: done units in full,
+ *  the running one by its own progress, instant copies not at all. */
+export function unitsFraction(units: PlanUnit[] | null | undefined): number | null {
+  if (!units?.length) return null;
+  let total = 0;
+  let got = 0;
+  for (const u of units) {
+    if (u.instant || u.state === "instant") continue;
+    const w = (u.state === "done" ? u.tookS : null) ?? u.estS ?? null;
+    if (w == null) continue;
+    total += w;
+    if (u.state === "done") got += w;
+    else if (u.state === "running") got += w * (u.progress ?? 0);
+  }
+  return total > 0 ? got / total : null;
+}
+
+export function planTimeline(s: {
   stages: RailStage[];
-  skipped: Set<RailStage>;
+  skipped: ReadonlySet<RailStage>;
+  plan: PlanStage[] | null;
   stageTimes: Partial<Record<RailStage, StageTime>>;
   progress: BatchProgress | null;
-  audioDurSec: number | null;
   complete: boolean;
   now: number;
 }): TimelineEntry[] {
+  const byName = new Map<string, PlanStage>();
+  for (const p of s.plan ?? []) byName.set(p.stage, p);
   const active = s.complete
     ? s.stages.length
     : activeRailIndex(s.progress, s.stageTimes, s.stages, s.skipped);
   const out: TimelineEntry[] = [];
   s.stages.forEach((st, i) => {
     if (s.skipped.has(st)) return;
+    const p = byName.get(st);
     const t = s.stageTimes[st];
-    const est = stageEstimateMs(st, s.audioDurSec);
-    // Weight-scaled pseudo-time keeps proportions sane before the audio
-    // duration is known (never shown as a number, only as width).
-    const fallback = STAGE_WEIGHTS[st] * 2000;
-    if (i < active) {
-      const span = t?.end != null ? Math.max(t.end - t.start, 1000) : null;
-      out.push({
-        stage: st,
-        ms: span ?? est ?? fallback,
-        elapsedMs: span ?? 0,
-        state: "done",
-        fill: 1,
-        overrun: false,
-        estMs: est,
-      });
-    } else if (i === active) {
-      const elapsed = t ? Math.max(s.now - t.start, 0) : 0;
-      const over = est != null && elapsed > est;
-      const ms = over
-        ? est + Math.ceil((elapsed - est) / 15000) * 15000
-        : (est ?? fallback);
-      const frac =
-        typeof s.progress?.progress === "number" ? s.progress.progress : 0;
-      out.push({
-        stage: st,
-        ms: Math.max(ms, 1),
-        elapsedMs: elapsed,
-        state: "active",
-        fill: over ? 0.96 : Math.min(frac, 1),
-        overrun: over,
-        estMs: est,
-      });
-    } else {
-      out.push({
-        stage: st,
-        ms: est ?? fallback,
-        elapsedMs: 0,
-        state: "pending",
-        fill: 0,
-        overrun: false,
-        estMs: est,
-      });
+    const span = t?.end != null ? Math.max(t.end - t.start, 1000) : null;
+    const state: TimelineEntry["state"] = p
+      ? p.state === "done" || p.state === "failed" ? "done"
+        : p.state === "active" ? "active" : "pending"
+      : i < active ? "done" : i === active ? "active" : "pending";
+    const estMs = p?.estS != null ? p.estS * 1000 : null;
+    const tookMs = p?.tookS != null ? Math.max(p.tookS * 1000, 1000) : null;
+    if (state === "done") {
+      const ms = tookMs ?? span ?? estMs ?? 1000;
+      out.push({ stage: st, ms, elapsedMs: span ?? ms, state, fill: 1, overrun: false, estMs,
+        estimated: tookMs == null && span == null, lanes: lanesOf(p, true) });
+      return;
     }
+    if (state === "active") {
+      const elapsed = t ? Math.max(s.now - t.start, 0) : (p?.elapsedS ?? 0) * 1000;
+      const frac =
+        unitsFraction(p?.units) ??
+        (typeof s.progress?.progress === "number" ? s.progress.progress : null) ??
+        (estMs ? Math.min(elapsed / estMs, 0.95) : 0);
+      const over = estMs != null && elapsed > estMs;
+      out.push({
+        stage: st,
+        // Never narrower than the time already spent: a stage past its
+        // estimate keeps its true width, in whole 15 s steps so the strip
+        // does not creep per tick.
+        ms: Math.max(estMs ?? 1000, over ? Math.ceil(elapsed / 15000) * 15000 : 0, 1),
+        elapsedMs: elapsed,
+        state,
+        fill: over ? 0.96 : Math.min(Math.max(frac, 0), 1),
+        overrun: over,
+        estMs,
+        estimated: true,
+        lanes: lanesOf(p, false),
+      });
+      return;
+    }
+    out.push({ stage: st, ms: estMs ?? 1000, elapsedMs: 0, state, fill: 0, overrun: false, estMs,
+      estimated: true, lanes: lanesOf(p, false) });
   });
   return out;
+}
+
+function lanesOf(p: PlanStage | undefined, done: boolean): TimelineLane[] | undefined {
+  if (!p?.units?.length) return undefined;
+  const lanes: TimelineLane[] = [];
+  for (const u of p.units) {
+    if (u.instant || u.state === "instant") continue;
+    const ms = ((u.tookS ?? u.estS) ?? 0) * 1000;
+    const state: PlanUnit["state"] = done ? "done" : u.state;
+    lanes.push({
+      target: u.target,
+      ms: Math.max(ms, 500),
+      state,
+      fill: state === "done" ? 1 : state === "running" ? Math.min(Math.max(u.progress ?? 0, 0.02), 1) : 0,
+    });
+  }
+  return lanes.length ? lanes : undefined;
 }
 
 /** Everything the pump needs from the screen, captured once per run — the
@@ -890,9 +919,8 @@ export function foldProgress(p: BatchProgress) {
     const prev = s.progress ? railOf(s.progress.stage) : null;
     const cur = railOf(p.stage);
     // "waiting" is the registry's request-entry seed, not evidence the
-    // transcribe row ran: it must not stamp a clock `observed`, or the phantom
-    // span it opens is fed to learnStageRtf by the first real stage (a
-    // realtime factor of hundreds → every later transcribe estimate ~0).
+    // transcribe row ran: it must not stamp a clock `observed` — a seeded
+    // phantom span would read as the stage having run.
     const obs = p.stage !== "waiting";
     let stageTimes = s.stageTimes;
     // Every poll marks its stage observed — a stage whose clock only ever got
@@ -902,12 +930,6 @@ export function foldProgress(p: BatchProgress) {
       const pc = prev ? stageTimes[prev] : undefined;
       if (prev && pc && !pc.end) {
         stageTimes[prev] = { ...pc, end: now };
-        // A finished stage with a known audio duration teaches the timeline
-        // strip its realtime factor (only observed clocks — a seeded phantom
-        // span would poison the average).
-        if (pc.observed) {
-          learnStageRtf(prev, now - pc.start, p.duration ?? s.progress?.duration);
-        }
       }
       // Close every still-open clock whose pipeline order is before `cur`.
       // This handles seeded clocks for stages the server skipped (e.g. the
@@ -923,9 +945,6 @@ export function foldProgress(p: BatchProgress) {
           const tc = stageTimes[st];
           if (tc && !tc.end) {
             stageTimes[st] = { ...tc, end: now };
-            if (tc.observed) {
-              learnStageRtf(st, now - tc.start, p.duration ?? s.progress?.duration);
-            }
           }
         }
       }
@@ -977,6 +996,17 @@ export function foldProgress(p: BatchProgress) {
         downloading: { ...stageMeta.downloading, dlStart: now },
       };
     }
+    // Per-language clock: the first poll naming a target starts its lane's
+    // elapsed ticker (the server's elapsed_s only moves per poll).
+    if (p.target && cur === "translating" && !stageMeta.translating?.unitStarts?.[p.target]) {
+      stageMeta = {
+        ...stageMeta,
+        translating: {
+          ...stageMeta.translating,
+          unitStarts: { ...stageMeta.translating?.unitStarts, [p.target]: now },
+        },
+      };
+    }
     return { progress: p, stageTimes, stageMeta };
   });
 }
@@ -1025,6 +1055,7 @@ async function translateTextSource(
   const warnings: string[] = [];
   let model: string | undefined;
   let source: string | undefined;
+  let plan: PlanStage[] | undefined;
   for (let at = 0; at < parsed.segments.length; at += CHUNK) {
     // A cancel or an input change bumps the epoch; the pump only checks it after this
     // function returns, so without this a feature-length file kept POSTing chunk after
@@ -1049,6 +1080,9 @@ async function translateTextSource(
     if (r.warnings?.length) for (const w of r.warnings) if (!warnings.includes(w)) warnings.push(w);
     model = model ?? r.model;
     source = source ?? r.source;
+    // The last chunk's receipt stands for the run (each chunk is its own
+    // one-stage plan on the server).
+    if (r.plan?.length) plan = r.plan;
   }
   const segments = assembleTranslatedSegments(parsed.segments, results, keptAll);
   return {
@@ -1072,6 +1106,7 @@ async function translateTextSource(
     ...(parsed.segments.every((seg) => seg.start === undefined && seg.end === undefined)
       ? { timingSynthesized: true }
       : {}),
+    ...(plan ? { plan } : {}),
   } as BatchResult;
 }
 
@@ -1161,7 +1196,7 @@ async function pump(
       let pollingDone = false;
       // Monotonic sequence: drop any response whose seq is older than the
       // newest folded one — out-of-order responses (poll latency > 1s on a
-      // loaded backend) would rewind the stage clocks and poison learnStageRtf.
+      // loaded backend) would rewind the stage clocks.
       let pollSeq = 0;
       let pollInFlight = false;
       const poller = pid
@@ -1276,15 +1311,10 @@ export function startRun(options: TranscribeOptions | undefined,
   void pump(epoch, options, ctx);
 }
 
-/** The sidebar badge's fraction: the running item's own rail flags (URL → a download stage,
- *  text → the translating rail alone), exactly as the Transcribe panel derives them. Passing
- *  the bare store credited a download's fraction to the transcribe weight — 80% while the file
- *  was still downloading, then back to 0%. */
+/** The sidebar badge's fraction — the same server number the run panel's header shows, so
+ *  the two can never disagree. */
 export function runBadgeFraction(s: TranscribeRunState): number | null {
-  const it = s.queue.find((q) => q.status === "running") ?? null;
-  const forUrl = it?.kind === "url" || (it ? isSourceUrl(it.path) : false);
-  const forText = it?.kind === "text" || (it && !forUrl ? isTextSourcePath(it.path) : false);
-  return overallFraction({ ...s, forUrl, forText });
+  return overallOf(s);
 }
 
 /** The item the completed run panel describes: the file the PUMP ran last (it stamps
