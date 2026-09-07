@@ -187,6 +187,11 @@ pub fn run() {
             commands::post_usage_outcomes, // POST /v1/usage/outcome (end-of-dictation facets)
             commands::load_usage_outcomes, // on-disk outcome queue (survives restarts)
             commands::save_usage_outcomes,
+            commands::load_jobs_ledger,    // on-disk in-flight jobs ledger (re-attach after a restart)
+            commands::save_jobs_ledger,
+            commands::get_job,             // GET /v1/jobs/{id} (re-attach poll)
+            commands::get_job_result,      // GET /v1/jobs/{id}/result (late ingest)
+            commands::delete_job,          // DELETE /v1/jobs/{id}
             commands::sync_pull,          // P30: GET /v1/client-settings
             commands::sync_push,          // P30: PUT /v1/client-settings
             commands::sync_delete,        // P30: DELETE /v1/client-settings

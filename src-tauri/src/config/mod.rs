@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+pub mod jobs_ledger;
 pub mod sync_state;
 pub mod usage_queue;
 

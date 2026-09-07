@@ -437,6 +437,21 @@ pub async fn get_override_profile(
 mod tests {
     use super::UsageQuery;
 
+    /// The typed mirror drops what it does not name: the jobs keys the
+    /// reconcile step gates on must survive the round trip.
+    #[test]
+    fn capabilities_parse_jobs_flags() {
+        let raw = serde_json::json!({"jobs_enabled": true, "jobs": {"ttl_s": 259200}});
+        let caps: super::super::Capabilities = serde_json::from_value(raw).unwrap();
+        assert_eq!(caps.jobs_enabled, Some(true));
+        assert_eq!(caps.jobs.as_ref().map(|j| j.ttl_s), Some(259200.0));
+        let out = serde_json::to_value(caps).unwrap();
+        assert_eq!(out["jobs_enabled"], true);
+        assert_eq!(out["jobs"]["ttl_s"], 259200.0);
+        let none: super::super::Capabilities = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(none.jobs_enabled, None);
+    }
+
     /// The typed mirror drops what it does not name: the video/packaging
     /// keys the frontend gates its UI on must survive the round trip.
     #[test]

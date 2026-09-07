@@ -179,8 +179,11 @@ pub struct TranslationInfo {
     pub mode: Option<String>,
 }
 
+/// The wire shape of a transcription payload — the POST's response body and,
+/// byte-for-byte the same, `GET /v1/jobs/{id}/result`. Both go through
+/// [`to_batch_result`] so the record the client builds is identical.
 #[derive(Deserialize)]
-struct VerboseJson {
+pub(crate) struct VerboseJson {
     text: String,
     #[serde(default)]
     language: Option<String>,
@@ -245,7 +248,26 @@ fn translate_to_field(requested: Option<&[String]>) -> Option<String> {
 
 #[cfg(test)]
 mod wire_field_tests {
-    use super::{bound_progress, bound_rung, is_format_id, translate_to_field, BatchProgress, VideoRung};
+    use super::{bound_progress, bound_rung, is_format_id, to_batch_result, translate_to_field, BatchProgress, VerboseJson, VideoRung};
+
+    /// The stored result of a lost run goes through the same door as the
+    /// POST body: media ids screened, labels bounded, output untouched.
+    #[test]
+    fn to_batch_result_filters_media_ids_and_bounds_labels() {
+        let raw = serde_json::json!({
+            "text": "hallo welt", "language": "l".repeat(200),
+            "source_media_id": "../../x", "source_video_media_id": "cafe".repeat(8),
+            "speakers": ["s".repeat(300)], "segments": [{"start": 0.0, "end": 1.0, "text": "t".repeat(5000)}]
+        });
+        let parsed: VerboseJson = serde_json::from_value(raw).unwrap();
+        let r = to_batch_result(parsed);
+        assert_eq!(r.text, "hallo welt");
+        assert_eq!(r.language.unwrap().chars().count(), 65); // 64 + ellipsis
+        assert_eq!(r.source_media_id, None);
+        assert_eq!(r.source_video_media_id.as_deref(), Some("cafecafecafecafecafecafecafecafe"));
+        assert_eq!(r.speakers[0].chars().count(), 65);
+        assert_eq!(r.segments[0].text.chars().count(), 5000);
+    }
 
     #[test]
     fn plan_and_progress_numbers_are_bounded() {
@@ -996,10 +1018,16 @@ async fn post(
         .await
         .map_err(|e| anyhow::anyhow!(e))
         .context("decoding response")?;
-    // The dictation sibling caps this same pair on the way out (session.rs); the file-upload arm
-    // returned them straight off the wire, so the Transcribe screen rendered a server string
-    // bounded only by the 32 MiB body cap. `text` is deliberately untouched — that IS the output.
-    Ok(BatchResult {
+    Ok(to_batch_result(parsed))
+}
+
+/// Bound a parsed payload into the record the webview stores. The dictation sibling caps this
+/// same pair on the way out (session.rs); the file-upload arm once returned them straight off
+/// the wire, so the Transcribe screen rendered a server string bounded only by the 32 MiB body
+/// cap. `text` is deliberately untouched — that IS the output. Shared with `transport::jobs`
+/// (the stored result of a run the app lost the connection to).
+pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
+    BatchResult {
         text: parsed.text,
         language: parsed
             .language
@@ -1078,7 +1106,7 @@ async fn post(
             mode: t.mode.map(|m| super::bounded_server_text(&m, 16)),
         }),
         plan: parsed.plan.map(bound_plan),
-    })
+    }
 }
 
 /// Re-key a translations map through the server-string bound (values are the

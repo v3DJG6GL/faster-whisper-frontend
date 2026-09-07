@@ -14,6 +14,7 @@ use std::time::Duration;
 
 pub mod batch;
 pub mod discovery;
+pub mod jobs;
 pub mod media;
 pub mod pipeline;
 pub mod preload;
@@ -124,6 +125,22 @@ pub struct Capabilities {
     pub diarization_models: Option<Vec<ServerModel>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub separation_models: Option<Vec<ServerModel>>,
+    /// Whether the server keeps a durable job resource (`GET /v1/jobs*`) the
+    /// app can re-attach to after losing its connection. Same `Some(true)`-
+    /// only contract as `url_download_enabled`; the detail block rides only
+    /// when on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jobs_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jobs: Option<JobsCaps>,
+}
+
+/// `capabilities.jobs` from `GET /v1/me` — how long a finished job's result
+/// stays fetchable, in seconds.
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct JobsCaps {
+    #[serde(default)]
+    pub ttl_s: f64,
 }
 
 /// `capabilities.media_package` from `GET /v1/me` — what the packaging
