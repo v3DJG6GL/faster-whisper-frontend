@@ -565,6 +565,12 @@ export interface Capabilities {
     reason: string | null;
     ffmpeg_version: string | null;
   };
+  /** Whether the server keeps a durable job resource (`GET /v1/jobs*`)
+   *  the app can re-attach to after losing its connection. ABSENT = the
+   *  feature does not exist; the in-flight ledger is written only on
+   *  `=== true`. `jobs.ttl_s` = how long a finished result stays fetchable. */
+  jobs_enabled?: boolean;
+  jobs?: { ttl_s: number };
   /** Whether this server runs the T2T translating stage. Like
    *  url_download_enabled, ABSENT means the feature does not exist —
    *  translation UI shows only on `=== true` (deliberate opt-in). */
@@ -1052,6 +1058,39 @@ export interface VideoProgress {
 }
 
 /** Result of a batch transcription. */
+/** One server job row (`GET /v1/jobs/{id}`) — a batch run the server keeps
+ *  after the connection that carried it is gone. Mirrors Rust
+ *  `transport::jobs::JobStatus` (camelCase over the IPC). */
+export type JobState = "running" | "done" | "failed" | "cancelled";
+export interface JobStatus {
+  jobId?: string;
+  kind?: "transcribe" | "translate" | string;
+  state?: JobState | string;
+  /** Unix seconds. */
+  createdAt?: number;
+  finishedAt?: number;
+  expiresAt?: number;
+  model?: string;
+  sourceKind?: "file" | "url" | "text" | string;
+  sourceName?: string;
+  task?: string;
+  error?: string;
+  resultBytes?: number;
+  resultAvailable?: boolean;
+  /** The live progress while the run is in flight; null once it closed. */
+  progress?: BatchProgress | null;
+}
+
+/** What a jobs call came back with — a typed outcome, not an exception,
+ *  because a 404 (unknown / expired / foreign), a 409 (result asked for
+ *  while running) and a 403 (feature off) each drive a different decision. */
+export type JobOutcome<T> =
+  | { kind: "ok"; value: T }
+  | { kind: "not_found" }
+  | { kind: "running" }
+  | { kind: "disabled" }
+  | { kind: "error"; message: string };
+
 export interface BatchResult {
   text: string;
   language?: string;

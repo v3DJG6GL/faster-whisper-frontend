@@ -702,6 +702,33 @@ describe("forgetRecord (a deleted record must stay deleted)", () => {
   });
 });
 
+describe("reattachRun: a run found in the ledger takes the rail back", () => {
+  it("seeds the first stage clock from the row's start and routes Cancel to the job id", async () => {
+    const { reattachRun } = await import("./transcribeRun");
+    useTranscribeRun.setState({ files: [], queue: [], running: false, progress: null, stageTimes: {}, stageMeta: {} });
+    const before = useTranscribeRun.getState().epoch;
+    const epoch = reattachRun({
+      v: 1, jobId: "c".repeat(32), backendId: "b1", serverUrl: "http://x", path: "https://youtu.be/q",
+      kind: "url", title: "Talk", options: { separateBgm: true },
+      ctx: { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false },
+      urlMeta: { title: "Talk", extractor: "Youtube" }, startedAt: 123_000,
+    });
+    const s = useTranscribeRun.getState();
+    expect(epoch).toBe(before + 1);
+    expect(s.epoch).toBe(epoch);
+    expect(s.running).toBe(true);
+    expect(s.files).toEqual(["https://youtu.be/q"]);
+    expect(s.queue).toEqual([{ path: "https://youtu.be/q", status: "running", kind: "url", title: "Talk" }]);
+    // A link run starts on the download row, whatever the options say.
+    expect(s.stageTimes).toEqual({ downloading: { start: 123_000 } });
+    expect(s.urlMeta["https://youtu.be/q"]?.extractor).toBe("Youtube");
+    expect(s.lastOptions).toEqual({ separateBgm: true });
+    cancelRun();
+    expect(useTranscribeRun.getState().running).toBe(true); // cancelRun leaves `running` to the pump/watcher
+    useTranscribeRun.setState({ files: [], queue: [], running: false, progress: null, stageTimes: {}, stageMeta: {} });
+  });
+});
+
 describe("keep_video: the secondary download folds into the Download row's meta", () => {
   it("keeps the video state and stamps its own rate clock, never reopening the stage clock", () => {
     useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });

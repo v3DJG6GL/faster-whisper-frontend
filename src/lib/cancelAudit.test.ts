@@ -154,6 +154,7 @@ describe("every transcribe epoch bump abandons the server-side run", () => {
       "cancelRun",
       "closeRecord",
       "openHistoryRecord",
+      "reattachRun",
       "resetForInputChange",
       "startRun",
     ]);

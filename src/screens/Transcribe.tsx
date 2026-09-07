@@ -1059,6 +1059,7 @@ export default function Transcribe() {
         effectiveServerKind(backend, ownProp(useApp.getState().connections, backend.id)) === "standard",
       urlVideoEnabled: urlAvailable && caps?.url_video_enabled === true,
       mediaPackageEnabled: !isStandard && caps?.media_package_enabled === true,
+      jobsEnabled: !isStandard && caps?.jobs_enabled === true,
     };
   };
 

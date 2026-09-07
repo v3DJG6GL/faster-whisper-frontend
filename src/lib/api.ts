@@ -9,6 +9,8 @@ import type {
   BatchProgress,
   BatchResult,
   Capabilities,
+  JobOutcome,
+  JobStatus,
   Config,
   ConnectionInfo,
   DecodeOverrides,
@@ -635,6 +637,68 @@ export async function postUsageOutcomes(args: {
     apiKey: args.apiKey ?? null,
     outcomes: args.outcomes,
   });
+}
+
+/** `GET /v1/jobs/{id}` — a server job row, with the live progress while in
+ *  flight. Deliberately NOT tied to the file-transcribe cancel epoch: a late
+ *  re-attach must survive an unrelated cancel. */
+export async function getJob(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  jobId: string;
+}): Promise<JobOutcome<JobStatus>> {
+  if (!isTauri) return { kind: "error", message: "Not running in the desktop app." };
+  return invoke<JobOutcome<JobStatus>>("get_job", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    jobId: args.jobId,
+  });
+}
+
+/** `GET /v1/jobs/{id}/result` — the stored payload as the BatchResult the
+ *  POST would have returned (same conversion + bounding in Rust). */
+export async function getJobResult(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  jobId: string;
+}): Promise<JobOutcome<BatchResult>> {
+  if (!isTauri) return { kind: "error", message: "Not running in the desktop app." };
+  return invoke<JobOutcome<BatchResult>>("get_job_result", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    jobId: args.jobId,
+  });
+}
+
+/** `DELETE /v1/jobs/{id}` — cancel a running job or delete a finished one. */
+export async function deleteJob(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  jobId: string;
+}): Promise<JobOutcome<null>> {
+  if (!isTauri) return { kind: "error", message: "Not running in the desktop app." };
+  return invoke<JobOutcome<null>>("delete_job", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    jobId: args.jobId,
+  });
+}
+
+/** The on-disk in-flight jobs ledger (opaque to Rust; shape owned by lib/jobsLedger.ts). */
+export async function loadJobsLedger(): Promise<unknown> {
+  if (!isTauri) return null;
+  return invoke<unknown>("load_jobs_ledger");
+}
+
+export async function saveJobsLedger(ledger: unknown): Promise<void> {
+  if (!isTauri) return;
+  await invoke("save_jobs_ledger", { ledger });
 }
 
 /** The on-disk outcome queue (opaque to Rust; shape owned by lib/usageOutcome.ts). */

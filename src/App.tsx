@@ -7,6 +7,7 @@ import { initConfig } from "@/lib/persistence";
 import { initSync } from "@/lib/sync";
 import { initOverlayController } from "@/lib/overlay";
 import { initUsageController } from "@/lib/usage";
+import { initJobReconcile } from "@/lib/jobsReconcile";
 import { onTrigger, onSystemResumed, onOverlayAction, onAppNavigate } from "@/lib/api";
 import { dictate, runOverlayAction } from "@/lib/dictation";
 import { cancelLive, requestStopIfStarting } from "@/lib/streaming";
@@ -221,6 +222,9 @@ export default function App() {
     void initSync();
     void initOverlayController();
     initUsageController();
+    // Runs the app was quit in the middle of: re-attach to what the server still
+    // holds (orders itself after the config load via configReady).
+    void initJobReconcile();
     // Sidebar Logs badge: always-on counter feed (tiny, change-gated events).
     initLogStatus();
     // History coalesces rapid record writes (chunked translate); land them on quit/reload.

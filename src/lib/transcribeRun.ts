@@ -23,6 +23,7 @@ import type {
 } from "./types";
 import type { VideoRung } from "./urlSource";
 import { isVideoSourcePath } from "./mediaExport";
+import { forgetRow, persistRow, type LedgerRow } from "./jobsLedger";
 
 export type ItemStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
@@ -389,9 +390,13 @@ export interface RunContext {
    *  VIDEO file then asks the server to retain the upload for a while, so
    *  an export right after needs no second upload. */
   mediaPackageEnabled?: boolean;
+  /** The server keeps a durable job resource (caps.jobs_enabled): only then
+   *  is a run written to the in-flight ledger so it can be re-attached to
+   *  after a restart (lib/jobsLedger.ts, lib/jobsReconcile.ts). */
+  jobsEnabled?: boolean;
 }
 
-interface TranscribeRunState {
+export interface TranscribeRunState {
   files: string[];
   queue: QueueItem[];
   selectedPath: string | null;
@@ -665,16 +670,21 @@ function recordRun(
   ctx: RunContext,
   options: TranscribeOptions | undefined,
   outcome: { status: "done" | "failed"; result?: BatchResult; error?: string; tookMs?: number },
+  // A run ingested from the server's job resource after a restart brings its
+  // own identity: the job id (so a second ingest upserts, never duplicates),
+  // the moment it was posted, the link title the ledger kept — and it may
+  // land HEADLESS, with no queue row to stamp and no viewer to open.
+  extra: { id?: string; createdAt?: string; title?: string; touchQueue?: boolean } = {},
 ): TranscriptRecord {
   const s = get();
   const isUrl = isSourceUrl(path);
-  const title = s.urlMeta[path]?.title;
+  const title = extra.title ?? s.urlMeta[path]?.title;
   const rec: TranscriptRecord = {
     schemaVersion: 1,
     kind: isUrl ? "url" : isTextSourcePath(path) ? "text" : "file",
     title: isUrl ? title : undefined,
-    id: crypto.randomUUID(),
-    createdAt: new Date().toISOString(),
+    id: extra.id ?? crypto.randomUUID(),
+    createdAt: extra.createdAt ?? new Date().toISOString(),
     sourcePath: path,
     sourceName: displayLabel(path, title),
     status: outcome.status,
@@ -690,6 +700,7 @@ function recordRun(
   };
   registerRecord(rec);
   upsertRecord(rec);
+  if (extra.touchQueue === false) return rec;
   // The viewer identifies the open transcript by its timestamp — same-URL
   // records are otherwise indistinguishable (the URL is the queue key).
   patchItem(path, { createdAt: rec.createdAt });
@@ -1203,9 +1214,125 @@ let activeCancel: {
  *  Take-and-null makes it idempotent, and the API swallows a 404 for an id the
  *  server already retired. */
 function abandonActiveRun(): void {
+  // A re-attached run has no pump; its watcher (lib/jobsReconcile.ts) is
+  // what must stop, synchronously, before the cancel goes out — startRun's
+  // `running` guard reads the store right after this returns.
+  const stop = reattachStop;
+  reattachStop = null;
+  if (stop) stop();
   const target = activeCancel;
   activeCancel = null;
   if (target) void cancelBackendTranscription(target).catch(() => {});
+}
+
+/** The re-attached run's stop hook: clears its watcher, marks the store not
+ *  running and forgets its ledger row. Set by jobsReconcile, consumed by
+ *  abandonActiveRun (every epoch bump). */
+let reattachStop: (() => void) | null = null;
+export function setReattachStop(fn: (() => void) | null): void {
+  reattachStop = fn;
+}
+
+/** Take over the rail for a run the server is still working on (found in
+ *  the in-flight ledger at launch): the queue shows it running, the first
+ *  stage's clock starts when the request originally left, and Cancel routes
+ *  to the same server id. Returns the epoch the watcher must fold under. */
+export function reattachRun(row: LedgerRow): number {
+  abandonActiveRun();
+  const isUrl = row.kind === "url";
+  const first: RailStage = isUrl
+    ? "downloading"
+    : row.options?.separateBgm ? "separating" : "transcribing";
+  const s = get();
+  const epoch = s.epoch + 1;
+  set({
+    epoch,
+    files: [row.path],
+    queue: [{ path: row.path, status: "running", kind: row.kind, title: row.title }],
+    selectedPath: null,
+    openRecordId: null,
+    lastRunPath: row.path,
+    lastOptions: row.options,
+    lastOverrides: row.overrides ?? {},
+    urlMeta: row.urlMeta ? { ...s.urlMeta, [row.path]: { ...s.urlMeta[row.path], ...row.urlMeta } } : s.urlMeta,
+    progress: null,
+    stageMeta: {},
+    stageTimes: { [first]: { start: row.startedAt } },
+    running: true,
+  });
+  activeCancel = { serverUrl: row.serverUrl, backendId: row.backendId, progressId: row.jobId };
+  return epoch;
+}
+
+/** Land a result fetched from the server's job resource exactly as the POST
+ *  path would have. `attached` = the run owns the rail (reattachRun ran):
+ *  the queue row settles, the record opens, the clocks close. Headless =
+ *  the record goes straight to History (the media copies still happen). */
+export function ingestJobResult(
+  row: LedgerRow,
+  res: BatchResult,
+  tookMs: number,
+  opts: { attached: boolean },
+): TranscriptRecord {
+  const isUrl = row.kind === "url";
+  const extra = {
+    id: row.jobId,
+    createdAt: new Date(row.startedAt).toISOString(),
+    title: row.title,
+    touchQueue: opts.attached,
+  };
+  if (opts.attached) {
+    patchItem(row.path, { status: "done", result: res, tookMs });
+    set({ selectedPath: row.path, openRecordId: null });
+  }
+  const rec = recordRun(row.path, row.ctx, row.options, { status: "done", result: res, tookMs }, extra);
+  if (isUrl) {
+    if (res.sourceMediaId) fetchRunUrlMedia(row.path, rec, row.ctx, res.sourceMediaId);
+    if (res.sourceVideoMediaId) {
+      fetchRunUrlVideo(row.path, rec, row.ctx, res.sourceVideoMediaId);
+    } else if (res.sourceVideoPending && opts.attached) {
+      awaitRunUrlVideo(row.path, rec, row.ctx, row.jobId, get().epoch);
+    }
+  } else {
+    copyRunMedia(row.path, rec);
+  }
+  if (opts.attached) settleReattached();
+  return rec;
+}
+
+/** The re-attached run failed (server error, cancelled, or the server no
+ *  longer knows it): a failed record, and — when it owns the rail — the
+ *  queue row settles with the reason, the doorway banner points at Logs. */
+export function failJob(row: LedgerRow, error: string, opts: { attached: boolean }): TranscriptRecord {
+  const extra = {
+    id: row.jobId,
+    createdAt: new Date(row.startedAt).toISOString(),
+    title: row.title,
+    touchQueue: opts.attached,
+  };
+  if (opts.attached) patchItem(row.path, { status: "failed", error });
+  const rec = recordRun(row.path, row.ctx, row.options, { status: "failed", error }, extra);
+  if (opts.attached) {
+    const backendName =
+      useApp.getState().backends.find((b) => b.id === row.backendId)?.name ?? "the backend";
+    useApp.getState().setLogsDoorway(transportErrorDoorway("transcribe", error, backendName));
+    settleReattached();
+  }
+  return rec;
+}
+
+/** The pump's last-file settle, for a run that has no pump: close the open
+ *  clocks, release the cancel handle, mark the store idle. */
+function settleReattached(): void {
+  activeCancel = null;
+  reattachStop = null;
+  const doneAt = Date.now();
+  set((s) => ({
+    running: false,
+    stageTimes: Object.fromEntries(
+      Object.entries(s.stageTimes).map(([k, t]) => [k, t.end ? t : { ...t, end: doneAt }]),
+    ) as TranscribeRunState["stageTimes"],
+  }));
 }
 
 /** Translate-only run for a subtitle/text source: read + parse locally, one
@@ -1424,6 +1551,31 @@ async function pump(
           overrideProfile: ctx.overrideProfile,
           options: pid ? { ...itemOptions, progressId: pid } : itemOptions,
         };
+        // The in-flight ledger row lands BEFORE the request leaves: the
+        // server's job row and ours share this id, and a quit in the first
+        // second must still find the run at the next launch. Text sources
+        // post N chunk requests under one id (translateTextSource) — a
+        // server job row is one chunk, not the run — so they stay out.
+        if (pid && ctx.jobsEnabled && !isText) {
+          try {
+            await persistRow({
+              v: 1,
+              jobId: pid,
+              backendId: ctx.backendId,
+              serverUrl: ctx.serverUrl,
+              path: next.path,
+              kind: isUrl ? "url" : "file",
+              title: next.title,
+              options: itemOptions,
+              ctx,
+              urlMeta: get().urlMeta[next.path],
+              overrides: get().lastOverrides,
+              startedAt: fileT0,
+            });
+          } catch (e) {
+            console.error("jobs ledger write failed:", e);
+          }
+        }
         const res = isText
           ? await translateTextSource(next.path, options!, ctx, pid, epoch)
           : isUrl
@@ -1466,6 +1618,10 @@ async function pump(
         pollingDone = true;
         activeCancel = null;
         if (poller !== undefined) window.clearInterval(poller);
+        // Settled (done, failed, or our end dropped by a cancel): the row
+        // has done its job. A cancelled run's server row lands `cancelled`
+        // on its own; nothing to re-attach to.
+        if (pid) void forgetRow(pid);
         if (epoch === get().epoch) {
           if (get().queue.some((it) => it.status === "queued")) {
             set({ progress: null, stageTimes: {}, stageMeta: {} });
