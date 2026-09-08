@@ -527,6 +527,9 @@ async function maybeTranslate(
         backendId: tr.backendId,
         // Completes the server-side receipt THIS utterance is waiting on.
         capturedId,
+        // Names the session on the server's receipt either way — the one-shot
+        // claims no capture, so without this its receipt links to nothing.
+        clientJob: sessionMeta?.clientJob ?? null,
         warm: tr.warm ?? null,
         oneShot,
         queued: opts?.queued ?? 0,

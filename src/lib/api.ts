@@ -167,6 +167,10 @@ export async function translateText(args: {
    *  block. Omitted by every non-dictation caller; an older backend ignores
    *  the unknown field. */
   capturedId?: string | null;
+  /** The dictation session this translation belongs to — the same client-minted id the
+   *  stream handshake sent as `client_job`. A stop-timing one-shot holds no capture, so
+   *  this is what lets the server's log tie its receipt to the session's utterances. */
+  clientJob?: string | null;
   /** Drop the request when cancelFileTranscription bumps Rust's epoch — the
    *  Transcribe pump's text-source path only. */
   fileEpochCancel?: boolean;
@@ -185,6 +189,7 @@ export async function translateText(args: {
     contextSegments: args.contextSegments ?? null,
     progressId: args.progressId ?? null,
     capturedId: args.capturedId ?? null,
+    clientJob: args.clientJob ?? null,
     cancelWithFileEpoch: args.fileEpochCancel ?? null,
   });
 }

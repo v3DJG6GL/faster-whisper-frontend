@@ -58,6 +58,7 @@ export interface TranslateDeps {
     contextSegments?: number | null;
     progressId?: string | null;
     capturedId?: string | null;
+    clientJob?: string | null;
   }) => Promise<TextTranslationResult>;
   /** Best-effort server-side abort. Called ONLY when we stopped waiting. */
   cancel: (args: { serverUrl: string; backendId: string; progressId: string }) => unknown;
@@ -101,6 +102,9 @@ export interface DictationTranslateRequest {
   backendId: string;
   /** The capture whose server-side log receipt is waiting on this call. */
   capturedId?: string | null;
+  /** The session's client-minted id (the stream handshake's `client_job`), so the
+   *  server's translate receipt names the session it belongs to. */
+  clientJob?: string | null;
   /** Has this server already produced a translation this session? `null` =
    *  unknown (older backend / no capability probe yet) — treated as cold. */
   warm: boolean | null;
@@ -275,6 +279,7 @@ export async function runDictationTranslate(
         contextSegments: req.contextSegments ?? (req.context.length ? req.context.length : null),
         progressId,
         capturedId: req.capturedId ?? null,
+        clientJob: req.clientJob ?? null,
       }),
       new Promise<never>((_, rej) => {
         timer = setTimeout(

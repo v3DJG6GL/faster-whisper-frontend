@@ -49,6 +49,11 @@ struct RequestBody<'a> {
     /// which the server treats as "nothing held" rather than an error.
     #[serde(skip_serializing_if = "Option::is_none")]
     captured_id: Option<&'a str>,
+    /// The dictation session this translation belongs to (the stream
+    /// handshake's `client_job`), so the server's receipt can name it even
+    /// when no capture is held. Omitted by non-dictation callers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_job: Option<&'a str>,
 }
 
 #[derive(serde::Serialize)]
@@ -129,6 +134,7 @@ fn build_request_body<'a>(
     context_segments: Option<u32>,
     progress_id: Option<&'a str>,
     captured_id: Option<&'a str>,
+    client_job: Option<&'a str>,
 ) -> RequestBody<'a> {
     RequestBody {
         segments: texts.iter().enumerate().map(|(id, t)| SegmentIn { id, text: t }).collect(),
@@ -140,6 +146,7 @@ fn build_request_body<'a>(
         context_segments,
         progress_id: progress_id.filter(|s| !s.is_empty()),
         captured_id: captured_id.filter(|s| !s.is_empty()),
+        client_job: client_job.filter(|s| !s.is_empty()),
     }
 }
 
@@ -151,7 +158,7 @@ mod request_body_tests {
         let texts = vec!["hallo".to_string()];
         let targets = vec!["en".to_string()];
         serde_json::to_value(build_request_body(
-            &texts, &targets, source, None, None, glossary, None, None, None,
+            &texts, &targets, source, None, None, glossary, None, None, None, None,
         ))
         .unwrap()
     }
@@ -194,9 +201,10 @@ mod request_body_tests {
             None,
             Some(""),
             Some(""),
+            Some(""),
         ))
         .unwrap();
-        for key in ["translation_model", "translation_mode", "progress_id", "captured_id"] {
+        for key in ["translation_model", "translation_mode", "progress_id", "captured_id", "client_job"] {
             assert!(v.get(key).is_none(), "{key} should be omitted");
         }
     }
@@ -217,6 +225,8 @@ pub async fn translate_texts(
     // The capture row whose log receipt the server is holding open for this
     // translation. Opaque here; the server links the two halves with it.
     captured_id: Option<&str>,
+    // The session's client-minted id; names the session on the receipt.
+    client_job: Option<&str>,
 ) -> anyhow::Result<TextTranslationResult> {
     if texts.is_empty() {
         bail!("nothing to translate");
@@ -241,6 +251,7 @@ pub async fn translate_texts(
         context_segments,
         progress_id,
         captured_id,
+        client_job,
     );
     let base = base_url(server_url);
     // Per-request override of the shared client's 120 s default (reqwest's

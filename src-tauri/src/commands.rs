@@ -500,6 +500,7 @@ pub async fn translate_text(
     context_segments: Option<u32>,
     progress_id: Option<String>,
     captured_id: Option<String>,
+    client_job: Option<String>,
     cancel_with_file_epoch: Option<bool>,
 ) -> Result<transport::text::TextTranslationResult, String> {
     // Captured BEFORE the keyring resolve, as in `transcribe_file`.
@@ -517,6 +518,7 @@ pub async fn translate_text(
         context_segments,
         progress_id.as_deref(),
         captured_id.as_deref(),
+        client_job.as_deref(),
     );
     if cancel_with_file_epoch == Some(true) {
         until_file_epoch_bumps(epoch, fut).await
