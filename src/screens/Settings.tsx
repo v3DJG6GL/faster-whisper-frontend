@@ -1766,7 +1766,7 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title={SETTING.dotSize.label}
-              desc="Makes the dot larger while the chip is minimized: resting as a standby dot or hidden at the edge. When the chip opens, the dot returns to its normal size."
+              desc="Makes the dot larger while the chip is hidden at the screen edge. Chip size does not affect it, and the dot inside the chip keeps its normal size."
               disabled={chipOff}
             >
               <Stepper

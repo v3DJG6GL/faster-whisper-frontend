@@ -97,7 +97,7 @@ interface ChipState {
   // "Chip size" — applied by Rust as this webview's zoom, so nothing here multiplies by it;
   // the chip only watches it to come out of hiding while the user adjusts it.
   chipScale: number;
-  // "Dot size" — extra factor for the status dot while the chip is MINIMIZED (see dotK).
+  // "Dot size" — factor for the status dot while it is tucked at the screen edge (see dotK).
   dotScale: number;
   quickLaunch: OverlayQuickAction[];
 }
@@ -876,15 +876,16 @@ export default function Overlay() {
         : standby
           ? "border border-faint bg-transparent"
           : "bg-armed";
-  // "Dot size" applies only while the chip is MINIMIZED — the dot is all there is to see:
-  // tucked at the edge (incl. "stay hidden while dictating"), or resting as the docked
-  // standby dot. The moment the pill opens (a session, the hover reveal and with it the
-  // quick-launch row, the post-session linger) the dot returns to its base size, so an open
-  // chip keeps its proportions; the width/height transition on the dot animates the change.
-  // It grows from its centre, which stays on the pill's centre line — so PEEK_TUCK still
-  // parks exactly half of it on the screen edge, and 3× (30px) still fits the 42px pill.
-  const minimized = peeked || (standby && !hoverReveal && !expanded);
-  const dotK = minimized ? Math.min(3, Math.max(1, state.dotScale)) : 1;
+  // "Dot size" applies ONLY to the dot tucked at the screen edge (incl. "stay hidden while
+  // dictating"). Any dot that sits inside a visible pill — the docked standby chip, a
+  // session, the hover reveal — keeps its base size, so the chip keeps its proportions; the
+  // width/height transition on the dot animates the change. "Chip size" is a webview zoom
+  // and would scale the tucked dot with it, so it is divided back out here: the edge dot's
+  // on-screen size follows "Dot size" alone. It grows from its centre, which stays on the
+  // pill's centre line — so PEEK_TUCK still parks exactly half of it on the screen edge, and
+  // the largest case (3× at 0.75 zoom = 40px) still fits the 42px pill.
+  const chipZoom = Math.min(2, Math.max(0.75, state.chipScale));
+  const dotK = peeked ? Math.min(3, Math.max(1, state.dotScale)) / chipZoom : 1;
   // Same gate as dotColorClass above, deliberately: whenever the fill comes from the
   // tone map, so does the glow.
   const baseDotGlow =
@@ -1228,7 +1229,7 @@ export default function Overlay() {
             style={{ boxShadow: dotGlow, width: 10 * dotK, height: 10 * dotK }}
             className={cn(
               // 10px base (was size-2.5); width/height join the colour transition so the
-              // minimized ↔ open size change (dotK) eases instead of snapping.
+              // tucked ↔ open size change (dotK) eases instead of snapping.
               "shrink-0 rounded-full transition-[width,height,color,background-color,border-color] duration-300",
               // A landed phrase / session end flashes the dot: green = typed, amber = clipboard,
               // amber = landed untranslated (the words arrived, just not in the asked-for language).
