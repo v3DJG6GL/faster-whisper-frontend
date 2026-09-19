@@ -2216,6 +2216,10 @@ pub fn spawn_suspend_watch(app: AppHandle) {
                     } else {
                         apply_bindings(&app);
                     }
+                    // A resume reshuffles the desktop (display re-attach, lock screen); make
+                    // sure the chip did not come back underneath something.
+                    #[cfg(windows)]
+                    crate::overlay::repair_topmost(&app);
                     let _ = app.emit("system://resumed", ());
                 }
             }

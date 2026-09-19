@@ -253,7 +253,7 @@ pub fn apply_log_level(level: LogLevel) {
 }
 
 /// The log directory: the user's custom folder when set, else `<app_local_data>/logs` —
-/// on Windows `%LOCALAPPDATA%\ch.informethic.faster-whisper-frontend\logs`. Local, not
+/// on Windows `%LOCALAPPDATA%\org.fasterwhisper.frontend\logs`. Local, not
 /// Roaming (`app_data_dir` is `%APPDATA%` on Windows): logs must not sync between
 /// machines. This is NOT the pre-viewer `%LOCALAPPDATA%\faster-whisper-frontend\logs`;
 /// `prune_legacy_dir` clears that folder's pair out.
@@ -384,7 +384,13 @@ pub fn apply_log_settings(app: &AppHandle, config: &Config) {
     // legacy pair there was never reached by the prune above.
     #[cfg(windows)]
     if let Some(base) = std::env::var_os("LOCALAPPDATA") {
-        prune_legacy_dir(&PathBuf::from(base).join("faster-whisper-frontend").join("logs"));
+        let legacy = PathBuf::from(base).join("faster-whisper-frontend").join("logs");
+        prune_legacy_dir(&legacy);
+        // …and the folder itself once it is empty, so machines that ran those builds stop
+        // showing a stray second app folder. `remove_dir` only ever removes an EMPTY
+        // directory. Deliberately not the parent: for a per-user (NSIS) install,
+        // `%LOCALAPPDATA%\faster-whisper-frontend` is the program's install directory.
+        let _ = std::fs::remove_dir(&legacy);
     }
 }
 

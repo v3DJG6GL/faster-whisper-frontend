@@ -268,6 +268,10 @@ fn show_now(app: &AppHandle) {
             std::thread::spawn(kwin::install_keep_above);
         }
         let _ = win.show();
+        // set_always_on_top(true) above is a no-op on Windows (tao only acts on a CHANGED
+        // flag) and show() never raises — see win_topmost.rs.
+        #[cfg(windows)]
+        crate::win_topmost::assert_topmost(&win);
         let _ = win.unminimize();
         let _ = win.set_focus();
         let _ = handle.emit("quickadd://shown", ());

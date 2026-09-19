@@ -48,6 +48,21 @@ accent, and Hubot Sans / Mona Sans / Geist Mono (all OFL).
 Linux (primary: **KDE Plasma Wayland**; X11 fully supported; GNOME usable with
 documented degradations) and Windows 10/11. x64 only.
 
+## Where your data lives
+
+The app's folders are named after its identifier, `org.fasterwhisper.frontend`:
+
+| | Windows | Linux |
+|---|---|---|
+| Settings, audio, transcripts | `%APPDATA%\org.fasterwhisper.frontend` | `~/.config/…` and `~/.local/share/…` |
+| Logs, WebView profile | `%LOCALAPPDATA%\org.fasterwhisper.frontend` | `~/.local/share/…`, `~/.cache/…` |
+
+Releases up to 0.1.114 used a different identifier. The first start of a newer version
+moves those folders across automatically and keeps everything — settings, history, audio.
+The move is one-way: an older version started afterwards finds empty folders and shows
+onboarding again (your backend API keys are kept either way; they live in the OS secret
+store under the app's name, not in these folders).
+
 ## Development
 
 ```bash

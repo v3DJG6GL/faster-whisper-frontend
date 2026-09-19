@@ -8,8 +8,10 @@
 //! break text injection into the previously-focused app).
 //!
 //! Placement is platform-specific:
-//!   * **Windows / Linux-X11** — `set_position` + `set_always_on_top` work, so the
-//!     chip is centred at the top (or bottom) and kept above other windows.
+//!   * **Windows / Linux-X11** — `set_position` works, so the chip is centred at the top (or
+//!     bottom). Keep-above comes from the window's `alwaysOnTop` config flag; on Windows tao
+//!     asserts that only once, at creation, so `win_topmost` re-pins the chip on every show
+//!     and a slow watchdog repairs it if Windows misplaces it later (see win_topmost.rs).
 //!   * **KDE Wayland** — clients can't position themselves or force keep-above, so
 //!     we install a small, reversible **KWin window rule** (matched on a unique,
 //!     invisible chip title) that keeps the chip above, off the taskbar, and unable
@@ -19,6 +21,8 @@
 //!   * **Other Wayland (GNOME)** — neither works; the chip is shown wherever the
 //!     compositor puts it and the tray + sounds are the reliable status cue.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow};
 
 /// Logical size declared for the `overlay` window in tauri.conf.json. The chip pill is
@@ -27,6 +31,57 @@ use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow};
 /// on one line without the last button being clipped.
 const CHIP_W: f64 = 820.0;
 const CHIP_H: f64 = 132.0;
+
+/// "Chip size" (Settings → Chip): one factor for the whole chip. It is applied as the overlay
+/// WEBVIEW'S ZOOM plus a proportional window resize, so inside the webview the viewport stays
+/// 820×132 CSS px and none of the chip's layout (pill height, edge inset, tuck offset, max
+/// width) has to know about it — and text is re-laid-out at the real size, so it stays crisp.
+/// The one place the factor leaks out is the hit region: the webview reports CSS px, the
+/// window systems want window-logical px (= CSS px × zoom) — see `set_chip_hit_region`.
+const CHIP_SCALE_MIN: f64 = 0.75;
+const CHIP_SCALE_MAX: f64 = 2.0;
+/// f64 bits of the current factor (1.0 until the first show says otherwise).
+static CHIP_SCALE: AtomicU64 = AtomicU64::new(0x3FF0_0000_0000_0000);
+/// f64 bits of the factor last pushed into the window (0 = never), so a re-show with an
+/// unchanged size touches neither the zoom nor the window size.
+static APPLIED_SCALE: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn clamp_scale(s: f64) -> f64 {
+    if s.is_finite() {
+        s.clamp(CHIP_SCALE_MIN, CHIP_SCALE_MAX)
+    } else {
+        1.0
+    }
+}
+
+fn chip_scale() -> f64 {
+    f64::from_bits(CHIP_SCALE.load(Ordering::Relaxed))
+}
+
+/// Logical size of the overlay window at factor `s`, the width capped to the monitor so a
+/// large chip on a small screen never hangs off both sides (the pill caps itself to 100vw).
+fn scaled_size(s: f64, monitor_logical_w: f64) -> (f64, f64) {
+    ((CHIP_W * s).min(monitor_logical_w.max(1.0)), CHIP_H * s)
+}
+
+/// Logical width of the monitor the chip lives on (unbounded when it can't be read).
+fn monitor_logical_w(win: &WebviewWindow) -> f64 {
+    crate::winpos::monitor_of(win)
+        .map(|m| m.size().width as f64 / m.scale_factor())
+        .unwrap_or(f64::MAX)
+}
+
+/// Push a changed factor into the window: webview zoom + window size. No-op when unchanged.
+fn apply_scale(win: &WebviewWindow, s: f64) {
+    CHIP_SCALE.store(s.to_bits(), Ordering::Relaxed);
+    if APPLIED_SCALE.swap(s.to_bits(), Ordering::Relaxed) == s.to_bits() {
+        return;
+    }
+    let (w, h) = scaled_size(s, monitor_logical_w(win));
+    let _ = win.set_zoom(s);
+    let _ = win.set_size(tauri::LogicalSize::new(w, h));
+}
+
 /// A unique, stable window title the KDE rule matches on. Invisible to the user:
 /// the chip has no decorations and is hidden from the taskbar/switcher.
 #[cfg(target_os = "linux")]
@@ -46,8 +101,10 @@ fn position(win: &WebviewWindow, edge: &str) {
     let scale = monitor.scale_factor();
     let m_pos = monitor.position();
     let m_size = monitor.size();
-    let chip_w = (CHIP_W * scale) as i32;
-    let chip_h = (CHIP_H * scale) as i32;
+    // The window's CURRENT logical size (Chip size applied, width capped to the monitor).
+    let (w, h) = scaled_size(chip_scale(), m_size.width as f64 / scale);
+    let chip_w = (w * scale) as i32;
+    let chip_h = (h * scale) as i32;
 
     let x = m_pos.x + ((m_size.width as i32 - chip_w) / 2).max(0);
     let y = if edge == "bottom" {
@@ -77,19 +134,26 @@ pub fn prewarm_chip_rule(cfg: &crate::config::Config) {
         // Chip disabled: leave the user's kwinrulesrc untouched.
         IndicatorPosition::Off => return,
     };
+    // The saved Chip size, so the pre-warmed position centres the window it will really be.
+    // (No monitor cap here — there is no window yet to ask; chip_position clamps x at 0.)
+    let s = clamp_scale(cfg.settings.recording.chip_scale);
+    CHIP_SCALE.store(s.to_bits(), Ordering::Relaxed);
     std::thread::spawn(move || {
-        kwin::place_chip(kwin::chip_position(edge, CHIP_W, CHIP_H));
+        kwin::place_chip(kwin::chip_position(edge, CHIP_W * s, CHIP_H * s));
     });
 }
 
 /// Show the chip at the requested edge ("top" | "bottom"), without focusing it. The window is
 /// anchored flush against that edge; the resting inset and the edge-peek tuck are pure CSS
-/// inside the webview (see Overlay.tsx).
+/// inside the webview (see Overlay.tsx). `scale` is the "Chip size" factor; absent = keep
+/// the current one.
 #[tauri::command]
-pub fn show_overlay(app: AppHandle, position: String) {
+pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
     let Some(win) = app.get_webview_window("overlay") else {
         return;
     };
+    // Size before position: the centring reads the scaled size.
+    apply_scale(&win, scale.map(clamp_scale).unwrap_or_else(chip_scale));
     self::position(&win, &position);
     let _ = win.set_always_on_top(true);
 
@@ -110,8 +174,9 @@ pub fn show_overlay(app: AppHandle, position: String) {
         // it runs on the GTK/UI thread — a hang here freezes the whole app and every
         // queued command (text injection included). Do it on a detached thread; the
         // window is already shown, the rule only nudges it into position afterwards.
+        let (w, h) = scaled_size(chip_scale(), monitor_logical_w(&win));
         std::thread::spawn(move || {
-            kwin::place_chip(kwin::chip_position(&position, CHIP_W, CHIP_H));
+            kwin::place_chip(kwin::chip_position(&position, w, h));
         });
         return;
     }
@@ -139,8 +204,26 @@ pub fn show_overlay(app: AppHandle, position: String) {
     #[cfg(windows)]
     {
         let _ = win.set_focusable(false);
+        // The set_always_on_top(true) above is a no-op here and show() never raises — this
+        // is what actually puts the chip on top (never activating it). See win_topmost.rs.
+        crate::win_topmost::assert_topmost(&win);
         win_hover::on_show(&app);
     }
+}
+
+/// Re-pin the chip if Windows has let an ordinary window above it. Cheap, and a no-op while
+/// the chip is hidden or correctly ordered. Any thread (hops to the main thread).
+#[cfg(windows)]
+pub fn repair_topmost(app: &AppHandle) {
+    if !win_hover::is_visible() {
+        return;
+    }
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = handle.get_webview_window("overlay") {
+            crate::win_topmost::repair_if_covered(&win);
+        }
+    });
 }
 
 // The edge-peek never moves the window. The window is anchored FLUSH against the screen edge
@@ -185,6 +268,11 @@ pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64, persi
     let Some(win) = app.get_webview_window("overlay") else {
         return;
     };
+    // The webview measures in CSS px; with "Chip size" applied as webview zoom, one CSS px is
+    // `zoom` window-logical px — the unit both the GDK input shape and the Windows cursor
+    // poller work in. (Also right for the full-window hover hold: innerWidth × zoom = window.)
+    let s = chip_scale();
+    let (x, y, w, h) = (x * s, y * s, w * s, h * s);
     #[cfg(target_os = "linux")]
     {
         // Remember the latest requested region so a later (re)show can restore it: show_overlay
@@ -458,7 +546,17 @@ mod win_hover {
         VISIBLE.store(false, Ordering::SeqCst);
     }
 
+    pub fn is_visible() -> bool {
+        VISIBLE.load(Ordering::SeqCst)
+    }
+
+    /// Visible ticks between topmost checks: 40 × 50 ms ≈ 2 s. Slow on purpose — the check
+    /// only ever repairs a verified-wrong z-order (win_topmost.rs), so there is nothing to
+    /// gain from racing, and two eager always-on-top apps would flicker against each other.
+    const TOPMOST_EVERY: u32 = 40;
+
     fn run(app: AppHandle) {
+        let mut ticks: u32 = 0;
         loop {
             // Sample VISIBLE for the sleep cadence, then re-read AFTER waking so the
             // hover decision uses the current state, not one up to 250 ms stale.
@@ -468,6 +566,13 @@ mod win_hover {
             // Idle slowly while hidden.
             std::thread::sleep(std::time::Duration::from_millis(if visible { 50 } else { 250 }));
             let visible = VISIBLE.load(Ordering::SeqCst);
+            if visible {
+                ticks = ticks.wrapping_add(1);
+                if ticks % TOPMOST_EVERY == 0 {
+                    #[cfg(windows)]
+                    super::repair_topmost(&app);
+                }
+            }
             let want = visible && cursor_in_chip(&app).unwrap_or(false);
             if want != INTERACTIVE.load(Ordering::SeqCst) {
                 INTERACTIVE.store(want, Ordering::SeqCst);

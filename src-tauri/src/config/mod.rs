@@ -127,6 +127,10 @@ fn default_hover_reveal() -> u32 {
     500
 }
 
+fn default_scale() -> f64 {
+    1.0
+}
+
 fn default_hands_free_auto_stop() -> f64 {
     30.0
 }
@@ -580,6 +584,15 @@ pub struct RecordingSettings {
     /// Hover-intent delay (ms) before the chip reveals detail + quick-launch buttons.
     #[serde(default = "default_hover_reveal")]
     pub hover_reveal_ms: u32,
+    /// "Chip size": one factor for the whole chip (0.75–2.0). Rust reads it only to pre-warm
+    /// the KDE placement rule; at runtime the webview passes it to `show_overlay`, which
+    /// clamps it. `#[serde(default = …)]` so older configs load at 100 %.
+    #[serde(default = "default_scale")]
+    pub chip_scale: f64,
+    /// "Dot size": extra factor (1.0–3.0) for the status dot while the chip is minimized
+    /// (standby dot / tucked at the edge). Frontend-only — pure CSS in the chip webview.
+    #[serde(default = "default_scale")]
+    pub dot_scale: f64,
     /// Send the dictated-into app id with each session's usage outcome.
     /// `#[serde(default = …)]` so older configs default on (matching the TS default).
     #[serde(default = "default_true")]
@@ -828,6 +841,8 @@ impl Default for Config {
                     peek_while_active: false,
                     dim_after_sec: 2.5,
                     hover_reveal_ms: 500,
+                    chip_scale: 1.0,
+                    dot_scale: 1.0,
                     report_target_app: true,
                     quick_launch: Vec::new(),
                 },

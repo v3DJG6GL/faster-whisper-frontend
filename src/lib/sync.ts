@@ -1604,6 +1604,17 @@ export async function applyBlob(
             OVERLAY_STATS_METRICS,
             settings.recording.overlayStatsMetric,
           ),
+          // Bounded like the Settings steppers: a peer's 50× chip would cover the screen
+          // (Rust clamps chipScale again at the window; dotScale is CSS-only, so this is
+          // its only bound on this path).
+          chipScale:
+            typeof chip.chipScale === "number" && Number.isFinite(chip.chipScale)
+              ? Math.min(2, Math.max(0.75, chip.chipScale))
+              : settings.recording.chipScale,
+          dotScale:
+            typeof chip.dotScale === "number" && Number.isFinite(chip.dotScale)
+              ? Math.min(3, Math.max(1, chip.dotScale))
+              : settings.recording.dotScale,
         },
       };
     }
