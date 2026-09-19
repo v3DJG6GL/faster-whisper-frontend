@@ -1186,7 +1186,10 @@ export default function Overlay() {
             // the window edge clips the right-most (newest) transcript words. The transcript below
             // is the flex element that shrinks to make the pill fit (min-w-0 chain → its own
             // justify-end clip box then drops the OLDEST off the left instead).
-            "inline-flex h-[42px] max-w-[calc(100vw-24px)] items-center overflow-hidden border px-3.5 transition-colors duration-300",
+            // 64px = 32px a side: the shadow below reaches 32px sideways (40 blur − 8 spread), and
+            // the transparent window CLIPS what is painted past its edge — at the old 12px a side
+            // a full-width pill's shadow ended in a hard vertical cut (the quick-add bug).
+            "inline-flex h-[42px] max-w-[calc(100vw-64px)] items-center overflow-hidden border px-3.5 transition-colors duration-300",
             // Tucked: drop the pill chrome so ONLY the bare dot peeks below the border.
             peeked
               ? "border-transparent bg-transparent shadow-none"

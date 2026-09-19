@@ -39,8 +39,8 @@
       {
         "label": "quickadd",
         "title": "faster-whisper-frontend",
-        "width": 600,
-        "height": 480,
+        "width": 624,
+        "height": 516,
         "transparent": true,
         "decorations": false,
         "alwaysOnTop": true,

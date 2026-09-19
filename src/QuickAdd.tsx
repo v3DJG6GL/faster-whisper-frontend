@@ -476,8 +476,15 @@ export default function QuickAdd() {
   const dotHex = ruleDotColor(color);
 
   return (
-    <div className="flex h-screen w-screen bg-transparent p-3">
-      <div className="flex min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8),0_0_60px_-26px_rgba(255,158,44,0.22)]">
+    // The window is a transparent rectangle and CLIPS whatever is painted past its edge, so
+    // the margin here must be at least the shadow's reach (offset + blur + spread) on each
+    // side — otherwise the shadow ends in a hard, square-cornered cut instead of fading out
+    // (it did: a 60px-blur shadow in a 12px margin). Drop shadow 0/12/32/-12 reaches 32px
+    // down, 20px sideways, 8px up; the glow 0/0/32/-12 reaches 20px all round → 24px sides
+    // and top, 36px bottom. Change one and the other must follow, plus the window size
+    // (quickadd.rs QA_W/QA_H + tauri.conf.json), which is the 576×456 panel + this margin.
+    <div className="flex h-screen w-screen bg-transparent px-6 pb-9 pt-6">
+      <div className="flex min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_12px_32px_-12px_rgba(0,0,0,0.75),0_0_32px_-12px_rgba(255,158,44,0.2)]">
         {/* header */}
         <div className="flex items-center gap-2.5 border-b border-line px-4 py-3">
           <Plus className="size-4 text-accent" />

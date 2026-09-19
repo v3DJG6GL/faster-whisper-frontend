@@ -14,8 +14,10 @@
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Logical size declared for the `quickadd` window in tauri.conf.json.
-const QA_W: f64 = 600.0;
-const QA_H: f64 = 480.0;
+// The 576×456 panel plus the transparent margin its CSS shadow needs to fade out inside the
+// window (24px sides/top, 36px bottom — see QuickAdd.tsx). Keep in step with tauri.conf.json.
+const QA_W: f64 = 624.0;
+const QA_H: f64 = 516.0;
 /// A unique, stable window title the KDE keep-above rule matches on (invisible — the
 /// window is undecorated). Set just before the window maps so the rule applies.
 #[cfg(target_os = "linux")]
