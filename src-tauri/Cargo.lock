@@ -4453,7 +4453,7 @@ dependencies = [
 [[package]]
 name = "tao"
 version = "0.35.3"
-source = "git+https://github.com/tauri-apps/tao?rev=07f3742b1833b64be27b1ef991e38d557d4276c9#07f3742b1833b64be27b1ef991e38d557d4276c9"
+source = "git+https://github.com/tauri-apps/tao?rev=da7441aa06a03df2298d09909d95eb99070aa6c9#da7441aa06a03df2298d09909d95eb99070aa6c9"
 dependencies = [
  "bitflags 2.13.0",
  "block2",
@@ -4480,7 +4480,7 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "raw-window-handle",
- "tao-macros 0.1.3 (git+https://github.com/tauri-apps/tao?rev=07f3742b1833b64be27b1ef991e38d557d4276c9)",
+ "tao-macros 0.1.3 (git+https://github.com/tauri-apps/tao?rev=da7441aa06a03df2298d09909d95eb99070aa6c9)",
  "unicode-segmentation",
  "url",
  "windows",
@@ -4503,7 +4503,7 @@ dependencies = [
 [[package]]
 name = "tao-macros"
 version = "0.1.3"
-source = "git+https://github.com/tauri-apps/tao?rev=07f3742b1833b64be27b1ef991e38d557d4276c9#07f3742b1833b64be27b1ef991e38d557d4276c9"
+source = "git+https://github.com/tauri-apps/tao?rev=da7441aa06a03df2298d09909d95eb99070aa6c9#da7441aa06a03df2298d09909d95eb99070aa6c9"
 dependencies = [
  "proc-macro2",
  "quote",

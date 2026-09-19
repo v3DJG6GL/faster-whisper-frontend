@@ -57,6 +57,9 @@ pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
             std::thread::spawn(kwin::install_keep_above);
         }
         let _ = win.show();
+        // set_always_on_top(true) above is a no-op on Windows — see win_topmost.rs.
+        #[cfg(windows)]
+        crate::win_topmost::assert_topmost(&win);
         let _ = win.unminimize();
         let _ = win.set_focus();
         // A Tauri emit with no listener is dropped, never queued. What makes this one safe

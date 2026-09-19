@@ -11,6 +11,7 @@ mod key_debounce;
 mod kwin;
 mod logging;
 mod media_decode;
+mod migrate_identifier;
 mod overlay;
 mod langpick;
 mod quickadd;
@@ -23,6 +24,10 @@ mod triggers;
 mod virtual_keyboard;
 mod wayland_inject;
 mod win_hotkeys;
+#[cfg(windows)]
+mod win_session_end;
+#[cfg(windows)]
+mod win_topmost;
 mod winpos;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -34,6 +39,11 @@ pub fn run() {
     let log_writer = logging::SwapWriter::default();
     logging::init(log_ring.clone(), log_writer.clone());
     tracing::info!("faster-whisper-frontend v{}", env!("CARGO_PKG_VERSION"));
+
+    // The identifier was renamed (to org.fasterwhisper.frontend) and every app folder is named after it. Move an existing install's folders across BEFORE the
+    // builder: before single-instance, before the webview opens a profile, before any path
+    // is resolved. A no-op on every launch after the first. See migrate_identifier.rs.
+    migrate_identifier::run();
 
     // reqwest 0.13's `rustls-no-provider` ships no TLS crypto provider; install
     // ring as the process-wide default (the same provider tokio-tungstenite's
@@ -141,6 +151,9 @@ pub fn run() {
             // Recover hotkeys + any in-flight dictation after the machine wakes from
             // suspend (a dropped key-release / dead WebSocket would otherwise wedge us).
             commands::spawn_suspend_watch(app.handle().clone());
+            // Never veto a Windows shutdown/logoff, and really exit when the session ends.
+            #[cfg(windows)]
+            win_session_end::install(app.handle());
             // Keep the OS autostart entry in sync with the saved preference.
             commands::sync_autostart(app.handle(), cfg.settings.general.open_at_login);
             // KDE-Wayland: write the chip's KWin placement rule now, ahead of the first

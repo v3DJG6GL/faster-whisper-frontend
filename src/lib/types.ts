@@ -276,6 +276,8 @@ export interface RecordingSettings {
   peekWhileActive: boolean; // stay tucked at the edge as a dot even while dictating (color + pulse only)
   dimAfterSec: number; // idle seconds before the chip fades to a dim opacity (0 = never)
   hoverRevealMs: number; // hover-intent delay before the chip reveals detail + quick-launch
+  chipScale: number; // "Chip size": one factor for the whole chip (0.75–2; webview zoom + window size)
+  dotScale: number; // "Dot size": extra factor (1–3) for the status dot while the chip is minimized
   quickLaunch: OverlayQuickAction[]; // chip quick-launch buttons (screens + dictation actions)
 }
 

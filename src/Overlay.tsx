@@ -90,6 +90,11 @@ interface ChipState {
   peekWhileActive: boolean;
   dimAfterSec: number;
   hoverRevealMs: number;
+  // "Chip size" — applied by Rust as this webview's zoom, so nothing here multiplies by it;
+  // the chip only watches it to come out of hiding while the user adjusts it.
+  chipScale: number;
+  // "Dot size" — extra factor for the status dot while the chip is MINIMIZED (see dotK).
+  dotScale: number;
   quickLaunch: OverlayQuickAction[];
 }
 
@@ -188,6 +193,8 @@ export default function Overlay() {
     peekWhileActive: false,
     dimAfterSec: 2.5,
     hoverRevealMs: 500,
+    chipScale: 1,
+    dotScale: 1,
     quickLaunch: [],
   });
 
@@ -236,6 +243,8 @@ export default function Overlay() {
             peekWhileActive: e.payload.peekWhileActive ?? false,
             dimAfterSec: e.payload.dimAfterSec ?? 2.5,
             hoverRevealMs: e.payload.hoverRevealMs ?? 500,
+            chipScale: e.payload.chipScale ?? 1,
+            dotScale: e.payload.dotScale ?? 1,
             quickLaunch: e.payload.quickLaunch ?? [],
             targetTitle: e.payload.targetTitle ?? "",
             targetSkip: e.payload.targetSkip ?? "",
@@ -311,6 +320,8 @@ export default function Overlay() {
         peekWhileActive: false,
         dimAfterSec: 10,
         hoverRevealMs: 1000,
+        chipScale: 1,
+        dotScale: 1,
         quickLaunch: [
           { id: "d1", kind: "screen", target: "profiles" },
           { id: "d2", kind: "screen", target: "backends" },
@@ -405,6 +416,20 @@ export default function Overlay() {
   // the edge) falls off it, dropping the hover before it can reveal. A non-tucked hover leaves it
   // false → the pill keeps its normal rest inset (no jump out from under the cursor).
   const [peekRestoring, setPeekRestoring] = useState(false);
+  // Adjusting "Chip size" / "Dot size" in Settings brings the chip out of hiding for the
+  // hover grace period, at full opacity — otherwise the user would be resizing something
+  // tucked away or dimmed to 40%. The nudge counter re-arms the peek and dim timers below.
+  const [sizeNudge, setSizeNudge] = useState(0);
+  const sizeSeen = useRef(false);
+  useEffect(() => {
+    if (!sizeSeen.current) {
+      sizeSeen.current = true; // mount, not an adjustment
+      return;
+    }
+    peekGraceUntil.current = performance.now() + PEEK_HOVER_GRACE_MS;
+    setPeeked(false);
+    setSizeNudge((n) => n + 1);
+  }, [state.chipScale, state.dotScale]);
   // Every "the cursor is definitely gone" path funnels here: a real pointerleave, the
   // lost-leave safety nets below (non-interactive reset, failed dwell verify, watchdog).
   const clearHover = useCallback(() => {
@@ -611,7 +636,9 @@ export default function Overlay() {
     if (!interactive) return;
     const ids = [0, 160, 420, 850, 1500].map((ms) => setTimeout(reportBounds, ms));
     return () => ids.forEach(clearTimeout);
-  }, [reportBounds, interactive, state.status, state.position, peeked]);
+    // chipScale/dotScale: a resized chip (or dot) has new bounds, and Rust converts them with
+    // the zoom it holds at that moment — the late retries land after both have settled.
+  }, [reportBounds, interactive, state.status, state.position, peeked, state.chipScale, state.dotScale]);
 
   // Safety net for a lost pointerleave. `hovering`/`hoverReveal` are reset ONLY in
   // onPointerLeave, so any event that drops the leave strands them true (chip stuck
@@ -654,7 +681,7 @@ export default function Overlay() {
     if (expanded || hovering || !restingCalm || state.dimAfterSec <= 0) return;
     const t = setTimeout(() => setDimmed(true), state.dimAfterSec * 1000);
     return () => clearTimeout(t);
-  }, [expanded, hovering, state.status, speaking, state.dimAfterSec]);
+  }, [expanded, hovering, state.status, speaking, state.dimAfterSec, sizeNudge]);
 
   // The NEWEST words are pinned to the RIGHT purely by LAYOUT — a flex justify-end row with a
   // non-shrinking text child (see the transcript markup below) — so there's NO scrollLeft math to
@@ -826,9 +853,18 @@ export default function Overlay() {
         : standby
           ? "border border-faint bg-transparent"
           : "bg-armed";
+  // "Dot size" applies only while the chip is MINIMIZED — the dot is all there is to see:
+  // tucked at the edge (incl. "stay hidden while dictating"), or resting as the docked
+  // standby dot. The moment the pill opens (a session, the hover reveal and with it the
+  // quick-launch row, the post-session linger) the dot returns to its base size, so an open
+  // chip keeps its proportions; the width/height transition on the dot animates the change.
+  // It grows from its centre, which stays on the pill's centre line — so PEEK_TUCK still
+  // parks exactly half of it on the screen edge, and 3× (30px) still fits the 42px pill.
+  const minimized = peeked || (standby && !hoverReveal && !expanded);
+  const dotK = minimized ? Math.min(3, Math.max(1, state.dotScale)) : 1;
   // Same gate as dotColorClass above, deliberately: whenever the fill comes from the
   // tone map, so does the glow.
-  const dotGlow =
+  const baseDotGlow =
     vis.state === "error" || vis.state === "speaking" || vis.state === "processing"
       ? TONE_GLOW[vis.tone]
       : peeked
@@ -840,6 +876,9 @@ export default function Overlay() {
           : !expanded
             ? "0 0 12px rgba(255,158,44,0.55)" // calm breathing ember
             : "0 0 8px rgba(255,158,44,0.4)";
+  // The halo radius follows the dot: a 30px dot inside a 12px glow reads as no glow at all.
+  const dotGlow =
+    dotK === 1 ? baseDotGlow : baseDotGlow.replace(/(\d+)px/g, (_, n: string) => `${Number(n) * dotK}px`);
   // Match the dot + transcript during the post-speech working phase: take the tone from the
   // SAME dictationVisual() call the dot uses (else the bars would glow amber "ready" next to a
   // working dot, or blue next to the teal translating one). Mirrors Home's waveTone derivation.
@@ -970,6 +1009,7 @@ export default function Overlay() {
     // A phase arriving mid-tuck can release the hold (chipTuckHold). The stable KEY, not the
     // payload object: every progress push replaces it, and that re-armed the tuck timer.
     phaseKey,
+    sizeNudge, // a size adjustment restarts the wait from the refreshed grace floor
   ]);
 
   // Quick-launch: icon buttons shown when hovering the idle/standby chip (never while
@@ -1146,7 +1186,10 @@ export default function Overlay() {
             // the window edge clips the right-most (newest) transcript words. The transcript below
             // is the flex element that shrinks to make the pill fit (min-w-0 chain → its own
             // justify-end clip box then drops the OLDEST off the left instead).
-            "inline-flex h-[42px] max-w-[calc(100vw-24px)] items-center overflow-hidden border px-3.5 transition-colors duration-300",
+            // 64px = 32px a side: the shadow below reaches 32px sideways (40 blur − 8 spread), and
+            // the transparent window CLIPS what is painted past its edge — at the old 12px a side
+            // a full-width pill's shadow ended in a hard vertical cut (the quick-add bug).
+            "inline-flex h-[42px] max-w-[calc(100vw-64px)] items-center overflow-hidden border px-3.5 transition-colors duration-300",
             // Tucked: drop the pill chrome so ONLY the bare dot peeks below the border.
             peeked
               ? "border-transparent bg-transparent shadow-none"
@@ -1159,9 +1202,11 @@ export default function Overlay() {
               icons. The rest of the time it shows the steady status fill / breathing. */}
           <span
             ref={dotRef}
-            style={{ boxShadow: dotGlow }}
+            style={{ boxShadow: dotGlow, width: 10 * dotK, height: 10 * dotK }}
             className={cn(
-              "size-2.5 shrink-0 rounded-full transition-colors duration-300",
+              // 10px base (was size-2.5); width/height join the colour transition so the
+              // minimized ↔ open size change (dotK) eases instead of snapping.
+              "shrink-0 rounded-full transition-[width,height,color,background-color,border-color] duration-300",
               // A landed phrase / session end flashes the dot: green = typed, amber = clipboard,
               // amber = landed untranslated (the words arrived, just not in the asked-for language).
               pulse === "typed"

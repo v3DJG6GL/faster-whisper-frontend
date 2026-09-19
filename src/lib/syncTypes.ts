@@ -58,6 +58,8 @@ export const CHIP_FIELDS = [
   "peekWhileActive",
   "dimAfterSec",
   "hoverRevealMs",
+  "chipScale",
+  "dotScale",
   "quickLaunch",
   "realtimePreview",
   "realtimePreviewOnHover",

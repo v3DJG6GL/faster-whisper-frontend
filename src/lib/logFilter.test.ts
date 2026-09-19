@@ -224,7 +224,7 @@ describe("formatLine / buildBugReport", () => {
 });
 
 describe("bugReportRunFields", () => {
-  const backendName = (id?: string) => (id === "b1" ? "informethic" : null);
+  const backendName = (id?: string) => (id === "b1" ? "home-server" : null);
 
   it("attributes a file run to the run alone — no borrowed profile", () => {
     const f = bugReportRunFields(
@@ -234,7 +234,7 @@ describe("bugReportRunFields", () => {
       backendName,
     );
     expect(f.profile).toBeNull();
-    expect(f.backend).toBe("informethic");
+    expect(f.backend).toBe("home-server");
     expect(f.model).toBe("large-v2");
     expect(f.route).toBe("de → fr");
     expect(f.stages).toBe("translate");
@@ -254,7 +254,7 @@ describe("bugReportRunFields", () => {
   it("labels the settings fallback when nothing ran", () => {
     const f = bugReportRunFields(null, { backendId: "b1", model: "tiny" }, backendName);
     expect(f.source).toBe("settings (no run recorded)");
-    expect(f.backend).toBe("informethic");
+    expect(f.backend).toBe("home-server");
     expect(f.profile).toBeNull();
     expect(f.route).toBeNull();
   });
@@ -271,7 +271,7 @@ describe("bug report: what actually ran", () => {
         appVersion: "0.1.89",
         platform: "linux",
         source: "dictation",
-        backend: "informethic",
+        backend: "home-server",
         model: "large-v2",
         profile: "PTT DE",
         route: "de → en,fr",

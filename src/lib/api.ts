@@ -1142,10 +1142,12 @@ export async function setDeepFieldDetection(enabled: boolean): Promise<void> {
 }
 
 /** Show + position the dictation chip overlay at the given screen edge. The window is
- *  anchored flush against that edge; the resting inset and edge-peek are pure CSS (Overlay.tsx). */
-export async function showOverlay(position: "top" | "bottom"): Promise<void> {
+ *  anchored flush against that edge; the resting inset and edge-peek are pure CSS (Overlay.tsx).
+ *  `scale` is the "Chip size" factor: Rust clamps it and applies it as the overlay webview's
+ *  zoom plus a matching window size, so the chip's own layout never sees it. */
+export async function showOverlay(position: "top" | "bottom", scale: number): Promise<void> {
   if (!isTauri) return;
-  await invoke("show_overlay", { position });
+  await invoke("show_overlay", { position, scale });
 }
 
 /** Hide the dictation chip overlay. */

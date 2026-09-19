@@ -127,6 +127,9 @@ let hideTimer: ReturnType<typeof setTimeout> | undefined;
 // The edge the window was last placed at, so we only re-place (move the OS window) when it
 // actually changes — the edge-peek itself is a pure CSS transform inside the chip.
 let shownPos: "top" | "bottom" | undefined;
+// …and the "Chip size" factor it was last shown at: a change re-shows the window so Rust can
+// re-apply the webview zoom + window size (and re-centre the resized window).
+let shownScale: number | undefined;
 
 /** Assemble the full `dictation://update` payload from a store snapshot. Everything the
  *  chip renders is resolved HERE (main window) because the overlay webview can't read
@@ -219,6 +222,10 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     peekWhileActive: rec.peekWhileActive ?? false,
     dimAfterSec: rec.dimAfterSec ?? 2.5,
     hoverRevealMs: rec.hoverRevealMs ?? 500,
+    // Sizes. chipScale is applied by Rust (webview zoom); the chip only needs it to notice a
+    // change and come out of hiding. dotScale is the chip's own CSS (minimized dot only).
+    chipScale: rec.chipScale ?? 1,
+    dotScale: rec.dotScale ?? 1,
     quickLaunch: rec.quickLaunch ?? [],
     // The injection target app title + a skip reason ("blocked" / "notEditable") for the
     // warn-tinted hint. Empty when the feature's off, no app is known, or the session's idle.
@@ -285,6 +292,7 @@ export async function initOverlayController(): Promise<void> {
 
   useApp.subscribe((state, prev) => {
     const pos = state.settings.recording.indicatorPosition;
+    const scale = state.settings.recording.chipScale ?? 1;
     // Forward the live chip state whenever the relevant fields change — but only when the chip is
     // actually enabled. With it "off" (tray-only / GNOME) the overlay webview is never shown, so this
     // ~30Hz level-driven payload rebuild + cross-window broadcast to a hidden window is pure waste
@@ -379,9 +387,10 @@ export async function initOverlayController(): Promise<void> {
       // window is anchored flush against that edge and never moves again for the peek — the
       // edge-peek tuck is a pure CSS transform in the chip (Overlay.tsx), so it animates
       // reliably and can't desync with an OS window-move (which Wayland applies instantly).
-      if (!visible || (active && !prevActive) || pos !== shownPos) {
-        void showOverlay(pos).catch((e) => console.error("showOverlay failed:", e));
+      if (!visible || (active && !prevActive) || pos !== shownPos || scale !== shownScale) {
+        void showOverlay(pos, scale).catch((e) => console.error("showOverlay failed:", e));
         shownPos = pos;
+        shownScale = scale;
       }
       visible = true;
       return;
@@ -396,8 +405,9 @@ export async function initOverlayController(): Promise<void> {
     if (visible || (pos !== "off" && state.status === "error")) {
       clearTimeout(hideTimer);
       if (!visible && pos !== "off") {
-        void showOverlay(pos).catch((e) => console.error("showOverlay failed:", e));
+        void showOverlay(pos, scale).catch((e) => console.error("showOverlay failed:", e));
         shownPos = pos;
+        shownScale = scale;
         visible = true;
       }
       const delay = pos === "off" ? 0 : state.status === "error" ? 2400 : 1800;

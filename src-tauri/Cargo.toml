@@ -161,6 +161,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_Accessibility",
     "Win32_UI_Input",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
@@ -177,5 +178,12 @@ unused_crate_dependencies = "allow"
 # KWin's server-side decorations get used instead), first released in tao 0.36.0 — which
 # tauri-runtime-wry (^0.35) can't pull yet. The fix's merge commit is still versioned
 # 0.35.3, so pin it here; drop this once tauri-runtime-wry depends on tao >= 0.36.
+#
+# The rev is deliberately da7441aa (tao PR #1274), not the #1218 merge itself: every rev
+# between PR #1231 ("remove window subclassing") and #1274 has a thread-event-target
+# window whose default arm returns 0 for WM_QUERYENDSESSION — a VETO — so the app blocked
+# every Windows shutdown/logoff ("This app is preventing shutdown"). da7441aa is 7 commits
+# after the old 07f3742b pin, still 0.35.3, and still contains #1218. Do not move past
+# 71b59efe: that one bumps tao to 0.36.0, which tauri-runtime-wry cannot accept.
 [patch.crates-io]
-tao = { git = "https://github.com/tauri-apps/tao", rev = "07f3742b1833b64be27b1ef991e38d557d4276c9" }
+tao = { git = "https://github.com/tauri-apps/tao", rev = "da7441aa06a03df2298d09909d95eb99070aa6c9" }

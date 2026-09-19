@@ -113,7 +113,9 @@ impl Default for AtspiGuard {
 /// this string match is only a best-effort fallback for the snapshot bookkeeping.
 fn is_self(app_id: &str) -> bool {
     let a = app_id.to_lowercase();
-    a.contains("faster-whisper") || a.contains("faster_whisper") || a.contains("informethic")
+    // "fasterwhisper": the identifier (org.fasterwhisper.frontend), which is what GTK derives
+    // the application id — and with it the a11y app name — from on some desktops.
+    a.contains("faster-whisper") || a.contains("faster_whisper") || a.contains("fasterwhisper")
 }
 
 /// Apps that must never be treated as a dictation target, so their focus events don't clobber
@@ -815,6 +817,14 @@ mod imp {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::imp::{next_failures, should_log};
+
+    #[test]
+    fn our_own_app_is_recognised_under_every_name_a_desktop_may_report() {
+        assert!(super::is_self("faster-whisper-frontend"));
+        assert!(super::is_self("Faster_Whisper_Frontend"));
+        assert!(super::is_self("org.fasterwhisper.frontend"));
+        assert!(!super::is_self("org.kde.kate"));
+    }
 
     #[test]
     fn a_long_lived_connection_resets_the_counter_for_either_outcome() {

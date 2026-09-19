@@ -1737,6 +1737,23 @@ export default function Settings() {
               />
             </SettingRow>
             <SettingRow
+              title={SETTING.chipSize.label}
+              desc="Scales the whole chip: pill, text, buttons and dot. The chip comes out of hiding while you adjust it, so you see the result."
+              disabled={chipOff}
+            >
+              {/* Stored as a factor (1 = 100%); shown as a percentage. */}
+              <Stepper
+                ariaLabel="chip size"
+                value={Math.round((s.recording.chipScale ?? 1) * 100)}
+                onChange={(v) => updateRecording({ chipScale: v / 100 })}
+                min={75}
+                max={200}
+                step={5}
+                unit="%"
+                disabled={chipOff}
+              />
+            </SettingRow>
+            <SettingRow
               title={SETTING.keepChipDocked.label}
               desc="Keep the chip on screen as a small standby dot when you're not dictating, instead of hiding it."
               disabled={chipOff}
@@ -1745,6 +1762,22 @@ export default function Settings() {
                 checked={s.recording.persistentDock}
                 disabled={chipOff}
                 onChange={(v) => updateRecording({ persistentDock: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              title={SETTING.dotSize.label}
+              desc="Makes the dot larger while the chip is minimized: resting as a standby dot or hidden at the edge. When the chip opens, the dot returns to its normal size."
+              disabled={chipOff}
+            >
+              <Stepper
+                ariaLabel="dot size"
+                value={Math.round((s.recording.dotScale ?? 1) * 100)}
+                onChange={(v) => updateRecording({ dotScale: v / 100 })}
+                min={100}
+                max={300}
+                step={25}
+                unit="%"
+                disabled={chipOff}
               />
             </SettingRow>
 

@@ -14,8 +14,10 @@
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Logical size declared for the `quickadd` window in tauri.conf.json.
-const QA_W: f64 = 600.0;
-const QA_H: f64 = 480.0;
+// The 576×456 panel plus the transparent margin its CSS shadow needs to fade out inside the
+// window (24px sides/top, 36px bottom — see QuickAdd.tsx). Keep in step with tauri.conf.json.
+const QA_W: f64 = 624.0;
+const QA_H: f64 = 516.0;
 /// A unique, stable window title the KDE keep-above rule matches on (invisible — the
 /// window is undecorated). Set just before the window maps so the rule applies.
 #[cfg(target_os = "linux")]
@@ -268,6 +270,10 @@ fn show_now(app: &AppHandle) {
             std::thread::spawn(kwin::install_keep_above);
         }
         let _ = win.show();
+        // set_always_on_top(true) above is a no-op on Windows (tao only acts on a CHANGED
+        // flag) and show() never raises — see win_topmost.rs.
+        #[cfg(windows)]
+        crate::win_topmost::assert_topmost(&win);
         let _ = win.unminimize();
         let _ = win.set_focus();
         let _ = handle.emit("quickadd://shown", ());

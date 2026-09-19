@@ -85,6 +85,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     peekWhileActive: false,
     dimAfterSec: 2.5,
     hoverRevealMs: 500,
+    chipScale: 1,
+    dotScale: 1,
     quickLaunch: [],
   },
   sync: DEFAULT_SYNC,
