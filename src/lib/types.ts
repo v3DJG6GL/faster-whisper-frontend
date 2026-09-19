@@ -478,6 +478,20 @@ export type DictationStatus =
   | "injecting"
   | "error";
 
+/** What the SERVER is doing for a streaming session whose status is still "listening" — the
+ *  mic is open, so the status cannot say it. Server-authored, never inferred:
+ *   • "loading"  — cold-loading the model (its `loading` keepalive, until `ready`);
+ *   • "open"     — holding an utterance it has not decoded yet (`utterance`/open);
+ *   • "decoding" — running that utterance's final decode (`utterance`/decoding).
+ *  null = nothing in flight: "listening" really does mean ready. See utterancePending.ts for
+ *  how long an "open" is believed. */
+export type ServerWork = "loading" | "open" | "decoding" | null;
+
+/** Narrow an untrusted value (the chip's cross-window payload) to a ServerWork. */
+export function asServerWork(v: unknown): ServerWork {
+  return v === "loading" || v === "open" || v === "decoding" ? v : null;
+}
+
 /** What the current dictation status is actually WAITING on, when that is worth
  *  more than the one-word status — today only the cold translate ("loading the
  *  model" vs "translating"), where the wait is tens of seconds and silence

@@ -30,6 +30,11 @@ import { acquireWarm, preloadPlanFor, type WarmLease } from "./preload";
 import { ownProp } from "./own";
 import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
 import {
+  display as pendingDisplay, holdRemainingMs, isLive as pendingIsLive, msUntilStale, newUtterancePending,
+  onFrame as onUtteranceFrame, onSpeaking as onPendingSpeaking, onTerminal as onUtteranceTerminal,
+  reset as resetPending, type UtterancePending,
+} from "./utterancePending";
+import {
   isTauri,
   startStream,
   stopStream,
@@ -58,7 +63,7 @@ import {
   type TranslateFailure,
 } from "./dictationTranslate";
 import { newCaptureIdBook } from "./captureIds";
-import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertionOverrides, InsertMethod, Profile } from "./types";
+import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertionOverrides, InsertMethod, Profile, ServerWork } from "./types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
 import { normalizeAppId } from "./sanitize";
@@ -72,6 +77,57 @@ let wired = false;
 let autoStopMemo: SpeakMemo = newSpeakMemo();
 let autoStopMs = 0;
 let lastSpokeAt = 0;
+
+// What the SERVER says about the utterance it is holding (`stream://utterance`), and the one
+// timer that keeps the store's `serverWork` honest about it. The rules — how long an `open` is
+// believed, the minimum time a working state stays painted — live in utterancePending.ts, which
+// is pure and tested; this file only feeds it and publishes what it answers.
+const pending: UtterancePending = newUtterancePending();
+let workTimer: ReturnType<typeof setTimeout> | undefined;
+function clearWorkTimer(): void {
+  if (workTimer) {
+    clearTimeout(workTimer);
+    workTimer = undefined;
+  }
+}
+function publishServerWork(v: ServerWork): void {
+  if (useApp.getState().serverWork !== v) useApp.getState().setDictation({ serverWork: v });
+}
+/** Publish what the server's last statement is worth NOW, and wake up when that changes by the
+ *  mere passage of time (an `open` going stale). Never clears "loading": that one is owned by
+ *  the `loading`/`ready` pair, and a speech edge during a cold load lands here with nothing held. */
+function syncServerWork(): void {
+  clearWorkTimer();
+  const now = performance.now();
+  const v = pendingDisplay(pending, now);
+  if (v !== null || useApp.getState().serverWork !== "loading") publishServerWork(v);
+  const next = msUntilStale(pending, now);
+  if (next !== null) workTimer = setTimeout(syncServerWork, next + 5);
+}
+/** The utterance ended (its `final`, or `dropped`). The protocol state clears at once — the
+ *  per-phrase Enter must not wait on a paint — but the painted state keeps its minimum show
+ *  time, so a 60 ms decode doesn't read as a glitch. */
+function endUtterance(): void {
+  const hold = holdRemainingMs(pending, performance.now());
+  onUtteranceTerminal(pending);
+  clearWorkTimer();
+  if (hold <= 0) {
+    publishServerWork(null);
+    return;
+  }
+  workTimer = setTimeout(() => {
+    workTimer = undefined;
+    // Re-ask rather than assume: the next utterance may have been announced meanwhile (that
+    // path re-syncs and replaces this timer, but a stale closure must still not blank it).
+    publishServerWork(pendingDisplay(pending, performance.now()));
+  }, hold);
+}
+/** Session-level teardown: forget everything NOW, no minimum show time. The caller's own
+ *  setDictation patch carries `serverWork: null`; this is the module half. */
+function resetServerWork(): void {
+  clearWorkTimer();
+  resetPending(pending);
+}
 
 let activeEndpoint: "stream" | "batch" | null = null;
 // Is the mic still open? NOT the same question as `activeEndpoint !== null`, which stays
@@ -705,6 +761,10 @@ let clipDirty = false;
 let clipHoldsOurs = false;
 let phraseEndTimer: ReturnType<typeof setTimeout> | null = null;
 const PHRASE_END_QUIET_MS = 1200;
+// How long the phrase-end actions may be withheld because the server still holds the utterance
+// (see bumpPhraseEnd), counted from the first expiry that found it so.
+const PHRASE_DEFER_MAX_MS = 30_000;
+let phraseDeferSince: number | null = null;
 // Chord family: a hands-free superset completed during the start prologue (insertCfg not
 // built yet) — startLiveInner applies the upgrade right after it exists. Cleared on
 // every fresh start and on cancel so a stale flip can't latch an unrelated session.
@@ -784,11 +844,33 @@ function enqueueRestoreSnapshot(): void {
  *  them; once speech stops for PHRASE_END_QUIET_MS the phrase is done. The backend hard-break
  *  boundary (~20s) is a backstop. Armed for ANY live session (not just Enter/restore) so the
  *  clipboard-only baseline still advances on a pause. */
-function bumpPhraseEnd(): void {
+function bumpPhraseEnd(deferred = false): void {
   if (!insertCfg?.live) return;
+  // A bump from OUTSIDE (a partial, a final, a dropped utterance) is news; only the timer's own
+  // re-arm below counts against the deferral cap.
+  if (!deferred) phraseDeferSince = null;
   if (phraseEndTimer) clearTimeout(phraseEndTimer);
   phraseEndTimer = setTimeout(() => {
     phraseEndTimer = null;
+    // "Quiet for 1.2 s" was only ever a stand-in for "the phrase is done" — and it is wrong in
+    // exactly the moment it matters: the server stops sending partials when you pause, waits
+    // out its own commit silence (~1.2 s) and only THEN decodes, so this expired while the
+    // phrase was still on its way. After a forced commit (a long sentence) or with partials
+    // skipped (server behind realtime) it expired MID-SPEECH, and the Enter landed between two
+    // halves of one thought. The server now says when it still holds an utterance: while it
+    // does, keep waiting. Its terminal frame re-arms this timer fresh (`final` via the `grew`
+    // bump, `dropped` via the utterance listener), so the Enter still follows the text by the
+    // same 1.2 s. Bounded: utterancePending stops believing a stale `open` on its own, and the
+    // cap below covers anything else — a withheld Enter must never be a permanent one.
+    if (isCapturing() && pendingIsLive(pending, performance.now())) {
+      const t = performance.now();
+      if (phraseDeferSince === null) phraseDeferSince = t;
+      if (t - phraseDeferSince < PHRASE_DEFER_MAX_MS) {
+        bumpPhraseEnd(true);
+        return;
+      }
+    }
+    phraseDeferSince = null;
     // Press Enter for the just-finished phrase — only if new text landed since the last Enter.
     // No autoEnter gate here: it is a property of the WINDOW being typed into, which only
     // resolveTarget knows. enqueueAutoEnter tests it after resolving and returns if unwanted.
@@ -1147,6 +1229,7 @@ function settleIdle(keepError = false): void {
     sessionNote: sessionInsertSkipped ? (saved ? "not-inserted-saved" : "not-inserted") : null,
     activeProfile: null,
     dictationPhase: null,
+    serverWork: null, // already cleared by whichever stop got here; idle must never carry one
     // The session's resolved route dies with the session — otherwise the standby dock
     // previews the finished run's targets under the home Profile's own tag, and the tray
     // tooltip keeps them with no source language to pair them with.
@@ -1378,15 +1461,23 @@ async function ensureListeners(): Promise<void> {
     }
     // Hands-free auto-stop (when armed): track silence via the shared speaking detector and end the
     // session after the configured quiet stretch. Fires once, then disarms itself.
-    if (autoStopMs > 0) {
+    // The detector now runs for EVERY session, not only an auto-stop one: whether the user is
+    // speaking also decides how long a server `open` is believed (utterancePending.ts).
+    {
       const tNow = performance.now();
       // "Is the mic open", NOT "is the status listening": a per-phrase translate holds the
       // status on "translating" for seconds while capture continues — a status gate here
       // reset the silence accounting for the whole translate and froze the chip's meter.
       const listening = isCapturing();
-      if (stepSpeaking(autoStopMemo, latestLevel, listening, tNow)) {
+      const spoke = stepSpeaking(autoStopMemo, latestLevel, listening, tNow);
+      if (spoke !== pending.speaking) {
+        onPendingSpeaking(pending, spoke, tNow);
+        // Only an announced utterance can change what is published on a speech edge.
+        if (pending.state !== null) syncServerWork();
+      }
+      if (spoke) {
         lastSpokeAt = tNow;
-      } else if (listening && tNow - lastSpokeAt >= autoStopMs) {
+      } else if (autoStopMs > 0 && listening && tNow - lastSpokeAt >= autoStopMs) {
         autoStopMs = 0;
         console.info("[dictation] hands-free auto-stop: silence threshold reached");
         void stopLive();
@@ -1496,6 +1587,10 @@ async function ensureListeners(): Promise<void> {
     // injecting and the trailing `closed` then idles, so real finals pass; only post-cancel
     // (idle) and post-error (error) late emits are dropped.
     if (!inSession()) return;
+    // A final is the terminal frame of whatever utterance the server had announced. ANY final:
+    // the socket is ordered, and a final only ever comes from the finalize of the utterance in
+    // flight — matching ordinals would buy nothing and mis-handle the closing document's.
+    endUtterance();
     // committed+tail is the whole document so far — fold it in and show it.
     committedDoc = e.payload.committed + e.payload.tail;
     // Drop any pending partial tick first: it holds the PRE-final text and would otherwise
@@ -1836,6 +1931,44 @@ async function ensureListeners(): Promise<void> {
     captureIds.resolve(e.payload.utterance, id);
   });
 
+  await reg<{ state: string; utterance: number | null }>("stream://utterance", (e) => {
+    // Where the utterance the server is holding stands: open → decoding → (final | dropped).
+    // This is what turns "listening, silent" from amber "ready" into blue "working" between the
+    // end of a phrase and its `final` — and the server, not a silence heuristic, is the source.
+    const state = e.payload?.state;
+    if (typeof state !== "string") return;
+    const ordinal = typeof e.payload.utterance === "number" ? e.payload.utterance : null;
+    if (!isCapturing()) {
+      // The post-stop drain: the chip already reads "finalizing…", and nothing here may
+      // resurrect a mic-open state. A `decoding` is still proof of life for a slow last phrase,
+      // exactly like the model-load keepalive.
+      if (state === "decoding" && useApp.getState().status === "transcribing") armStuckWatchdog();
+      return;
+    }
+    if (!inSession()) return;
+    const now = performance.now();
+    if (ordinal !== null && pending.ordinal !== null && ordinal < pending.ordinal) {
+      // The server's ordinals only grow; an older one is a bug worth seeing, not acting on.
+      console.debug(`[dictation] stale utterance frame ${state}#${ordinal} (holding #${pending.ordinal})`);
+      return;
+    }
+    if (state === "dropped") {
+      // The utterance ended with nothing to type (noise, a lone hallucination, a failed decode
+      // with no partial text). It is a phrase end all the same — re-arm the quiet timer the
+      // deferral in bumpPhraseEnd may have been holding for it. endUtterance, not
+      // onUtteranceFrame: it must read the minimum show time BEFORE the state is cleared.
+      endUtterance();
+      if (insertCfg?.live) bumpPhraseEnd();
+      return;
+    }
+    onUtteranceFrame(pending, state, ordinal, now);
+    // The server holding speech means the session is productive even when the room is quiet
+    // (it is about to decode) — don't let the hands-free silence clock run against it. Not on
+    // `decoding`: that would only pad the session by one decode per phrase.
+    if (state === "open") lastSpokeAt = now;
+    syncServerWork();
+  });
+
   await reg<string>("stream://boundary", (e) => {
     // Same un-advanced-epoch path as `final`/`overrides-ignored`: a cancelled/errored session's
     // detached WS drain can still emit a late boundary. Unlike cancel, a stream://error does NOT
@@ -1879,6 +2012,9 @@ async function ensureListeners(): Promise<void> {
         if (insertCfg === cfg) injectedText = "";
       });
     }
+    // The server only breaks between utterances, so nothing should be held here — but a fresh
+    // document must not inherit a working state from the old one if a frame was ever lost.
+    endUtterance();
     // Same reason as the final handler's: a pending tick would undo this clear.
     resetPartialPreview();
     setDictation({ partial: "" });
@@ -1964,6 +2100,9 @@ async function ensureListeners(): Promise<void> {
 
   await reg<string>("stream://status", (e) => {
     if (e.payload === "ready") {
+      // The model is loaded. BEFORE the early return below: a `ready` that lands after a stop
+      // must still take "loading model…" off a chip that teardown has not reached yet.
+      if (useApp.getState().serverWork === "loading") setDictation({ serverWork: null });
       // Drop a late `ready` that lands after a stop (a short PTT tap, or a stop during a cold-model
       // handshake delay): stopLive already moved us to "transcribing", and resurrecting "listening"
       // here would make the subsequent `closed` skip its transcribing-gated settle and wedge the chip
@@ -1981,6 +2120,10 @@ async function ensureListeners(): Promise<void> {
       // load can't force-idle a dictation whose transcript is seconds away —
       // the Rust drain's idle window resets on the same frames.
       if (useApp.getState().status === "transcribing") armStuckWatchdog();
+      // …and while the mic is still open, SAY so. The frame used to change nothing on screen:
+      // a cold load (tens of seconds) sat on amber "listening", inviting speech the server was
+      // not transcribing yet. Cleared by `ready` above and by every teardown.
+      else if (useApp.getState().status === "listening" && isCapturing()) publishServerWork("loading");
     } else if (e.payload === "closed") {
       capturing = false; // covers the closes that ran no stopLive (capture death, server-initiated)
       clearStuckWatchdog(); // the stream resolved on its own
@@ -2012,7 +2155,8 @@ async function ensureListeners(): Promise<void> {
       // to idle only from "transcribing", so without this a no-tail capture-death close would wedge
       // the chip at "listening" with the mic already gone (no stuck-watchdog runs for it either).
       // From here the hasTail branch moves to "injecting" while the transcript is written out.
-      setDictation({ level: 0, warming: false, status: "transcribing" });
+      resetServerWork();
+      setDictation({ level: 0, warming: false, serverWork: null, status: "transcribing" });
       // (The saved recording's transcript .txt sidecar is written in Rust, in the streaming drain —
       // ungated, so a cancelled/superseded session still gets it, matching the batch path.)
       // Release a session that reached `closed` WITHOUT a user stop (capture-thread death / a
@@ -2466,7 +2610,8 @@ function flashError(message: string): void {
   resetPartialPreview();
   // Same call as the status move (see settleIdle): the error supersedes whatever
   // the cold-translate phase was reporting.
-  useApp.getState().setDictation({ status: "error", dictationError: message, level: 0, partial: "", warming: false, dictationPhase: null, sessionTargets: null, routePending: null });
+  resetServerWork();
+  useApp.getState().setDictation({ status: "error", dictationError: message, level: 0, partial: "", warming: false, serverWork: null, dictationPhase: null, sessionTargets: null, routePending: null });
   // Failure doorway: the dictation error itself lingers only briefly (chip/Home);
   // the banner persists with a "View logs" path to the full story.
   useApp.getState().setLogsDoorway("Dictation failed — the log has the details.");
@@ -2765,6 +2910,7 @@ async function startLiveInner(
   injectChain = Promise.resolve();
   injectDepth = 0; // the old chain's finallys may drive it negative; only `>= MAX` reads it
   clearStuckWatchdog(); // fresh session — drop any leftover backstop
+  resetServerWork(); // …and anything the previous session's server was reported doing
 
   // P16/D: surface the injection target + why (if at all) it's coerced to clipboard, for the
   // chip's "→ app" readout. blocked (per-app rule) takes precedence over the deep-detect guard.
@@ -2774,6 +2920,7 @@ async function startLiveInner(
     // Warm-up gate: grey "warming up…" from the first frame (never an amber "listening"
     // flash before the mic is live); cleared by real audio or the safety timeout below.
     warming: true,
+    serverWork: null, // nothing announced yet — a fresh session starts truly "listening"
     micLive: false, // fresh session: the mic hasn't gone live yet (gates the start/stop cues)
     partial: "",
     level: 0,
@@ -2969,7 +3116,8 @@ export async function stopLive(): Promise<void> {
   // micLive:false marks the mic-closed edge for the overlay's stop cue — a stop landing
   // DURING a per-phrase translate (translating->transcribing) is a real session end, while
   // translatePhrase's post-stop status restore is not; only the store can tell them apart.
-  useApp.getState().setDictation({ status: "transcribing", warming: false, micLive: false });
+  resetServerWork(); // the mic is closed: "finalizing…" speaks for the drain from here
+  useApp.getState().setDictation({ status: "transcribing", warming: false, serverWork: null, micLive: false });
   // Guard against a `closed` that never comes (socket died mid-finalize).
   armStuckWatchdog();
   try {
@@ -3087,6 +3235,7 @@ export async function cancelLive(): Promise<void> {
   sessionTyped = false;
   sessionClipboard = false;
   sessionInsertSkipped = false;
+  resetServerWork();
   clearPhraseEnd();
   insertCfg = null;
   injectChain = Promise.resolve();
@@ -3097,7 +3246,7 @@ export async function cancelLive(): Promise<void> {
     .getState()
     // Cancelled → no done marker (outcome "none"); clear any pending per-phrase pulse.
     // `warming: false` so a cancel during warm-up doesn't strand the chip on "warming up…".
-    .setDictation({ status: "idle", warming: false, partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", sessionNote: null, lastInsert: null, activeProfile: null, dictationPhase: null, sessionTargets: null, routePending: null, translateFailure: null });
+    .setDictation({ status: "idle", warming: false, serverWork: null, partial: "", level: 0, dictationError: null, targetApp: null, targetSkip: null, sessionOutcome: "none", sessionNote: null, lastInsert: null, activeProfile: null, dictationPhase: null, sessionTargets: null, routePending: null, translateFailure: null });
   const endpoint = activeEndpoint;
   activeEndpoint = null;
   capturing = false;

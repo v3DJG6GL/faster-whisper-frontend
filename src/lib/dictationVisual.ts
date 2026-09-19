@@ -1,4 +1,4 @@
-import type { DictationStatus } from "./types";
+import type { DictationStatus, ServerWork } from "./types";
 
 /**
  * THE single source of truth mapping dictation state → colour / shape / label,
@@ -19,7 +19,10 @@ import type { DictationStatus } from "./types";
  *                       as a hang. The hue isn't new — `--c-translate` was already reserved
  *                       for T2T and is what the viewer's MT lines and the translate run
  *                       chrome use, so the chip now agrees with those surfaces too.
- *   • blue   (think)  — finalizing / inserting / mic warm-up (machine working). Was
+ *   • blue   (think)  — finalizing / inserting / mic warm-up, and — in a streaming session, whose
+ *                       status never leaves "listening" — whatever the SERVER reports it is
+ *                       doing: loading its model, or holding / decoding your last phrase
+ *                       (machine working). Was
  *                       neutral-grey (dim), but grey-working was indistinguishable
  *                       from grey-off — literally identical on the tucked edge-dot,
  *                       whose colour is its ONLY channel (no shape/motion legibility
@@ -58,12 +61,19 @@ export function dictationVisual(
   status: DictationStatus,
   speaking: boolean,
   warming = false,
+  serverWork: ServerWork = null,
 ): DictationVisual {
   // Mic opening but not yet delivering audio (e.g. a Bluetooth headset switching into
   // its mic profile). Read as blue "working" — NOT the amber "ready to speak" — so
   // the user doesn't start talking before the mic is actually capturing.
   if (warming && status === "listening") {
     return { state: "processing", tone: "think", label: "warming up…", pulse: true, filled: true };
+  }
+  // The server is cold-loading its model: the handshake is not done, so nothing said now is
+  // being transcribed yet. Outranks `speaking` for the same reason warm-up does — green would
+  // promise that the words are landing.
+  if (serverWork === "loading" && status === "listening") {
+    return { state: "processing", tone: "think", label: "loading model…", pulse: true, filled: true };
   }
   switch (status) {
     case "error":
@@ -75,8 +85,16 @@ export function dictationVisual(
     case "injecting":
       return { state: "processing", tone: "think", label: "inserting…", pulse: true, filled: true };
     case "listening":
-      return speaking
-        ? { state: "speaking", tone: "live", label: "listening", pulse: true, filled: true }
+      if (speaking) return { state: "speaking", tone: "live", label: "listening", pulse: true, filled: true };
+      // A streaming session never leaves "listening" between phrases, so without this the
+      // stretch between "you stopped talking" and the server's `final` read as amber "ready,
+      // nothing happening" while the backend was holding — then decoding — the phrase, where a
+      // batch session shows blue "finalizing…" for the very same work. The SERVER says so
+      // (`utterance` frames → serverWork); nothing here is guessed from silence. The mic IS
+      // still open (unlike the other blue states), which is why speech wins above: talk again
+      // and it goes straight back to green.
+      return serverWork === "open" || serverWork === "decoding"
+        ? { state: "processing", tone: "think", label: "transcribing…", pulse: true, filled: true }
         : { state: "armed", tone: "armed", label: "listening", pulse: true, filled: true };
     case "idle":
     default:

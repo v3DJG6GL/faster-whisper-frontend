@@ -69,6 +69,46 @@ describe("dictationVisual", () => {
     expect(dictationVisual("listening", false).tone).toBe("armed");
   });
 
+  describe("serverWork — what the server is doing behind a `listening` status", () => {
+    it("shows the held / decoding phrase as working, not as amber `ready`", () => {
+      // The bug: a streaming session stays "listening", so the decode between end of speech
+      // and the server's `final` read as armed-amber while the backend was busy.
+      for (const work of ["open", "decoding"] as const) {
+        const v = dictationVisual("listening", false, false, work);
+        expect(v.state, work).toBe("processing");
+        expect(v.tone, work).toBe("think");
+        expect(v.label, work).toBe("transcribing…");
+        expect(v.pulse && v.filled, work).toBe(true);
+      }
+    });
+
+    it("lets speech win: the mic is open, and talking again is green at once", () => {
+      expect(dictationVisual("listening", true, false, "open").tone).toBe("live");
+      expect(dictationVisual("listening", true, false, "decoding").tone).toBe("live");
+    });
+
+    it("shows a cold model load, and ranks it above speech", () => {
+      const v = dictationVisual("listening", false, false, "loading");
+      expect(v.tone).toBe("think");
+      expect(v.label).toBe("loading model…");
+      // Green would promise the words are landing; the handshake isn't done.
+      expect(dictationVisual("listening", true, false, "loading").label).toBe("loading model…");
+    });
+
+    it("keeps warm-up on top: the mic isn't even delivering audio yet", () => {
+      expect(dictationVisual("listening", false, true, "loading").label).toBe("warming up…");
+      expect(dictationVisual("listening", false, true, "decoding").label).toBe("warming up…");
+    });
+
+    it("never repaints a status that already speaks for itself", () => {
+      for (const s of STATUSES.filter((x) => x !== "listening")) {
+        for (const work of ["loading", "open", "decoding"] as const) {
+          expect(dictationVisual(s, false, false, work), `${s}/${work}`).toEqual(dictationVisual(s, false));
+        }
+      }
+    });
+  });
+
   it("renders idle hollow and everything else filled", () => {
     expect(dictationVisual("idle", false).filled).toBe(false);
     for (const s of STATUSES.filter((x) => x !== "idle")) {

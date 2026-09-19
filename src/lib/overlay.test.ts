@@ -2,7 +2,7 @@
 // store or the cross-window payload it normally rides in.
 
 import { describe, expect, it } from "vitest";
-import { chipRouteMore, chipRoutePending, chipRouteTargets, configuredRouteTargets } from "./overlay";
+import { chipRouteMore, chipRoutePending, chipRouteTargets, configuredRouteTargets, trayStatus } from "./overlay";
 
 describe("configuredRouteTargets", () => {
   // The Backend's translation defaults under the Profile's overrides — the session's merge.
@@ -110,5 +110,25 @@ describe("chipRoutePending", () => {
     expect(chipRoutePending("undecided", "listening", true)).toBe("undecided");
     expect(chipRoutePending("choosing", "idle", true)).toBe("choosing");
     expect(chipRoutePending("original", "listening", false)).toBe("original");
+  });
+});
+
+describe("trayStatus", () => {
+  // The tray tooltip is the only status surface on a chip-less desktop (GNOME, non-KDE Wayland).
+  it("names the server's work behind a listening status", () => {
+    expect(trayStatus("listening", false, null)).toBe("listening");
+    expect(trayStatus("listening", false, "loading")).toBe("loading");
+    expect(trayStatus("listening", false, "decoding")).toBe("transcribing");
+  });
+
+  it("does not call a held utterance `transcribing`: the tray cannot see whether you are speaking", () => {
+    expect(trayStatus("listening", false, "open")).toBe("listening");
+  });
+
+  it("keeps warm-up on top, and never repaints a status that speaks for itself", () => {
+    expect(trayStatus("listening", true, "loading")).toBe("warming");
+    expect(trayStatus("transcribing", true, "decoding")).toBe("transcribing");
+    expect(trayStatus("idle", false, "loading")).toBe("idle");
+    expect(trayStatus("error", false, "decoding")).toBe("error");
   });
 });

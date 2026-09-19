@@ -223,6 +223,7 @@ export default function Dashboard() {
   const status = useApp((s) => s.status);
   const warming = useApp((s) => s.warming);
   const speaking = useApp((s) => s.speaking);
+  const serverWork = useApp((s) => s.serverWork);
   const dictationError = useApp((s) => s.dictationError);
   const overridesIgnored = useApp((s) => s.overridesIgnored);
   const micId = useApp((s) => s.settings.microphoneId);
@@ -253,7 +254,7 @@ export default function Dashboard() {
   // neutral button (press to start) — NOT the old always-amber — and only goes amber
   // once a session is armed, green while you speak. The waveform has no hollow form,
   // so its "off" tone maps to grey (dim) rather than amber.
-  const vis = dictationVisual(status, speaking, warming);
+  const vis = dictationVisual(status, speaking, warming, serverWork);
   const heroFill =
     vis.state === "speaking"
       ? "bg-live text-white"

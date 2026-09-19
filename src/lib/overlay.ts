@@ -16,7 +16,7 @@ import { fmtCompact, fmtDuration } from "./format";
 import { ownProp } from "./own";
 import { effectiveLanguage } from "./backends";
 import { isActiveDictation } from "./dictationVisual";
-import type { OverlayStatsMetric, UsageStats } from "./types";
+import type { OverlayStatsMetric, ServerWork, UsageStats } from "./types";
 
 /** How many translation targets the chip spells out before the rest become "+N". Two, not
  *  `routeParts`' three: the chip's identity row shares one line with the live transcript,
@@ -112,6 +112,20 @@ function trayRoute(state: ReturnType<typeof useApp.getState>): string {
   return `${src.toUpperCase() || "AUTO"} → ${shown.join(" ")}${more > 0 ? ` +${more}` : ""}`;
 }
 
+/** The status word for the tray tooltip — the ONLY status surface on a chip-less desktop.
+ *
+ *  Mirrors dictationVisual's precedence for a "listening" status: warm-up, then a cold model
+ *  load, then the server decoding. `open` is deliberately absent: it only means "working"
+ *  while the user is silent, and the tray cannot see `speaking` — "recording…" is the truthful
+ *  word for it. `decoding` borrows the existing "transcribing…" string. */
+export function trayStatus(status: string, warming: boolean, serverWork: ServerWork): string {
+  if (status !== "listening") return status;
+  if (warming) return "warming";
+  if (serverWork === "loading") return "loading";
+  if (serverWork === "decoding") return "transcribing";
+  return status;
+}
+
 /** Build the chip's tiny usage readout (today's value) for the chosen metric. */
 function chipStatsLine(u: UsageStats, metric: OverlayStatsMetric): string {
   // `today.all` — every kind, like the Words tile; the per-kind split is a Statistics matter.
@@ -197,6 +211,9 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   return {
     status: state.status,
     warming: state.warming, // mic opening but not yet capturing → chip shows "warming up…"
+    // What the SERVER is doing behind a "listening" status (cold model load / an utterance it
+    // holds or is decoding) → the chip reads blue "working", not amber "ready".
+    serverWork: state.serverWork,
     level: state.level,
     // "Live transcript in overlay" off → show the status label, not words. In "on hover"
     // mode the words are still sent but the chip only surfaces them while hovered.
@@ -303,6 +320,7 @@ export async function initOverlayController(): Promise<void> {
       pos !== "off" &&
       (state.status !== prev.status ||
       state.warming !== prev.warming || // mic warm-up gate (chip "warming up…")
+      state.serverWork !== prev.serverWork || // server-side work behind "listening" (blue, not amber)
       state.level !== prev.level ||
       state.partial !== prev.partial ||
       state.dictationError !== prev.dictationError ||
@@ -336,16 +354,14 @@ export async function initOverlayController(): Promise<void> {
     if (
       state.status !== prev.status ||
       state.warming !== prev.warming ||
+      state.serverWork !== prev.serverWork || // "loading model…" / "transcribing…" behind a listening status
       state.sessionTargets !== prev.sessionTargets ||
       state.routePending !== prev.routePending || // "DE → ?" while a push-to-talk session is undecided
       state.activeProfile !== prev.activeProfile ||
       state.profiles !== prev.profiles ||
       state.backends !== prev.backends // the inherited source language lives on the Backend
     ) {
-      void setTrayState(
-        state.warming && state.status === "listening" ? "warming" : state.status,
-        trayRoute(state),
-      ).catch((e) => console.error("setTrayState failed:", e));
+      void setTrayState(trayStatus(state.status, state.warming, state.serverWork), trayRoute(state)).catch((e) => console.error("setTrayState failed:", e));
     }
     // Cues stay keyed on status TRANSITIONS only (not warming), so a warm-up flip can't re-fire them.
     if (state.status !== prev.status) {

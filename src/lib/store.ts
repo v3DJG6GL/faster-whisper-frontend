@@ -9,6 +9,7 @@ import type {
   Config,
   ConnectionInfo,
   DictationPhase,
+  ServerWork,
   DictationStatus,
   FocusedApp,
   Profile,
@@ -360,6 +361,9 @@ interface AppState {
    *  safety timeout fired), NOT when warming was cleared by teardown. Gates the start/stop
    *  cues so a session that starts/ends DURING warm-up doesn't play a mismatched chime. */
   micLive: boolean;
+  /** What the server is doing behind a "listening" status (cold model load / an utterance it
+   *  holds or is decoding) — server-authored, see types.ServerWork. null = truly ready. */
+  serverWork: ServerWork;
   level: number; // 0..1 audio RMS for the visualizer
   speaking: boolean; // derived from level (smoothed): actively speaking vs armed-silent
   partial: string; // live partial transcript for the chip preview
@@ -550,6 +554,7 @@ interface AppState {
       status: DictationStatus;
       warming: boolean;
       micLive: boolean;
+      serverWork: ServerWork;
       level: number;
       partial: string;
       activeProfile: string | null;
@@ -629,6 +634,7 @@ export const useApp = create<AppState>((set) => ({
   status: "idle",
   warming: false,
   micLive: false,
+  serverWork: null,
   level: 0,
   speaking: false,
   partial: "",

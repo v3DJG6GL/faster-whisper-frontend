@@ -128,6 +128,8 @@ pub fn set_tray_state(app: AppHandle, status: String, route: Option<String>) {
     };
     let base = match status.as_str() {
         "warming" => "faster-whisper — warming up…",
+        // The server is cold-loading its model: nothing said now is transcribed yet.
+        "loading" => "faster-whisper — loading model…",
         "listening" => "faster-whisper — recording…",
         "transcribing" => "faster-whisper — transcribing…",
         "translating" => "faster-whisper — translating…",

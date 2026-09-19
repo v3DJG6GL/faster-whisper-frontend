@@ -200,6 +200,14 @@ struct CapturedPayload {
     utterance: Option<u32>,
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UtterancePayload {
+    /// "open" | "decoding" | "dropped" — already validated at the parse boundary.
+    state: crate::transport::stream::UtteranceState,
+    utterance: Option<u32>,
+}
+
 pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
     let (device, format, channels, config, in_rate) = open_input(p.device_id)?;
     let mute = SystemMuteGuard::new(p.mute_system);
@@ -279,6 +287,11 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             // re-arms its stuck-finalize watchdog on this so a long load can't
             // force-idle a dictation whose transcript is seconds away.
             emit_if_active(&appc, epoch, "stream://status", "loading");
+        }
+        StreamEvent::Utterance { state, utterance } => {
+            // Epoch-gated like the rest: a cancelled session's drain can still
+            // deliver "decoding", and it must not paint the next session busy.
+            emit_if_active(&appc, epoch, "stream://utterance", UtterancePayload { state, utterance });
         }
         StreamEvent::Boundary { separator } => {
             tracing::info!("[stream] session {epoch} boundary (hard break)");

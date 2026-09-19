@@ -116,10 +116,11 @@ export function Sidebar() {
   const status = useApp((s) => s.status);
   const warming = useApp((s) => s.warming);
   const speaking = useApp((s) => s.speaking);
+  const serverWork = useApp((s) => s.serverWork);
   const backendCount = useApp((s) => s.backends.length);
   const profileCount = useApp((s) => s.profiles.length);
   const showLogsInSidebar = useApp((s) => s.settings.logging?.showInSidebar ?? true);
-  const vis = dictationVisual(status, speaking, warming);
+  const vis = dictationVisual(status, speaking, warming, serverWork);
   // Build-time app version (from tauri.conf.json), shown next to the brand label.
   const [version, setVersion] = useState("");
   useEffect(() => {

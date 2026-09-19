@@ -13,7 +13,8 @@ import {
   phaseClock, phaseElapsedMs,
 } from "@/lib/chipRules";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
-import type { AccentMotion, DictationPhase, DictationStatus, ThemeName, OverlayQuickAction } from "@/lib/types";
+import { asServerWork } from "@/lib/types";
+import type { AccentMotion, DictationPhase, DictationStatus, ServerWork, ThemeName, OverlayQuickAction } from "@/lib/types";
 
 /** Value identity for an AccentMotion — see `prevMotionRef` below. */
 function motionKey(m: AccentMotion | undefined): string {
@@ -24,6 +25,9 @@ interface ChipState {
   status: DictationStatus;
   // Mic opening but not yet capturing (e.g. Bluetooth profile switch) → show "warming up…".
   warming?: boolean;
+  // What the SERVER is doing behind a "listening" status: cold-loading its model, or holding /
+  // decoding the last phrase → blue "working" instead of amber "ready". Server-authored.
+  serverWork?: ServerWork;
   level: number;
   partial: string;
   // When true, the live words are revealed only while the chip is hover-revealed (else always).
@@ -232,6 +236,8 @@ export default function Overlay() {
           setState({
             ...e.payload,
             warming: e.payload.warming ?? false,
+            // Narrowed, not trusted: it selects a visual state, and the payload is just JSON.
+            serverWork: asServerWork(e.payload.serverWork),
             dictationError: e.payload.dictationError ?? "",
             phase: e.payload.phase ?? null,
             position: e.payload.position ?? "top",
@@ -346,6 +352,16 @@ export default function Overlay() {
     setSpeaking((prev) => (prev === sp ? prev : sp));
   }, [state.level, state.status]);
 
+  // Is the SERVER working behind a "listening" status? (a cold model load; or it holds / is
+  // decoding the last phrase while the user is silent — speech wins, exactly as in
+  // dictationVisual, which paints this blue). Everything that treats "listening + silent" as a
+  // calm, resting chip — the dim timer, the bar tone, the quick-launch row — must not during it.
+  const srvBusy =
+    state.status === "listening" &&
+    !state.warming &&
+    (state.serverWork === "loading" ||
+      (!speaking && (state.serverWork === "open" || state.serverWork === "decoding")));
+
   const [expanded, setExpanded] = useState(false);
 
   // The stage the machine is in, trusted only while it still matches the status (see
@@ -374,6 +390,7 @@ export default function Overlay() {
   const wantExpanded = chipExpansion({
     status: state.status,
     warming: state.warming,
+    serverWork: state.serverWork,
     speaking,
     expanded,
     phase: state.phase,
@@ -677,11 +694,13 @@ export default function Overlay() {
   const [dimmed, setDimmed] = useState(false);
   useEffect(() => {
     setDimmed(false);
-    const restingCalm = (state.status === "listening" && !speaking) || state.status === "idle";
+    // NOT calm while the server is working on the last phrase (srvBusy): fading a chip that is
+    // about to type would read as "done, nothing coming".
+    const restingCalm = (state.status === "listening" && !speaking && !srvBusy) || state.status === "idle";
     if (expanded || hovering || !restingCalm || state.dimAfterSec <= 0) return;
     const t = setTimeout(() => setDimmed(true), state.dimAfterSec * 1000);
     return () => clearTimeout(t);
-  }, [expanded, hovering, state.status, speaking, state.dimAfterSec, sizeNudge]);
+  }, [expanded, hovering, state.status, speaking, srvBusy, state.dimAfterSec, sizeNudge]);
 
   // The NEWEST words are pinned to the RIGHT purely by LAYOUT — a flex justify-end row with a
   // non-shrinking text child (see the transcript markup below) — so there's NO scrollLeft math to
@@ -715,7 +734,11 @@ export default function Overlay() {
   // a pulse + the dim "machine working" tone), else "warming up…" shows a frozen dot + flat bars while
   // every other working state moves. The cancel-✕ and transcript text-dim must NOT engage during
   // warm-up, so only the motion uses this wider flag; those keep bare `processing`.
-  const working = processing || !!state.warming;
+  // …and likewise while the server reports work behind a "listening" status (srvBusy): the dot
+  // takes the quicker "thinking" pulse and the bars self-sweep, as Home's do (its waveProcessing
+  // keys off the same dictationVisual state). Speech ends srvBusy, so the bars answer to the
+  // voice again the moment there is one.
+  const working = processing || !!state.warming || srvBusy;
   const standby = state.status === "idle"; // only ever visible when persistentDock is on
 
   // Hold off the cancel ✕ until finalizing/inserting has actually persisted (see
@@ -820,7 +843,7 @@ export default function Overlay() {
   // half reads (a hollow standby ring would all but vanish at half-size), and the
   // docked standby dot at rest is a hollow ring. Active states (error / speaking /
   // finishing) keep their tone even while tucked.
-  const vis = dictationVisual(state.status, speaking, state.warming);
+  const vis = dictationVisual(state.status, speaking, state.warming, state.serverWork);
   // The pill's status WORD comes from the SAME SSOT as the dot, so it can't drift from the dot / Home.
   // idle (post-session linger) → "" placeholder, never a stale "listening". Error's vis.label is unused
   // (the error branch renders dictationError instead).
@@ -885,7 +908,7 @@ export default function Overlay() {
   // Armed-amber only while actually listening; idle (the post-session expand-linger) reads neutral
   // grey like the hollow idle dot + every other surface (off/idle = grey), not the amber "ready" tone.
   const barTone =
-    state.warming || processing
+    state.warming || processing || srvBusy
       ? // "faint" can't actually reach here (it is the off/idle tone), but Waveform has no
         // hollow-grey bar tone, so fold it to "dim" exactly as Home's waveTone does.
         vis.tone === "faint"
@@ -1016,7 +1039,7 @@ export default function Overlay() {
   // peeked, speaking, finishing, or in error). Screen entries focus + navigate the main
   // window; action entries run a dictation action (routed through the main window).
   const hasQuickLaunch = state.quickLaunch.length > 0;
-  const restingIdle = (state.status === "listening" && !speaking) || standby;
+  const restingIdle = (state.status === "listening" && !speaking && !srvBusy) || standby;
   // Gate quick-launch on the SAME delayed hover-intent as the language/mode detail (not raw
   // `hovering`), so the chip reveals everything in one step after the dwell — never expanding
   // abruptly under the cursor right as you reach for a button.

@@ -46,8 +46,39 @@ pub enum StreamEvent {
     /// until `ready`/the finals). Proof of life — resets the drain's idle
     /// window and the UI's stuck-finalize watchdog.
     Loading,
+    /// Where the utterance the server is holding stands: `Open` (it has enough
+    /// speech to be decoded), `Decoding` (the final decode is running) or
+    /// `Dropped` (it ended with no `final`). The server is the only party that
+    /// knows this — a streaming session never leaves "listening" on the client,
+    /// so without it the UI read "ready" through every decode. The server
+    /// guarantees one terminal per announced utterance (a `Final` with the same
+    /// ordinal, or `Dropped`), which is what lets the UI show a working state
+    /// without a way to get stuck in it.
+    Utterance { state: UtteranceState, utterance: Option<u32> },
     Error(String),
     Closed,
+}
+
+/// The `state` of an `utterance` frame. A closed set on purpose: the value
+/// drives UI state, so a string the server may grow later is dropped at the
+/// parse boundary rather than forwarded for every consumer to re-validate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UtteranceState {
+    Open,
+    Decoding,
+    Dropped,
+}
+
+impl UtteranceState {
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "open" => Some(Self::Open),
+            "decoding" => Some(Self::Decoding),
+            "dropped" => Some(Self::Dropped),
+            _ => None,
+        }
+    }
 }
 
 pub struct StreamParams {
@@ -763,6 +794,16 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
             on_event(StreamEvent::Loading);
             Frame::Continue
         }
+        Some("utterance") => {
+            // A state this build doesn't know is ignored, not guessed at: the
+            // protocol's must-ignore rule applies to the value as much as to
+            // the frame type, and a fallback here would be a UI state change
+            // nobody asked for.
+            if let Some(state) = UtteranceState::parse(str_field(&v, "state")) {
+                on_event(StreamEvent::Utterance { state, utterance: ordinal_field(&v, "utterance") });
+            }
+            Frame::Continue
+        }
         Some("closing") => Frame::Closing,
         _ => Frame::Continue,
     }
@@ -856,5 +897,59 @@ mod display_url_tests {
         assert_eq!(display_url("wss://host:8000/v1/x"), "wss://host:8000");
         assert_eq!(display_url("wss://[::1]:8000/v1/x"), "wss://[::1]:8000");
         assert_eq!(display_url("host:8000"), "host:8000");
+    }
+}
+
+#[cfg(test)]
+mod emit_message_tests {
+    use super::{emit_message, Frame, StreamEvent, UtteranceState};
+    use std::cell::RefCell;
+
+    /// The `utterance` events one server text frame produces.
+    fn utterances(text: &str) -> (Vec<(UtteranceState, Option<u32>)>, Frame) {
+        let seen = RefCell::new(Vec::new());
+        let frame = emit_message(text, &|e| {
+            if let StreamEvent::Utterance { state, utterance } = e {
+                seen.borrow_mut().push((state, utterance));
+            }
+        });
+        (seen.into_inner(), frame)
+    }
+
+    #[test]
+    fn the_three_known_states_are_forwarded_with_their_ordinal() {
+        for (wire, state) in [
+            ("open", UtteranceState::Open),
+            ("decoding", UtteranceState::Decoding),
+            ("dropped", UtteranceState::Dropped),
+        ] {
+            let (seen, frame) =
+                utterances(&format!(r#"{{"type":"utterance","utterance":7,"state":"{wire}","reason":"empty"}}"#));
+            assert_eq!(seen, vec![(state, Some(7))], "{wire}");
+            assert!(frame == Frame::Continue, "{wire}: an utterance frame never ends the reader");
+        }
+    }
+
+    #[test]
+    fn a_state_this_build_does_not_know_is_ignored_not_guessed() {
+        // Must-ignore applies to the VALUE too: the server may grow states, and any
+        // fallback here would be a UI state change nobody asked for.
+        for text in [
+            r#"{"type":"utterance","utterance":1,"state":"paused"}"#,
+            r#"{"type":"utterance","utterance":1}"#,
+            r#"{"type":"utterance","utterance":1,"state":7}"#,
+        ] {
+            let (seen, frame) = utterances(text);
+            assert!(seen.is_empty(), "{text}");
+            assert!(frame == Frame::Continue, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_missing_or_bogus_ordinal_stays_explicitly_absent() {
+        let (seen, _) = utterances(r#"{"type":"utterance","state":"open"}"#);
+        assert_eq!(seen, vec![(UtteranceState::Open, None)]);
+        let (seen, _) = utterances(r#"{"type":"utterance","state":"open","utterance":-3}"#);
+        assert_eq!(seen, vec![(UtteranceState::Open, None)]);
     }
 }

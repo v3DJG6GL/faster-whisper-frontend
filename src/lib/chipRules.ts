@@ -13,7 +13,7 @@
 // the pill open (or hold the ✕ up) after the stage it described has ended.
 
 import { isProcessing } from "./dictationVisual";
-import type { DictationPhase, DictationStatus } from "./types";
+import type { DictationPhase, DictationStatus, ServerWork } from "./types";
 
 /** How long a processing stage must persist before it earns the pill. Below this a
  *  state is over before the eye resolves it, and the expand+collapse reads as a
@@ -67,6 +67,8 @@ export function phaseClock(ms: number): string {
 export function chipExpansion(a: {
   status: DictationStatus;
   warming?: boolean;
+  /** What the server reports doing behind a "listening" status (types.ServerWork). */
+  serverWork?: ServerWork;
   speaking: boolean;
   /** Is the pill open right now? (Processing sustains, never initiates.) */
   expanded: boolean;
@@ -74,7 +76,14 @@ export function chipExpansion(a: {
   now: number;
 }): boolean {
   if (a.status === "error" || a.warming) return true;
-  if (a.status === "listening") return a.speaking;
+  if (a.status === "listening") {
+    // A cold model load is a wait the user is about to sit through, like warm-up: say so.
+    if (a.serverWork === "loading") return true;
+    // The server holding / decoding the last phrase is a processing state in all but status:
+    // it KEEPS an open pill open (the pill is where "transcribing…" is read) but never pops
+    // a minimized chip for it — same rule, same reason, as the processing branch below.
+    return a.speaking || (a.expanded && (a.serverWork === "open" || a.serverWork === "decoding"));
+  }
   if (!isProcessing(a.status)) return false;
   if (a.expanded) return true;
   const phase = currentPhase(a.status, a.phase);

@@ -32,6 +32,32 @@ describe("chipExpansion", () => {
     expect(chipExpansion({ status: "listening", speaking: false, expanded: true, now: NOW })).toBe(false);
   });
 
+  it("keeps an open pill open while the server holds or decodes the phrase, but never pops one", () => {
+    for (const serverWork of ["open", "decoding"] as const) {
+      // Sustains: the pill is where "transcribing…" is read, and closing it the instant the
+      // user pauses only to reopen it for the inserted text is the flicker this avoids.
+      expect(
+        chipExpansion({ status: "listening", speaking: false, expanded: true, serverWork, now: NOW }),
+        serverWork,
+      ).toBe(true);
+      // Never initiates — same rule as every processing state: the tucked dot turns blue instead.
+      expect(
+        chipExpansion({ status: "listening", speaking: false, expanded: false, serverWork, now: NOW }),
+        serverWork,
+      ).toBe(false);
+    }
+  });
+
+  it("expands for a cold model load, like warm-up: a wait worth naming", () => {
+    expect(
+      chipExpansion({ status: "listening", speaking: false, expanded: false, serverWork: "loading", now: NOW }),
+    ).toBe(true);
+    // …but only behind a listening status: a stale value must not open an idle chip.
+    expect(
+      chipExpansion({ status: "idle", speaking: false, expanded: false, serverWork: "loading", now: NOW }),
+    ).toBe(false);
+  });
+
   it("never expands at idle", () => {
     expect(chipExpansion({ status: "idle", speaking: true, expanded: true, now: NOW })).toBe(false);
   });
