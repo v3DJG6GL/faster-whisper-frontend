@@ -33,18 +33,26 @@ const CHIP_W: f64 = 820.0;
 const CHIP_H: f64 = 132.0;
 
 /// "Chip size" (Settings → Chip): one factor for the whole chip. It is applied as the overlay
-/// WEBVIEW'S ZOOM plus a proportional window resize, so inside the webview the viewport stays
-/// 820×132 CSS px and none of the chip's layout (pill height, edge inset, tuck offset, max
-/// width) has to know about it — and text is re-laid-out at the real size, so it stays crisp.
+/// WEBVIEW'S ZOOM, so none of the chip's layout (pill height, edge inset, tuck offset) has to
+/// know about it — and text is re-laid-out at the real size, so it stays crisp. The WINDOW
+/// never resizes with it: it is always sized for the largest factor (see `window_size`), and
+/// the chip — centred, anchored to the screen edge — just grows inside it. A per-step window
+/// resize + re-centre can't be tweened (Wayland applies it instantly, and the KWin rule that
+/// re-centres lands a beat later), which made the chip jump sideways while rescaling.
 /// The one place the factor leaks out is the hit region: the webview reports CSS px, the
 /// window systems want window-logical px (= CSS px × zoom) — see `set_chip_hit_region`.
 const CHIP_SCALE_MIN: f64 = 0.75;
 const CHIP_SCALE_MAX: f64 = 2.0;
-/// f64 bits of the current factor (1.0 until the first show says otherwise).
+/// f64 bits of the zoom the webview holds right now — mid-tween this is the in-between value,
+/// so a hit region reported during the tween converts with the zoom it was measured at.
 static CHIP_SCALE: AtomicU64 = AtomicU64::new(0x3FF0_0000_0000_0000);
-/// f64 bits of the factor last pushed into the window (0 = never), so a re-show with an
-/// unchanged size touches neither the zoom nor the window size.
+/// f64 bits of the factor last requested for the window (0 = never), so a re-show with an
+/// unchanged size touches nothing.
 static APPLIED_SCALE: AtomicU64 = AtomicU64::new(0);
+/// Bumped by every scale change; a running tween stops as soon as it is no longer the latest.
+static SCALE_TWEEN_GEN: AtomicU64 = AtomicU64::new(0);
+const SCALE_TWEEN_MS: f64 = 220.0;
+const SCALE_TWEEN_STEP_MS: u64 = 16;
 
 pub(crate) fn clamp_scale(s: f64) -> f64 {
     if s.is_finite() {
@@ -58,10 +66,14 @@ fn chip_scale() -> f64 {
     f64::from_bits(CHIP_SCALE.load(Ordering::Relaxed))
 }
 
-/// Logical size of the overlay window at factor `s`, the width capped to the monitor so a
-/// large chip on a small screen never hangs off both sides (the pill caps itself to 100vw).
-fn scaled_size(s: f64, monitor_logical_w: f64) -> (f64, f64) {
-    ((CHIP_W * s).min(monitor_logical_w.max(1.0)), CHIP_H * s)
+/// Logical size of the overlay window: room for the chip at the LARGEST "Chip size", the
+/// width capped to the monitor so it never hangs off both sides (the pill caps itself to
+/// 100vw). Click-through outside the chip's hit region, so the spare room costs nothing.
+fn window_size(monitor_logical_w: f64) -> (f64, f64) {
+    (
+        (CHIP_W * CHIP_SCALE_MAX).min(monitor_logical_w.max(1.0)),
+        CHIP_H * CHIP_SCALE_MAX,
+    )
 }
 
 /// Logical width of the monitor the chip lives on (unbounded when it can't be read).
@@ -71,15 +83,40 @@ fn monitor_logical_w(win: &WebviewWindow) -> f64 {
         .unwrap_or(f64::MAX)
 }
 
-/// Push a changed factor into the window: webview zoom + window size. No-op when unchanged.
+/// Push a changed factor into the webview zoom. No-op when unchanged. The first application
+/// (and any while the chip is hidden) is set at once; a change on a visible chip is tweened —
+/// short and monotonic (ease-out), one zoom step per frame — so dragging "Chip size" grows
+/// the chip smoothly instead of snapping between steps.
 fn apply_scale(win: &WebviewWindow, s: f64) {
-    CHIP_SCALE.store(s.to_bits(), Ordering::Relaxed);
-    if APPLIED_SCALE.swap(s.to_bits(), Ordering::Relaxed) == s.to_bits() {
+    let prev = APPLIED_SCALE.swap(s.to_bits(), Ordering::Relaxed);
+    if prev == s.to_bits() {
         return;
     }
-    let (w, h) = scaled_size(s, monitor_logical_w(win));
-    let _ = win.set_zoom(s);
-    let _ = win.set_size(tauri::LogicalSize::new(w, h));
+    let gen = SCALE_TWEEN_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+    if prev == 0 || !win.is_visible().unwrap_or(false) {
+        CHIP_SCALE.store(s.to_bits(), Ordering::Relaxed);
+        let _ = win.set_zoom(s);
+        return;
+    }
+    // From the zoom held NOW (a superseded tween's in-between value), so a drag never jumps back.
+    let from = chip_scale();
+    let win = win.clone();
+    std::thread::spawn(move || {
+        let start = std::time::Instant::now();
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(SCALE_TWEEN_STEP_MS));
+            if SCALE_TWEEN_GEN.load(Ordering::Relaxed) != gen {
+                return;
+            }
+            let t = (start.elapsed().as_secs_f64() * 1000.0 / SCALE_TWEEN_MS).min(1.0);
+            let z = from + (s - from) * (1.0 - (1.0 - t).powi(3));
+            CHIP_SCALE.store(z.to_bits(), Ordering::Relaxed);
+            let _ = win.set_zoom(z);
+            if t >= 1.0 {
+                return;
+            }
+        }
+    });
 }
 
 /// A unique, stable window title the KDE rule matches on. Invisible to the user:
@@ -101,8 +138,8 @@ fn position(win: &WebviewWindow, edge: &str) {
     let scale = monitor.scale_factor();
     let m_pos = monitor.position();
     let m_size = monitor.size();
-    // The window's CURRENT logical size (Chip size applied, width capped to the monitor).
-    let (w, h) = scaled_size(chip_scale(), m_size.width as f64 / scale);
+    // The window's logical size (fixed — see `window_size`; width capped to the monitor).
+    let (w, h) = window_size(m_size.width as f64 / scale);
     let chip_w = (w * scale) as i32;
     let chip_h = (h * scale) as i32;
 
@@ -134,12 +171,10 @@ pub fn prewarm_chip_rule(cfg: &crate::config::Config) {
         // Chip disabled: leave the user's kwinrulesrc untouched.
         IndicatorPosition::Off => return,
     };
-    // The saved Chip size, so the pre-warmed position centres the window it will really be.
     // (No monitor cap here — there is no window yet to ask; chip_position clamps x at 0.)
-    let s = clamp_scale(cfg.settings.recording.chip_scale);
-    CHIP_SCALE.store(s.to_bits(), Ordering::Relaxed);
+    let (w, h) = window_size(f64::MAX);
     std::thread::spawn(move || {
-        kwin::place_chip(kwin::chip_position(edge, CHIP_W * s, CHIP_H * s));
+        kwin::place_chip(kwin::chip_position(edge, w, h));
     });
 }
 
@@ -152,8 +187,16 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
     let Some(win) = app.get_webview_window("overlay") else {
         return;
     };
-    // Size before position: the centring reads the scaled size.
-    apply_scale(&win, scale.map(clamp_scale).unwrap_or_else(chip_scale));
+    if let Some(s) = scale {
+        apply_scale(&win, clamp_scale(s));
+    }
+    // Size before position: the centring reads the window size.
+    // Only when it differs (first show, or a move to a narrower monitor) — never per show.
+    let (w, h) = window_size(monitor_logical_w(&win));
+    static SIZED_W: AtomicU64 = AtomicU64::new(0);
+    if SIZED_W.swap(w.to_bits(), Ordering::Relaxed) != w.to_bits() {
+        let _ = win.set_size(tauri::LogicalSize::new(w, h));
+    }
     self::position(&win, &position);
     let _ = win.set_always_on_top(true);
 
@@ -174,7 +217,6 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
         // it runs on the GTK/UI thread — a hang here freezes the whole app and every
         // queued command (text injection included). Do it on a detached thread; the
         // window is already shown, the rule only nudges it into position afterwards.
-        let (w, h) = scaled_size(chip_scale(), monitor_logical_w(&win));
         std::thread::spawn(move || {
             kwin::place_chip(kwin::chip_position(&position, w, h));
         });
@@ -241,6 +283,15 @@ fn ignore_cursor(win: &WebviewWindow) {
     let _ = win.set_ignore_cursor_events(true);
 }
 
+/// A changed "Chip size" on a chip that is already up: only the webview zoom moves (tweened),
+/// the window stays put — no re-show, no re-place.
+#[tauri::command]
+pub fn set_overlay_scale(app: AppHandle, scale: f64) {
+    if let Some(win) = app.get_webview_window("overlay") {
+        apply_scale(&win, clamp_scale(scale));
+    }
+}
+
 /// Hide the chip.
 #[tauri::command]
 pub fn hide_overlay(app: AppHandle) {
@@ -270,7 +321,7 @@ pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64, persi
     };
     // The webview measures in CSS px; with "Chip size" applied as webview zoom, one CSS px is
     // `zoom` window-logical px — the unit both the GDK input shape and the Windows cursor
-    // poller work in. (Also right for the full-window hover hold: innerWidth × zoom = window.)
+    // poller work in. (The hover hold band is reported in CSS px too.)
     let s = chip_scale();
     let (x, y, w, h) = (x * s, y * s, w * s, h * s);
     #[cfg(target_os = "linux")]

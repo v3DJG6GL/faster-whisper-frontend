@@ -8,7 +8,7 @@
 // transcript (or an error) stays readable before it disappears.
 
 import { useApp } from "./store";
-import { isTauri, showOverlay, hideOverlay, setTrayState, playCue } from "./api";
+import { isTauri, showOverlay, setOverlayScale, hideOverlay, setTrayState, playCue } from "./api";
 import { chipTagFor } from "./profileTag";
 import { backendForProfile, homeTargetProfile } from "./dictation";
 import { activeStatsBackend } from "./usage";
@@ -141,8 +141,8 @@ let hideTimer: ReturnType<typeof setTimeout> | undefined;
 // The edge the window was last placed at, so we only re-place (move the OS window) when it
 // actually changes — the edge-peek itself is a pure CSS transform inside the chip.
 let shownPos: "top" | "bottom" | undefined;
-// …and the "Chip size" factor it was last shown at: a change re-shows the window so Rust can
-// re-apply the webview zoom + window size (and re-centre the resized window).
+// …and the "Chip size" factor it was last shown at: a change is pushed to Rust, which tweens
+// the webview zoom (the window itself never resizes or moves for it).
 let shownScale: number | undefined;
 
 /** Assemble the full `dictation://update` payload from a store snapshot. Everything the
@@ -403,9 +403,12 @@ export async function initOverlayController(): Promise<void> {
       // window is anchored flush against that edge and never moves again for the peek — the
       // edge-peek tuck is a pure CSS transform in the chip (Overlay.tsx), so it animates
       // reliably and can't desync with an OS window-move (which Wayland applies instantly).
-      if (!visible || (active && !prevActive) || pos !== shownPos || scale !== shownScale) {
+      if (!visible || (active && !prevActive) || pos !== shownPos) {
         void showOverlay(pos, scale).catch((e) => console.error("showOverlay failed:", e));
         shownPos = pos;
+        shownScale = scale;
+      } else if (scale !== shownScale) {
+        void setOverlayScale(scale).catch((e) => console.error("setOverlayScale failed:", e));
         shownScale = scale;
       }
       visible = true;

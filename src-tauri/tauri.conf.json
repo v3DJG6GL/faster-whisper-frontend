@@ -25,8 +25,8 @@
       {
         "label": "overlay",
         "title": "faster-whisper-frontend",
-        "width": 820,
-        "height": 132,
+        "width": 1640,
+        "height": 264,
         "transparent": true,
         "decorations": false,
         "alwaysOnTop": true,

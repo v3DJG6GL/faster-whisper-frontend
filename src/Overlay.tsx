@@ -144,6 +144,12 @@ const COLLAPSE_LINGER_MS = 2000;
 // perceive any residual edge re-raster.
 const MORPH = { type: "tween", duration: 0.2, ease: [0.22, 1, 0.36, 1] } as const;
 
+// The chip's own band inside the overlay window, in CSS px: the pill's width cap and the
+// transient hover hold (see reportBounds). The window itself is larger — overlay.rs sizes it
+// for the largest "Chip size" so that rescaling never resizes or moves it.
+const HOLD_W = 820;
+const HOLD_H = 132;
+
 // Deep-idle edge-peek: after the chip sits undisturbed for the user's peekTimeoutSec, it
 // slides (in CSS) so only the status dot's outer half hugs the screen edge; any activity
 // restores it. After a hover, hold off re-peeking this long so a hover-restore (which slides
@@ -433,9 +439,9 @@ export default function Overlay() {
   // the edge) falls off it, dropping the hover before it can reveal. A non-tucked hover leaves it
   // false → the pill keeps its normal rest inset (no jump out from under the cursor).
   const [peekRestoring, setPeekRestoring] = useState(false);
-  // Adjusting "Chip size" / "Dot size" in Settings brings the chip out of hiding for the
-  // hover grace period, at full opacity — otherwise the user would be resizing something
-  // tucked away or dimmed to 40%. The nudge counter re-arms the peek and dim timers below.
+  // Adjusting "Chip size" in Settings brings the chip out of hiding for the hover grace
+  // period, at full opacity — otherwise the user would be resizing something tucked away or
+  // dimmed to 40%. The nudge counter re-arms the peek and dim timers below.
   const [sizeNudge, setSizeNudge] = useState(0);
   const sizeSeen = useRef(false);
   useEffect(() => {
@@ -446,7 +452,22 @@ export default function Overlay() {
     peekGraceUntil.current = performance.now() + PEEK_HOVER_GRACE_MS;
     setPeeked(false);
     setSizeNudge((n) => n + 1);
-  }, [state.chipScale, state.dotScale]);
+  }, [state.chipScale]);
+  // "Dot size" is the opposite: it only shows on the TUCKED dot, so adjusting it must never
+  // open the chip. A tucked chip stays tucked (the dot's width/height transition eases the
+  // change); a resting one that may tuck does so at once instead of waiting out the timeout,
+  // so the result is visible while the slider moves.
+  const tuckNow = useRef(false);
+  const dotSeen = useRef(false);
+  useEffect(() => {
+    if (!dotSeen.current) {
+      dotSeen.current = true; // mount, not an adjustment
+      return;
+    }
+    tuckNow.current = true;
+    peekGraceUntil.current = 0;
+    setSizeNudge((n) => n + 1);
+  }, [state.dotScale]);
   // Every "the cursor is definitely gone" path funnels here: a real pointerleave, the
   // lost-leave safety nets below (non-interactive reset, failed dwell verify, watchdog).
   const clearHover = useCallback(() => {
@@ -615,7 +636,13 @@ export default function Overlay() {
       // persist=false: this full-window hold is transient (keeps the cursor inside the shape
       // through the morph) — don't let it become the region a re-show restores, or the whole
       // strip would swallow clicks if a session ends with the cursor still over the chip.
-      void setChipHitRegion(0, 0, window.innerWidth, window.innerHeight, false).catch((e) =>
+      // "Whole window" means the chip's own 820×132 band at the screen edge, not the real
+      // window — that one is sized for the largest "Chip size" (see overlay.rs), and holding
+      // all of it would swallow a far bigger strip than the chip can ever fill.
+      const w = Math.min(HOLD_W, window.innerWidth);
+      const h = Math.min(HOLD_H, window.innerHeight);
+      const y = state.position === "bottom" ? window.innerHeight - h : 0;
+      void setChipHitRegion((window.innerWidth - w) / 2, y, w, h, false).catch((e) =>
         console.error("set chip hit region failed:", e),
       );
       return;
@@ -633,7 +660,7 @@ export default function Overlay() {
       void setChipHitRegion(r.x, r.y, r.width, r.height).catch((e) =>
         console.error("set chip hit region failed:", e),
       );
-  }, [hovering, peeked]);
+  }, [hovering, peeked, state.position]);
   // Report bounds ONLY at settled moments — never mid-morph. A region that resizes
   // out from under the cursor causes hover enter/leave thrash (chip flickering
   // open/closed, "stuck" open, needing a click to wake). So updates come only from
@@ -1014,8 +1041,11 @@ export default function Overlay() {
     // tucks promptly instead. A recent hover extends either via the grace floor.
     const base =
       keepMin && activeStatus && !standby ? PEEK_ACTIVE_SETTLE_MS : state.peekTimeoutSec * 1000;
-    const wait = Math.max(base, peekGraceUntil.current - performance.now());
-    const t = setTimeout(() => setPeeked(true), wait);
+    const wait = tuckNow.current ? 0 : Math.max(base, peekGraceUntil.current - performance.now());
+    const t = setTimeout(() => {
+      tuckNow.current = false;
+      setPeeked(true);
+    }, wait);
     return () => clearTimeout(t);
   }, [
     state.overlayPeek,
@@ -1205,7 +1235,7 @@ export default function Overlay() {
           // centred via the parent's justify-center, so the dot/tag translate (never
           // scale) as it grows.
           className={cn(
-            // max-w caps the pill to the fixed 820px overlay WINDOW (100vw here) so it can never
+            // max-w caps the pill to its 820px band (or a narrower window: 100vw) so it can never
             // grow past the window edge — otherwise the centred, content-sized pill overflows and
             // the window edge clips the right-most (newest) transcript words. The transcript below
             // is the flex element that shrinks to make the pill fit (min-w-0 chain → its own
@@ -1213,7 +1243,7 @@ export default function Overlay() {
             // 64px = 32px a side: the shadow below reaches 32px sideways (40 blur − 8 spread), and
             // the transparent window CLIPS what is painted past its edge — at the old 12px a side
             // a full-width pill's shadow ended in a hard vertical cut (the quick-add bug).
-            "inline-flex h-[42px] max-w-[calc(100vw-64px)] items-center overflow-hidden border px-3.5 transition-colors duration-300",
+            "inline-flex h-[42px] max-w-[calc(min(100vw,820px)-64px)] items-center overflow-hidden border px-3.5 transition-colors duration-300",
             // Tucked: drop the pill chrome so ONLY the bare dot peeks below the border.
             peeked
               ? "border-transparent bg-transparent shadow-none"

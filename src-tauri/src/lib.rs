@@ -275,6 +275,7 @@ pub fn run() {
             commands::get_quickadd_seed,
             commands::get_focused_selection,
             overlay::show_overlay,
+            overlay::set_overlay_scale,
             overlay::hide_overlay,
             overlay::set_chip_hit_region,
             overlay::chip_pointer_over,
