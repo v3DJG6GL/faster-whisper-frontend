@@ -37,7 +37,8 @@
 #     the GitHub release API exposes a digest for an attachment); every
 #     downloaded byte is then verified against the release's own SHA256SUMS
 #     file before it is pushed on. A size mismatch means an interrupted upload,
-#     so the GitHub copy is replaced.
+#     so the GitHub copy is replaced. An asset with no published digest (a
+#     release older than SHA256SUMS) is skipped with a warning, never uploaded.
 #   * Releases are processed oldest-first so GitHub's "latest release"
 #     badge lands on the newest non-prerelease after a backfill.
 
@@ -135,7 +136,7 @@ jobs:
             page=$((page + 1))
           done
 
-          created=0 patched=0 uploaded=0 fresh=0 lagging=0
+          created=0 patched=0 uploaded=0 fresh=0 lagging=0 unverified=0
           while IFS= read -r rel; do
             tag=$(jq -r '.tag_name' <<<"$rel")
 
@@ -216,6 +217,28 @@ jobs:
                   fresh=$((fresh + 1))
                   continue
                 fi
+              fi
+              want=$(awk -v n="$aname" '$2 == n { print $1; exit }' allsums.txt)
+              if [ -z "$want" ] && [ "${aname#SHA256SUMS}" = "$aname" ]; then
+                # No digest for this asset. Every release built since SHA256SUMS was introduced
+                # publishes one per leg, so this now means either a release predating that, or an
+                # asset someone added to the release out of band. Refuse to mirror it: a size
+                # check cannot tell a correct installer from a same-size replacement, and the job
+                # summary claims every byte is verified.
+                #
+                # Skip the asset rather than fail the job: releases are walked oldest-first, so
+                # an `exit 1` here on one OLD (pre-SHA256SUMS) release whose asset is missing on
+                # the GitHub side stopped every newer release from mirroring, forever (run 848:
+                # v0.1.36 blocked 80 releases). The guarantee is unchanged — unverified bytes are
+                # never uploaded (nor even downloaded: this runs before the fetch) — and the
+                # warning plus the summary count keep it visible. Resolve it by publishing a
+                # SHA256SUMS for that release or deleting the entry.
+                echo "::warning::[$tag] $aname has no published sha256 (release published ${sumsfound} SHA256SUMS asset(s)) — not mirroring unverified bytes"
+                unverified=$((unverified + 1))
+                continue
+              fi
+              # After the digest gate above, so a skipped asset keeps whatever copy GitHub has.
+              if [ -n "$match" ]; then
                 echo "[$tag] $aname size drifted — replacing"
                 dput -X DELETE "$dst_api/repos/$DST_REPO/releases/assets/$(jq -r '.id' <<<"$match")"
               fi
@@ -229,28 +252,12 @@ jobs:
               fi
               # And the bytes themselves, when the release published a digest for this name. A
               # size check alone cannot tell a correct installer from a same-size replacement.
-              want=$(awk -v n="$aname" '$2 == n { print $1; exit }' allsums.txt)
               if [ -n "$want" ]; then
                 got=$(sha256sum asset.bin | cut -d" " -f1)
                 if [ "$want" != "$got" ]; then
                   echo "::error::[$tag] $aname sha256 $got does not match the published $want"
                   exit 1
                 fi
-              elif [ "${aname#SHA256SUMS}" = "$aname" ]; then
-                # No digest for this asset. Every release built since SHA256SUMS was introduced
-                # publishes one per leg, so this now means either a release predating that, or an
-                # asset someone added to the release out of band. Refuse to mirror it: a size
-                # check cannot tell a correct installer from a same-size replacement, and the job
-                # summary claims every byte is verified.
-                #
-                # Note the consequence, deliberately accepted: if an OLD (pre-SHA256SUMS) release
-                # ever needs re-uploading — its asset deleted on the GitHub side, or its size
-                # drifted — this hard-fails and no further releases mirror until it is resolved,
-                # either by publishing a SHA256SUMS for that release or by deleting the entry.
-                # Assets already mirrored are counted `fresh` and skipped, so this does not fire
-                # on a steady-state run.
-                echo "::error::[$tag] $aname has no published sha256 (release published ${sumsfound} SHA256SUMS asset(s)) — refusing to mirror unverified bytes"
-                exit 1
               fi
               dput -X POST "https://uploads.github.com/repos/$DST_REPO/releases/$rid/assets?name=$aname" \
                 -H 'Content-Type: application/octet-stream' \
@@ -262,4 +269,5 @@ jobs:
 
           summary="mirror-gh-releases: $created release(s) created, $patched patched, $uploaded asset(s) uploaded, $fresh already in sync"
           [ "$lagging" -gt 0 ] && summary="$summary, $lagging tag(s) awaiting the push mirror"
+          [ "$unverified" -gt 0 ] && summary="$summary, $unverified asset(s) skipped for lack of a published sha256"
           echo "::notice::$summary"
