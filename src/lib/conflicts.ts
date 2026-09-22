@@ -10,7 +10,9 @@
 // implements on purpose (src-tauri/src/chord_engine.rs), and the shape every
 // dictation product ships (Wispr Flow: Ctrl+Win → Ctrl+Win+Space):
 //   • a HOLD chord ⊂ a HANDS-FREE chord  — completing the superset UPGRADES the
-//     running push-to-talk session to hands-free (reclassify, no restart).
+//     running push-to-talk session to hands-free (reclassify, no restart) — or, when
+//     the two Profiles need different sessions (backend, language, …), discards it and
+//     starts the hands-free Profile instead (dictation.ts `sessionShape`).
 // Everything else nested (hands-free ⊂ hands-free, hold ⊂ hold, anything ⊂/⊃ quick-add…)
 // is a hard "shadow" conflict. This MUST stay in lockstep with the engine's
 // semantics — and with the registration filter in both hotkey backends — so

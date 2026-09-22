@@ -7,12 +7,13 @@ import { useApp } from "./store";
 import {
   startLive, stopLive, cancelLive, requestStopIfStarting, cancelStopIfStarting, isStarting,
   queuePendingHoldStart, voidPendingHoldStart, registerPendingStartRunner, reclassifyLive, abortDictationTranslate,
-  isCapturing, setSettleTargetPicker, setRouteHint,
+  isCapturing, setSettleTargetPicker, setRouteHint, restartLiveAs,
 } from "./streaming";
 import type { TargetPick } from "./streaming";
 import { getFocusedApp, isTauri, showLangPick, showQuickAdd } from "./api";
 import { ownProp } from "./own";
 import { effectiveLanguage } from "./backends";
+import { sessionShape } from "./sessionShape";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
 import { configuredRouteTargets } from "./overlay";
 import type { Backend, Profile } from "./types";
@@ -84,7 +85,10 @@ export function dictate(profileId: string, action: TriggerAction): void {
     if (requestStopIfStarting()) return;
   }
   // Chord family: the hands-free superset completed over the hold root. Three meanings:
-  //   • session running under ANOTHER profile → upgrade it in place (hold → hands-free);
+  //   • session running under ANOTHER profile → upgrade it in place (hold → hands-free) when
+  //     both Profiles resolve to the same session (sessionShape); otherwise the upgrade would
+  //     keep the hold's backend/language under the hands-free label, so discard the hold
+  //     session and start the hands-free Profile for real (restartLiveAs);
   //   • session running under THIS hands-free profile → the user pressed the family again:
   //     toggle off (the root's own "start" was the busy-gate no-op just before this);
   //   • idle → the keys arrived (near-)simultaneously and the root never started, or
@@ -93,7 +97,13 @@ export function dictate(profileId: string, action: TriggerAction): void {
     if (isBusy() || isStarting()) {
       const handsFree = s.profiles.find((p) => p.id === profileId);
       if (s.activeProfile === profileId) stopOrCancel(true);
-      else if (handsFree && handsFree.enabled) reclassifyLive(handsFree);
+      else if (handsFree && handsFree.enabled) {
+        const running = s.profiles.find((p) => p.id === s.activeProfile);
+        const shape = (p: Profile) => sessionShape(p, backendForProfile(p, s.backends));
+        if (running && shape(running) !== shape(handsFree)) {
+          restartLiveAs(() => dictate(profileId, "toggle"));
+        } else reclassifyLive(handsFree);
+      }
       return;
     }
   }

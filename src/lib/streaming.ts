@@ -769,6 +769,12 @@ let phraseDeferSince: number | null = null;
 // built yet) — startLiveInner applies the upgrade right after it exists. Cleared on
 // every fresh start and on cancel so a stale flip can't latch an unrelated session.
 let pendingReclassify: Profile | null = null;
+// Chord family, the other answer: the hands-free superset needs a session the hold's can't be
+// upgraded into (another backend/language/…, see dictation.ts `sessionShape`). A restart that
+// lands during the start prologue waits here until the prologue settles; startLive's `finally`
+// then cancels the hold session (if it came up) and runs this to start the hands-free one.
+// Cleared on every fresh start and on cancel, like pendingReclassify.
+let restartOwed: (() => void) | null = null;
 // Serialise every injection op so backspaces/types never interleave or race.
 let injectChain: Promise<void> = Promise.resolve();
 /** Pending links on `injectChain`. The queue is fed by `stream://final`, whose rate the untrusted
@@ -2686,6 +2692,7 @@ export async function startLive(
   startingSession = true;
   stopRequestedDuringStart = false; // fresh start; a prologue stop sets it (see requestStopIfStarting)
   pendingReclassify = null; // a stale queued upgrade must not latch this unrelated session
+  restartOwed = null; // …nor a stale queued restart replace it
   // Cancel a prior error's lingering auto-clear timer: its body nulls activeProfile + blips the chip
   // to idle, guarded only by status==="error" at fire time. A re-trigger during the ~1s start prologue
   // (status stays "error" until startLiveInner sets "listening") would otherwise let it fire on the
@@ -2708,6 +2715,16 @@ export async function startLive(
     flashError(String(e));
   } finally {
     startingSession = false;
+    // A chord-family restart landed during the prologue. `capturing` says whether the hold
+    // session actually came up (a failed start already tore itself down): cancel it first,
+    // then start the hands-free Profile on a clean slate.
+    // (TS narrows the module `let` to its start-of-function `null`; the prologue's awaits set it.)
+    const restart = restartOwed as (() => void) | null;
+    restartOwed = null;
+    if (restart) {
+      if (capturing) void cancelLive({ keepShortcuts: true }).then(restart);
+      else restart();
+    }
   }
 }
 
@@ -3020,7 +3037,8 @@ async function startLiveInner(
     // A stop landed during the start prologue (a fast PTT tap released the chord before status was
     // "listening", so stopOrCancel no-op'd against idle). The session is up now → stop it promptly
     // (a short tap-dictation) instead of leaving it wedged "listening" with the chord released.
-    if (stopRequestedDuringStart) {
+    // An owed chord-family restart supersedes it: startLive's `finally` cancels this session.
+    if (stopRequestedDuringStart && !restartOwed) {
       stopRequestedDuringStart = false;
       void stopLive();
     }
@@ -3045,7 +3063,8 @@ async function startLiveInner(
  *  the auto-stop timer arms, live TYPING becomes allowed once the chord is
  *  released (recomputed below), and the chip/usage relabel to the hands-free
  *  Profile. That Profile's own backend/language/prompt overrides do NOT
- *  apply — the transport was opened for the hold's backend and stays there.
+ *  apply — the transport was opened for the hold's backend and stays there —
+ *  so dictation.ts only upgrades when they match, and `restartLiveAs` otherwise.
  *  Mid-prologue (insertCfg not built yet) the flip is queued and applied by
  *  startLiveInner the moment the session context exists. */
 export function reclassifyLive(profile: Profile): void {
@@ -3055,6 +3074,28 @@ export function reclassifyLive(profile: Profile): void {
   }
   if (!insertCfg) return; // no session — dictate() only calls this while busy
   applyReclassify(profile);
+}
+
+export interface CancelOpts {
+  /** Skip the shortcut re-registration — for the chord-family restart, which cancels while
+   *  the user is still holding the chord (re-enumerating keyboards then would lose its keys). */
+  keepShortcuts?: boolean;
+}
+
+/** Chord family, when the in-place upgrade would be a lie: the hands-free Profile needs a
+ *  different session than the running hold one (another backend, language, prompt, decode or
+ *  translation setup — dictation.ts decides). Discard the hold session WITHOUT inserting
+ *  anything, then call `start` to begin the hands-free Profile properly. The hold's audio is
+ *  lost, which in practice is the few ms between the root chord and the superset key.
+ *  Mid-prologue the restart is queued and honored when the prologue settles. */
+export function restartLiveAs(start: () => void): void {
+  pendingReclassify = null;
+  if (startingSession) {
+    restartOwed = start;
+    return;
+  }
+  // The chord is still physically held here — keep the hotkey backend's held-set as it is.
+  void cancelLive({ keepShortcuts: true }).then(start);
 }
 
 function applyReclassify(profile: Profile): void {
@@ -3188,10 +3229,11 @@ export async function stopLive(): Promise<void> {
  *  re-applies the hotkey bindings, since a suspend can leave a hold-to-talk chord
  *  stuck "down" in the evdev backend (a dropped key-release) — so the one action
  *  recovers both the recording state AND the shortcuts. */
-export async function cancelLive(): Promise<void> {
+export async function cancelLive(opts?: CancelOpts): Promise<void> {
   autoStopMs = 0; // disarm hands-free auto-stop
   voidPendingHoldStart(); // a deliberate cancel also voids a queued fast re-press (in-flight check included)
   pendingReclassify = null; // …and a queued chord-family upgrade
+  restartOwed = null; // …or restart
   clearWarmTimer();
   clearStuckWatchdog();
   stopTargetPoll();
@@ -3266,6 +3308,7 @@ export async function cancelLive(): Promise<void> {
   // capture-aware variant: cancelLive runs on system://resumed, and if a binding capture is in
   // progress the suspend-watch deliberately left shortcuts suspended — re-arming here would let the
   // user's next chord both rebind AND fire dictation. The capture-end reregister re-arms when done.
+  if (opts?.keepShortcuts) return;
   try {
     await reregisterShortcutsUnlessCapturing();
   } catch (e) {
