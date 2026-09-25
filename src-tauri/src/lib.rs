@@ -29,6 +29,7 @@ mod win_session_end;
 #[cfg(windows)]
 mod win_topmost;
 mod winpos;
+mod winvis;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -100,6 +101,7 @@ pub fn run() {
                 if matches!(window.label(), "main" | "quickadd" | "langpick") {
                     api.prevent_close();
                     let _ = window.hide();
+                    winvis::notify(window, window.label(), false);
                 }
                 // An OS/WM close (Alt+F4 / compositor close) of quick-add bypasses the in-app
                 // Esc/X path, so its debounced-save flush + correct-on-close word replacement would

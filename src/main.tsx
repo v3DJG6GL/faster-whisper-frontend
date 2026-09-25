@@ -13,6 +13,7 @@ import QuickAdd from "./QuickAdd";
 import LangPick from "./LangPick";
 import { initKeyboardLayout } from "./lib/keyboardLayout";
 import { applyTheme } from "./lib/theme";
+import { watchWindowVisibility } from "./lib/windowVisibility";
 
 type WindowLabel = "main" | "overlay" | "quickadd" | "langpick";
 
@@ -34,6 +35,8 @@ function detectWindowLabel(): WindowLabel {
 
 const label = detectWindowLabel();
 document.body.dataset.window = label;
+// Before any window mounts its drift driver: the three hidden-at-launch windows start paused.
+watchWindowVisibility(label);
 // Learn the user's keyboard layout (QWERTZ etc.) so shortcut chips show the keys on
 // their keycaps, not the physical US-QWERTY positions event.code reports.
 initKeyboardLayout();

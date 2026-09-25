@@ -56,6 +56,7 @@ pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
             let _ = win.set_title(LP_TITLE);
             std::thread::spawn(kwin::install_keep_above);
         }
+        crate::winvis::notify(&win, "langpick", true);
         let _ = win.show();
         // set_always_on_top(true) above is a no-op on Windows — see win_topmost.rs.
         #[cfg(windows)]
@@ -88,6 +89,7 @@ pub(crate) fn hide_lang_pick(app: AppHandle) {
     let _ = app.run_on_main_thread(move || {
         if let Some(win) = handle.get_webview_window("langpick") {
             let _ = win.hide();
+            crate::winvis::notify(&win, "langpick", false);
         }
     });
 }

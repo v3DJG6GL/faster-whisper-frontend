@@ -269,6 +269,7 @@ fn show_now(app: &AppHandle) {
             let _ = win.set_title(QA_TITLE);
             std::thread::spawn(kwin::install_keep_above);
         }
+        crate::winvis::notify(&win, "quickadd", true);
         let _ = win.show();
         // set_always_on_top(true) above is a no-op on Windows (tao only acts on a CHANGED
         // flag) and show() never raises — see win_topmost.rs.
@@ -291,6 +292,7 @@ pub fn hide(app: &AppHandle) {
     let _ = app.run_on_main_thread(move || {
         if let Some(win) = handle.get_webview_window("quickadd") {
             let _ = win.hide();
+            crate::winvis::notify(&win, "quickadd", false);
         }
     });
 }

@@ -217,6 +217,14 @@ body[data-window="main"]::before {
     radial-gradient(90% 60% at -10% 110%, var(--c-glow-b), var(--c-glow-0) 55%);
 }
 
+/* A Motion drift tick (theme.ts `stampTick`) restamps the accent tokens up to 4× a second;
+   without this every `transition-colors` element re-ran its 150 ms fade on each tick and the
+   window animated most frames. Scoped to that utility on purpose: a blanket transition:none
+   would cut the Pride mark's delayed transitions below. Lifted two frames after the tick. */
+html.accent-tick .transition-colors {
+  transition-property: none !important;
+}
+
 input,
 textarea {
   font-family: inherit;

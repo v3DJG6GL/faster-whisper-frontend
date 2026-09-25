@@ -17,11 +17,14 @@ import {
   driftTickMs,
   effectiveMotion,
   fmtPer,
+  isAccentDriftPaused,
   isValidAccentMotion,
   lum,
+  motionCostNote,
   motionPhase,
   secToSlider,
   setAccentHue,
+  setAccentDriftPaused,
   setAccentMotion,
   sliderToSec,
   startAccentDrift,
@@ -303,5 +306,136 @@ describe("applyTheme + setAccentHue", () => {
     ticks = 0;
     vi.advanceTimersByTime(5_000);
     expect(ticks).toBe(5);
+  });
+
+  it("a tick that lands on the same whole degree stamps nothing", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.stubGlobal("document", fakeDocument);
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    let stamps = 0;
+    subscribeAccentHue(() => stamps++);
+    setAccentHue(100);
+    setAccentMotion({ period: 604_800, range: "wheel" }); // 7 d: one degree every 28 min
+    applyTheme("dark");
+    startAccentDrift();
+    stamps = 0;
+    vi.advanceTimersByTime(5 * 60_000); // ten 30 s ticks, none of them a new degree
+    expect(stamps).toBe(0);
+    // A theme apply still restamps, same hue or not.
+    applyTheme("dark");
+    expect(stamps).toBe(1);
+  });
+
+  it("a paused driver arms no timer and catches up from the clock on resume", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.stubGlobal("document", fakeDocument);
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    setAccentHue(65);
+    setAccentMotion({ period: 360, range: "wheel" });
+    applyTheme("dark");
+    startAccentDrift();
+    setAccentDriftPaused("window", true);
+    expect(isAccentDriftPaused()).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(10_000);
+    expect(currentAccentHue()).toBe(65); // held: nobody sees it
+    setAccentDriftPaused("window", false);
+    expect(currentAccentHue()).toBe(75); // straight to the clock's hue
+    vi.advanceTimersByTime(2_000);
+    expect(currentAccentHue()).toBe(77);
+  });
+
+  it("a window that boots paused never arms the timer", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.stubGlobal("document", fakeDocument);
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    setAccentDriftPaused("window", true);
+    setAccentMotion({ period: 60, range: "wheel" });
+    applyTheme("dark");
+    startAccentDrift();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a theme flip or a new motion while paused stamps once and stays paused", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.stubGlobal("document", fakeDocument);
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    let stamps = 0;
+    subscribeAccentHue(() => stamps++);
+    setAccentHue(275);
+    setAccentMotion({ period: 360, range: "wheel" });
+    applyTheme("dark");
+    startAccentDrift();
+    setAccentDriftPaused("window", true);
+    stamps = 0;
+    applyTheme("light");
+    expect(props.get("--c-accent")).toBe(deriveAccent(275, false).accent);
+    setAccentMotion({ period: 60, range: "wheel" });
+    expect(stamps).toBe(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("the drift runs only once every pause reason is lifted", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.stubGlobal("document", fakeDocument);
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    setAccentMotion({ period: 360, range: "wheel" });
+    applyTheme("dark");
+    startAccentDrift();
+    setAccentDriftPaused("window", true);
+    setAccentDriftPaused("document", true);
+    setAccentDriftPaused("window", false);
+    expect(vi.getTimerCount()).toBe(0);
+    setAccentDriftPaused("document", false);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it("the driver asks for the reduced-motion query once, not once per tick", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.stubGlobal("document", fakeDocument);
+    let reducedQueries = 0;
+    vi.stubGlobal("window", {
+      matchMedia: (q: string) => {
+        if (q.includes("reduced-motion")) reducedQueries++;
+        return { matches: false };
+      },
+    });
+    setAccentMotion({ period: 60, range: "wheel" });
+    applyTheme("dark");
+    reducedQueries = 0;
+    startAccentDrift();
+    vi.advanceTimersByTime(10_000); // 40 ticks
+    expect(reducedQueries).toBe(1);
+  });
+});
+
+describe("motionCostNote", () => {
+  it("warns at two updates a second or more, notes about one, says nothing slower", () => {
+    expect(motionCostNote(0)).toBeNull();
+    for (const p of [30, 60, 90]) {
+      expect(motionCostNote(p)).toEqual({
+        tone: "warn",
+        text: "Updates the colour 4 times a second in every open window, which keeps the CPU busy.",
+      });
+    }
+    expect(motionCostNote(120)?.text).toContain("3 times a second");
+    for (const p of [150, 180]) {
+      expect(motionCostNote(p)).toMatchObject({ tone: "warn" });
+      expect(motionCostNote(p)?.text).toContain("twice a second");
+    }
+    for (const p of [181, 300, 360]) {
+      expect(motionCostNote(p)).toEqual({
+        tone: "note",
+        text: "Updates the colour about once a second in every open window, which keeps the CPU busy.",
+      });
+    }
+    expect(motionCostNote(361)).toBeNull();
+    expect(motionCostNote(3600)).toBeNull();
   });
 });

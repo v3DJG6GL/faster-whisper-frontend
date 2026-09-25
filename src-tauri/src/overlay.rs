@@ -203,6 +203,7 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
     #[cfg(target_os = "linux")]
     if kwin::is_kde_wayland() {
         let _ = win.set_title(CHIP_TITLE);
+        crate::winvis::notify(&win, "overlay", true);
         let _ = win.show();
         ignore_cursor(&win);
         // ignore_cursor REPLACED the input shape with an empty one (whole window click-through);
@@ -231,6 +232,7 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
     #[cfg(windows)]
     ignore_cursor(&win);
 
+    crate::winvis::notify(&win, "overlay", true);
     let _ = win.show();
 
     #[cfg(not(windows))]
@@ -297,6 +299,7 @@ pub fn set_overlay_scale(app: AppHandle, scale: f64) {
 pub fn hide_overlay(app: AppHandle) {
     if let Some(win) = app.get_webview_window("overlay") {
         let _ = win.hide();
+        crate::winvis::notify(&win, "overlay", false);
     }
     #[cfg(windows)]
     win_hover::on_hide();

@@ -28,6 +28,8 @@
 // ticks once per degree of hue (clamped 250 ms … 30 s) and restamps the tokens through the
 // same engine; the persisted `accentHue` is never touched — it is the base the drift
 // starts from. `prefers-reduced-motion` forces Still (period 0) and Settings says so.
+// A hidden window holds its drift (`setAccentDriftPaused`, fed by windowVisibility.ts) and
+// catches up from the clock when shown, so only the windows on screen pay for the motion.
 
 import type { ThemeName } from "./types";
 
@@ -253,6 +255,9 @@ let accentMotion: AccentMotion = DEFAULT_ACCENT_MOTION;
 let currentDark = true;
 /** The hue the tokens currently show (integer degrees; the base while Still). */
 let shownHue = DEFAULT_ACCENT_HUE;
+/** The theme cut the tokens were last stamped for; `null` until the first stamp. Together
+ *  with `shownHue` it lets a drift tick that lands on the same whole degree do nothing. */
+let shownDark: boolean | null = null;
 const listeners = new Set<(hue: number) => void>();
 
 /** Set the Signal colour for the next `applyTheme` (module state: every webview owns
@@ -272,7 +277,8 @@ export function currentAccentHue(): number {
   return shownHue;
 }
 
-/** Be told on every restamp (each drift tick, each theme apply) what hue is showing.
+/** Be told on every restamp (each drift tick that moves a whole degree, each theme apply)
+ *  what hue is showing.
  *  Settings' "Right now" row is the one subscriber. Returns the unsubscribe. */
 export function subscribeAccentHue(fn: (hue: number) => void): () => void {
   listeners.add(fn);
@@ -283,7 +289,7 @@ export function subscribeAccentHue(fn: (hue: number) => void): () => void {
  *  whole degree — one degree is below the just-noticeable difference, and rounding keeps
  *  the "default hue stamps nothing" shortcut alive as a wheel sweeps past 65. */
 function hueNow(): number {
-  const m = effectiveMotion(accentMotion, prefersReducedMotion());
+  const m = effectiveMotion(accentMotion, reducedNow());
   return Math.round(driftHue(accentHue, m, Date.now())) % 360;
 }
 
@@ -293,8 +299,34 @@ function applyAccent(dark: boolean): void {
   stampHue(hueNow(), dark);
 }
 
+/** A drift tick's restamp. The tokens feed ~40 `transition-colors` elements (the sidebar's
+ *  active icon among them); a 150 ms colour transition re-armed by every 250 ms tick kept the
+ *  main window animating most frames. `accent-tick` (app.css) switches those transitions off
+ *  for the frame that sees the new tokens and is lifted two frames later, once the colours
+ *  have settled, so a hover still fades normally between ticks. Only ticks do this: a pick in
+ *  Settings or a theme flip keeps its transition. */
+function stampTick(hue: number, dark: boolean): void {
+  const root = document.documentElement;
+  const canSuppress = typeof root.classList?.add === "function" && typeof requestAnimationFrame === "function";
+  if (canSuppress) {
+    if (tickRaf) cancelAnimationFrame(tickRaf);
+    root.classList.add("accent-tick");
+  }
+  stampHue(hue, dark);
+  if (canSuppress) {
+    tickRaf = requestAnimationFrame(() => {
+      tickRaf = requestAnimationFrame(() => {
+        tickRaf = 0;
+        root.classList.remove("accent-tick");
+      });
+    });
+  }
+}
+let tickRaf = 0;
+
 function stampHue(hue: number, dark: boolean): void {
   shownHue = hue;
+  shownDark = dark;
   const style = document.documentElement.style;
   if (hue === DEFAULT_ACCENT_HUE) {
     for (const v of ACCENT_VARS) style.removeProperty(v);
@@ -340,18 +372,80 @@ export function watchSystemTheme(get: () => ThemeName): () => void {
 
 let driverRunning = false;
 let timer: ReturnType<typeof setInterval> | null = null;
+/** The driver's own reduced-motion query, made once per start. `matchMedia` builds a new
+ *  MediaQueryList on every call, and `hueNow` runs on every tick — 4 a second per window at
+ *  the fastest speeds. */
+let reducedMq: MediaQueryList | null = null;
+/** Why this window's drift is on hold ("window" = Rust hid it, "document" = the page is
+ *  hidden). A hidden webview has nobody to show the colour to, and ticking there built up
+ *  memory it never gave back (quick-add grew ~1.3 MB a minute while hidden). */
+const pauseReasons = new Set<string>();
+
+function reducedNow(): boolean {
+  return reducedMq ? reducedMq.matches : prefersReducedMotion();
+}
+
+/** One tick: restamp only when the whole degree (or the theme cut) actually moved. */
+function tick(): void {
+  const hue = hueNow();
+  if (hue === shownHue && currentDark === shownDark) return;
+  stampTick(hue, currentDark);
+}
 
 /** (Re)arm the tick for the effective motion: Still stamps the base once and idles;
  *  anything else restamps every `driftTickMs`. Called whenever the motion, the reduced-
- *  motion preference or the driver's own lifetime changes. */
+ *  motion preference, a pause or the driver's own lifetime changes. A paused window still
+ *  gets the one stamp (so a theme flip or a new motion is right the moment it is shown) but
+ *  no timer. */
 function schedule(): void {
   if (timer !== null) {
     clearInterval(timer);
     timer = null;
   }
-  const m = effectiveMotion(accentMotion, prefersReducedMotion());
+  const m = effectiveMotion(accentMotion, reducedNow());
   applyAccent(currentDark);
-  if (m.period > 0) timer = setInterval(() => applyAccent(currentDark), driftTickMs(m.period));
+  if (m.period > 0 && pauseReasons.size === 0) timer = setInterval(tick, driftTickMs(m.period));
+}
+
+/** Put this window's drift on hold for `reason`, or lift that reason. The drift runs only
+ *  while no reason is left; lifting the last one re-derives the hue from the clock at once,
+ *  so the window shows the same colour as every other window the moment it is visible.
+ *  Works before `startAccentDrift` too (a window that boots hidden starts on hold). */
+export function setAccentDriftPaused(reason: string, paused: boolean): void {
+  const was = pauseReasons.size > 0;
+  if (paused) pauseReasons.add(reason);
+  else pauseReasons.delete(reason);
+  const now = pauseReasons.size > 0;
+  if (!driverRunning || was === now) return;
+  if (now) {
+    // Keep whatever hue is showing: nobody sees it, and the resume restamps from the clock.
+    if (timer !== null) {
+      clearInterval(timer);
+      timer = null;
+    }
+  } else {
+    schedule();
+  }
+}
+
+export function isAccentDriftPaused(): boolean {
+  return pauseReasons.size > 0;
+}
+
+/** What a Motion speed costs, for the note under Settings' Motion row: the update rate is
+ *  the driver's own tick (`driftTickMs`), so the note can never disagree with the engine.
+ *  Two updates a second or more warns; about one a second is a quiet note; slower costs
+ *  nothing worth saying. */
+export function motionCostNote(period: number): { tone: "warn" | "note"; text: string } | null {
+  if (!(period > 0)) return null;
+  const rate = 1000 / driftTickMs(period);
+  if (rate < 1) return null;
+  const n = Math.round(rate);
+  const words = rate < 2 ? "about once a second" : n === 2 ? "twice a second" : `${n} times a second`;
+  return {
+    tone: rate < 2 ? "note" : "warn",
+    text: `Updates the colour ${words} in every open window, which keeps the CPU busy.`,
+  };
 }
 
 /** Start this window's drift clock. Idempotent — a second call while running is a no-op
@@ -364,6 +458,7 @@ export function startAccentDrift(): () => void {
   const mq = typeof window !== "undefined" && typeof window.matchMedia === "function"
     ? window.matchMedia(REDUCED_MOTION_MQ)
     : null;
+  reducedMq = mq;
   const onReduced = () => schedule();
   mq?.addEventListener?.("change", onReduced);
   reducedCleanup = () => mq?.removeEventListener?.("change", onReduced);
@@ -384,6 +479,9 @@ function stopAccentDrift(): void {
   }
   reducedCleanup?.();
   reducedCleanup = null;
+  reducedMq = null;
+  // Pause reasons are the window's, not the driver's: they outlive a stop/start (React
+  // StrictMode remounts the effect that owns the driver).
   // The setting itself is untouched: a later start resumes it from the clock.
   stampHue(((Math.round(accentHue) % 360) + 360) % 360, currentDark);
 }
@@ -395,5 +493,7 @@ export function _resetThemeEngineForTests(): void {
   accentMotion = DEFAULT_ACCENT_MOTION;
   currentDark = true;
   shownHue = DEFAULT_ACCENT_HUE;
+  shownDark = null;
+  pauseReasons.clear();
   listeners.clear();
 }
