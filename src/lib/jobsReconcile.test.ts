@@ -28,7 +28,7 @@ vi.mock("./api", async (importOriginal) => ({
 }));
 vi.mock("./persistence", () => ({ configReady: Promise.resolve() }));
 
-const { _resetLedgerForTests, ledgerRows, persistRow } = await import("./jobsLedger");
+const { _resetLedgerForTests, ledgerRows, persistRow, MAX_AGE_MS } = await import("./jobsLedger");
 const { _resetReconcileForTests, initJobReconcile, reconcileJobs, NOT_FOUND_ERROR } =
   await import("./jobsReconcile");
 const { useTranscribeRun, forgetRecord, cancelRun } = await import("./transcribeRun");
@@ -229,6 +229,73 @@ describe("reconcileJobs", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(ledgerRows()).toEqual([]);
     await vi.advanceTimersByTimeAsync(3_000);
+    expect(getJob).not.toHaveBeenCalled();
+  });
+
+  it("a done status whose result is not published yet re-polls, then ingests", async () => {
+    await seed(row(JOB_A, T0));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    await reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    // The result endpoint still answers 409 on the first try.
+    getJobResult.mockResolvedValueOnce({ kind: "running" }).mockResolvedValue(ok(RESULT));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(getJobResult).toHaveBeenCalledTimes(1);
+    expect(records()).toEqual([]);
+    expect(ledgerRows()).toHaveLength(1);
+    expect(useTranscribeRun.getState().running).toBe(true);
+    // A later poll fetches it and settles the rail.
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getJobResult).toHaveBeenCalledTimes(2);
+    expect(records().map((r) => r.id)).toEqual([JOB_A]);
+    expect(ledgerRows()).toEqual([]);
+    expect(useTranscribeRun.getState().running).toBe(false);
+  });
+
+  it("a result fetch that keeps failing backs off, and still gives up at MAX_AGE_MS", async () => {
+    await seed(row(JOB_A, T0));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    await reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    const at: number[] = [];
+    getJobResult.mockImplementation(async () => {
+      at.push(Date.now());
+      return { kind: "error", message: "Could not connect" };
+    });
+    await vi.advanceTimersByTimeAsync(120_000);
+    const gaps = at.slice(1).map((t, i) => t - at[i]);
+    expect(gaps.slice(0, 4)).toEqual([2_000, 4_000, 8_000, 16_000]);
+    expect(Math.max(...gaps)).toBe(30_000);
+    expect(ledgerRows()).toHaveLength(1);
+    // Past the ledger's age limit the watcher fails the run instead of polling forever.
+    vi.setSystemTime(T0 + MAX_AGE_MS + 1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(records()[0]).toMatchObject({ id: JOB_A, status: "failed" });
+    expect(ledgerRows()).toEqual([]);
+    expect(useTranscribeRun.getState().running).toBe(false);
+    const calls = getJobResult.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(getJobResult).toHaveBeenCalledTimes(calls);
+  });
+
+  it("cancelling after a failed result fetch still forgets the row", async () => {
+    await seed(row(JOB_A, T0));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    await reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue({ kind: "error", message: "Could not connect" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(getJobResult).toHaveBeenCalledTimes(1);
+    getJob.mockClear();
+    cancelRun();
+    expect(useTranscribeRun.getState().running).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ledgerRows()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(getJob).not.toHaveBeenCalled();
   });
 

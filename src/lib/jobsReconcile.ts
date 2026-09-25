@@ -55,7 +55,8 @@ function failedText(status: JobStatus): string {
   return status.state === "cancelled" ? "Cancelled" : "The run failed on the server";
 }
 
-/** Fetch + ingest a finished job. Returns false when the fetch must be retried. */
+/** Fetch + ingest a finished job. Returns false when the fetch must be retried
+ *  (transport error, or the result is not published yet). */
 async function ingestDone(row: LedgerRow, status: JobStatus, attached: boolean): Promise<boolean> {
   const r = await getJobResult({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
   switch (r.kind) {
@@ -64,8 +65,10 @@ async function ingestDone(row: LedgerRow, status: JobStatus, attached: boolean):
       await forgetRow(row.jobId);
       return true;
     case "running":
-      // Raced the finish: the next poll sees the terminal state.
-      return true;
+      // The status said done but the result endpoint still answers 409 (the server
+      // publishes the two a moment apart). Retry like a fetch error: nothing was
+      // ingested yet, so reporting success here would abandon the finished run.
+      return false;
     case "not_found":
     case "disabled":
       failJob(row, r.kind === "disabled" ? DISABLED_ERROR : NO_RESULT_ERROR, { attached });
@@ -88,13 +91,13 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
     stopped = true;
     clearTimeout(timer);
   };
-  if (opts.attached) {
-    setReattachStop(() => {
-      stop();
-      useTranscribeRun.setState({ running: false });
-      void forgetRow(row.jobId);
-    });
-  }
+  // The rail's stop hook (abandonActiveRun): the user moved on, so the row goes too.
+  const abandon = () => {
+    stop();
+    useTranscribeRun.setState({ running: false });
+    void forgetRow(row.jobId);
+  };
+  if (opts.attached) setReattachStop(abandon);
   const tick = async () => {
     if (stopped) return;
     if (opts.attached && useTranscribeRun.getState().epoch !== opts.epoch) {
@@ -120,7 +123,6 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
         delay = Math.min(POLL_MS * 2 ** failures, MAX_BACKOFF_MS);
         return;
       }
-      failures = 0;
       if (r.kind === "not_found" || r.kind === "disabled") {
         stop();
         if (opts.attached) setReattachStop(null);
@@ -131,13 +133,27 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
       if (r.kind !== "ok") return;
       const status = r.value;
       if (status.state === "running") {
+        failures = 0;
         if (opts.attached && status.progress) foldProgress(status.progress);
         return;
       }
       if (status.state === "done") {
         if (opts.attached) setReattachStop(null);
-        if (await ingestDone(row, status, opts.attached)) stop();
-        else if (opts.attached) setReattachStop(() => stop());
+        if (await ingestDone(row, status, opts.attached)) {
+          stop();
+          return;
+        }
+        // Back off like a status error (failures is not reset on "done", so a result
+        // that keeps failing slows down to MAX_BACKOFF_MS instead of 1 s for 72 h).
+        failures += 1;
+        delay = Math.min(POLL_MS * 2 ** failures, MAX_BACKOFF_MS);
+        if (!opts.attached) return;
+        if (useTranscribeRun.getState().epoch !== opts.epoch) {
+          // The rail moved on during the fetch; the hook slot is someone else's now.
+          stop();
+          return;
+        }
+        setReattachStop(abandon);
         return;
       }
       stop();
