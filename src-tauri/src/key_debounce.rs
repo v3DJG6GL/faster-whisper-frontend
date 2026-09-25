@@ -92,6 +92,8 @@ impl Debouncer {
 
     /// Drop a single key's deferred release without committing it — restores the
     /// `held`/`pending` coupling for callers that bypass `on_event` (e.g. `resync_held`).
+    /// Only the Windows hook resyncs held keys, so elsewhere it has no caller.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn forget(&mut self, key: u16) {
         self.pending.remove(&key);
     }
