@@ -22,7 +22,7 @@ import {
 } from "./transcribeRun";
 import type { PlanStage } from "./types";
 import type { QueueItem } from "./transcribeRun";
-import type { TranscriptRecord } from "./transcriptHistory";
+import { deleteRecord, patchRecord, type TranscriptRecord } from "./transcriptHistory";
 
 describe("railOf", () => {
   it("folds resolving onto the download row", () => {
@@ -675,8 +675,6 @@ describe("forgetRecord (a deleted record must stay deleted)", () => {
     // the test env is `node`, so point `window` at the (faked) globals.
     vi.stubGlobal("window", globalThis);
     try {
-      useTranscriptHistory.setState({ records: [], loaded: false });
-      saveTranscriptRecord.mockClear();
       const rec: TranscriptRecord = {
         schemaVersion: 1,
         kind: "file",
@@ -687,18 +685,110 @@ describe("forgetRecord (a deleted record must stay deleted)", () => {
         status: "done",
         result: { text: "a", segments: [{ start: 0, end: 1, text: "a", speaker: "SPEAKER_00" }] },
       };
+      // Opened from History's list, so the mirror holds it.
+      useTranscriptHistory.setState({ records: [rec], loaded: false });
+      saveTranscriptRecord.mockClear();
       openHistoryRecord(rec);
       forgetRecord(rec.id); // History deleted it out from under the open workbench
       setRename(rec.id, "SPEAKER_00", "Kate"); // the 800 ms persist debounce
       vi.advanceTimersByTime(900);
       expect(saveTranscriptRecord).not.toHaveBeenCalled();
-      expect(useTranscriptHistory.getState().records).toEqual([]);
+      expect(useTranscriptHistory.getState().records).toEqual([rec]);
       expect(useTranscribeRun.getState().openRecordId).toBeNull();
     } finally {
       vi.useRealTimers();
       forgetRecord(null);
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("one current copy per record (the registries hold ids, never copies)", () => {
+  const rec: TranscriptRecord = {
+    schemaVersion: 1,
+    kind: "url",
+    id: "cur-1",
+    createdAt: "2026-08-30T12:00:00Z",
+    sourcePath: "https://example.com/watch?v=1",
+    sourceName: "clip",
+    status: "done",
+    result: {
+      text: "a",
+      sourceMediaId: "srv-audio",
+      segments: [{ start: 0, end: 1, text: "a", speaker: "SPEAKER_00" }],
+    },
+  };
+  const saves = () => saveTranscriptRecord.mock.calls.filter(([id]) => id === rec.id);
+
+  beforeEach(async () => {
+    const { useTranscriptHistory } = await import("./transcriptHistory");
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+    useTranscriptHistory.setState({ records: [rec], loaded: true });
+    saveTranscriptRecord.mockClear();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    forgetRecord(null);
+    vi.unstubAllGlobals();
+  });
+
+  it("a viewer write, then a rename, keeps the viewer's fields", async () => {
+    const { currentRecord } = await import("./transcriptHistory");
+    openHistoryRecord(rec);
+    // The export panel's writes go straight to the history, not through the workbench.
+    patchRecord(rec.id, (r) => ({ ...r, videoPath: "/video/cur-1.mkv" }));
+    patchRecord(rec.id, (r) => ({
+      ...r, result: { ...r.result!, sourceVideoMediaId: "srv-video" },
+    }));
+    setRename(rec.id, "SPEAKER_00", "Kate");
+    vi.advanceTimersByTime(900);
+    const cur = currentRecord(rec.id)!;
+    expect(cur.renames).toEqual({ SPEAKER_00: "Kate" });
+    expect(cur.videoPath).toBe("/video/cur-1.mkv");
+    expect(cur.result?.sourceMediaId).toBe("srv-audio");
+    expect(cur.result?.sourceVideoMediaId).toBe("srv-video");
+    // ...and the file on disk: the persist wrote the merged record, not the opened copy.
+    vi.advanceTimersByTime(2_100); // the coalesced tail
+    const all = saves();
+    const last = JSON.parse(String(all[all.length - 1][1])) as TranscriptRecord;
+    expect(last.renames).toEqual({ SPEAKER_00: "Kate" });
+    expect(last.videoPath).toBe("/video/cur-1.mkv");
+    expect(last.result?.sourceVideoMediaId).toBe("srv-video");
+  });
+
+  it("a record deleted during the edit debounce is not re-saved", async () => {
+    const { currentRecord } = await import("./transcriptHistory");
+    openHistoryRecord(rec);
+    setRename(rec.id, "SPEAKER_00", "Kate");
+    deleteRecord(rec.id);
+    saveTranscriptRecord.mockClear();
+    vi.advanceTimersByTime(900);
+    expect(saves()).toEqual([]);
+    expect(currentRecord(rec.id)).toBeUndefined();
+  });
+
+  it("a record gone from the mirror (a wipe's reload) resolves to nothing", async () => {
+    const { currentRecord, useTranscriptHistory } = await import("./transcriptHistory");
+    openHistoryRecord(rec);
+    // The forced listing after a wipe no longer lists it; nothing told the registry.
+    useTranscriptHistory.setState({ records: [] });
+    saveTranscriptRecord.mockClear();
+    setRename(rec.id, "SPEAKER_00", "Kate");
+    mergeSegmentTranslations(rec.id, { 0: { de: "A-de" } }, { targets: ["de"] });
+    vi.advanceTimersByTime(900);
+    expect(saves()).toEqual([]);
+    expect(currentRecord(rec.id)).toBeUndefined();
+  });
+
+  it("a translation merge lands on the latest copy too", async () => {
+    const { currentRecord } = await import("./transcriptHistory");
+    openHistoryRecord(rec);
+    patchRecord(rec.id, (r) => ({ ...r, videoPath: "/video/cur-1.mkv" }));
+    mergeSegmentTranslations(rec.id, { 0: { de: "A-de" } }, { targets: ["de"] });
+    const cur = currentRecord(rec.id)!;
+    expect(cur.videoPath).toBe("/video/cur-1.mkv");
+    expect(cur.result?.segments?.[0].translations).toEqual({ de: "A-de" });
   });
 });
 

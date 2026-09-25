@@ -16,7 +16,9 @@ import { transportErrorDoorway } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText, type ImportedText } from "./subtitleImport";
 import { useApp } from "./store";
-import { setRecordForgetHook, upsertRecord, type TranscriptRecord } from "./transcriptHistory";
+import {
+  currentRecord, patchRecord, setRecordForgetHook, upsertRecord, type TranscriptRecord,
+} from "./transcriptHistory";
 import type {
   BatchProgress, BatchResult, DecodeOverrides, PlanStage, PlanUnit, TranscribeOptions,
   TranscriptSegment, VideoProgress,
@@ -583,53 +585,69 @@ export function removeFile(path: string) {
 export function selectPath(path: string | null) {
   // Selection defines what's "open": keep the Recent-strip marker on the
   // record registered for the newly selected row. If the CURRENTLY open
-  // record already belongs to this path, keep it — historyByPath only holds
+  // record already belongs to this path, keep it — idByPath only holds
   // the last-registered record per path, and the user may have an OLDER
   // same-path record open (three records of one URL). Recomputing here used
   // to swap the overlay/run key under the viewer mid-look.
   set((s) => {
-    const cur = s.openRecordId ? recordById[s.openRecordId] : undefined;
+    const cur = s.openRecordId ? registered(s.openRecordId) : undefined;
     return {
       selectedPath: path,
       openRecordId:
         path && cur && cur.sourcePath === path
           ? s.openRecordId
-          : (path && historyByPath[path]?.id) || null,
+          : (path && registered(path)?.id) || null,
     };
   });
 }
 
 // ── history bridge ───────────────────────────────────────────────────────────
-// The latest history record per file path. A finished run registers here; a
-// reopened record re-registers, so later corrections re-save under the SAME
-// id instead of forking a new entry.
-const historyByPath: Record<string, TranscriptRecord> = {};
-// Overlay slots and edit persistence are keyed by RECORD ID — the path
-// can't do it, two records of the same URL share theirs.
-const recordById: Record<string, TranscriptRecord> = {};
+// Which records the workbench may re-save, by ID only — the record itself is always read
+// back from the history mirror (currentRecord). These maps used to hold full copies, which
+// went stale the moment the viewer (or a media fetch) upserted the record directly: the
+// next rename/edit re-saved the old copy and reverted videoPath, sourceMediaId, an expired
+// id's deletion. Every registration also upserts (recordRun, the persist paths) or passes a
+// record the mirror holds (openHistoryRecord), so a registered id resolves unless deleted.
+//
+// Overlay slots and edit persistence are keyed by RECORD ID — the path can't do it, two
+// records of the same URL share theirs.
+const registeredIds = new Set<string>();
+// The latest-registered record id per source path. A finished run registers here; a
+// reopened record re-registers, so later corrections re-save under the SAME id instead of
+// forking a new entry.
+const idByPath: Record<string, string> = {};
 // One timer PER overlay key: a single handle let an edit to record B (opened from
 // History inside the debounce window) cancel a pending write for record A.
 const persistTimers = new Map<string, number>();
 
 function registerRecord(rec: TranscriptRecord) {
-  historyByPath[rec.sourcePath] = rec;
-  recordById[rec.id] = rec;
+  idByPath[rec.sourcePath] = rec.id;
+  registeredIds.add(rec.id);
+}
+
+/** The current copy of a registered record, by overlay key: a record id, or a legacy path
+ *  key through idByPath. Undefined = not ours, or deleted since (the mirror no longer has
+ *  it) — every writer treats that as "nothing to save". */
+function registered(key: string): TranscriptRecord | undefined {
+  const id = registeredIds.has(key) ? key : idByPath[key];
+  return id ? currentRecord(id) : undefined;
 }
 
 /** Drop a deleted record from the registries (and close it if it is the open one), so a
  *  later overlay edit or chunk merge cannot re-save it. `null` = every record (bulk wipe). */
 export function forgetRecord(id: string | null): void {
   if (id === null) {
-    for (const k of Object.keys(recordById)) delete recordById[k];
-    for (const k of Object.keys(historyByPath)) delete historyByPath[k];
+    registeredIds.clear();
+    for (const k of Object.keys(idByPath)) delete idByPath[k];
     for (const t of persistTimers.values()) window.clearTimeout(t);
     persistTimers.clear();
     set({ openRecordId: null });
     return;
   }
-  const rec = recordById[id];
-  delete recordById[id];
-  if (rec && historyByPath[rec.sourcePath]?.id === id) delete historyByPath[rec.sourcePath];
+  registeredIds.delete(id);
+  // By value, not via the record's sourcePath: deleteRecord calls this before the mirror
+  // drops the record, but nothing guarantees the mirror still has it.
+  for (const [p, v] of Object.entries(idByPath)) if (v === id) delete idByPath[p];
   window.clearTimeout(persistTimers.get(id));
   persistTimers.delete(id);
   if (get().openRecordId === id) set({ openRecordId: null });
@@ -639,13 +657,14 @@ setRecordForgetHook(forgetRecord);
 /** Re-save a record with the CURRENT overlays, debounced — every
  *  rename/recolor/correction lands in the history within a second, without a
  *  disk write per keystroke. `key` is the overlay key: the record id
- *  (legacy path keys still resolve through historyByPath). */
+ *  (legacy path keys still resolve through idByPath). The record is re-read
+ *  when the timer fires, so the overlays land on its latest copy. */
 function schedulePersistEdits(key: string) {
-  if (!recordById[key] && !historyByPath[key]) return;
+  if (!registered(key)) return;
   window.clearTimeout(persistTimers.get(key));
   persistTimers.set(key, window.setTimeout(() => {
     persistTimers.delete(key);
-    const rec = recordById[key] ?? historyByPath[key];
+    const rec = registered(key);
     if (!rec) return;
     const s = get();
     const updated: TranscriptRecord = {
@@ -721,16 +740,9 @@ function copyRunMedia(path: string, rec: TranscriptRecord) {
     .then((mediaPath) => {
       if (!mediaPath) return;
       patchItem(path, { mediaPath });
-      // Re-resolve by ID and register under BOTH maps: every persist path reads the id
-      // map first, so a path-only write left the record's mediaPath to be dropped by the
-      // next rename / recolor / edit — permanently, for a URL run whose copy is the only
-      // playable source.
-      const cur = recordById[rec.id] ?? historyByPath[path];
-      if (cur && cur.id === rec.id) {
-        const updated = { ...cur, mediaPath };
-        registerRecord(updated);
-        upsertRecord(updated);
-      }
+      // Merge onto the record's LATEST copy, by id — and only while it is still ours: a
+      // record deleted (or wiped) during the copy stays gone.
+      if (registeredIds.has(rec.id)) patchRecord(rec.id, (cur) => ({ ...cur, mediaPath }));
     })
     .catch((e) => console.error("audio copy failed:", e));
 }
@@ -753,16 +765,9 @@ function fetchRunUrlMedia(path: string, rec: TranscriptRecord, ctx: RunContext, 
     .then((mediaPath) => {
       if (!mediaPath) return;
       patchItem(path, { mediaPath });
-      // Re-resolve by ID and register under BOTH maps: every persist path reads the id
-      // map first, so a path-only write left the record's mediaPath to be dropped by the
-      // next rename / recolor / edit — permanently, for a URL run whose copy is the only
-      // playable source.
-      const cur = recordById[rec.id] ?? historyByPath[path];
-      if (cur && cur.id === rec.id) {
-        const updated = { ...cur, mediaPath };
-        registerRecord(updated);
-        upsertRecord(updated);
-      }
+      // Merge onto the record's LATEST copy, by id — and only while it is still ours: a
+      // record deleted (or wiped) during the copy stays gone.
+      if (registeredIds.has(rec.id)) patchRecord(rec.id, (cur) => ({ ...cur, mediaPath }));
     })
     .catch((e) => console.error("url media fetch failed:", e));
 }
@@ -770,8 +775,8 @@ function fetchRunUrlMedia(path: string, rec: TranscriptRecord, ctx: RunContext, 
 /** Pull the server-retained VIDEO of a link run into the local video store
  *  (keepUrlVideoCopies gate is the run's own keep_video choice — the server
  *  only holds a video the user asked for) and stamp it on the record as
- *  `videoPath`. Same double registration as the audio copy. */
-function fetchRunUrlVideo(path: string, rec: TranscriptRecord, ctx: RunContext, mediaId: string) {
+ *  `videoPath`, merged onto the record's latest copy like the audio copy. */
+function fetchRunUrlVideo(rec: TranscriptRecord, ctx: RunContext, mediaId: string) {
   const s = useApp.getState().settings;
   void fetchUrlVideo({
     serverUrl: ctx.serverUrl,
@@ -782,12 +787,7 @@ function fetchRunUrlVideo(path: string, rec: TranscriptRecord, ctx: RunContext, 
   })
     .then((videoPath) => {
       if (!videoPath) return;
-      const cur = recordById[rec.id] ?? historyByPath[path];
-      if (cur && cur.id === rec.id) {
-        const updated = { ...cur, videoPath };
-        registerRecord(updated);
-        upsertRecord(updated);
-      }
+      if (registeredIds.has(rec.id)) patchRecord(rec.id, (cur) => ({ ...cur, videoPath }));
     })
     .catch((e) => console.error("url video fetch failed:", e));
 }
@@ -799,7 +799,6 @@ function fetchRunUrlVideo(path: string, rec: TranscriptRecord, ctx: RunContext, 
  *  the file. Gives up when the entry vanishes (server restart / stale
  *  sweep) or after two hours. */
 function awaitRunUrlVideo(
-  path: string,
   rec: TranscriptRecord,
   ctx: RunContext,
   pid: string,
@@ -839,7 +838,7 @@ function awaitRunUrlVideo(
         const st = p.video?.state;
         if (st === "done" || st === "failed" || st === "cancelled") {
           window.clearInterval(timer);
-          if (st === "done" && p.video?.mediaId) fetchRunUrlVideo(path, rec, ctx, p.video.mediaId);
+          if (st === "done" && p.video?.mediaId) fetchRunUrlVideo(rec, ctx, p.video.mediaId);
         }
       })
       .catch(() => {})
@@ -853,7 +852,10 @@ function awaitRunUrlVideo(
  *  Runs through the run's own progress id so the rail keeps one clock. */
 export function retryRunVideo(path: string, ctx: RunContext): void {
   const s = get();
-  const rec = historyByPath[path];
+  // The OPEN record first: idByPath holds the last-registered record of the path, and
+  // the panel may show an older same-link one.
+  const open = s.openRecordId ? registered(s.openRecordId) : undefined;
+  const rec = open && open.sourcePath === path ? open : registered(path);
   const meta = s.urlMeta[path];
   if (!rec || !s.stageMeta.downloading?.video) return;
   const epoch = s.epoch;
@@ -870,7 +872,7 @@ export function retryRunVideo(path: string, ctx: RunContext): void {
       },
     },
   }));
-  awaitRunUrlVideo(path, rec, ctx, pid, epoch);
+  awaitRunUrlVideo(rec, ctx, pid, epoch);
   void fetchUrlVideoOnDemand({
     serverUrl: ctx.serverUrl,
     backendId: ctx.backendId,
@@ -901,6 +903,10 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
   // Loading a history record replaces the workbench (epoch bump below), so any
   // still-registered server-side run is ours to stop.
   abandonActiveRun();
+  // Every caller hands over a row it rendered from the history mirror, so the record is
+  // there — but the registry resolves through the mirror, and a record missing from it
+  // would open with edits that silently never save. Seed it rather than lose them.
+  if (!currentRecord(rec.id)) upsertRecord(rec);
   registerRecord(rec);
   const recIsUrl = isSourceUrl(rec.sourcePath);
   set((s) => ({
@@ -967,7 +973,7 @@ export function setSegmentEdit(key: string, index: number, text: string | null) 
     else file[index] = text;
     // Editing the ORIGINAL text marks this segment's translations stale (they
     // translated the old text); reverting the edit clears the mark.
-    const rec = recordById[key] ?? historyByPath[key];
+    const rec = registered(key);
     const hasTr = !!rec?.result?.segments?.[index]?.translations;
     let translationsStale = s.translationsStale;
     if (hasTr) {
@@ -1023,7 +1029,7 @@ export function mergeSegmentTranslations(
    *  targeting a subset of tracks never erases untouched tracks' marks. */
   kept?: Record<number, string[]>,
 ) {
-  const rec = recordById[key] ?? historyByPath[key];
+  const rec = registered(key);
   if (!rec?.result?.segments) return;
   const segments = rec.result.segments.map((seg, i) => {
     if (!patch[i]) return seg;
@@ -1070,7 +1076,7 @@ export function mergeSegmentTranslations(
   // by path then swapped the OPEN transcript to A's segments under B's header. Only THAT
   // collision is suppressed: an open record of a different path leaves A's own row updated.
   const openId = get().openRecordId;
-  const open = openId ? recordById[openId] : undefined;
+  const open = openId ? registered(openId) : undefined;
   if (!open || open.id === rec.id || open.sourcePath !== rec.sourcePath) {
     patchItem(rec.sourcePath, { result: updated.result });
   }
@@ -1289,9 +1295,9 @@ export function ingestJobResult(
   if (isUrl) {
     if (res.sourceMediaId) fetchRunUrlMedia(row.path, rec, row.ctx, res.sourceMediaId);
     if (res.sourceVideoMediaId) {
-      fetchRunUrlVideo(row.path, rec, row.ctx, res.sourceVideoMediaId);
+      fetchRunUrlVideo(rec, row.ctx, res.sourceVideoMediaId);
     } else if (res.sourceVideoPending && opts.attached) {
-      awaitRunUrlVideo(row.path, rec, row.ctx, row.jobId, get().epoch);
+      awaitRunUrlVideo(rec, row.ctx, row.jobId, get().epoch);
     }
   } else {
     copyRunMedia(row.path, rec);
@@ -1593,11 +1599,11 @@ async function pump(
         if (isUrl) {
           if (res.sourceMediaId) fetchRunUrlMedia(next.path, rec, ctx, res.sourceMediaId);
           if (res.sourceVideoMediaId) {
-            fetchRunUrlVideo(next.path, rec, ctx, res.sourceVideoMediaId);
+            fetchRunUrlVideo(rec, ctx, res.sourceVideoMediaId);
           } else if (res.sourceVideoPending && pid) {
             // The transcript came back before the video did: keep polling
             // the same id (the server leaves the entry to the video task).
-            awaitRunUrlVideo(next.path, rec, ctx, pid, epoch);
+            awaitRunUrlVideo(rec, ctx, pid, epoch);
           }
         } else if (!isText) {
           copyRunMedia(next.path, rec);

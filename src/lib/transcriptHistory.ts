@@ -189,7 +189,14 @@ const pendingWrite = new Map<string, TranscriptRecord>();
 const lastWriteAt = new Map<string, number>();
 
 function writeNow(rec: TranscriptRecord): void {
-  lastWriteAt.set(rec.id, Date.now());
+  const now = Date.now();
+  // One stamp per record ever written would grow for the whole session (every dictation
+  // adds one). A stamp older than the window decides nothing — upsertRecord reads a missing
+  // one as "long ago" — so sweep those, only once the map is big enough to be worth it.
+  if (lastWriteAt.size > 64) {
+    for (const [id, at] of lastWriteAt) if (now - at >= WRITE_COALESCE_MS) lastWriteAt.delete(id);
+  }
+  lastWriteAt.set(rec.id, now);
   void saveTranscriptRecord(rec.id, JSON.stringify(rec), rec.kind === "dictation").catch((e) =>
     console.error("history save failed:", e),
   );
@@ -244,6 +251,24 @@ export function upsertRecord(rec: TranscriptRecord): void {
       if (last) writeNow(last);
     }, WRITE_COALESCE_MS),
   );
+}
+
+/** The mirror's copy of one record — the ONLY current one. Anything that holds a record
+ *  across an await or a debounce must re-read it here before writing: a copy kept aside goes
+ *  stale the moment another writer (the viewer, a media fetch) upserts the same id, and
+ *  saving it reverts their fields. `undefined` = gone (deleted, or wiped). */
+export function currentRecord(id: string): TranscriptRecord | undefined {
+  return useTranscriptHistory.getState().records.find((r) => r.id === id);
+}
+
+/** Read-modify-write one record against its latest copy. No-op when the record is gone
+ *  (a late write must not resurrect a deleted one), and when `fn` hands the same object
+ *  back (nothing changed → no disk write). */
+export function patchRecord(id: string, fn: (r: TranscriptRecord) => TranscriptRecord): void {
+  const latest = currentRecord(id);
+  if (!latest) return;
+  const next = fn(latest);
+  if (next !== latest) upsertRecord(next);
 }
 
 /** Everything a finished dictation session hands over (streaming.ts). */

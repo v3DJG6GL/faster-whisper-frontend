@@ -47,7 +47,7 @@ import {
   mediaExportPlan, mp4Disabled, sidecarFiles, trackLang, type MediaChoice, type MediaContainer,
   type MediaExportPhase, type MediaStreams, type SubtitleMode,
 } from "@/lib/mediaExport";
-import { upsertRecord } from "@/lib/transcriptHistory";
+import { patchRecord } from "@/lib/transcriptHistory";
 import { useTranscriptHistory } from "@/lib/transcriptHistory";
 import type { BatchResult, TranscribeSettings, TranscriptWord } from "@/lib/types";
 
@@ -2152,17 +2152,20 @@ export function TranscriptViewer({
           maxHeight: settings.transcribe?.urlVideoMaxHeight ?? null,
         });
         source = { sourceMediaId: got.mediaId };
-        upsertRecord({
-          ...rec,
+        // Every write below merges onto the LATEST copy of the record, never
+        // onto `rec`: that is the render's snapshot, and spreading it (the
+        // video fetch lands after the write above) erased the id just stored.
+        patchRecord(rec.id, (r) => ({
+          ...r,
           result: {
-            ...(rec.result ?? { text: "" }),
+            ...(r.result ?? { text: "" }),
             sourceVideoMediaId: got.mediaId,
             sourceVideoExpiresAt: got.expiresAt ?? undefined,
           },
-        });
+        }));
         // Keep a local copy too (the Settings' video store), best effort.
         void fetchUrlVideo({ serverUrl, backendId: trBackend.id, mediaId: got.mediaId, recordId: rec.id, audioBase })
-          .then((vp) => { if (vp) upsertRecord({ ...rec, videoPath: vp }); })
+          .then((vp) => { if (vp) patchRecord(rec.id, (r) => ({ ...r, videoPath: vp })); })
           .catch(() => {});
       } catch (e) {
         setMediaJob(null);
@@ -2205,25 +2208,27 @@ export function TranscriptViewer({
       // An uploaded file's server copy is reusable for a while: remember it
       // so "Save as MKV" or a second export skips the upload.
       if (source.sourcePath && outcome.mediaId) {
-        upsertRecord({
-          ...rec,
-          result: {
-            ...(rec.result ?? { text: "" }),
-            sourceMediaId: outcome.mediaId,
-            sourceMediaExpiresAt: outcome.expiresAt ?? undefined,
-          },
-        });
+        const mediaId = outcome.mediaId;
+        const expiresAt = outcome.expiresAt ?? undefined;
+        patchRecord(rec.id, (r) => ({
+          ...r,
+          result: { ...(r.result ?? { text: "" }), sourceMediaId: mediaId, sourceMediaExpiresAt: expiresAt },
+        }));
       }
       return true;
     }
     if (outcome.kind === "expired") {
-      // The server dropped it: forget the id; a local copy carries on.
-      if (rec.result?.sourceVideoMediaId === serverVideoId || rec.result?.sourceMediaId === serverVideoId) {
-        const r = { ...(rec.result ?? { text: "" }) };
+      // The server dropped it: forget the id; a local copy carries on. Judged
+      // against the latest copy — the upload may have stored a newer id since.
+      patchRecord(rec.id, (latest) => {
+        if (latest.result?.sourceVideoMediaId !== serverVideoId && latest.result?.sourceMediaId !== serverVideoId) {
+          return latest;
+        }
+        const r = { ...(latest.result ?? { text: "" }) };
         delete r.sourceVideoMediaId; delete r.sourceVideoExpiresAt;
         if (!urlSource) { delete r.sourceMediaId; delete r.sourceMediaExpiresAt; }
-        upsertRecord({ ...rec, result: r });
-      }
+        return { ...latest, result: r };
+      });
       setMediaError({
         kind: "expired",
         msg: localVideo

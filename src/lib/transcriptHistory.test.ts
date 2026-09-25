@@ -16,8 +16,10 @@ vi.mock("./api", async (importOriginal) => ({
   saveTranscriptRecord: (id: string, json: string, d: boolean) => saveTranscriptRecord(id, json, d),
 }));
 
-const { deleteRecord, dropPendingWrites, loadHistory, recordDictation, upsertRecord, useTranscriptHistory } =
-  await import("./transcriptHistory");
+const {
+  currentRecord, deleteRecord, dropPendingWrites, loadHistory, patchRecord, recordDictation, upsertRecord,
+  useTranscriptHistory,
+} = await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
 
 const CAPTURE = {
@@ -324,6 +326,73 @@ describe("deleteRecord", () => {
       expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
       expect(useTranscriptHistory.getState().records.find((r) => r.id === "del-1")).toBeUndefined();
     } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("patchRecord merges onto the latest copy", () => {
+  const base: TranscriptRecord = {
+    schemaVersion: 1, kind: "url", id: "patch-1", createdAt: "2026-08-30T12:00:00Z",
+    sourcePath: "https://example.com/v", sourceName: "v", status: "done", result: { text: "t" },
+  };
+
+  it("two writers each keep the other's field (the viewer's stale-`rec` overwrite)", () => {
+    upsertRecord(base);
+    // The on-demand fetch stores the server id, then the local copy lands later: both
+    // are patches, so the second no longer spreads a snapshot taken before the first.
+    patchRecord("patch-1", (r) => ({ ...r, result: { ...r.result!, sourceVideoMediaId: "m1" } }));
+    patchRecord("patch-1", (r) => ({ ...r, videoPath: "/video/patch-1.mkv" }));
+    const rec = currentRecord("patch-1")!;
+    expect(rec.result?.sourceVideoMediaId).toBe("m1");
+    expect(rec.videoPath).toBe("/video/patch-1.mkv");
+  });
+
+  it("is a no-op for a missing id: a late write never resurrects a deleted record", () => {
+    saveTranscriptRecord.mockClear();
+    const fn = vi.fn((r: TranscriptRecord) => r);
+    patchRecord("nope", fn);
+    expect(fn).not.toHaveBeenCalled();
+    expect(saveTranscriptRecord).not.toHaveBeenCalled();
+    expect(currentRecord("nope")).toBeUndefined();
+    expect(useTranscriptHistory.getState().records).toEqual([]);
+  });
+
+  it("writes nothing when the patch hands the same record back", () => {
+    useTranscriptHistory.setState({ records: [base] }); // in the mirror, no write stamp yet
+    saveTranscriptRecord.mockClear();
+    patchRecord("patch-1", (r) => r);
+    expect(saveTranscriptRecord).not.toHaveBeenCalled();
+  });
+});
+
+describe("lastWriteAt pruning keeps coalescing intact", () => {
+  it("sweeps stale stamps without un-coalescing a record written inside the window", () => {
+    vi.useFakeTimers();
+    try {
+      const at = (id: string, text = "x"): TranscriptRecord => ({
+        schemaVersion: 1, kind: "file", id, createdAt: "2026-08-30T12:00:00Z",
+        sourcePath: `/${id}.mp3`, sourceName: id, status: "done", result: { text },
+      });
+      // Enough stamps to cross the sweep threshold.
+      for (let i = 0; i < 70; i++) upsertRecord(at(`prune-${i}`));
+      vi.advanceTimersByTime(1_000);
+      upsertRecord(at("fresh", "f1")); // stamped 1 s after the bulk
+      vi.advanceTimersByTime(1_100); // bulk stamps now stale, "fresh" still inside its window
+      saveTranscriptRecord.mockClear();
+      upsertRecord(at("trigger")); // this write runs the sweep
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
+      // "fresh" kept its stamp: a second write inside the window still parks...
+      upsertRecord(at("fresh", "f2"));
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
+      // ...and a swept record reads as "long ago": leading-edge write at once.
+      upsertRecord(at("prune-3", "again"));
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(2);
+      vi.advanceTimersByTime(2_100);
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(3);
+      expect(String(saveTranscriptRecord.mock.calls[2][1])).toContain("f2");
+    } finally {
+      dropPendingWrites();
       vi.useRealTimers();
     }
   });
