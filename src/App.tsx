@@ -8,7 +8,7 @@ import { initSync } from "@/lib/sync";
 import { initOverlayController } from "@/lib/overlay";
 import { initUsageController } from "@/lib/usage";
 import { initJobReconcile } from "@/lib/jobsReconcile";
-import { onTrigger, onSystemResumed, onOverlayAction, onAppNavigate } from "@/lib/api";
+import { noteRoute, onTrigger, onSystemResumed, onOverlayAction, onAppNavigate } from "@/lib/api";
 import { dictate, runOverlayAction } from "@/lib/dictation";
 import { cancelLive, requestStopIfStarting } from "@/lib/streaming";
 import { SCREEN_PATH } from "@/lib/screens";
@@ -59,6 +59,7 @@ function useTauriListener(subscribe: () => Promise<() => void>, deps: Dependency
 function ScrollReset() {
   const { pathname } = useLocation();
   useEffect(() => {
+    noteRoute(pathname);
     if (pathname === "/history") return;
     document.querySelector("main")?.scrollTo(0, 0);
   }, [pathname]);

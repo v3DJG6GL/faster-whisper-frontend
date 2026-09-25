@@ -77,6 +77,13 @@ export async function appVersion(): Promise<string> {
   return invoke<string>("app_version");
 }
 
+/** Tell the core which screen the main window shows, for its periodic memory line
+ *  (memwatch.rs) — a spike in the log then says where it happened. Fire and forget. */
+export function noteRoute(path: string): void {
+  if (!isTauri) return;
+  void invoke("note_route", { path }).catch(() => {});
+}
+
 export async function testConnection(args: {
   serverUrl: string;
   backendId?: string | null;

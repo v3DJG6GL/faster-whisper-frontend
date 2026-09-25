@@ -11,6 +11,7 @@ mod key_debounce;
 mod kwin;
 mod logging;
 mod media_decode;
+mod memwatch;
 mod migrate_identifier;
 mod overlay;
 mod langpick;
@@ -141,6 +142,8 @@ pub fn run() {
             // start the batched log stream for the Logs screen.
             logging::apply_log_settings(app.handle(), &cfg);
             logging::spawn_emit_pump(app.handle().clone());
+            // Webview memory into the log every few minutes (debug; warn on a spike).
+            memwatch::spawn();
             commands::apply_bindings(app.handle());
             // Warm the AT-SPI focus listener now so the focused-app cache is populated by
             // the time the user dictates (per-app rules + the chip target readout), and
@@ -184,6 +187,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            memwatch::note_route,
             commands::load_config,
             commands::save_config,
             commands::set_backend_key,
