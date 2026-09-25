@@ -13,7 +13,7 @@ import {
 } from "react";
 import type { LucideIcon } from "lucide-react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, ArrowLeft, Check, Minus, Plus } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Info, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { languageLabel } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
@@ -350,16 +350,22 @@ export function Notice({
   className,
   children,
 }: {
-  tone?: "warn" | "ok";
+  /** "note" is the quiet one: something worth knowing that is not a problem (the neutral
+   *  panel of `SettingExpand`, not a semantic colour). */
+  tone?: "warn" | "ok" | "note";
   className?: string;
   children: ReactNode;
 }) {
-  const Icon = tone === "ok" ? Check : AlertTriangle;
+  const Icon = tone === "ok" ? Check : tone === "note" ? Info : AlertTriangle;
   return (
     <div
       className={cn(
         "flex items-start gap-2 rounded-xl border px-3.5 py-2.5 text-[12.5px]",
-        tone === "ok" ? "border-ok/30 bg-ok/5 text-ok" : "border-warn/30 bg-warn/5 text-warn",
+        tone === "ok"
+          ? "border-ok/30 bg-ok/5 text-ok"
+          : tone === "note"
+            ? "border-line bg-surface-2/40 text-dim"
+            : "border-warn/30 bg-warn/5 text-warn",
         className,
       )}
     >

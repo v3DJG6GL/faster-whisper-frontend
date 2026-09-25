@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Mic, Check, Play, RefreshCw, Square, ArrowUp, ArrowDown, Trash2, Plus, FolderOpen, Settings as SettingsIcon } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { swap } from "@/lib/arr";
-import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
+import { Button, Card, Notice, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta, screenEyebrow, screenTitle } from "@/lib/screens";
 import { IS_LINUX } from "@/lib/platform";
@@ -50,6 +50,7 @@ import {
   currentAccentHue,
   deriveAccent,
   fmtPer,
+  motionCostNote,
   prefersReducedMotion,
   resolvedTheme,
   secToSlider,
@@ -891,6 +892,11 @@ function MotionRows({
     commit({ period: Number(v) });
   };
 
+  // What the speed costs, said under the Motion row (D71–D73). Follows the slider while it
+  // is dragged, before the debounced commit lands; reduced motion runs Still, so no cost.
+  const livePeriod = custom ? sliderToSec(slider) : motion.period;
+  const cost = reduced ? null : motionCostNote(livePeriod);
+
   // What the tokens show right now — the driver restamps them on every tick.
   const shownHue = useSyncExternalStore(subscribeAccentHue, currentAccentHue);
   const note = reduced
@@ -920,6 +926,17 @@ function MotionRows({
         desc="How fast the Signal colour travels around the wheel. Still keeps it where you set it."
         disabled={reduced}
         disabledReason={REDUCED_MOTION_REASON}
+        expand={
+          // Always mounted, so a change of tier is announced; a live region that mounts
+          // together with its text is announced unreliably.
+          <div role="status" aria-live="polite">
+            {cost && (
+              <Notice tone={cost.tone} className="mt-2.5">
+                {cost.text}
+              </Notice>
+            )}
+          </div>
+        }
       >
         <Select<string>
           value={custom ? "custom" : String(motion.period)}
