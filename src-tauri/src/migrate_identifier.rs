@@ -55,7 +55,7 @@ fn roots() -> Vec<Root> {
     // cache and the WebView2 profile.
     ["APPDATA", "LOCALAPPDATA"]
         .iter()
-        .filter_map(|k| std::env::var_os(k))
+        .filter_map(std::env::var_os)
         .map(|b| Root {
             base: PathBuf::from(b),
             disposable: false,

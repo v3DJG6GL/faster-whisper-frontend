@@ -47,8 +47,8 @@ const POLL_MS: u32 = 1000;
 
 /// The foreground HWND the previous fold saw. Compared BEFORE any process work: the 1 s
 /// poll almost always lands on an unchanged foreground, and without this pre-check every
-/// tick opened a handle to the foreground process (OpenProcess + QueryFullProcessImageNameW
-/// + a UTF-16 decode) just to discover nothing changed. Tracker-thread only (the timer and
+/// tick opened a handle to the foreground process (OpenProcess, QueryFullProcessImageNameW
+/// and a UTF-16 decode) just to discover nothing changed. Tracker-thread only (the timer and
 /// the WinEvent callback both land there).
 static LAST_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
@@ -129,7 +129,7 @@ fn fold_foreground() {
     };
     LAST_HWND.store(hwnd as isize, Relaxed);
     let mut s = snap.lock();
-    if s.current.as_ref().map_or(false, |c| c.app_id == app_id) {
+    if s.current.as_ref().is_some_and(|c| c.app_id == app_id) {
         return; // unchanged (where the 1 s poll usually lands)
     }
     tracing::debug!("[winfocus] foreground: {app_id}");

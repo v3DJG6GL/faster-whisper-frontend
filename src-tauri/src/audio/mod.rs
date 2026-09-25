@@ -291,7 +291,7 @@ pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
                 dir.display()
             );
         }
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -334,7 +334,7 @@ pub(crate) fn windows_owner_only_dacl(dir: &Path) -> std::io::Result<()> {
         // requirement (8 on x64). A Vec<u8> only guarantees 1-byte alignment,
         // and casting through a misaligned pointer is UB regardless of what the
         // global allocator happens to return.
-        let u64_len = (needed.max(1) as usize + 7) / 8;
+        let u64_len = (needed.max(1) as usize).div_ceil(8);
         let mut buf = vec![0u64; u64_len];
         let ok = GetTokenInformation(
             token,
@@ -498,8 +498,8 @@ fn frame_level_s16le(bytes: &[u8]) -> f32 {
         return 0.0;
     }
     let mut sum = 0.0f32;
-    for s in bytes.chunks_exact(2) {
-        let v = i16::from_le_bytes([s[0], s[1]]) as f32 / 32768.0;
+    for s in bytes.as_chunks::<2>().0 {
+        let v = i16::from_le_bytes(*s) as f32 / 32768.0;
         sum += v * v;
     }
     chip_level((sum / n as f32).sqrt())

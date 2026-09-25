@@ -6,6 +6,7 @@
 //!     already set from tauri.conf.json, so no `SetWindowPos` is ever issued;
 //!   * `show()` on a non-focusable window is `SW_SHOWNOACTIVATE`, which shows the window at
 //!     its CURRENT z-position and never raises it.
+//!
 //! So when Windows misplaces the window in the topmost band (observed after login: the chip
 //! sat under ordinary app windows until the main window was opened), nothing repaired it.
 //! Upstream: tauri-apps/tao#1234. PowerToys' Always-On-Top re-pins for the same reason.

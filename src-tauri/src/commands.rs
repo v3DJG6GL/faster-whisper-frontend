@@ -2685,7 +2685,7 @@ pub async fn get_quickadd_seed(
                 seed.as_deref().map_or(0, str::len)
             ),
         }
-        return Ok(seed);
+        Ok(seed)
     }
     #[cfg(not(windows))]
     {

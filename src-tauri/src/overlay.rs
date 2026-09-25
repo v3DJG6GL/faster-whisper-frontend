@@ -404,7 +404,7 @@ pub fn chip_pointer_over(app: AppHandle) -> bool {
     #[cfg(windows)]
     {
         let _ = &win;
-        return win_hover::cursor_in_chip(&app).unwrap_or(true);
+        win_hover::cursor_in_chip(&app).unwrap_or(true)
     }
     #[cfg(all(not(target_os = "linux"), not(windows)))]
     {

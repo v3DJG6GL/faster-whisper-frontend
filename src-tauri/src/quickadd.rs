@@ -190,7 +190,6 @@ pub fn show(app: &AppHandle) {
         match rdv.summon() {
             Summon::NoSeed => {
                 show_now(app);
-                return;
             }
             // A summon grab is already running (second press while the first still waits on
             // the modifier gate / clipboard). Showing at once put the window up BEFORE that
@@ -205,7 +204,6 @@ pub fn show(app: &AppHandle) {
                         show_now(&handle);
                     }
                 });
-                return;
             }
             Summon::Grab(generation) => {
                 let handle = app.clone();
@@ -240,7 +238,6 @@ pub fn show(app: &AppHandle) {
                         show_now(&handle);
                     }
                 });
-                return;
             }
         }
     }

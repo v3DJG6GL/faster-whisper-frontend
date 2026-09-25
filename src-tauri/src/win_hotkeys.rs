@@ -785,7 +785,7 @@ mod imp {
     /// RAWKEYBOARD → the chord id space of `code_to_vk` (left/right-specific VKs,
     /// NUMPAD_ENTER synthetic). None = not a key transition we track.
     fn key_id(vkey: u16, make_code: u16, flags: u32) -> Option<u16> {
-        let e0 = flags & RI_KEY_E0 as u32 != 0;
+        let e0 = flags & RI_KEY_E0 != 0;
         Some(match vkey {
             // Overrun / prefix marker — never a real key.
             0xFF => return None,
@@ -802,7 +802,7 @@ mod imp {
                 // Defensive: if a message-layer fake AltGr companion ever shows up in
                 // raw input it carries the 0x21D scan / E1 marking — drop it (AltGr
                 // must be a lone RAlt, evdev parity; normally it never reaches here).
-                if make_code == 0x21D || flags & RI_KEY_E1 as u32 != 0 {
+                if make_code == 0x21D || flags & RI_KEY_E1 != 0 {
                     return None;
                 }
                 if e0 {
