@@ -48,6 +48,7 @@ import {
   type MediaExportPhase, type MediaStreams, type SubtitleMode,
 } from "@/lib/mediaExport";
 import { patchRecord } from "@/lib/transcriptHistory";
+import { releaseMedia } from "@/lib/media";
 import { useTranscriptHistory } from "@/lib/transcriptHistory";
 import type { BatchResult, TranscribeSettings, TranscriptWord } from "@/lib/types";
 
@@ -753,6 +754,19 @@ export function TranscriptViewer({
   }, [focus]);
   // Built-in playback with karaoke follow.
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // The <audio>'s ref: keeps audioRef (playhead loop, watchdog, seek) and
+  // empties the element when React lets go of it — the key change (blob →
+  // WAV → path), audioBroken and unmount all detach it, and a detached
+  // element otherwise keeps its decoded source alive. Stable on purpose: an
+  // inline arrow would detach and re-attach (and so release) every render.
+  const attachAudio = useCallback((el: HTMLAudioElement | null) => {
+    audioRef.current = el;
+    if (!el) return;
+    return () => {
+      if (audioRef.current === el) audioRef.current = null;
+      releaseMedia(el);
+    };
+  }, []);
   const [playing, setPlaying] = useState(false);
   // Coarse playhead for the readout + scrubber (~4 Hz is plenty for a time
   // label); the word/segment highlight advances at frame rate via the rAF
@@ -1862,7 +1876,10 @@ export function TranscriptViewer({
   /** One source of truth for Save AND the live preview: the display toggles
    *  map onto the generator options (colors on → "line" mode; names/timestamps
    *  gate their prefixes). */
-  const exportOpts = (): ExportOptions => ({
+  // Memoized over exactly what it reads, so the preview below (and anything
+  // else keyed on it) holds across the re-renders that don't touch the export
+  // choices — playhead ticks, and a media export's progress events.
+  const exportOptions = useMemo((): ExportOptions => ({
     format: exportFormat,
     renames: fileRenames,
     speakerColors: hasSpeakers && colorize ? "line" : "off",
@@ -1882,7 +1899,11 @@ export function TranscriptViewer({
           lineOrder,
         }
       : {}),
-  });
+  }), [
+    exportFormat, fileRenames, hasSpeakers, colorize, showNames, showTs, fileColors, speakers,
+    wordTs, langs, exportTracks, visibleTracks, allTracks, lineOrder,
+  ]);
+  const exportOpts = (): ExportOptions => exportOptions;
 
   /** Tracks the export actually carries (the picker, else the visible ones). */
   const effTracks = useMemo(
@@ -2066,9 +2087,11 @@ export function TranscriptViewer({
   const PREVIEW_CUES = 12;
 
   /** First cues of the ACTUAL file, re-serialized on every card/toggle
-   *  change — the panel's answer to "what am I getting?". */
-  const exportPreview = (): string | null => {
-    if (!result.segments?.length) return null;
+   *  change — the panel's answer to "what am I getting?". Memoized: it used
+   *  to re-serialize on every render, and a video export re-renders the
+   *  viewer per progress event. Only while the panel shows it. */
+  const exportPreview = useMemo((): string | null => {
+    if (!showExport || !result.segments?.length) return null;
     const full = editedResult;
     const segs = (full.segments ?? []).slice(0, PREVIEW_CUES);
     const lastEnd = segs[segs.length - 1]?.end ?? 0;
@@ -2081,8 +2104,8 @@ export function TranscriptViewer({
     // Preview the first file generateExports would actually write — the
     // singular generateExport falls back to the original track for
     // multi-track LRC, which no written file would contain.
-    return generateExports(sample, exportOpts())[0].content;
-  };
+    return generateExports(sample, exportOptions)[0].content;
+  }, [showExport, result.segments, editedResult, exportOptions]);
 
 
   /** The files one Save writes (the media file first, then the text files),
@@ -2495,7 +2518,7 @@ export function TranscriptViewer({
           {/* key forces a clean reload per file */}
           <audio
             key={blobSrc ?? path}
-            ref={audioRef}
+            ref={attachAudio}
             src={blobSrc ?? audioSrc}
             preload="metadata"
             onLoadedMetadata={(e) => {
@@ -3126,7 +3149,7 @@ export function TranscriptViewer({
             style={previewH !== null ? { height: previewH, maxHeight: "none" } : undefined}
             className="mt-3 max-h-[40vh] overflow-auto whitespace-pre rounded-xl border border-line bg-surface px-3.5 py-3 font-mono text-[11.5px] leading-relaxed text-dim"
           >
-            {exportPreview() ?? "No segments to preview."}
+            {exportPreview ?? "No segments to preview."}
           </pre>
           <div className="flex justify-center pt-1.5">
             <div

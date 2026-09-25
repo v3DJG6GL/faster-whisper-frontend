@@ -7,7 +7,7 @@
 // timestamps → karaoke). Search is global; when the active segment hides
 // matches, a banner names them (NN/g scoped-search guidance).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useNavigate } from "react-router-dom";
 import { Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, FileText, Film, Link2, Mic, MicOff, Pause, Play, RotateCcw, Search, Trash2, X, History as HistoryIcon } from "lucide-react";
@@ -37,6 +37,7 @@ import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { urlHost } from "@/lib/urlSource";
 import { exportStem, isVideoSourcePath } from "@/lib/mediaExport";
 import { cn } from "@/lib/cn";
+import { releaseMedia } from "@/lib/media";
 
 /** "Today" / "Yesterday" / a local date — the bucket a record sorts under. */
 function dayBucket(iso: string): string {
@@ -134,10 +135,25 @@ function RecordingPlayer({ path }: { path: string }) {
   const [cur, setCur] = useState(0);
   const [len, setLen] = useState(0);
   const [rate, setRate] = useState(1);
+  // Keeps audioRef and empties the element when it detaches (path change,
+  // row collapse, unmount): a detached element otherwise holds the whole
+  // decoded WAV. Stable, so it is not released and re-attached per render.
+  const attachAudio = useCallback((el: HTMLAudioElement | null) => {
+    audioRef.current = el;
+    if (!el) return;
+    return () => {
+      if (audioRef.current === el) audioRef.current = null;
+      releaseMedia(el);
+    };
+  }, []);
 
   useEffect(() => {
     let stale = false;
     let url: string | null = null;
+    // Drop the previous recording's URL first: the cleanup below revokes it,
+    // and the element must not keep pointing at a dead blob while the next
+    // file loads (null also unmounts it, which releases it).
+    setSrc(null);
     readMediaFile(path)
       .then((buf) => {
         if (stale) return;
@@ -190,7 +206,7 @@ function RecordingPlayer({ path }: { path: string }) {
   return (
     <div className="mt-3 flex h-9 items-center gap-3 rounded-xl border border-line bg-surface-2 px-3">
       <audio
-        ref={audioRef}
+        ref={attachAudio}
         src={src}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}

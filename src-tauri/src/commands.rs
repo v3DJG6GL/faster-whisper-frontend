@@ -837,7 +837,23 @@ pub async fn package_media(
     let epoch = MEDIA_EXPORT_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
     let emit_app = app.clone();
     let job = job_id.clone();
+    // Throttled to ~10 events/s: the transfer loops report every KB-sized chunk, and each
+    // event re-renders the whole viewer. A phase's first event and the final one (done ==
+    // total) always go through, so the bar never skips a phase or stalls short of 100%.
+    let last_emit: std::sync::Mutex<(Option<std::time::Instant>, &'static str)> =
+        std::sync::Mutex::new((None, ""));
     let progress: media::Progress = std::sync::Arc::new(move |phase, done, total| {
+        {
+            let mut last = last_emit.lock().unwrap_or_else(|e| e.into_inner());
+            let now = std::time::Instant::now();
+            let due = last.1 != phase
+                || total == Some(done)
+                || last.0.map_or(true, |t| now.duration_since(t) >= std::time::Duration::from_millis(100));
+            if !due {
+                return;
+            }
+            *last = (Some(now), phase);
+        }
         let _ = emit_app.emit(
             "media://export-progress",
             media::ExportProgress { job_id: job.clone(), phase, done, total },
