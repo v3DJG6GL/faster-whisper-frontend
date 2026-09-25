@@ -127,6 +127,28 @@ pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32, channels: u16) -> Vec<u8> {
     wav
 }
 
+/// Ceiling on one session's in-memory recording: 4 h of 16 kHz mono s16le (32,000 B/s). A
+/// forgotten hands-free session otherwise grows its buffer without bound (~115 MB/h), and the WAV
+/// wrap copies it once more at save time. Shared by the batch buffer and the streaming saved copy.
+pub const MAX_RECORD_PCM_BYTES: usize = 4 * 60 * 60 * 32_000;
+
+/// Append PCM to a recording buffer without ever passing MAX_RECORD_PCM_BYTES. Returns false when
+/// the cap cut (or refused) this append, so the caller can warn once per session. The kept prefix
+/// stays sample-aligned (the cap is even and the cut rounds down to whole samples).
+pub fn push_pcm_capped(buf: &mut Vec<u8>, bytes: &[u8]) -> bool {
+    push_pcm_capped_at(buf, bytes, MAX_RECORD_PCM_BYTES)
+}
+
+fn push_pcm_capped_at(buf: &mut Vec<u8>, bytes: &[u8], cap: usize) -> bool {
+    let room = cap.saturating_sub(buf.len());
+    if bytes.len() <= room {
+        buf.extend_from_slice(bytes);
+        return true;
+    }
+    buf.extend_from_slice(&bytes[..room & !1]);
+    false
+}
+
 /// The two file names this app writes into the dictations folder — `dictation-*.wav`
 /// and its `.txt` sidecar. Everything else in a user-chosen folder is somebody else's
 /// data: never moved by the layout migration, never deleted by prune or delete-all.
@@ -618,5 +640,25 @@ mod retention_tests {
     #[test]
     fn missing_directory_is_not_an_error() {
         assert_eq!(prune_recordings(Path::new("/nonexistent/fwf/x"), 30), 0);
+    }
+}
+
+#[cfg(test)]
+mod cap_tests {
+    use super::{push_pcm_capped_at, MAX_RECORD_PCM_BYTES};
+
+    #[test]
+    fn recording_buffer_stops_at_the_cap() {
+        assert_eq!(MAX_RECORD_PCM_BYTES % 2, 0, "the cap must fall on a sample boundary");
+        const CAP: usize = 8;
+        let mut buf = vec![0u8; CAP - 4];
+        assert!(push_pcm_capped_at(&mut buf, &[1, 2], CAP));
+        // Crosses the cap: only the whole samples that fit are kept.
+        assert!(!push_pcm_capped_at(&mut buf, &[3, 4, 5, 6], CAP));
+        assert_eq!(buf, [0, 0, 0, 0, 1, 2, 3, 4]);
+        // At the cap: refused, nothing appended.
+        assert!(!push_pcm_capped_at(&mut buf, &[7, 8], CAP));
+        assert_eq!(buf.len(), CAP);
+        assert!(push_pcm_capped_at(&mut Vec::new(), &[], CAP));
     }
 }

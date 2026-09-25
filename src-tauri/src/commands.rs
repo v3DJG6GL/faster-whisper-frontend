@@ -1442,19 +1442,25 @@ pub async fn save_text_file(path: String, contents: String) -> Result<(), String
 
 /// Read a text/subtitle source file for a translate-only run. Size-capped —
 /// subtitle files are KBs; anything past the cap is the wrong file.
+/// async + spawn_blocking: a sync command runs on the main thread, and the picked file can sit
+/// on a slow or stalled mount (network share, sleeping disk).
 #[tauri::command]
-pub fn read_text_file(path: String) -> Result<String, String> {
+pub async fn read_text_file(path: String) -> Result<String, String> {
     const MAX_TEXT_SOURCE_BYTES: u64 = 10 * 1024 * 1024;
-    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
-    if !meta.is_file() {
-        return Err("not a file".into());
-    }
-    if meta.len() > MAX_TEXT_SOURCE_BYTES {
-        return Err("file is larger than 10 MB — not a subtitle/text source".into());
-    }
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-    // Lossy: a stray invalid byte must not block a whole subtitle file.
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        if !meta.is_file() {
+            return Err("not a file".into());
+        }
+        if meta.len() > MAX_TEXT_SOURCE_BYTES {
+            return Err("file is larger than 10 MB — not a subtitle/text source".into());
+        }
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        // Lossy: a stray invalid byte must not block a whole subtitle file.
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// A parsed + validated settings export, ready for the import-preview UI.
@@ -2305,10 +2311,35 @@ pub struct ClipboardSnapshot(pub std::sync::Mutex<Option<String>>);
 /// dead/slow owner — e.g. right after the previous clipboard owner exited — so every such read goes
 /// through here: one place owns the off-thread + 400ms-cap contract. Returns None on timeout, join
 /// error, or an empty read; callers log / handle None per-site.
+///
+/// Single-flight (CLIP_READ_BUSY): a read that outlives its 400ms cap keeps its blocking thread,
+/// so on a wedged owner every per-phrase call used to strand one more thread. While a read is still
+/// running, a new one returns None straight away; the flag clears only when the blocking read
+/// itself returns, not when the caller's timeout fires.
 async fn read_selection_bounded(
     read: impl FnOnce() -> Option<String> + Send + 'static,
 ) -> Option<String> {
-    let task = tokio::task::spawn_blocking(read);
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static CLIP_READ_BUSY: AtomicBool = AtomicBool::new(false);
+    if CLIP_READ_BUSY
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        tracing::debug!("[clipboard] a previous selection read is still running; skipping this one");
+        return None;
+    }
+    struct Release;
+    impl Drop for Release {
+        fn drop(&mut self) {
+            CLIP_READ_BUSY.store(false, Ordering::Release);
+        }
+    }
+    let release = Release;
+    let task = tokio::task::spawn_blocking(move || {
+        // Moved in, so it drops (and frees the flag) when the read returns, or if it panics.
+        let _release = release;
+        read()
+    });
     match tokio::time::timeout(std::time::Duration::from_millis(400), task).await {
         Ok(Ok(v)) => v,
         _ => None,

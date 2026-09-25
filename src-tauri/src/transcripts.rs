@@ -353,12 +353,21 @@ pub fn save_transcript_record(
 /// All history records, parsed but uninterpreted. Unreadable or unparseable
 /// files are skipped — one corrupt record must never hide the rest. Ordering
 /// is the frontend's job (records carry their own createdAt).
+/// async + spawn_blocking: reading and parsing every record is the heaviest read the app does,
+/// and a sync command would stall the main thread (every window) for its duration. Safe to run
+/// beside writes: `write_record_atomic` renames into place, so a read sees old or new, never half.
 #[tauri::command]
-pub fn list_transcript_records(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
-    let mut out = Vec::new();
-    read_records_into(&transcripts_dir(&app)?, &mut out);
-    read_records_into(&dictations_dir(&app)?, &mut out);
-    Ok(out)
+pub async fn list_transcript_records(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    let transcripts = transcripts_dir(&app)?;
+    let dictations = dictations_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut out = Vec::new();
+        read_records_into(&transcripts, &mut out);
+        read_records_into(&dictations, &mut out);
+        out
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) {

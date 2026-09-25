@@ -1161,6 +1161,18 @@ fn set_system_mute(mute: bool) {
     }
 }
 
+/// Append resampled PCM to the batch recording. Stops at `MAX_RECORD_PCM_BYTES` (4 h): a forgotten
+/// session is then transcribed up to the cap instead of the buffer growing until memory runs out.
+fn push_recording(buf: &Mutex<Vec<u8>>, bytes: &[u8], capped: &AtomicBool) {
+    let Ok(mut b) = buf.lock() else { return };
+    if !crate::audio::push_pcm_capped(&mut b, bytes) && !capped.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            "[record] recording reached the {} MB cap (4 h) — later audio is not kept; the clip is transcribed up to the cap",
+            crate::audio::MAX_RECORD_PCM_BYTES / 1_000_000
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_record_capture(
     app: &AppHandle,
@@ -1180,9 +1192,12 @@ fn run_record_capture(
     // Same raw-audio go-live detector as the streaming path (batch parity): the frontend's
     // warm-up gate runs for BOTH endpoints, so both must announce `stream://mic-live`.
     let live = Arc::new(AtomicBool::new(false));
+    // Latched on the first append the recording cap cuts, so the warning is logged once per session.
+    let capped = Arc::new(AtomicBool::new(false));
     let stream = match format {
         SampleFormat::F32 => {
             let buf = buffer.clone();
+            let capped = capped.clone();
             let lvl = level.clone();
             let mut sm = 0.0f32;
             let mut mono: Vec<f32> = Vec::new();
@@ -1197,9 +1212,7 @@ fn run_record_capture(
                     ld.feed(&mono);
                     let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
                     if !bytes.is_empty() {
-                        if let Ok(mut b) = buf.lock() {
-                            b.extend_from_slice(&bytes);
-                        }
+                        push_recording(&buf, &bytes, &capped);
                     }
                 },
                 err_cb_with_lost(stop.clone(), device_lost.clone()),
@@ -1208,6 +1221,7 @@ fn run_record_capture(
         }
         SampleFormat::I16 => {
             let buf = buffer.clone();
+            let capped = capped.clone();
             let lvl = level.clone();
             let mut sm = 0.0f32;
             let mut mono: Vec<f32> = Vec::new();
@@ -1222,9 +1236,7 @@ fn run_record_capture(
                     ld.feed(&mono);
                     let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
                     if !bytes.is_empty() {
-                        if let Ok(mut b) = buf.lock() {
-                            b.extend_from_slice(&bytes);
-                        }
+                        push_recording(&buf, &bytes, &capped);
                     }
                 },
                 err_cb_with_lost(stop.clone(), device_lost.clone()),
@@ -1233,6 +1245,7 @@ fn run_record_capture(
         }
         SampleFormat::U16 => {
             let buf = buffer.clone();
+            let capped = capped.clone();
             let lvl = level.clone();
             let mut sm = 0.0f32;
             let mut mono: Vec<f32> = Vec::new();
@@ -1247,9 +1260,7 @@ fn run_record_capture(
                     ld.feed(&mono);
                     let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
                     if !bytes.is_empty() {
-                        if let Ok(mut b) = buf.lock() {
-                            b.extend_from_slice(&bytes);
-                        }
+                        push_recording(&buf, &bytes, &capped);
                     }
                 },
                 err_cb_with_lost(stop.clone(), device_lost.clone()),
@@ -1268,9 +1279,7 @@ fn run_record_capture(
     if let Ok(mut r) = resampler.lock() {
         let tail = r.flush();
         if !tail.is_empty() {
-            if let Ok(mut b) = buffer.lock() {
-                b.extend_from_slice(&tail);
-            }
+            push_recording(&buffer, &tail, &capped);
         }
     }
     Ok(())

@@ -358,6 +358,10 @@ pub async fn run<F>(
     let saving = params.save_dir.is_some();
     let trim = saving && params.trim_silence;
     let mut saved: Vec<u8> = Vec::new();
+    // Latched once `saved` reaches MAX_RECORD_PCM_BYTES (see `save_capped`); `gated` is the reused
+    // scratch the speech gate writes into, so its output goes through the same cap.
+    let mut saved_capped = false;
+    let mut gated: Vec<u8> = Vec::new();
     // Accumulate the session transcript HERE (Rust) so a saved recording gets its `.txt` sidecar
     // written in the drain — independent of the epoch-gated `recording-saved` emit — exactly like the
     // batch path (transcribe_recording). A session superseded by cancel/suspend would otherwise keep
@@ -392,7 +396,10 @@ pub async fn run<F>(
     // side. It forwards parsed messages over `evt_rx` and signals `Closed` when the
     // socket ends or the terminal frame arrives.
     let (evt_tx, mut evt_rx) = mpsc::unbounded_channel::<FromReader>();
-    let reader = tokio::spawn(async move {
+    // AbortOnDrop: the reader must die with this task on EVERY exit. A cancelled session aborts the
+    // outer task (StreamSession::drop), and a bare JoinHandle dropped by that abort only DETACHES
+    // the reader — which then keeps the socket alive answering server PINGs indefinitely.
+    let reader = AbortOnDrop(tokio::spawn(async move {
         loop {
             match read.next().await {
                 Some(Ok(Message::Text(t))) => {
@@ -442,7 +449,7 @@ pub async fn run<F>(
             }
         }
         let _ = evt_tx.send(FromReader::Closed);
-    });
+    }));
 
     // Client-initiated keepalive: a little outbound traffic on a regular cadence so a
     // half-open link is noticed promptly (the bounded send times out) even during a
@@ -467,9 +474,11 @@ pub async fn run<F>(
                                 // thresholds as the chip); the gate keeps audio only while "speaking"
                                 // and prepends the buffered lead-in on each silence→speech edge.
                                 let lvl = crate::audio::chip_level(rms_f32(&chunk));
-                                gate.push(lvl, &bytes, &mut saved);
+                                gated.clear();
+                                gate.push(lvl, &bytes, &mut gated);
+                                save_capped(&mut saved, &gated, &mut saved_capped);
                             } else if saving {
-                                saved.extend_from_slice(&bytes);
+                                save_capped(&mut saved, &bytes, &mut saved_capped);
                             }
                             let n = bytes.len() as u64;
                             match tokio::time::timeout(
@@ -581,7 +590,7 @@ pub async fn run<F>(
                 let bytes = resampler.push(&chunk);
                 if !bytes.is_empty() {
                     if saving {
-                        saved.extend_from_slice(&bytes);
+                        save_capped(&mut saved, &bytes, &mut saved_capped);
                     }
                     let _ = write.send(Message::Binary(bytes.into())).await;
                 }
@@ -592,7 +601,7 @@ pub async fn run<F>(
             let tail = resampler.flush();
             if !tail.is_empty() {
                 if saving {
-                    saved.extend_from_slice(&tail);
+                    save_capped(&mut saved, &tail, &mut saved_capped);
                 }
                 let _ = write.send(Message::Binary(tail.into())).await;
             }
@@ -656,8 +665,8 @@ pub async fn run<F>(
     }
 
     // We own the write half; the reader owns the read half. Once draining is done,
-    // drop the reader so it can't linger after we return.
-    reader.abort();
+    // drop (= abort) the reader so it can't linger after we return.
+    drop(reader);
 
     if let Some(dir) = &params.save_dir {
         // Skip empties (a quick tap that drained without audio, or a session the silence-trim
@@ -684,6 +693,28 @@ pub async fn run<F>(
         }
     }
     on_event(StreamEvent::Closed);
+}
+
+/// Aborts the wrapped task when dropped — including when the owning future is itself aborted
+/// or dropped mid-await, which a bare `JoinHandle` would turn into a silent detach.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Append to the saved recording copy, stopping at `MAX_RECORD_PCM_BYTES` (4 h). Only the copy
+/// stops growing: the audio still streams, so the live transcript is unaffected. Warns once.
+fn save_capped(saved: &mut Vec<u8>, bytes: &[u8], capped: &mut bool) {
+    if !crate::audio::push_pcm_capped(saved, bytes) && !*capped {
+        *capped = true;
+        tracing::warn!(
+            "[stream] saved recording reached the {} MB cap (4 h) — the rest of this session is transcribed but not kept",
+            crate::audio::MAX_RECORD_PCM_BYTES / 1_000_000
+        );
+    }
 }
 
 /// Fold a stream event into the running session transcript (for the saved-recording `.txt` sidecar),
