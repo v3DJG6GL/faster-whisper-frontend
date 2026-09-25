@@ -132,6 +132,14 @@ jobs:
         run: echo "CARGO_HOME=${RUNNER_TEMP:-/tmp}/cargo-home" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # Formatting is platform-neutral and needs no build, so Linux only and first: a
+      # formatting slip fails in seconds. Fix it with `cargo fmt` in src-tauri.
+      - name: cargo fmt
+        if: runner.os == 'Linux'
+        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
 
       # Linux only. On the windows leg this action never once restored anything —
       # every host-mode run logs "No cache found" (occasionally "Failed to
@@ -159,9 +167,14 @@ jobs:
       # so both legs run it; without this step a red suite merged silently.
       - run: pnpm test
 
+      # clippy runs everything `cargo check` did plus the lints; any warning — compiler or
+      # clippy — fails the job, on both legs (the Windows leg is the only place the
+      # cfg(windows) code gets linted). --all-targets covers the test modules too.
       # --locked also protects the time-0.3.47 pin (see Cargo.toml) from drifting.
-      - name: cargo check
-        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+      # The toolchain floats on stable, so a new Rust release can bring a new lint: fix
+      # it, or allow it with a reason where it fires.
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
 
       # The unit tests live mostly in Linux-gated modules; the Windows leg's job
       # is the compile check above.

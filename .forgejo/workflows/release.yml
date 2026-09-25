@@ -192,12 +192,25 @@ jobs:
         run: echo "CARGO_HOME=${RUNNER_TEMP:-/tmp}/cargo-home" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
       - run: pnpm install --frozen-lockfile
+
+      # The same Rust gates as ci.yml, so a release dispatched on a commit whose CI
+      # never ran (or failed) still can't ship unformatted or lint-failing code.
+      # Linux only: the Windows leg shares its VM with other jobs, and ci.yml's
+      # push run lints the Windows code. clippy needs dist/ (generate_context!);
+      # tauri-action rebuilds it below, which only costs the vite build twice.
+      - name: cargo fmt
+        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
+      - run: pnpm build
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
 
       # Don't ship a release whose tag disagrees with the in-app version readout.
       - name: Verify the tag matches the app version
