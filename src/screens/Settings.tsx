@@ -748,7 +748,9 @@ function AppearanceRows() {
                 className="ring-signal h-2 w-full min-w-[160px] cursor-pointer appearance-none rounded-pill disabled:cursor-not-allowed"
                 style={{ background: HUE_TRACK }}
               />
-              <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-dim">
+              {/* Fixed width (the longest readout, "…59.9 min · 30 s … 7 d"), so the
+                  slider keeps its size and place while the number changes under a drag. */}
+              <span className="w-[36ch] shrink-0 whitespace-nowrap font-mono text-[11.5px] tabular-nums text-dim">
                 {hue}° · {custom ? "custom" : preset![0].toLowerCase()}
               </span>
             </div>
@@ -845,6 +847,37 @@ function useReducedMotion(): boolean {
  *  (whole wheel / an arc to a second swatch) and a live "Right now" readout fed by this
  *  window's drift driver (theme.ts). The engine itself never touches `accentHue`: the
  *  hue you picked above is the base every turn starts from. */
+/** The Motion cost notice (D71–D73), under the Custom speed row while Custom is picked
+ *  (so the slider above it never moves) and under Motion otherwise. It fades and folds
+ *  its height in and out instead of popping, and keeps the last text while it fades out. */
+function CostNotice({ cost }: { cost: ReturnType<typeof motionCostNote> }) {
+  const last = useRef(cost);
+  if (cost) last.current = cost;
+  const shown = last.current;
+  return (
+    // Always mounted, so a change of tier is announced; a live region that mounts
+    // together with its text is announced unreliably.
+    <div
+      role="status"
+      aria-live="polite"
+      className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none ${
+        cost ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+      }`}
+    >
+      <div className="overflow-hidden">
+        {/* Fading out, the old text stays for the eye but leaves the live region. */}
+        {shown && (
+          <div aria-hidden={cost ? undefined : true}>
+            <Notice tone={shown.tone} className="mt-2.5">
+              {shown.text}
+            </Notice>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MotionRows({
   dark, motion, reduced, baseHue,
 }: { dark: boolean; motion: AccentMotion; reduced: boolean; baseHue: number }) {
@@ -926,17 +959,7 @@ function MotionRows({
         desc="How fast the Signal colour travels around the wheel. Still keeps it where you set it."
         disabled={reduced}
         disabledReason={REDUCED_MOTION_REASON}
-        expand={
-          // Always mounted, so a change of tier is announced; a live region that mounts
-          // together with its text is announced unreliably.
-          <div role="status" aria-live="polite">
-            {cost && (
-              <Notice tone={cost.tone} className="mt-2.5">
-                {cost.text}
-              </Notice>
-            )}
-          </div>
-        }
+        expand={custom ? undefined : <CostNotice cost={cost} />}
       >
         <Select<string>
           value={custom ? "custom" : String(motion.period)}
@@ -949,7 +972,11 @@ function MotionRows({
       </SettingRow>
       {custom && (
         <div className="pl-5">
-          <SettingRow title="Custom speed" desc="One full turn of the wheel takes this long.">
+          <SettingRow
+            title="Custom speed"
+            desc="One full turn of the wheel takes this long."
+            expand={<CostNotice cost={cost} />}
+          >
             <div className="flex items-center gap-3">
               <input
                 type="range"
@@ -961,7 +988,9 @@ function MotionRows({
                 onChange={(e) => dragSpeed(Number(e.target.value))}
                 className="ring-signal h-2 w-full min-w-[160px] cursor-pointer appearance-none rounded-pill bg-surface-2"
               />
-              <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-dim">
+              {/* Fixed width (the longest readout, "…59.9 min · 30 s … 7 d"), so the
+                  slider keeps its size and place while the number changes under a drag. */}
+              <span className="w-[36ch] shrink-0 whitespace-nowrap font-mono text-[11.5px] tabular-nums text-dim">
                 {fmtPer(sliderToSec(slider))} · 30 s … 7 d
               </span>
             </div>
@@ -1000,7 +1029,9 @@ function MotionRows({
                   />
                 ))}
               </div>
-              <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-dim">
+              {/* Fixed width (the longest readout, "…59.9 min · 30 s … 7 d"), so the
+                  slider keeps its size and place while the number changes under a drag. */}
+              <span className="w-[36ch] shrink-0 whitespace-nowrap font-mono text-[11.5px] tabular-nums text-dim">
                 {arcName(arcFrom)} ↔ {arcName(arcTo)}
               </span>
             </div>
