@@ -93,7 +93,10 @@ impl ChordKind {
     /// same rule in the Settings UI; this is its twin for the profile lists that never pass
     /// through the UI (a sync pull, an import), applied by both backends' `chords_from`.
     fn may_nest_in(&self, sup: &ChordKind) -> bool {
-        matches!((self, sup), (ChordKind::Hold { .. }, ChordKind::HandsFree { .. }))
+        matches!(
+            (self, sup),
+            (ChordKind::Hold { .. }, ChordKind::HandsFree { .. })
+        )
     }
 }
 
@@ -184,12 +187,18 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(chords: Vec<ChordSpec>) -> Self {
-        let sets: Vec<HashSet<u16>> = chords.iter().map(|c| c.keys.iter().copied().collect()).collect();
+        let sets: Vec<HashSet<u16>> = chords
+            .iter()
+            .map(|c| c.keys.iter().copied().collect())
+            .collect();
         let n = chords.len();
         let mut subsets = vec![Vec::new(); n];
         for i in 0..n {
             for j in 0..n {
-                if i != j && sets[j].len() > sets[i].len() && sets[i].iter().all(|c| sets[j].contains(c)) {
+                if i != j
+                    && sets[j].len() > sets[i].len()
+                    && sets[i].iter().all(|c| sets[j].contains(c))
+                {
                     subsets[j].push(i);
                 }
             }
@@ -374,9 +383,22 @@ mod tests {
     /// independent quick-add chord beside them (the starter shape, quick-add on Alt+Super).
     fn family() -> Engine {
         Engine::new(vec![
-            ChordSpec { keys: vec![CTRL_L, SHIFT_L], kind: ChordKind::Hold { profile_id: "ptt".into() } },
-            ChordSpec { keys: vec![CTRL_L, SHIFT_L, SPACE], kind: ChordKind::HandsFree { profile_id: "handsfree".into() } },
-            ChordSpec { keys: vec![ALT_L, SUPER_L], kind: ChordKind::QuickAdd },
+            ChordSpec {
+                keys: vec![CTRL_L, SHIFT_L],
+                kind: ChordKind::Hold {
+                    profile_id: "ptt".into(),
+                },
+            },
+            ChordSpec {
+                keys: vec![CTRL_L, SHIFT_L, SPACE],
+                kind: ChordKind::HandsFree {
+                    profile_id: "handsfree".into(),
+                },
+            },
+            ChordSpec {
+                keys: vec![ALT_L, SUPER_L],
+                kind: ChordKind::QuickAdd,
+            },
         ])
     }
 
@@ -386,9 +408,22 @@ mod tests {
     /// which no other test covers.
     fn overlapping() -> Engine {
         Engine::new(vec![
-            ChordSpec { keys: vec![CTRL_L, SHIFT_L], kind: ChordKind::Hold { profile_id: "ptt".into() } },
-            ChordSpec { keys: vec![CTRL_L, SUPER_L], kind: ChordKind::HandsFree { profile_id: "hf".into() } },
-            ChordSpec { keys: vec![ALT_L, SUPER_L], kind: ChordKind::QuickAdd },
+            ChordSpec {
+                keys: vec![CTRL_L, SHIFT_L],
+                kind: ChordKind::Hold {
+                    profile_id: "ptt".into(),
+                },
+            },
+            ChordSpec {
+                keys: vec![CTRL_L, SUPER_L],
+                kind: ChordKind::HandsFree {
+                    profile_id: "hf".into(),
+                },
+            },
+            ChordSpec {
+                keys: vec![ALT_L, SUPER_L],
+                kind: ChordKind::QuickAdd,
+            },
         ])
     }
 
@@ -407,7 +442,15 @@ mod tests {
         let mut e = family();
         let t = Instant::now();
         assert_eq!(
-            run(&mut e, &[(&[CTRL_L], t), (&[CTRL_L, SHIFT_L], t), (&[CTRL_L], t), (&[], t)]),
+            run(
+                &mut e,
+                &[
+                    (&[CTRL_L], t),
+                    (&[CTRL_L, SHIFT_L], t),
+                    (&[CTRL_L], t),
+                    (&[], t)
+                ]
+            ),
             vec![Fire::Start("ptt".into()), Fire::Stop("ptt".into())]
         );
     }
@@ -416,7 +459,9 @@ mod tests {
     fn plain_handsfree_toggle_and_rearm() {
         let mut e = Engine::new(vec![ChordSpec {
             keys: vec![CTRL_L, KEY_H],
-            kind: ChordKind::HandsFree { profile_id: "l".into() },
+            kind: ChordKind::HandsFree {
+                profile_id: "l".into(),
+            },
         }]);
         let t = Instant::now();
         let fires = run(
@@ -429,7 +474,10 @@ mod tests {
                 (&[], t),
             ],
         );
-        assert_eq!(fires, vec![Fire::Toggle("l".into()), Fire::Toggle("l".into())]);
+        assert_eq!(
+            fires,
+            vec![Fire::Toggle("l".into()), Fire::Toggle("l".into())]
+        );
     }
 
     #[test]
@@ -447,7 +495,11 @@ mod tests {
         );
         assert_eq!(
             fires,
-            vec![Fire::Start("ptt".into()), Fire::ReleaseHold("ptt".into()), Fire::Reclassify("handsfree".into())]
+            vec![
+                Fire::Start("ptt".into()),
+                Fire::ReleaseHold("ptt".into()),
+                Fire::Reclassify("handsfree".into())
+            ]
         );
     }
 
@@ -459,7 +511,12 @@ mod tests {
         let t = Instant::now();
         let fires = run(
             &mut e,
-            &[(&[SPACE], t), (&[SPACE, CTRL_L], t), (&[SPACE, CTRL_L, SHIFT_L], t), (&[], t)],
+            &[
+                (&[SPACE], t),
+                (&[SPACE, CTRL_L], t),
+                (&[SPACE, CTRL_L, SHIFT_L], t),
+                (&[], t),
+            ],
         );
         assert_eq!(fires, vec![Fire::Toggle("handsfree".into())]);
     }
@@ -471,14 +528,31 @@ mod tests {
         // the frontend reads same-profile as toggle-off.
         let mut e = family();
         let t = Instant::now();
-        run(&mut e, &[(&[CTRL_L, SHIFT_L], t), (&[CTRL_L, SHIFT_L, SPACE], t), (&[], t)]);
-        let fires = run(&mut e, &[(&[CTRL_L, SHIFT_L], t), (&[CTRL_L, SHIFT_L, SPACE], t), (&[], t)]);
+        run(
+            &mut e,
+            &[
+                (&[CTRL_L, SHIFT_L], t),
+                (&[CTRL_L, SHIFT_L, SPACE], t),
+                (&[], t),
+            ],
+        );
+        let fires = run(
+            &mut e,
+            &[
+                (&[CTRL_L, SHIFT_L], t),
+                (&[CTRL_L, SHIFT_L, SPACE], t),
+                (&[], t),
+            ],
+        );
         assert_eq!(
             fires,
-            vec![Fire::Start("ptt".into()), Fire::ReleaseHold("ptt".into()), Fire::Reclassify("handsfree".into())]
+            vec![
+                Fire::Start("ptt".into()),
+                Fire::ReleaseHold("ptt".into()),
+                Fire::Reclassify("handsfree".into())
+            ]
         );
     }
-
 
     /// Quick-add is a plain rising-edge chord: press opens, and it re-arms only on a real
     /// release — exactly the hands-free discipline, with no hold to hand off.
@@ -507,20 +581,55 @@ mod tests {
         let t = Instant::now();
         // hands-free nested in quick-add: lifting the extra key must not toggle dictation.
         let mut e = Engine::new(vec![
-            ChordSpec { keys: vec![CTRL_L, SHIFT_L], kind: ChordKind::HandsFree { profile_id: "hf".into() } },
-            ChordSpec { keys: vec![CTRL_L, SHIFT_L, SPACE], kind: ChordKind::QuickAdd },
+            ChordSpec {
+                keys: vec![CTRL_L, SHIFT_L],
+                kind: ChordKind::HandsFree {
+                    profile_id: "hf".into(),
+                },
+            },
+            ChordSpec {
+                keys: vec![CTRL_L, SHIFT_L, SPACE],
+                kind: ChordKind::QuickAdd,
+            },
         ]);
         assert_eq!(
-            run(&mut e, &[(&[SPACE], t), (&[SPACE, CTRL_L], t), (&[SPACE, CTRL_L, SHIFT_L], t), (&[CTRL_L, SHIFT_L], t), (&[], t)]),
+            run(
+                &mut e,
+                &[
+                    (&[SPACE], t),
+                    (&[SPACE, CTRL_L], t),
+                    (&[SPACE, CTRL_L, SHIFT_L], t),
+                    (&[CTRL_L, SHIFT_L], t),
+                    (&[], t)
+                ]
+            ),
             vec![Fire::OpenQuickAdd]
         );
         // quick-add nested in hands-free: lifting the extra key must not open the window.
         let mut e2 = Engine::new(vec![
-            ChordSpec { keys: vec![CTRL_L, SHIFT_L, SPACE], kind: ChordKind::QuickAdd },
-            ChordSpec { keys: vec![CTRL_L, SHIFT_L, SPACE, KEY_H], kind: ChordKind::HandsFree { profile_id: "hf".into() } },
+            ChordSpec {
+                keys: vec![CTRL_L, SHIFT_L, SPACE],
+                kind: ChordKind::QuickAdd,
+            },
+            ChordSpec {
+                keys: vec![CTRL_L, SHIFT_L, SPACE, KEY_H],
+                kind: ChordKind::HandsFree {
+                    profile_id: "hf".into(),
+                },
+            },
         ]);
         assert_eq!(
-            run(&mut e2, &[(&[KEY_H], t), (&[KEY_H, CTRL_L], t), (&[KEY_H, CTRL_L, SHIFT_L], t), (&[KEY_H, CTRL_L, SHIFT_L, SPACE], t), (&[CTRL_L, SHIFT_L, SPACE], t), (&[], t)]),
+            run(
+                &mut e2,
+                &[
+                    (&[KEY_H], t),
+                    (&[KEY_H, CTRL_L], t),
+                    (&[KEY_H, CTRL_L, SHIFT_L], t),
+                    (&[KEY_H, CTRL_L, SHIFT_L, SPACE], t),
+                    (&[CTRL_L, SHIFT_L, SPACE], t),
+                    (&[], t)
+                ]
+            ),
             vec![Fire::Toggle("hf".into())]
         );
     }
@@ -563,7 +672,12 @@ mod tests {
         assert_eq!(
             run(
                 &mut e,
-                &[(&[ALT_L], t), (&[ALT_L, CTRL_L], t), (&[ALT_L, CTRL_L, SUPER_L], t), (&[], t)]
+                &[
+                    (&[ALT_L], t),
+                    (&[ALT_L, CTRL_L], t),
+                    (&[ALT_L, CTRL_L, SUPER_L], t),
+                    (&[], t)
+                ]
             ),
             vec![]
         );
@@ -579,7 +693,12 @@ mod tests {
         assert_eq!(
             run(
                 &mut e,
-                &[(&[CTRL_L], t), (&[CTRL_L, SUPER_L], t), (&[CTRL_L, SUPER_L, ALT_L], t), (&[], t)]
+                &[
+                    (&[CTRL_L], t),
+                    (&[CTRL_L, SUPER_L], t),
+                    (&[CTRL_L, SUPER_L, ALT_L], t),
+                    (&[], t)
+                ]
             ),
             vec![Fire::Toggle("hf".into())]
         );
@@ -587,7 +706,12 @@ mod tests {
         assert_eq!(
             run(
                 &mut e2,
-                &[(&[ALT_L], t), (&[ALT_L, SUPER_L], t), (&[ALT_L, SUPER_L, CTRL_L], t), (&[], t)]
+                &[
+                    (&[ALT_L], t),
+                    (&[ALT_L, SUPER_L], t),
+                    (&[ALT_L, SUPER_L, CTRL_L], t),
+                    (&[], t)
+                ]
             ),
             vec![Fire::OpenQuickAdd]
         );
@@ -610,7 +734,10 @@ mod tests {
                 (&[], t),                         // real release → stop
             ],
         );
-        assert_eq!(fires, vec![Fire::Start("ptt".into()), Fire::Stop("ptt".into())]);
+        assert_eq!(
+            fires,
+            vec![Fire::Start("ptt".into()), Fire::Stop("ptt".into())]
+        );
     }
 
     /// Every branch of the shared latch predicate: fully held / fully released / a staggered
@@ -624,11 +751,26 @@ mod tests {
         let down_none = |_k: u16| false;
         let down_second_mod = |k: u16| k == 2;
         let down_plain_only = |k: u16| k == 9;
-        assert!(any_chord_mod_down(&chord, is_mod, down_all), "fully held ⇒ arm");
-        assert!(!any_chord_mod_down(&chord, is_mod, down_none), "fully released ⇒ don't arm");
-        assert!(any_chord_mod_down(&chord, is_mod, down_second_mod), "staggered release ⇒ arm");
-        assert!(!any_chord_mod_down(&chord, is_mod, down_plain_only), "only the plain key ⇒ don't arm");
-        assert!(!any_chord_mod_down(&[], is_mod, down_all), "empty chord ⇒ don't arm");
+        assert!(
+            any_chord_mod_down(&chord, is_mod, down_all),
+            "fully held ⇒ arm"
+        );
+        assert!(
+            !any_chord_mod_down(&chord, is_mod, down_none),
+            "fully released ⇒ don't arm"
+        );
+        assert!(
+            any_chord_mod_down(&chord, is_mod, down_second_mod),
+            "staggered release ⇒ arm"
+        );
+        assert!(
+            !any_chord_mod_down(&chord, is_mod, down_plain_only),
+            "only the plain key ⇒ don't arm"
+        );
+        assert!(
+            !any_chord_mod_down(&[], is_mod, down_all),
+            "empty chord ⇒ don't arm"
+        );
     }
 
     /// The guard arbitrates CHORDS, it does not turn matching into an exact modifier mask:
@@ -641,7 +783,12 @@ mod tests {
         assert_eq!(
             run(
                 &mut e,
-                &[(&[KEY_H], t), (&[KEY_H, CTRL_L], t), (&[KEY_H, CTRL_L, SHIFT_L], t), (&[KEY_H], t)]
+                &[
+                    (&[KEY_H], t),
+                    (&[KEY_H, CTRL_L], t),
+                    (&[KEY_H, CTRL_L, SHIFT_L], t),
+                    (&[KEY_H], t)
+                ]
             ),
             vec![Fire::Start("ptt".into()), Fire::Stop("ptt".into())]
         );
@@ -651,25 +798,67 @@ mod tests {
     /// the UI: exactly one nesting is allowed, a hold inside a hands-free superset.
     #[test]
     fn registration_allows_only_the_hold_in_handsfree_nesting() {
-        let hold = |k: &[u16]| ChordSpec { keys: k.to_vec(), kind: ChordKind::Hold { profile_id: "h".into() } };
-        let hf = |k: &[u16]| ChordSpec { keys: k.to_vec(), kind: ChordKind::HandsFree { profile_id: "f".into() } };
-        let qa = |k: &[u16]| ChordSpec { keys: k.to_vec(), kind: ChordKind::QuickAdd };
+        let hold = |k: &[u16]| ChordSpec {
+            keys: k.to_vec(),
+            kind: ChordKind::Hold {
+                profile_id: "h".into(),
+            },
+        };
+        let hf = |k: &[u16]| ChordSpec {
+            keys: k.to_vec(),
+            kind: ChordKind::HandsFree {
+                profile_id: "f".into(),
+            },
+        };
+        let qa = |k: &[u16]| ChordSpec {
+            keys: k.to_vec(),
+            kind: ChordKind::QuickAdd,
+        };
         // The designed family, in either config order.
-        assert_eq!(registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &hf(&[CTRL_L, SHIFT_L, SPACE])), None);
-        assert_eq!(registration_conflict(&hf(&[CTRL_L, SHIFT_L, SPACE]), &hold(&[CTRL_L, SHIFT_L])), None);
+        assert_eq!(
+            registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &hf(&[CTRL_L, SHIFT_L, SPACE])),
+            None
+        );
+        assert_eq!(
+            registration_conflict(&hf(&[CTRL_L, SHIFT_L, SPACE]), &hold(&[CTRL_L, SHIFT_L])),
+            None
+        );
         // Directional: hands-free inside a hold is a shadow.
-        assert!(registration_conflict(&hf(&[CTRL_L, SHIFT_L]), &hold(&[CTRL_L, SHIFT_L, SPACE])).is_some());
+        assert!(
+            registration_conflict(&hf(&[CTRL_L, SHIFT_L]), &hold(&[CTRL_L, SHIFT_L, SPACE]))
+                .is_some()
+        );
         // hold ⊂ hold — two sessions would run at once.
-        assert!(registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &hold(&[CTRL_L, SHIFT_L, SPACE])).is_some());
+        assert!(
+            registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &hold(&[CTRL_L, SHIFT_L, SPACE]))
+                .is_some()
+        );
         // hands-free ⊂ hands-free, and quick-add nested either way.
-        assert!(registration_conflict(&hf(&[CTRL_L, SHIFT_L]), &hf(&[CTRL_L, SHIFT_L, SPACE])).is_some());
-        assert!(registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &qa(&[CTRL_L, SHIFT_L, KEY_H])).is_some());
-        assert!(registration_conflict(&qa(&[ALT_L, SUPER_L]), &hf(&[ALT_L, SUPER_L, KEY_H])).is_some());
+        assert!(
+            registration_conflict(&hf(&[CTRL_L, SHIFT_L]), &hf(&[CTRL_L, SHIFT_L, SPACE]))
+                .is_some()
+        );
+        assert!(
+            registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &qa(&[CTRL_L, SHIFT_L, KEY_H]))
+                .is_some()
+        );
+        assert!(
+            registration_conflict(&qa(&[ALT_L, SUPER_L]), &hf(&[ALT_L, SUPER_L, KEY_H])).is_some()
+        );
         // Same set, duplicates inside the Vec notwithstanding.
-        assert!(registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &hf(&[CTRL_L, CTRL_L, SHIFT_L])).is_some());
+        assert!(
+            registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &hf(&[CTRL_L, CTRL_L, SHIFT_L]))
+                .is_some()
+        );
         // Overlap and disjoint are not registration conflicts (the peer guard arbitrates them).
-        assert_eq!(registration_conflict(&hf(&[CTRL_L, SUPER_L]), &qa(&[ALT_L, SUPER_L])), None);
-        assert_eq!(registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &qa(&[ALT_L, SUPER_L])), None);
+        assert_eq!(
+            registration_conflict(&hf(&[CTRL_L, SUPER_L]), &qa(&[ALT_L, SUPER_L])),
+            None
+        );
+        assert_eq!(
+            registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &qa(&[ALT_L, SUPER_L])),
+            None
+        );
     }
 
     #[test]

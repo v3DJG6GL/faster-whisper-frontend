@@ -68,7 +68,8 @@ pub fn audio_dir_path(app: AppHandle, custom: Option<String>) -> Option<String> 
 pub fn open_audio_dir(app: AppHandle, custom: Option<String>) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let dir = resolve_audio_base(&app, custom).ok_or("could not resolve the audio folder")?;
-    crate::audio::create_dir_private(&dir).map_err(|e| format!("could not create the folder: {e}"))?;
+    crate::audio::create_dir_private(&dir)
+        .map_err(|e| format!("could not create the folder: {e}"))?;
     for sub in AUDIO_SUBDIRS {
         let _ = crate::audio::create_dir_private(&dir.join(sub));
     }
@@ -118,13 +119,19 @@ fn move_dir_contents(
         if src.extension().and_then(|e| e.to_str()) == Some("tmp") {
             continue;
         }
-        let Some(name) = src.file_name() else { continue };
+        let Some(name) = src.file_name() else {
+            continue;
+        };
         let dest = to.join(name);
         // Never clobber (the layout migration's rule, applied to the relocation too): a base
         // that already holds a same-named file — a second install pointed at one synced folder,
         // a re-run after a partial move — keeps it, and the record still points at the source.
         if dest.exists() {
-            tracing::warn!("[audio] not moving {} — {} already exists", src.display(), dest.display());
+            tracing::warn!(
+                "[audio] not moving {} — {} already exists",
+                src.display(),
+                dest.display()
+            );
             continue;
         }
         move_file(&src, &dest).map_err(|e| format!("could not move {}: {e}", src.display()))?;
@@ -176,7 +183,9 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
         if let Ok(entries) = std::fs::read_dir(&legacy_rec) {
             for entry in entries.flatten() {
                 let src = entry.path();
-                let Some(name) = src.file_name() else { continue };
+                let Some(name) = src.file_name() else {
+                    continue;
+                };
                 // Only the app's own files: the legacy folder is a free user pick (~/Music,
                 // a shared Documents folder…), and relocating every .wav/.txt in it moved
                 // foreign files under a folder "Delete all dictations" then wipes.
@@ -207,14 +216,15 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
                 if !src.is_file() {
                     continue;
                 }
-                let Some(name) = src.file_name() else { continue };
+                let Some(name) = src.file_name() else {
+                    continue;
+                };
                 let stem = src
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or_default()
                     .to_owned();
-                let sub = if crate::transcripts::record_kind(app, &stem).as_deref() == Some("url")
-                {
+                let sub = if crate::transcripts::record_kind(app, &stem).as_deref() == Some("url") {
                     "links"
                 } else {
                     "files"
@@ -234,7 +244,11 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
         }
     }
     if !map.is_empty() {
-        tracing::info!("[audio] layout migration moved {} file(s) under {}", map.len(), base.display());
+        tracing::info!(
+            "[audio] layout migration moved {} file(s) under {}",
+            map.len(),
+            base.display()
+        );
         rewrite_media_paths(app, &map);
     }
     // Repair records a past (incomplete) rewrite left pointing at moved files. One
@@ -294,11 +308,15 @@ pub async fn move_audio_base(
             let _ = std::fs::write(&new_stamp, b"");
         }
         let _ = std::fs::remove_dir(&from); // only if empty
-        // Always re-point what actually moved: records store ABSOLUTE paths, and a
-        // partial move leaves the preference on the old base, which the startup heal
-        // then searches — so an unrewritten record would stay broken for good.
+                                            // Always re-point what actually moved: records store ABSOLUTE paths, and a
+                                            // partial move leaves the preference on the old base, which the startup heal
+                                            // then searches — so an unrewritten record would stay broken for good.
         rewrite_media_paths(&app, &map);
-        tracing::info!("[audio] base moved: {} file(s) → {}", map.len(), to.display());
+        tracing::info!(
+            "[audio] base moved: {} file(s) → {}",
+            map.len(),
+            to.display()
+        );
         res
     })
     .await
@@ -683,8 +701,7 @@ pub async fn url_video_download(
 
 /// Epoch for aborting in-flight `transcribe_file` calls (see above). Same
 /// shape as session.rs's CANCELLED_BATCH_EPOCH for dictation clips.
-static FILE_TRANSCRIBE_EPOCH: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static FILE_TRANSCRIBE_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Drive `fut` to completion unless `cancel_file_transcription` bumps the epoch captured as
 /// `epoch` first — then DROP the future, which closes the connection (the server cancels its
@@ -719,8 +736,7 @@ async fn until_epoch_bumps<T, E: std::fmt::Display>(
 
 /// Epoch for aborting an in-flight media export (`package_media`): bumping it
 /// drops the future, which closes the upload/download connection.
-static MEDIA_EXPORT_EPOCH: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static MEDIA_EXPORT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Abort the in-flight media export (the export panel's Cancel).
 #[tauri::command]
@@ -738,7 +754,11 @@ fn under(dir: &std::path::Path, path: &std::path::Path) -> bool {
 /// Whether `path` sits inside any folder this app manages (the audio base or
 /// the app data dir) — an export must never land there, and a copy source
 /// must come from there or from the record's own files.
-fn inside_app_storage(app: &tauri::AppHandle, audio_base: Option<String>, path: &std::path::Path) -> bool {
+fn inside_app_storage(
+    app: &tauri::AppHandle,
+    audio_base: Option<String>,
+    path: &std::path::Path,
+) -> bool {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(b) = resolve_audio_base(app, audio_base) {
         dirs.push(b);
@@ -794,7 +814,10 @@ pub async fn package_media(
             return Err("a subtitle track has a malformed language code".into());
         }
     }
-    for (name, idx) in [("default_track", default_track), ("original_track", original_track)] {
+    for (name, idx) in [
+        ("default_track", default_track),
+        ("original_track", original_track),
+    ] {
         if idx.is_some_and(|i| i as usize >= subtitles.len()) {
             return Err(format!("{name} is out of range"));
         }
@@ -803,7 +826,12 @@ pub async fn package_media(
     // only the audio stream keeps whatever tag the source carried.
     let audio_lang = audio_lang.filter(|l| lang_ok(l));
     let audio_label = audio_label
-        .map(|l| l.chars().filter(|c| !c.is_control()).take(64).collect::<String>())
+        .map(|l| {
+            l.chars()
+                .filter(|c| !c.is_control())
+                .take(64)
+                .collect::<String>()
+        })
         .filter(|l| !l.trim().is_empty());
     let dest = PathBuf::from(&dest_path);
     let Some(parent) = dest.parent().filter(|p| p.is_dir()) else {
@@ -850,7 +878,9 @@ pub async fn package_media(
             let now = std::time::Instant::now();
             let due = last.1 != phase
                 || total == Some(done)
-                || last.0.is_none_or(|t| now.duration_since(t) >= std::time::Duration::from_millis(100));
+                || last
+                    .0
+                    .is_none_or(|t| now.duration_since(t) >= std::time::Duration::from_millis(100));
             if !due {
                 return;
             }
@@ -858,7 +888,12 @@ pub async fn package_media(
         }
         let _ = emit_app.emit(
             "media://export-progress",
-            media::ExportProgress { job_id: job.clone(), phase, done, total },
+            media::ExportProgress {
+                job_id: job.clone(),
+                phase,
+                done,
+                total,
+            },
         );
     });
     let max_upload = max_upload_bytes.unwrap_or(crate::transcripts::MAX_MEDIA_BYTES);
@@ -868,8 +903,19 @@ pub async fn package_media(
         let mid = match (media_id, path) {
             (Some(id), _) => id,
             (None, Some(p)) => {
-                match media::upload_media(&server_url, key.as_deref(), &p, max_upload, progress.clone()).await? {
-                    UploadOutcome::Ok { media_id, expires_at } => {
+                match media::upload_media(
+                    &server_url,
+                    key.as_deref(),
+                    &p,
+                    max_upload,
+                    progress.clone(),
+                )
+                .await?
+                {
+                    UploadOutcome::Ok {
+                        media_id,
+                        expires_at,
+                    } => {
                         uploaded_expiry = expires_at;
                         media_id
                     }
@@ -952,7 +998,9 @@ pub async fn copy_media_to(
     }
     let src_path = PathBuf::from(&src);
     let dest_path = PathBuf::from(&dest);
-    let src_real = src_path.canonicalize().map_err(|e| format!("reading the media file: {e}"))?;
+    let src_real = src_path
+        .canonicalize()
+        .map_err(|e| format!("reading the media file: {e}"))?;
     if !src_real.is_file() {
         return Err("the media file is missing".into());
     }
@@ -971,7 +1019,11 @@ pub async fn copy_media_to(
     if inside_app_storage(&app, audio_base, parent) {
         return Err("choose a folder outside the app's own storage".into());
     }
-    if dest_path.canonicalize().map(|c| c == src_real).unwrap_or(false) {
+    if dest_path
+        .canonicalize()
+        .map(|c| c == src_real)
+        .unwrap_or(false)
+    {
         return Err("that is the file itself".into());
     }
     tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
@@ -994,7 +1046,6 @@ pub async fn copy_media_to(
     .await
     .map_err(|e| e.to_string())?
 }
-
 
 /// Abort every in-flight file transcription (the Transcribe screen's Cancel).
 #[tauri::command]
@@ -1205,7 +1256,10 @@ pub async fn post_usage_outcomes(
 /// Rust; the queue logic lives in TS.
 #[tauri::command]
 pub fn load_usage_outcomes(app: AppHandle) -> Option<serde_json::Value> {
-    app.path().app_data_dir().ok().and_then(|d| config::usage_queue::load(&d))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .and_then(|d| config::usage_queue::load(&d))
 }
 
 #[tauri::command]
@@ -1219,7 +1273,10 @@ pub fn save_usage_outcomes(app: AppHandle, queue: serde_json::Value) -> Result<(
 /// mid-flight. Opaque JSON to Rust; the row shape lives in TS (`lib/jobsLedger.ts`).
 #[tauri::command]
 pub fn load_jobs_ledger(app: AppHandle) -> Option<serde_json::Value> {
-    app.path().app_data_dir().ok().and_then(|d| config::jobs_ledger::load(&d))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .and_then(|d| config::jobs_ledger::load(&d))
 }
 
 #[tauri::command]
@@ -1273,7 +1330,9 @@ pub async fn sync_delete(
 /// snapshot) — opaque to Rust, lives in `<config dir>/sync-state.json`.
 #[tauri::command]
 pub fn load_sync_state(app: AppHandle) -> Option<serde_json::Value> {
-    config_dir(&app).ok().and_then(|d| config::sync_state::load(&d))
+    config_dir(&app)
+        .ok()
+        .and_then(|d| config::sync_state::load(&d))
 }
 
 #[tauri::command]
@@ -1325,8 +1384,7 @@ pub async fn export_settings_file(path: String, envelope: serde_json::Value) -> 
             t.push(".tmp");
             PathBuf::from(t)
         };
-        let text =
-            serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
+        let text = serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
         // Owner-only, and never leave the tmp behind: with "include API keys" ticked this envelope
         // holds the raw keyring secrets, and it lands wherever the user pointed the save dialog.
         // A4 cleaned up the tmp on a rename failure but not on a write failure — and `write_private`
@@ -1395,10 +1453,7 @@ pub fn open_source_url(app: AppHandle, url: String) -> Result<(), String> {
 /// cached on-disk WAV the viewer streams through the asset protocol —
 /// returning the bytes over IPC froze the web process on ~240 MB blobs.
 #[tauri::command]
-pub async fn decode_media_file(
-    app: AppHandle,
-    path: String,
-) -> Result<String, String> {
+pub async fn decode_media_file(app: AppHandle, path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         crate::media_decode::decode_to_cached_wav(&app, &path).map_err(|e| {
             tracing::warn!("[playback] decode failed for {path}: {e}");
@@ -1497,11 +1552,11 @@ pub async fn import_settings_file(path: String) -> Result<ImportResult, String> 
 
 fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
     const MAX_IMPORT_BYTES: u64 = 20_000_000; // sanity cap, not a format limit
-    // Entry-count ceiling, matching the sync path's own (`MAX_SYNCED_ENTRIES` in lib/sync.ts).
-    // The byte cap alone admits ~130k well-formed backends, and every one with a key becomes a
-    // SERIAL 10s-timeout keyring write in `reconcileBackendSecrets` — permanent credential
-    // entries in the user's wallet, with the webview blocked throughout. This is the designated
-    // validator for the untrusted-file path; it should fail here, with a message.
+                                              // Entry-count ceiling, matching the sync path's own (`MAX_SYNCED_ENTRIES` in lib/sync.ts).
+                                              // The byte cap alone admits ~130k well-formed backends, and every one with a key becomes a
+                                              // SERIAL 10s-timeout keyring write in `reconcileBackendSecrets` — permanent credential
+                                              // entries in the user's wallet, with the webview blocked throughout. This is the designated
+                                              // validator for the untrusted-file path; it should fail here, with a message.
     const MAX_ENTRIES: usize = 500;
     // Ceiling on the codes in ONE chord, matching `MAX_CHORD_CODES` in lib/sync.ts. The count cap
     // above bounds how MANY chords arrive, never how long one is: `de_hotkey`'s `visit_seq` pushes
@@ -1528,8 +1583,8 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
     }
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("Could not read the file: {e}"))?;
-    let mut doc: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|_| "That file isn't valid JSON.".to_string())?;
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&text).map_err(|_| "That file isn't valid JSON.".to_string())?;
 
     let format_version = doc
         .get("formatVersion")
@@ -1568,7 +1623,10 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
 
     // Split out + validate secrets ({backendId: apiKey} strings only).
     let mut secrets = serde_json::Map::new();
-    if let Some(b) = categories.get_mut("backends").and_then(|b| b.as_object_mut()) {
+    if let Some(b) = categories
+        .get_mut("backends")
+        .and_then(|b| b.as_object_mut())
+    {
         if let Some(raw) = b.remove("secrets") {
             if let Some(map) = raw.as_object() {
                 for (id, key) in map {
@@ -1585,11 +1643,16 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
     // Normalize the typed categories through serde (drops unknown fields,
     // canonicalizes hotkey chords via the Profile deserializer, and fails
     // loudly on structurally-broken lists).
-    if let Some(list) = categories.get_mut("backends").and_then(|b| b.get_mut("list")) {
+    if let Some(list) = categories
+        .get_mut("backends")
+        .and_then(|b| b.get_mut("list"))
+    {
         let parsed: Vec<config::Backend> = serde_json::from_value(list.take())
             .map_err(|e| format!("The file's server connections are invalid: {e}"))?;
         if parsed.len() > MAX_ENTRIES {
-            return Err("That file lists far more server connections than the app supports.".into());
+            return Err(
+                "That file lists far more server connections than the app supports.".into(),
+            );
         }
         for b in &parsed {
             if b.has_api_key && !secrets.contains_key(&b.id) {
@@ -1609,20 +1672,29 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
         }
         *list = serde_json::to_value(parsed).map_err(|e| e.to_string())?;
     }
-    if let Some(list) = categories.get_mut("profiles").and_then(|p| p.get_mut("list")) {
+    if let Some(list) = categories
+        .get_mut("profiles")
+        .and_then(|p| p.get_mut("list"))
+    {
         let parsed: Vec<config::Profile> = serde_json::from_value(list.take())
             .map_err(|e| format!("The file's dictation profiles are invalid: {e}"))?;
         if parsed.len() > MAX_ENTRIES {
-            return Err("That file lists far more dictation profiles than the app supports.".into());
+            return Err(
+                "That file lists far more dictation profiles than the app supports.".into(),
+            );
         }
         if parsed.iter().any(|p| p.hotkey.len() > MAX_CHORD_CODES) {
-            return Err("That file has a shortcut with far more keys than the app supports.".into());
+            return Err(
+                "That file has a shortcut with far more keys than the app supports.".into(),
+            );
         }
         if parsed
             .iter()
             .any(|p| p.hotkey.iter().any(|c| c.len() > MAX_CHORD_CODE_LEN))
         {
-            return Err("That file has a shortcut key name far longer than the app supports.".into());
+            return Err(
+                "That file has a shortcut key name far longer than the app supports.".into(),
+            );
         }
         *list = serde_json::to_value(parsed).map_err(|e| e.to_string())?;
     }
@@ -1638,7 +1710,15 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
     }
     // Every scalar wire category — keep in step with `SCALAR_CATS` in src/lib/syncGates.ts. A
     // category missing here passed validation and then vanished silently at apply time.
-    for key in ["general", "recording", "chip", "transcription", "fileTranscriptions", "dictionary", "logging"] {
+    for key in [
+        "general",
+        "recording",
+        "chip",
+        "transcription",
+        "fileTranscriptions",
+        "dictionary",
+        "logging",
+    ] {
         if let Some(v) = categories.get(key) {
             if !v.is_null() && !v.is_object() {
                 return Err(format!("The file's {key} settings are invalid."));
@@ -1652,13 +1732,11 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
     for cat in ["dictionary", "general"] {
         if let Some(qa) = categories.get(cat).and_then(|g| g.get("quickAddHotkey")) {
             let ok = qa.is_null()
-                || qa
-                    .as_array()
-                    .is_some_and(|a| {
-                        a.len() <= MAX_CHORD_CODES
-                            && a.iter()
-                                .all(|c| c.as_str().is_some_and(|s| s.len() <= MAX_CHORD_CODE_LEN))
-                    });
+                || qa.as_array().is_some_and(|a| {
+                    a.len() <= MAX_CHORD_CODES
+                        && a.iter()
+                            .all(|c| c.as_str().is_some_and(|s| s.len() <= MAX_CHORD_CODE_LEN))
+                });
             if !ok {
                 return Err("The file's quick-add shortcut is invalid.".into());
             }
@@ -1742,7 +1820,10 @@ pub fn play_mic_test(
     let (samples, sample_rate) = {
         let c = clip.0.lock().map_err(|_| "mic clip poisoned")?;
         // Collect the ring into a contiguous Vec for playback (one alloc, off the capture path).
-        (c.samples.iter().copied().collect::<Vec<f32>>(), c.sample_rate)
+        (
+            c.samples.iter().copied().collect::<Vec<f32>>(),
+            c.sample_rate,
+        )
     };
     if samples.is_empty() || sample_rate == 0 {
         return Ok(());
@@ -1757,7 +1838,7 @@ pub fn play_mic_test(
                 break 'play; // no output device / audio server down — fall through to signal "ended"
             };
             sink.log_on_drop(false); // every replay would otherwise print "Dropping DeviceSink..." on stderr
-            // Guarded by the sample_rate == 0 early-return above; still no unwrap on runtime data.
+                                     // Guarded by the sample_rate == 0 early-return above; still no unwrap on runtime data.
             let Some(rate) = std::num::NonZero::new(sample_rate) else {
                 break 'play;
             };
@@ -1837,7 +1918,10 @@ pub async fn start_stream(
             None
         };
         let state = app.state::<StreamState>();
-        let mut guard = state.0.lock().map_err(|_| "stream state poisoned".to_string())?;
+        let mut guard = state
+            .0
+            .lock()
+            .map_err(|_| "stream state poisoned".to_string())?;
         *guard = None; // stop any previous session first (Drop joins capture, drains WS)
         let sess = session::start(
             app.clone(),
@@ -1869,7 +1953,11 @@ pub async fn start_stream(
 pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<StreamState>();
-        let sess = state.0.lock().map_err(|_| "stream state poisoned".to_string())?.take();
+        let sess = state
+            .0
+            .lock()
+            .map_err(|_| "stream state poisoned".to_string())?
+            .take();
         if let Some(s) = sess {
             s.finish(); // drain in the background to deliver the last utterance
         }
@@ -1889,7 +1977,10 @@ pub async fn cancel_stream(app: AppHandle, user_initiated: bool) -> Result<(), S
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<StreamState>();
         let (sess, had_session) = {
-            let mut guard = state.0.lock().map_err(|_| "stream state poisoned".to_string())?;
+            let mut guard = state
+                .0
+                .lock()
+                .map_err(|_| "stream state poisoned".to_string())?;
             let sess = guard.take();
             let had = sess.is_some();
             // Retire while the lock is held: start_stream claims its epoch under the same lock, so
@@ -1899,18 +1990,18 @@ pub async fn cancel_stream(app: AppHandle, user_initiated: bool) -> Result<(), S
             (sess, had)
         };
         drop(sess); // Drop (not finish) runs OUTSIDE the lock — capture join, mute release, etc.
-        // …and abandon any transcript still being typed out. The typing paths emit one key at a
-        // time, so without this a cancel only stopped FUTURE inserts while the current one kept
-        // going into whatever window had focus.
-        //
-        // When a session was actually taken, OR the user pressed Cancel. The frontend
-        // fire-and-forgets a (non-user) cancel on every normal close, and that no-op call used to
-        // bump the counter too — harmless only because the injection captured its epoch so late
-        // that the bump always landed first. Now that the capture is at the top of `inject_text`,
-        // an unconditional bump here would abort the legitimate end-of-session insert queued
-        // moments later. But in stop-timing mode the session is ALREADY gone while the transcript
-        // is being typed, so `had_session` alone made the chip's ✕ a no-op during "inserting…" —
-        // the one phase where a cancel matters most. `user_initiated` tells the two apart.
+                    // …and abandon any transcript still being typed out. The typing paths emit one key at a
+                    // time, so without this a cancel only stopped FUTURE inserts while the current one kept
+                    // going into whatever window had focus.
+                    //
+                    // When a session was actually taken, OR the user pressed Cancel. The frontend
+                    // fire-and-forgets a (non-user) cancel on every normal close, and that no-op call used to
+                    // bump the counter too — harmless only because the injection captured its epoch so late
+                    // that the bump always landed first. Now that the capture is at the top of `inject_text`,
+                    // an unconditional bump here would abort the legitimate end-of-session insert queued
+                    // moments later. But in stop-timing mode the session is ALREADY gone while the transcript
+                    // is being typed, so `had_session` alone made the chip's ✕ a no-op during "inserting…" —
+                    // the one phase where a cancel matters most. `user_initiated` tells the two apart.
         if had_session || user_initiated {
             crate::inject::cancel_injection();
         }
@@ -1950,7 +2041,10 @@ pub async fn start_record(
             None
         };
         let state = app.state::<RecordState>();
-        let mut guard = state.0.lock().map_err(|_| "record state poisoned".to_string())?;
+        let mut guard = state
+            .0
+            .lock()
+            .map_err(|_| "record state poisoned".to_string())?;
         *guard = None;
         let sess = session::start_record(
             app.clone(),
@@ -1984,7 +2078,10 @@ pub async fn stop_record(app: AppHandle) -> Result<(), String> {
         // joining the capture thread — see `RecordSession::claim_detached` for why that gap let a
         // concurrent cancel disown the wrong session (or none at all).
         let sess = {
-            let mut guard = state.0.lock().map_err(|_| "record state poisoned".to_string())?;
+            let mut guard = state
+                .0
+                .lock()
+                .map_err(|_| "record state poisoned".to_string())?;
             let sess = guard.take();
             if let Some(s) = sess.as_ref() {
                 s.claim_detached();
@@ -2022,7 +2119,10 @@ pub async fn cancel_record(app: AppHandle, user_initiated: bool) -> Result<(), S
         // session, and disowning here would instead kill a legitimate earlier transcription that
         // is still in flight (stop A → start B → cancel B would have discarded A's result).
         let (sess, had_session) = {
-            let mut guard = state.0.lock().map_err(|_| "record state poisoned".to_string())?;
+            let mut guard = state
+                .0
+                .lock()
+                .map_err(|_| "record state poisoned".to_string())?;
             let sess = guard.take();
             let had_session = sess.is_some();
             if !had_session {
@@ -2236,7 +2336,9 @@ pub fn spawn_suspend_watch(app: AppHandle) {
                     // "listening" — exactly what the suspend guards). The capture's reregister
                     // rebuilds fresh held-state on completion, so nothing is lost by skipping.
                     if CAPTURE_SUSPENDED.load(Ordering::SeqCst) {
-                        tracing::info!("[suspend] binding capture in progress; leaving shortcuts suspended");
+                        tracing::info!(
+                            "[suspend] binding capture in progress; leaving shortcuts suspended"
+                        );
                     } else {
                         apply_bindings(&app);
                     }
@@ -2327,7 +2429,9 @@ async fn read_selection_bounded(
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
-        tracing::debug!("[clipboard] a previous selection read is still running; skipping this one");
+        tracing::debug!(
+            "[clipboard] a previous selection read is still running; skipping this one"
+        );
         return None;
     }
     struct Release;
@@ -2364,7 +2468,13 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
     // called PER PHRASE, and a SYNC command runs on the UI thread — on the UI thread the blocking read
     // freezes the whole app. On timeout/empty we KEEP the prior snapshot: that path means we still hold
     // the clipboard ourselves (the user copied nothing new), so the existing snapshot already has it.
-    match read_selection_bounded(|| arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())).await {
+    match read_selection_bounded(|| {
+        arboard::Clipboard::new()
+            .ok()
+            .and_then(|mut c| c.get_text().ok())
+    })
+    .await
+    {
         // The clipboard still holds OUR last transcript (a restore was skipped or failed silently)
         // — that is NOT the user's clipboard, and snapshotting it would resurrect stale dictation
         // at the end-of-session restore. Same reasoning as the None arm: the user copied nothing
@@ -2378,7 +2488,9 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
                 *g = Some(text);
             }
         }
-        None => tracing::info!("[clip] begin_injection: clipboard read empty/timeout — keeping prior snapshot"),
+        None => tracing::info!(
+            "[clip] begin_injection: clipboard read empty/timeout — keeping prior snapshot"
+        ),
     }
     Ok(())
 }
@@ -2412,7 +2524,10 @@ pub fn end_injection(snap: State<ClipboardSnapshot>, guard: State<crate::atspi_g
             );
             return;
         }
-        tracing::info!("[clip] end_injection: restore {} chars (delayed)", prev.len());
+        tracing::info!(
+            "[clip] end_injection: restore {} chars (delayed)",
+            prev.len()
+        );
         // Persist on Wayland: a plain set_text that drops immediately doesn't stick, which
         // is why the clipboard was "never restored". Serve it from a live owner — and after a
         // short delay, so the last phrase's in-flight Ctrl+V consumes the transcript BEFORE we
@@ -2435,10 +2550,15 @@ pub fn restore_clipboard_snapshot(
         // Remote-desktop target: skip the per-phrase restore (see end_injection) — the snapshot
         // stays untouched for later phrases / a later non-remote end-of-session restore.
         if focused_remote_target(guard.inner()) {
-            tracing::info!("[clip] restore_clipboard_snapshot: remote-desktop target — restore skipped");
+            tracing::info!(
+                "[clip] restore_clipboard_snapshot: remote-desktop target — restore skipped"
+            );
             return;
         }
-        tracing::info!("[clip] restore_clipboard_snapshot: {} chars (delayed)", prev.len());
+        tracing::info!(
+            "[clip] restore_clipboard_snapshot: {} chars (delayed)",
+            prev.len()
+        );
         // Serve after the same ~400ms margin as end_injection / the paste path (via
         // restore_clipboard_later), NOT an immediate set_clipboard_persistent: the boundary-
         // separator restore (streaming.ts) runs synchronously right after its OWN separator
@@ -2478,8 +2598,7 @@ pub async fn get_focused_app(
     // knows its own keyboard focus. Dictation won't type into our own UI, so surface that
     // truthfully instead of letting AT-SPI report whatever was focused before us. The
     // click-through "overlay" chip never holds focus; exclude it.
-    if own_window_focused(&app)
-    {
+    if own_window_focused(&app) {
         return Ok(Some(crate::atspi_guard::FocusedApp {
             app_id: "self".into(),
             title: "this app".into(),
@@ -2511,7 +2630,11 @@ pub async fn get_focused_other_app(
     // Keep the window title out of the default-on `info` line (see get_focused_app) — it can hold
     // sensitive data; log app_id + editable at info, the full record at `debug` (off by default).
     match &focused {
-        Some(f) => tracing::info!("[focused-other-app] id={} editable={:?}", f.app_id, f.editable),
+        Some(f) => tracing::info!(
+            "[focused-other-app] id={} editable={:?}",
+            f.app_id,
+            f.editable
+        ),
         None => tracing::info!("[focused-other-app] none"),
     }
     tracing::debug!("[focused-other-app] {focused:?}");
@@ -2571,7 +2694,11 @@ pub async fn get_quickadd_seed(
         match crate::atspi_guard::focused_selection(guard.inner()).await {
             SelRead::Text(s) => {
                 let seed = sanitize_seed(&s);
-                tracing::info!("[quickadd-seed] atspi selection {} chars -> seed {} chars", s.len(), seed.as_deref().map_or(0, str::len));
+                tracing::info!(
+                    "[quickadd-seed] atspi selection {} chars -> seed {} chars",
+                    s.len(),
+                    seed.as_deref().map_or(0, str::len)
+                );
                 Ok(seed)
             }
             SelRead::Empty => {
@@ -2585,7 +2712,11 @@ pub async fn get_quickadd_seed(
                     None => return Ok(None),
                 };
                 let seed = sanitize_seed(&raw);
-                tracing::info!("[quickadd-seed] primary fallback {} chars -> seed {} chars", raw.len(), seed.as_deref().map_or(0, str::len));
+                tracing::info!(
+                    "[quickadd-seed] primary fallback {} chars -> seed {} chars",
+                    raw.len(),
+                    seed.as_deref().map_or(0, str::len)
+                );
                 Ok(seed)
             }
         }
@@ -2612,11 +2743,13 @@ pub async fn get_focused_selection(
     #[cfg(windows)]
     {
         let _ = &guard;
-        let sel = tauri::async_runtime::spawn_blocking(move || crate::quickadd::win_seed::grab(&app, None, None))
-            .await
-            .ok()
-            .flatten()
-            .map(bounded_selection);
+        let sel = tauri::async_runtime::spawn_blocking(move || {
+            crate::quickadd::win_seed::grab(&app, None, None)
+        })
+        .await
+        .ok()
+        .flatten()
+        .map(bounded_selection);
         tracing::info!(
             "[quickadd-close] windows re-grab -> {} chars",
             sel.as_deref().map_or(0, str::len)
@@ -2627,12 +2760,14 @@ pub async fn get_focused_selection(
     {
         let _ = &app;
         use crate::atspi_guard::SelRead;
-        Ok(match crate::atspi_guard::focused_selection(guard.inner()).await {
-            // `Text` is already capped at its own read; the PRIMARY fallback is only TIME-bounded.
-            SelRead::Text(s) => Some(s),
-            SelRead::Opaque => read_primary_now().await.map(bounded_selection),
-            SelRead::Empty | SelRead::Unavailable => None,
-        })
+        Ok(
+            match crate::atspi_guard::focused_selection(guard.inner()).await {
+                // `Text` is already capped at its own read; the PRIMARY fallback is only TIME-bounded.
+                SelRead::Text(s) => Some(s),
+                SelRead::Opaque => read_primary_now().await.map(bounded_selection),
+                SelRead::Empty | SelRead::Unavailable => None,
+            },
+        )
     }
 }
 
@@ -2756,7 +2891,12 @@ pub async fn inject_text(
     // landing in that window used to bump the counter BEFORE the job read it, so the job adopted
     // the post-cancel generation and never saw itself as cancelled.
     let epoch = crate::inject::injection_epoch();
-    tracing::info!("[inject] {} chars via {} (auto_enter={})", text.len(), method, auto_enter);
+    tracing::info!(
+        "[inject] {} chars via {} (auto_enter={})",
+        text.len(),
+        method,
+        auto_enter
+    );
     // Never inject into our OWN UI: if one of our real windows holds keyboard focus, typed/pasted
     // keys would fire buttons/shortcuts in the app itself (e.g. dictating while looking at Home) —
     // AND a clipboard-only insert would silently clobber the user's clipboard for an insert they
@@ -2765,10 +2905,12 @@ pub async fn inject_text(
     // focused). A Wayland client is always told its own keyboard focus, so this is reliable on KWin —
     // unlike detecting other apps' focused fields. The click-through "overlay" chip never holds
     // focus; exclude it. The transcript still shows in the chip.
-    if own_window_focused(&app)
-    {
+    if own_window_focused(&app) {
         tracing::info!("[inject] skipped: our own window holds focus");
-        return Ok(InjectOutcome { landed: false, diverted: false });
+        return Ok(InjectOutcome {
+            landed: false,
+            diverted: false,
+        });
     }
     // Clipboard-only: put the text on the clipboard and inject NO keystrokes, so it can't
     // fire actions in the wrong window — the user pastes it themselves. No modifier gate needed
@@ -2781,7 +2923,10 @@ pub async fn inject_text(
         if crate::inject::injection_cancelled(epoch) && !crate::inject::cancel_wants_recovery(epoch)
         {
             tracing::info!("[inject] clipboard-only insert cancelled before the write — skipping");
-            return Ok(InjectOutcome { landed: true, diverted: false });
+            return Ok(InjectOutcome {
+                landed: true,
+                diverted: false,
+            });
         }
         if !text.is_empty() {
             // The whole point of the handshake: this arm's `landed: true` used to be a constant,
@@ -2790,10 +2935,16 @@ pub async fn inject_text(
             // this path, so the caller's re-send cannot duplicate anything.
             if let Err(e) = crate::inject::set_clipboard_persistent(&text) {
                 tracing::warn!("[inject] clipboard-only insert failed: {e}");
-                return Ok(InjectOutcome { landed: false, diverted: false });
+                return Ok(InjectOutcome {
+                    landed: false,
+                    diverted: false,
+                });
             }
         }
-        return Ok(InjectOutcome { landed: true, diverted: false });
+        return Ok(InjectOutcome {
+            landed: true,
+            diverted: false,
+        });
     }
     // Nothing to type and no Enter to send → bail before the keystroke paths. Without this, the
     // Wayland PASTE branch below would set_clipboard("") — clobbering the user's clipboard with an
@@ -2801,7 +2952,10 @@ pub async fn inject_text(
     // emitted only control chars). Mirrors the X11 inject::inject guard. (empty + auto_enter still
     // falls through below to send the bare Enter.)
     if text.is_empty() && !auto_enter {
-        return Ok(InjectOutcome { landed: true, diverted: false });
+        return Ok(InjectOutcome {
+            landed: true,
+            diverted: false,
+        });
     }
     // Pasting into a remote-desktop client (mstsc & co) needs different clipboard handling: the
     // local clipboard reaches the remote host ASYNCHRONOUSLY, so the paste gets a longer settle
@@ -2836,7 +2990,9 @@ pub async fn inject_text(
                     // TRIGGER fired, i.e. the dictation chord itself is not being released.
                     modifiers_stuck = crate::triggers::trigger_modifiers_still_held(&held);
                     if modifiers_stuck {
-                        tracing::warn!("[inject] trigger chord still held after 500ms — clipboard only");
+                        tracing::warn!(
+                            "[inject] trigger chord still held after 500ms — clipboard only"
+                        );
                     } else {
                         tracing::warn!("[inject] an unrelated modifier is held — injecting anyway");
                     }
@@ -2877,10 +3033,12 @@ pub async fn inject_text(
     // the clipboard-only branch precisely so our own window holding focus can never clobber the
     // user's clipboard for an insert they cannot see land. Skipping is safe — `streaming.ts`
     // leaves `injectedText` un-advanced on a skip, so the text goes out with the next insert.
-    if own_window_focused(&app)
-    {
+    if own_window_focused(&app) {
         tracing::info!("[inject] skipped at the sink: our own window took focus mid-injection");
-        return Ok(InjectOutcome { landed: false, diverted: false });
+        return Ok(InjectOutcome {
+            landed: false,
+            diverted: false,
+        });
     }
     // Consumed UNCONDITIONALLY (no `!modifiers_stuck &&` short-circuit): a latch left armed by a
     // true positive would divert the NEXT, legitimate injection too. Guarded on `!text.is_empty()`
@@ -2914,7 +3072,11 @@ pub async fn inject_text(
     // already gets, so the text is preserved and nothing is typed into a window whose rule we
     // never evaluated. An UNIDENTIFIED window still falls through unchanged: that is the
     // deliberate fail-open behaviour, and a cold a11y bridge hits it routinely.
-    let method = if modifiers_stuck { "clipboard".to_string() } else { method };
+    let method = if modifiers_stuck {
+        "clipboard".to_string()
+    } else {
+        method
+    };
     // ONE focus read, used for both decisions below. `remote_target` used to be resolved at the
     // top of this function and acted on here — the same decided-at-T, applied-at-T+n shape the
     // per-app re-check exists to fix, on the control immediately beside it. Focus leaving a
@@ -2950,7 +3112,10 @@ pub async fn inject_text(
         if crate::inject::injection_cancelled(epoch) && !crate::inject::cancel_wants_recovery(epoch)
         {
             tracing::info!("[inject] diverted to clipboard, but cancelled first — skipping");
-            return Ok(InjectOutcome { landed: true, diverted: false });
+            return Ok(InjectOutcome {
+                landed: true,
+                diverted: false,
+            });
         }
         if !text.is_empty() {
             // The divert the ledger's D1 named as the data-loss path: on `landed: true` the
@@ -2958,18 +3123,26 @@ pub async fn inject_text(
             // Nothing has been typed on this arm either, so `false` is both truthful and safe.
             if let Err(e) = crate::inject::set_clipboard_persistent(&text) {
                 tracing::warn!("[inject] divert to clipboard failed: {e}");
-                return Ok(InjectOutcome { landed: false, diverted: false });
+                return Ok(InjectOutcome {
+                    landed: false,
+                    diverted: false,
+                });
             }
             // Third recovery write: an error abort that fell through the gate above has just put the
             // transcript on the clipboard; arm the session-restore guard like the two paste-path
             // writes so end_injection does not serve `prev` over it. Not armed on a plain divert —
             // that session is still live.
-            if crate::inject::injection_cancelled(epoch) && crate::inject::cancel_wants_recovery(epoch) {
+            if crate::inject::injection_cancelled(epoch)
+                && crate::inject::cancel_wants_recovery(epoch)
+            {
                 crate::inject::note_recovery_on_clipboard();
             }
         }
         // The one site that reports a DIVERT: the caller asked to type or paste and we did neither.
-        return Ok(InjectOutcome { landed: true, diverted: true });
+        return Ok(InjectOutcome {
+            landed: true,
+            diverted: true,
+        });
     }
     // Now that the method is final and focus has been read once, at the sink.
     let remote_target = method != "direct"
@@ -2997,7 +3170,10 @@ pub async fn inject_text(
         // last sinks in the tree with no own-window re-check, so they could not previously say
         // anything but "landed". Their guards live inside the backends, at the keystroke, because
         // that is the far side of the widest guard-to-sink gap on any path.
-        let wayland_res: Result<crate::inject::Landed, String> = if text.is_empty() && auto_enter && method != "direct" {
+        let wayland_res: Result<crate::inject::Landed, String> = if text.is_empty()
+            && auto_enter
+            && method != "direct"
+        {
             // Auto-enter with no text on the PASTE path (the per-phrase / tail Enter): press Enter
             // WITHOUT touching the clipboard — paste would set_clipboard("") and clobber it, so route
             // the bare Enter through the portal type path instead. (Direct falls through to the VK-first
@@ -3011,7 +3187,15 @@ pub async fn inject_text(
             // or a job fails.
             let vk_probe: std::sync::Arc<dyn Fn() -> bool + Send + Sync> =
                 std::sync::Arc::new(own_focused_probe.clone());
-            match crate::virtual_keyboard::type_text(vkbd.inner(), &text, auto_enter, epoch, vk_probe).await {
+            match crate::virtual_keyboard::type_text(
+                vkbd.inner(),
+                &text,
+                auto_enter,
+                epoch,
+                vk_probe,
+            )
+            .await
+            {
                 Ok(landed) => {
                     tracing::info!("[inject] typed via virtual keyboard");
                     Ok(landed)
@@ -3020,8 +3204,12 @@ pub async fn inject_text(
                 // unavailable, keymap upload failed). A mid-typing failure already landed a prefix, so
                 // re-typing the whole text via the portal would duplicate it — surface the error instead.
                 Err(e) if !e.after_typing => {
-                    tracing::warn!("[inject] virtual keyboard unavailable ({}); using portal", e.message);
-                    crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter, epoch).await
+                    tracing::warn!(
+                        "[inject] virtual keyboard unavailable ({}); using portal",
+                        e.message
+                    );
+                    crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter, epoch)
+                        .await
                 }
                 Err(e) => {
                     tracing::error!("[inject] virtual keyboard failed mid-typing ({}); not re-typing via portal (would duplicate the landed prefix)", e.message);
@@ -3043,9 +3231,17 @@ pub async fn inject_text(
             // clipboard so the set_text still lands regardless of the prev-read result.
             // remote_target skips the capture entirely — see its resolution above.
             let prev = if restore_clipboard && !remote_target {
-                match read_selection_bounded(|| arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok())).await {
+                match read_selection_bounded(|| {
+                    arboard::Clipboard::new()
+                        .ok()
+                        .and_then(|mut c| c.get_text().ok())
+                })
+                .await
+                {
                     None => {
-                        tracing::info!("[clip] paste: prev-clipboard read empty/timeout — skipping restore");
+                        tracing::info!(
+                            "[clip] paste: prev-clipboard read empty/timeout — skipping restore"
+                        );
                         None
                     }
                     // Never adopt OUR OWN last transcript as "the user's previous clipboard" —
@@ -3073,10 +3269,14 @@ pub async fn inject_text(
             // `injection_cancelled && cancel_wants_recovery && !recovery_text.is_empty()` — never
             // `res` — and this is an early `return`, so it skipped the block entirely and a died
             // session lost its transcript instead of leaving it recoverable.
-            if crate::inject::injection_cancelled(epoch) && !crate::inject::cancel_wants_recovery(epoch)
+            if crate::inject::injection_cancelled(epoch)
+                && !crate::inject::cancel_wants_recovery(epoch)
             {
                 tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
-                return Ok(InjectOutcome { landed: true, diverted: false });
+                return Ok(InjectOutcome {
+                    landed: true,
+                    diverted: false,
+                });
             }
             // Own-window re-check, at the sink rather than at the top of the function. The guard
             // that decides "our own window took focus" runs ~0.5s earlier: the latch consume, a
@@ -3089,9 +3289,10 @@ pub async fn inject_text(
             // READ), so the caller re-sends and no text is duplicated. This does not strand the
             // held-chord latch — if it had been armed, `method` would already be "clipboard" and
             // this branch is unreachable.
-            if own_window_focused(&app)
-            {
-                tracing::info!("[inject] skipped at the clipboard write: our own window took focus");
+            if own_window_focused(&app) {
+                tracing::info!(
+                    "[inject] skipped at the clipboard write: our own window took focus"
+                );
                 // An early `return` here would skip the error-abort recovery block at the end of
                 // this function — the exact defect P4 recorded for the cancel check above, which
                 // cost a died session its transcript. The two states are not exclusive: the cancel
@@ -3104,8 +3305,13 @@ pub async fn inject_text(
                     // it on a failed write would suppress the restore of the user's own clipboard
                     // to protect a transcript that is not there — losing both.
                     if let Err(e) = crate::inject::set_clipboard_persistent(&recovery_text) {
-                        tracing::warn!("[inject] recovery to clipboard failed at the write guard: {e}");
-                        return Ok(InjectOutcome { landed: false, diverted: false });
+                        tracing::warn!(
+                            "[inject] recovery to clipboard failed at the write guard: {e}"
+                        );
+                        return Ok(InjectOutcome {
+                            landed: false,
+                            diverted: false,
+                        });
                     }
                     // The SECOND recovery write, and it needs the same session-restore guard as
                     // the one at the end of this function — this early `return` is precisely why
@@ -3113,24 +3319,34 @@ pub async fn inject_text(
                     // naturally: the error teardown refocuses our own window, which is what makes
                     // this guard fire in the first place.
                     crate::inject::note_recovery_on_clipboard();
-                    return Ok(InjectOutcome { landed: true, diverted: true });
+                    return Ok(InjectOutcome {
+                        landed: true,
+                        diverted: true,
+                    });
                 }
-                return Ok(InjectOutcome { landed: false, diverted: false });
+                return Ok(InjectOutcome {
+                    landed: false,
+                    diverted: false,
+                });
             }
             let set_res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
                 .await
                 .map_err(|e| e.to_string())?;
             set_res?; // propagate a set_text failure; prev was captured (time-bounded) above
-            // Longer settle for a remote-desktop target (content must cross the network first).
-            tokio::time::sleep(std::time::Duration::from_millis(if remote_target { 300 } else { 60 })).await;
+                      // Longer settle for a remote-desktop target (content must cross the network first).
+            tokio::time::sleep(std::time::Duration::from_millis(if remote_target {
+                300
+            } else {
+                60
+            }))
+            .await;
             // And again after the settle, before the chord. The check above guards the clipboard
             // WRITE; this one guards the KEYSTROKE, and 60ms (300ms remote) of wall clock separates
             // them — the same gap `inject::paste` re-asks the epoch across on the other platform.
             // `diverted: true`, not `landed: false`: the transcript IS on the clipboard by now, so
             // that is the truthful answer, and the restore below must be skipped so it stays
             // pasteable.
-            if own_window_focused(&app)
-            {
+            if own_window_focused(&app) {
                 tracing::info!("[inject] skipped at the paste chord: our own window took focus");
                 // Re-set through the PERSISTENT owner first. The write above used the plain
                 // `set_clipboard`, which does not stick on Wayland once the setter returns — so
@@ -3144,11 +3360,24 @@ pub async fn inject_text(
                 // re-send is safe.
                 if let Err(e) = crate::inject::set_clipboard_persistent(&text) {
                     tracing::warn!("[inject] divert at the paste chord failed: {e}");
-                    return Ok(InjectOutcome { landed: false, diverted: false });
+                    return Ok(InjectOutcome {
+                        landed: false,
+                        diverted: false,
+                    });
                 }
-                return Ok(InjectOutcome { landed: true, diverted: true });
+                return Ok(InjectOutcome {
+                    landed: true,
+                    diverted: true,
+                });
             }
-            let r = crate::wayland_inject::paste(&app, typer.inner(), paste_shortcut, auto_enter, epoch).await;
+            let r = crate::wayland_inject::paste(
+                &app,
+                typer.inner(),
+                paste_shortcut,
+                auto_enter,
+                epoch,
+            )
+            .await;
             // Restore the user's prior clipboard only if the paste actually landed. If it failed,
             // leave the transcript on the clipboard so it's recoverable (the user can paste it
             // manually) instead of silently clobbering it with the old clipboard.
@@ -3231,17 +3460,27 @@ pub async fn inject_text(
         }
     }
     res.map(|landed| match landed {
-        crate::inject::Landed::Yes => InjectOutcome { landed: true, diverted: false },
+        crate::inject::Landed::Yes => InjectOutcome {
+            landed: true,
+            diverted: false,
+        },
         // "Nothing written" is only true if the recovery block above did not just write the
         // transcript to the clipboard. When it did, the text IS somewhere the user can reach, and
         // saying otherwise both mis-describes the state and makes the caller re-issue an insert
         // that would land in the same place. This is also what the Wayland arm reports for the
         // same event, so the two platforms now answer the same question the same way.
-        crate::inject::Landed::NothingWritten if recovered => {
-            InjectOutcome { landed: true, diverted: true }
-        }
-        crate::inject::Landed::NothingWritten => InjectOutcome { landed: false, diverted: false },
-        crate::inject::Landed::OnClipboard => InjectOutcome { landed: true, diverted: true },
+        crate::inject::Landed::NothingWritten if recovered => InjectOutcome {
+            landed: true,
+            diverted: true,
+        },
+        crate::inject::Landed::NothingWritten => InjectOutcome {
+            landed: false,
+            diverted: false,
+        },
+        crate::inject::Landed::OnClipboard => InjectOutcome {
+            landed: true,
+            diverted: true,
+        },
     })
 }
 
@@ -3269,8 +3508,14 @@ mod tests {
         move_dir_contents(&from, &to, &mut map).unwrap();
 
         assert!(to.join("a.wav").is_file(), "regular media moves");
-        assert!(!to.join("b.m4a.tmp").exists(), "an in-flight .tmp is never moved");
-        assert!(from.join("b.m4a.tmp").is_file(), "the .tmp stays in the old base for its writer");
+        assert!(
+            !to.join("b.m4a.tmp").exists(),
+            "an in-flight .tmp is never moved"
+        );
+        assert!(
+            from.join("b.m4a.tmp").is_file(),
+            "the .tmp stays in the old base for its writer"
+        );
         assert_eq!(map.len(), 1);
         assert!(map[0].0.ends_with("a.wav") && map[0].1.ends_with("a.wav"));
 

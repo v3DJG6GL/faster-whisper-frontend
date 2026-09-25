@@ -9,12 +9,12 @@ mod inject;
 mod key_debounce;
 #[cfg(target_os = "linux")]
 mod kwin;
+mod langpick;
 mod logging;
 mod media_decode;
 mod memwatch;
 mod migrate_identifier;
 mod overlay;
-mod langpick;
 mod quickadd;
 mod session;
 mod sound;
@@ -196,31 +196,31 @@ pub fn run() {
             commands::test_connection,
             commands::transcribe_file,
             commands::list_override_profiles,
-            commands::get_capabilities, // P11: GET /v1/me capabilities
-            commands::preload_models,   // POST /v1/models/preload (best-effort warm hint)
+            commands::get_capabilities,     // P11: GET /v1/me capabilities
+            commands::preload_models,       // POST /v1/models/preload (best-effort warm hint)
             commands::get_override_profile, // P11: GET /v1/override-profiles/{name}
-            commands::get_pipeline_rules, // P17: GET /v1/pipeline-rules
-            commands::save_pipeline_rules, // P17: PATCH /v1/pipeline-rules
-            commands::get_recent_words,   // P18: GET /v1/recent-words (key suggestions)
-            commands::get_usage_stats,    // P28: GET /v1/usage (per-user usage document)
-            commands::post_usage_outcomes, // POST /v1/usage/outcome (end-of-dictation facets)
-            commands::load_usage_outcomes, // on-disk outcome queue (survives restarts)
+            commands::get_pipeline_rules,   // P17: GET /v1/pipeline-rules
+            commands::save_pipeline_rules,  // P17: PATCH /v1/pipeline-rules
+            commands::get_recent_words,     // P18: GET /v1/recent-words (key suggestions)
+            commands::get_usage_stats,      // P28: GET /v1/usage (per-user usage document)
+            commands::post_usage_outcomes,  // POST /v1/usage/outcome (end-of-dictation facets)
+            commands::load_usage_outcomes,  // on-disk outcome queue (survives restarts)
             commands::save_usage_outcomes,
-            commands::load_jobs_ledger,    // on-disk in-flight jobs ledger (re-attach after a restart)
+            commands::load_jobs_ledger, // on-disk in-flight jobs ledger (re-attach after a restart)
             commands::save_jobs_ledger,
-            commands::get_job,             // GET /v1/jobs/{id} (re-attach poll)
-            commands::get_job_result,      // GET /v1/jobs/{id}/result (late ingest)
-            commands::delete_job,          // DELETE /v1/jobs/{id}
-            commands::sync_pull,          // P30: GET /v1/client-settings
-            commands::sync_push,          // P30: PUT /v1/client-settings
-            commands::sync_delete,        // P30: DELETE /v1/client-settings
-            commands::load_sync_state,    // P30: local sync bookkeeping
+            commands::get_job,         // GET /v1/jobs/{id} (re-attach poll)
+            commands::get_job_result,  // GET /v1/jobs/{id}/result (late ingest)
+            commands::delete_job,      // DELETE /v1/jobs/{id}
+            commands::sync_pull,       // P30: GET /v1/client-settings
+            commands::sync_push,       // P30: PUT /v1/client-settings
+            commands::sync_delete,     // P30: DELETE /v1/client-settings
+            commands::load_sync_state, // P30: local sync bookkeeping
             commands::save_sync_state,
             commands::sync_device_info,
-            commands::read_backend_keys,  // P30: bulk keyring read (export/sync)
+            commands::read_backend_keys, // P30: bulk keyring read (export/sync)
             commands::export_settings_file, // P30: settings export to file
-            commands::save_text_file,       // transcript exports (Transcribe screen)
-            commands::read_text_file,       // subtitle/text sources for translate-only runs
+            commands::save_text_file,    // transcript exports (Transcribe screen)
+            commands::read_text_file,    // subtitle/text sources for translate-only runs
             transcripts::save_transcript_record, // transcription history (local store)
             transcripts::list_transcript_records,
             transcripts::delete_transcript_record,
@@ -229,24 +229,23 @@ pub fn run() {
             transcripts::delete_all_dictations,
             transcripts::clear_file_transcriptions,
             transcripts::remove_transcript_media,
-            commands::read_media_file,      // playback blob fallback (Transcribe screen)
-            commands::decode_media_file,    // playback codec fallback (webview can't do AAC)
-            commands::open_source_url,      // "Open link" on a URL transcript
-
+            commands::read_media_file, // playback blob fallback (Transcribe screen)
+            commands::decode_media_file, // playback codec fallback (webview can't do AAC)
+            commands::open_source_url, // "Open link" on a URL transcript
             commands::cancel_file_transcription, // abort in-flight Transcribe runs (client side)
             commands::cancel_backend_transcription, // …and tell the server to stop the work
-            commands::get_transcribe_progress,   // live progress poll (Transcribe screen)
+            commands::get_transcribe_progress, // live progress poll (Transcribe screen)
             commands::transcribe_url,
-            commands::translate_text,       // T2T of segment texts (dictation / re-translate / text sources)
+            commands::translate_text, // T2T of segment texts (dictation / re-translate / text sources)
             commands::cancel_text_translation, // tell the server to stop an in-flight T2T run
-            commands::url_preview,          // link metadata preview (Transcribe screen)
-            commands::fetch_url_media,      // pull downloaded audio for local playback
-            commands::fetch_url_video,      // pull a link run's kept video for export
-            commands::url_video_download,   // fetch a link's video on demand (export panel)
-            commands::package_media,        // export a video with subtitle tracks (server mux)
+            commands::url_preview,    // link metadata preview (Transcribe screen)
+            commands::fetch_url_media, // pull downloaded audio for local playback
+            commands::fetch_url_video, // pull a link run's kept video for export
+            commands::url_video_download, // fetch a link's video on demand (export panel)
+            commands::package_media,  // export a video with subtitle tracks (server mux)
             commands::cancel_media_export,
             commands::get_media_streams,
-            commands::copy_media_to,        // plain copy of a record's media to a picked path
+            commands::copy_media_to, // plain copy of a record's media to a picked path
             commands::import_settings_file, // P30: settings import (parse+validate)
             commands::list_audio_devices,
             commands::start_mic_test,
@@ -260,9 +259,9 @@ pub fn run() {
             commands::stop_record,
             commands::cancel_record,
             commands::retire_session_epoch,
-            commands::audio_dir_path,      // audio base folder (display path)
-            commands::open_audio_dir,      // open the audio base folder
-            commands::move_audio_base,     // relocate the whole audio store
+            commands::audio_dir_path,  // audio base folder (display path)
+            commands::open_audio_dir,  // open the audio base folder
+            commands::move_audio_base, // relocate the whole audio store
             commands::reregister_shortcuts,
             commands::reregister_shortcuts_unless_capturing,
             commands::suspend_shortcuts,

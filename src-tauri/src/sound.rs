@@ -56,18 +56,42 @@ pub fn play_cue(kind: String) {
     let notes: &[Note] = match kind.as_str() {
         // rising perfect fifth — "listening"
         "start" => &[
-            Note { freq: 523.25, ms: 120, amp: 0.20 },
-            Note { freq: 783.99, ms: 150, amp: 0.20 },
+            Note {
+                freq: 523.25,
+                ms: 120,
+                amp: 0.20,
+            },
+            Note {
+                freq: 783.99,
+                ms: 150,
+                amp: 0.20,
+            },
         ],
         // falling fifth — mirror of start
         "stop" => &[
-            Note { freq: 783.99, ms: 120, amp: 0.18 },
-            Note { freq: 523.25, ms: 170, amp: 0.18 },
+            Note {
+                freq: 783.99,
+                ms: 120,
+                amp: 0.18,
+            },
+            Note {
+                freq: 523.25,
+                ms: 170,
+                amp: 0.18,
+            },
         ],
         // low, gently dissonant fall — error (no piercing 2–4 kHz content)
         "error" => &[
-            Note { freq: 440.00, ms: 150, amp: 0.24 },
-            Note { freq: 349.23, ms: 220, amp: 0.24 },
+            Note {
+                freq: 440.00,
+                ms: 150,
+                amp: 0.24,
+            },
+            Note {
+                freq: 349.23,
+                ms: 220,
+                amp: 0.24,
+            },
         ],
         _ => return,
     };

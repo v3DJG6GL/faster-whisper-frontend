@@ -8,7 +8,9 @@
 //! merge without a second GET). Blobs pass through as opaque JSON — the
 //! category shapes are typed on the TS side.
 
-use super::{base_url, body_capped_to, client, detail_from, friendly_err, json_capped_to, with_auth};
+use super::{
+    base_url, body_capped_to, client, detail_from, friendly_err, json_capped_to, with_auth,
+};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -158,14 +160,20 @@ pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
                         ok: false,
                         status: code,
                         state: None,
-                        error: Some(format!("Unexpected response: {}", super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT))),
+                        error: Some(format!(
+                            "Unexpected response: {}",
+                            super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT)
+                        )),
                     },
                 }
             } else {
                 // Pure error arm: the body goes straight into `detail_from` and nothing
                 // else, so the error-body ceiling is enough — buffering 4 MiB to extract
                 // 200 characters is wasted on the unattended startup/focus-change leg.
-                let body = match body_capped_to(resp, super::MAX_ERROR_BODY).await { Ok(b) => b, Err(r) => r };
+                let body = match body_capped_to(resp, super::MAX_ERROR_BODY).await {
+                    Ok(b) => b,
+                    Err(r) => r,
+                };
                 SyncPull {
                     ok: false,
                     status: code,
@@ -226,12 +234,14 @@ pub async fn push(
             // real cause.
             let text = match body_capped_to(resp, SYNC_MAX_BODY).await {
                 Ok(b) => b,
-                Err(reason) => return SyncPush {
-                    ok: false,
-                    status: code,
-                    error: Some(reason),
-                    ..Default::default()
-                },
+                Err(reason) => {
+                    return SyncPush {
+                        ok: false,
+                        status: code,
+                        error: Some(reason),
+                        ..Default::default()
+                    }
+                }
             };
             if (200..300).contains(&(code as i32)) {
                 match serde_json::from_str::<SyncRemoteState>(&text) {
@@ -251,7 +261,10 @@ pub async fn push(
                     Err(e) => SyncPush {
                         ok: false,
                         status: code,
-                        error: Some(format!("Unexpected response: {}", super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT))),
+                        error: Some(format!(
+                            "Unexpected response: {}",
+                            super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT)
+                        )),
                         ..Default::default()
                     },
                 }
@@ -274,7 +287,10 @@ pub async fn push(
                     Err(e) => SyncPush {
                         ok: false,
                         status: code,
-                        error: Some(format!("Unexpected conflict response: {}", super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT))),
+                        error: Some(format!(
+                            "Unexpected conflict response: {}",
+                            super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT)
+                        )),
                         ..Default::default()
                     },
                 }
@@ -316,7 +332,10 @@ pub async fn delete(server_url: &str, api_key: Option<&str>) -> SyncDelete {
             } else {
                 // Pure error arm: `detail_from` extracts at most 200 characters, so the
                 // error-body ceiling matches every other non-2xx arm in the transport.
-                let body = match body_capped_to(resp, super::MAX_ERROR_BODY).await { Ok(b) => b, Err(r) => r };
+                let body = match body_capped_to(resp, super::MAX_ERROR_BODY).await {
+                    Ok(b) => b,
+                    Err(r) => r,
+                };
                 SyncDelete {
                     ok: false,
                     status: code,
@@ -350,7 +369,10 @@ mod tests {
 
     #[test]
     fn version_guard_rejects_the_unrepresentable_extremes_without_overflowing() {
-        let state = |version: i64| SyncRemoteState { version, ..Default::default() };
+        let state = |version: i64| SyncRemoteState {
+            version,
+            ..Default::default()
+        };
         assert!(!state(i64::MIN).version_representable());
         assert!(!state(i64::MAX).version_representable());
         assert!(state(MAX_SAFE_VERSION).version_representable());

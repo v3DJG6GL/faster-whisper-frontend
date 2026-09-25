@@ -2,7 +2,10 @@
 //! out. Serves dictation settle-time translation, the viewer's re-translate,
 //! retro-translation from History, and subtitle/text-file sources.
 
-use super::{base_url, bounded_server_text, client, detail_from, friendly_err, json_capped, with_auth, MAX_ERROR_TEXT};
+use super::{
+    base_url, bounded_server_text, client, detail_from, friendly_err, json_capped, with_auth,
+    MAX_ERROR_TEXT,
+};
 use anyhow::bail;
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -137,7 +140,11 @@ fn build_request_body<'a>(
     client_job: Option<&'a str>,
 ) -> RequestBody<'a> {
     RequestBody {
-        segments: texts.iter().enumerate().map(|(id, t)| SegmentIn { id, text: t }).collect(),
+        segments: texts
+            .iter()
+            .enumerate()
+            .map(|(id, t)| SegmentIn { id, text: t })
+            .collect(),
         targets,
         source,
         translation_model: model.filter(|s| !s.is_empty()),
@@ -176,7 +183,11 @@ pub async fn translate_texts(
     }
     // The same screen the batch form applies; the CAP differs on purpose (refuse, don't
     // truncate — see `transport::MAX_TARGETS`).
-    let targets: Vec<String> = targets.iter().filter(|t| super::is_lang_code(t)).cloned().collect();
+    let targets: Vec<String> = targets
+        .iter()
+        .filter(|t| super::is_lang_code(t))
+        .cloned()
+        .collect();
     if targets.is_empty() || targets.len() > MAX_TARGETS {
         bail!("between 1 and {MAX_TARGETS} valid target languages");
     }
@@ -197,18 +208,21 @@ pub async fn translate_texts(
     // Per-request override of the shared client's 120 s default (reqwest's
     // RequestBuilder::timeout replaces the client-level timeout for this
     // request only) — see TEXT_TRANSLATE_TIMEOUT for why.
-    let resp = with_auth(client().post(format!("{base}/v1/text/translations")), api_key)
-        .json(&body)
-        .timeout(TEXT_TRANSLATE_TIMEOUT)
-        .send()
-        .await
-        .map_err(|e| {
-            // The viewer historically swallowed this error into a generic
-            // toast — make sure the log carries the classified cause.
-            let msg = friendly_err(&e);
-            tracing::warn!("[text] translate request failed: {msg}");
-            anyhow::anyhow!(msg)
-        })?;
+    let resp = with_auth(
+        client().post(format!("{base}/v1/text/translations")),
+        api_key,
+    )
+    .json(&body)
+    .timeout(TEXT_TRANSLATE_TIMEOUT)
+    .send()
+    .await
+    .map_err(|e| {
+        // The viewer historically swallowed this error into a generic
+        // toast — make sure the log carries the classified cause.
+        let msg = friendly_err(&e);
+        tracing::warn!("[text] translate request failed: {msg}");
+        anyhow::anyhow!(msg)
+    })?;
     let status = resp.status();
     if !status.is_success() {
         let body = super::body_capped_to(resp, super::MAX_ERROR_BODY)
@@ -223,7 +237,8 @@ pub async fn translate_texts(
         .map_err(|e| anyhow::anyhow!(e))?;
     // Re-order by id into a dense list aligned with the input; translation
     // VALUES are output (untouched), the language-code keys get bounded.
-    let mut results: Vec<BTreeMap<String, String>> = (0..texts.len()).map(|_| BTreeMap::new()).collect();
+    let mut results: Vec<BTreeMap<String, String>> =
+        (0..texts.len()).map(|_| BTreeMap::new()).collect();
     let mut kept: Vec<Vec<String>> = (0..texts.len()).map(|_| Vec::new()).collect();
     for seg in parsed.segments {
         if let Some(slot) = results.get_mut(seg.id) {
@@ -317,7 +332,13 @@ mod request_body_tests {
             Some(""),
         ))
         .unwrap();
-        for key in ["translation_model", "translation_mode", "progress_id", "captured_id", "client_job"] {
+        for key in [
+            "translation_model",
+            "translation_mode",
+            "progress_id",
+            "captured_id",
+            "client_job",
+        ] {
             assert!(v.get(key).is_none(), "{key} should be omitted");
         }
     }

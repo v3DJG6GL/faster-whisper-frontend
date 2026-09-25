@@ -39,12 +39,23 @@ pub fn create(app: &App) -> tauri::Result<()> {
     let sep1 = PredefinedMenuItem::separator(app)?;
     let mut items: Vec<MenuItem<tauri::Wry>> = Vec::with_capacity(SCREENS.len());
     for (id, label) in SCREENS {
-        items.push(MenuItem::with_id(app, format!("{SCREEN_PREFIX}{id}"), *label, true, None::<&str>)?);
+        items.push(MenuItem::with_id(
+            app,
+            format!("{SCREEN_PREFIX}{id}"),
+            *label,
+            true,
+            None::<&str>,
+        )?);
     }
     let sep2 = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let mut refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&show as &dyn tauri::menu::IsMenuItem<tauri::Wry>, &sep1];
-    refs.extend(items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<tauri::Wry>));
+    let mut refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
+        vec![&show as &dyn tauri::menu::IsMenuItem<tauri::Wry>, &sep1];
+    refs.extend(
+        items
+            .iter()
+            .map(|i| i as &dyn tauri::menu::IsMenuItem<tauri::Wry>),
+    );
     refs.push(&sep2);
     refs.push(&quit);
     let menu = Menu::with_items(app, &refs)?;
@@ -56,7 +67,12 @@ pub fn create(app: &App) -> tauri::Result<()> {
         // Linux (libappindicator shows the menu on any button and reports no clicks).
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
                 show_main(tray.app_handle());
             }
         })
@@ -149,7 +165,10 @@ fn tooltip(base: &str, status: &str, route: &str) -> String {
     if route.is_empty() || status == "idle" {
         base.to_string()
     } else {
-        format!("{base}  ·  {}", crate::transport::bounded_server_text(route, 64))
+        format!(
+            "{base}  ·  {}",
+            crate::transport::bounded_server_text(route, 64)
+        )
     }
 }
 

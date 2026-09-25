@@ -25,7 +25,9 @@ fn sync_state_path(dir: &Path) -> PathBuf {
 /// document could not carry the device id, so a fresh one was minted on EVERY call.
 pub fn load(dir: &Path) -> Option<serde_json::Value> {
     let text = std::fs::read_to_string(sync_state_path(dir)).ok()?;
-    serde_json::from_str::<serde_json::Value>(&text).ok().filter(|v| v.is_object())
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .filter(|v| v.is_object())
 }
 
 /// Persist atomically (tmp + rename), mirroring `config::save`.

@@ -13,9 +13,9 @@ use crate::transport::stream::{self, StreamEvent, StreamParams};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleFormat, StreamConfig, StreamError};
 use serde::Serialize;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::path::PathBuf;
 use std::thread::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{mpsc, watch};
@@ -68,7 +68,10 @@ static CANCELLED_BATCH_EPOCH: AtomicU64 = AtomicU64::new(0);
 /// Disown whatever batch transcription is currently detached, if any. Called by `cancel_record`
 /// even when the session has already been taken out of state by a preceding stop.
 pub fn cancel_detached_batch() {
-    CANCELLED_BATCH_EPOCH.store(DETACHED_BATCH_EPOCH.load(Ordering::SeqCst), Ordering::SeqCst);
+    CANCELLED_BATCH_EPOCH.store(
+        DETACHED_BATCH_EPOCH.load(Ordering::SeqCst),
+        Ordering::SeqCst,
+    );
 }
 
 /// Was the detached transcription for `epoch` cancelled? Epoch 0 is "none detached yet".
@@ -253,13 +256,28 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         StreamEvent::Ready { overrides_ignored } => {
             emit_if_active(&appc, epoch, "stream://status", "ready");
             if !overrides_ignored.is_empty() {
-                emit_if_active(&appc, epoch, "stream://overrides-ignored", overrides_ignored);
+                emit_if_active(
+                    &appc,
+                    epoch,
+                    "stream://overrides-ignored",
+                    overrides_ignored,
+                );
             }
         }
         StreamEvent::Partial { committed, pending } => {
-            emit_if_active(&appc, epoch, "stream://partial", PartialPayload { committed, pending });
+            emit_if_active(
+                &appc,
+                epoch,
+                "stream://partial",
+                PartialPayload { committed, pending },
+            );
         }
-        StreamEvent::Final { committed, tail, last, utterance } => {
+        StreamEvent::Final {
+            committed,
+            tail,
+            last,
+            utterance,
+        } => {
             tracing::info!(
                 "[stream] session {epoch} final committed={} tail={} last={}",
                 committed.len(),
@@ -270,7 +288,12 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
                 &appc,
                 epoch,
                 "stream://final",
-                FinalPayload { committed, tail, last, utterance },
+                FinalPayload {
+                    committed,
+                    tail,
+                    last,
+                    utterance,
+                },
             );
         }
         StreamEvent::RecordingSaved(path) => {
@@ -280,7 +303,12 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             // Epoch-gated like every other event: a cancelled session's
             // capture id must never reach the UI and get attached to whatever
             // session started next.
-            emit_if_active(&appc, epoch, "stream://captured", CapturedPayload { id, utterance });
+            emit_if_active(
+                &appc,
+                epoch,
+                "stream://captured",
+                CapturedPayload { id, utterance },
+            );
         }
         StreamEvent::Loading => {
             // Server is cold-loading its model — alive, just slow. The client
@@ -291,7 +319,12 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         StreamEvent::Utterance { state, utterance } => {
             // Epoch-gated like the rest: a cancelled session's drain can still
             // deliver "decoding", and it must not paint the next session busy.
-            emit_if_active(&appc, epoch, "stream://utterance", UtterancePayload { state, utterance });
+            emit_if_active(
+                &appc,
+                epoch,
+                "stream://utterance",
+                UtterancePayload { state, utterance },
+            );
         }
         StreamEvent::Boundary { separator } => {
             tracing::info!("[stream] session {epoch} boundary (hard break)");
@@ -344,7 +377,9 @@ fn open_input(
             .map_err(|e| e.to_string())?
             .find(|d| device_name(d).map(|n| n == id).unwrap_or(false))
             .or_else(|| {
-                tracing::warn!("[audio] microphone '{id}' not found; falling back to the default input");
+                tracing::warn!(
+                    "[audio] microphone '{id}' not found; falling back to the default input"
+                );
                 host.default_input_device()
             })
             .ok_or_else(|| "no default input device".to_string())?,
@@ -403,7 +438,12 @@ fn downmix<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> V
 
 /// Downmix to mono into a caller-owned scratch buffer (cleared first), so a per-buffer capture
 /// callback can reuse one `Vec` instead of allocating every ~10-20 ms. Mirrors `capture::analyze`.
-fn downmix_into<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32, out: &mut Vec<f32>) {
+fn downmix_into<T: Copy>(
+    data: &[T],
+    channels: usize,
+    to_f32: impl Fn(T) -> f32,
+    out: &mut Vec<f32>,
+) {
     out.clear();
     if channels <= 1 {
         out.extend(data.iter().map(|&s| to_f32(s)));
@@ -488,7 +528,8 @@ fn spawn_capture(
     std::thread::Builder::new()
         .name("stream-capture".into())
         .spawn(move || {
-            if let Err(e) = run_capture(&app, device, format, channels, config, pcm_tx, level, stop) {
+            if let Err(e) = run_capture(&app, device, format, channels, config, pcm_tx, level, stop)
+            {
                 tracing::warn!("[stream] capture: {e}");
             }
         })
@@ -732,7 +773,15 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
             .name("record-capture".into())
             .spawn(move || {
                 match run_record_capture(
-                    &app, device, format, channels, config, in_rate, buffer.clone(), level, stop,
+                    &app,
+                    device,
+                    format,
+                    channels,
+                    config,
+                    in_rate,
+                    buffer.clone(),
+                    level,
+                    stop,
                     device_lost.clone(),
                 ) {
                     Err(e) => {
@@ -765,7 +814,10 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
                     // cover it: without this the salvage was the one detached path a cancel could
                     // not reach, and it left `DETACHED_BATCH_EPOCH` stale, so a later
                     // `cancel_detached_batch()` disowned some EARLIER session's live POST instead.
-                    Ok(()) if device_lost.load(Ordering::SeqCst) && !discard.load(Ordering::SeqCst) => {
+                    Ok(())
+                        if device_lost.load(Ordering::SeqCst)
+                            && !discard.load(Ordering::SeqCst) =>
+                    {
                         let pcm = buffer
                             .lock()
                             .map(|mut b| std::mem::take(&mut *b))
@@ -801,7 +853,9 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
     // Cancelled between the stop and this task getting scheduled: archive nothing, send nothing.
     // "Cancel" has to mean discard here too, not just for a session still held in state.
     if batch_cancelled(epoch) {
-        tracing::info!("[record] session {epoch} cancelled before transcribing — discarding the clip");
+        tracing::info!(
+            "[record] session {epoch} cancelled before transcribing — discarding the clip"
+        );
         return;
     }
     // Save the captured clip FIRST, regardless of length — exactly as the streaming save path
@@ -876,7 +930,12 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             // and tell the client where it landed so its history record can link the audio.
             if let Some(p) = &saved_path {
                 crate::audio::save_transcript_sidecar(p, &text);
-                emit_if_active(&app, epoch, "stream://recording", p.to_string_lossy().to_string());
+                emit_if_active(
+                    &app,
+                    epoch,
+                    "stream://recording",
+                    p.to_string_lossy().to_string(),
+                );
             }
             // Surface server-locked decode overrides the same way the streaming path's
             // `ready` frame does. The batch POST hands the same list back in its result,
@@ -1116,7 +1175,11 @@ fn mute_other_streams() -> Option<Vec<u32>> {
 #[cfg(unix)]
 fn set_sink_input_mute(id: u32, mute: bool) {
     let _ = std::process::Command::new("pactl")
-        .args(["set-sink-input-mute", &id.to_string(), if mute { "1" } else { "0" }])
+        .args([
+            "set-sink-input-mute",
+            &id.to_string(),
+            if mute { "1" } else { "0" },
+        ])
         .status();
 }
 
@@ -1143,7 +1206,11 @@ fn get_system_mute() -> Option<bool> {
     if !out.status.success() {
         return None;
     }
-    Some(String::from_utf8_lossy(&out.stdout).to_lowercase().contains("yes"))
+    Some(
+        String::from_utf8_lossy(&out.stdout)
+            .to_lowercase()
+            .contains("yes"),
+    )
 }
 
 #[cfg(unix)]
@@ -1188,7 +1255,9 @@ fn run_record_capture(
 ) -> Result<(), String> {
     // One resampler, shared with the `move` capture closure via Arc<Mutex>, so we can flush its
     // buffered tail after capture stops (the closure owns nothing else we could reach).
-    let resampler = Arc::new(Mutex::new(Resampler16k::new(in_rate).map_err(|e| e.to_string())?));
+    let resampler = Arc::new(Mutex::new(
+        Resampler16k::new(in_rate).map_err(|e| e.to_string())?,
+    ));
     // Same raw-audio go-live detector as the streaming path (batch parity): the frontend's
     // warm-up gate runs for BOTH endpoints, so both must announce `stream://mic-live`.
     let live = Arc::new(AtomicBool::new(false));
@@ -1210,7 +1279,10 @@ fn run_record_capture(
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);
-                    let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
+                    let bytes = resampler
+                        .lock()
+                        .map(|mut r| r.push(&mono))
+                        .unwrap_or_default();
                     if !bytes.is_empty() {
                         push_recording(&buf, &bytes, &capped);
                     }
@@ -1234,7 +1306,10 @@ fn run_record_capture(
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);
-                    let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
+                    let bytes = resampler
+                        .lock()
+                        .map(|mut r| r.push(&mono))
+                        .unwrap_or_default();
                     if !bytes.is_empty() {
                         push_recording(&buf, &bytes, &capped);
                     }
@@ -1254,11 +1329,19 @@ fn run_record_capture(
             device.build_input_stream(
                 &config,
                 move |data: &[u16], _| {
-                    downmix_into(data, channels, |s| (s as f32 - 32768.0) / 32768.0, &mut mono);
+                    downmix_into(
+                        data,
+                        channels,
+                        |s| (s as f32 - 32768.0) / 32768.0,
+                        &mut mono,
+                    );
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);
-                    let bytes = resampler.lock().map(|mut r| r.push(&mono)).unwrap_or_default();
+                    let bytes = resampler
+                        .lock()
+                        .map(|mut r| r.push(&mono))
+                        .unwrap_or_default();
                     if !bytes.is_empty() {
                         push_recording(&buf, &bytes, &capped);
                     }

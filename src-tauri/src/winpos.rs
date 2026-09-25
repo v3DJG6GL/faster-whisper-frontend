@@ -16,7 +16,9 @@ pub fn monitor_of(win: &WebviewWindow) -> Option<tauri::Monitor> {
 /// Center a window of logical size `w`×`h` on its monitor. A no-op on native Wayland,
 /// where the compositor decides placement.
 pub fn center_on_monitor(win: &WebviewWindow, w: f64, h: f64) {
-    let Some(monitor) = monitor_of(win) else { return };
+    let Some(monitor) = monitor_of(win) else {
+        return;
+    };
     let scale = monitor.scale_factor();
     let m_pos = monitor.position();
     let m_size = monitor.size();

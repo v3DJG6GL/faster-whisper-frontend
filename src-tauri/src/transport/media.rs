@@ -52,7 +52,9 @@ fn bound_streams(s: MediaStreams) -> MediaStreams {
     MediaStreams {
         video_codec: s.video_codec.map(|v| super::bounded_server_text(&v, 32)),
         audio_codec: s.audio_codec.map(|v| super::bounded_server_text(&v, 32)),
-        mp4_reason: s.mp4_reason.map(|v| super::bounded_server_text(&v, super::MAX_ERROR_TEXT)),
+        mp4_reason: s
+            .mp4_reason
+            .map(|v| super::bounded_server_text(&v, super::MAX_ERROR_TEXT)),
         width: s.width.filter(|w| (1..=16384).contains(w)),
         height: s.height.filter(|h| (1..=16384).contains(h)),
         duration: s.duration.filter(|d| d.is_finite() && *d >= 0.0),
@@ -113,7 +115,10 @@ struct UploadAnswer {
 }
 
 pub enum UploadOutcome {
-    Ok { media_id: String, expires_at: Option<i64> },
+    Ok {
+        media_id: String,
+        expires_at: Option<i64>,
+    },
     /// A status the panel can name (413 too large, 429 rate, 403 off, 503 no ffmpeg).
     Http { status: u16, detail: String },
 }
@@ -143,10 +148,14 @@ pub async fn upload_media(
     }
     let len = meta.len();
     if len > max_bytes {
-        return Ok(UploadOutcome::Http { status: 413, detail: "the video is larger than the server's limit".into() });
+        return Ok(UploadOutcome::Http {
+            status: 413,
+            detail: "the video is larger than the server's limit".into(),
+        });
     }
     let p = progress.clone();
-    let on_read: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |sent| p("uploading", sent, Some(len)));
+    let on_read: Arc<dyn Fn(u64) + Send + Sync> =
+        Arc::new(move |sent| p("uploading", sent, Some(len)));
     let body = reqwest::Body::wrap_stream(super::file_stream(file, Some(on_read)));
     let base = base_url(server_url);
     let resp = with_auth(
@@ -166,7 +175,10 @@ pub async fn upload_media(
         let body = body_capped_to(resp, MAX_ERROR_BODY)
             .await
             .unwrap_or_else(|reason| reason);
-        return Ok(UploadOutcome::Http { status: status.as_u16(), detail: detail_from(&body) });
+        return Ok(UploadOutcome::Http {
+            status: status.as_u16(),
+            detail: detail_from(&body),
+        });
     }
     let parsed: UploadAnswer = json_capped_to::<UploadAnswer>(resp, MAX_META_BODY)
         .await
@@ -175,7 +187,10 @@ pub async fn upload_media(
     if !super::batch::is_progress_id(&parsed.media_id) {
         bail!("the server answered with a malformed media id");
     }
-    Ok(UploadOutcome::Ok { media_id: parsed.media_id, expires_at: parsed.expires_at })
+    Ok(UploadOutcome::Ok {
+        media_id: parsed.media_id,
+        expires_at: parsed.expires_at,
+    })
 }
 
 /// Codec facts for a retained file; `None` when the server no longer has it.
@@ -188,17 +203,22 @@ pub async fn get_streams(
         bail!("malformed media id");
     }
     let base = base_url(server_url);
-    let resp = with_auth(client().get(format!("{base}/v1/audio/media/{media_id}/streams")), api_key)
-        .timeout(Duration::from_secs(60))
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
+    let resp = with_auth(
+        client().get(format!("{base}/v1/audio/media/{media_id}/streams")),
+        api_key,
+    )
+    .timeout(Duration::from_secs(60))
+    .send()
+    .await
+    .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
     if resp.status().as_u16() == 404 {
         return Ok(None);
     }
     let status = resp.status();
     if !status.is_success() {
-        let body = body_capped_to(resp, MAX_ERROR_BODY).await.unwrap_or_else(|r| r);
+        let body = body_capped_to(resp, MAX_ERROR_BODY)
+            .await
+            .unwrap_or_else(|r| r);
         bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
     }
     let parsed: MediaStreams = json_capped_to::<MediaStreams>(resp, MAX_META_BODY)
@@ -212,7 +232,10 @@ fn error_code(body: &str) -> (Option<String>, String) {
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
         if let Some(d) = v.get("detail") {
             if let Some(obj) = d.as_object() {
-                let code = obj.get("code").and_then(|c| c.as_str()).map(|c| c.to_string());
+                let code = obj
+                    .get("code")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c.to_string());
                 let msg = obj
                     .get("message")
                     .and_then(|m| m.as_str())
@@ -260,7 +283,9 @@ pub async fn package_to_path(
     });
     progress("packaging", 0, None);
     let mut resp = with_auth(
-        client().post(format!("{base}/v1/audio/media/{media_id}/package")).json(&body),
+        client()
+            .post(format!("{base}/v1/audio/media/{media_id}/package"))
+            .json(&body),
         api_key,
     )
     .timeout(MEDIA_EXPORT_TIMEOUT)
@@ -269,10 +294,15 @@ pub async fn package_to_path(
     .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
     let status = resp.status().as_u16();
     if status == 404 {
-        return Ok(PackageOutcome::err("expired", "the server no longer has this media"));
+        return Ok(PackageOutcome::err(
+            "expired",
+            "the server no longer has this media",
+        ));
     }
     if !resp.status().is_success() {
-        let text = body_capped_to(resp, MAX_ERROR_BODY).await.unwrap_or_else(|r| r);
+        let text = body_capped_to(resp, MAX_ERROR_BODY)
+            .await
+            .unwrap_or_else(|r| r);
         let (code, msg) = error_code(&text);
         let kind = match (status, code.as_deref()) {
             (422, Some("mp4_incompatible")) => "mp4_incompatible",
@@ -298,13 +328,21 @@ pub async fn package_to_path(
     let mut written: u64 = 0;
     let write_result: anyhow::Result<()> = async {
         use tokio::io::AsyncWriteExt;
-        let mut f = tokio::fs::File::create(&tmp).await.context("creating the export file")?;
-        while let Some(chunk) = resp.chunk().await.map_err(|e| anyhow::anyhow!(friendly_err(&e)))? {
+        let mut f = tokio::fs::File::create(&tmp)
+            .await
+            .context("creating the export file")?;
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?
+        {
             written += chunk.len() as u64;
             if written > max_bytes {
                 bail!("the packaged video is larger than this app's copy limit");
             }
-            f.write_all(&chunk).await.context("writing the export file")?;
+            f.write_all(&chunk)
+                .await
+                .context("writing the export file")?;
             progress("downloading", written, total);
         }
         if written == 0 {
@@ -341,7 +379,8 @@ mod tests {
 
     #[test]
     fn error_code_reads_structured_and_plain_details() {
-        let (code, msg) = error_code(r#"{"detail":{"code":"mp4_incompatible","message":"MP4 can't carry VP9"}}"#);
+        let (code, msg) =
+            error_code(r#"{"detail":{"code":"mp4_incompatible","message":"MP4 can't carry VP9"}}"#);
         assert_eq!(code.as_deref(), Some("mp4_incompatible"));
         assert!(msg.contains("VP9"));
         let (code, msg) = error_code(r#"{"detail":"container must be mkv or mp4"}"#);
@@ -360,7 +399,10 @@ mod tests {
             mp4_ok: false,
             mp4_reason: Some("why".into()),
         });
-        assert_eq!(s.video_codec.as_deref().map(|v| v.chars().count()), Some(33));
+        assert_eq!(
+            s.video_codec.as_deref().map(|v| v.chars().count()),
+            Some(33)
+        );
         assert_eq!(s.width, None);
         assert_eq!(s.height, Some(1080));
         assert_eq!(s.duration, None);

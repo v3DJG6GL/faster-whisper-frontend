@@ -5,7 +5,9 @@
 //! `duplicate`), which is what lets the TS queue flush with backoff and no dedupe of
 //! its own.
 
-use super::{base_url, body_capped_to, client, detail_from, friendly_err, with_auth, MAX_META_BODY};
+use super::{
+    base_url, body_capped_to, client, detail_from, friendly_err, with_auth, MAX_META_BODY,
+};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -65,7 +67,9 @@ pub async fn post_usage_outcomes(
     // a request the server will refuse every time.
     let bad = outcomes.iter().any(|o| {
         !job_id_ok(&o.job_id)
-            || o.app_id.as_deref().is_some_and(|a| a.is_empty() || a.chars().count() > 64)
+            || o.app_id
+                .as_deref()
+                .is_some_and(|a| a.is_empty() || a.chars().count() > 64)
     });
     if bad || outcomes.is_empty() || outcomes.len() > MAX_OUTCOMES {
         return UsageOutcomePost {
@@ -87,7 +91,10 @@ pub async fn post_usage_outcomes(
     {
         Ok(resp) => {
             let code = resp.status().as_u16();
-            let text = match body_capped_to(resp, MAX_META_BODY).await { Ok(b) => b, Err(r) => r };
+            let text = match body_capped_to(resp, MAX_META_BODY).await {
+                Ok(b) => b,
+                Err(r) => r,
+            };
             if (200..300).contains(&code) {
                 let parsed: OutcomeResponse = serde_json::from_str(&text).unwrap_or_default();
                 let mut results = parsed.results;
@@ -96,7 +103,12 @@ pub async fn post_usage_outcomes(
                     r.job_id = super::bounded_server_text(&r.job_id, 64);
                     r.status = super::bounded_server_text(&r.status, 16);
                 }
-                UsageOutcomePost { ok: true, status: code, error: None, results }
+                UsageOutcomePost {
+                    ok: true,
+                    status: code,
+                    error: None,
+                    results,
+                }
             } else {
                 UsageOutcomePost {
                     ok: false,

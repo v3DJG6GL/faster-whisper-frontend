@@ -503,7 +503,10 @@ pub fn client() -> reqwest::Client {
         .get_or_init(|| {
             reqwest::Client::builder()
                 .timeout(Duration::from_secs(120))
-                .user_agent(concat!("faster-whisper-frontend/", env!("CARGO_PKG_VERSION")))
+                .user_agent(concat!(
+                    "faster-whisper-frontend/",
+                    env!("CARGO_PKG_VERSION")
+                ))
                 // Never follow a redirect to a DIFFERENT host. reqwest strips `Authorization` on a
                 // cross-host hop, but it does NOT strip the request BODY, and 307/308 replay method
                 // + body verbatim to the `Location` host — and the sync push's body is the settings
@@ -537,8 +540,8 @@ pub fn client() -> reqwest::Client {
                     let same_scheme = prev.map(|u| u.scheme()) == Some(attempt.url().scheme());
                     let same_port = prev.and_then(|u| u.port_or_known_default())
                         == attempt.url().port_or_known_default();
-                    let downgrades_tls =
-                        prev.is_some_and(|u| u.scheme() == "https") && attempt.url().scheme() != "https";
+                    let downgrades_tls = prev.is_some_and(|u| u.scheme() == "https")
+                        && attempt.url().scheme() != "https";
                     if !same_host || downgrades_tls || (same_scheme && !same_port) {
                         attempt.stop()
                     } else if attempt.previous().len() > 5 {
@@ -758,7 +761,8 @@ mod usage_hour_cell_tests {
     /// rather than becoming zero-filled objects the client would mistake for data.
     #[test]
     fn an_old_server_slot_keeps_its_blocks_absent() {
-        let c: UsageHourCell = serde_json::from_str(r#"{"dow":0,"hour":8,"all":7,"dictation":7}"#).unwrap();
+        let c: UsageHourCell =
+            serde_json::from_str(r#"{"dow":0,"hour":8,"all":7,"dictation":7}"#).unwrap();
         let out = serde_json::to_value(&c).unwrap();
         assert_eq!(out["all"], 7);
         assert_eq!(out["dow"], 0);
@@ -772,7 +776,10 @@ mod usage_hour_cell_tests {
     /// The day-of-month grid rides through beside the weekday one.
     #[test]
     fn the_day_of_month_grid_keeps_its_dom_key() {
-        let u: UsageStats = serde_json::from_str(r#"{"dom_hours":[{"dom":29,"hour":5,"all":3,"sessions":{"all":1}}]}"#).unwrap();
+        let u: UsageStats = serde_json::from_str(
+            r#"{"dom_hours":[{"dom":29,"hour":5,"all":3,"sessions":{"all":1}}]}"#,
+        )
+        .unwrap();
         let out = serde_json::to_value(&u).unwrap();
         assert_eq!(out["dom_hours"][0]["dom"], 29);
         assert!(out["dom_hours"][0].get("dow").is_none());
@@ -834,9 +841,14 @@ const TOO_LARGE: &str = "The server sent an unreasonably large response — igno
 /// over-large body, or one that won't deserialize — collapses to `None`. The discovery probes
 /// (`/v1/me`, `/v1/usage`, `/v1/override-profiles/{name}`) all treat an unreachable/absent/
 /// unauthorized endpoint this way.
-pub async fn get_json<T: serde::de::DeserializeOwned>(url: String, api_key: Option<&str>) -> Option<T> {
+pub async fn get_json<T: serde::de::DeserializeOwned>(
+    url: String,
+    api_key: Option<&str>,
+) -> Option<T> {
     match with_auth(client().get(url), api_key).send().await {
-        Ok(resp) if resp.status().is_success() => json_capped_to::<T>(resp, MAX_META_BODY).await.ok(),
+        Ok(resp) if resp.status().is_success() => {
+            json_capped_to::<T>(resp, MAX_META_BODY).await.ok()
+        }
         _ => None,
     }
 }

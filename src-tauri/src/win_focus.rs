@@ -163,7 +163,11 @@ unsafe fn foreground_app_id(hwnd: HWND) -> Option<String> {
     // UWP: the foreground window belongs to the ApplicationFrameHost shim;
     // the real app's process owns the CoreWindow child. On a cold start that child does not
     // exist yet — None, never the frame host's own name, so the next poll tries again.
-    let exe = if exe == "applicationframehost" { uwp_app(hwnd, pid)? } else { exe };
+    let exe = if exe == "applicationframehost" {
+        uwp_app(hwnd, pid)?
+    } else {
+        exe
+    };
     // Judged on the RESOLVED exe, so a shell host behind the frame host is caught too.
     if is_shell_exe(&exe) {
         return None; // Start menu / Search / notification centre — the Linux plasmashell twin
@@ -200,7 +204,7 @@ unsafe fn is_shell_window(hwnd: HWND) -> bool {
         "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"          // taskbar(s)
             | "Progman" | "WorkerW"                          // the desktop
             | "MultitaskingViewFrame" | "ForegroundStaging"  // Alt-Tab / Task View (Win10)
-            | "XamlExplorerHostIslandWindow"                 // Alt-Tab / Task View (Win11)
+            | "XamlExplorerHostIslandWindow" // Alt-Tab / Task View (Win11)
     )
 }
 
@@ -227,7 +231,10 @@ unsafe fn exe_basename(pid: u32) -> Option<String> {
 /// the previous snapshot exactly as the AT-SPI twin's empty-after-bound check does.
 fn normalize_exe_basename(path: &str) -> Option<String> {
     let base = path.rsplit(['\\', '/']).next()?.to_lowercase();
-    let base = base.strip_suffix(".exe").map(str::to_string).unwrap_or(base);
+    let base = base
+        .strip_suffix(".exe")
+        .map(str::to_string)
+        .unwrap_or(base);
     // Same bound + defang the AT-SPI twin applies to ITS app id, for the same three sinks (the
     // overlay payload, a persisted AppRule that rides the sync push, the once-a-second log line).
     // The earlier refutation — "an NTFS filename cannot contain control characters" — is right for
@@ -267,7 +274,10 @@ unsafe fn uwp_app(host: HWND, host_pid: u32) -> Option<String> {
         }
         1 // continue
     }
-    let mut ctx = Ctx { host_pid, found: None };
+    let mut ctx = Ctx {
+        host_pid,
+        found: None,
+    };
     EnumChildWindows(host, Some(enum_cb), &mut ctx as *mut Ctx as LPARAM);
     exe_basename(ctx.found?)
 }
@@ -278,17 +288,32 @@ mod tests {
 
     #[test]
     fn an_exe_name_with_nothing_displayable_left_is_not_an_app_id() {
-        assert_eq!(normalize_exe_basename("C:\\Apps\\Code.exe").as_deref(), Some("code"));
+        assert_eq!(
+            normalize_exe_basename("C:\\Apps\\Code.exe").as_deref(),
+            Some("code")
+        );
         assert_eq!(normalize_exe_basename("C:\\x\\\u{202e}.exe"), None);
         assert_eq!(normalize_exe_basename("C:\\x\\\u{1}\u{2}.exe"), None);
     }
 
     #[test]
     fn shell_hosts_are_filtered_by_name_and_real_apps_are_not() {
-        for shell in ["startmenuexperiencehost", "searchhost", "searchapp", "shellexperiencehost", "lockapp"] {
+        for shell in [
+            "startmenuexperiencehost",
+            "searchhost",
+            "searchapp",
+            "shellexperiencehost",
+            "lockapp",
+        ] {
             assert!(is_shell_exe(shell), "{shell}");
         }
-        for app in ["explorer", "code", "chrome", "applicationframehost", "wordpad"] {
+        for app in [
+            "explorer",
+            "code",
+            "chrome",
+            "applicationframehost",
+            "wordpad",
+        ] {
             assert!(!is_shell_exe(app), "{app}");
         }
     }

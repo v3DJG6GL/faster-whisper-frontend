@@ -13,8 +13,12 @@
 //! foreign — one answer, no oracle), a 409 (result asked for while running)
 //! and a 403 (feature off) each drive a different client decision.
 
-use super::batch::{bound_progress, is_progress_id, to_batch_result, BatchProgress, BatchResult, VerboseJson};
-use super::{base_url, client, friendly_err, json_capped, json_capped_to, with_auth, MAX_META_BODY};
+use super::batch::{
+    bound_progress, is_progress_id, to_batch_result, BatchProgress, BatchResult, VerboseJson,
+};
+use super::{
+    base_url, client, friendly_err, json_capped, json_capped_to, with_auth, MAX_META_BODY,
+};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -28,7 +32,9 @@ const JOB_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum JobOutcome<T> {
-    Ok { value: T },
+    Ok {
+        value: T,
+    },
     /// Unknown, expired, or someone else's — the server answers all three
     /// the same way (404).
     NotFound,
@@ -37,7 +43,9 @@ pub enum JobOutcome<T> {
     /// The server does not keep jobs (403 — JOBS_ENABLED off).
     Disabled,
     /// Transport failure or an unexpected status; `message` is client-safe.
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 /// One job row (`GET /v1/jobs/{id}`), snake_case on the wire, camelCase to
@@ -110,7 +118,9 @@ fn outcome_for<T>(status: reqwest::StatusCode) -> JobOutcome<T> {
         404 => JobOutcome::NotFound,
         409 => JobOutcome::Running,
         403 => JobOutcome::Disabled,
-        code => JobOutcome::Error { message: format!("HTTP {code}") },
+        code => JobOutcome::Error {
+            message: format!("HTTP {code}"),
+        },
     }
 }
 
@@ -122,12 +132,23 @@ async fn send(req: reqwest::RequestBuilder) -> Result<reqwest::Response, String>
 }
 
 /// `GET /v1/jobs/{id}` — the row, with the live progress while in flight.
-pub async fn get_job(server_url: &str, api_key: Option<&str>, job_id: &str) -> JobOutcome<JobStatus> {
+pub async fn get_job(
+    server_url: &str,
+    api_key: Option<&str>,
+    job_id: &str,
+) -> JobOutcome<JobStatus> {
     if !is_progress_id(job_id) {
-        return JobOutcome::Error { message: "malformed job id".into() };
+        return JobOutcome::Error {
+            message: "malformed job id".into(),
+        };
     }
     let base = base_url(server_url);
-    let resp = match send(with_auth(client().get(format!("{base}/v1/jobs/{job_id}")), api_key)).await {
+    let resp = match send(with_auth(
+        client().get(format!("{base}/v1/jobs/{job_id}")),
+        api_key,
+    ))
+    .await
+    {
         Ok(r) => r,
         Err(message) => return JobOutcome::Error { message },
     };
@@ -136,7 +157,9 @@ pub async fn get_job(server_url: &str, api_key: Option<&str>, job_id: &str) -> J
         return outcome_for(status);
     }
     match json_capped_to::<JobStatus>(resp, MAX_META_BODY).await {
-        Ok(parsed) => JobOutcome::Ok { value: bound_job_status(parsed) },
+        Ok(parsed) => JobOutcome::Ok {
+            value: bound_job_status(parsed),
+        },
         Err(message) => JobOutcome::Error { message },
     }
 }
@@ -144,15 +167,24 @@ pub async fn get_job(server_url: &str, api_key: Option<&str>, job_id: &str) -> J
 /// `GET /v1/jobs/{id}/result` — the payload, through the POST's own
 /// conversion and bounding. Generous timeout: a verbose_json payload with
 /// words and translations can be megabytes.
-pub async fn get_job_result(server_url: &str, api_key: Option<&str>, job_id: &str) -> JobOutcome<BatchResult> {
+pub async fn get_job_result(
+    server_url: &str,
+    api_key: Option<&str>,
+    job_id: &str,
+) -> JobOutcome<BatchResult> {
     if !is_progress_id(job_id) {
-        return JobOutcome::Error { message: "malformed job id".into() };
+        return JobOutcome::Error {
+            message: "malformed job id".into(),
+        };
     }
     let base = base_url(server_url);
-    let resp = match with_auth(client().get(format!("{base}/v1/jobs/{job_id}/result")), api_key)
-        .send()
-        .await
-        .map_err(|e| friendly_err(&e))
+    let resp = match with_auth(
+        client().get(format!("{base}/v1/jobs/{job_id}/result")),
+        api_key,
+    )
+    .send()
+    .await
+    .map_err(|e| friendly_err(&e))
     {
         Ok(r) => r,
         Err(message) => return JobOutcome::Error { message },
@@ -162,7 +194,9 @@ pub async fn get_job_result(server_url: &str, api_key: Option<&str>, job_id: &st
         return outcome_for(status);
     }
     match json_capped::<VerboseJson>(resp).await {
-        Ok(parsed) => JobOutcome::Ok { value: to_batch_result(parsed) },
+        Ok(parsed) => JobOutcome::Ok {
+            value: to_batch_result(parsed),
+        },
         Err(message) => JobOutcome::Error { message },
     }
 }
@@ -170,10 +204,17 @@ pub async fn get_job_result(server_url: &str, api_key: Option<&str>, job_id: &st
 /// `DELETE /v1/jobs/{id}` — cancel a running job / delete a finished one.
 pub async fn delete_job(server_url: &str, api_key: Option<&str>, job_id: &str) -> JobOutcome<()> {
     if !is_progress_id(job_id) {
-        return JobOutcome::Error { message: "malformed job id".into() };
+        return JobOutcome::Error {
+            message: "malformed job id".into(),
+        };
     }
     let base = base_url(server_url);
-    let resp = match send(with_auth(client().delete(format!("{base}/v1/jobs/{job_id}")), api_key)).await {
+    let resp = match send(with_auth(
+        client().delete(format!("{base}/v1/jobs/{job_id}")),
+        api_key,
+    ))
+    .await
+    {
         Ok(r) => r,
         Err(message) => return JobOutcome::Error { message },
     };
@@ -214,11 +255,15 @@ mod wire_field_tests {
         assert_eq!(b.expires_at, None);
         assert_eq!(b.model.unwrap().chars().count(), 129);
         assert_eq!(b.source_name.unwrap().chars().count(), 201);
-        assert_eq!(b.error.unwrap().chars().count(), super::super::MAX_ERROR_TEXT + 1);
+        assert_eq!(
+            b.error.unwrap().chars().count(),
+            super::super::MAX_ERROR_TEXT + 1
+        );
         assert_eq!(b.result_bytes, Some(42));
         assert!(b.progress.is_none());
         // A clean id survives; camelCase on the way out.
-        let s: JobStatus = serde_json::from_value(serde_json::json!({"job_id": "cafe".repeat(8)})).unwrap();
+        let s: JobStatus =
+            serde_json::from_value(serde_json::json!({"job_id": "cafe".repeat(8)})).unwrap();
         let out = serde_json::to_value(bound_job_status(s)).unwrap();
         assert_eq!(out["jobId"], "cafe".repeat(8));
         assert!(out.get("job_id").is_none());
@@ -247,7 +292,12 @@ mod wire_field_tests {
     #[test]
     fn status_codes_map_to_outcomes() {
         use reqwest::StatusCode;
-        let k = |o: JobOutcome<()>| serde_json::to_value(o).unwrap()["kind"].as_str().unwrap().to_string();
+        let k = |o: JobOutcome<()>| {
+            serde_json::to_value(o).unwrap()["kind"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
         assert_eq!(k(outcome_for(StatusCode::NOT_FOUND)), "not_found");
         assert_eq!(k(outcome_for(StatusCode::CONFLICT)), "running");
         assert_eq!(k(outcome_for(StatusCode::FORBIDDEN)), "disabled");

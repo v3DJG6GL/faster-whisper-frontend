@@ -9,7 +9,10 @@
 //! cb:map `map` / `pattern` / `wordlist`), so they pass through as opaque JSON
 //! and are typed on the TS side.
 
-use super::{base_url, body_capped_to, client, detail_from, friendly_err, json_capped_to, with_auth, MAX_ERROR_BODY, MAX_META_BODY};
+use super::{
+    base_url, body_capped_to, client, detail_from, friendly_err, json_capped_to, with_auth,
+    MAX_ERROR_BODY, MAX_META_BODY,
+};
 use serde::{Deserialize, Serialize};
 
 /// A role name ("admin", "editor"), never prose.
@@ -96,7 +99,9 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                         }
                     }
                     Err(e) => {
-                        tracing::warn!("[pipeline] rules GET: HTTP {code} but unparsable body: {e}");
+                        tracing::warn!(
+                            "[pipeline] rules GET: HTTP {code} but unparsable body: {e}"
+                        );
                         PipelineFetch {
                             ok: false,
                             status: code,
@@ -106,7 +111,10 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                     }
                 }
             } else {
-                let body = match body_capped_to(resp, MAX_ERROR_BODY).await { Ok(b) => b, Err(r) => r };
+                let body = match body_capped_to(resp, MAX_ERROR_BODY).await {
+                    Ok(b) => b,
+                    Err(r) => r,
+                };
                 let detail = detail_from(&body);
                 tracing::warn!("[pipeline] rules GET failed: HTTP {code} {detail}");
                 PipelineFetch {
@@ -139,7 +147,11 @@ pub async fn save_pipeline_rules(
 ) -> PipelineSave {
     let base = base_url(server_url);
     let url = format!("{base}/v1/pipeline-rules");
-    match with_auth(client().patch(url), api_key).json(&patch).send().await {
+    match with_auth(client().patch(url), api_key)
+        .json(&patch)
+        .send()
+        .await
+    {
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
@@ -154,7 +166,10 @@ pub async fn save_pipeline_rules(
                         // by holding it to the same shape as its neighbours.
                         saved: {
                             b.saved.truncate(MAX_RECENT_WORDS);
-                            b.saved.iter().map(|s| super::bounded_server_text(s, WORD_MAX)).collect()
+                            b.saved
+                                .iter()
+                                .map(|s| super::bounded_server_text(s, WORD_MAX))
+                                .collect()
                         },
                         conflicts: if b.conflicts.is_null() {
                             serde_json::json!([])
@@ -166,7 +181,9 @@ pub async fn save_pipeline_rules(
                         detail: None,
                     },
                     Err(e) => {
-                        tracing::warn!("[pipeline] rules PATCH: HTTP {code} but unparsable body: {e}");
+                        tracing::warn!(
+                            "[pipeline] rules PATCH: HTTP {code} but unparsable body: {e}"
+                        );
                         PipelineSave {
                             ok: false,
                             status: code,
@@ -177,7 +194,10 @@ pub async fn save_pipeline_rules(
                     }
                 }
             } else {
-                let body = match body_capped_to(resp, MAX_ERROR_BODY).await { Ok(b) => b, Err(r) => r };
+                let body = match body_capped_to(resp, MAX_ERROR_BODY).await {
+                    Ok(b) => b,
+                    Err(r) => r,
+                };
                 let parsed: Option<serde_json::Value> = serde_json::from_str(&body).ok();
                 let errors = parsed.as_ref().and_then(|v| v.get("errors").cloned());
                 // Bounded and control-folded like every other server-supplied string: the fallback
@@ -187,7 +207,13 @@ pub async fn save_pipeline_rules(
                     &parsed
                         .as_ref()
                         .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(String::from))
-                        .unwrap_or_else(|| if errors.is_some() { String::new() } else { body }),
+                        .unwrap_or_else(|| {
+                            if errors.is_some() {
+                                String::new()
+                            } else {
+                                body
+                            }
+                        }),
                     crate::transport::MAX_ERROR_TEXT,
                 );
                 // Status + short detail only — never the `errors` value: a 422's validation
@@ -198,7 +224,11 @@ pub async fn save_pipeline_rules(
                     status: code,
                     conflicts: serde_json::json!([]),
                     errors,
-                    detail: if detail.is_empty() { None } else { Some(detail) },
+                    detail: if detail.is_empty() {
+                        None
+                    } else {
+                        Some(detail)
+                    },
                     ..Default::default()
                 }
             }
@@ -240,23 +270,25 @@ pub async fn get_recent_words(server_url: &str, api_key: Option<&str>) -> Recent
     // `debug` (not warn) is deliberate — a standard/old server 404s this endpoint on every
     // summon, and that expected miss must not spam the default-on info/warn log.
     match with_auth(client().get(url), api_key).send().await {
-        Ok(resp) if resp.status().is_success() => match json_capped_to::<RecentWords>(resp, MAX_META_BODY).await {
-            // The COUNT is capped in both webviews; the per-word LENGTH never was, and
-            // `Combobox.rank` lowercases every candidate on every keystroke.
-            Ok(mut rw) => {
-                rw.words.truncate(MAX_RECENT_WORDS);
-                rw.words = rw
-                    .words
-                    .iter()
-                    .map(|w| super::bounded_server_text(w, WORD_MAX))
-                    .collect();
-                rw
+        Ok(resp) if resp.status().is_success() => {
+            match json_capped_to::<RecentWords>(resp, MAX_META_BODY).await {
+                // The COUNT is capped in both webviews; the per-word LENGTH never was, and
+                // `Combobox.rank` lowercases every candidate on every keystroke.
+                Ok(mut rw) => {
+                    rw.words.truncate(MAX_RECENT_WORDS);
+                    rw.words = rw
+                        .words
+                        .iter()
+                        .map(|w| super::bounded_server_text(w, WORD_MAX))
+                        .collect();
+                    rw
+                }
+                Err(e) => {
+                    tracing::debug!("[pipeline] recent-words: unparsable body: {e}");
+                    RecentWords::default()
+                }
             }
-            Err(e) => {
-                tracing::debug!("[pipeline] recent-words: unparsable body: {e}");
-                RecentWords::default()
-            }
-        },
+        }
         Ok(resp) => {
             tracing::debug!("[pipeline] recent-words: HTTP {}", resp.status().as_u16());
             RecentWords::default()

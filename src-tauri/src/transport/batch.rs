@@ -1,8 +1,8 @@
 //! Batch transcription: `POST /v1/audio/transcriptions` (multipart).
 
 use super::{
-    base_url, body_capped_to, client, detail_from, friendly_err, json_capped, json_capped_to, with_auth,
-    MAX_ERROR_BODY, MAX_META_BODY,
+    base_url, body_capped_to, client, detail_from, friendly_err, json_capped, json_capped_to,
+    with_auth, MAX_ERROR_BODY, MAX_META_BODY,
 };
 use anyhow::{bail, Context};
 use reqwest::multipart::Part;
@@ -47,7 +47,11 @@ pub struct Segment {
     /// server's quality guard rejected the MT output). Wire is snake_case
     /// (`translations_kept`); TS-facing serialization is camelCase via
     /// rename_all, so the alias covers deserialization.
-    #[serde(default, alias = "translations_kept", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "translations_kept",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub translations_kept: Option<Vec<String>>,
 }
 
@@ -248,7 +252,10 @@ fn translate_to_field(requested: Option<&[String]>) -> Option<String> {
 
 #[cfg(test)]
 mod wire_field_tests {
-    use super::{bound_progress, bound_rung, is_format_id, to_batch_result, translate_to_field, BatchProgress, VerboseJson, VideoRung};
+    use super::{
+        bound_progress, bound_rung, is_format_id, to_batch_result, translate_to_field,
+        BatchProgress, VerboseJson, VideoRung,
+    };
 
     /// The stored result of a lost run goes through the same door as the
     /// POST body: media ids screened, labels bounded, output untouched.
@@ -264,7 +271,10 @@ mod wire_field_tests {
         assert_eq!(r.text, "hallo welt");
         assert_eq!(r.language.unwrap().chars().count(), 65); // 64 + ellipsis
         assert_eq!(r.source_media_id, None);
-        assert_eq!(r.source_video_media_id.as_deref(), Some("cafecafecafecafecafecafecafecafe"));
+        assert_eq!(
+            r.source_video_media_id.as_deref(),
+            Some("cafecafecafecafecafecafecafecafe")
+        );
         assert_eq!(r.speakers[0].chars().count(), 65);
         assert_eq!(r.segments[0].text.chars().count(), 5000);
     }
@@ -272,7 +282,13 @@ mod wire_field_tests {
     #[test]
     fn plan_and_progress_numbers_are_bounded() {
         let stages: Vec<String> = (0..12)
-            .map(|i| format!(r#"{{"stage":"{}","state":"pending","est_s":{}}}"#, "s".repeat(80), i))
+            .map(|i| {
+                format!(
+                    r#"{{"stage":"{}","state":"pending","est_s":{}}}"#,
+                    "s".repeat(80),
+                    i
+                )
+            })
             .collect();
         let json = format!(
             r#"{{"stage":"translating","progress":0.5,"target":"{}","target_progress":7.0,
@@ -295,7 +311,10 @@ mod wire_field_tests {
         assert_eq!(p.eta_s, None); // negative → dropped
         let plan = p.plan.expect("plan kept");
         assert_eq!(plan.len(), 8);
-        assert_eq!(plan[0].stage.as_deref().map(|s| s.chars().count()), Some(33));
+        assert_eq!(
+            plan[0].stage.as_deref().map(|s| s.chars().count()),
+            Some(33)
+        );
     }
 
     #[test]
@@ -376,10 +395,19 @@ mod wire_field_tests {
 
     #[test]
     fn targets_are_screened_and_capped_at_eight() {
-        let list: Vec<String> = ["de", "fr/x", "pt-BR"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(translate_to_field(Some(&list)), Some("de,pt-BR".to_string()));
+        let list: Vec<String> = ["de", "fr/x", "pt-BR"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            translate_to_field(Some(&list)),
+            Some("de,pt-BR".to_string())
+        );
         let many: Vec<String> = (0..12).map(|i| format!("l{i}")).collect();
-        assert_eq!(translate_to_field(Some(&many)).unwrap().split(',').count(), 8);
+        assert_eq!(
+            translate_to_field(Some(&many)).unwrap().split(',').count(),
+            8
+        );
     }
 
     #[test]
@@ -395,7 +423,9 @@ mod wire_field_tests {
 /// Progress ids are client-generated lowercase hex (a UUID without dashes) —
 /// validated before they reach a form field or, critically, a URL path.
 pub(crate) fn is_progress_id(s: &str) -> bool {
-    (8..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    (8..=64).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 /// One translation target inside the run plan's translating stage. The server
@@ -549,7 +579,9 @@ fn bound_video(v: VideoProgress) -> VideoProgress {
         format_id: v.format_id.filter(|s| is_format_id(s)),
         // Screened like a progress id: it gets interpolated into a URL path.
         media_id: v.media_id.filter(|s| is_progress_id(s)),
-        error: v.error.map(|s| super::bounded_server_text(&s, super::MAX_ERROR_TEXT)),
+        error: v
+            .error
+            .map(|s| super::bounded_server_text(&s, super::MAX_ERROR_TEXT)),
         ..v
     }
 }
@@ -619,9 +651,7 @@ pub struct BatchProgress {
 /// bounding is unit-testable without a socket.
 pub(crate) fn bound_progress(parsed: BatchProgress) -> BatchProgress {
     BatchProgress {
-        stage: parsed
-            .stage
-            .map(|s| super::bounded_server_text(&s, 32)),
+        stage: parsed.stage.map(|s| super::bounded_server_text(&s, 32)),
         step: parsed.step.map(|s| super::bounded_server_text(&s, 48)),
         last_text: parsed
             .last_text
@@ -663,7 +693,9 @@ pub async fn progress(
     }
     let base = base_url(server_url);
     let resp = with_auth(
-        client().get(format!("{base}/v1/audio/transcriptions/progress/{progress_id}")),
+        client().get(format!(
+            "{base}/v1/audio/transcriptions/progress/{progress_id}"
+        )),
         api_key,
     )
     .timeout(PROGRESS_TIMEOUT)
@@ -695,7 +727,9 @@ pub async fn cancel(
     }
     let base = base_url(server_url);
     let resp = with_auth(
-        client().post(format!("{base}/v1/audio/transcriptions/cancel/{progress_id}")),
+        client().post(format!(
+            "{base}/v1/audio/transcriptions/cancel/{progress_id}"
+        )),
         api_key,
     )
     .timeout(PROGRESS_TIMEOUT)
@@ -759,9 +793,23 @@ pub async fn transcribe(
         .with_context(|| format!("reading {file_path}"))?
         .len();
     let body = reqwest::Body::wrap_stream(super::file_stream(file, None));
-    let part = Part::stream_with_length(body, len).file_name(filename).mime_str(mime)?;
+    let part = Part::stream_with_length(body, len)
+        .file_name(filename)
+        .mime_str(mime)?;
     // File upload (Transcribe screen): a long recording can decode for many minutes — allow it.
-    post(server_url, api_key, model, language, prompt, overrides, override_profile, SourcePart::File(part), Some(FILE_TRANSCRIBE_TIMEOUT), options).await
+    post(
+        server_url,
+        api_key,
+        model,
+        language,
+        prompt,
+        overrides,
+        override_profile,
+        SourcePart::File(part),
+        Some(FILE_TRANSCRIBE_TIMEOUT),
+        options,
+    )
+    .await
 }
 
 /// Transcribe an in-memory WAV (used by batch-mode dictation recording).
@@ -777,13 +825,30 @@ pub async fn transcribe_wav_bytes(
     standard: bool,
     wav: Vec<u8>,
 ) -> anyhow::Result<BatchResult> {
-    let part = Part::bytes(wav).file_name("recording.wav").mime_str("audio/wav")?;
+    let part = Part::bytes(wav)
+        .file_name("recording.wav")
+        .mime_str("audio/wav")?;
     // Dictation batch: short clips; keep the 120 s client default (the record path's only
     // stuck-session backstop, since the streaming-style finalize watchdog is stream-only).
     // No stage options — dictation never diarizes/translates — only the server-kind flag
     // that shapes the `language` field for a plain OpenAI-compatible server.
-    let options = BatchOptions { standard: Some(standard), ..Default::default() };
-    post(server_url, api_key, model, language, prompt, overrides, override_profile, SourcePart::File(part), None, Some(options)).await
+    let options = BatchOptions {
+        standard: Some(standard),
+        ..Default::default()
+    };
+    post(
+        server_url,
+        api_key,
+        model,
+        language,
+        prompt,
+        overrides,
+        override_profile,
+        SourcePart::File(part),
+        None,
+        Some(options),
+    )
+    .await
 }
 
 /// The one client-supplied audio source of a batch request: an uploaded file
@@ -993,8 +1058,7 @@ async fn post(
     } else {
         "/v1/audio/transcriptions"
     };
-    let mut req = with_auth(client().post(format!("{base}{endpoint}")), api_key)
-        .multipart(form);
+    let mut req = with_auth(client().post(format!("{base}{endpoint}")), api_key).multipart(form);
     // Per-request override of the shared client's 120 s default (reqwest's RequestBuilder::timeout
     // replaces the client-level timeout for this request only). Only the file-upload path sets it;
     // dictation passes None and keeps the 120 s default.
@@ -1088,7 +1152,9 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
         source_media_expires_at: parsed.source_media_expires_at,
         source_video_media_id: parsed.source_video_media_id.filter(|s| is_progress_id(s)),
         source_video_expires_at: parsed.source_video_expires_at,
-        source_video_height: parsed.source_video_height.filter(|h| (1..=8192).contains(h)),
+        source_video_height: parsed
+            .source_video_height
+            .filter(|h| (1..=8192).contains(h)),
         source_video_container: parsed
             .source_video_container
             .map(|s| super::bounded_server_text(&s, 8)),
@@ -1216,7 +1282,8 @@ const MAX_LADDER_RUNGS: usize = 16;
 pub(crate) fn is_format_id(s: &str) -> bool {
     let n = s.chars().count();
     (1..=40).contains(&n)
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
 }
 
 fn bound_rung(r: VideoRung) -> VideoRung {
@@ -1250,12 +1317,15 @@ pub async fn url_preview(
 ) -> anyhow::Result<UrlPreview> {
     validate_media_url(url)?;
     let base = base_url(server_url);
-    let resp = with_auth(client().post(format!("{base}/v1/audio/url-preview")), api_key)
-        .timeout(URL_PREVIEW_TIMEOUT)
-        .json(&serde_json::json!({ "url": url }))
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
+    let resp = with_auth(
+        client().post(format!("{base}/v1/audio/url-preview")),
+        api_key,
+    )
+    .timeout(URL_PREVIEW_TIMEOUT)
+    .json(&serde_json::json!({ "url": url }))
+    .send()
+    .await
+    .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
     let status = resp.status();
     if !status.is_success() {
         let body = match body_capped_to(resp, MAX_ERROR_BODY).await {
@@ -1275,9 +1345,9 @@ pub async fn url_preview(
         uploader: parsed.uploader.map(|s| super::bounded_server_text(&s, 128)),
         extractor: parsed.extractor.map(|s| super::bounded_server_text(&s, 64)),
         ext: parsed.ext.map(|s| super::bounded_server_text(&s, 16)),
-        thumbnail: parsed.thumbnail.filter(|t| {
-            t.len() <= MAX_THUMBNAIL_DATA_URI && t.starts_with("data:image/")
-        }),
+        thumbnail: parsed
+            .thumbnail
+            .filter(|t| t.len() <= MAX_THUMBNAIL_DATA_URI && t.starts_with("data:image/")),
         video_ladder: parsed
             .video_ladder
             .into_iter()
@@ -1332,7 +1402,9 @@ pub async fn url_video_download(
         body["progress_id"] = serde_json::json!(pid);
     }
     let resp = with_auth(
-        client().post(format!("{base}/v1/audio/url-media/video")).json(&body),
+        client()
+            .post(format!("{base}/v1/audio/url-media/video"))
+            .json(&body),
         api_key,
     )
     .timeout(URL_VIDEO_TIMEOUT)
@@ -1400,7 +1472,13 @@ pub async fn download_result_media(
         .headers()
         .get("content-type")
         .and_then(|v| v.to_str().ok())
-        .map(|v| v.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
+        .map(|v| {
+            v.split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+        })
         .as_deref()
     {
         Some("audio/wav") => "wav",
@@ -1431,25 +1509,38 @@ pub async fn download_result_media(
     let mut over_cap = false;
     let write_result: anyhow::Result<()> = async {
         use tokio::io::AsyncWriteExt;
-        let mut f = tokio::fs::File::create(&tmp).await.context("creating the media file")?;
+        let mut f = tokio::fs::File::create(&tmp)
+            .await
+            .context("creating the media file")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600)).await;
+            let _ = f
+                .set_permissions(std::fs::Permissions::from_mode(0o600))
+                .await;
         }
         // Same per-file DACL as the recordings: `links/` may have pre-existed the pick.
         #[cfg(windows)]
         if let Err(e) = crate::audio::windows_owner_only_dacl(&tmp) {
-            tracing::warn!("[transport] could not restrict {} to the current user: {e}", tmp.display());
+            tracing::warn!(
+                "[transport] could not restrict {} to the current user: {e}",
+                tmp.display()
+            );
         }
         let mut total: u64 = 0;
-        while let Some(chunk) = resp.chunk().await.map_err(|e| anyhow::anyhow!(friendly_err(&e)))? {
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?
+        {
             total += chunk.len() as u64;
             if total > max_bytes {
                 over_cap = true;
                 bail!("media exceeds the local copy cap");
             }
-            f.write_all(&chunk).await.context("writing the media file")?;
+            f.write_all(&chunk)
+                .await
+                .context("writing the media file")?;
         }
         if total == 0 {
             bail!("the server sent no media");
@@ -1470,10 +1561,9 @@ pub async fn download_result_media(
         }
         return Err(e);
     }
-    std::fs::rename(&tmp, &dest)
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            anyhow::anyhow!("saving the media file: {e}")
-        })?;
+    std::fs::rename(&tmp, &dest).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        anyhow::anyhow!("saving the media file: {e}")
+    })?;
     Ok(Some(dest.to_string_lossy().to_string()))
 }

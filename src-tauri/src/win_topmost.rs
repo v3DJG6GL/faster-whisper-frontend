@@ -28,7 +28,15 @@ fn hwnd_of(win: &WebviewWindow) -> Option<HWND> {
 fn set_band(hwnd: HWND, insert_after: HWND) {
     // SAFETY: plain Win32 call on a window handle; a stale handle just fails.
     unsafe {
-        SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        SetWindowPos(
+            hwnd,
+            insert_after,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
     }
 }
 
@@ -55,7 +63,12 @@ fn intersects(a: &RECT, b: &RECT) -> bool {
 /// if any — i.e. proof that the window is mis-ordered. Walks up the z-order only, so the
 /// common case (we are at or near the top) is a handful of calls.
 fn covering_window(hwnd: HWND) -> Option<HWND> {
-    let mut ours = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut ours = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     // SAFETY: out-pointer to a local.
     if unsafe { GetWindowRect(hwnd, &mut ours) } == 0 {
         return None;
@@ -68,11 +81,17 @@ fn covering_window(hwnd: HWND) -> Option<HWND> {
         if cur.is_null() {
             return None;
         }
-        let ordinary = unsafe { IsWindowVisible(cur) != 0 && IsIconic(cur) == 0 } && !is_topmost(cur);
+        let ordinary =
+            unsafe { IsWindowVisible(cur) != 0 && IsIconic(cur) == 0 } && !is_topmost(cur);
         if !ordinary {
             continue;
         }
-        let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        let mut r = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
         if unsafe { GetWindowRect(cur, &mut r) } != 0 && intersects(&ours, &r) {
             return Some(cur);
         }
@@ -116,9 +135,24 @@ mod tests {
 
     #[test]
     fn touching_edges_do_not_count_as_overlap() {
-        let a = RECT { left: 0, top: 0, right: 10, bottom: 10 };
-        let beside = RECT { left: 10, top: 0, right: 20, bottom: 10 };
-        let over = RECT { left: 9, top: 9, right: 20, bottom: 20 };
+        let a = RECT {
+            left: 0,
+            top: 0,
+            right: 10,
+            bottom: 10,
+        };
+        let beside = RECT {
+            left: 10,
+            top: 0,
+            right: 20,
+            bottom: 10,
+        };
+        let over = RECT {
+            left: 9,
+            top: 9,
+            right: 20,
+            bottom: 20,
+        };
         assert!(!intersects(&a, &beside));
         assert!(intersects(&a, &over));
     }

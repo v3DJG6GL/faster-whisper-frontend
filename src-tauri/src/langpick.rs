@@ -26,7 +26,6 @@ const LP_H: f64 = 460.0;
 #[cfg(target_os = "linux")]
 const LP_TITLE: &str = "fwf-translate-to";
 
-
 /// Show + focus the picker, carrying the seed the main window built.
 ///
 /// `seed` is opaque JSON (source language, preselected targets, recents) — Rust forwards

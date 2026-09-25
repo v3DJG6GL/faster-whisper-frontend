@@ -17,7 +17,11 @@ static ROUTE: Mutex<String> = Mutex::new(String::new());
 #[tauri::command]
 pub fn note_route(path: String) {
     // It goes into a log line: printable ASCII only, and short.
-    let clean: String = path.chars().filter(|c| c.is_ascii_graphic()).take(80).collect();
+    let clean: String = path
+        .chars()
+        .filter(|c| c.is_ascii_graphic())
+        .take(80)
+        .collect();
     if let Ok(mut r) = ROUTE.lock() {
         *r = clean;
     }
@@ -69,14 +73,25 @@ mod imp {
         let mut line = format!("[mem] core {}M", anon_mb(me).unwrap_or(0));
         let mut alive = Vec::with_capacity(web.len());
         for (i, pid) in web.iter().copied().enumerate() {
-            let (Some(anon), Some(peak)) = (anon_mb(pid), peak_mb(pid)) else { continue };
+            let (Some(anon), Some(peak)) = (anon_mb(pid), peak_mb(pid)) else {
+                continue;
+            };
             alive.push(pid);
-            let name = if web.len() == LABELS.len() { LABELS[i].to_string() } else { format!("web{pid}") };
+            let name = if web.len() == LABELS.len() {
+                LABELS[i].to_string()
+            } else {
+                format!("web{pid}")
+            };
             line.push_str(&format!(" | {name} {anon}M (peak {peak}M)"));
-            let s = seen.entry(pid).or_insert_with(|| Seen { peak_mb: peak, warned: false });
+            let s = seen.entry(pid).or_insert_with(|| Seen {
+                peak_mb: peak,
+                warned: false,
+            });
             if anon >= WARN_ANON_MB && !s.warned {
                 s.warned = true;
-                tracing::warn!("[mem] {name} (pid {pid}) holds {anon}M private memory — screen {route}");
+                tracing::warn!(
+                    "[mem] {name} (pid {pid}) holds {anon}M private memory — screen {route}"
+                );
             } else if anon < REARM_ANON_MB {
                 s.warned = false;
             }
@@ -102,15 +117,24 @@ mod imp {
 
     /// Direct children of `parent` whose comm (kernel-truncated to 15 bytes) is `comm`.
     fn children(parent: u32, comm: &str) -> Vec<u32> {
-        let Ok(dir) = std::fs::read_dir("/proc") else { return Vec::new() };
+        let Ok(dir) = std::fs::read_dir("/proc") else {
+            return Vec::new();
+        };
         dir.flatten()
             .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
             .filter(|pid| {
-                let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { return false };
+                let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                    return false;
+                };
                 // "pid (comm) state ppid …" — comm may itself hold spaces or parentheses.
-                let (Some(open), Some(close)) = (stat.find('('), stat.rfind(')')) else { return false };
+                let (Some(open), Some(close)) = (stat.find('('), stat.rfind(')')) else {
+                    return false;
+                };
                 let name = &stat[open + 1..close];
-                let ppid = stat[close + 1..].split_whitespace().nth(1).and_then(|p| p.parse::<u32>().ok());
+                let ppid = stat[close + 1..]
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|p| p.parse::<u32>().ok());
                 name == comm && ppid == Some(parent)
             })
             .collect()

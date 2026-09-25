@@ -1165,13 +1165,27 @@ mod tests {
     fn only_platform_failures_are_retried() {
         use super::keys::{retryable, should_retry};
         assert!(retryable(&keyring::Error::PlatformFailure("dbus".into())));
-        assert!(!retryable(&keyring::Error::NoStorageAccess("locked".into())));
+        assert!(!retryable(&keyring::Error::NoStorageAccess(
+            "locked".into()
+        )));
         assert!(!retryable(&keyring::Error::Ambiguous(vec![])));
-        assert!(!retryable(&keyring::Error::Invalid("attr".into(), "why".into())));
+        assert!(!retryable(&keyring::Error::Invalid(
+            "attr".into(),
+            "why".into()
+        )));
         // The loop's gate, not just the predicate: a locked wallet is never read twice.
-        assert!(should_retry(0, &keyring::Error::PlatformFailure("dbus".into())));
-        assert!(!should_retry(1, &keyring::Error::PlatformFailure("dbus".into())));
-        assert!(!should_retry(0, &keyring::Error::NoStorageAccess("locked".into())));
+        assert!(should_retry(
+            0,
+            &keyring::Error::PlatformFailure("dbus".into())
+        ));
+        assert!(!should_retry(
+            1,
+            &keyring::Error::PlatformFailure("dbus".into())
+        ));
+        assert!(!should_retry(
+            0,
+            &keyring::Error::NoStorageAccess("locked".into())
+        ));
     }
 
     #[test]
@@ -1184,7 +1198,10 @@ mod tests {
         // write (a planted tmp path would fail at the open and never create anything).
         std::fs::create_dir_all(dir.join("config.json").join("occupied")).unwrap();
         assert!(save(&dir, &Config::default()).is_err());
-        assert!(!dir.join("config.json.tmp").exists(), "tmp left behind after a failed rename");
+        assert!(
+            !dir.join("config.json.tmp").exists(),
+            "tmp left behind after a failed rename"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1205,10 +1222,19 @@ mod tests {
 
         let cfg: Config = serde_json::from_value(json).expect("config parses");
         let out = serde_json::to_value(&cfg).expect("config serializes");
-        assert_eq!(out["profiles"][0]["askTranslationTargets"], serde_json::json!(true));
-        assert_eq!(out["settings"]["recentTranslationTargets"], serde_json::json!(["fr", "de"]));
+        assert_eq!(
+            out["profiles"][0]["askTranslationTargets"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            out["settings"]["recentTranslationTargets"],
+            serde_json::json!(["fr", "de"])
+        );
         // The quick-add and picker windows read the Signal colour through this struct.
         assert_eq!(out["settings"]["accentHue"], serde_json::json!(330.0));
-        assert_eq!(out["settings"]["accentMotion"]["period"], serde_json::json!(3600));
+        assert_eq!(
+            out["settings"]["accentMotion"]["period"],
+            serde_json::json!(3600)
+        );
     }
 }

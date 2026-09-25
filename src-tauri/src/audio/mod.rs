@@ -229,7 +229,10 @@ fn write_new_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     // the directory call.
     #[cfg(windows)]
     if let Err(e) = windows_owner_only_dacl(path) {
-        tracing::warn!("[audio] could not restrict {} to the current user: {e}", path.display());
+        tracing::warn!(
+            "[audio] could not restrict {} to the current user: {e}",
+            path.display()
+        );
     }
     if let Err(e) = f.write_all(bytes).and_then(|_| f.sync_all()) {
         let _ = std::fs::remove_file(path);
@@ -283,7 +286,10 @@ pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
         // Best-effort, deliberately: a failure here must not stop the user recording. It is logged
         // so a broken ACL is diagnosable rather than silent.
         if let Err(e) = windows_owner_only_dacl(dir) {
-            tracing::warn!("[audio] could not restrict {} to the current user: {e}", dir.display());
+            tracing::warn!(
+                "[audio] could not restrict {} to the current user: {e}",
+                dir.display()
+            );
         }
         return Ok(());
     }
@@ -581,7 +587,8 @@ mod retention_tests {
     /// past ~10.7 million days and PANICS inside `setup()` on every launch once persisted.
     #[test]
     fn an_absurd_retention_window_is_clamped_not_fatal() {
-        let dir = std::env::temp_dir().join(format!("fwf-retention-clamp-{}", std::process::id()).as_str());
+        let dir = std::env::temp_dir()
+            .join(format!("fwf-retention-clamp-{}", std::process::id()).as_str());
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         seed(&dir, "dictation-old.wav", 400);
@@ -595,7 +602,8 @@ mod retention_tests {
     /// folder cannot have the server-supplied transcript written through it.
     #[test]
     fn a_transcript_never_overwrites_an_existing_file() {
-        let dir = std::env::temp_dir().join(format!("fwf-sidecar-nofollow-{}", std::process::id()).as_str());
+        let dir = std::env::temp_dir()
+            .join(format!("fwf-sidecar-nofollow-{}", std::process::id()).as_str());
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let victim = dir.join("dictation-x.txt");
@@ -607,7 +615,8 @@ mod retention_tests {
 
     #[test]
     fn keeps_everything_when_retention_is_off() {
-        let dir = std::env::temp_dir().join(format!("fwf-retention-off-{}", std::process::id()).as_str());
+        let dir =
+            std::env::temp_dir().join(format!("fwf-retention-off-{}", std::process::id()).as_str());
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         seed(&dir, "dictation-old.wav", 400);
@@ -618,7 +627,8 @@ mod retention_tests {
 
     #[test]
     fn removes_only_our_files_past_the_window() {
-        let dir = std::env::temp_dir().join(format!("fwf-retention-window-{}", std::process::id()).as_str());
+        let dir = std::env::temp_dir()
+            .join(format!("fwf-retention-window-{}", std::process::id()).as_str());
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         seed(&dir, "dictation-old.wav", 40);
@@ -649,7 +659,11 @@ mod cap_tests {
 
     #[test]
     fn recording_buffer_stops_at_the_cap() {
-        assert_eq!(MAX_RECORD_PCM_BYTES % 2, 0, "the cap must fall on a sample boundary");
+        assert_eq!(
+            MAX_RECORD_PCM_BYTES % 2,
+            0,
+            "the cap must fall on a sample boundary"
+        );
         const CAP: usize = 8;
         let mut buf = vec![0u8; CAP - 4];
         assert!(push_pcm_capped_at(&mut buf, &[1, 2], CAP));

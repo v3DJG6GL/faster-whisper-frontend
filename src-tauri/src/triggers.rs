@@ -103,7 +103,11 @@ fn load_config(app: &AppHandle) -> Option<crate::config::Config> {
 /// activation (config order), then emit. Keeps existing desktop shortcuts working.
 fn emit_for_activation(app: &AppHandle, want: ActivationType, action: &str) {
     let Some(cfg) = load_config(app) else { return };
-    match cfg.profiles.iter().find(|p| p.enabled && p.activation == want) {
+    match cfg
+        .profiles
+        .iter()
+        .find(|p| p.enabled && p.activation == want)
+    {
         Some(p) => emit_trigger(app, p.id.clone(), action),
         None => tracing::info!("[trigger] legacy flag: no enabled {want:?} profile"),
     }
@@ -195,7 +199,10 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
 #[derive(Clone)]
 #[cfg_attr(windows, allow(dead_code))] // see module header: on Windows the plugin is never the registrar
 enum ShortcutTarget {
-    Dictate { profile_id: String, activation: ActivationType },
+    Dictate {
+        profile_id: String,
+        activation: ActivationType,
+    },
     OpenQuickAdd,
 }
 
@@ -245,7 +252,10 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
         return;
     };
     match t {
-        ShortcutTarget::Dictate { profile_id, activation } => {
+        ShortcutTarget::Dictate {
+            profile_id,
+            activation,
+        } => {
             let action = match (activation, event.state()) {
                 (ActivationType::Hold, ShortcutState::Pressed) => "start",
                 (ActivationType::Hold, ShortcutState::Released) => "stop",

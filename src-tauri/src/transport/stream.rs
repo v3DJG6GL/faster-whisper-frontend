@@ -19,12 +19,24 @@ use tokio_tungstenite::tungstenite::Message;
 pub enum StreamEvent {
     /// Handshake accepted. `overrides_ignored` lists client decode overrides the
     /// server refused because the field is admin-locked (empty otherwise).
-    Ready { overrides_ignored: Vec<String> },
-    Partial { committed: String, pending: String },
-    Final { committed: String, tail: String, last: bool, utterance: Option<u32> },
+    Ready {
+        overrides_ignored: Vec<String>,
+    },
+    Partial {
+        committed: String,
+        pending: String,
+    },
+    Final {
+        committed: String,
+        tail: String,
+        last: bool,
+        utterance: Option<u32>,
+    },
     /// Long-silence hard break: the server reset its document. The client should
     /// reset its injection baseline and optionally type `separator` between docs.
-    Boundary { separator: String },
+    Boundary {
+        separator: String,
+    },
     /// The capture-row id the server minted for the utterance it just
     /// finalized. Rides its own frame because the `final` frame is emitted
     /// BEFORE the capture is written, so the id does not exist yet at that
@@ -36,7 +48,10 @@ pub enum StreamEvent {
     /// samples and rate-limits them) or the inject queue drains slowly.
     /// `utterance` is None when the server predates the ordinal: the client then
     /// pairs nothing rather than keying every phrase on ordinal 0.
-    Captured { id: String, utterance: Option<u32> },
+    Captured {
+        id: String,
+        utterance: Option<u32>,
+    },
     /// The session's audio was saved to this path ("Keep audio recordings" on).
     /// Emitted before `Closed` so the client can link its history record to the
     /// file. Epoch-gated like every other event — a cancelled session's save
@@ -54,7 +69,10 @@ pub enum StreamEvent {
     /// guarantees one terminal per announced utterance (a `Final` with the same
     /// ordinal, or `Dropped`), which is what lets the UI show a working state
     /// without a way to get stuck in it.
-    Utterance { state: UtteranceState, utterance: Option<u32> },
+    Utterance {
+        state: UtteranceState,
+        utterance: Option<u32>,
+    },
     Error(String),
     Closed,
 }
@@ -109,14 +127,15 @@ pub struct StreamParams {
     pub api_key: Option<String>,
     pub in_rate: u32,
     pub save_dir: Option<PathBuf>, // Some → save the streamed 16 kHz audio as .wav
-    pub trim_silence: bool, // when saving: keep only spoken spans (drop silence) in the .wav
+    pub trim_silence: bool,        // when saving: keep only spoken spans (drop silence) in the .wav
 }
 
 /// Case-insensitive `strip_prefix` for an ASCII prefix. `s.get(..len)` returns None on a
 /// non-char-boundary, so this can't panic.
 fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
     let head = s.get(..prefix.len())?;
-    head.eq_ignore_ascii_case(prefix).then(|| &s[prefix.len()..])
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &s[prefix.len()..])
 }
 
 /// Derive the streaming WS URL from a profile's http(s) server URL. The scheme match is
@@ -163,7 +182,11 @@ fn display_url(u: &str) -> String {
     }
     // The path is a fixed literal on every one of these URLs, so it carries no information for the
     // reader and only spends the message's budget. Scheme + host is the whole point.
-    let joined = if scheme.is_empty() { host.to_string() } else { format!("{scheme}://{host}") };
+    let joined = if scheme.is_empty() {
+        host.to_string()
+    } else {
+        format!("{scheme}://{host}")
+    };
     // Its own, smaller budget: the caller bounds the WHOLE message at MAX_ERROR_TEXT, so a URL
     // allowed to spend all 200 would truncate the error's cause away entirely.
     super::bounded_server_text(&joined, MAX_URL_IN_ERROR)
@@ -225,7 +248,10 @@ pub async fn run<F>(
 
     let mut request = match params.ws_url.as_str().into_client_request() {
         Ok(r) => r,
-        Err(e) => fail!(format!("Invalid stream URL {}: {e}", display_url(&params.ws_url))),
+        Err(e) => fail!(format!(
+            "Invalid stream URL {}: {e}",
+            display_url(&params.ws_url)
+        )),
     };
     if let Some(k) = &params.api_key {
         if !k.is_empty() {
@@ -637,7 +663,9 @@ pub async fn run<F>(
                 Ok(None) | Ok(Some(FromReader::Closed)) => break false,
                 Ok(Some(FromReader::Event(e))) => {
                     saw_frame = true;
-                    if saving { accumulate_transcript(&e, &mut transcript_docs, &mut transcript_cur); }
+                    if saving {
+                        accumulate_transcript(&e, &mut transcript_docs, &mut transcript_cur);
+                    }
                     on_event(e);
                 }
             }
@@ -688,7 +716,9 @@ pub async fn run<F>(
                 if !transcript.is_empty() {
                     crate::audio::save_transcript_sidecar(&path, &transcript);
                 }
-                on_event(StreamEvent::RecordingSaved(path.to_string_lossy().into_owned()));
+                on_event(StreamEvent::RecordingSaved(
+                    path.to_string_lossy().into_owned(),
+                ));
             }
         }
     }
@@ -722,7 +752,9 @@ fn save_capped(saved: &mut Vec<u8>, bytes: &[u8], capped: &mut bool) {
 /// `committed + tail`; a `Boundary` banks the (trimmed, non-empty) current document and resets it.
 fn accumulate_transcript(e: &StreamEvent, docs: &mut Vec<String>, current: &mut String) {
     match e {
-        StreamEvent::Final { committed, tail, .. } => {
+        StreamEvent::Final {
+            committed, tail, ..
+        } => {
             current.clear();
             current.push_str(committed);
             current.push_str(tail);
@@ -790,7 +822,11 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
                 last,
                 utterance: ordinal_field(&v, "utterance"),
             });
-            if last { Frame::LastFinal } else { Frame::Continue }
+            if last {
+                Frame::LastFinal
+            } else {
+                Frame::Continue
+            }
         }
         Some("boundary") => {
             on_event(StreamEvent::Boundary {
@@ -804,7 +840,10 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
             // opaque field on the next translate request.
             let id = bounded(str_field(&v, "id"), 64);
             if !id.is_empty() {
-                on_event(StreamEvent::Captured { id, utterance: ordinal_field(&v, "utterance") });
+                on_event(StreamEvent::Captured {
+                    id,
+                    utterance: ordinal_field(&v, "utterance"),
+                });
             }
             Frame::Continue
         }
@@ -831,7 +870,10 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
             // the frame type, and a fallback here would be a UI state change
             // nobody asked for.
             if let Some(state) = UtteranceState::parse(str_field(&v, "state")) {
-                on_event(StreamEvent::Utterance { state, utterance: ordinal_field(&v, "utterance") });
+                on_event(StreamEvent::Utterance {
+                    state,
+                    utterance: ordinal_field(&v, "utterance"),
+                });
             }
             Frame::Continue
         }
@@ -876,7 +918,9 @@ pub(crate) fn bounded(s: &str, n: usize) -> String {
 /// The client pairs nothing for None, which is the best-effort behaviour an
 /// older backend already gets.
 fn ordinal_field(v: &serde_json::Value, key: &str) -> Option<u32> {
-    v.get(key).and_then(|x| x.as_u64()).and_then(|n| u32::try_from(n).ok())
+    v.get(key)
+        .and_then(|x| x.as_u64())
+        .and_then(|n| u32::try_from(n).ok())
 }
 
 fn str_field<'a>(v: &'a serde_json::Value, key: &str) -> &'a str {
@@ -897,7 +941,6 @@ fn bounded_str_vec_field(v: &serde_json::Value, key: &str) -> Vec<String> {
         })
         .unwrap_or_default()
 }
-
 
 #[cfg(test)]
 mod display_url_tests {
@@ -954,10 +997,14 @@ mod emit_message_tests {
             ("decoding", UtteranceState::Decoding),
             ("dropped", UtteranceState::Dropped),
         ] {
-            let (seen, frame) =
-                utterances(&format!(r#"{{"type":"utterance","utterance":7,"state":"{wire}","reason":"empty"}}"#));
+            let (seen, frame) = utterances(&format!(
+                r#"{{"type":"utterance","utterance":7,"state":"{wire}","reason":"empty"}}"#
+            ));
             assert_eq!(seen, vec![(state, Some(7))], "{wire}");
-            assert!(frame == Frame::Continue, "{wire}: an utterance frame never ends the reader");
+            assert!(
+                frame == Frame::Continue,
+                "{wire}: an utterance frame never ends the reader"
+            );
         }
     }
 

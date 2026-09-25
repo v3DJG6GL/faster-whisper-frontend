@@ -139,7 +139,9 @@ fn pick_device(device_id: Option<String>) -> Result<Device, String> {
             .map_err(|e| e.to_string())?
             .find(|d| device_name(d).map(|n| n == id).unwrap_or(false))
             .or_else(|| {
-                tracing::warn!("[audio] microphone '{id}' not found; falling back to the default input");
+                tracing::warn!(
+                    "[audio] microphone '{id}' not found; falling back to the default input"
+                );
                 host.default_input_device()
             })
             .ok_or_else(|| "no default input device".to_string()),
@@ -184,7 +186,10 @@ fn run(
     let stream = match sample_format {
         SampleFormat::F32 => {
             let mut meter = Meter::new(level_bits.clone());
-            let rec = Recorder { clip: clip.clone(), cap };
+            let rec = Recorder {
+                clip: clip.clone(),
+                cap,
+            };
             let mut mono: Vec<f32> = Vec::new();
             device.build_input_stream(
                 &config,
@@ -198,7 +203,10 @@ fn run(
         }
         SampleFormat::I16 => {
             let mut meter = Meter::new(level_bits.clone());
-            let rec = Recorder { clip: clip.clone(), cap };
+            let rec = Recorder {
+                clip: clip.clone(),
+                cap,
+            };
             let mut mono: Vec<f32> = Vec::new();
             device.build_input_stream(
                 &config,
@@ -212,12 +220,20 @@ fn run(
         }
         SampleFormat::U16 => {
             let mut meter = Meter::new(level_bits.clone());
-            let rec = Recorder { clip: clip.clone(), cap };
+            let rec = Recorder {
+                clip: clip.clone(),
+                cap,
+            };
             let mut mono: Vec<f32> = Vec::new();
             device.build_input_stream(
                 &config,
                 move |data: &[u16], _| {
-                    meter.push(analyze(data, channels, |s| (s as f32 - 32768.0) / 32768.0, &mut mono));
+                    meter.push(analyze(
+                        data,
+                        channels,
+                        |s| (s as f32 - 32768.0) / 32768.0,
+                        &mut mono,
+                    ));
                     rec.push(&mono);
                 },
                 err_cb,

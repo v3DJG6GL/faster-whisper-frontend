@@ -58,7 +58,8 @@ pub fn decode_to_cached_wav(app: &tauri::AppHandle, path: &str) -> Result<String
         // mtime, and a pure read left the transcript replayed daily looking older than one
         // decoded yesterday and never played again. Best-effort.
         if let Ok(f) = std::fs::File::options().write(true).open(&out) {
-            let _ = f.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
+            let _ =
+                f.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
         }
         prune_cache(&dir, &out);
         return Ok(out.to_string_lossy().into_owned());
@@ -262,16 +263,21 @@ mod tests {
         let stamp = |p: &std::path::Path, secs: u64| {
             let f = std::fs::File::options().write(true).open(p).unwrap();
             let t = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs);
-            f.set_times(std::fs::FileTimes::new().set_modified(t)).unwrap();
+            f.set_times(std::fs::FileTimes::new().set_modified(t))
+                .unwrap();
         };
-        let (old, mid, keep) = (dir.join("old.wav"), dir.join("mid.wav"), dir.join("keep.wav"));
+        let (old, mid, keep) = (
+            dir.join("old.wav"),
+            dir.join("mid.wav"),
+            dir.join("keep.wav"),
+        );
         for p in [&old, &mid, &keep] {
             std::fs::write(p, &big).unwrap();
         }
         stamp(&old, 1_000_000);
         stamp(&mid, 2_000_000);
         stamp(&keep, 500_000); // oldest of all, but it is the one just written
-        // Force eviction of exactly one file by pretending the ceiling is tiny.
+                               // Force eviction of exactly one file by pretending the ceiling is tiny.
         prune_cache_to(&dir, &keep, 2 * 1024 + 512);
         assert!(!old.exists(), "the oldest-modified file is evicted first");
         assert!(mid.exists());

@@ -153,13 +153,22 @@ pub fn is_own_injected(text: &str) -> bool {
 /// and skips the clipboard restore entirely.
 pub fn is_remote_desktop_app(app_id: &str) -> bool {
     const CLIENTS: &[&str] = &[
-        "mstsc", "msrdc", "rdcman", // Microsoft RDP clients (classic / Windows-App-AVD / RDCMan)
+        "mstsc",
+        "msrdc",
+        "rdcman",    // Microsoft RDP clients (classic / Windows-App-AVD / RDCMan)
         "vmconnect", // Hyper-V console
-        "wfica32", "citrix", // Citrix Workspace
+        "wfica32",
+        "citrix", // Citrix Workspace
         "vmware", // VMware Horizon / Workstation (Tools clipboard sync is async too)
-        "virt-viewer", "remote-viewer", // SPICE
-        "remmina", "freerdp", // Linux RDP clients
-        "rustdesk", "anydesk", "teamviewer", "parsec", "nxplayer",
+        "virt-viewer",
+        "remote-viewer", // SPICE
+        "remmina",
+        "freerdp", // Linux RDP clients
+        "rustdesk",
+        "anydesk",
+        "teamviewer",
+        "parsec",
+        "nxplayer",
     ];
     let a = app_id.to_lowercase();
     CLIENTS.iter().any(|c| a.contains(c))
@@ -236,7 +245,7 @@ pub fn is_deceptive_format_char(c: char) -> bool {
         | '\u{fff9}'..='\u{fffb}'       // interlinear annotation — hides text between the anchors
         | '\u{1bca0}'..='\u{1bca3}'     // Duployan shorthand format controls
         | '\u{1d173}'..='\u{1d17a}'     // musical beam/slur/phrase controls — invisible
-        | '\u{e0000}'..='\u{e007f}')    // TAG block — the standard invisible-payload range
+        | '\u{e0000}'..='\u{e007f}') // TAG block — the standard invisible-payload range
 }
 
 /// How much text one `enigo.text` call may carry. The Wayland backends type character by
@@ -303,7 +312,9 @@ pub fn inject(
                 // dispatch sit between it and the first keystroke. Without this, a click into our
                 // own settings field mid-injection types the transcript into it.
                 if own_window_focused() {
-                    tracing::info!("[inject] skipped at the typing sink: our own window took focus");
+                    tracing::info!(
+                        "[inject] skipped at the typing sink: our own window took focus"
+                    );
                     return Ok(Landed::NothingWritten);
                 }
                 let mut rest = text;
@@ -336,7 +347,9 @@ pub fn inject(
                         // Accepted, and consistent with the guards at the entry and the sinks,
                         // which have always made the same unbounded call.
                         if own_window_focused() {
-                            tracing::info!("[inject] stopped mid-typing: our own window took focus");
+                            tracing::info!(
+                                "[inject] stopped mid-typing: our own window took focus"
+                            );
                             return Ok(Landed::Yes);
                         }
                     }
@@ -371,7 +384,11 @@ pub fn inject(
             tracing::info!("[inject] skipped the auto-Enter: our own window took focus");
             // `NothingWritten` ONLY when this job was just the Enter. If text landed above, saying
             // "nothing written" makes the caller re-send it — the P16 duplicate-text hazard.
-            return Ok(if text.is_empty() { Landed::NothingWritten } else { Landed::Yes });
+            return Ok(if text.is_empty() {
+                Landed::NothingWritten
+            } else {
+                Landed::Yes
+            });
         }
         enigo
             .key(Key::Return, Direction::Click)
@@ -566,7 +583,9 @@ fn paste(
         clipboard.get_text().ok().filter(|p| {
             let own = is_own_injected(p);
             if own {
-                tracing::info!("[clip] paste: prior clipboard is our own transcript — skipping restore");
+                tracing::info!(
+                    "[clip] paste: prior clipboard is our own transcript — skipping restore"
+                );
             }
             !own
         })
@@ -601,7 +620,9 @@ fn paste(
     if remote_target {
         set_clipboard_persistent(text)?; // note_injected's for us
     } else {
-        clipboard.set_text(text.to_string()).map_err(|e| e.to_string())?;
+        clipboard
+            .set_text(text.to_string())
+            .map_err(|e| e.to_string())?;
         note_injected(text);
     }
     // Let the new clipboard owner settle before pasting. A remote-desktop client additionally
@@ -644,7 +665,9 @@ fn paste(
         // `Clipboard` that is dropped on return, so it is not a fallback.)
         if !remote_target {
             if let Err(e) = set_clipboard_persistent(text) {
-                tracing::warn!("[clip] paste: clipboard divert failed, reporting nothing written: {e}");
+                tracing::warn!(
+                    "[clip] paste: clipboard divert failed, reporting nothing written: {e}"
+                );
                 return Ok(Landed::NothingWritten);
             }
         }
@@ -673,16 +696,21 @@ fn paste(
 /// Map a KeyboardEvent.code to an enigo key + whether it's a modifier. "Control" maps to
 /// Cmd on macOS so the default paste chord stays correct there.
 fn code_to_enigo(code: &str) -> Option<(Key, bool)> {
-    let ctrl = if cfg!(target_os = "macos") { Key::Meta } else { Key::Control };
+    let ctrl = if cfg!(target_os = "macos") {
+        Key::Meta
+    } else {
+        Key::Control
+    };
     Some(match code {
         "ControlLeft" | "ControlRight" => (ctrl, true),
         "ShiftLeft" | "ShiftRight" => (Key::Shift, true),
         "AltLeft" | "AltRight" => (Key::Alt, true),
         "MetaLeft" | "MetaRight" | "OSLeft" | "OSRight" => (Key::Meta, true),
         "Insert" => (Key::Insert, false),
-        c if c.len() == 4 && c.starts_with("Key") => {
-            (Key::Unicode(c.as_bytes()[3].to_ascii_lowercase() as char), false)
-        }
+        c if c.len() == 4 && c.starts_with("Key") => (
+            Key::Unicode(c.as_bytes()[3].to_ascii_lowercase() as char),
+            false,
+        ),
         _ => return None,
     })
 }
@@ -701,7 +729,11 @@ fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
     // Fall back to Ctrl/Cmd+V if the chord didn't map to a usable main key.
     let main = main.unwrap_or(Key::Unicode('v'));
     if mods.is_empty() {
-        mods.push(if cfg!(target_os = "macos") { Key::Meta } else { Key::Control });
+        mods.push(if cfg!(target_os = "macos") {
+            Key::Meta
+        } else {
+            Key::Control
+        });
     }
     // Settle delays: without them a modifier can arrive after the key, so the target
     // sees a literal character instead of a paste (an XTEST timing race).
@@ -746,7 +778,9 @@ mod tests {
         let out = sanitize_injected(hostile);
         assert!(!out.contains('\u{202e}'), "RLO survived: {out:?}");
         assert!(!out.contains('\u{202c}'), "PDF survived: {out:?}");
-        for c in ['\u{200b}', '\u{200e}', '\u{200f}', '\u{2066}', '\u{2069}', '\u{feff}'] {
+        for c in [
+            '\u{200b}', '\u{200e}', '\u{200f}', '\u{2066}', '\u{2069}', '\u{feff}',
+        ] {
             assert_eq!(sanitize_injected(&format!("a{c}b")), "ab", "{c:?} survived");
         }
         // ZWNJ (U+200C) and ZWJ (U+200D) are NOT stripped: they are orthographically
@@ -759,8 +793,15 @@ mod tests {
         // (a bidi control like LRM/RLM), the invisible operators, the annotation anchors and the
         // TAG block are all invisible-but-meaningful and none are category Cc.
         for c in [
-            '\u{00ad}', '\u{061c}', '\u{180e}', '\u{2060}', '\u{2064}', '\u{fff9}', '\u{fffb}',
-            '\u{e0001}', '\u{e007f}',
+            '\u{00ad}',
+            '\u{061c}',
+            '\u{180e}',
+            '\u{2060}',
+            '\u{2064}',
+            '\u{fff9}',
+            '\u{fffb}',
+            '\u{e0001}',
+            '\u{e007f}',
         ] {
             assert_eq!(sanitize_injected(&format!("a{c}b")), "ab", "{c:?} survived");
         }
@@ -769,8 +810,16 @@ mod tests {
         // for all of them, yet U+2028/U+2029 are UAX#14 mandatory breaks, so on the typing paths
         // they land as a real Enter.
         for c in [
-            '\u{115f}', '\u{1160}', '\u{3164}', '\u{ffa0}', '\u{2028}', '\u{2029}', '\u{206a}',
-            '\u{206f}', '\u{1bca0}', '\u{1d173}',
+            '\u{115f}',
+            '\u{1160}',
+            '\u{3164}',
+            '\u{ffa0}',
+            '\u{2028}',
+            '\u{2029}',
+            '\u{206a}',
+            '\u{206f}',
+            '\u{1bca0}',
+            '\u{1d173}',
         ] {
             assert_eq!(sanitize_injected(&format!("a{c}b")), "ab", "{c:?} survived");
         }
@@ -801,7 +850,10 @@ mod tests {
     /// rely on, must pass through untouched.
     #[test]
     fn leaves_normal_transcript_text_alone() {
-        assert_eq!(sanitize_injected("Grüße, 日本語\tund\nZeile 2"), "Grüße, 日本語\tund\nZeile 2");
+        assert_eq!(
+            sanitize_injected("Grüße, 日本語\tund\nZeile 2"),
+            "Grüße, 日本語\tund\nZeile 2"
+        );
     }
 
     #[test]
@@ -822,11 +874,21 @@ mod tests {
 
     #[test]
     fn remote_desktop_app_ids() {
-        for id in ["mstsc", "MSRDC", "org.remmina.Remmina", "xfreerdp", "wfica32", "vmconnect"] {
+        for id in [
+            "mstsc",
+            "MSRDC",
+            "org.remmina.Remmina",
+            "xfreerdp",
+            "wfica32",
+            "vmconnect",
+        ] {
             assert!(super::is_remote_desktop_app(id), "{id} should be remote");
         }
         for id in ["firefox", "kate", "ms-teams", "code"] {
-            assert!(!super::is_remote_desktop_app(id), "{id} should not be remote");
+            assert!(
+                !super::is_remote_desktop_app(id),
+                "{id} should not be remote"
+            );
         }
     }
 
@@ -834,7 +896,10 @@ mod tests {
     fn sanitize_drops_controls_keeps_tab_lf_normalizes_cr() {
         // Printable text + Tab/LF survive; a trailing CR is normalized to LF (not kept), so a
         // CRLF break can't type a second Enter in the direct paths.
-        assert_eq!(sanitize_injected("hello\tworld\nline\r"), "hello\tworld\nline\n");
+        assert_eq!(
+            sanitize_injected("hello\tworld\nline\r"),
+            "hello\tworld\nline\n"
+        );
         // CRLF collapses to a single LF (one Enter, not two).
         assert_eq!(sanitize_injected("a\r\nb"), "a\nb");
         // ESC, BEL, NUL, DEL, and a C1 control are stripped; the surrounding text stays.

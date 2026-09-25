@@ -56,7 +56,10 @@ fn roots() -> Vec<Root> {
     ["APPDATA", "LOCALAPPDATA"]
         .iter()
         .filter_map(|k| std::env::var_os(k))
-        .map(|b| Root { base: PathBuf::from(b), disposable: false })
+        .map(|b| Root {
+            base: PathBuf::from(b),
+            disposable: false,
+        })
         .collect()
 }
 
@@ -67,17 +70,29 @@ fn roots() -> Vec<Root> {
         std::env::var_os(var)
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
-            .or_else(|| home.as_ref().map(|h| fallback.iter().fold(h.clone(), |p, s| p.join(s))))
+            .or_else(|| {
+                home.as_ref()
+                    .map(|h| fallback.iter().fold(h.clone(), |p, s| p.join(s)))
+            })
     };
     let mut out = Vec::new();
     if let Some(base) = xdg("XDG_CONFIG_HOME", &[".config"]) {
-        out.push(Root { base, disposable: false });
+        out.push(Root {
+            base,
+            disposable: false,
+        });
     }
     if let Some(base) = xdg("XDG_DATA_HOME", &[".local", "share"]) {
-        out.push(Root { base, disposable: false });
+        out.push(Root {
+            base,
+            disposable: false,
+        });
     }
     if let Some(base) = xdg("XDG_CACHE_HOME", &[".cache"]) {
-        out.push(Root { base, disposable: true });
+        out.push(Root {
+            base,
+            disposable: true,
+        });
     }
     out
 }
@@ -93,7 +108,10 @@ fn legacy_instance_running() -> bool {
     use windows_sys::Win32::System::Threading::OpenMutexW;
     const SYNCHRONIZE: u32 = 0x0010_0000;
     // tauri-plugin-single-instance names its mutex "<identifier>-sim".
-    let name: Vec<u16> = format!("{LEGACY_ID}-sim").encode_utf16().chain(std::iter::once(0)).collect();
+    let name: Vec<u16> = format!("{LEGACY_ID}-sim")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     // SAFETY: NUL-terminated name; the handle is closed at once.
     unsafe {
         let h = OpenMutexW(SYNCHRONIZE, 0, name.as_ptr());
@@ -136,7 +154,9 @@ pub fn run() {
 }
 
 fn is_empty_dir(p: &Path) -> bool {
-    std::fs::read_dir(p).map(|mut d| d.next().is_none()).unwrap_or(false)
+    std::fs::read_dir(p)
+        .map(|mut d| d.next().is_none())
+        .unwrap_or(false)
 }
 
 fn migrate_dir(old: &Path, new: &Path, disposable: bool) -> Outcome {
@@ -216,15 +236,28 @@ fn after_move(old: &Path, new: &Path) {
 /// the setting at where it is now. Edits the raw JSON rather than going through
 /// `config::load`, whose recovery path may rewrite a config it cannot parse.
 fn rewrite_config_paths(config: &Path, old: &Path, new: &Path) {
-    let Ok(text) = std::fs::read_to_string(config) else { return };
-    let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&text) else { return };
+    let Ok(text) = std::fs::read_to_string(config) else {
+        return;
+    };
+    let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return;
+    };
     let mut changed = false;
-    for (section, key) in [("recording", "audioBaseDir"), ("recording", "recordingsDir"), ("logging", "logDir")] {
-        let Some(slot) = json.get_mut("settings").and_then(|s| s.get_mut(section)).and_then(|s| s.get_mut(key))
+    for (section, key) in [
+        ("recording", "audioBaseDir"),
+        ("recording", "recordingsDir"),
+        ("logging", "logDir"),
+    ] {
+        let Some(slot) = json
+            .get_mut("settings")
+            .and_then(|s| s.get_mut(section))
+            .and_then(|s| s.get_mut(key))
         else {
             continue;
         };
-        let Some(current) = slot.as_str() else { continue };
+        let Some(current) = slot.as_str() else {
+            continue;
+        };
         if let Ok(rest) = Path::new(current).strip_prefix(old) {
             *slot = serde_json::Value::String(new.join(rest).to_string_lossy().into_owned());
             changed = true;
@@ -249,14 +282,18 @@ mod tests {
 
     #[test]
     fn the_new_id_is_the_configured_identifier() {
-        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         assert_eq!(conf["identifier"], NEW_ID);
     }
 
     #[test]
     fn a_fresh_install_has_nothing_to_move() {
         let base = scratch("fresh");
-        assert_eq!(migrate_dir(&base.join(LEGACY_ID), &base.join(NEW_ID), false), Outcome::Absent);
+        assert_eq!(
+            migrate_dir(&base.join(LEGACY_ID), &base.join(NEW_ID), false),
+            Outcome::Absent
+        );
         assert!(!base.join(NEW_ID).exists());
     }
 
@@ -277,7 +314,10 @@ mod tests {
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join("config.json"), "{\"stale\":true}").unwrap();
         assert_eq!(migrate_dir(&old, &new, false), Outcome::AlreadyDone);
-        assert_eq!(std::fs::read_to_string(new.join("config.json")).unwrap(), "{}");
+        assert_eq!(
+            std::fs::read_to_string(new.join("config.json")).unwrap(),
+            "{}"
+        );
     }
 
     #[test]
@@ -289,7 +329,10 @@ mod tests {
         std::fs::write(old.join("config.json"), "old").unwrap();
         std::fs::write(new.join("config.json"), "new").unwrap();
         assert_eq!(migrate_dir(&old, &new, false), Outcome::Conflict);
-        assert_eq!(std::fs::read_to_string(new.join("config.json")).unwrap(), "new");
+        assert_eq!(
+            std::fs::read_to_string(new.join("config.json")).unwrap(),
+            "new"
+        );
         assert!(old.join("config.json").exists());
     }
 
@@ -301,7 +344,10 @@ mod tests {
         std::fs::create_dir_all(&new).unwrap();
         std::fs::write(old.join("config.json"), "old").unwrap();
         assert_eq!(migrate_dir(&old, &new, false), Outcome::Moved);
-        assert_eq!(std::fs::read_to_string(new.join("config.json")).unwrap(), "old");
+        assert_eq!(
+            std::fs::read_to_string(new.join("config.json")).unwrap(),
+            "old"
+        );
     }
 
     #[test]
@@ -340,8 +386,15 @@ mod tests {
         std::fs::write(new.join("config.json"), cfg.to_string()).unwrap();
         rewrite_config_paths(&new.join("config.json"), &old, &new);
         let out: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(new.join("config.json")).unwrap()).unwrap();
-        assert_eq!(out["settings"]["recording"]["audioBaseDir"], serde_json::json!(new.join("my-audio")));
-        assert_eq!(out["settings"]["recording"]["recordingsDir"], serde_json::json!(elsewhere));
+            serde_json::from_str(&std::fs::read_to_string(new.join("config.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            out["settings"]["recording"]["audioBaseDir"],
+            serde_json::json!(new.join("my-audio"))
+        );
+        assert_eq!(
+            out["settings"]["recording"]["recordingsDir"],
+            serde_json::json!(elsewhere)
+        );
     }
 }

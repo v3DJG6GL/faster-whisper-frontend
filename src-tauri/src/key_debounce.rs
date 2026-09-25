@@ -38,7 +38,10 @@ pub struct Debouncer {
 
 impl Debouncer {
     pub fn new(window: Duration) -> Self {
-        Self { window, pending: HashMap::new() }
+        Self {
+            window,
+            pending: HashMap::new(),
+        }
     }
 
     /// Feed one raw transition. `Some((key, down))` = commit it to the held-set /
@@ -47,7 +50,13 @@ impl Debouncer {
     /// COMMITTED held-set: ups for keys not held pass straight through (they are
     /// no-ops downstream anyway), which guarantees a down is only ever swallowed
     /// as the second half of a true held→up→down bounce pair.
-    pub fn on_event(&mut self, key: u16, down: bool, held: bool, now: Instant) -> Option<(u16, bool)> {
+    pub fn on_event(
+        &mut self,
+        key: u16,
+        down: bool,
+        held: bool,
+        now: Instant,
+    ) -> Option<(u16, bool)> {
         if down {
             if self.pending.remove(&key).is_some() {
                 return None; // bounce pair erased — the key never (observably) left

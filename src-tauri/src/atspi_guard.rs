@@ -243,7 +243,6 @@ mod win_focus;
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use atspi_connection::{set_session_accessibility, AccessibilityConnection};
     use atspi::events::focus::FocusEvent;
     use atspi::events::object::StateChangedEvent;
     use atspi::events::window::{ActivateEvent, DeactivateEvent};
@@ -253,6 +252,7 @@ mod imp {
     use atspi::proxy::text::TextProxy;
     use atspi::zbus;
     use atspi::{Role, State};
+    use atspi_connection::{set_session_accessibility, AccessibilityConnection};
     use futures_util::StreamExt;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -316,7 +316,10 @@ mod imp {
             // one warn per 2 s retry. Both outcomes: a long-lived connection that finally dies
             // with an ERROR opens a new incident whose first warn must not be swallowed by a
             // counter an earlier outage left at 45.
-            failures = next_failures(failures, started.elapsed() >= std::time::Duration::from_secs(60));
+            failures = next_failures(
+                failures,
+                started.elapsed() >= std::time::Duration::from_secs(60),
+            );
             if should_log(failures) {
                 match &outcome {
                     Ok(()) => tracing::warn!(
@@ -389,8 +392,13 @@ mod imp {
         // tracking (the bug a single shared slot caused). Resolved OFF the event loop (a11y
         // round-trips run on the target app's UI thread). Processed per cycle in the order
         // activate → deactivate → focus so the foreground mark is right before focus is gated.
-        type Slots = (Option<ObjectRefOwned>, Option<ObjectRefOwned>, Option<ObjectRefOwned>);
-        let pending: Arc<parking_lot::Mutex<Slots>> = Arc::new(parking_lot::Mutex::new((None, None, None)));
+        type Slots = (
+            Option<ObjectRefOwned>,
+            Option<ObjectRefOwned>,
+            Option<ObjectRefOwned>,
+        );
+        let pending: Arc<parking_lot::Mutex<Slots>> =
+            Arc::new(parking_lot::Mutex::new((None, None, None)));
         let notify = Arc::new(tokio::sync::Notify::new());
         let resolver = {
             let pending = pending.clone();
@@ -543,13 +551,20 @@ mod imp {
             match acc.get_role().await.ok() {
                 // Terminals expose role=terminal and never EDITABLE; whitelist as typable.
                 Some(Role::Terminal) => Some(true),
-                _ => acc.get_state().await.ok().map(|s| s.contains(State::Editable)),
+                _ => acc
+                    .get_state()
+                    .await
+                    .ok()
+                    .map(|s| s.contains(State::Editable)),
             }
         } else {
             None
         };
         let active = if read_active {
-            acc.get_state().await.ok().map(|s| s.contains(State::Active))
+            acc.get_state()
+                .await
+                .ok()
+                .map(|s| s.contains(State::Active))
         } else {
             None
         };
@@ -570,8 +585,7 @@ mod imp {
         // a default-on log line polled roughly once a second (a newline there forges records).
         // Bound and defang it once, here, where all three inherit it. Generous enough that no
         // real application name — or an existing rule keyed on one — is affected.
-        let app_id =
-            crate::transport::bounded_server_text(&app_id, crate::atspi_guard::APP_ID_MAX);
+        let app_id = crate::transport::bounded_server_text(&app_id, crate::atspi_guard::APP_ID_MAX);
         // Emptiness is judged on the BOUNDED value: a name made only of format controls (bidi
         // overrides, ZWSP) is non-empty raw and empty after the bound, and an empty id must
         // read as "no focus" — `is_noise("")` is false, so it would otherwise be installed as
@@ -662,10 +676,12 @@ mod imp {
                 // bounds it via `sanitize_seed`, but `get_focused_selection` hands it straight
                 // across the IPC into the QuickAdd webview, where it is only ever compared for
                 // equality. SEL_MAX is far above any real selection, so the cap costs nothing.
-                Ok(s) => super::SelRead::Text(match s.char_indices().nth(crate::atspi_guard::SEL_MAX) {
-                    Some((i, _)) => s[..i].to_string(),
-                    None => s,
-                }),
+                Ok(s) => {
+                    super::SelRead::Text(match s.char_indices().nth(crate::atspi_guard::SEL_MAX) {
+                        Some((i, _)) => s[..i].to_string(),
+                        None => s,
+                    })
+                }
                 Err(_) => super::SelRead::Unavailable,
             }
         };
@@ -806,7 +822,6 @@ mod imp {
             }
         })
     }
-
 }
 
 #[cfg(all(test, target_os = "linux"))]

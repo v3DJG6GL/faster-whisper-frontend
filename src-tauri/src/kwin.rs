@@ -50,7 +50,15 @@ pub fn config_tools() -> Option<(&'static str, &'static str)> {
 /// no pipe to leak — and we never read the output.
 pub fn set_key(tool: &str, group: &str, key: &str, value: &str) {
     let _ = Command::new(tool)
-        .args(["--file", "kwinrulesrc", "--group", group, "--key", key, value])
+        .args([
+            "--file",
+            "kwinrulesrc",
+            "--group",
+            group,
+            "--key",
+            key,
+            value,
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

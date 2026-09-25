@@ -56,7 +56,6 @@ enum VkChannel {
     Unavailable,
 }
 
-
 /// Managed state: the lazily-started channel to the virtual-keyboard thread.
 #[derive(Default)]
 pub struct VirtualKeyboard(Mutex<VkChannel>);
@@ -75,15 +74,26 @@ pub async fn type_text(
     epoch: u64,
     own_window_focused: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<crate::inject::Landed, VkError> {
-    let tx = ensure_started(vk)
-        .await
-        .map_err(|message| VkError { message, after_typing: false })?;
+    let tx = ensure_started(vk).await.map_err(|message| VkError {
+        message,
+        after_typing: false,
+    })?;
     let (reply, reply_rx) = oneshot::channel();
-    tx.send(VkJob { text: text.to_string(), auto_enter, reply, epoch, own_window_focused })
-        .map_err(|_| VkError { message: "virtual keyboard thread gone".into(), after_typing: false })?;
-    reply_rx
-        .await
-        .map_err(|_| VkError { message: "virtual keyboard dropped the job".into(), after_typing: false })?
+    tx.send(VkJob {
+        text: text.to_string(),
+        auto_enter,
+        reply,
+        epoch,
+        own_window_focused,
+    })
+    .map_err(|_| VkError {
+        message: "virtual keyboard thread gone".into(),
+        after_typing: false,
+    })?;
+    reply_rx.await.map_err(|_| VkError {
+        message: "virtual keyboard dropped the job".into(),
+        after_typing: false,
+    })?
 }
 
 async fn ensure_started(vk: &VirtualKeyboard) -> Result<mpsc::UnboundedSender<VkJob>, String> {
@@ -160,7 +170,10 @@ mod imp {
     wayland_client::delegate_noop!(St: ignore ZwpVirtualKeyboardV1);
 
     /// Serve typing jobs until the channel closes or the connection dies.
-    pub fn run_thread(mut rx: mpsc::UnboundedReceiver<VkJob>, init: oneshot::Sender<Result<(), String>>) {
+    pub fn run_thread(
+        mut rx: mpsc::UnboundedReceiver<VkJob>,
+        init: oneshot::Sender<Result<(), String>>,
+    ) {
         let mut conn = match VkConn::new() {
             Ok(c) => {
                 let _ = init.send(Ok(()));
@@ -203,22 +216,32 @@ mod imp {
 
     impl VkConn {
         fn new() -> Result<Self, String> {
-            let conn = Connection::connect_to_env().map_err(|e| format!("no Wayland connection: {e}"))?;
-            let (globals, mut queue) =
-                registry_queue_init::<St>(&conn).map_err(|e| format!("registry init failed: {e}"))?;
+            let conn =
+                Connection::connect_to_env().map_err(|e| format!("no Wayland connection: {e}"))?;
+            let (globals, mut queue) = registry_queue_init::<St>(&conn)
+                .map_err(|e| format!("registry init failed: {e}"))?;
             let qh = queue.handle();
             // The deciding bind: absent on GNOME → caller falls back to the portal.
-            let mgr: ZwpVirtualKeyboardManagerV1 = globals
-                .bind(&qh, 1..=1, ())
-                .map_err(|_| "zwp_virtual_keyboard_manager_v1 not advertised (compositor unsupported)".to_string())?;
+            let mgr: ZwpVirtualKeyboardManagerV1 = globals.bind(&qh, 1..=1, ()).map_err(|_| {
+                "zwp_virtual_keyboard_manager_v1 not advertised (compositor unsupported)"
+                    .to_string()
+            })?;
             let seat: WlSeat = globals
                 .bind(&qh, 1..=8, ())
                 .map_err(|e| format!("no wl_seat: {e}"))?;
             let vk = mgr.create_virtual_keyboard(&seat, &qh, ());
             let mut state = St;
             // Flush the create + settle the protocol objects.
-            queue.roundtrip(&mut state).map_err(|e| format!("roundtrip failed: {e}"))?;
-            Ok(Self { conn, queue, state, vk, start: Instant::now() })
+            queue
+                .roundtrip(&mut state)
+                .map_err(|e| format!("roundtrip failed: {e}"))?;
+            Ok(Self {
+                conn,
+                queue,
+                state,
+                vk,
+                start: Instant::now(),
+            })
         }
 
         fn type_text(
@@ -230,7 +253,10 @@ mod imp {
         ) -> Result<crate::inject::Landed, VkError> {
             // Helper: an error raised BEFORE any key was transmitted (keymap upload, limit, the
             // pre-key roundtrip) is safe to fall back to the portal. `before` builds those.
-            let before = |e: String| VkError { message: e, after_typing: false };
+            let before = |e: String| VkError {
+                message: e,
+                after_typing: false,
+            };
             // Bound the input BEFORE the per-character allocation below. `order` is one heap
             // `String` per input character, ~50-60 bytes each against 1 byte of ASCII input — so
             // a transcript at the 32 MiB body cap becomes ~1.8 GB here, and the distinct-symbol
@@ -242,7 +268,9 @@ mod imp {
             // 8ms/key — no real dictation approaches it.
             const MAX_VK_TEXT_BYTES: usize = 1 << 20;
             if text.len() > MAX_VK_TEXT_BYTES {
-                return Err(before("transcript too large for the virtual keyboard".into()));
+                return Err(before(
+                    "transcript too large for the virtual keyboard".into(),
+                ));
             }
             // Each character → its keysym name; skip non-printing control chars (Enter
             // and Tab map to their named keysyms, matching the portal path).
@@ -283,14 +311,23 @@ mod imp {
             }
             // xkb keycodes top out at 255 (8 + 247); far beyond any real dictation.
             if unique.len() > 248 {
-                return Err(before(format!("{} distinct symbols exceeds the keymap limit", unique.len())));
+                return Err(before(format!(
+                    "{} distinct symbols exceeds the keymap limit",
+                    unique.len()
+                )));
             }
 
             let keymap = build_keymap(&unique);
             let (mfd, size) = keymap_fd(&keymap).map_err(before)?;
-            self.vk.keymap(1 /* WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 */, mfd.as_file().as_fd(), size);
+            self.vk.keymap(
+                1, /* WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 */
+                mfd.as_file().as_fd(),
+                size,
+            );
             // Ensure the compositor has read + compiled the keymap before we send keys.
-            self.queue.roundtrip(&mut self.state).map_err(|e| before(e.to_string()))?;
+            self.queue
+                .roundtrip(&mut self.state)
+                .map_err(|e| before(e.to_string()))?;
             drop(mfd);
 
             // Zero our own modifier state. Belt-and-suspenders: on wlroots this clears any
@@ -344,17 +381,26 @@ mod imp {
                 let code = idx_of[name];
                 let t = self.start.elapsed().as_millis() as u32;
                 self.vk.key(t, code, 1); // pressed
-                // A failed press-flush BEFORE the first success transmitted nothing → safe fallback.
-                self.conn.flush().map_err(|e| VkError { message: e.to_string(), after_typing: emitted })?;
+                                         // A failed press-flush BEFORE the first success transmitted nothing → safe fallback.
+                self.conn.flush().map_err(|e| VkError {
+                    message: e.to_string(),
+                    after_typing: emitted,
+                })?;
                 emitted = true; // a key-down was transmitted (the char likely registered on key-down)
                 std::thread::sleep(Duration::from_millis(3));
                 let t = self.start.elapsed().as_millis() as u32;
                 self.vk.key(t, code, 0); // released
-                self.conn.flush().map_err(|e| VkError { message: e.to_string(), after_typing: true })?;
+                self.conn.flush().map_err(|e| VkError {
+                    message: e.to_string(),
+                    after_typing: true,
+                })?;
                 std::thread::sleep(Duration::from_millis(5));
             }
             // Drain so the compositor has processed everything before we report done.
-            self.queue.roundtrip(&mut self.state).map_err(|e| VkError { message: e.to_string(), after_typing: emitted })?;
+            self.queue.roundtrip(&mut self.state).map_err(|e| VkError {
+                message: e.to_string(),
+                after_typing: emitted,
+            })?;
             Ok(crate::inject::Landed::Yes)
         }
     }
@@ -409,7 +455,9 @@ mod imp {
         s.push_str("xkb_symbols \"(unnamed)\" {\n");
         for (i, name) in unique.iter().enumerate() {
             let kc = 8 + i;
-            s.push_str(&format!("key <K{kc}> {{ type=\"FWF_LOCKPROOF\", [ {name} ] }};\n"));
+            s.push_str(&format!(
+                "key <K{kc}> {{ type=\"FWF_LOCKPROOF\", [ {name} ] }};\n"
+            ));
         }
         s.push_str("};\n");
         s.push_str("};\n");
@@ -425,7 +473,8 @@ mod imp {
             .map_err(|e| format!("memfd: {e}"))?;
         {
             let mut f = mfd.as_file();
-            f.write_all(&data).map_err(|e| format!("keymap write: {e}"))?;
+            f.write_all(&data)
+                .map_err(|e| format!("keymap write: {e}"))?;
         }
         Ok((mfd, data.len() as u32))
     }
@@ -465,7 +514,10 @@ mod imp {
 
             let caps = keymap.mod_get_index(xkb::MOD_NAME_CAPS);
             for &c in &chars {
-                let idx = unique.iter().position(|n| *n == keysym_name(c).unwrap()).unwrap();
+                let idx = unique
+                    .iter()
+                    .position(|n| *n == keysym_name(c).unwrap())
+                    .unwrap();
                 let kc = xkb::Keycode::new((idx + 8) as u32);
                 for caps_on in [false, true] {
                     let mut state = xkb::State::new(&keymap);
@@ -473,7 +525,11 @@ mod imp {
                         state.update_mask(0, 0, 1 << caps, 0, 0, 0);
                     }
                     let got = state.key_get_utf8(kc);
-                    assert_eq!(got, c.to_string(), "char {c:?} (caps_on={caps_on}) typed as {got:?}");
+                    assert_eq!(
+                        got,
+                        c.to_string(),
+                        "char {c:?} (caps_on={caps_on}) typed as {got:?}"
+                    );
                 }
             }
         }

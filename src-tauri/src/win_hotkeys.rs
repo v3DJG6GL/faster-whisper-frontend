@@ -235,11 +235,10 @@ mod imp {
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-        GetMessageW, KillTimer, PostThreadMessageW, RegisterClassW, SetTimer,
-        SetWindowsHookExW, UnhookWindowsHookEx, EVENT_SYSTEM_FOREGROUND, HHOOK, HWND_MESSAGE,
-        KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, MSG, RI_KEY_BREAK, RI_KEY_E0,
-        RI_KEY_E1, WH_KEYBOARD_LL, WINEVENT_OUTOFCONTEXT, WM_INPUT, WM_KEYDOWN, WM_QUIT,
-        WM_SYSKEYDOWN, WM_TIMER, WNDCLASSW,
+        GetMessageW, KillTimer, PostThreadMessageW, RegisterClassW, SetTimer, SetWindowsHookExW,
+        UnhookWindowsHookEx, EVENT_SYSTEM_FOREGROUND, HHOOK, HWND_MESSAGE, KBDLLHOOKSTRUCT,
+        LLKHF_EXTENDED, LLKHF_INJECTED, MSG, RI_KEY_BREAK, RI_KEY_E0, RI_KEY_E1, WH_KEYBOARD_LL,
+        WINEVENT_OUTOFCONTEXT, WM_INPUT, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSW,
     };
 
     /// A physical key transition, forwarded from `hook_proc` to the worker.
@@ -289,25 +288,41 @@ mod imp {
             }
         };
         for p in profiles.iter().filter(|p| p.enabled) {
-            let Some(keys) = p.hotkey.iter().map(|c| code_to_vk(c)).collect::<Option<Vec<_>>>() else {
+            let Some(keys) = p
+                .hotkey
+                .iter()
+                .map(|c| code_to_vk(c))
+                .collect::<Option<Vec<_>>>()
+            else {
                 continue;
             };
             if keys.is_empty() {
                 continue;
             }
             let kind = match p.activation {
-                ActivationType::Hold => ChordKind::Hold { profile_id: p.id.clone() },
-                ActivationType::HandsFree => ChordKind::HandsFree { profile_id: p.id.clone() },
+                ActivationType::Hold => ChordKind::Hold {
+                    profile_id: p.id.clone(),
+                },
+                ActivationType::HandsFree => ChordKind::HandsFree {
+                    profile_id: p.id.clone(),
+                },
             };
             // `what` is interpolated into the duplicate-chord warning below, so the untrusted id
             // is defanged here rather than at the log line — same reason as `emit`'s.
             push(
                 kind,
                 keys,
-                &format!("profile '{}'", crate::transport::bounded_server_text(&p.id, 120)),
+                &format!(
+                    "profile '{}'",
+                    crate::transport::bounded_server_text(&p.id, 120)
+                ),
             );
         }
-        if let Some(keys) = quick_add_hotkey.iter().map(|c| code_to_vk(c)).collect::<Option<Vec<_>>>() {
+        if let Some(keys) = quick_add_hotkey
+            .iter()
+            .map(|c| code_to_vk(c))
+            .collect::<Option<Vec<_>>>()
+        {
             if !keys.is_empty() {
                 push(ChordKind::QuickAdd, keys, "the quick-add shortcut");
             }
@@ -315,7 +330,12 @@ mod imp {
         out
     }
 
-    pub fn start(app: &AppHandle, state: &WinHookState, profiles: &[Profile], quick_add_hotkey: &[String]) {
+    pub fn start(
+        app: &AppHandle,
+        state: &WinHookState,
+        profiles: &[Profile],
+        quick_add_hotkey: &[String],
+    ) {
         // Hold the state lock across the whole stop→spawn→store sequence so two
         // concurrent apply_bindings() calls can't interleave and leave two live
         // hooks (mirrors evdev_hotkeys::start — see the comment there).
@@ -324,10 +344,10 @@ mod imp {
             Err(_) => return,
         };
         *g = None; // drop any previous Running → old worker drains + old hook unhooks
-        // Fresh start: drop any held-key counts left over from a previous run so the
-        // inject-gate can't wait on a phantom modifier — and retire the old worker's writer,
-        // so its late post-loop decrements (it wakes AFTER this) can't zero counts the new
-        // worker is about to record (see HeldKeys::clear).
+                   // Fresh start: drop any held-key counts left over from a previous run so the
+                   // inject-gate can't wait on a phantom modifier — and retire the old worker's writer,
+                   // so its late post-loop decrements (it wakes AFTER this) can't zero counts the new
+                   // worker is about to record (see HeldKeys::clear).
         let held_keys = app.state::<crate::held_keys::HeldKeys>();
         held_keys.clear();
         let held_keys = held_keys.writer();
@@ -367,7 +387,9 @@ mod imp {
         match ready_rx.recv_timeout(std::time::Duration::from_secs(2)) {
             Ok(Some(tid)) => {
                 tracing::info!("[winhook] raw-input listener up ({n_chords} chord(s))");
-                *g = Some(Running { input_thread_id: tid });
+                *g = Some(Running {
+                    input_thread_id: tid,
+                });
             }
             ready => {
                 // Two different investigations share one teardown: a refused raw-input
@@ -649,8 +671,8 @@ mod imp {
             // kept: dictation hardware (SpeechMike-style companion apps, AutoHotkey
             // remaps) sends its configured chord via VK-only SendInput, and the raw
             // feed can never see it (hDevice == 0) — this hook is its only path.
-            let own_inject = kb.flags & LLKHF_INJECTED != 0
-                && kb.dwExtraInfo == enigo::EVENT_MARKER as usize;
+            let own_inject =
+                kb.flags & LLKHF_INJECTED != 0 && kb.dwExtraInfo == enigo::EVENT_MARKER as usize;
             if !own_inject {
                 if let Some(id) = ll_key_id(kb.vkCode, kb.scanCode, kb.flags) {
                     let down = wparam == WM_KEYDOWN as usize || wparam == WM_SYSKEYDOWN as usize;
@@ -718,7 +740,12 @@ mod imp {
         })
     }
 
-    unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe extern "system" fn wndproc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
         if msg == WM_INPUT {
             let mut raw: RAWINPUT = std::mem::zeroed();
             let mut size = std::mem::size_of::<RAWINPUT>() as u32;
@@ -854,7 +881,10 @@ mod imp {
         tracing::info!("[trigger] {profile_id_log}/{action} (winhook)");
         let _ = app.emit(
             "trigger",
-            TriggerPayload { profile_id: profile_id.to_string(), action: action.to_string() },
+            TriggerPayload {
+                profile_id: profile_id.to_string(),
+                action: action.to_string(),
+            },
         );
     }
 
@@ -877,7 +907,11 @@ mod imp {
     /// Is any shortcut MODIFIER of the chord still physically down, per the OS? Empty = no.
     /// See `chord_engine::any_chord_mod_down` for why it is "any modifier", not "all keys".
     fn chord_mod_still_down(keys: &[u16]) -> bool {
-        crate::chord_engine::any_chord_mod_down(keys, |k| vk_to_evdev_mod(k).is_some(), physically_down)
+        crate::chord_engine::any_chord_mod_down(
+            keys,
+            |k| vk_to_evdev_mod(k).is_some(),
+            physically_down,
+        )
     }
 
     /// The manufactured-stop rule, shared by both teardown sites: emit the stop, and arm the
@@ -950,7 +984,11 @@ mod imp {
     ) {
         // Windows auto-repeats WM_KEYDOWN while a key is held; the held-set
         // insert dedups them (mirrors evdev skipping value == 2 autorepeat).
-        let changed = if down { held.insert(id) } else { held.remove(&id) };
+        let changed = if down {
+            held.insert(id)
+        } else {
+            held.remove(&id)
+        };
         if !changed {
             return;
         }
@@ -1058,7 +1096,11 @@ mod imp {
         up_once: &mut HashSet<u16>,
         deb: &mut crate::key_debounce::Debouncer,
     ) {
-        let up_now: HashSet<u16> = held.iter().copied().filter(|&id| !physically_down(id)).collect();
+        let up_now: HashSet<u16> = held
+            .iter()
+            .copied()
+            .filter(|&id| !physically_down(id))
+            .collect();
         // Retain-then-swap: only keys up on BOTH polls are acted on.
         let confirmed: Vec<u16> = up_once.intersection(&up_now).copied().collect();
         *up_once = up_now;
@@ -1110,7 +1152,10 @@ mod imp {
             // reconciliation. The reconciler is scheduled ONLY while we believe something is
             // held — with an empty held-set there is nothing to repair and the worker goes
             // back to blocking indefinitely on the channel, exactly as before.
-            let deadline = match (deb.next_deadline(), (!held.is_empty()).then_some(next_resync)) {
+            let deadline = match (
+                deb.next_deadline(),
+                (!held.is_empty()).then_some(next_resync),
+            ) {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),
             };
@@ -1139,7 +1184,14 @@ mod imp {
                 // Called even when nothing is held (an event can wake us before the deadline
                 // we skipped scheduling): it then simply clears any stale first strike, so a
                 // key pressed later always gets its own two polls.
-                resync_held(&app, &held_keys, &mut held, &mut engine, &mut up_once, &mut deb);
+                resync_held(
+                    &app,
+                    &held_keys,
+                    &mut held,
+                    &mut engine,
+                    &mut up_once,
+                    &mut deb,
+                );
             }
             if let Some(ev) = ev {
                 if let Some((k, d)) = deb.on_event(ev.id, ev.down, held.contains(&ev.id), now) {
@@ -1185,13 +1237,36 @@ mod tests {
     #[test]
     fn every_bindable_code_maps_to_a_windows_vk() {
         let mut codes: Vec<String> = [
-            "ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight",
-            "AltLeft", "AltRight", "MetaLeft", "MetaRight",
-            "Backspace", "Delete", "Enter", "Space", "Tab", "Home", "End", "Insert",
-            "PageUp", "PageDown", "PrintScreen",
-            "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
-            "NumpadAdd", "NumpadSubtract", "NumpadMultiply", "NumpadDivide",
-            "NumpadDecimal", "NumpadEnter", "NumpadEqual",
+            "ControlLeft",
+            "ControlRight",
+            "ShiftLeft",
+            "ShiftRight",
+            "AltLeft",
+            "AltRight",
+            "MetaLeft",
+            "MetaRight",
+            "Backspace",
+            "Delete",
+            "Enter",
+            "Space",
+            "Tab",
+            "Home",
+            "End",
+            "Insert",
+            "PageUp",
+            "PageDown",
+            "PrintScreen",
+            "ArrowUp",
+            "ArrowDown",
+            "ArrowLeft",
+            "ArrowRight",
+            "NumpadAdd",
+            "NumpadSubtract",
+            "NumpadMultiply",
+            "NumpadDivide",
+            "NumpadDecimal",
+            "NumpadEnter",
+            "NumpadEqual",
         ]
         .into_iter()
         .map(String::from)
@@ -1229,13 +1304,36 @@ mod tests {
             }
         };
         for c in [
-            "ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight",
-            "AltLeft", "AltRight", "MetaLeft", "MetaRight",
-            "Backspace", "Delete", "Enter", "Space", "Tab", "Home", "End", "Insert",
-            "PageUp", "PageDown", "PrintScreen",
-            "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
-            "NumpadAdd", "NumpadSubtract", "NumpadMultiply", "NumpadDivide",
-            "NumpadDecimal", "NumpadEnter", "NumpadEqual",
+            "ControlLeft",
+            "ControlRight",
+            "ShiftLeft",
+            "ShiftRight",
+            "AltLeft",
+            "AltRight",
+            "MetaLeft",
+            "MetaRight",
+            "Backspace",
+            "Delete",
+            "Enter",
+            "Space",
+            "Tab",
+            "Home",
+            "End",
+            "Insert",
+            "PageUp",
+            "PageDown",
+            "PrintScreen",
+            "ArrowUp",
+            "ArrowDown",
+            "ArrowLeft",
+            "ArrowRight",
+            "NumpadAdd",
+            "NumpadSubtract",
+            "NumpadMultiply",
+            "NumpadDivide",
+            "NumpadDecimal",
+            "NumpadEnter",
+            "NumpadEqual",
         ] {
             check(c.to_string());
         }

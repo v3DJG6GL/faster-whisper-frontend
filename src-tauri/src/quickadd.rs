@@ -23,7 +23,6 @@ const QA_H: f64 = 516.0;
 #[cfg(target_os = "linux")]
 const QA_TITLE: &str = "fwf-quick-add";
 
-
 /// Rendezvous between the Windows seed grab (writer: a plain thread) and
 /// `get_quickadd_seed` (reader: an async command). Generation-stamped: every summon
 /// starts a new generation, and a reader only ever receives the generation that was
@@ -441,7 +440,11 @@ pub(crate) mod win_seed {
         send_events(&[
             key_event(VK_CONTROL, SCAN_LCTRL, 0),
             key_event(VK_INSERT, SCAN_INSERT, KEYEVENTF_EXTENDEDKEY),
-            key_event(VK_INSERT, SCAN_INSERT, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP),
+            key_event(
+                VK_INSERT,
+                SCAN_INSERT,
+                KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP,
+            ),
             key_event(VK_CONTROL, SCAN_LCTRL, KEYEVENTF_KEYUP),
         ])
     }
@@ -535,11 +538,11 @@ pub(crate) mod win_seed {
         };
         const REMOTE_CLASSES: &[&str] = &[
             "TscShellContainerClass", // mstsc.exe top-level
-            "IHWindowClass",          // mstsc input sink; also the embedded ActiveX (RDCMan, mRemoteNG)
-            "OPWindowClass",          // mstsc output surface (focus can land here)
-            "RAIL_WINDOW",            // RemoteApp seamless windows
-            "RdClientWindow",         // msrdc.exe (Windows App / Azure Virtual Desktop)
-            "FreeRDP",                // wfreerdp
+            "IHWindowClass", // mstsc input sink; also the embedded ActiveX (RDCMan, mRemoteNG)
+            "OPWindowClass", // mstsc output surface (focus can land here)
+            "RAIL_WINDOW",   // RemoteApp seamless windows
+            "RdClientWindow", // msrdc.exe (Windows App / Azure Virtual Desktop)
+            "FreeRDP",       // wfreerdp
         ];
         let class_of = |hwnd: windows_sys::Win32::Foundation::HWND| -> Option<String> {
             if hwnd.is_null() {
@@ -554,8 +557,16 @@ pub(crate) mod win_seed {
         let have_info = unsafe { GetGUIThreadInfo(0, &mut info) } != 0;
         let candidates = [
             unsafe { GetForegroundWindow() },
-            if have_info { info.hwndFocus } else { std::ptr::null_mut() },
-            if have_info { info.hwndActive } else { std::ptr::null_mut() },
+            if have_info {
+                info.hwndFocus
+            } else {
+                std::ptr::null_mut()
+            },
+            if have_info {
+                info.hwndActive
+            } else {
+                std::ptr::null_mut()
+            },
         ];
         candidates
             .into_iter()
@@ -609,8 +620,11 @@ pub(crate) mod win_seed {
     ) -> Option<String> {
         use std::sync::atomic::Ordering;
         let mut ready = Ready(ready);
-        let superseded =
-            || cancel.as_ref().is_some_and(|(rdv, generation)| !rdv.is_current(*generation));
+        let superseded = || {
+            cancel
+                .as_ref()
+                .is_some_and(|(rdv, generation)| !rdv.is_current(*generation))
+        };
         // The single-flight lives HERE, not in `show`, because `show` is only one of two callers:
         // `commands::get_focused_selection` (the correct-on-close re-grab, which runs ~400ms after
         // the window hides and can last SECONDS: the ≤3 s modifier release gate, an un-timed
@@ -680,7 +694,9 @@ pub(crate) mod win_seed {
         // re-added and the gate above reads "nothing held" for the rest of that hold.
         // Ask the OS directly rather than trusting the cleared map.
         if modifier_physically_down() {
-            tracing::info!("[quickadd-seed] modifier still physically down; skipping the copy grab");
+            tracing::info!(
+                "[quickadd-seed] modifier still physically down; skipping the copy grab"
+            );
             return None;
         }
         let mut cb = arboard::Clipboard::new().ok()?;
@@ -698,7 +714,9 @@ pub(crate) mod win_seed {
         // own comment names. Same rule as the injection sinks — re-ask at the sink, not only
         // before the prologue.
         if modifier_physically_down() {
-            tracing::info!("[quickadd-seed] modifier went down during the prologue; skipping the copy grab");
+            tracing::info!(
+                "[quickadd-seed] modifier went down during the prologue; skipping the copy grab"
+            );
             return None;
         }
         // Read while focus is still on the source (the last pre-injection moment): a
@@ -706,7 +724,9 @@ pub(crate) mod win_seed {
         // unshown until the copy lands / the forwarding grace passes — see the consts.
         let remote = focus_is_remote_desktop_client();
         if remote {
-            tracing::info!("[quickadd-seed] remote-desktop client focused; holding the window for the copy");
+            tracing::info!(
+                "[quickadd-seed] remote-desktop client focused; holding the window for the copy"
+            );
         }
         // Ctrl+Insert, the CUA copy chord — Win32 edit controls, browsers, Office, Qt,
         // and terminals all honor it, and unlike Ctrl+C it is never a terminal
@@ -714,7 +734,9 @@ pub(crate) mod win_seed {
         // (LLKHF_INJECTED + marker), so this can't disturb chord matching.
         #[cfg(windows)]
         if !send_copy_chord() {
-            tracing::warn!("[quickadd-seed] SendInput rejected the copy chord (UIPI / desktop switch?)");
+            tracing::warn!(
+                "[quickadd-seed] SendInput rejected the copy chord (UIPI / desktop switch?)"
+            );
             return None;
         }
         // Non-Windows twin of the injection (never called — kept so the Linux dev loop
@@ -739,7 +761,11 @@ pub(crate) mod win_seed {
         }
         // The copy lands asynchronously in the source app.
         let deadline = injected_at
-            + Duration::from_millis(if remote { COPY_DEADLINE_RDP_MS } else { COPY_DEADLINE_MS });
+            + Duration::from_millis(if remote {
+                COPY_DEADLINE_RDP_MS
+            } else {
+                COPY_DEADLINE_MS
+            });
         #[cfg(windows)]
         {
             // Phase 1: wait for the copy to LAND by watching the sequence number — NOT by
@@ -872,7 +898,9 @@ pub(crate) mod win_seed {
                     Some(prev) => {
                         let _ = cb.set_text(prev); // put the user's clipboard back
                     }
-                    None => tracing::info!("[quickadd-seed] non-text clipboard was replaced by the copy grab"),
+                    None => tracing::info!(
+                        "[quickadd-seed] non-text clipboard was replaced by the copy grab"
+                    ),
                 }
                 return now;
             }
@@ -894,8 +922,8 @@ mod kwin {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     // Generic KConfig/KWin primitives are shared with overlay::kwin via crate::kwin.
-    use crate::kwin::{config_tools, merge_general, reconfigure, set_key};
     pub use crate::kwin::is_kde_wayland;
+    use crate::kwin::{config_tools, merge_general, reconfigure, set_key};
 
     const GROUP: &str = "fwf-quick-add";
     static INSTALLED: AtomicBool = AtomicBool::new(false);

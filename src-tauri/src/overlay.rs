@@ -133,7 +133,9 @@ const CHIP_TITLE: &str = "fwf-dictation-chip";
 /// "raise the window off the border" trick never actually applied). A no-op on native
 /// Wayland (the compositor decides).
 fn position(win: &WebviewWindow, edge: &str) {
-    let Some(monitor) = crate::winpos::monitor_of(win) else { return };
+    let Some(monitor) = crate::winpos::monitor_of(win) else {
+        return;
+    };
 
     let scale = monitor.scale_factor();
     let m_pos = monitor.position();
@@ -415,7 +417,8 @@ pub fn chip_pointer_over(app: AppHandle) -> bool {
 /// restore it the instant `ignore_cursor` wipes the input shape (the webview also re-reports its
 /// exact bounds a beat later). `Mutex::new` is const, so no lazy init is needed.
 #[cfg(target_os = "linux")]
-static LAST_HIT_REGION: std::sync::Mutex<Option<(f64, f64, f64, f64)>> = std::sync::Mutex::new(None);
+static LAST_HIT_REGION: std::sync::Mutex<Option<(f64, f64, f64, f64)>> =
+    std::sync::Mutex::new(None);
 
 /// Re-apply the last known chip hit region after a (re)show's `ignore_cursor` reset, so the chip
 /// stays hoverable across a standby→session re-center without waiting on a webview round-trip.
@@ -459,7 +462,11 @@ fn install_crossing_forwarder(win: &WebviewWindow, gtk_win: &gtk::ApplicationWin
         });
         // A leave of ANY mode means the cursor is no longer ours — always safe to clear.
         gtk_win.connect_leave_notify_event(move |_, e| {
-            tracing::debug!("[overlay] gdk leave mode={:?} at {:?}", e.mode(), e.position());
+            tracing::debug!(
+                "[overlay] gdk leave mode={:?} at {:?}",
+                e.mode(),
+                e.position()
+            );
             let _ = app.emit_to("overlay", "chip://pointer", false);
             gtk::glib::Propagation::Proceed
         });
@@ -553,7 +560,9 @@ mod win_hover {
 
     /// Refresh the cached geometry from the window (main-thread or not — it is a one-off).
     fn refresh_geom(app: &AppHandle) {
-        let Some(win) = app.get_webview_window("overlay") else { return };
+        let Some(win) = app.get_webview_window("overlay") else {
+            return;
+        };
         if let (Ok(scale), Ok(pos)) = (win.scale_factor(), win.outer_position()) {
             if let Ok(mut g) = GEOM.lock() {
                 *g = Some((scale, pos.x, pos.y));
@@ -618,7 +627,11 @@ mod win_hover {
             // 50 ms tracks hover-enter/leave comfortably; the per-tick cost is one
             // event-loop round-trip (cursor position — the geometry is cached, see GEOM).
             // Idle slowly while hidden.
-            std::thread::sleep(std::time::Duration::from_millis(if visible { 50 } else { 250 }));
+            std::thread::sleep(std::time::Duration::from_millis(if visible {
+                50
+            } else {
+                250
+            }));
             let visible = VISIBLE.load(Ordering::SeqCst);
             if visible {
                 ticks = ticks.wrapping_add(1);
@@ -695,8 +708,8 @@ mod kwin {
     use std::sync::Mutex;
 
     // Generic KConfig/KWin primitives are shared with quickadd::kwin via crate::kwin.
-    use crate::kwin::{config_tools, merge_general, reconfigure, set_key};
     pub use crate::kwin::is_kde_wayland;
+    use crate::kwin::{config_tools, merge_general, reconfigure, set_key};
 
     /// KConfig group (and `rules=` entry) for our rule. A fixed name keeps the
     /// operation idempotent — re-runs update the same entry instead of piling up.
@@ -744,7 +757,11 @@ mod kwin {
             }
             let pos = o.get("pos")?;
             let size = o.get("size")?;
-            let scale = o.get("scale").and_then(|s| s.as_f64()).unwrap_or(1.0).max(0.1);
+            let scale = o
+                .get("scale")
+                .and_then(|s| s.as_f64())
+                .unwrap_or(1.0)
+                .max(0.1);
             let x = pos.get("x")?.as_i64()? as i32;
             let y = pos.get("y")?.as_i64()? as i32;
             let w = (size.get("width")?.as_f64()? / scale).round() as i32;

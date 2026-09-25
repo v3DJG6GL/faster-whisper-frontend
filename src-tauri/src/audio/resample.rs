@@ -64,11 +64,11 @@ impl Resampler16k {
             let needed = self.needed;
             // Convert the front block in place into the reused output buffer — `process_into_buffer`
             // avoids the per-chunk input/output heap allocations `process()` does on the audio thread.
-            let res = self
-                .inner
-                .as_mut()
-                .unwrap()
-                .process_into_buffer(&[&self.acc[..needed]], &mut self.out, None);
+            let res = self.inner.as_mut().unwrap().process_into_buffer(
+                &[&self.acc[..needed]],
+                &mut self.out,
+                None,
+            );
             match res {
                 Ok((_, written)) => {
                     out.reserve(written * 2);
@@ -78,7 +78,9 @@ impl Resampler16k {
                 }
                 // Don't drop a block silently: the input is still drained below (no stall), but a
                 // vanished audio block would otherwise corrupt the transcription with no trace.
-                Err(e) => tracing::warn!("[resample] process_into_buffer failed, dropping a block: {e}"),
+                Err(e) => {
+                    tracing::warn!("[resample] process_into_buffer failed, dropping a block: {e}")
+                }
             }
             self.acc.drain(..needed);
             self.needed = self.inner.as_ref().unwrap().input_frames_next();
@@ -98,11 +100,11 @@ impl Resampler16k {
         }
         self.acc.resize(self.needed, 0.0); // pad the partial block with silence
         let needed = self.needed;
-        let res = self
-            .inner
-            .as_mut()
-            .unwrap()
-            .process_into_buffer(&[&self.acc[..needed]], &mut self.out, None);
+        let res = self.inner.as_mut().unwrap().process_into_buffer(
+            &[&self.acc[..needed]],
+            &mut self.out,
+            None,
+        );
         match res {
             Ok((_, written)) => {
                 out.reserve(written * 2);
@@ -110,7 +112,9 @@ impl Resampler16k {
                     push_i16le(&mut out, s);
                 }
             }
-            Err(e) => tracing::warn!("[resample] flush process_into_buffer failed, dropping the tail: {e}"),
+            Err(e) => tracing::warn!(
+                "[resample] flush process_into_buffer failed, dropping the tail: {e}"
+            ),
         }
         self.acc.clear();
         out
@@ -133,7 +137,10 @@ mod tests {
         // 1 second of silence at 48 kHz → ~1 second at 16 kHz (minus < 1 chunk of buffering).
         let bytes = r.push(&vec![0.0f32; 48_000]);
         let samples = bytes.len() / 2;
-        assert!(samples > 16_000 - 2048 && samples <= 16_000, "got {samples} samples");
+        assert!(
+            samples > 16_000 - 2048 && samples <= 16_000,
+            "got {samples} samples"
+        );
     }
 
     #[test]

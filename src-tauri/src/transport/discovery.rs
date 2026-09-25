@@ -73,7 +73,10 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
     // one default timeout instead of doubling it.
     let whoami_fut = async {
         let (mut open_mode, mut username) = (false, None);
-        if let Ok(resp) = with_auth(http.get(format!("{base}/auth/whoami")), api_key).send().await {
+        if let Ok(resp) = with_auth(http.get(format!("{base}/auth/whoami")), api_key)
+            .send()
+            .await
+        {
             if resp.status().is_success() {
                 if let Ok(who) = super::json_capped_to::<WhoAmI>(resp, super::MAX_META_BODY).await {
                     open_mode = who.open_mode;
@@ -98,7 +101,9 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     models: vec![],
                     boot_id: None,
                     server_version: None,
-                    error: Some("Unauthorized — an API key is required or the key is invalid.".into()),
+                    error: Some(
+                        "Unauthorized — an API key is required or the key is invalid.".into(),
+                    ),
                 };
             }
             if !status.is_success() {
@@ -124,7 +129,10 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                         .data
                         .into_iter()
                         .take(MAX_MODELS)
-                        .map(|m| ServerModel { id: bounded_name(&m.id), loaded: m.loaded })
+                        .map(|m| ServerModel {
+                            id: bounded_name(&m.id),
+                            loaded: m.loaded,
+                        })
                         .collect(),
                     boot_id: parsed.boot_id.map(|s| bounded_name(&s)),
                     server_version: parsed.server_version.map(|s| bounded_name(&s)),
@@ -176,7 +184,13 @@ pub async fn list_override_profiles(server_url: &str, api_key: Option<&str>) -> 
     // Best-effort: get_json → None on any failure, so the picker falls back to free-text.
     get_json::<OverrideProfilesResp>(url, api_key)
         .await
-        .map(|r| r.profiles.iter().take(MAX_MODELS).map(|p| bounded_name(p)).collect())
+        .map(|r| {
+            r.profiles
+                .iter()
+                .take(MAX_MODELS)
+                .map(|p| bounded_name(p))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -210,7 +224,10 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
         list.map(|mut v| {
             v.truncate(MAX_MODELS);
             v.into_iter()
-                .map(|m| ServerModel { id: bounded_name(&m.id), loaded: m.loaded })
+                .map(|m| ServerModel {
+                    id: bounded_name(&m.id),
+                    loaded: m.loaded,
+                })
                 .collect::<Vec<_>>()
         })
     };
@@ -219,11 +236,15 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     caps.separation_models = bound_models(caps.separation_models);
     caps.translation_languages = caps.translation_languages.map(|mut v| {
         v.truncate(MAX_MODELS);
-        v.iter().map(|s| super::bounded_server_text(s, 16)).collect()
+        v.iter()
+            .map(|s| super::bounded_server_text(s, 16))
+            .collect()
     });
     caps.translate_to_default = caps.translate_to_default.map(|mut v| {
         v.truncate(super::MAX_TARGETS);
-        v.iter().map(|s| super::bounded_server_text(s, 16)).collect()
+        v.iter()
+            .map(|s| super::bounded_server_text(s, 16))
+            .collect()
     });
     Some(caps)
 }
@@ -304,9 +325,16 @@ impl UsageQuery {
         }
         if let Some(z) = self.tz.as_deref() {
             if iana_zone_ok(z) {
-                let encoded: String = z.bytes().map(|b| {
-                    if b == b'+' { "%2B".to_string() } else { (b as char).to_string() }
-                }).collect();
+                let encoded: String = z
+                    .bytes()
+                    .map(|b| {
+                        if b == b'+' {
+                            "%2B".to_string()
+                        } else {
+                            (b as char).to_string()
+                        }
+                    })
+                    .collect();
                 q.push(format!("tz={encoded}"));
             }
         }
@@ -332,7 +360,11 @@ fn iana_zone_ok(tz: &str) -> bool {
 /// standard/old server, unauthorized, unreachable) → None, so the UI simply hides the
 /// stats surfaces (Home section + chip line). Query params are omitted when None so the
 /// server applies its own defaults.
-pub async fn get_usage_stats(server_url: &str, api_key: Option<&str>, query: &UsageQuery) -> Option<UsageStats> {
+pub async fn get_usage_stats(
+    server_url: &str,
+    api_key: Option<&str>,
+    query: &UsageQuery,
+) -> Option<UsageStats> {
     let base = base_url(server_url);
     let q = query.to_query();
     let url = if q.is_empty() {
@@ -346,7 +378,11 @@ pub async fn get_usage_stats(server_url: &str, api_key: Option<&str>, query: &Us
     // Read at the usage-specific ceiling (not the shared MAX_META_BODY): the "All"
     // window can legitimately exceed 1 MiB — see USAGE_MAX_BODY.
     let mut u: UsageStats = match with_auth(client().get(url), api_key).send().await {
-        Ok(resp) if resp.status().is_success() => super::json_capped_to::<UsageStats>(resp, USAGE_MAX_BODY).await.ok()?,
+        Ok(resp) if resp.status().is_success() => {
+            super::json_capped_to::<UsageStats>(resp, USAGE_MAX_BODY)
+                .await
+                .ok()?
+        }
         _ => return None,
     };
     u.username = bounded_name(&u.username);
@@ -396,7 +432,9 @@ pub async fn get_override_profile(
     // profile, and pasting it raw could escape the path (e.g. "../") or break URL parsing —
     // so a non-slug name is treated as "no such profile" (None), consistent with best-effort.
     if name.is_empty()
-        || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
     {
         return None;
     }
@@ -445,7 +483,8 @@ mod tests {
         let out = serde_json::to_value(caps).unwrap();
         assert_eq!(out["jobs_enabled"], true);
         assert_eq!(out["jobs"]["ttl_s"], 259200.0);
-        let none: super::super::Capabilities = serde_json::from_value(serde_json::json!({})).unwrap();
+        let none: super::super::Capabilities =
+            serde_json::from_value(serde_json::json!({})).unwrap();
         assert_eq!(none.jobs_enabled, None);
     }
 
@@ -482,12 +521,19 @@ mod tests {
             ..serde_json::from_value(serde_json::json!({})).unwrap()
         })
         .unwrap();
-        assert_eq!(out["media_package"]["containers"], serde_json::json!(["mkv", "mp4"]));
+        assert_eq!(
+            out["media_package"]["containers"],
+            serde_json::json!(["mkv", "mp4"])
+        );
     }
 
     #[test]
     fn usage_query_validates_every_value_before_it_reaches_the_url() {
-        let q = UsageQuery { days: Some(30), tz: Some("Europe/Zurich".into()), ..Default::default() };
+        let q = UsageQuery {
+            days: Some(30),
+            tz: Some("Europe/Zurich".into()),
+            ..Default::default()
+        };
         assert_eq!(q.to_query(), "days=30&tz=Europe/Zurich");
         // from/to win over days; all wins over both; unknown stages and a bad zone are dropped.
         let q = UsageQuery {
@@ -499,7 +545,11 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(q.to_query(), "from=100&to=200&with=vad,translating");
-        let q = UsageQuery { all: true, from: Some(1), ..Default::default() };
+        let q = UsageQuery {
+            all: true,
+            from: Some(1),
+            ..Default::default()
+        };
         assert_eq!(q.to_query(), "all=1");
         assert_eq!(UsageQuery::default().to_query(), "");
     }

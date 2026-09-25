@@ -149,11 +149,7 @@ impl<S> tracing_subscriber::Layer<S> for RingLayer
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
-    fn on_event(
-        &self,
-        event: &tracing::Event<'_>,
-        _cx: tracing_subscriber::layer::Context<'_, S>,
-    ) {
+    fn on_event(&self, event: &tracing::Event<'_>, _cx: tracing_subscriber::layer::Context<'_, S>) {
         let mut v = MsgVisitor::default();
         event.record(&mut v);
         let (tag, msg) = split_tag(&v.msg);
@@ -234,7 +230,12 @@ pub fn init(ring: LogRing, writer: SwapWriter) {
         .with(filter)
         .with(RingLayer { ring })
         .with(fmt::layer().with_timer(LocalTimer))
-        .with(fmt::layer().with_timer(LocalTimer).with_ansi(false).with_writer(writer))
+        .with(
+            fmt::layer()
+                .with_timer(LocalTimer)
+                .with_ansi(false)
+                .with_writer(writer),
+        )
         .init();
 }
 
@@ -294,7 +295,11 @@ impl tracing_subscriber::fmt::time::FormatTime for LocalTimer {
 
 fn format_line(l: &LogLine) -> String {
     let ts = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(l.ts as i64)
-        .map(|t| t.with_timezone(&chrono::Local).format(TS_FORMAT).to_string())
+        .map(|t| {
+            t.with_timezone(&chrono::Local)
+                .format(TS_FORMAT)
+                .to_string()
+        })
         .unwrap_or_default();
     let level = l.level.to_uppercase();
     match &l.tag {
@@ -346,8 +351,12 @@ pub fn prune_log_files(dir: &Path, keep_days: u32) {
     // panic this prevents (inside setup(), with the value already persisted).
     const MAX_RETENTION_DAYS: u32 = 3650;
     let cutoff = std::time::SystemTime::now()
-        - std::time::Duration::from_secs(u64::from(keep_days.min(MAX_RETENTION_DAYS)) * 24 * 60 * 60);
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+        - std::time::Duration::from_secs(
+            u64::from(keep_days.min(MAX_RETENTION_DAYS)) * 24 * 60 * 60,
+        );
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -369,7 +378,9 @@ pub fn prune_log_files(dir: &Path, keep_days: u32) {
 /// the session file if the folder changed, and prune old files.
 pub fn apply_log_settings(app: &AppHandle, config: &Config) {
     apply_log_level(config.settings.logging.log_level);
-    let Some(dir) = log_dir(app, config) else { return };
+    let Some(dir) = log_dir(app, config) else {
+        return;
+    };
     let writer = app.state::<SwapWriter>();
     let ring = app.state::<LogRing>();
     let current = writer.0.lock().ok().and_then(|i| i.dir.clone());
@@ -384,7 +395,9 @@ pub fn apply_log_settings(app: &AppHandle, config: &Config) {
     // legacy pair there was never reached by the prune above.
     #[cfg(windows)]
     if let Some(base) = std::env::var_os("LOCALAPPDATA") {
-        let legacy = PathBuf::from(base).join("faster-whisper-frontend").join("logs");
+        let legacy = PathBuf::from(base)
+            .join("faster-whisper-frontend")
+            .join("logs");
         prune_legacy_dir(&legacy);
         // …and the folder itself once it is empty, so machines that ran those builds stop
         // showing a stray second app folder. `remove_dir` only ever removes an EMPTY
@@ -478,7 +491,9 @@ pub fn get_log_status(ring: State<'_, LogRing>) -> LogTail {
 /// The live `logDir` preference as the config field: a blank or absent custom folder means
 /// the default, never "no opinion".
 fn live_log_dir(custom: Option<String>) -> Option<String> {
-    custom.map(|c| c.trim().to_string()).filter(|c| !c.is_empty())
+    custom
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
 }
 
 /// Resolve the effective log directory from the LIVE custom preference, without
@@ -523,12 +538,24 @@ mod tests {
 
     #[test]
     fn the_replayed_head_uses_the_same_stamp_format_as_the_live_tail() {
-        let l = LogLine { seq: 1, ts: 1_700_000_000_123, level: "info", target: "t".into(), tag: None, msg: "m".into() };
+        let l = LogLine {
+            seq: 1,
+            ts: 1_700_000_000_123,
+            level: "info",
+            target: "t".into(),
+            tag: None,
+            msg: "m".into(),
+        };
         let out = format_line(&l);
         // "YYYY-MM-DD HH:MM:SS.mmm" — a date, a space, a time with millis.
         let stamp = out.split(' ').take(2).collect::<Vec<_>>().join(" ");
         assert_eq!(stamp.len(), "2023-11-14 22:13:20.123".len(), "{out:?}");
-        assert!(stamp.as_bytes()[4] == b'-' && stamp.as_bytes()[10] == b' ' && stamp.as_bytes()[19] == b'.', "{out:?}");
+        assert!(
+            stamp.as_bytes()[4] == b'-'
+                && stamp.as_bytes()[10] == b' '
+                && stamp.as_bytes()[19] == b'.',
+            "{out:?}"
+        );
     }
 
     #[test]
@@ -537,7 +564,10 @@ mod tests {
         let mut s = String::new();
         LocalTimer.format_time(&mut Writer::new(&mut s)).unwrap();
         assert_eq!(s.len(), "2023-11-14 22:13:20.123".len(), "{s:?}");
-        assert!(s.as_bytes()[4] == b'-' && s.as_bytes()[10] == b' ' && s.as_bytes()[19] == b'.', "{s:?}");
+        assert!(
+            s.as_bytes()[4] == b'-' && s.as_bytes()[10] == b' ' && s.as_bytes()[19] == b'.',
+            "{s:?}"
+        );
     }
 
     fn line(msg: &str, level: &'static str) -> LogLine {

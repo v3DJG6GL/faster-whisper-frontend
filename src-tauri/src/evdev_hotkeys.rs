@@ -48,7 +48,13 @@ pub fn permitted() -> bool {
 pub fn stop_held_sessions(_app: &tauri::AppHandle) {}
 #[cfg(not(target_os = "linux"))]
 #[cfg_attr(windows, allow(dead_code))] // Windows never starts evdev (win_hotkeys owns all chords); stub kept for the shared signature
-pub fn start(_app: &tauri::AppHandle, _state: &EvdevState, _profiles: &[crate::config::Profile], _quick_add_hotkey: &[String]) {}
+pub fn start(
+    _app: &tauri::AppHandle,
+    _state: &EvdevState,
+    _profiles: &[crate::config::Profile],
+    _quick_add_hotkey: &[String],
+) {
+}
 #[cfg(not(target_os = "linux"))]
 pub async fn setup() -> Result<String, String> {
     Err("The evdev backend is Linux-only.".into())
@@ -101,7 +107,10 @@ mod imp {
             if name.is_null() {
                 return None;
             }
-            std::ffi::CStr::from_ptr(name).to_str().ok().map(str::to_owned)
+            std::ffi::CStr::from_ptr(name)
+                .to_str()
+                .ok()
+                .map(str::to_owned)
         }
     }
 
@@ -115,14 +124,18 @@ mod imp {
     /// while the polkit prompt showed only "usermod" — an administrator approving it had no way to
     /// see whom they were granting it to. The uid we are actually running as cannot be spoofed.
     pub async fn setup() -> Result<String, String> {
-        let user = current_username().ok_or_else(|| "couldn't determine the current user".to_string())?;
+        let user =
+            current_username().ok_or_else(|| "couldn't determine the current user".to_string())?;
         let out = tokio::process::Command::new("pkexec")
             .args(["usermod", "-aG", "input", &user])
             .output()
             .await
             .map_err(|e| format!("couldn't launch pkexec: {e}"))?;
         if out.status.success() {
-            Ok("Added to the 'input' group. Log out and back in, then enable the evdev backend.".into())
+            Ok(
+                "Added to the 'input' group. Log out and back in, then enable the evdev backend."
+                    .into(),
+            )
         } else {
             let err = String::from_utf8_lossy(&out.stderr);
             Err(if err.trim().is_empty() {
@@ -178,8 +191,12 @@ mod imp {
             }
             let keys: Vec<u16> = keys.iter().map(|k| k.code()).collect();
             let kind = match p.activation {
-                ActivationType::Hold => ChordKind::Hold { profile_id: p.id.clone() },
-                ActivationType::HandsFree => ChordKind::HandsFree { profile_id: p.id.clone() },
+                ActivationType::Hold => ChordKind::Hold {
+                    profile_id: p.id.clone(),
+                },
+                ActivationType::HandsFree => ChordKind::HandsFree {
+                    profile_id: p.id.clone(),
+                },
             };
             // `what` is interpolated into the duplicate-chord warning below, so the untrusted id
             // is defanged here rather than at the log line — same reason as `emit`'s. This one
@@ -187,7 +204,10 @@ mod imp {
             push(
                 kind,
                 keys,
-                &format!("profile '{}'", crate::transport::bounded_server_text(&p.id, 120)),
+                &format!(
+                    "profile '{}'",
+                    crate::transport::bounded_server_text(&p.id, 120)
+                ),
             );
         }
         // The quick-add window shortcut (not a Profile) — matched alongside the chords.
@@ -200,7 +220,12 @@ mod imp {
         out
     }
 
-    pub fn start(app: &AppHandle, state: &EvdevState, profiles: &[Profile], quick_add_hotkey: &[String]) {
+    pub fn start(
+        app: &AppHandle,
+        state: &EvdevState,
+        profiles: &[Profile],
+        quick_add_hotkey: &[String],
+    ) {
         // Hold the EvdevState lock across the ENTIRE stop→enumerate→spawn→store sequence so two
         // concurrent apply_bindings() calls (the reregister_shortcuts IPC thread + the suspend-watch
         // thread) can't interleave: otherwise both spawn reader-task sets that briefly read the same
@@ -214,10 +239,10 @@ mod imp {
             Err(_) => return,
         };
         *g = None; // drop + abort any previous readers, under the lock
-        // Fresh start: drop any held-key counts left over from a previous run so the
-        // inject-gate can't wait on a phantom modifier — and retire the old readers' writer
-        // (a reader whose stream ends past the abort point still runs its post-loop; see
-        // HeldKeys::clear). One writer per start, cloned into every reader.
+                   // Fresh start: drop any held-key counts left over from a previous run so the
+                   // inject-gate can't wait on a phantom modifier — and retire the old readers' writer
+                   // (a reader whose stream ends past the abort point still runs its post-loop; see
+                   // HeldKeys::clear). One writer per start, cloned into every reader.
         let held_keys = app.state::<crate::held_keys::HeldKeys>();
         held_keys.clear();
         let held_keys = held_keys.writer();
@@ -295,7 +320,8 @@ mod imp {
     // deduped on insert and dictate("stop") is a no-op when idle, so any staleness is harmless.
     // Each entry carries the evdev codes of the chord that started the hold, so the teardown can
     // ask the kernel whether that chord is STILL physically down before arming the loss latch.
-    static ACTIVE_HOLDS: std::sync::Mutex<Vec<(String, Vec<u16>)>> = std::sync::Mutex::new(Vec::new());
+    static ACTIVE_HOLDS: std::sync::Mutex<Vec<(String, Vec<u16>)>> =
+        std::sync::Mutex::new(Vec::new());
 
     fn note_hold(profile_id: &str, keys: &[u16], active: bool) {
         if let Ok(mut h) = ACTIVE_HOLDS.lock() {
@@ -398,7 +424,11 @@ mod imp {
         down: bool,
         teardown: bool,
     ) {
-        let changed = if down { held.insert(code) } else { held.remove(&code) };
+        let changed = if down {
+            held.insert(code)
+        } else {
+            held.remove(&code)
+        };
         if !changed {
             return;
         }
@@ -483,7 +513,12 @@ mod imp {
                     Err(_) => break, // device went away
                 },
                 Some(dl) => {
-                    match tokio::time::timeout_at(tokio::time::Instant::from_std(dl), stream.next_event()).await {
+                    match tokio::time::timeout_at(
+                        tokio::time::Instant::from_std(dl),
+                        stream.next_event(),
+                    )
+                    .await
+                    {
                         Ok(Ok(e)) => Some(e),
                         Ok(Err(_)) => break, // device went away
                         Err(_) => None,      // deadline reached — commit deferred releases below
@@ -603,43 +638,94 @@ mod imp {
 
     fn letter_key(l: &str) -> Option<Key> {
         Some(match l {
-            "A" => Key::KEY_A, "B" => Key::KEY_B, "C" => Key::KEY_C, "D" => Key::KEY_D,
-            "E" => Key::KEY_E, "F" => Key::KEY_F, "G" => Key::KEY_G, "H" => Key::KEY_H,
-            "I" => Key::KEY_I, "J" => Key::KEY_J, "K" => Key::KEY_K, "L" => Key::KEY_L,
-            "M" => Key::KEY_M, "N" => Key::KEY_N, "O" => Key::KEY_O, "P" => Key::KEY_P,
-            "Q" => Key::KEY_Q, "R" => Key::KEY_R, "S" => Key::KEY_S, "T" => Key::KEY_T,
-            "U" => Key::KEY_U, "V" => Key::KEY_V, "W" => Key::KEY_W, "X" => Key::KEY_X,
-            "Y" => Key::KEY_Y, "Z" => Key::KEY_Z,
+            "A" => Key::KEY_A,
+            "B" => Key::KEY_B,
+            "C" => Key::KEY_C,
+            "D" => Key::KEY_D,
+            "E" => Key::KEY_E,
+            "F" => Key::KEY_F,
+            "G" => Key::KEY_G,
+            "H" => Key::KEY_H,
+            "I" => Key::KEY_I,
+            "J" => Key::KEY_J,
+            "K" => Key::KEY_K,
+            "L" => Key::KEY_L,
+            "M" => Key::KEY_M,
+            "N" => Key::KEY_N,
+            "O" => Key::KEY_O,
+            "P" => Key::KEY_P,
+            "Q" => Key::KEY_Q,
+            "R" => Key::KEY_R,
+            "S" => Key::KEY_S,
+            "T" => Key::KEY_T,
+            "U" => Key::KEY_U,
+            "V" => Key::KEY_V,
+            "W" => Key::KEY_W,
+            "X" => Key::KEY_X,
+            "Y" => Key::KEY_Y,
+            "Z" => Key::KEY_Z,
             _ => return None,
         })
     }
 
     fn digit_key(d: &str) -> Option<Key> {
         Some(match d {
-            "0" => Key::KEY_0, "1" => Key::KEY_1, "2" => Key::KEY_2, "3" => Key::KEY_3,
-            "4" => Key::KEY_4, "5" => Key::KEY_5, "6" => Key::KEY_6, "7" => Key::KEY_7,
-            "8" => Key::KEY_8, "9" => Key::KEY_9,
+            "0" => Key::KEY_0,
+            "1" => Key::KEY_1,
+            "2" => Key::KEY_2,
+            "3" => Key::KEY_3,
+            "4" => Key::KEY_4,
+            "5" => Key::KEY_5,
+            "6" => Key::KEY_6,
+            "7" => Key::KEY_7,
+            "8" => Key::KEY_8,
+            "9" => Key::KEY_9,
             _ => return None,
         })
     }
 
     fn numpad_digit_key(n: &str) -> Option<Key> {
         Some(match n {
-            "0" => Key::KEY_KP0, "1" => Key::KEY_KP1, "2" => Key::KEY_KP2, "3" => Key::KEY_KP3,
-            "4" => Key::KEY_KP4, "5" => Key::KEY_KP5, "6" => Key::KEY_KP6, "7" => Key::KEY_KP7,
-            "8" => Key::KEY_KP8, "9" => Key::KEY_KP9,
+            "0" => Key::KEY_KP0,
+            "1" => Key::KEY_KP1,
+            "2" => Key::KEY_KP2,
+            "3" => Key::KEY_KP3,
+            "4" => Key::KEY_KP4,
+            "5" => Key::KEY_KP5,
+            "6" => Key::KEY_KP6,
+            "7" => Key::KEY_KP7,
+            "8" => Key::KEY_KP8,
+            "9" => Key::KEY_KP9,
             _ => return None,
         })
     }
 
     fn fn_key(f: &str) -> Option<Key> {
         Some(match f {
-            "1" => Key::KEY_F1, "2" => Key::KEY_F2, "3" => Key::KEY_F3, "4" => Key::KEY_F4,
-            "5" => Key::KEY_F5, "6" => Key::KEY_F6, "7" => Key::KEY_F7, "8" => Key::KEY_F8,
-            "9" => Key::KEY_F9, "10" => Key::KEY_F10, "11" => Key::KEY_F11, "12" => Key::KEY_F12,
-            "13" => Key::KEY_F13, "14" => Key::KEY_F14, "15" => Key::KEY_F15, "16" => Key::KEY_F16,
-            "17" => Key::KEY_F17, "18" => Key::KEY_F18, "19" => Key::KEY_F19, "20" => Key::KEY_F20,
-            "21" => Key::KEY_F21, "22" => Key::KEY_F22, "23" => Key::KEY_F23, "24" => Key::KEY_F24,
+            "1" => Key::KEY_F1,
+            "2" => Key::KEY_F2,
+            "3" => Key::KEY_F3,
+            "4" => Key::KEY_F4,
+            "5" => Key::KEY_F5,
+            "6" => Key::KEY_F6,
+            "7" => Key::KEY_F7,
+            "8" => Key::KEY_F8,
+            "9" => Key::KEY_F9,
+            "10" => Key::KEY_F10,
+            "11" => Key::KEY_F11,
+            "12" => Key::KEY_F12,
+            "13" => Key::KEY_F13,
+            "14" => Key::KEY_F14,
+            "15" => Key::KEY_F15,
+            "16" => Key::KEY_F16,
+            "17" => Key::KEY_F17,
+            "18" => Key::KEY_F18,
+            "19" => Key::KEY_F19,
+            "20" => Key::KEY_F20,
+            "21" => Key::KEY_F21,
+            "22" => Key::KEY_F22,
+            "23" => Key::KEY_F23,
+            "24" => Key::KEY_F24,
             _ => return None,
         })
     }
@@ -653,13 +739,36 @@ mod imp {
         #[test]
         fn every_bindable_code_maps_to_an_evdev_key() {
             let mut codes: Vec<String> = [
-                "ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight",
-                "AltLeft", "AltRight", "MetaLeft", "MetaRight",
-                "Backspace", "Delete", "Enter", "Space", "Tab", "Home", "End", "Insert",
-                "PageUp", "PageDown", "PrintScreen",
-                "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
-                "NumpadAdd", "NumpadSubtract", "NumpadMultiply", "NumpadDivide",
-                "NumpadDecimal", "NumpadEnter", "NumpadEqual",
+                "ControlLeft",
+                "ControlRight",
+                "ShiftLeft",
+                "ShiftRight",
+                "AltLeft",
+                "AltRight",
+                "MetaLeft",
+                "MetaRight",
+                "Backspace",
+                "Delete",
+                "Enter",
+                "Space",
+                "Tab",
+                "Home",
+                "End",
+                "Insert",
+                "PageUp",
+                "PageDown",
+                "PrintScreen",
+                "ArrowUp",
+                "ArrowDown",
+                "ArrowLeft",
+                "ArrowRight",
+                "NumpadAdd",
+                "NumpadSubtract",
+                "NumpadMultiply",
+                "NumpadDivide",
+                "NumpadDecimal",
+                "NumpadEnter",
+                "NumpadEqual",
             ]
             .into_iter()
             .map(String::from)

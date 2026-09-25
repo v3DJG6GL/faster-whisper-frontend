@@ -25,7 +25,7 @@ pub struct Job {
     /// `crate::inject::injection_cancelled` reports it superseded. Without it a long transcript
     /// kept typing into whatever held focus long after the user cancelled.
     epoch: u64,
-    paste: bool,  // true → synthesize the paste chord instead of typing `text`
+    paste: bool, // true → synthesize the paste chord instead of typing `text`
     // The paste chord as KeyboardEvent.code strings (modifiers first, main key last) — NOT pre-resolved
     // keycodes — so the MAIN letter key is resolved by KEYSYM against the active layout's charmap inside
     // session_loop (where the charmap is built). A fixed physical position would mis-paste on a layout
@@ -178,8 +178,13 @@ mod imp {
             let mut group: u32 = 0;
             // XkbGetState needs the XKB extension initialised on this display first; pass the 1.0
             // version we rely on (in/out args, the rest are ignored).
-            let (mut op, mut ev, mut err, mut major, mut minor): (c_int, c_int, c_int, c_int, c_int) =
-                (0, 0, 0, 1, 0);
+            let (mut op, mut ev, mut err, mut major, mut minor): (
+                c_int,
+                c_int,
+                c_int,
+                c_int,
+                c_int,
+            ) = (0, 0, 0, 1, 0);
             if query(dpy, &mut op, &mut ev, &mut err, &mut major, &mut minor) != 0 {
                 // XkbStateRec begins with `unsigned char group;`. Read the first byte of an 8-aligned
                 // buffer sized well past the struct (~16 bytes). XkbGetState returns Success (0).
@@ -287,8 +292,20 @@ mod imp {
 
     fn key_spec_for(c: char, map: &HashMap<char, KeySpec>) -> Option<KeySpec> {
         match c {
-            '\n' | '\r' => Some(KeySpec { keycode: KEY_ENTER, shift: false, altgr: false, lock: false, caps_safe: true }),
-            '\t' => Some(KeySpec { keycode: KEY_TAB, shift: false, altgr: false, lock: false, caps_safe: true }),
+            '\n' | '\r' => Some(KeySpec {
+                keycode: KEY_ENTER,
+                shift: false,
+                altgr: false,
+                lock: false,
+                caps_safe: true,
+            }),
+            '\t' => Some(KeySpec {
+                keycode: KEY_TAB,
+                shift: false,
+                altgr: false,
+                lock: false,
+                caps_safe: true,
+            }),
             _ => map.get(&c).copied(),
         }
     }
@@ -348,7 +365,16 @@ mod imp {
         auto_enter: bool,
         epoch: u64,
     ) -> Result<crate::inject::Landed, String> {
-        submit(app, typer, text.to_string(), false, Vec::new(), auto_enter, epoch).await
+        submit(
+            app,
+            typer,
+            text.to_string(),
+            false,
+            Vec::new(),
+            auto_enter,
+            epoch,
+        )
+        .await
     }
 
     /// Synthesize Ctrl+V on the shared session (the caller has already set the
@@ -361,14 +387,31 @@ mod imp {
         auto_enter: bool,
         epoch: u64,
     ) -> Result<crate::inject::Landed, String> {
-        submit(app, typer, String::new(), true, chord_codes, auto_enter, epoch).await
+        submit(
+            app,
+            typer,
+            String::new(),
+            true,
+            chord_codes,
+            auto_enter,
+            epoch,
+        )
+        .await
     }
 
     fn is_modifier_code(code: &str) -> bool {
         matches!(
             code,
-            "ControlLeft" | "ControlRight" | "ShiftLeft" | "ShiftRight"
-                | "AltLeft" | "AltRight" | "MetaLeft" | "MetaRight" | "OSLeft" | "OSRight"
+            "ControlLeft"
+                | "ControlRight"
+                | "ShiftLeft"
+                | "ShiftRight"
+                | "AltLeft"
+                | "AltRight"
+                | "MetaLeft"
+                | "MetaRight"
+                | "OSLeft"
+                | "OSRight"
         )
     }
     fn code_to_keycode(code: &str) -> Option<i32> {
@@ -396,10 +439,32 @@ mod imp {
     fn letter_keycode(code: &str) -> Option<i32> {
         let letter = code.strip_prefix("Key").filter(|s| s.len() == 1)?;
         Some(match letter {
-            "Q" => 16, "W" => 17, "E" => 18, "R" => 19, "T" => 20, "Y" => 21, "U" => 22,
-            "I" => 23, "O" => 24, "P" => 25, "A" => 30, "S" => 31, "D" => 32, "F" => 33,
-            "G" => 34, "H" => 35, "J" => 36, "K" => 37, "L" => 38, "Z" => 44, "X" => 45,
-            "C" => 46, "V" => KEY_V, "B" => 48, "N" => 49, "M" => 50,
+            "Q" => 16,
+            "W" => 17,
+            "E" => 18,
+            "R" => 19,
+            "T" => 20,
+            "Y" => 21,
+            "U" => 22,
+            "I" => 23,
+            "O" => 24,
+            "P" => 25,
+            "A" => 30,
+            "S" => 31,
+            "D" => 32,
+            "F" => 33,
+            "G" => 34,
+            "H" => 35,
+            "J" => 36,
+            "K" => 37,
+            "L" => 38,
+            "Z" => 44,
+            "X" => 45,
+            "C" => 46,
+            "V" => KEY_V,
+            "B" => 48,
+            "N" => 49,
+            "M" => 50,
             _ => return None,
         })
     }
@@ -486,9 +551,16 @@ mod imp {
         // the job adopted the post-cancel generation and `injection_cancelled` was false for its
         // whole life. Capturing at entry closes that window; the counter is still monotonic, so a
         // cancel still cannot leak into the NEXT injection.
-        tx.send(Job { text, paste, chord_codes, auto_enter, reply, epoch })
-            .await
-            .map_err(|_| "wayland typer unavailable".to_string())?;
+        tx.send(Job {
+            text,
+            paste,
+            chord_codes,
+            auto_enter,
+            reply,
+            epoch,
+        })
+        .await
+        .map_err(|_| "wayland typer unavailable".to_string())?;
         reply_rx
             .await
             .map_err(|_| "wayland typer dropped the job".to_string())?
@@ -541,7 +613,9 @@ mod imp {
             let charmap = match build_charmap() {
                 Some(m) => m,
                 None => {
-                    let _ = job.reply.send(Err("could not build a keymap for the active layout".into()));
+                    let _ = job
+                        .reply
+                        .send(Err("could not build a keymap for the active layout".into()));
                     continue;
                 }
             };
@@ -838,7 +912,12 @@ mod imp {
             // errors since we're already reporting the real failure.
             for code in held.iter().rev() {
                 let _ = proxy
-                    .notify_keyboard_keycode(&session, *code, KeyState::Released, Default::default())
+                    .notify_keyboard_keycode(
+                        &session,
+                        *code,
+                        KeyState::Released,
+                        Default::default(),
+                    )
                     .await;
             }
             // The held loop only releases keycodes still pressed; a Caps Lock tap is press+release,
@@ -846,10 +925,20 @@ mod imp {
             // more to restore the user's Caps Lock state.
             if caps_flipped {
                 let _ = proxy
-                    .notify_keyboard_keycode(&session, KEY_CAPSLOCK, KeyState::Pressed, Default::default())
+                    .notify_keyboard_keycode(
+                        &session,
+                        KEY_CAPSLOCK,
+                        KeyState::Pressed,
+                        Default::default(),
+                    )
                     .await;
                 let _ = proxy
-                    .notify_keyboard_keycode(&session, KEY_CAPSLOCK, KeyState::Released, Default::default())
+                    .notify_keyboard_keycode(
+                        &session,
+                        KEY_CAPSLOCK,
+                        KeyState::Released,
+                        Default::default(),
+                    )
                     .await;
             }
 

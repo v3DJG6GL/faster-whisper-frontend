@@ -157,7 +157,10 @@ impl HeldKeys {
     /// A writer bound to the CURRENT generation. Take it once per listener start, after
     /// `clear()`, and clone it into that start's workers.
     pub fn writer(&self) -> HeldKeysWriter {
-        HeldKeysWriter { keys: self.clone(), generation: self.0.generation.load(Ordering::Acquire) }
+        HeldKeysWriter {
+            keys: self.clone(),
+            generation: self.0.generation.load(Ordering::Acquire),
+        }
     }
 
     /// Is any of `codes` currently held?

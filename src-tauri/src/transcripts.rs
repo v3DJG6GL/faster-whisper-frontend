@@ -101,10 +101,7 @@ pub(crate) fn record_kind(app: &AppHandle, id: &str) -> Option<String> {
 /// Rewrite `mediaPath` in every record whose stored path appears in `lookup`
 /// (old absolute path → new absolute path), after a migration or base move.
 /// Best-effort per record; a record that fails to parse is left untouched.
-pub(crate) fn rewrite_media_paths(
-    app: &AppHandle,
-    lookup: &std::collections::HashMap<&str, &str>,
-) {
+pub(crate) fn rewrite_media_paths(app: &AppHandle, lookup: &std::collections::HashMap<&str, &str>) {
     let dirs = [transcripts_dir(app), dictations_dir(app)];
     let mut rewritten = 0;
     for dir in dirs.into_iter().flatten() {
@@ -190,7 +187,11 @@ pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
             }
             // Same size guard as `read_records_into`: an oversized record is skipped
             // there too, so parsing it here would be work for a record nobody loads.
-            if entry.metadata().map(|m| m.len() > MAX_RECORD_BYTES).unwrap_or(true) {
+            if entry
+                .metadata()
+                .map(|m| m.len() > MAX_RECORD_BYTES)
+                .unwrap_or(true)
+            {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&path) else {
@@ -245,8 +246,7 @@ pub(crate) const MAX_MEDIA_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 /// Record ids are frontend-generated UUIDs — hex + dashes only, so an id can
 /// never traverse out of the transcripts directory.
 pub(crate) fn valid_id(id: &str) -> bool {
-    (8..=64).contains(&id.len())
-        && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+    (8..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
 }
 
 /// Is `s` shaped like the ids this app actually writes — a `crypto.randomUUID()`, 36 chars
@@ -379,7 +379,11 @@ fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) {
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        if entry.metadata().map(|m| m.len() > MAX_RECORD_BYTES).unwrap_or(true) {
+        if entry
+            .metadata()
+            .map(|m| m.len() > MAX_RECORD_BYTES)
+            .unwrap_or(true)
+        {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -464,7 +468,9 @@ pub async fn save_transcript_media(
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase())
-            .filter(|e| !e.is_empty() && e.len() <= 5 && e.bytes().all(|b| b.is_ascii_alphanumeric()))
+            .filter(|e| {
+                !e.is_empty() && e.len() <= 5 && e.bytes().all(|b| b.is_ascii_alphanumeric())
+            })
             .unwrap_or_else(|| "bin".into());
         let dest = dir.join(format!("{id}.{ext}"));
         let tmp = dir.join(format!("{id}.{ext}.tmp"));
@@ -482,7 +488,10 @@ pub async fn save_transcript_media(
         }
         #[cfg(windows)]
         if let Err(e) = crate::audio::windows_owner_only_dacl(&tmp) {
-            tracing::warn!("[transcripts] could not restrict {} to the current user: {e}", tmp.display());
+            tracing::warn!(
+                "[transcripts] could not restrict {} to the current user: {e}",
+                tmp.display()
+            );
         }
         if let Err(e) = std::fs::rename(&tmp, &dest) {
             let _ = std::fs::remove_file(&tmp);
@@ -511,9 +520,12 @@ pub fn transcript_store_stats(
             })
             .unwrap_or(0)
     }
-    let (file_bytes, file_files) = owned_dir_bytes(&files_media_dir(&app, audio_base.clone())?, is_own_media);
-    let (link_bytes, link_files) = owned_dir_bytes(&links_media_dir(&app, audio_base.clone())?, is_own_media);
-    let (video_bytes, video_files) = owned_dir_bytes(&video_media_dir(&app, audio_base.clone())?, is_own_media);
+    let (file_bytes, file_files) =
+        owned_dir_bytes(&files_media_dir(&app, audio_base.clone())?, is_own_media);
+    let (link_bytes, link_files) =
+        owned_dir_bytes(&links_media_dir(&app, audio_base.clone())?, is_own_media);
+    let (video_bytes, video_files) =
+        owned_dir_bytes(&video_media_dir(&app, audio_base.clone())?, is_own_media);
     let (rec_bytes, rec_files) = crate::commands::resolve_recordings_dir(&app, audio_base)
         .map(|d| {
             owned_dir_bytes(&d, |p| {
@@ -568,7 +580,10 @@ pub fn delete_all_dictations(app: AppHandle, audio_base: Option<String>) -> Resu
 /// "Delete all transcriptions": every file/link record with its corrections;
 /// the orphan sweep then drops their audio.
 #[tauri::command]
-pub fn clear_file_transcriptions(app: AppHandle, audio_base: Option<String>) -> Result<u32, String> {
+pub fn clear_file_transcriptions(
+    app: AppHandle,
+    audio_base: Option<String>,
+) -> Result<u32, String> {
     let removed = wipe_records(&transcripts_dir(&app)?) as u32;
     sweep_orphan_media(&app, audio_base);
     Ok(removed)
@@ -655,8 +670,7 @@ fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
             if !is_own_media(&path) {
                 continue;
             }
-            if !records.join(format!("{stem}.json")).exists()
-                && std::fs::remove_file(&path).is_ok()
+            if !records.join(format!("{stem}.json")).exists() && std::fs::remove_file(&path).is_ok()
             {
                 removed += 1;
             }
@@ -696,7 +710,9 @@ pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
     }
     if removed > 0 {
         let effective = days.min(MAX_RETENTION_DAYS);
-        tracing::info!("[transcripts] retention: removed {removed} record(s) older than {effective}d");
+        tracing::info!(
+            "[transcripts] retention: removed {removed} record(s) older than {effective}d"
+        );
     }
     removed
 }
@@ -770,7 +786,9 @@ mod tests {
 
     #[test]
     fn media_ownership_guard_only_matches_our_ids() {
-        assert!(is_own_media(Path::new("/x/files/9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.m4a")));
+        assert!(is_own_media(Path::new(
+            "/x/files/9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.m4a"
+        )));
         assert!(!is_own_media(Path::new("/x/files/my-album.mp3")));
         assert!(!is_own_media(Path::new("/x/links/notes.txt")));
         assert!(!is_own_media(Path::new("/x/files/holiday video.mp4")));
@@ -780,7 +798,12 @@ mod tests {
     fn dictation_audio_removal_spares_foreign_files() {
         let dir = std::env::temp_dir().join(format!("fwf-dict-rm-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        for n in ["dictation-1.wav", "dictation-1.txt", "interview.wav", "interview.txt"] {
+        for n in [
+            "dictation-1.wav",
+            "dictation-1.txt",
+            "interview.wav",
+            "interview.txt",
+        ] {
             std::fs::write(dir.join(n), b"x").unwrap();
         }
         remove_dictation_audio(dir.join("dictation-1.wav").to_str().unwrap());
@@ -794,7 +817,9 @@ mod tests {
 
     #[test]
     fn ownership_is_uuid_shaped_not_merely_hex() {
-        assert!(is_own_media(Path::new("/x/files/9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.m4a")));
+        assert!(is_own_media(Path::new(
+            "/x/files/9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.m4a"
+        )));
         assert!(!is_own_media(Path::new("/x/files/20260901.mp3")));
         assert!(!is_own_media(Path::new("/x/files/12345678.wav")));
         assert!(!is_own_media(Path::new("/x/files/cafe1234.wav")));
@@ -825,7 +850,8 @@ mod tests {
 
     #[test]
     fn prune_only_touches_old_json() {
-        let dir = std::env::temp_dir().join(format!("fwf-transcripts-prune-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("fwf-transcripts-prune-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let old = dir.join("aaaa1111.json");
