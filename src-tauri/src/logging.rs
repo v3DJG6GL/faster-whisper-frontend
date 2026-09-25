@@ -420,7 +420,7 @@ pub fn spawn_emit_pump(app: AppHandle) {
                         inner.emitted_seq = last.seq + 1;
                     }
                 }
-                if tick % STATUS_EVERY_TICKS == 0 {
+                if tick.is_multiple_of(STATUS_EVERY_TICKS) {
                     let now = (inner.errors, inner.warns);
                     if now != inner.status_emitted {
                         inner.status_emitted = now;

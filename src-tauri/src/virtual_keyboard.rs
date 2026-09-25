@@ -47,18 +47,15 @@ pub struct VkJob {
 }
 
 #[cfg_attr(windows, allow(dead_code))] // Active is only constructed by the Linux worker startup
+#[derive(Default)]
 enum VkChannel {
+    #[default]
     Unstarted,
     Active(mpsc::UnboundedSender<VkJob>),
     /// Determined unsupported (no protocol / init failed) — don't retry; fall back.
     Unavailable,
 }
 
-impl Default for VkChannel {
-    fn default() -> Self {
-        VkChannel::Unstarted
-    }
-}
 
 /// Managed state: the lazily-started channel to the virtual-keyboard thread.
 #[derive(Default)]

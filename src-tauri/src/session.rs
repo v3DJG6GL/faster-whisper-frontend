@@ -142,8 +142,8 @@ pub struct StreamSession {
 }
 
 impl StreamSession {
-    /// User-requested stop: stop capture, then let the WS task drain (flush + stop
-    /// + final) in the background so the last utterance is still delivered. Takes
+    /// User-requested stop: stop capture, then let the WS task drain (flush, stop,
+    /// final) in the background so the last utterance is still delivered. Takes
     /// the task out first so the `Drop` below won't abort it.
     pub fn finish(mut self) {
         self.capture_stop.store(true, Ordering::SeqCst);

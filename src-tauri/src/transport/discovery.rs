@@ -217,13 +217,10 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     caps.translation_models = bound_models(caps.translation_models);
     caps.diarization_models = bound_models(caps.diarization_models);
     caps.separation_models = bound_models(caps.separation_models);
-    let bound_langs = |list: Option<Vec<String>>| {
-        list.map(|mut v| {
-            v.truncate(MAX_MODELS);
-            v.iter().map(|s| super::bounded_server_text(s, 16)).collect::<Vec<_>>()
-        })
-    };
-    caps.translation_languages = bound_langs(caps.translation_languages);
+    caps.translation_languages = caps.translation_languages.map(|mut v| {
+        v.truncate(MAX_MODELS);
+        v.iter().map(|s| super::bounded_server_text(s, 16)).collect()
+    });
     caps.translate_to_default = caps.translate_to_default.map(|mut v| {
         v.truncate(super::MAX_TARGETS);
         v.iter().map(|s| super::bounded_server_text(s, 16)).collect()

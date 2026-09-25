@@ -727,6 +727,7 @@ fn mime_for(path: &Path) -> &'static str {
 }
 
 /// Transcribe a file from disk (used by the Transcribe screen).
+#[allow(clippy::too_many_arguments)]
 pub async fn transcribe(
     server_url: &str,
     api_key: Option<&str>,
@@ -764,6 +765,7 @@ pub async fn transcribe(
 }
 
 /// Transcribe an in-memory WAV (used by batch-mode dictation recording).
+#[allow(clippy::too_many_arguments)]
 pub async fn transcribe_wav_bytes(
     server_url: &str,
     api_key: Option<&str>,
@@ -797,6 +799,7 @@ pub enum SourcePart {
 /// Transcribe a pasted media link: the server downloads the audio (yt-dlp)
 /// and runs the normal pipeline. Full-backend only (gated by the
 /// `url_download_enabled` capability); the URL itself is the only payload.
+#[allow(clippy::too_many_arguments)]
 pub async fn transcribe_url(
     server_url: &str,
     api_key: Option<&str>,
@@ -837,12 +840,13 @@ fn validate_media_url(source_url: &str) -> anyhow::Result<()> {
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         bail!("only http(s) links are supported");
     }
-    if parsed.host_str().map_or(true, |h| h.is_empty()) {
+    if parsed.host_str().is_none_or(|h| h.is_empty()) {
         bail!("the link has no host");
     }
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn post(
     server_url: &str,
     api_key: Option<&str>,
@@ -970,7 +974,7 @@ async fn post(
     }
     // Per-request decode overrides as a JSON Form field (only when non-empty).
     if let Some(v) = overrides {
-        if v.as_object().map_or(false, |m| !m.is_empty()) {
+        if v.as_object().is_some_and(|m| !m.is_empty()) {
             if let Ok(s) = serde_json::to_string(v) {
                 form = form.text("decode_overrides", s);
             }

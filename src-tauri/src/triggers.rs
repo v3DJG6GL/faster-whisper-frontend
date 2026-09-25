@@ -279,7 +279,7 @@ pub fn unregister_all(app: &AppHandle) {
         return;
     };
     for sc in map.keys() {
-        let _ = gs.unregister(sc.clone());
+        let _ = gs.unregister(*sc);
     }
     map.clear();
 }
@@ -297,7 +297,7 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
         return;
     };
     for sc in map.keys() {
-        let _ = gs.unregister(sc.clone());
+        let _ = gs.unregister(*sc);
     }
     map.clear();
 
@@ -338,7 +338,7 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
             tracing::warn!("[hotkey] '{accel_log}' has the same chord as an earlier profile; ignoring it (the Profiles screen flags this as a conflict)");
             continue;
         }
-        match gs.register(shortcut.clone()) {
+        match gs.register(shortcut) {
             Ok(()) => {
                 tracing::info!(
                     "[hotkey] registered '{accel_log}' → {} ({:?})",
@@ -368,7 +368,7 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
                     Ok(shortcut) if map.contains_key(&shortcut) => tracing::warn!(
                         "[hotkey] quick-add '{safe_accel}' has the same chord as a profile; ignoring it"
                     ),
-                    Ok(shortcut) => match gs.register(shortcut.clone()) {
+                    Ok(shortcut) => match gs.register(shortcut) {
                         Ok(()) => {
                             tracing::info!("[hotkey] registered '{safe_accel}' → quick-add");
                             map.insert(shortcut, ShortcutTarget::OpenQuickAdd);

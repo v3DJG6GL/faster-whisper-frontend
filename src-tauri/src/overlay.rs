@@ -397,7 +397,7 @@ pub fn chip_pointer_over(app: AppHandle) -> bool {
             under.is_some(),
             toplevel_eq,
         );
-        return toplevel_eq == Some(true);
+        toplevel_eq == Some(true)
     }
     #[cfg(windows)]
     {
@@ -622,7 +622,7 @@ mod win_hover {
             let visible = VISIBLE.load(Ordering::SeqCst);
             if visible {
                 ticks = ticks.wrapping_add(1);
-                if ticks % TOPMOST_EVERY == 0 {
+                if ticks.is_multiple_of(TOPMOST_EVERY) {
                     #[cfg(windows)]
                     super::repair_topmost(&app);
                 }

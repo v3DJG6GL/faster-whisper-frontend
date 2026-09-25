@@ -435,6 +435,7 @@ pub async fn test_connection(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn transcribe_file(
     server_url: String,
     backend_id: Option<String>,
@@ -550,6 +551,7 @@ pub async fn cancel_text_translation(
 /// connection), and the Transcribe screen pairs that with the server-side
 /// cancel by progress id, which also terminates the download subprocess.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn transcribe_url(
     server_url: String,
     backend_id: Option<String>,
@@ -848,7 +850,7 @@ pub async fn package_media(
             let now = std::time::Instant::now();
             let due = last.1 != phase
                 || total == Some(done)
-                || last.0.map_or(true, |t| now.duration_since(t) >= std::time::Duration::from_millis(100));
+                || last.0.is_none_or(|t| now.duration_since(t) >= std::time::Duration::from_millis(100));
             if !due {
                 return;
             }
@@ -1520,12 +1522,12 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
     // rendering the raw string as a key cap. Every real code is a `KeyboardEvent.code`-style
     // token — the longest in the tree is well under 32 — so this rejects only forgeries.
     const MAX_CHORD_CODE_LEN: usize = 64;
-    let meta = std::fs::metadata(&path).map_err(|e| format!("Could not read the file: {e}"))?;
+    let meta = std::fs::metadata(path).map_err(|e| format!("Could not read the file: {e}"))?;
     if meta.len() > MAX_IMPORT_BYTES {
         return Err("That file is too large to be a settings export.".into());
     }
     let text =
-        std::fs::read_to_string(&path).map_err(|e| format!("Could not read the file: {e}"))?;
+        std::fs::read_to_string(path).map_err(|e| format!("Could not read the file: {e}"))?;
     let mut doc: serde_json::Value = serde_json::from_str(&text)
         .map_err(|_| "That file isn't valid JSON.".to_string())?;
 
@@ -2727,6 +2729,7 @@ pub struct InjectOutcome {
 /// Direct typing on Wayland routes through the RemoteDesktop portal; everything
 /// else uses enigo (clipboard paste, or direct on X11/Windows).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn inject_text(
     app: AppHandle,
     typer: State<'_, WaylandTyper>,

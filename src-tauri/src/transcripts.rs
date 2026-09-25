@@ -1,8 +1,8 @@
 //! Local transcription history: one JSON file per finished batch run under
 //! `<app_data_dir>/transcripts/<id>.json`.
 //!
-//! The record content is FRONTEND-OWNED opaque JSON (result + user corrections
-//! + speaker renames/colors + the settings used) — Rust stores and lists it
+//! The record content is FRONTEND-OWNED opaque JSON (result, user corrections,
+//! speaker renames/colors and the settings used) — Rust stores and lists it
 //! but never interprets it, the same contract as `sync-state.json` and
 //! `quick_launch`. The files themselves are the source of truth: listing reads
 //! the directory, there is no index to corrupt. Records are as sensitive as

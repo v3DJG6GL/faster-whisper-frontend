@@ -150,66 +150,6 @@ fn build_request_body<'a>(
     }
 }
 
-#[cfg(test)]
-mod request_body_tests {
-    use super::build_request_body;
-
-    fn body(source: Option<&str>, glossary: Option<&str>) -> serde_json::Value {
-        let texts = vec!["hallo".to_string()];
-        let targets = vec!["en".to_string()];
-        serde_json::to_value(build_request_body(
-            &texts, &targets, source, None, None, glossary, None, None, None, None,
-        ))
-        .unwrap()
-    }
-
-    #[test]
-    fn an_explicitly_cleared_glossary_is_sent_and_an_absent_one_is_omitted() {
-        // The distinction the whole change exists for: "" = no glossary (overrides the
-        // server's own), absent = inherit it.
-        assert_eq!(body(None, Some(""))["translation_glossary"], "");
-        assert!(body(None, None).get("translation_glossary").is_none());
-        assert_eq!(body(None, Some("a = b"))["translation_glossary"], "a = b");
-    }
-
-    #[test]
-    fn a_whitespace_only_glossary_is_still_a_present_value() {
-        // It used to be trimmed away into "absent", which re-inherited. The server owns
-        // the decision about what an all-blank glossary means; the client just says it.
-        assert_eq!(body(None, Some("   "))["translation_glossary"], "   ");
-    }
-
-    #[test]
-    fn an_empty_source_is_sent_verbatim_not_pruned() {
-        assert_eq!(body(Some(""), None)["source"], "");
-        assert!(body(None, None).get("source").is_none());
-        assert_eq!(body(Some("de"), None)["source"], "de");
-    }
-
-    #[test]
-    fn model_and_mode_keep_their_truthiness_prune() {
-        // Not tri-state: their pickers have an "Inherit" row, so "" is no choice at all.
-        let texts = vec!["hallo".to_string()];
-        let targets = vec!["en".to_string()];
-        let v = serde_json::to_value(build_request_body(
-            &texts,
-            &targets,
-            None,
-            Some(""),
-            Some(""),
-            None,
-            None,
-            Some(""),
-            Some(""),
-            Some(""),
-        ))
-        .unwrap();
-        for key in ["translation_model", "translation_mode", "progress_id", "captured_id", "client_job"] {
-            assert!(v.get(key).is_none(), "{key} should be omitted");
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub async fn translate_texts(
     server_url: &str,
@@ -321,4 +261,64 @@ pub async fn translate_texts(
             .collect(),
         plan: parsed.plan.map(super::batch::bound_plan),
     })
+}
+
+#[cfg(test)]
+mod request_body_tests {
+    use super::build_request_body;
+
+    fn body(source: Option<&str>, glossary: Option<&str>) -> serde_json::Value {
+        let texts = vec!["hallo".to_string()];
+        let targets = vec!["en".to_string()];
+        serde_json::to_value(build_request_body(
+            &texts, &targets, source, None, None, glossary, None, None, None, None,
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn an_explicitly_cleared_glossary_is_sent_and_an_absent_one_is_omitted() {
+        // The distinction the whole change exists for: "" = no glossary (overrides the
+        // server's own), absent = inherit it.
+        assert_eq!(body(None, Some(""))["translation_glossary"], "");
+        assert!(body(None, None).get("translation_glossary").is_none());
+        assert_eq!(body(None, Some("a = b"))["translation_glossary"], "a = b");
+    }
+
+    #[test]
+    fn a_whitespace_only_glossary_is_still_a_present_value() {
+        // It used to be trimmed away into "absent", which re-inherited. The server owns
+        // the decision about what an all-blank glossary means; the client just says it.
+        assert_eq!(body(None, Some("   "))["translation_glossary"], "   ");
+    }
+
+    #[test]
+    fn an_empty_source_is_sent_verbatim_not_pruned() {
+        assert_eq!(body(Some(""), None)["source"], "");
+        assert!(body(None, None).get("source").is_none());
+        assert_eq!(body(Some("de"), None)["source"], "de");
+    }
+
+    #[test]
+    fn model_and_mode_keep_their_truthiness_prune() {
+        // Not tri-state: their pickers have an "Inherit" row, so "" is no choice at all.
+        let texts = vec!["hallo".to_string()];
+        let targets = vec!["en".to_string()];
+        let v = serde_json::to_value(build_request_body(
+            &texts,
+            &targets,
+            None,
+            Some(""),
+            Some(""),
+            None,
+            None,
+            Some(""),
+            Some(""),
+            Some(""),
+        ))
+        .unwrap();
+        for key in ["translation_model", "translation_mode", "progress_id", "captured_id", "client_job"] {
+            assert!(v.get(key).is_none(), "{key} should be omitted");
+        }
+    }
 }

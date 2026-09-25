@@ -17,6 +17,7 @@
 //!   * otherwise move. `rename` first — same volume, atomic, instant even with gigabytes of
 //!     audio. If that fails (AppData redirected to another volume, a locked file), copy into
 //!     a staging sibling, swap it in, and delete the old folder only after the copy succeeded.
+//!
 //! The move is one-way: an older build started afterwards finds empty folders and shows
 //! onboarding (backend keys survive — the keyring is not identifier-scoped).
 

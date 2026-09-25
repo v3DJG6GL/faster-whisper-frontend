@@ -322,7 +322,7 @@ pub async fn run<F>(
     }
     // Forward per-request decode overrides as a nested object (only when non-empty).
     if let Some(v) = &params.decode_overrides {
-        if v.as_object().map_or(false, |m| !m.is_empty()) {
+        if v.as_object().is_some_and(|m| !m.is_empty()) {
             config["decode_overrides"] = v.clone();
         }
     }
@@ -334,7 +334,7 @@ pub async fn run<F>(
     }
     // Forward the translation declaration (only when it names targets).
     if let Some(v) = &params.translate_expect {
-        if v.as_object().map_or(false, |m| !m.is_empty()) {
+        if v.as_object().is_some_and(|m| !m.is_empty()) {
             config["translate_expect"] = v.clone();
         }
     }

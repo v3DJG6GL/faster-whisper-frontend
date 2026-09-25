@@ -271,6 +271,7 @@ pub enum Landed {
 /// thread no matter who asks.
 pub type OwnWindowFocused<'a> = &'a (dyn Fn() -> bool + Sync);
 
+#[allow(clippy::too_many_arguments)]
 pub fn inject(
     text: &str,
     method: &str,

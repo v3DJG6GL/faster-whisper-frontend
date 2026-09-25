@@ -145,14 +145,14 @@ mod imp {
     fn active_xkb_group() -> u32 {
         use libc::{c_char, c_int, c_uint, c_void};
         unsafe {
-            let lib = libc::dlopen(b"libX11.so.6\0".as_ptr() as *const c_char, libc::RTLD_NOW);
+            let lib = libc::dlopen(c"libX11.so.6".as_ptr(), libc::RTLD_NOW);
             if lib.is_null() {
                 return 0;
             }
-            let open = libc::dlsym(lib, b"XOpenDisplay\0".as_ptr() as *const c_char);
-            let close = libc::dlsym(lib, b"XCloseDisplay\0".as_ptr() as *const c_char);
-            let query = libc::dlsym(lib, b"XkbQueryExtension\0".as_ptr() as *const c_char);
-            let state_fn = libc::dlsym(lib, b"XkbGetState\0".as_ptr() as *const c_char);
+            let open = libc::dlsym(lib, c"XOpenDisplay".as_ptr());
+            let close = libc::dlsym(lib, c"XCloseDisplay".as_ptr());
+            let query = libc::dlsym(lib, c"XkbQueryExtension".as_ptr());
+            let state_fn = libc::dlsym(lib, c"XkbGetState".as_ptr());
             if open.is_null() || close.is_null() || query.is_null() || state_fn.is_null() {
                 libc::dlclose(lib);
                 return 0;
@@ -689,7 +689,7 @@ mod imp {
                     let Some(spec) = key_spec_for(c, &charmap) else {
                         continue; // char not reachable on this layout — skip
                     };
-                    if typed % 32 == 0 && typed > 0 && own_window_focused(app) {
+                    if typed.is_multiple_of(32) && typed > 0 && own_window_focused(app) {
                         tracing::info!(
                             "[wayland-inject] stopped mid-typing: our own window took focus ({typed} chars in)"
                         );

@@ -271,7 +271,7 @@ mod imp {
     /// neither a fast-ending stream nor an Err/Ok alternation can flood the ring
     /// at the 2 s retry cadence.
     pub(super) fn should_log(failures: u32) -> bool {
-        failures == 1 || failures % 30 == 0
+        failures == 1 || failures.is_multiple_of(30)
     }
 
     pub(super) async fn run(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String> {
@@ -389,13 +389,8 @@ mod imp {
         // tracking (the bug a single shared slot caused). Resolved OFF the event loop (a11y
         // round-trips run on the target app's UI thread). Processed per cycle in the order
         // activate → deactivate → focus so the foreground mark is right before focus is gated.
-        let pending: Arc<
-            parking_lot::Mutex<(
-                Option<ObjectRefOwned>,
-                Option<ObjectRefOwned>,
-                Option<ObjectRefOwned>,
-            )>,
-        > = Arc::new(parking_lot::Mutex::new((None, None, None)));
+        type Slots = (Option<ObjectRefOwned>, Option<ObjectRefOwned>, Option<ObjectRefOwned>);
+        let pending: Arc<parking_lot::Mutex<Slots>> = Arc::new(parking_lot::Mutex::new((None, None, None)));
         let notify = Arc::new(tokio::sync::Notify::new());
         let resolver = {
             let pending = pending.clone();
@@ -740,7 +735,7 @@ mod imp {
         // even though the same field is still focused. A switch to a DIFFERENT app must still clear
         // it (no stale cross-app ref); the element focus that follows the switch replaces it.
         let reactivating_same =
-            element.is_none() && snap.current.as_ref().map_or(false, |c| c.app_id == app_id);
+            element.is_none() && snap.current.as_ref().is_some_and(|c| c.app_id == app_id);
         let fa = super::FocusedApp {
             title: app_id.clone(),
             app_id,

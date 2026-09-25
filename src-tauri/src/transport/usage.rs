@@ -65,7 +65,7 @@ pub async fn post_usage_outcomes(
     // a request the server will refuse every time.
     let bad = outcomes.iter().any(|o| {
         !job_id_ok(&o.job_id)
-            || o.app_id.as_deref().map_or(false, |a| a.is_empty() || a.chars().count() > 64)
+            || o.app_id.as_deref().is_some_and(|a| a.is_empty() || a.chars().count() > 64)
     });
     if bad || outcomes.is_empty() || outcomes.len() > MAX_OUTCOMES {
         return UsageOutcomePost {

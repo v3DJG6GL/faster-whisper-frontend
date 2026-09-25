@@ -162,6 +162,16 @@ impl SeedRendezvous {
     }
 }
 
+// One seed grab at a time — the flag itself lives in `win_seed`, its owner, so that the SECOND
+// caller (`commands::get_focused_selection`, the correct-on-close re-grab) is covered too and so
+// it is held for the grab's real lifetime rather than until a caller's timeout.
+//
+// The grab saves the clipboard, synthesizes a copy chord, then
+// restores what it saved — so two overlapping runs interleave: the second snapshots the
+// FIRST one's freshly-copied selection as "the user's clipboard", the first restores the
+// real one, and the second then puts the selection back. Net effect is the user's own
+// clipboard destroyed and their selection left resident globally, which is exactly the
+// residue the restore exists to prevent.
 /// Show + focus the quick-add window and signal the webview to (re)focus its
 /// field and refresh the list. Safe to call repeatedly (each summon re-centers).
 ///
@@ -174,17 +184,6 @@ impl SeedRendezvous {
 /// remote-desktop client the show is held until the copy LANDS (or a short grace
 /// passes) — stealing the client's focus at injection time stops its input forwarding
 /// and can kill the chord before the remote app ever copies (see `win_seed::grab`).
-// One seed grab at a time — the flag itself lives in `win_seed`, its owner, so that the SECOND
-// caller (`commands::get_focused_selection`, the correct-on-close re-grab) is covered too and so
-// it is held for the grab's real lifetime rather than until a caller's timeout.
-//
-// The grab saves the clipboard, synthesizes a copy chord, then
-// restores what it saved — so two overlapping runs interleave: the second snapshots the
-// FIRST one's freshly-copied selection as "the user's clipboard", the first restores the
-// real one, and the second then puts the selection back. Net effect is the user's own
-// clipboard destroyed and their selection left resident globally, which is exactly the
-// residue the restore exists to prevent.
-
 pub fn show(app: &AppHandle) {
     #[cfg(windows)]
     {

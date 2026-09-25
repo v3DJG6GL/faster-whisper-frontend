@@ -67,7 +67,7 @@ mod imp {
 
     fn is_keyboard(d: &Device) -> bool {
         d.supported_keys()
-            .map_or(false, |k| k.contains(Key::KEY_ENTER))
+            .is_some_and(|k| k.contains(Key::KEY_ENTER))
     }
 
     /// Can we actually open a keyboard for reading (i.e. are we permitted)?
