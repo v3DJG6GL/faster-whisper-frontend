@@ -106,6 +106,15 @@ describe("manifest integrity", () => {
     expect(DEFS.some((d) => d.fields.some((f) => f.slice === "general" && f.key === "insertTiming"))).toBe(false);
   });
 
+  it("the clipboard-history privacy setting syncs by default, under Dictation → Insertion", () => {
+    // A preference about the user's data, not about this machine: turning it on at one desk
+    // should reach the others, so it is deliberately NOT machineSpecific.
+    expect(DEFAULT_SETTING_SYNC.excludeFromClipboardHistory).toBe(true);
+    expect(SETTING.excludeFromClipboardHistory.section).toBe("Insertion");
+    expect(settingsOfGroup("dictation").some((d) => d.id === "excludeFromClipboardHistory")).toBe(true);
+    expect(GENERAL_COVERAGE.excludeFromClipboardHistory).toBe("excludeFromClipboardHistory");
+  });
+
   it("legacy sub-toggle semantics carry over (defaults preserve today's behavior)", () => {
     // The four pre-manifest sub-toggles keep their defaults under new ids.
     expect(DEFAULT_SETTING_SYNC.audioFolder).toBe(false); // was recordingsDir: false

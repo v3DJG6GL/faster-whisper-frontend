@@ -514,6 +514,62 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(r.insertMethod).toBe("direct"); // the rest still applies
   });
 
+  it("excludeFromClipboardHistory travels in the general block and applies", async () => {
+    // Not machine-specific: a user who wants dictated text out of clipboard history wants it
+    // on every device, so it composes like restoreClipboard and applies like it.
+    const cfg = slice();
+    cfg.settings.general.excludeFromClipboardHistory = false;
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    expect(blob.general?.excludeFromClipboardHistory).toBe(false);
+
+    useApp.setState({ settings: settings(), appRules: [] });
+    expect(useApp.getState().settings.general.excludeFromClipboardHistory).toBe(true);
+    await applyBlob({ general: { excludeFromClipboardHistory: false } }, { ...CATS_ALL, backends: false, profiles: false });
+    expect(useApp.getState().settings.general.excludeFromClipboardHistory).toBe(false);
+  });
+
+  it("a blob written before excludeFromClipboardHistory existed keeps the local value", async () => {
+    useApp.setState({ settings: settings(), appRules: [] });
+    await applyBlob({ general: { soundEffects: false } }, { ...CATS_ALL, backends: false, profiles: false });
+    expect(useApp.getState().settings.general.excludeFromClipboardHistory).toBe(true);
+  });
+
+  it("an app rule's remoteDesktop is clamped to true / false / null, junk dropped to auto", async () => {
+    useApp.setState({ settings: settings(), appRules: [] });
+    const bucket = IS_WINDOWS ? "windows" : "linux";
+    await applyBlob(
+      {
+        appRules: {
+          [bucket]: [
+            { id: "a", appId: "mstsc", block: false, remoteDesktop: true },
+            { id: "b", appId: "anydesk", block: false, remoteDesktop: false },
+            { id: "c", appId: "citrix", block: false, remoteDesktop: null },
+            { id: "d", appId: "vncviewer", block: false, remoteDesktop: "yes" },
+            { id: "e", appId: "konsole", block: false },
+          ],
+        } as never,
+      },
+      { ...CATS_ALL, backends: false, profiles: false },
+    );
+    const by = (id: string) => useApp.getState().appRules.find((x) => x.id === id)!;
+    expect(by("a").remoteDesktop).toBe(true);
+    expect(by("b").remoteDesktop).toBe(false);
+    expect(by("c").remoteDesktop).toBeNull();
+    // A truthy string must never force the remote path — it reads as auto (unset).
+    expect(by("d").remoteDesktop ?? null).toBeNull();
+    expect(by("e").remoteDesktop ?? null).toBeNull();
+  });
+
+  it("an app rule's remoteDesktop composes into this OS's bucket", async () => {
+    const cfg = {
+      ...slice(),
+      appRules: [{ id: "r1", appId: "mstsc", block: false, remoteDesktop: false }] as never[],
+    };
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    const mine = blob.appRules![IS_WINDOWS ? "windows" : "linux"][0] as unknown as Record<string, unknown>;
+    expect(mine.remoteDesktop).toBe(false);
+  });
+
   it("a malformed category container is skipped whole, never spread", async () => {
     // `"backends": []` / a string / a number are all truthy: without the isPlainObject
     // guard `sanitizeBackends(undefined)` returned [] and the dangling-reference scrub

@@ -170,3 +170,60 @@ describe("every transcribe epoch bump abandons the server-side run", () => {
     });
   }
 });
+
+describe("live typed baseline: the hard-break carry and clipboard delivery", () => {
+  // The carry (text a hard break threw away before it was typed) and the clipboard-delivered
+  // advance are both bookkeeping on `injectedText` spread across three handlers and two
+  // teardowns. None of it is reachable without Tauri, so pin the shape here: a carry that
+  // outlives its session types session A's leftovers into session B's window, and an ungated
+  // one types a stop-timing session's text twice.
+  const fns = topLevelFunctions(streamingSrc);
+  const finalBody = bodyAfter(streamingSrc, '"stream://final"');
+  const boundaryBody = bodyAfter(streamingSrc, '"stream://boundary"');
+  const clears = (body: string) => /\bcarryText =\s+;/.test(mask(body)) && /\bcarrySep =\s+;/.test(mask(body));
+
+  it("cancelLive and startLiveInner clear the carry", () => {
+    expect(clears(fns.cancelLive), "cancelLive must drop a pending carry").toBe(true);
+    expect(clears(fns.startLiveInner), "startLiveInner must not inherit the last session's carry").toBe(true);
+  });
+
+  it("the boundary captures the document before clearing it", () => {
+    const m = mask(boundaryBody);
+    const capture = m.indexOf("const docAtBreak = committedDoc");
+    const clear = m.search(/\bcommittedDoc =\s+;/);
+    expect(capture).toBeGreaterThanOrEqual(0);
+    expect(clear).toBeGreaterThan(capture);
+  });
+
+  it("the boundary link carries only for a live session, then clears the baseline", () => {
+    const link = mask(bodyAfter(boundaryBody, "injectChain = injectChain.then(() =>"));
+    const gate = link.indexOf("cfg?.live");
+    const carry = link.indexOf("untypedRemainder(");
+    expect(gate, "boundary link lost its live gate").toBeGreaterThanOrEqual(0);
+    expect(carry).toBeGreaterThan(gate);
+    expect(link).toMatch(/\binjectedText =\s+;/);
+  });
+
+  it("the separator task stands down while a carry is pending", () => {
+    const task = bodyAfter(boundaryBody, "enqueueInject(async () =>");
+    const skip = task.indexOf("if (carryText) return");
+    expect(skip, "separator task must skip while a carry is pending").toBeGreaterThanOrEqual(0);
+    expect(skip).toBeGreaterThan(task.indexOf("holdCoerced("));
+    expect(skip).toBeLessThan(task.indexOf("t.autoEnter"));
+  });
+
+  it("a delivered typed insert consumes the carry", () => {
+    // Trailing space, no brace: bodyAfter opens at the first `{` AFTER the anchor.
+    expect(clears(bodyAfter(finalBody, "if (delivered) "))).toBe(true);
+  });
+
+  it("a delivered clipboard phrase advances the typed baseline (guarded by clipFrom)", () => {
+    const block = bodyAfter(finalBody, "if (!t.isSelf && landed)");
+    expect(block).toContain("commonPrefixLen(injectedText, target) >= clipFrom");
+    expect(block).toContain("injectedText = target");
+  });
+
+  it("a release final (no utterance ordinal) doesn't end the open utterance", () => {
+    expect(finalBody).toContain('if (typeof e.payload.utterance === "number" || pending.state === null) endUtterance();');
+  });
+});

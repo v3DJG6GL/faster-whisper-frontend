@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { AppWindow, Ban, Crosshair, Pencil, Trash2 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, ConfirmLeave, EditorHeader, Labeled, ListScreenHeader, Notice, SectionLabel, TextInput, Toggle } from "@/components/ui";
+import { Button, Card, ConfirmLeave, EditorHeader, Labeled, ListScreenHeader, Notice, SectionLabel, Segmented, TextInput, Toggle } from "@/components/ui";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
-import { getFocusedOtherApp } from "@/lib/api";
+import { getFocusedOtherApp, remoteDesktopAutoDetected } from "@/lib/api";
 import { pasteLabel } from "@/lib/paste";
 import { dictationControls, FIELD_LABEL, METHOD_OPTIONS } from "@/components/DictationFields";
 import { IS_WINDOWS } from "@/lib/platform";
@@ -35,7 +35,19 @@ const pruneInherit = (x: AppRule): AppRule => ({
   pasteShortcut: x.pasteShortcut ?? undefined,
   autoEnter: x.autoEnter ?? undefined,
   restoreClipboard: x.restoreClipboard ?? undefined,
+  remoteDesktop: x.remoteDesktop ?? undefined,
 });
+
+/** The rule's three-state remote-desktop override as the Segmented control's value.
+ *  Anything but a real boolean is Auto — the same reading `resolveInjectionTarget` gives it. */
+type RemoteMode = "auto" | "on" | "off";
+const REMOTE_OPTIONS: { value: RemoteMode; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  { value: "on", label: "On" },
+  { value: "off", label: "Off" },
+];
+const remoteMode = (v: AppRule["remoteDesktop"]): RemoteMode =>
+  v === true ? "on" : v === false ? "off" : "auto";
 
 function Editor({
   initial,
@@ -54,6 +66,26 @@ function Editor({
   // unless the user hand-typed a custom one (then we leave it). See captureCurrent.
   const lastAutoName = useRef<string | undefined>(undefined);
   const set = (patch: Partial<AppRule>) => setR((x) => ({ ...x, ...patch }));
+
+  // What "Auto" resolves to for the id as typed: Rust's built-in exe list (the window-class
+  // half of the detector needs a live window, so the hint can only speak for the id). Asked
+  // per id change; the `live` flag drops an answer that arrives after the next keystroke, so
+  // a slow reply for "mstsc" can't label "mstsc2". `null` = not asked yet / no id.
+  const detectId = normalizeAppId(r.appId);
+  const [autoRemote, setAutoRemote] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!detectId) {
+      setAutoRemote(null);
+      return;
+    }
+    let live = true;
+    void remoteDesktopAutoDetected(detectId).then((v) => {
+      if (live) setAutoRemote(v);
+    });
+    return () => {
+      live = false;
+    };
+  }, [detectId]);
 
   // Fill appId (and a label) from the most recently focused OTHER window (ours took
   // focus when the user clicked here) — AT-SPI on Linux, win_focus on Windows.
@@ -102,7 +134,7 @@ function Editor({
 
   // Unsaved-work guard, shared with the Profiles and Backends editors: a
   // sidebar click used to discard a half-written rule in silence.
-  // `null` and absent both mean "inherit" for the four override keys (types.ts), and the
+  // `null` and absent both mean "inherit" for the five override keys (types.ts), and the
   // controls write `null` on every change — so compare with both spellings pruned, or a
   // set-then-revert reads as unsaved forever.
   const dirty = isDirty(pruneInherit(r), pruneInherit(initial));
@@ -194,6 +226,28 @@ function Editor({
         );
       })()}
 
+      {/* Rule-only, so it lives here and not in dictationControls: being a remote-desktop client
+          is a property of the TARGET app, and no Profile or global value could sensibly say it.
+          Deliberately NOT disabled for a blocked rule — a block coerces only the method, and the
+          clipboard hand-off that the remote path protects still happens there. */}
+      <Labeled label="Remote desktop" className="mt-4">
+        <Segmented<RemoteMode>
+          ariaLabel="Remote desktop"
+          value={remoteMode(r.remoteDesktop)}
+          options={REMOTE_OPTIONS}
+          onChange={(v) => set({ remoteDesktop: v === "auto" ? null : v === "on" })}
+        />
+        <div className="mt-1.5 text-[12px] text-dim">
+          {remoteMode(r.remoteDesktop) === "auto"
+            ? autoRemote === null
+              ? "Auto — detected from the application id."
+              : autoRemote
+                ? "Auto — detected as a remote-desktop client."
+                : "Auto — not a known remote-desktop client."
+            : "Remote-desktop clients (mstsc, Citrix, AnyDesk…) get a longer paste delay and no clipboard restore."}
+        </div>
+      </Labeled>
+
       <div className="mt-6 flex items-center justify-between">
         <Button variant="ghost" onClick={() => guard.guardExit(onCancel)}>
           Cancel
@@ -220,6 +274,7 @@ function RuleRow({ r, onEdit, onRemove }: { r: AppRule; onEdit: () => void; onRe
         // Only when overridden — an inherited value would just repeat the default on every row.
         r.autoEnter == null ? null : r.autoEnter ? "Enter" : "no Enter",
         r.restoreClipboard == null ? null : r.restoreClipboard ? "restore clipboard" : "keep clipboard",
+        r.remoteDesktop == null ? null : r.remoteDesktop ? "remote desktop" : "not remote desktop",
       ]
         .filter(Boolean)
         .join(" · ");

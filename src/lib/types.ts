@@ -169,6 +169,10 @@ export interface AppRule {
   autoEnter?: boolean | null;
   /** Put the user's clipboard back after pasting, for THIS app. */
   restoreClipboard?: boolean | null;
+  /** Treat THIS app as a remote-desktop client (longer paste settle, no clipboard restore).
+   *  null/absent = auto-detect by app id — the Rust side knows mstsc, Citrix, AnyDesk and
+   *  friends; the override exists for the client it doesn't know, or a false positive. */
+  remoteDesktop?: boolean | null;
 }
 
 /** The focused app as reported by AT-SPI: its id/title plus — when "deep field detection"
@@ -234,6 +238,13 @@ export interface GeneralSettings {
   pasteShortcut: string[];
   autoEnter: boolean;
   restoreClipboard: boolean;
+  /** Mark every clipboard write of OUR transcript as "keep out of history": Windows'
+   *  Clipboard history (Win+V) and cloud clipboard skip it, and clipboard managers that
+   *  honour the hint (Klipper and others) don't keep it. Rust reads this from the saved
+   *  config — no IPC argument — so QuickAdd, recovery writes and diverts all obey it.
+   *  Clipboard RESTORES are always excluded regardless (a restored snapshot has lost its
+   *  source's flags, e.g. a password manager's). Default on. */
+  excludeFromClipboardHistory: boolean;
   /** Default for the per-Profile "Type as I speak" — what a Profile inherits when it sets
    *  no opinion of its own. Replaced the global three-way `insertTiming`, whose "live"
    *  value this carries forward. Still only ACTS on a streaming, hands-free session; see

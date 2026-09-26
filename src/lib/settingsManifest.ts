@@ -153,6 +153,10 @@ export const MANIFEST = [
     localOnly: true, fields: [] },
   { id: "restoreClipboard", section: "Insertion", label: "Restore clipboard afterward", group: "dictation", category: "general",
     fields: [g("restoreClipboard")] },
+  { id: "excludeFromClipboardHistory", section: "Insertion",
+    label: "Keep dictated text out of clipboard history & cloud clipboard",
+    group: "dictation", category: "general",
+    fields: [g("excludeFromClipboardHistory")] },
   { id: "soundCues", label: "Sound cues", group: "general", category: "general",
     fields: [g("soundEffects")] },
 
@@ -318,7 +322,7 @@ export const MANIFEST = [
     desc: "Blocklist and per-app behavior; other-OS rules pass through untouched.",
     custom: "appRulesOs", fields: [] },
   { id: "perAppOverrides", label: "Per-app insertion overrides", group: "appRules", category: "appRules",
-    desc: "Insertion method and clipboard restore, per app. Needs Rules for this OS on.",
+    desc: "Insertion method, clipboard restore and remote-desktop handling, per app. Needs Rules for this OS on.",
     custom: "appRuleOverrides", fields: [] },
   { id: "perAppPasteShortcuts", label: "Per-app paste shortcuts", group: "appRules", category: "appRules",
     desc: "Chords, like the global paste shortcut. Needs Rules for this OS on.",
@@ -370,6 +374,7 @@ export const GENERAL_COVERAGE = {
   pasteShortcut: "pasteShortcut",
   autoEnter: LOCAL, // never accepted from a peer — see the general apply strip in sync.ts
   restoreClipboard: "restoreClipboard",
+  excludeFromClipboardHistory: "excludeFromClipboardHistory",
   soundEffects: "soundCues",
   evdevEnabled: LOCAL, // Permissions-tab hardware opt-in, per machine
   deepFieldDetection: "deepFieldDetection",

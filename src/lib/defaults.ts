@@ -47,6 +47,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     pasteShortcut: ["ControlLeft", "KeyV"],
     autoEnter: false,
     restoreClipboard: true,
+    // Mirrors Rust `default_true` on GeneralSettings.exclude_from_clipboard_history:
+    // dictated text is private by default, history is opt-in.
+    excludeFromClipboardHistory: true,
     soundEffects: true,
     evdevEnabled: false,
     deepFieldDetection: false,

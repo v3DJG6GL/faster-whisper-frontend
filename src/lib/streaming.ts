@@ -17,7 +17,9 @@
 // whole document (committed + tail) beyond what we've already typed — we never
 // backspace/revise. This honours the chosen method (clipboard paste or direct).
 // On a server "boundary" (long-silence hard break) the document resets: we drop our
-// baseline so the next utterance starts fresh, and optionally type a separator.
+// baseline so the next utterance starts fresh, and optionally type a separator. Whatever of
+// the old document was never typed (an own-window skip, a paste Rust declined to attempt) is
+// CARRIED over the break and typed ahead of the next phrase, joined by that separator.
 
 import { useApp } from "./store";
 import { translateFailureDoorway } from "./errors";
@@ -55,6 +57,7 @@ import {
   translateText,
   cancelTextTranslation,
   getTranscribeProgress,
+  logLine,
 } from "./api";
 import {
   newAbortHandle,
@@ -67,6 +70,7 @@ import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, 
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
 import { normalizeAppId } from "./sanitize";
+import { baselineDivergence, commonPrefixLen, joinCarry, untypedRemainder, withCarry } from "./typedBaseline";
 
 let wired = false;
 
@@ -208,6 +212,43 @@ function flushPartial(): void {
 // actually lands (NOT for a phrase the own-window guard skips) — so after a focus switch, text
 // dictated while our own window was focused is re-typed rather than silently dropped.
 let injectedText = "";
+// Text a hard break threw away before it was ever typed, waiting to go out ahead of the next
+// typed phrase — and the boundary separator that goes between them. Filled by the boundary's
+// chained link (the only place that knows the old document AND the drained typed baseline),
+// consumed by the typed branch of the final handler on a delivered insert. Without it, a phrase
+// skipped in our own window — or refused by Rust with nothing written — was cleared together
+// with `injectedText` at the break and never typed anywhere. Session-scoped: startLiveInner and
+// cancelLive clear it, and a session that ends with a carry still pending logs its length.
+let carryText = "";
+let carrySep = "";
+/** Typed-baseline divergence lines logged this session; capped so a server that rewrites every
+ *  seam can't flood the log file. See noteDivergence. */
+let divergenceLogs = 0;
+const MAX_DIVERGENCE_LOGS = 50;
+/** The document no longer EXTENDS what was typed: a seam rewrite (the server re-formatted text
+ *  the client had already typed). The server now promises append-only documents, so each one is
+ *  a bug worth a line — but only positions, lengths and character CLASSES go into it, never the
+ *  text: the log file is what users attach to bug reports. `where` names the call site. */
+function noteDivergence(where: string, typed: string, doc: string, utt: number | null): void {
+  const d = baselineDivergence(typed, doc);
+  if (!d || divergenceLogs >= MAX_DIVERGENCE_LOGS) return;
+  divergenceLogs++;
+  const last = divergenceLogs === MAX_DIVERGENCE_LOGS ? " (log cap reached, further ones this session unlogged)" : "";
+  logLine(
+    "warn",
+    "dictation",
+    `typed baseline diverged at ${where}${utt !== null ? ` utt=${utt}` : ""}: at=${d.at} typed=${d.typedLen} doc=${d.docLen} typedCh=${d.typedCh} docCh=${d.docCh}${last}`,
+  );
+}
+/** A session ended with a carry nobody typed (the last phrases never reached a real window). The
+ *  text is still in the session transcript (History, when kept); this only records that it was
+ *  never typed. Length only, like every other line from here. */
+function noteDroppedCarry(): void {
+  if (!carryText) return;
+  logLine("info", "dictation", `session ended with ${carryText.length} carried chars never typed (dropped)`);
+  carryText = "";
+  carrySep = "";
+}
 // The last final's document (advanced synchronously per final), used ONLY for the "did the document
 // grow" guard — distinguishes a real new phrase from a re-sent `final` (the flush final emitted at
 // hands-free end), independent of whether/where it was typed. Separate from `injectedText` so the typed
@@ -827,7 +868,7 @@ function enqueueAutoEnter(): void {
     // The target decides: an app rule can turn Enter off for this window even when the
     // profile/global has it on (a chat client submits, an editor must not).
     if (!t.autoEnter) return;
-    await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+    await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
   });
 }
 
@@ -997,6 +1038,12 @@ export function resolveInjectionTarget(
   pasteShortcut: string[];
   autoEnter: boolean;
   restoreClipboard: boolean;
+  /** The app rule's remote-desktop override, handed to Rust verbatim: `true`/`false` force it,
+   *  `null` lets Rust auto-detect (exe list + window class). Rule-only — neither the Profile nor
+   *  the global has an opinion here, because being a remote-desktop client is a property of
+   *  the TARGET app, not of how the user wants to insert. Anything but a real boolean is null:
+   *  a synced junk value must fall back to detection, never to a forced answer. */
+  remoteDesktop: boolean | null;
   /** Our own window is focused — nothing is typed here, and no app rule matched. */
   isSelf: boolean;
 } {
@@ -1015,6 +1062,7 @@ export function resolveInjectionTarget(
       pasteShortcut: prof?.pasteShortcut ?? g.pasteShortcut,
       autoEnter: prof?.autoEnter ?? g.autoEnter,
       restoreClipboard: prof?.restoreClipboard ?? g.restoreClipboard,
+      remoteDesktop: null,
       isSelf: true,
     };
   }
@@ -1040,6 +1088,7 @@ export function resolveInjectionTarget(
   // the text isn't lost — it lands on the clipboard for the user to paste.
   //
   // Precedence for the four preference fields: constraint > app rule > profile > global.
+  // (`remoteDesktop` below is rule-only: it describes the target, not a preference.)
   // The CONSTRAINT (block / notEditable) applies to `method` only — a blocked app is already
   // clipboard-only, and the `holdCoerced` guards downstream suppress the Enter from there.
   // Below it the app rule wins over the profile because it expresses what the TARGET can
@@ -1051,7 +1100,8 @@ export function resolveInjectionTarget(
   const pasteShortcut = rule?.pasteShortcut ?? prof?.pasteShortcut ?? g.pasteShortcut;
   const autoEnter = rule?.autoEnter ?? prof?.autoEnter ?? g.autoEnter;
   const restoreClipboard = rule?.restoreClipboard ?? prof?.restoreClipboard ?? g.restoreClipboard;
-  return { rule, notEditable, method, pasteShortcut, autoEnter, restoreClipboard, isSelf: false };
+  const remoteDesktop = typeof rule?.remoteDesktop === "boolean" ? rule.remoteDesktop : null;
+  return { rule, notEditable, method, pasteShortcut, autoEnter, restoreClipboard, remoteDesktop, isSelf: false };
 }
 
 /** Resolve the CURRENT injection target (focused app → per-app rule) into the method +
@@ -1064,6 +1114,8 @@ async function resolveTarget(cfg: InsertCfg | null): Promise<{
   pasteShortcut: string[];
   autoEnter: boolean;
   restoreClipboard: boolean;
+  /** See resolveInjectionTarget — null = let Rust auto-detect. */
+  remoteDesktop: boolean | null;
   isSelf: boolean;
   /** The app the rule below was resolved against, handed to Rust so it can confirm focus hasn't
    *  moved by the time the keys actually go out. */
@@ -1085,6 +1137,7 @@ async function resolveTarget(cfg: InsertCfg | null): Promise<{
     pasteShortcut,
     autoEnter,
     restoreClipboard,
+    remoteDesktop,
     isSelf,
   } = resolveInjectionTarget(targetApp ?? null, appRules, g, cfg?.profileInsertion);
   // Keep the chip's "→ app" readout + skip hint live as focus moves mid-session: this resolves
@@ -1095,7 +1148,15 @@ async function resolveTarget(cfg: InsertCfg | null): Promise<{
   // sink-side focus re-check, so a null here meant: alt-tab between this resolve and the keys
   // going out and the resolved method was used with no re-check and no per-app rule — `block`
   // included. A real id makes that move a mismatch, which degrades to clipboard-only.
-  return { method, pasteShortcut, autoEnter, restoreClipboard, isSelf, appId: targetApp?.appId ?? null };
+  return {
+    method,
+    pasteShortcut,
+    autoEnter,
+    restoreClipboard,
+    remoteDesktop,
+    isSelf,
+    appId: targetApp?.appId ?? null,
+  };
 }
 
 /** Push the resolved injection target into the store (deduped) so the chip's "→ app" readout +
@@ -1399,7 +1460,7 @@ function armStuckWatchdog(): void {
             // the argument is inert here (and at every other clipboard-method site). The guard
             // that CAN answer `landed: false` on this call is inject_text's own-window ENTRY
             // check — which is what the "believe the answer" logic above relies on.
-            ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [], expectAppId: pendingAppId }));
+            ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [], expectAppId: pendingAppId, remoteDesktop: null }));
           } catch (err) {
             console.error("clipboard recovery after stuck-finalize failed:", err);
           }
@@ -1411,13 +1472,6 @@ function armStuckWatchdog(): void {
       }
     }
   }, STUCK_FINALIZE_MS);
-}
-
-function commonPrefixLen(a: string, b: string): number {
-  const n = Math.min(a.length, b.length);
-  let i = 0;
-  while (i < n && a[i] === b[i]) i++;
-  return i;
 }
 
 async function ensureListeners(): Promise<void> {
@@ -1583,6 +1637,11 @@ async function ensureListeners(): Promise<void> {
     if (insertCfg?.live && capturing) bumpPhraseEnd();
   });
 
+  // `utterance` is absent/null on a server RELEASE final: the server now holds back the end of
+  // the document while it could still change (a half-spoken "neuer" before "Absatz", a trailing
+  // "Komma"), and releases it with a final of its own — before a hard break, at close, on a
+  // flush — that belongs to no utterance. Rust drops that frame's `flush: true` marker; the
+  // missing ordinal is what identifies it here.
   type FinalFrame = { committed: string; tail: string; last: boolean; utterance: number | null };
   await reg<FinalFrame>("stream://final", (e) => {
     // A cancelled/errored session's detached drain can still emit a late `final` on the
@@ -1593,10 +1652,14 @@ async function ensureListeners(): Promise<void> {
     // injecting and the trailing `closed` then idles, so real finals pass; only post-cancel
     // (idle) and post-error (error) late emits are dropped.
     if (!inSession()) return;
-    // A final is the terminal frame of whatever utterance the server had announced. ANY final:
-    // the socket is ordered, and a final only ever comes from the finalize of the utterance in
-    // flight — matching ordinals would buy nothing and mis-handle the closing document's.
-    endUtterance();
+    // A final is the terminal frame of whatever utterance the server had announced — any final
+    // that CARRIES an ordinal: the socket is ordered, and such a final only ever comes from the
+    // finalize of the utterance in flight, so matching ordinals would buy nothing. A release
+    // final (no ordinal, see FinalFrame) ends nothing: it can arrive while the NEXT utterance is
+    // already open, and ending that one here would blank its working state and release the
+    // per-phrase Enter it is holding back. With nothing open it is harmless to call (it only
+    // settles the paint), so an old server that never sends ordinals behaves as before.
+    if (typeof e.payload.utterance === "number" || pending.state === null) endUtterance();
     // committed+tail is the whole document so far — fold it in and show it.
     committedDoc = e.payload.committed + e.payload.tail;
     // Drop any pending partial tick first: it holds the PRE-final text and would otherwise
@@ -1619,8 +1682,13 @@ async function ensureListeners(): Promise<void> {
       //   • typed (paste/direct), append-only → only the new suffix beyond what we've TYPED (diffed
       //     in-queue against injectedText, below). Strip the document's leading whitespace (Whisper
       //     prefixes a space) so the first phrase has none; inner spacing preserved. Never revise.
-      const phraseClip = committedDoc.slice(commonPrefixLen(clipBaseline, committedDoc)).trim();
+      const clipStartRaw = commonPrefixLen(clipBaseline, committedDoc);
+      const phraseClip = committedDoc.slice(clipStartRaw).trim();
       const target = committedDoc.replace(/^\s+/, "");
+      // Where the clipboard window starts, in `target` coordinates (the document minus its
+      // leading whitespace) — so the clipboard branch can ask "was everything BEFORE this window
+      // already delivered?" against the typed baseline, which lives in those coordinates.
+      const clipFrom = Math.max(0, clipStartRaw - (committedDoc.length - target.length));
       // Did the document GROW vs the last final? Distinguishes a real new phrase from a re-sent
       // `final` (the flush final the drain emits at hands-free end). Advanced synchronously per final and
       // kept SEPARATE from the typed baseline (injectedText), so re-sent-final detection stays correct
@@ -1684,7 +1752,7 @@ async function ensureListeners(): Promise<void> {
             if (insertCfg !== cfg) return;
             let landed = true;
             try {
-              ({ landed } = await injectText({ text: clipOut, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
+              ({ landed } = await injectText({ text: clipOut, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop }));
             } catch (e) {
               // A live phrase's clipboard copy failed: surface it AND tear the session down. Once
               // flashError sets status "error" no further phrase reaches this catch (the old "just
@@ -1737,6 +1805,27 @@ async function ensureListeners(): Promise<void> {
               // The clipboard now holds OUR text, so a later paste must NOT re-snapshot it as the
               // user's original (the snapshot guard keys on clipHoldsOurs, not clipDirty).
               clipHoldsOurs = true;
+              // The phrase was DELIVERED — to the clipboard, not typed, but delivered: it is on
+              // the clipboard for the user to paste, and they will. So it counts against the typed
+              // baseline like a typed phrase does. Leaving `injectedText` behind here meant that
+              // when focus later moved to a typing window (or a blocked app's rule stopped
+              // applying), the next typed phrase re-typed every clipboard-routed phrase before it,
+              // and the hard-break carry would do the same.
+              //
+              // Only when everything BEFORE this clipboard window was already delivered, though.
+              // The copy carries the current window alone, so a phrase from before it that the
+              // own-window guard skipped (typed-baseline still short of `clipFrom`) is on no
+              // clipboard and in no field; advancing over it would drop it for good. That case
+              // keeps the old behaviour — the next typed phrase re-sends from the baseline — and
+              // says so in the log.
+              noteDivergence("clipboard", injectedText, target, utterance);
+              if (commonPrefixLen(injectedText, target) >= clipFrom) injectedText = target;
+              else
+                logLine(
+                  "info",
+                  "dictation",
+                  `clipboard phrase left the typed baseline behind: ${clipFrom - commonPrefixLen(injectedText, target)} untyped chars before its window`,
+                );
             }
           }
         } else {
@@ -1746,12 +1835,18 @@ async function ensureListeners(): Promise<void> {
           // window focused) leaves the baseline untouched, so after a focus switch that text is
           // re-typed into the real window instead of being silently dropped. Empty toType = a
           // re-sent final or already-typed text → skip.
+          noteDivergence("typed", injectedText, target, utterance);
           const toType = target.slice(commonPrefixLen(injectedText, target));
-          if (toType.length > 0) {
+          // Text a hard break carried over untyped goes out FIRST, joined by that break's separator
+          // (which the boundary's own separator task skipped for exactly this reason). A carry alone
+          // is worth an insert — an empty re-sent final is the first chance to type it.
+          const carried = carryText;
+          if (toType.length > 0 || carried) {
+            const body = withCarry(carried, carrySep, toType);
             // T2T live: translate the outbound copy only. injectedText still
             // advances by the ORIGINAL document below, so per-phrase diffing,
             // skip-and-retype and re-sent-final detection are untouched.
-            const phrase = await translatePhrase(toType, cfg, {
+            const phrase = await translatePhrase(body, cfg, {
               queued: queuedAtEnqueue,
               utterance,
             });
@@ -1762,8 +1857,11 @@ async function ensureListeners(): Promise<void> {
             // a non-empty one means a previous phrase really landed — a phrase
             // the own-window guard skipped leaves it untouched and so does not
             // buy a leading gap for text that was never typed.
+            // A carried block opens with the rest of an EARLIER document, so it needs the gap
+            // whenever anything was typed before it this session, even though the break just
+            // emptied `injectedText`.
             const typeOut = sessionTranslation
-              ? (injectedText.length > 0 ? PHRASE_GAP : "") + phrase.text.trim()
+              ? (injectedText.length > 0 || (carried && sessionTyped) ? PHRASE_GAP : "") + phrase.text.trim()
               : phrase.text;
             // The translated-document accumulators advance further down, inside `if (delivered)`:
             // a sink-skipped phrase is deliberately re-sent with the next insert (injectedText
@@ -1793,7 +1891,7 @@ async function ensureListeners(): Promise<void> {
             let landed = true;
             let diverted = false;
             try {
-              ({ landed, diverted } = await injectText({ text: typeOut, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
+              ({ landed, diverted } = await injectText({ text: typeOut, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop }));
             } catch (e) {
               // A live phrase insert failed: surface it, then tear the session down (mirrors
               // stream://error) so the mic + system-mute don't leak — once status is "error" no
@@ -1805,7 +1903,7 @@ async function ensureListeners(): Promise<void> {
               if (t.method === "direct") {
                 // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
                 try {
-                  const copied = await injectText({ text: typeOut, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+                  const copied = await injectText({ text: typeOut, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
                   flashError(
                     copied.landed
                       ? "Couldn’t type the text — it’s on the clipboard to paste manually."
@@ -1830,7 +1928,7 @@ async function ensureListeners(): Promise<void> {
                 try {
                   ({ landed: recoverable } = await injectText({
                     text: typeOut, method: "clipboard", autoEnter: false, restoreClipboard: false,
-                    pasteShortcut: t.pasteShortcut, expectAppId: t.appId,
+                    pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop,
                   }));
                 } catch (e2) {
                   console.error("clipboard fallback after failed paste failed:", e2);
@@ -1875,8 +1973,12 @@ async function ensureListeners(): Promise<void> {
             // un-advanced re-sends the skipped text with the next insert, which is the whole point.
             if (delivered) {
               injectedText = target;
+              // The carry went out with this insert. Cleared only here: a skipped or refused insert
+              // keeps it for the next one, like the un-advanced baseline keeps the phrase.
+              carryText = "";
+              carrySep = "";
               if (phrase.translated) {
-                sessionPhraseContext.push(toType);
+                sessionPhraseContext.push(body);
                 sessionTranslatedText = sessionTranslatedText
                   ? sessionTranslatedText + PHRASE_GAP + phrase.text.trim()
                   : phrase.text.trim();
@@ -2000,6 +2102,10 @@ async function ensureListeners(): Promise<void> {
     if (committedDoc && bankedDoc.length + committedDoc.length + sep.length <= MAX_BANKED_DOC) {
       bankedDoc += committedDoc + sep;
     }
+    // The finished document in the typed baseline's coordinates (leading whitespace stripped, like
+    // the final handler's `target`), captured BEFORE the clear below — the chained link needs it
+    // to see what of this document never got typed.
+    const docAtBreak = committedDoc.replace(/^\s+/, "");
     committedDoc = "";
     clipBaseline = "";
     clipBooked = null;
@@ -2012,10 +2118,31 @@ async function ensureListeners(): Promise<void> {
     // had this exposure (its baseline is read synchronously at enqueue). Chained directly rather
     // than via enqueueInject so the flood cap can never drop the reset; the session token guards
     // a cancel-then-restart landing while it waits (the restart resets the baseline itself).
+    //
+    // The same link CARRIES what the old document never delivered: at drain time `injectedText`
+    // is final for it, so whatever of `docAtBreak` lies beyond it (a phrase the own-window guard
+    // skipped, a paste Rust refused with nothing written) would otherwise be cleared with the
+    // baseline and never typed anywhere. It goes out ahead of the next typed phrase, joined by
+    // this break's separator. Live sessions only: a "stop"-timing session types bankedDoc whole.
     {
       const cfg = insertCfg;
       injectChain = injectChain.then(() => {
-        if (insertCfg === cfg) injectedText = "";
+        if (insertCfg !== cfg) return;
+        if (cfg?.live) {
+          noteDivergence("boundary", injectedText, docAtBreak, null);
+          // trimEnd only: when part of this document WAS typed, the remainder's leading space is
+          // the seam to that typed text ("A" typed, " B" not) and must survive. A remainder with
+          // no typed text before it has none anyway (docAtBreak is stripped, like `target`).
+          const rest = untypedRemainder(injectedText, docAtBreak).trimEnd();
+          if (rest.trim()) {
+            // Several breaks in a row with nothing typed between them stack up in order, each
+            // pair joined by the separator of the break between them.
+            carryText = carryText ? joinCarry(carryText, carrySep, rest) : rest;
+            carrySep = sep;
+            logLine("info", "dictation", `hard break: carrying ${rest.length} untyped chars into the next phrase (${carryText.length} pending)`);
+          }
+        }
+        injectedText = "";
       });
     }
     // The server only breaks between utterances, so nothing should be held here — but a fresh
@@ -2053,19 +2180,24 @@ async function ensureListeners(): Promise<void> {
           // Hold session: same as enqueueAutoEnter — never emit a keystroke while the PTT chord is held
           // (the held modifier would fold into the separator/Enter once focus moved to a typing window).
           if (holdCoerced(insertCfg?.activation, t.method)) return;
+          // A carry is pending (the link above ran first — same chain): the untyped rest of the
+          // old document has not gone out, so neither may its Enter or separator. The separator
+          // travels INSIDE the carry (joinCarry) and lands between it and the next phrase; an
+          // Enter now would submit the half-typed message.
+          if (carryText) return;
           // Enter wins over the separator when this target wants it — the same precedence the
           // synchronous fork had, just evaluated against the window actually being typed into.
           if (t.autoEnter) {
             if (dirtyAtBreak) {
-              await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+              await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
             }
             return;
           }
           if (!sep) return;
           if (sep.includes("\n")) {
-            await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+            await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
           } else {
-            const { landed } = await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId });
+            const { landed } = await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
             // A cancel-then-fresh-start during the paste await must not stamp the OLD session's clipboard
             // bookkeeping (clipHoldsOurs / a restore) onto the new one — mirrors the inject tasks' guard.
             if (insertCfg !== cfg) return;
@@ -2206,8 +2338,13 @@ async function ensureListeners(): Promise<void> {
         // `closed` fires is honored on BOTH the tail and the no-tail path. (clipDirty is reset for
         // the next session by startLive's clearPhraseEnd, and microtask ordering guarantees finalClip
         // runs before any new session could reset it.)
-        const finalClip = (): Promise<void> =>
-          beganInjection ? (clipDirty ? endInjection() : discardInjectionSnapshot()) : Promise.resolve();
+        const finalClip = (): Promise<void> => {
+          // The queue has drained, so a carry still pending here never found a real window to go
+          // to (the last phrases were all skipped in our own window). Say so — by length — and
+          // drop it; the next session starts clean either way.
+          noteDroppedCarry();
+          return beganInjection ? (clipDirty ? endInjection() : discardInjectionSnapshot()) : Promise.resolve();
+        };
         const hasTail = enterTail || beganInjection;
         if (!hasTail) {
           // No visible write-out tail (clipboard-only, direct typing, or nothing landed): skip the
@@ -2322,6 +2459,7 @@ async function ensureListeners(): Promise<void> {
               autoEnter: t.autoEnter,
               restoreClipboard: t.restoreClipboard,
               pasteShortcut: t.pasteShortcut, expectAppId: t.appId,
+              remoteDesktop: t.remoteDesktop,
             }));
           } catch (e) {
             // The whole-session insert IS the product of the dictation. A failure here (portal
@@ -2343,7 +2481,7 @@ async function ensureListeners(): Promise<void> {
             // text (nothing was inserted).
             let onClipboard = false;
             try {
-              ({ landed: onClipboard } = await injectText({ text: outText, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId }));
+              ({ landed: onClipboard } = await injectText({ text: outText, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop }));
             } catch (e2) {
               console.error("clipboard fallback after failed insert failed:", e2);
             }
@@ -2385,7 +2523,7 @@ async function ensureListeners(): Promise<void> {
             // and history has already booked it as the delivered translation.
             let onClipboard = false;
             try {
-              onClipboard = (await injectText({ text: outText, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId })).landed;
+              onClipboard = (await injectText({ text: outText, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop })).landed;
             } catch (e2) {
               console.error("clipboard fallback after a sink-skipped insert failed:", e2);
             }
@@ -2459,7 +2597,7 @@ async function ensureListeners(): Promise<void> {
         let onClipboard = false;
         try {
           // Same as the stuck-finalize sibling: `landed: false` means nothing was written.
-          ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [] }));
+          ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [], remoteDesktop: null }));
         } catch (err) {
           console.error("clipboard recovery after stream error failed:", err);
         }
@@ -2913,6 +3051,11 @@ async function startLiveInner(
   }
   committedDoc = "";
   injectedText = "";
+  // A carry belongs to the session whose document it came from — never type session A's
+  // leftovers into session B's window. (A cancel already cleared it; a normal end logged it.)
+  carryText = "";
+  carrySep = "";
+  divergenceLogs = 0;
   seenDoc = "";
   bankedDoc = "";
   // The listener closure outlives every session, so a tick armed by the PREVIOUS session would
@@ -3110,7 +3253,11 @@ function applyReclassify(profile: Profile): void {
     // The chord gets released now the session is hands-free, so live TYPING becomes
     // safe — recompute `live` exactly as startLiveInner does (activation is no longer
     // "hold"). The append-only delta insert catches up anything committed before the
-    // flip. EXCEPT when a hard break already banked text (a long hold upgraded late):
+    // flip — anything not yet DELIVERED, that is: a hold session that already ran live on
+    // the clipboard booked each copied phrase into the typed baseline (clipboard-routed
+    // phrases count as delivered, see the final handler), so the first typed phrase after
+    // the flip types only what is new, not every phrase the user already has on the
+    // clipboard. A non-live hold session never touched the baseline, so it all goes out. EXCEPT when a hard break already banked text (a long hold upgraded late):
     // the live path never re-reads bankedDoc, so flipping `live` would drop it at stop
     // — keep the session in its started insert mode in that rare case.
     if (bankedDoc === "") {
@@ -3210,7 +3357,7 @@ export async function stopLive(): Promise<void> {
         let onClipboard = false;
         try {
           // Same as the stuck-finalize sibling: `landed: false` means nothing was written.
-          ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [] }));
+          ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [], remoteDesktop: null }));
         } catch (err) {
           console.error("clipboard recovery after stop reject failed:", err);
         }
@@ -3251,6 +3398,9 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   releaseWarmLease();
   committedDoc = "";
   injectedText = "";
+  // The user threw the session away, carry included — nothing of it may type later.
+  carryText = "";
+  carrySep = "";
   seenDoc = "";
   bankedDoc = "";
   resetPartialPreview();

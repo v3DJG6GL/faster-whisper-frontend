@@ -41,6 +41,9 @@ export interface SyncGeneral {
   insertMethod?: InsertMethod;
   pasteShortcut?: string[];
   restoreClipboard?: boolean;
+  /** Absent in blobs written before it existed (2026-09). Keep dictated text out of
+   *  clipboard history / cloud clipboard; the device keeps its own value when absent. */
+  excludeFromClipboardHistory?: boolean;
   soundEffects?: boolean;
   deepFieldDetection?: boolean;
 }

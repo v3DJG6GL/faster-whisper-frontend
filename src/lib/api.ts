@@ -84,6 +84,29 @@ export function noteRoute(path: string): void {
   void invoke("note_route", { path }).catch(() => {});
 }
 
+/** One line into the core's log file (`frontend_log` → `tracing` with the user's log
+ *  level), for diagnostics that only the webview can see — the typed-baseline divergence
+ *  and carry notes of live dictation. Rust keeps printable ASCII, caps `msg` at 300 chars
+ *  and rejects a `tag` outside [a-z]{1,16}, so keep both plain. NEVER pass transcript text:
+ *  the log is shared in bug reports. Fire and forget. */
+export function logLine(level: "info" | "warn", tag: string, msg: string): void {
+  if (!isTauri) return;
+  void invoke("frontend_log", { level, tag, msg }).catch(() => {});
+}
+
+/** Whether Rust's built-in list recognises this app id as a remote-desktop client — the
+ *  answer an App rule's "Auto" setting resolves to (the exe list only; the window-class
+ *  check needs a live window and so can't be asked here). False outside the desktop app
+ *  or on any error: the hint then reads "not a known client", which is the honest default. */
+export async function remoteDesktopAutoDetected(appId: string): Promise<boolean> {
+  if (!isTauri) return false;
+  try {
+    return (await invoke<boolean>("remote_desktop_auto_detected", { appId })) === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function testConnection(args: {
   serverUrl: string;
   backendId?: string | null;
@@ -1105,6 +1128,12 @@ export async function injectText(args: {
    *  a second earlier can't be applied to a different window. Omit when there is no identified
    *  target — an unidentified window deliberately still falls through. */
   expectAppId?: string | null;
+  /** The app rule's remote-desktop override (`resolveInjectionTarget().remoteDesktop`):
+   *  true/false force the remote paste path (longer settle, no clipboard restore) on or off,
+   *  null lets Rust auto-detect from the exe / window class. REQUIRED on purpose — an
+   *  optional field is the one a new call site forgets, and forgetting it here would
+   *  silently ignore the user's rule. Pass null where no target was resolved. */
+  remoteDesktop: boolean | null;
 }): Promise<InjectOutcome> {
   if (!isTauri) return { landed: true, diverted: false };
   return await invoke<InjectOutcome>("inject_text", {
@@ -1114,6 +1143,7 @@ export async function injectText(args: {
     restoreClipboard: args.restoreClipboard,
     pasteShortcut: args.pasteShortcut,
     expectAppId: args.expectAppId ?? null,
+    remoteDesktop: args.remoteDesktop ?? null,
   });
 }
 

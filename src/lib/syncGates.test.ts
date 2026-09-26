@@ -159,6 +159,22 @@ describe("compose: list arms", () => {
     expect(blob.profiles!.list[0].enabled).toBe(true);
   });
 
+  it("perAppOverrides off: the local remoteDesktop override does not travel", async () => {
+    const rule = { id: "r1", appId: "mstsc", name: "mstsc", block: false, remoteDesktop: true };
+    const cfg = { ...slice(), appRules: [rule] as never[] };
+    const snapshot: SyncBlob = {
+      appRules: { linux: [{ id: "r1", appId: "mstsc", name: "mstsc", block: false } as never], windows: [{ id: "r1", appId: "mstsc", name: "mstsc", block: false } as never] },
+    };
+    const blob = await composeBlob(cfg, CATS_ALL, snapshot, {
+      includeSecrets: false,
+      sub: SUB_ALL,
+      gates: { ...GATES_ALL, perAppOverrides: false },
+    });
+    const bucket = blob.appRules!.linux.length ? blob.appRules!.linux : blob.appRules!.windows;
+    const mine = bucket[0] as unknown as Record<string, unknown>;
+    expect("remoteDesktop" in mine).toBe(false);
+  });
+
   it("perAppPasteShortcuts off mirrors the snapshot exactly — absence included", async () => {
     const rule = { id: "r1", appId: "konsole", name: "Konsole", block: false, pasteShortcut: ["ControlLeft", "ShiftLeft", "KeyV"] };
     const cfg = { ...slice(), appRules: [rule] as never[] };
@@ -204,6 +220,26 @@ describe("apply: keep-local per gate", () => {
     const g = useApp.getState().settings.general;
     expect(g.soundEffects).toBe(true); // kept local
     expect(g.startMinimized).toBe(true); // non-gated applied
+  });
+
+  it("a gated-off clipboard-history setting never applies", async () => {
+    gateOff("excludeFromClipboardHistory");
+    await applyBlob(
+      { general: { excludeFromClipboardHistory: false } as never },
+      { ...CATS_ALL, backends: false, profiles: false },
+    );
+    expect(useApp.getState().settings.general.excludeFromClipboardHistory).toBe(true); // kept local
+  });
+
+  it("perAppOverrides off: a known rule keeps this device's remoteDesktop (its absence too)", async () => {
+    useApp.setState({ appRules: [{ id: "r1", appId: "mstsc", block: false }] });
+    gateOff("perAppOverrides");
+    await applyBlob(
+      { appRules: { linux: [{ id: "r1", appId: "mstsc", block: false, remoteDesktop: false }], windows: [{ id: "r1", appId: "mstsc", block: false, remoteDesktop: false }] } as never },
+      { ...CATS_ALL, backends: false, profiles: false },
+    );
+    const r = useApp.getState().appRules.find((x) => x.id === "r1")!;
+    expect(r.remoteDesktop ?? null).toBeNull();
   });
 
   it("serverAddresses off: a known backend keeps this device's URL", async () => {

@@ -686,7 +686,7 @@ async function replaceSelectionAfterClose(
   // Profile — the correction is a Quick-Add action, not a dictation — so it resolves
   // app-rule ← global exactly as it always has. Passing `undefined` states that rather
   // than leaving it to argument order.
-  const { rule, method, pasteShortcut, restoreClipboard } = resolveInjectionTarget(app ?? null, appRules, general, undefined);
+  const { rule, method, pasteShortcut, restoreClipboard, remoteDesktop } = resolveInjectionTarget(app ?? null, appRules, general, undefined);
   if (rule?.block) return; // the user marked this app "never type into" — don't correct into it at all (not even clipboard)
   // Clipboard-only (explicit per-app, or coerced for a non-editable target) puts the correction on the
   // clipboard with no keystroke; restore the prior clipboard only for a real paste.
@@ -703,6 +703,7 @@ async function replaceSelectionAfterClose(
     restoreClipboard,
     pasteShortcut,
     expectAppId: app?.appId ?? null,
+    remoteDesktop,
   });
 }
 

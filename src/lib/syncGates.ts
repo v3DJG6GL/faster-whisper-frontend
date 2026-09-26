@@ -188,7 +188,7 @@ export const BACKEND_DEFAULTS_FIELDS = [
  *  `autoEnter` is deliberately ABSENT: it is never accepted from a peer at all (the
  *  sanitizers drop it, and the apply arm re-pins it unconditionally), so gating it would
  *  imply a choice the user does not have. See `sanitizeAppRules`. */
-export const APP_RULE_OVERRIDE_FIELDS = ["insertMethod", "restoreClipboard"] as const;
+export const APP_RULE_OVERRIDE_FIELDS = ["insertMethod", "restoreClipboard", "remoteDesktop"] as const;
 export const APP_RULE_PASTE_FIELDS = ["pasteShortcut"] as const;
 /** Fields forced back to this device's value on EVERY inbound path, gate or no gate. */
 export const APP_RULE_LOCAL_ONLY_FIELDS = ["autoEnter"] as const;

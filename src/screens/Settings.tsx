@@ -6,7 +6,7 @@ import { swap } from "@/lib/arr";
 import { Button, Card, Notice, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta, screenEyebrow, screenTitle } from "@/lib/screens";
-import { IS_LINUX } from "@/lib/platform";
+import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
 import { dropPendingWrites, loadHistory } from "@/lib/transcriptHistory";
@@ -1363,15 +1363,33 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title={SETTING.restoreClipboard.label}
-              desc="Put your previous clipboard contents back once the paste is done. Skipped inside remote-desktop clients (mstsc, Citrix, AnyDesk…), where the clipboard reaches the remote host asynchronously and a restore can be what the remote actually pastes."
+              desc="Put your previous clipboard contents back once the paste is done. Skipped inside remote-desktop clients (mstsc, Citrix, AnyDesk…) and apps an App rule marks as remote desktop, where the clipboard reaches the remote host asynchronously and a restore can be what the remote actually pastes."
               disabled={s.general.insertMethod !== "paste"}
               disabledReason={`Only “Clipboard paste” replaces your clipboard, so only it has anything to put back. Set ${SETTING.insertMethod.label} to Clipboard paste to use this.`}
-              last
             >
               <Toggle
                 checked={s.general.restoreClipboard}
                 onChange={(v) => updateGeneral({ restoreClipboard: v })}
                 disabled={s.general.insertMethod !== "paste"}
+              />
+            </SettingRow>
+            {/* Not gated on the insertion method: "Clipboard only", the no-text-field divert and
+                the recovery writes all put the transcript on the clipboard too. Rust reads the
+                saved value (no IPC argument), so every one of those paths obeys it. The copy
+                differs per OS because the mechanism does — Windows has real per-write flags,
+                elsewhere it is a hint a clipboard manager may or may not honour. */}
+            <SettingRow
+              title={SETTING.excludeFromClipboardHistory.label}
+              desc={
+                IS_WINDOWS
+                  ? "Dictated text stays out of Clipboard history (Win+V) and isn’t uploaded by the cloud clipboard. Clipboard restores are always kept out."
+                  : "Dictated text is marked so clipboard managers that honour the hint (Klipper and others) don’t keep it."
+              }
+              last
+            >
+              <Toggle
+                checked={s.general.excludeFromClipboardHistory}
+                onChange={(v) => updateGeneral({ excludeFromClipboardHistory: v })}
               />
             </SettingRow>
 

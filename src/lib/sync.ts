@@ -321,6 +321,7 @@ function extractGeneral(settings: AppSettings): SyncGeneral {
     // autoEnter is deliberately absent: the apply arm drops it on every inbound path (a
     // peer must not arm a post-paste Return), so it is local-only in the manifest too.
     restoreClipboard: g.restoreClipboard,
+    excludeFromClipboardHistory: g.excludeFromClipboardHistory,
     soundEffects: g.soundEffects,
     deepFieldDetection: g.deepFieldDetection,
     openAtLogin: g.openAtLogin,
@@ -1247,6 +1248,16 @@ function sanitizeAppRules(rules: unknown): AppRule[] {
           ? r.insertMethod
           : oneOf<InsertMethod>(r.insertMethod, INSERT_METHODS, "paste"),
       restoreClipboard: r.restoreClipboard == null ? r.restoreClipboard : r.restoreClipboard === true,
+      // Three-state like its neighbours, but junk means AUTO (dropped), not "off": a wrong `true`
+      // would strip clipboard restores from an app that isn't remote, a wrong `false` would
+      // re-arm the 300 ms race on one that is — auto-detect is the only safe reading of a
+      // value nobody meant. `Option<bool>` in Rust rejects a string outright.
+      remoteDesktop:
+        typeof r.remoteDesktop === "boolean"
+          ? r.remoteDesktop
+          : r.remoteDesktop === null
+            ? null
+            : undefined,
       // `autoEnter` is FORCED OFF on every inbound path, never merely type-checked — the
       // same treatment the `general` block gets in applyBlob, and for the same reason: the
       // synthesized Return is sent AFTER the paste, outside the bracketed-paste region, so

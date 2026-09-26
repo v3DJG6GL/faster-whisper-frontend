@@ -17,6 +17,7 @@ const G: GeneralSettings = {
   pasteShortcut: ["ControlLeft", "KeyV"],
   autoEnter: false,
   restoreClipboard: true,
+  excludeFromClipboardHistory: true,
   typeAsISpeak: true,
   soundEffects: false,
   evdevEnabled: false,
@@ -149,5 +150,40 @@ describe("resolveInjectionTarget precedence", () => {
   it("matches rules by normalized app id, not raw equality", () => {
     const r = resolveInjectionTarget(app({ appId: "KonSole" }), [rule({ insertMethod: "direct" })], G);
     expect(r.method).toBe("direct");
+  });
+});
+
+describe("resolveInjectionTarget remoteDesktop", () => {
+  // Rule-only and three-state: a real boolean forces Rust's remote paste path on/off, anything
+  // else is null = "let Rust auto-detect". No profile/global layer exists for it.
+  it("is null (auto) with no rule", () => {
+    expect(resolveInjectionTarget(app(), [], G).remoteDesktop).toBeNull();
+  });
+
+  it("is null (auto) for a rule that leaves it unset or null", () => {
+    expect(resolveInjectionTarget(app(), [rule()], G).remoteDesktop).toBeNull();
+    expect(resolveInjectionTarget(app(), [rule({ remoteDesktop: null })], G).remoteDesktop).toBeNull();
+  });
+
+  it("passes a forced true or false through verbatim", () => {
+    expect(resolveInjectionTarget(app(), [rule({ remoteDesktop: true })], G).remoteDesktop).toBe(true);
+    expect(resolveInjectionTarget(app(), [rule({ remoteDesktop: false })], G).remoteDesktop).toBe(false);
+  });
+
+  it("is null on our own window, even when a rule would force it", () => {
+    const r = resolveInjectionTarget(app({ isSelf: true }), [rule({ remoteDesktop: true })], G);
+    expect(r.remoteDesktop).toBeNull();
+  });
+
+  it("still reports the override on a blocked app (the block coerces only the method)", () => {
+    const r = resolveInjectionTarget(app(), [rule({ block: true, remoteDesktop: false })], G);
+    expect(r.method).toBe("clipboard");
+    expect(r.remoteDesktop).toBe(false);
+  });
+
+  it("reads junk as auto, never as a forced answer", () => {
+    // A synced or hand-edited "yes" is truthy — it must not force the remote path.
+    const junk = rule({ remoteDesktop: "yes" as unknown as boolean });
+    expect(resolveInjectionTarget(app(), [junk], G).remoteDesktop).toBeNull();
   });
 });
