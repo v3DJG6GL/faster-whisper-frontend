@@ -109,6 +109,12 @@ pub fn cleanup_for_exit(app: &AppHandle) {
     // The drops above only ENQUEUED the unmute on the worker; wait (bounded) for it to actually run
     // before the process terminates, so quitting mid-dictation can't leave other apps muted.
     flush_mute_worker(std::time::Duration::from_secs(2));
+    // The remote-paste clipboard owner holds the last transcript DELAY-RENDERED: destroying its
+    // window makes Windows ask it to render everything it still owes, so the text stays pasteable
+    // after we exit. No exit path destroys that window otherwise (`exit()` skips destructors).
+    // A no-op when the owner never started.
+    #[cfg(windows)]
+    crate::win_clip::shutdown(std::time::Duration::from_millis(500));
 }
 
 pub struct StartParams {

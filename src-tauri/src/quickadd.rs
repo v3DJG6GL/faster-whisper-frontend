@@ -518,66 +518,6 @@ pub(crate) mod win_seed {
         false
     }
 
-    /// Is the user's focus in a remote-desktop client window right now? Read BEFORE
-    /// injecting, while focus is still on the source. Matched by window class:
-    /// mstsc's shell/input/output windows (the input sink also covers the RDP
-    /// ActiveX embedded in RDCMan / mRemoteNG), RemoteApp seamless windows, the
-    /// Windows App (msrdc), and FreeRDP. An unrecognized client just keeps the
-    /// non-RDP behavior — same as before this detection existed.
-    ///
-    /// Checked as: the foreground window, plus the foreground thread's focus and
-    /// active windows (`GetGUIThreadInfo`) — focus usually sits on a CHILD
-    /// (`IHWindowClass`) whose top-level is the shell container.
-    #[cfg(windows)]
-    fn focus_is_remote_desktop_client() -> bool {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GUITHREADINFO,
-        };
-        const REMOTE_CLASSES: &[&str] = &[
-            "TscShellContainerClass", // mstsc.exe top-level
-            "IHWindowClass", // mstsc input sink; also the embedded ActiveX (RDCMan, mRemoteNG)
-            "OPWindowClass", // mstsc output surface (focus can land here)
-            "RAIL_WINDOW",   // RemoteApp seamless windows
-            "RdClientWindow", // msrdc.exe (Windows App / Azure Virtual Desktop)
-            "FreeRDP",       // wfreerdp
-        ];
-        let class_of = |hwnd: windows_sys::Win32::Foundation::HWND| -> Option<String> {
-            if hwnd.is_null() {
-                return None;
-            }
-            let mut buf = [0u16; 64];
-            let n = unsafe { GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32) };
-            (n > 0).then(|| String::from_utf16_lossy(&buf[..n as usize]))
-        };
-        let mut info: GUITHREADINFO = unsafe { std::mem::zeroed() };
-        info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
-        let have_info = unsafe { GetGUIThreadInfo(0, &mut info) } != 0;
-        let candidates = [
-            unsafe { GetForegroundWindow() },
-            if have_info {
-                info.hwndFocus
-            } else {
-                std::ptr::null_mut()
-            },
-            if have_info {
-                info.hwndActive
-            } else {
-                std::ptr::null_mut()
-            },
-        ];
-        candidates
-            .into_iter()
-            .filter_map(class_of)
-            .any(|c| REMOTE_CLASSES.iter().any(|k| c.eq_ignore_ascii_case(k)))
-    }
-
-    /// Non-Windows twin, like `modifier_physically_down`'s: keeps the module
-    /// type-checking in the Linux dev loop.
-    #[cfg(not(windows))]
-    fn focus_is_remote_desktop_client() -> bool {
-        false
-    }
-
     /// Signals `quickadd::show`'s "safe to show the window now" rendezvous exactly once —
     /// explicitly, right after the copy chord is injected (the last point where focus must
     /// still be on the source app), or implicitly on drop, so every early-return / panic
@@ -719,7 +659,8 @@ pub(crate) mod win_seed {
         // Read while focus is still on the source (the last pre-injection moment): a
         // remote-desktop client gets the longer network deadline AND keeps our window
         // unshown until the copy lands / the forwarding grace passes — see the consts.
-        let remote = focus_is_remote_desktop_client();
+        // The window-class detector lives in `remote_desktop` now, shared with the paste path.
+        let remote = crate::remote_desktop::focus_is_remote_desktop_client();
         if remote {
             tracing::info!(
                 "[quickadd-seed] remote-desktop client focused; holding the window for the copy"

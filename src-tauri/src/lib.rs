@@ -16,6 +16,7 @@ mod memwatch;
 mod migrate_identifier;
 mod overlay;
 mod quickadd;
+mod remote_desktop;
 mod session;
 mod sound;
 mod transcripts;
@@ -24,6 +25,7 @@ mod tray;
 mod triggers;
 mod virtual_keyboard;
 mod wayland_inject;
+mod win_clip;
 mod win_hotkeys;
 #[cfg(windows)]
 mod win_session_end;
@@ -142,6 +144,9 @@ pub fn run() {
             // start the batched log stream for the Logs screen.
             logging::apply_log_settings(app.handle(), &cfg);
             logging::spawn_emit_pump(app.handle().clone());
+            // "Keep dictated text out of clipboard history" — a process-wide switch every
+            // transcript write reads; re-applied by save_config.
+            inject::set_clipboard_privacy(cfg.settings.general.exclude_from_clipboard_history);
             // Webview memory into the log every few minutes (debug; warn on a spike).
             memwatch::spawn();
             commands::apply_bindings(app.handle());
@@ -274,6 +279,8 @@ pub fn run() {
             commands::end_injection,
             commands::restore_clipboard_snapshot,
             commands::discard_injection_snapshot,
+            commands::remote_desktop_auto_detected,
+            commands::frontend_log,
             commands::get_focused_app,
             commands::get_focused_other_app,
             commands::set_deep_field_detection,

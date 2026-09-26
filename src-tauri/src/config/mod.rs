@@ -456,6 +456,15 @@ pub struct GeneralSettings {
     pub paste_shortcut: Vec<String>,
     pub auto_enter: bool,
     pub restore_clipboard: bool,
+    /// Keep dictated text out of the clipboard history (Win+V, Klipper & co) and off the
+    /// Windows cloud clipboard: every transcript write carries the platform's "don't record
+    /// this" hint (`inject::set_clipboard_privacy`). Restores of the user's own clipboard are
+    /// ALWAYS excluded regardless — a restored snapshot has lost its source's flags, and it may
+    /// be a password a manager had marked. Typed here, not left to the frontend, because this
+    /// struct is a typed mirror: a key missing from it is silently dropped on every save.
+    /// `default_true` so configs written before it existed get the private behaviour.
+    #[serde(default = "default_true")]
+    pub exclude_from_clipboard_history: bool,
     /// Default for the per-Profile "type as I speak"; carries forward what the retired
     /// three-way `insert_timing` meant by "live". `#[serde(default)]` so configs written
     /// before it existed load unchanged (and get it from the frontend migration).
@@ -809,6 +818,7 @@ impl Default for Config {
                     auto_enter: false,
                     type_as_i_speak: true,
                     restore_clipboard: true,
+                    exclude_from_clipboard_history: true,
                     sound_effects: true,
                     evdev_enabled: false,
                     deep_field_detection: false,
@@ -1235,6 +1245,28 @@ mod tests {
         assert_eq!(
             out["settings"]["accentMotion"]["period"],
             serde_json::json!(3600)
+        );
+    }
+
+    /// A config written before the clipboard-privacy setting existed must load with the
+    /// PRIVATE default (true), and the key must survive the typed round-trip once present.
+    #[test]
+    fn clipboard_privacy_defaults_on_and_round_trips() {
+        let mut json = serde_json::to_value(Config::default()).expect("default serializes");
+        let general = json["settings"]["general"]
+            .as_object_mut()
+            .expect("general is an object");
+        assert!(general.remove("excludeFromClipboardHistory").is_some());
+        let cfg: Config = serde_json::from_value(json.clone()).expect("config parses");
+        assert!(cfg.settings.general.exclude_from_clipboard_history);
+
+        json["settings"]["general"]["excludeFromClipboardHistory"] = serde_json::json!(false);
+        let cfg: Config = serde_json::from_value(json).expect("config parses");
+        assert!(!cfg.settings.general.exclude_from_clipboard_history);
+        let out = serde_json::to_value(&cfg).expect("config serializes");
+        assert_eq!(
+            out["settings"]["general"]["excludeFromClipboardHistory"],
+            serde_json::json!(false)
         );
     }
 }

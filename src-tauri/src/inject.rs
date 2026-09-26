@@ -10,7 +10,8 @@
 //! a native libei path is M7) and `arboard` for the clipboard.
 
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -145,33 +146,303 @@ pub fn is_own_injected(text: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Remote-desktop / VDI clients, matched on the focused app id. Their clipboard reaches the
-/// remote host ASYNCHRONOUSLY (RDP "delayed rendering" even fetches the data only when the
-/// remote app pastes), so (a) the usual 60ms local settle before Ctrl+V is not enough for the
-/// new content to cross before the forwarded keystroke, and (b) a post-paste restore can be
-/// what the remote's paste actually fetches. Paste into these targets uses a longer settle
-/// and skips the clipboard restore entirely.
-pub fn is_remote_desktop_app(app_id: &str) -> bool {
-    const CLIENTS: &[&str] = &[
-        "mstsc",
-        "msrdc",
-        "rdcman",    // Microsoft RDP clients (classic / Windows-App-AVD / RDCMan)
-        "vmconnect", // Hyper-V console
-        "wfica32",
-        "citrix", // Citrix Workspace
-        "vmware", // VMware Horizon / Workstation (Tools clipboard sync is async too)
-        "virt-viewer",
-        "remote-viewer", // SPICE
-        "remmina",
-        "freerdp", // Linux RDP clients
-        "rustdesk",
-        "anydesk",
-        "teamviewer",
-        "parsec",
-        "nxplayer",
-    ];
-    let a = app_id.to_lowercase();
-    CLIENTS.iter().any(|c| a.contains(c))
+/// Did the most recent PASTE go to a remote-desktop target?
+///
+/// The session-level restores (`end_injection`, `restore_clipboard_snapshot`) used to ask the
+/// CURRENT focus instead — `focused_remote_target` — which is the wrong question twice over: they
+/// run on a quiet timer or at teardown, long after the paste, when the user may have moved focus
+/// INTO an RDP window (skipping a restore the local paste was owed) or OUT of one (restoring over
+/// the transcript a still-pending remote fetch has not collected yet — the delayed-rendering hazard
+/// this skip exists for). What decides whether a restore is safe is where the paste WENT, so that
+/// is what gets recorded: set by `inject_text` for every non-empty paste once `remote_target` is
+/// resolved at the sink, cleared by the two session teardowns.
+static LAST_PASTE_REMOTE: AtomicBool = AtomicBool::new(false);
+
+/// Record where the paste that is about to happen goes (see `LAST_PASTE_REMOTE`).
+pub fn note_paste_target(remote: bool) {
+    LAST_PASTE_REMOTE.store(remote, Ordering::SeqCst);
+}
+
+/// Did the most recent paste go to a remote-desktop target?
+pub fn last_paste_was_remote() -> bool {
+    LAST_PASTE_REMOTE.load(Ordering::SeqCst)
+}
+
+/// Forget the last paste target (a session ended).
+pub fn clear_paste_target() {
+    LAST_PASTE_REMOTE.store(false, Ordering::SeqCst);
+}
+
+/// "Keep dictated text out of clipboard history & cloud clipboard" (settings.general
+/// `excludeFromClipboardHistory`). A process-wide switch rather than an IPC argument, applied at
+/// startup and on every `save_config` (like the log settings), so EVERY transcript write honours it
+/// — paste, clipboard-only, the diverts, the error-abort recovery, Quick-Add — without each call
+/// site having to carry it. 0 = off, 1 = on, 2 = not applied yet (treated as on: private is the
+/// default, and the startup apply follows within milliseconds).
+static CLIP_PRIVATE: AtomicU8 = AtomicU8::new(2);
+
+/// Apply the setting. Logged on change only (save_config runs on every autosave).
+pub fn set_clipboard_privacy(on: bool) {
+    let prev = CLIP_PRIVATE.swap(u8::from(on), Ordering::SeqCst);
+    if prev != u8::from(on) {
+        tracing::info!(
+            "[clip] privacy: dictated text excluded from clipboard history/cloud = {on}"
+        );
+    }
+}
+
+/// Should OUR transcript writes carry the history/cloud exclusion hints?
+pub fn clipboard_privacy() -> bool {
+    CLIP_PRIVATE.load(Ordering::SeqCst) != 0
+}
+
+/// `cb.set().text(text)`, with the platform's "do not record this" hints when `exclude`:
+///   * Windows: `CanIncludeInClipboardHistory` = 0 and `CanUploadToCloudClipboard` = 0 (NOT
+///     `ExcludeClipboardContentFromMonitorProcessing` — that hides the item from clipboard
+///     listeners, and an RDP client is one, so it could stop the text reaching the remote).
+///   * Linux: `x-kde-passwordManagerHint` (Klipper, and the managers that follow its convention).
+///     On X11 arboard then also SKIPS the clipboard-manager hand-off when the `Clipboard` drops —
+///     it clears the selection instead — so a write that must outlive its `Clipboard` has to go
+///     through a live owner (`wait`), which is what the callers below arrange.
+///   * macOS: `org.nspasteboard.ConcealedType`.
+///
+/// `wait` (Linux only) keeps serving the selection until another app replaces it.
+fn set_text_ext(
+    cb: &mut arboard::Clipboard,
+    text: &str,
+    exclude: bool,
+    wait: bool,
+) -> Result<(), arboard::Error> {
+    #[allow(unused_mut)] // only the platform arms below rebind it
+    let mut set = cb.set();
+    #[cfg(windows)]
+    {
+        use arboard::SetExtWindows;
+        let _ = wait;
+        if exclude {
+            set = set.exclude_from_history().exclude_from_cloud();
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use arboard::SetExtLinux;
+        if exclude {
+            set = set.exclude_from_history();
+        }
+        if wait {
+            set = set.wait();
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use arboard::SetExtApple;
+        let _ = wait;
+        if exclude {
+            set = set.exclude_from_history();
+        }
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (exclude, wait);
+    }
+    set.text(text.to_string())
+}
+
+/// Line endings for OUR transcript on its way to the clipboard. The transcript is LF-only
+/// (`sanitize_injected`), and a Windows clipboard reader expects CRLF: Notepad and many edit
+/// controls show a bare LF as nothing at all, so a multi-line dictation pasted as one line. Every
+/// Windows write of a transcript goes through here; restores do NOT (they hand back exactly what
+/// the user had). CRLF is first collapsed to LF so text that already has CRLF is never doubled.
+/// Off Windows the text is returned untouched.
+pub fn clipboard_newlines(text: &str, windows: bool) -> Cow<'_, str> {
+    if !windows || !text.contains('\n') {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(text.replace("\r\n", "\n").replace('\n', "\r\n"))
+}
+
+/// One piece of a direct-typing job: a run of text, or a separator that must be a real KEY.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeSeg<'a> {
+    Text(&'a str),
+    Enter,
+    Tab,
+}
+
+/// Split `text` for enigo: `\n` → an Enter click, `\t` → a Tab click, everything else as text
+/// runs of at most `max_chars` characters (split on char boundaries — see `DIRECT_CHUNK_CHARS`).
+///
+/// Separators are keys, not characters, because `enigo.text("\n")` does not type Enter: on X11 it
+/// maps '\n' to the XK_Linefeed keysym (ignored by most apps), on Windows it goes out as a
+/// VK_PACKET for U+000A that edit controls drop, and on macOS it can come out as U+200B. A
+/// multi-line direct dictation silently lost its line breaks on all three.
+pub fn typing_segments(text: &str, max_chars: usize) -> Vec<TypeSeg<'_>> {
+    fn push_run<'a>(mut run: &'a str, max_chars: usize, out: &mut Vec<TypeSeg<'a>>) {
+        while !run.is_empty() {
+            let split = match run.char_indices().nth(max_chars) {
+                Some((i, _)) => i,
+                None => run.len(),
+            };
+            let (chunk, tail) = run.split_at(split);
+            out.push(TypeSeg::Text(chunk));
+            run = tail;
+        }
+    }
+    let max_chars = max_chars.max(1);
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, c) in text.char_indices() {
+        let sep = match c {
+            '\n' => TypeSeg::Enter,
+            '\t' => TypeSeg::Tab,
+            _ => continue,
+        };
+        push_run(&text[start..i], max_chars, &mut out);
+        out.push(sep);
+        start = i + c.len_utf8();
+    }
+    push_run(&text[start..], max_chars, &mut out);
+    out
+}
+
+/// Single-flight flag for the time-bounded clipboard/PRIMARY reads (`commands::read_selection_bounded`).
+/// It stays set while a read that outlived its 400ms cap is STILL running on its blocking thread —
+/// which on Windows means that thread still holds (or is waiting on) `OpenClipboard`. Any write we
+/// make meanwhile either fails outright or, worse, races the stuck reader, so every write path asks
+/// `wait_clip_read_idle` first. Lives here (not in commands.rs) so the writers can see it.
+pub(crate) static CLIP_READ_BUSY: AtomicBool = AtomicBool::new(false);
+
+fn clip_read_busy() -> bool {
+    CLIP_READ_BUSY.load(Ordering::Acquire)
+}
+
+/// Wait (≤ `max`) for a stuck clipboard read to finish before writing. True = go ahead. Only
+/// Windows waits: there the clipboard is a lock (`OpenClipboard`) the stuck reader holds. On
+/// Linux a stuck read is a pending selection transfer that does not block a new owner, so this
+/// returns true at once.
+pub fn wait_clip_read_idle(max: Duration) -> bool {
+    #[cfg(windows)]
+    {
+        if !clip_read_busy() {
+            return true;
+        }
+        let t0 = std::time::Instant::now();
+        tracing::info!("[clip] a clipboard read is still running — waiting before the write");
+        while clip_read_busy() {
+            if t0.elapsed() >= max {
+                tracing::warn!(
+                    "[clip] the clipboard read is still stuck after {}ms — not writing",
+                    max.as_millis()
+                );
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        tracing::info!(
+            "[clip] the clipboard read finished after {}ms — writing",
+            t0.elapsed().as_millis()
+        );
+        true
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = max;
+        true
+    }
+}
+
+/// How long a writer waits for a stuck read (see `wait_clip_read_idle`).
+const CLIP_IDLE_WAIT: Duration = Duration::from_secs(1);
+
+/// The restore scheduled by `restore_clipboard_later`, generation-stamped so a NEWER clipboard
+/// write can supersede it. Without this, a restore scheduled after phrase N fired 400ms later no
+/// matter what — including on top of phrase N+1's transcript when N+1 was pasted inside that
+/// window, which then either pasted the user's OLD clipboard (a slow target) or left it on the
+/// clipboard while the next capture adopted our transcript. Now the newer write takes the pending
+/// restore: a local paste ADOPTS it as its own "previous" (so the user's clipboard still comes back,
+/// once, after the newest paste), anything else drops it.
+#[derive(Debug, Default)]
+struct RestoreSlot {
+    gen: u64,
+    pending: Option<String>,
+}
+
+impl RestoreSlot {
+    /// Schedule `text`, superseding whatever was pending. Returns the generation to check.
+    fn schedule(&mut self, text: String) -> u64 {
+        self.gen += 1;
+        self.pending = Some(text);
+        self.gen
+    }
+
+    /// The timer fired: the text, only if nothing superseded it meanwhile.
+    fn take_if_current(&mut self, gen: u64) -> Option<String> {
+        if self.gen == gen {
+            self.pending.take()
+        } else {
+            None
+        }
+    }
+
+    /// A newer write took over: invalidate the timer and hand back what was pending.
+    fn cancel(&mut self) -> Option<String> {
+        self.gen += 1;
+        self.pending.take()
+    }
+}
+
+static RESTORE: Mutex<RestoreSlot> = Mutex::new(RestoreSlot {
+    gen: 0,
+    pending: None,
+});
+
+/// Take (and cancel) the restore still waiting out its 400ms, if any.
+pub fn take_pending_restore() -> Option<String> {
+    RESTORE.lock().ok().and_then(|mut s| s.cancel())
+}
+
+/// Merge a restore taken by `take_pending_restore` into this paste's `previous`. `eligible` = a
+/// LOCAL paste (a remote target never restores — see `paste`). A pending restore is ADOPTED only
+/// when this paste has no better answer of its own — its prior read came back empty or as our own
+/// previous transcript (which is exactly what it reads when it lands inside the previous paste's
+/// restore window), or it did not read at all (restore off for THIS paste: the pending restore
+/// was still owed by an earlier one, and without the adoption it would simply be lost). A real
+/// prior read means the user copied something since, and that wins. Anything else — a remote
+/// target, a clipboard-only write, a divert — drops it: that text has to STAY on the clipboard.
+pub fn merge_pending_restore(
+    previous: Option<String>,
+    pending: Option<String>,
+    eligible: bool,
+) -> Option<String> {
+    match pending {
+        None => previous,
+        Some(p) if eligible && previous.is_none() => {
+            tracing::info!(
+                "[clip] paste: adopting the restore still pending from the previous paste ({} chars)",
+                p.len()
+            );
+            Some(p)
+        }
+        Some(p) => {
+            tracing::info!(
+                "[clip] a pending restore ({} chars) was superseded by this write",
+                p.len()
+            );
+            previous
+        }
+    }
+}
+
+/// Re-schedules a pending restore this paste took but never got to supersede (it bailed before
+/// writing, on any path including `?`). Emptied (`.0.take()`) once the write happened.
+struct RequeueRestore(Option<String>);
+
+impl Drop for RequeueRestore {
+    fn drop(&mut self) {
+        if let Some(p) = self.0.take() {
+            restore_clipboard_later(Some(p));
+        }
+    }
 }
 
 /// True on a native Wayland session (where enigo's X11 text path can't type
@@ -193,10 +464,14 @@ pub fn is_wayland() -> bool {
 /// (legitimate keystrokes); CR is first normalized to LF. The Wayland direct-typing paths already
 /// drop controls; this brings the paste / clipboard / X11-direct paths to the same posture.
 pub fn sanitize_injected(text: &str) -> String {
-    // Collapse CRLF and a lone CR to LF first: every direct-typing path maps BOTH '\r' and '\n' to
-    // an Enter keypress (wayland_inject's KeySpec, X11), so a server's Windows CRLF line endings
-    // would otherwise type TWO Enters per line break — a spurious blank line. Normalizing here makes
-    // direct + paste + clipboard agree on one Enter per break.
+    // Collapse CRLF and a lone CR to LF first, so every path sees exactly one '\n' per line break.
+    // The Wayland typing paths map both '\r' and '\n' to an Enter keypress (wayland_inject's
+    // KeySpec, the virtual keyboard), so a server's CRLF would otherwise type TWO Enters per break
+    // — a spurious blank line. The enigo path (X11/Windows/macOS) does NOT get Enter from a
+    // character at all — enigo maps '\n' to XK_Linefeed on X11 and may inject U+200B on macOS —
+    // so `inject` types each '\n' as a Return KEY via `typing_segments`. The clipboard paths turn
+    // the LF back into CRLF on Windows (`clipboard_newlines`). One LF here is what makes all of
+    // them agree on one Enter per break.
     text.replace("\r\n", "\n")
         .replace('\r', "\n")
         .chars()
@@ -317,31 +592,28 @@ pub fn inject(
                     );
                     return Ok(Landed::NothingWritten);
                 }
-                let mut rest = text;
-                while !rest.is_empty() {
-                    let split = match rest.char_indices().nth(DIRECT_CHUNK_CHARS) {
-                        Some((i, _)) => i,
-                        None => rest.len(),
-                    };
-                    let (chunk, tail) = rest.split_at(split);
-                    enigo.text(chunk).map_err(|e| e.to_string())?;
-                    rest = tail;
-                    if !rest.is_empty() {
+                // Text runs go out via `enigo.text`, line breaks and tabs as real key clicks —
+                // see `typing_segments` for why a '\n' character is not an Enter.
+                for (i, seg) in typing_segments(text, DIRECT_CHUNK_CHARS)
+                    .into_iter()
+                    .enumerate()
+                {
+                    if i > 0 {
                         if injection_cancelled(epoch) {
                             tracing::info!("[inject] cancelled mid-typing — stopping");
                             return Ok(Landed::Yes);
                         }
-                        // Focus is re-asked per chunk, not only before the first one: a 512-char
+                        // Focus is re-asked per segment, not only before the first one: a 512-char
                         // chunk is tens of milliseconds of typing, so a click into one of our own
                         // windows part-way through a long transcript otherwise lands every
                         // remaining chunk in that window's field.
                         //
-                        // `Yes`, NOT `NothingWritten` — the chunks before this one really did land,
-                        // and claiming otherwise makes the caller re-send the whole phrase on top
-                        // of them (P16's duplicate-text hazard). The untyped tail is dropped, which
-                        // is the same trade the mid-typing cancel above already makes.
+                        // `Yes`, NOT `NothingWritten` — the segments before this one really did
+                        // land, and claiming otherwise makes the caller re-send the whole phrase
+                        // on top of them (P16's duplicate-text hazard). The untyped tail is
+                        // dropped, which is the same trade the mid-typing cancel above makes.
                         //
-                        // One probe per chunk, and each is an event-loop round trip (~0.1ms) — a
+                        // One probe per segment, and each is an event-loop round trip (~0.1ms) — a
                         // rounding error against `enigo.text()`. What it does add is a dependency
                         // on the UI thread being responsive: if that stalls, typing stalls here.
                         // Accepted, and consistent with the guards at the entry and the sinks,
@@ -353,6 +625,12 @@ pub fn inject(
                             return Ok(Landed::Yes);
                         }
                     }
+                    match seg {
+                        TypeSeg::Text(chunk) => enigo.text(chunk),
+                        TypeSeg::Enter => enigo.key(Key::Return, Direction::Click),
+                        TypeSeg::Tab => enigo.key(Key::Tab, Direction::Click),
+                    }
+                    .map_err(|e| e.to_string())?;
                 }
             }
             _ => {
@@ -422,10 +700,24 @@ pub fn read_primary_selection() -> Option<String> {
 /// here and synthesizes Ctrl+V via the portal. The prior clipboard is captured separately
 /// and TIME-BOUNDED by the caller (read_selection_bounded — see commands.rs), so this no
 /// longer does the unbounded get_text() that could wedge on a dead clipboard owner.
+///
+/// With clipboard privacy on (Linux), the write goes through the live owner instead: the history
+/// hint makes arboard's X11 backend — which is also what a Wayland session WITHOUT the data-control
+/// protocol (GNOME) runs on, through XWayland — CLEAR the selection when the `Clipboard` drops
+/// instead of handing it to the clipboard manager, so a plain set could be gone before the
+/// portal's Ctrl+V reads it.
 pub fn set_clipboard(text: &str) -> Result<(), String> {
-    use arboard::Clipboard;
-    let mut cb = Clipboard::new().map_err(|e| e.to_string())?;
-    cb.set_text(text.to_string()).map_err(|e| e.to_string())?;
+    if cfg!(target_os = "linux") && clipboard_privacy() {
+        return persist_transcript(text);
+    }
+    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    set_text_ext(
+        &mut cb,
+        &clipboard_newlines(text, cfg!(windows)),
+        clipboard_privacy(),
+        false,
+    )
+    .map_err(|e| e.to_string())?;
     note_injected(text);
     Ok(())
 }
@@ -442,12 +734,18 @@ pub fn set_clipboard(text: &str) -> Result<(), String> {
 /// stale-paste bug hid behind exactly this `let _ =`). `is_own_injected` now breaks that chain,
 /// but the failure itself still needs to show up in the log.
 ///
+/// `exclude` = carry the history/cloud hints (see `set_text_ext`). Transcript writes pass the
+/// user's setting; RESTORES always pass true — a restored snapshot has lost whatever flags its
+/// source set (a password manager marks its copies), so re-publishing it to the history would leak
+/// exactly what the source had kept out.
+///
 /// `report`, when present, receives the outcome AS SOON AS IT IS KNOWABLE and before this
 /// function blocks — see `set_clipboard_persistent` for why that split exists and what it can and
 /// cannot answer.
 fn serve_clipboard_blocking(
     text: String,
     what: &str,
+    exclude: bool,
     report: Option<std::sync::mpsc::SyncSender<Result<(), String>>>,
 ) {
     let tell = |r: Result<(), String>| {
@@ -459,7 +757,6 @@ fn serve_clipboard_blocking(
     };
     #[cfg(target_os = "linux")]
     {
-        use arboard::SetExtLinux;
         match arboard::Clipboard::new() {
             // Blocks here serving the selection until another app replaces it — that's what
             // keeps the text on the clipboard after a plain set would return + drop it.
@@ -469,7 +766,7 @@ fn serve_clipboard_blocking(
                 // whole answer that can be given synchronously on this platform, and it is the one
                 // that matters — it is what fails when the session has no clipboard at all.
                 tell(Ok(()));
-                if let Err(e) = cb.set().wait().text(text) {
+                if let Err(e) = set_text_ext(&mut cb, &text, exclude, true) {
                     // The residual this design cannot answer synchronously. The caller has already
                     // been told Ok, so this stays a log line — see `set_clipboard_persistent`.
                     tracing::warn!("[clip] {what} failed after the handshake: {e}");
@@ -487,7 +784,7 @@ fn serve_clipboard_blocking(
             Ok(mut cb) => {
                 // No `wait()` off Linux: `set_text` completes, so the FULL outcome is knowable
                 // here and the residual above does not exist on this platform.
-                let r = cb.set_text(text).map_err(|e| e.to_string());
+                let r = set_text_ext(&mut cb, &text, exclude, false).map_err(|e| e.to_string());
                 if let Err(ref e) = r {
                     tracing::warn!("[clip] {what} failed: {e}");
                 }
@@ -529,15 +826,42 @@ fn serve_clipboard_blocking(
 /// be answered synchronously by construction — the call does not return until another app takes
 /// the selection. It stays a log line. The dominant real failure, and the one this closes, is
 /// having no clipboard connection at all.
+///
+/// This is a NEW clipboard write, so it supersedes a restore still waiting out its delay (see
+/// `RestoreSlot`): that restore would otherwise land on top of the text this call promises stays.
 pub fn set_clipboard_persistent(text: &str) -> Result<(), String> {
+    let _ = merge_pending_restore(None, take_pending_restore(), false);
+    persist_transcript(text)
+}
+
+/// The body of `set_clipboard_persistent`, minus the pending-restore take — for `paste`, which
+/// has already taken (and possibly adopted) it.
+///
+/// `note_injected` gets the LF text (`is_own_injected` normalizes); the clipboard gets CRLF on
+/// Windows (`clipboard_newlines`). The serving thread first waits out a stuck clipboard read
+/// (`wait_clip_read_idle`) and reports Err if it never finishes, so the caller's recv bound is
+/// raised by that wait on Windows (the only platform where it waits).
+fn persist_transcript(text: &str) -> Result<(), String> {
     note_injected(text);
-    let text = text.to_string();
+    let text = clipboard_newlines(text, cfg!(windows)).into_owned();
+    let exclude = clipboard_privacy();
     let (tx, rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
-    std::thread::spawn(move || serve_clipboard_blocking(text, "clipboard-only set", Some(tx)));
+    std::thread::spawn(move || {
+        if !wait_clip_read_idle(CLIP_IDLE_WAIT) {
+            let _ = tx.send(Err("a clipboard read is still stuck".to_string()));
+            return;
+        }
+        serve_clipboard_blocking(text, "clipboard-only set", exclude, Some(tx))
+    });
     // Normally sub-millisecond: this waits for a local connect, not for a paste. The bound exists
     // so a wedged compositor cannot park an injection, and it is long enough that a slow one still
     // gets to answer for itself rather than being reported as broken.
-    match rx.recv_timeout(Duration::from_millis(200)) {
+    let bound = if cfg!(windows) {
+        CLIP_IDLE_WAIT + Duration::from_millis(250)
+    } else {
+        Duration::from_millis(200)
+    };
+    match rx.recv_timeout(bound) {
         Ok(r) => r,
         Err(_) => Ok(()),
     }
@@ -546,14 +870,81 @@ pub fn set_clipboard_persistent(text: &str) -> Result<(), String> {
 /// Restore clipboard text captured (time-bounded) by the caller before the paste, after a short delay so the paste
 /// has consumed the clipboard first. No-op when `prev` is None. Restores via a LIVE owner
 /// (not a plain set_text) so the restored value actually persists on Wayland.
+///
+/// Scheduled through `RestoreSlot`: a newer clipboard write inside the 400ms takes it over (a
+/// local paste adopts it, anything else drops it), and the timer then finds itself superseded.
 pub fn restore_clipboard_later(prev: Option<String>) {
-    if let Some(prev) = prev {
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(400));
-            // No report channel: nothing user-facing rests on a RESTORE succeeding (the ledger
-            // verified all four call sites), and this already runs detached behind a 400ms sleep.
-            serve_clipboard_blocking(prev, "clipboard restore", None);
-        });
+    let Some(prev) = prev else { return };
+    let Ok(gen) = RESTORE.lock().map(|mut s| s.schedule(prev)) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        let Some(prev) = RESTORE.lock().ok().and_then(|mut s| s.take_if_current(gen)) else {
+            tracing::info!(
+                "[clip] restore superseded by a newer clipboard write or restore — skipped"
+            );
+            return;
+        };
+        // A read still stuck on the clipboard would fight this write (and on Windows block it).
+        // Skipping loses only the restore; the transcript stays, which is the documented fallback.
+        if !wait_clip_read_idle(CLIP_IDLE_WAIT) {
+            tracing::warn!("[clip] restore skipped: a clipboard read is still stuck");
+            return;
+        }
+        // No report channel: nothing user-facing rests on a RESTORE succeeding (the ledger
+        // verified all four call sites), and this already runs detached behind a 400ms sleep.
+        // Always excluded from history/cloud — see `serve_clipboard_blocking`.
+        serve_clipboard_blocking(prev, "clipboard restore", true, None);
+    });
+}
+
+/// The Windows remote-target write: the delayed-rendering owner (`win_clip`) unless the mode is
+/// `legacy` or the owner is unavailable, in which case the plain synchronous write. Ok carries the
+/// offer id when the owner took it (None for the legacy write); Err is the `Landed` to report —
+/// always `NothingWritten`, because no chord has been pressed and the caller's re-send is safe.
+#[cfg(windows)]
+fn write_remote_windows(text: &str) -> Result<Option<u64>, Landed> {
+    use crate::win_clip::{self, Mode, OfferError};
+    let exclude = clipboard_privacy();
+    let legacy = || -> Result<Option<u64>, Landed> {
+        let crlf = clipboard_newlines(text, true);
+        match arboard::Clipboard::new()
+            .and_then(|mut cb| set_text_ext(&mut cb, &crlf, exclude, false))
+        {
+            Ok(()) => {
+                note_injected(text);
+                Ok(None)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[clip] paste: remote write failed — nothing written, the caller re-sends: {e}"
+                );
+                Err(Landed::NothingWritten)
+            }
+        }
+    };
+    if win_clip::mode() == Mode::Legacy {
+        return legacy();
+    }
+    match win_clip::offer(text, exclude) {
+        Ok(id) => {
+            note_injected(text);
+            Ok(Some(id))
+        }
+        Err(OfferError::Unavailable) => legacy(),
+        Err(e) => {
+            // A timed-out offer may still land behind our back (the owner drops only commands it
+            // had not started). Remembering the text as ours costs nothing if it did not, and keeps
+            // the next snapshot from adopting it as the user's clipboard if it did.
+            if e == OfferError::Timeout {
+                note_injected(text);
+            }
+            tracing::warn!(
+                "[clip] paste: clipboard owner {e:?} — nothing written, the caller re-sends"
+            );
+            Err(Landed::NothingWritten)
+        }
     }
 }
 
@@ -571,24 +962,39 @@ fn paste(
     own_window_focused: OwnWindowFocused<'_>,
 ) -> Result<Landed, String> {
     use arboard::Clipboard;
+    // A restore the PREVIOUS paste scheduled and that is still waiting out its 400ms. Taken first,
+    // so it cannot fire in the middle of this paste (between our write and our chord it would
+    // make the target paste the user's old clipboard). If this paste bails before it writes — on
+    // any path, `?` included — the guard re-schedules it; once the write happened it is adopted or
+    // dropped below.
+    let mut requeue = RequeueRestore(take_pending_restore());
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     // Never capture (→ never restore) for a remote-desktop target: its clipboard sync is
     // asynchronous, and with RDP delayed rendering the RESTORED value can be what the remote's
     // paste actually fetches — no fixed delay makes that safe, so skipping the restore is the
     // only airtight option. The transcript stays on the clipboard instead.
     let previous = if restore_clipboard && !remote_target {
-        // Refuse to adopt OUR OWN last transcript as "the user's previous clipboard": it lingers
-        // there after a failed/skipped restore, and restoring it here would resurrect stale
-        // dictation after every future paste (the mstsc wrong-text bug).
-        clipboard.get_text().ok().filter(|p| {
-            let own = is_own_injected(p);
-            if own {
-                tracing::info!(
-                    "[clip] paste: prior clipboard is our own transcript — skipping restore"
-                );
-            }
-            !own
-        })
+        if clip_read_busy() {
+            // The un-timed read below would queue behind the stuck one (on Windows, spin on
+            // `OpenClipboard`) with no bound at all. Skipping it costs only this paste's restore.
+            tracing::info!(
+                "[clip] paste: a clipboard read is still stuck — skipping the prior read (no restore)"
+            );
+            None
+        } else {
+            // Refuse to adopt OUR OWN last transcript as "the user's previous clipboard": it
+            // lingers there after a failed/skipped restore, and restoring it here would resurrect
+            // stale dictation after every future paste (the mstsc wrong-text bug).
+            clipboard.get_text().ok().filter(|p| {
+                let own = is_own_injected(p);
+                if own {
+                    tracing::info!(
+                        "[clip] paste: prior clipboard is our own transcript — skipping restore"
+                    );
+                }
+                !own
+            })
+        }
     } else {
         None
     };
@@ -611,24 +1017,75 @@ fn paste(
         tracing::info!("[clip] paste: skipped at the clipboard write — our own window took focus");
         return Ok(Landed::NothingWritten);
     }
+    // A clipboard read that outlived its cap still holds the clipboard (Windows). Writing now
+    // would fail or race it; nothing is written yet, so reporting that is safe — the caller
+    // re-sends, and no chord has been pressed.
+    if !wait_clip_read_idle(CLIP_IDLE_WAIT) {
+        tracing::warn!("[clip] paste: nothing written — the caller re-sends");
+        return Ok(Landed::NothingWritten);
+    }
     // A remote target's clipboard fetch is DEFERRED: the client requests the data only when
     // the remote app actually pastes — after the forwarded chord, i.e. after this function
     // returns and the local `clipboard` binding is dropped. On X11 with no clipboard manager,
     // arboard tears the selection down on that drop, so the remote would paste nothing AND the
     // "transcript stays on the clipboard" consolation above would be false. Same rule as the
     // chord-divert guard: data that must outlive the call goes through the live owner.
+    //
+    // On Windows the remote write goes through the delayed-rendering owner instead (`win_clip`),
+    // which is what makes the remote's fetch observable — and, in enforce mode, orderable.
+    #[cfg(windows)]
+    let mut offer_id: Option<u64> = None;
+    // Did the write already go through a live owner (so the divert/failure arms need no re-set)?
+    let persisted;
     if remote_target {
-        set_clipboard_persistent(text)?; // note_injected's for us
+        #[cfg(windows)]
+        {
+            match write_remote_windows(text) {
+                Ok(id) => offer_id = id,
+                Err(landed) => return Ok(landed),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            persist_transcript(text)?;
+        }
+        persisted = true;
+    } else if cfg!(target_os = "linux") && clipboard_privacy() {
+        // The history hint turns arboard's X11 drop into a CLEAR (see `set_text_ext`), so with
+        // privacy on the local paste must be served by the live owner too — the target reads the
+        // selection asynchronously and may do so after this function has returned.
+        persist_transcript(text)?;
+        persisted = true;
     } else {
-        clipboard
-            .set_text(text.to_string())
-            .map_err(|e| e.to_string())?;
+        set_text_ext(
+            &mut clipboard,
+            &clipboard_newlines(text, cfg!(windows)),
+            clipboard_privacy(),
+            false,
+        )
+        .map_err(|e| e.to_string())?;
         note_injected(text);
+        persisted = false;
     }
+    // Written: the pending restore is now either this paste's own "previous" or superseded.
+    let previous = merge_pending_restore(previous, requeue.0.take(), !remote_target);
     // Let the new clipboard owner settle before pasting. A remote-desktop client additionally
     // needs the new content to cross the network (format-list announcement) before the forwarded
-    // Ctrl+V lands, or the remote pastes its previously-synced clipboard — give it a longer window.
-    std::thread::sleep(Duration::from_millis(if remote_target { 300 } else { 60 }));
+    // Ctrl+V lands, or the remote pastes its previously-synced clipboard — give it a longer window
+    // (`FWF_RDP_SETTLE_MS` on Windows, so the race can be measured; see `win_clip`).
+    let settle_ms = if remote_target {
+        #[cfg(windows)]
+        {
+            crate::win_clip::settle_ms()
+        }
+        #[cfg(not(windows))]
+        {
+            300
+        }
+    } else {
+        60
+    };
+    std::thread::sleep(Duration::from_millis(settle_ms));
     // Second check, at the sink. The one above guards the clipboard WRITE; this one guards the
     // KEYSTROKE, and the settle between them is 60ms (300ms remote) of wall clock during which
     // `cancel_stream`/`cancel_record` run un-chained on another blocking thread. The Wayland twin
@@ -663,8 +1120,8 @@ fn paste(
         // because no chord was pressed on this arm — the caller re-sends, and re-sending cannot
         // duplicate text that was never typed. (The `set_text` above went through a local
         // `Clipboard` that is dropped on return, so it is not a fallback.)
-        if !remote_target {
-            if let Err(e) = set_clipboard_persistent(text) {
+        if !persisted {
+            if let Err(e) = persist_transcript(text) {
                 tracing::warn!(
                     "[clip] paste: clipboard divert failed, reporting nothing written: {e}"
                 );
@@ -673,7 +1130,37 @@ fn paste(
         }
         return Ok(Landed::OnClipboard);
     }
+    // Tell the clipboard owner the chord is going out — BEFORE pressing it, not after. The remote's
+    // fetch can come back within the 30ms `paste_keystroke` sleeps after the key (a LAN round trip
+    // is ~1ms), and a fetch the owner sees before it knows about the chord is classified as
+    // "before our chord": no re-announce in enforce, and a false NO FETCH warning. The owner
+    // thread is idle, so this posted message is handled long before any fetch can arrive. The
+    // target is the foreground process now, which is where the keystroke goes.
+    #[cfg(windows)]
+    if let Some(id) = offer_id {
+        crate::win_clip::note_chord(id, crate::win_clip::foreground_pid());
+    }
     let res = paste_keystroke(enigo, chord);
+    // Enforce: wait (bounded) for the target's fetch of THIS offer before returning, so the next
+    // phrase's offer is ordered after it. The chord was pressed, so the answer is `Yes` whatever
+    // the wait says — re-sending would type the phrase twice.
+    #[cfg(windows)]
+    if let (Some(id), Ok(())) = (offer_id, &res) {
+        use crate::win_clip::{await_target_fetch, mode, FetchWait, Mode};
+        if mode() == Mode::Enforce {
+            match await_target_fetch(id, Duration::from_millis(1500)) {
+                FetchWait::Fetched {
+                    after_chord_ms,
+                    reannounced,
+                } => tracing::info!(
+                    "[winclip] #{id}: target fetched {after_chord_ms}ms after the chord (re-announce scheduled={reannounced})"
+                ),
+                FetchWait::NoFetch => tracing::info!(
+                    "[winclip] #{id}: no target fetch seen within 1500ms of the chord — returning anyway"
+                ),
+            }
+        }
+    }
 
     // Restore the user's prior clipboard ONLY when the paste SUCCEEDED — via a live owner (same path
     // as the Wayland branch) so it actually persists; a plain set_text that drops doesn't stick on
@@ -684,11 +1171,11 @@ fn paste(
     // skip-restore-on-failure contract. No-op when restore is off (`previous` is None).
     if res.is_ok() {
         restore_clipboard_later(previous);
-    } else if !remote_target {
+    } else if !persisted {
         // The local arboard Clipboard is dropped when this function returns — on X11/Wayland
         // without a clipboard manager that destroys the selection. Hand it to the persistent
         // owner so "it's on the clipboard to paste manually" stays true.
-        let _ = set_clipboard_persistent(text);
+        let _ = persist_transcript(text);
     }
     res.map(|()| Landed::Yes)
 }
@@ -873,26 +1360,6 @@ mod tests {
     }
 
     #[test]
-    fn remote_desktop_app_ids() {
-        for id in [
-            "mstsc",
-            "MSRDC",
-            "org.remmina.Remmina",
-            "xfreerdp",
-            "wfica32",
-            "vmconnect",
-        ] {
-            assert!(super::is_remote_desktop_app(id), "{id} should be remote");
-        }
-        for id in ["firefox", "kate", "ms-teams", "code"] {
-            assert!(
-                !super::is_remote_desktop_app(id),
-                "{id} should not be remote"
-            );
-        }
-    }
-
-    #[test]
     fn sanitize_drops_controls_keeps_tab_lf_normalizes_cr() {
         // Printable text + Tab/LF survive; a trailing CR is normalized to LF (not kept), so a
         // CRLF break can't type a second Enter in the direct paths.
@@ -906,5 +1373,104 @@ mod tests {
         assert_eq!(sanitize_injected("a\x1bb\x07c\0d\x7fe\u{0085}f"), "abcdef");
         // Non-ASCII printable (incl. astral) is untouched.
         assert_eq!(sanitize_injected("café 😀"), "café 😀");
+    }
+
+    #[test]
+    fn clipboard_newlines_crlf_on_windows_only_and_never_doubled() {
+        use super::clipboard_newlines;
+        use std::borrow::Cow;
+        assert_eq!(clipboard_newlines("a\nb\n", true), "a\r\nb\r\n");
+        // Already-CRLF text is not doubled into CR CR LF.
+        assert_eq!(clipboard_newlines("a\r\nb\nc", true), "a\r\nb\r\nc");
+        // Off Windows, and for text without a line break, nothing is copied.
+        assert!(matches!(
+            clipboard_newlines("a\nb", false),
+            Cow::Borrowed("a\nb")
+        ));
+        assert!(matches!(
+            clipboard_newlines("one line", true),
+            Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn typing_segments_turn_breaks_and_tabs_into_keys() {
+        use super::{typing_segments, TypeSeg};
+        assert_eq!(
+            typing_segments("Befund:\n\tZeile 2\n", 512),
+            vec![
+                TypeSeg::Text("Befund:"),
+                TypeSeg::Enter,
+                TypeSeg::Tab,
+                TypeSeg::Text("Zeile 2"),
+                TypeSeg::Enter,
+            ]
+        );
+        assert_eq!(typing_segments("", 512), Vec::<TypeSeg>::new());
+        assert_eq!(
+            typing_segments("\n\n", 512),
+            vec![TypeSeg::Enter, TypeSeg::Enter]
+        );
+    }
+
+    #[test]
+    fn typing_segments_cap_runs_on_char_boundaries() {
+        use super::{typing_segments, TypeSeg};
+        // 1030 multi-byte chars → 512 + 512 + 6, every chunk valid UTF-8 by construction.
+        let long: String = "ü".repeat(1030);
+        let segs = typing_segments(&long, 512);
+        let lens: Vec<usize> = segs
+            .iter()
+            .map(|s| match s {
+                TypeSeg::Text(t) => t.chars().count(),
+                _ => panic!("unexpected separator"),
+            })
+            .collect();
+        assert_eq!(lens, vec![512, 512, 6]);
+        // The cap restarts after a separator; the text round-trips exactly.
+        let mixed = format!("{}\n{}", "a".repeat(600), "😀".repeat(3));
+        let segs = typing_segments(&mixed, 512);
+        assert_eq!(segs.len(), 4);
+        let mut rebuilt = String::new();
+        for s in &segs {
+            match s {
+                TypeSeg::Text(t) => rebuilt.push_str(t),
+                TypeSeg::Enter => rebuilt.push('\n'),
+                TypeSeg::Tab => rebuilt.push('\t'),
+            }
+        }
+        assert_eq!(rebuilt, mixed);
+    }
+
+    #[test]
+    fn restore_slot_supersedes_and_cancels() {
+        use super::RestoreSlot;
+        let mut s = RestoreSlot::default();
+        let g1 = s.schedule("old".into());
+        let g2 = s.schedule("user".into());
+        // The first timer finds itself superseded; the second restores the newest text.
+        assert_eq!(s.take_if_current(g1), None);
+        assert_eq!(s.take_if_current(g2).as_deref(), Some("user"));
+        assert_eq!(s.take_if_current(g2), None, "a restore fires once");
+        // A newer write takes the pending restore and invalidates its timer.
+        let g3 = s.schedule("clip".into());
+        assert_eq!(s.cancel().as_deref(), Some("clip"));
+        assert_eq!(s.take_if_current(g3), None);
+        assert_eq!(s.cancel(), None);
+    }
+
+    #[test]
+    fn a_pending_restore_is_adopted_only_when_the_paste_has_none_of_its_own() {
+        use super::merge_pending_restore;
+        let p = || Some("pending".to_string());
+        assert_eq!(merge_pending_restore(None, p(), true), p());
+        // A real prior read wins: the user copied something since.
+        assert_eq!(
+            merge_pending_restore(Some("new copy".into()), p(), true).as_deref(),
+            Some("new copy")
+        );
+        // Remote target / a write that must stay: the pending restore is dropped.
+        assert_eq!(merge_pending_restore(None, p(), false), None);
+        assert_eq!(merge_pending_restore(None, None, true), None);
     }
 }

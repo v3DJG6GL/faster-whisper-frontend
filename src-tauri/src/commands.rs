@@ -399,6 +399,9 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     // Log level reload / session-file move / prune — so Settings changes
     // apply live, not at the next restart.
     crate::logging::apply_log_settings(&app, &config);
+    // Clipboard privacy is a process-wide switch every transcript write reads (see inject.rs), so
+    // it is applied here rather than carried on each insert.
+    crate::inject::set_clipboard_privacy(config.settings.general.exclude_from_clipboard_history);
     Ok(())
 }
 
@@ -2420,11 +2423,15 @@ pub struct ClipboardSnapshot(pub std::sync::Mutex<Option<String>>);
 /// so on a wedged owner every per-phrase call used to strand one more thread. While a read is still
 /// running, a new one returns None straight away; the flag clears only when the blocking read
 /// itself returns, not when the caller's timeout fires.
+///
+/// The flag lives in `inject` so the clipboard WRITERS can see it too: on Windows the stuck read
+/// still holds the clipboard, and every write path now waits it out (`wait_clip_read_idle`)
+/// instead of racing it.
 async fn read_selection_bounded(
     read: impl FnOnce() -> Option<String> + Send + 'static,
 ) -> Option<String> {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static CLIP_READ_BUSY: AtomicBool = AtomicBool::new(false);
+    use crate::inject::CLIP_READ_BUSY;
+    use std::sync::atomic::Ordering;
     if CLIP_READ_BUSY
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
@@ -2450,16 +2457,6 @@ async fn read_selection_bounded(
         Ok(Ok(v)) => v,
         _ => None,
     }
-}
-
-/// True when the currently-focused app is a remote-desktop client (mstsc & co, see
-/// inject::is_remote_desktop_app). Clipboard RESTORES are skipped for those targets: their
-/// clipboard sync is asynchronous (RDP delayed rendering fetches the data only when the remote
-/// app pastes), so a restored value can be what a still-pending remote paste actually receives.
-fn focused_remote_target(guard: &crate::atspi_guard::AtspiGuard) -> bool {
-    crate::atspi_guard::focused_app_now(guard)
-        .map(|f| crate::inject::is_remote_desktop_app(&f.app_id))
-        .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -2497,7 +2494,10 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
 
 /// Restore the clipboard snapshot taken by `begin_injection` (end of a live session).
 #[tauri::command]
-pub fn end_injection(snap: State<ClipboardSnapshot>, guard: State<crate::atspi_guard::AtspiGuard>) {
+pub fn end_injection(snap: State<ClipboardSnapshot>) {
+    // Where the session's LAST paste went, read and forgotten here (the session is over).
+    let last_remote = crate::inject::last_paste_was_remote();
+    crate::inject::clear_paste_target();
     // Taken UNCONDITIONALLY, above the snapshot test. Inside `if let Some(prev)` it would be
     // unreachable on every session that took no snapshot (direct-typing method, restore-clipboard
     // off, or a clipboard read that timed out) — and `streaming.ts` calls this on every teardown,
@@ -2506,11 +2506,13 @@ pub fn end_injection(snap: State<ClipboardSnapshot>, guard: State<crate::atspi_g
     let recovered_on_clipboard = crate::inject::take_recovery_on_clipboard();
     let prev = snap.0.lock().ok().and_then(|mut g| g.take());
     if let Some(prev) = prev {
-        // Remote-desktop target: skip the restore (same contract as the per-paste path) — the
-        // restored value can be what the remote's still-pending paste fetches. The snapshot is
-        // already consumed above, so it can't leak into a later session either way.
-        if focused_remote_target(guard.inner()) {
-            tracing::info!("[clip] end_injection: remote-desktop target — restore skipped");
+        // The last paste went to a remote-desktop target: skip the restore (same contract as the
+        // per-paste path) — the restored value can be what the remote's still-pending paste
+        // fetches. Decided by where that paste WENT (`last_paste_was_remote`), not by what has
+        // focus now: this runs at teardown, after the user may have moved into or out of the RDP
+        // window. The snapshot is already consumed above, so it can't leak into a later session.
+        if last_remote {
+            tracing::info!("[clip] end_injection: last paste went to a remote-desktop target — restore skipped");
             return;
         }
         // An error-abort recovery just put the abandoned transcript on the clipboard for the
@@ -2541,17 +2543,15 @@ pub fn end_injection(snap: State<ClipboardSnapshot>, guard: State<crate::atspi_g
 /// snapshot stays for the next phrase to restore again). Served from a live owner so it
 /// persists on Wayland; no-op when no snapshot was taken (restore off / non-paste session).
 #[tauri::command]
-pub fn restore_clipboard_snapshot(
-    snap: State<ClipboardSnapshot>,
-    guard: State<crate::atspi_guard::AtspiGuard>,
-) {
+pub fn restore_clipboard_snapshot(snap: State<ClipboardSnapshot>) {
     let prev = snap.0.lock().ok().and_then(|g| g.clone());
     if let Some(prev) = prev {
-        // Remote-desktop target: skip the per-phrase restore (see end_injection) — the snapshot
-        // stays untouched for later phrases / a later non-remote end-of-session restore.
-        if focused_remote_target(guard.inner()) {
+        // The last paste went to a remote-desktop target: skip the per-phrase restore (see
+        // end_injection) — the snapshot stays untouched for later phrases / a later non-remote
+        // end-of-session restore.
+        if crate::inject::last_paste_was_remote() {
             tracing::info!(
-                "[clip] restore_clipboard_snapshot: remote-desktop target — restore skipped"
+                "[clip] restore_clipboard_snapshot: last paste went to a remote-desktop target — restore skipped"
             );
             return;
         }
@@ -2582,6 +2582,8 @@ pub fn discard_injection_snapshot(snap: State<ClipboardSnapshot>) {
     // The other way a session ends. Dropping the snapshot means no restore will ever be attempted
     // against it, so a recovery flag has nothing left to protect and must not outlive this session.
     crate::inject::clear_recovery_on_clipboard();
+    // Same for the last paste target: it only ever gates a restore of THIS session's snapshot.
+    crate::inject::clear_paste_target();
 }
 
 /// The focused application's id + title + (when deep detection is on) whether its focused
@@ -2879,6 +2881,10 @@ pub async fn inject_text(
     // `None` = no identified target (our own window, or a cold a11y bridge), which skips the
     // re-check below.
     expect_app_id: Option<String>,
+    // The per-app rule's "Remote desktop" override: `Some(true)`/`Some(false)` force the
+    // remote-desktop clipboard handling on/off for that app, `None` = auto-detect (exe/app id +
+    // window class). See the resolution at the sink below.
+    remote_desktop: Option<bool>,
 ) -> Result<InjectOutcome, String> {
     // Strip control characters (except Tab/LF; CR is normalized to LF) from the server-transcribed
     // text before it reaches ANY injection path — clipboard-only, Wayland paste, or X11 paste/direct
@@ -3144,18 +3150,43 @@ pub async fn inject_text(
             diverted: true,
         });
     }
-    // Now that the method is final and focus has been read once, at the sink.
+    // Now that the method is final and focus has been read once, at the sink. Two detectors (see
+    // `remote_desktop`): the focused app id against the known clients, and — Windows — the focused
+    // window's class, which also catches the RDP control hosted by RDCMan/mRemoteNG & co. The
+    // per-app rule overrides both when it says On/Off; `None` is "Auto". Both are logged so a
+    // support log shows WHICH detector fired and whether the rule overrode it.
     let remote_target = method != "direct"
-        && match &focused_now {
-            Some(f) if crate::inject::is_remote_desktop_app(&f.app_id) => {
+        && {
+            let by_exe = focused_now
+                .as_ref()
+                .is_some_and(|f| crate::remote_desktop::is_remote_desktop_app(&f.app_id));
+            let by_class = crate::remote_desktop::focus_is_remote_desktop_client();
+            let detected = by_exe || by_class;
+            let remote = remote_desktop.unwrap_or(detected);
+            if remote || remote_desktop.is_some_and(|r| r != detected) {
+                let app = focused_now
+                    .as_ref()
+                    .map_or("unknown", |f| f.app_id.as_str());
+                let (what, then) = if remote {
+                    (
+                        "remote-desktop target",
+                        " — longer clipboard settle, restore skipped",
+                    )
+                } else {
+                    ("not treated as a remote-desktop target", "")
+                };
                 tracing::info!(
-                    "[inject] remote-desktop target ({}) — longer clipboard settle, restore skipped",
-                    f.app_id
+                    "[inject] {what} ({app}) — exe={by_exe} class={by_class} rule={remote_desktop:?}{then}"
                 );
-                true
             }
-            _ => false,
+            remote
         };
+    // Where this paste goes decides the SESSION-level restores later (end_injection /
+    // restore_clipboard_snapshot), which run after focus may have moved — see LAST_PASTE_REMOTE.
+    // A bare auto-Enter carries no transcript and touches no clipboard, so it does not count.
+    if method != "direct" && !text.is_empty() {
+        crate::inject::note_paste_target(remote_target);
+    }
 
     // Kept for the error-abort recovery below: the X11 branch moves `text` into spawn_blocking.
     let recovery_text = text.clone();
@@ -3329,9 +3360,19 @@ pub async fn inject_text(
                     diverted: false,
                 });
             }
+            // A restore the previous paste scheduled and that has not fired yet would land on top
+            // of this write (see inject::RestoreSlot): take it now. It becomes this paste's own
+            // `prev` when this paste has none (its read came back empty/timeout or as our own
+            // previous transcript — exactly what it reads inside that restore window), else it is
+            // superseded. If the write fails, the original restore is put back.
+            let pending = crate::inject::take_pending_restore();
+            let prev = crate::inject::merge_pending_restore(prev, pending.clone(), !remote_target);
             let set_res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
                 .await
                 .map_err(|e| e.to_string())?;
+            if set_res.is_err() {
+                crate::inject::restore_clipboard_later(pending);
+            }
             set_res?; // propagate a set_text failure; prev was captured (time-bounded) above
                       // Longer settle for a remote-desktop target (content must cross the network first).
             tokio::time::sleep(std::time::Duration::from_millis(if remote_target {
@@ -3484,9 +3525,70 @@ pub async fn inject_text(
     })
 }
 
+/// Would "Auto" treat `app_id` as a remote-desktop client? For the per-app rule editor, which
+/// shows "detected as a remote-desktop client" / "not a known remote-desktop client" next to the
+/// Auto choice. The app-id list only: the window-class detector needs the window focused, which
+/// the editor's target is not.
+#[tauri::command]
+pub fn remote_desktop_auto_detected(app_id: String) -> bool {
+    // An app id is short; bound the input so a junk IPC argument costs nothing.
+    let id: String = app_id.chars().take(256).collect();
+    crate::remote_desktop::is_remote_desktop_app(&id)
+}
+
+/// Longest message `frontend_log` writes.
+const FRONTEND_LOG_MAX: usize = 300;
+
+/// Defang a frontend log line: the tag must be 1–16 lowercase ASCII letters (else "frontend"),
+/// the message keeps printable ASCII only and at most `FRONTEND_LOG_MAX` characters. The webview
+/// is ours, but whatever it logs lands in the support log the user shares — so no control
+/// sequences or terminal escapes, no brackets or spaces smuggled into the tag, and no unbounded
+/// lines.
+fn sanitize_frontend_log(tag: &str, msg: &str) -> (String, String) {
+    let tag_ok = (1..=16).contains(&tag.len()) && tag.bytes().all(|b| b.is_ascii_lowercase());
+    let tag = if tag_ok { tag } else { "frontend" }.to_string();
+    let msg = msg
+        .chars()
+        .filter(|c| (' '..='~').contains(c))
+        .take(FRONTEND_LOG_MAX)
+        .collect();
+    (tag, msg)
+}
+
+/// A diagnostic line from the frontend (e.g. the typed-baseline divergence notes), written to the
+/// app log under `[tag]`. Uses the default target so the user's configured log level applies.
+/// Callers send indices, lengths and character classes — never dictated text.
+#[tauri::command]
+pub fn frontend_log(level: String, tag: String, msg: String) {
+    let (tag, msg) = sanitize_frontend_log(&tag, &msg);
+    match level.as_str() {
+        "warn" | "warning" | "error" => tracing::warn!("[{tag}] {msg}"),
+        _ => tracing::info!("[{tag}] {msg}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::move_dir_contents;
+
+    #[test]
+    fn frontend_log_is_defanged() {
+        use super::sanitize_frontend_log;
+        assert_eq!(
+            sanitize_frontend_log("typed", "diverged at 12/40"),
+            ("typed".to_string(), "diverged at 12/40".to_string())
+        );
+        // A tag that is not 1-16 lowercase letters falls back, so it cannot forge a prefix.
+        for bad in ["", "winclip]", "Typed", "a-b", "abcdefghijklmnopq"] {
+            assert_eq!(sanitize_frontend_log(bad, "x").0, "frontend", "{bad:?}");
+        }
+        // Controls and non-ASCII are dropped; the message is capped.
+        assert_eq!(
+            sanitize_frontend_log("t", "a\x1b[31mb\nc\u{202e}d\u{fc}").1,
+            "a[31mbcd"
+        );
+        assert_eq!(sanitize_frontend_log("t", &"x".repeat(1000)).1.len(), 300);
+    }
 
     #[test]
     fn move_dir_contents_leaves_inflight_tmp_behind() {
