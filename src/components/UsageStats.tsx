@@ -44,7 +44,7 @@ import {
   fmtDateFull,
   localTodayDay,
 } from "@/lib/format";
-import { TREND_DAYS, viewSignature, viewerTimeZone, yearPageQuery } from "@/lib/usage";
+import { TREND_DAYS, openStatisticsPage, viewSignature, viewerTimeZone, yearPageQuery } from "@/lib/usage";
 import { effectiveServerUrl } from "@/lib/backends";
 import {
   CHART_METRICS,
@@ -1752,6 +1752,8 @@ export function StatisticsView({
   onRhythm: (r: Rhythm) => void;
 }) {
   const { statsBackends, viewBackend, setView, stats: base } = useUsageView();
+  // The page's documents are fetched only while it is open (lib/usage.ts).
+  useEffect(() => openStatisticsPage(), []);
   const view = useApp((s) => s.usageView);
   const settings = useApp((s) => s.settings);
   const today = localTodayDay();

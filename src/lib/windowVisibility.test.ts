@@ -8,7 +8,13 @@ vi.mock("./theme", () => ({
   setAccentDriftPaused: (reason: string, p: boolean) => void paused.set(reason, p),
 }));
 
-import { watchWindowVisibility, type VisibilityDeps } from "./windowVisibility";
+import {
+  _resetWindowVisibilityForTests,
+  isWindowHidden,
+  onWindowHiddenChange,
+  watchWindowVisibility,
+  type VisibilityDeps,
+} from "./windowVisibility";
 
 function fakeDoc(state: "visible" | "hidden") {
   const handlers: (() => void)[] = [];
@@ -38,7 +44,27 @@ function fakeTauri(visible: Promise<boolean>) {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe("watchWindowVisibility", () => {
-  beforeEach(() => paused.clear());
+  beforeEach(() => {
+    paused.clear();
+    _resetWindowVisibilityForTests();
+  });
+
+  it("isWindowHidden is either reason, and listeners hear only real flips", () => {
+    const doc = fakeDoc("visible");
+    const { tauri, emit } = fakeTauri(new Promise(() => {}));
+    const seen: boolean[] = [];
+    onWindowHiddenChange((h) => seen.push(h));
+    watchWindowVisibility("main", { doc, tauri });
+    expect(isWindowHidden()).toBe(false);
+    doc.set("hidden");
+    emit(false); // a second reason while already hidden: no second notification
+    expect(isWindowHidden()).toBe(true);
+    doc.set("visible");
+    expect(isWindowHidden()).toBe(true); // still hidden by the window reason
+    emit(true);
+    expect(isWindowHidden()).toBe(false);
+    expect(seen).toEqual([true, false]);
+  });
 
   it("a window created hidden boots paused; main does not", () => {
     watchWindowVisibility("quickadd", { doc: fakeDoc("visible") });

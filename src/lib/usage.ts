@@ -13,6 +13,13 @@
 // The outcome queue (lib/usageOutcome.ts) is flushed from here too: at launch, on
 // every poll, and — crucially — BEFORE the post-session refetch, so the numbers
 // that refetch brings back already include the session that just ended.
+//
+// What the poll costs is kept to what someone can see. Every pass allocates the parsed
+// documents, and the main webview kept that memory: ~2.2 MB a minute with the window
+// closed to the tray, flat with the poll stretched to 10 minutes (A/B, 2026-09-26). So
+// the Statistics page's two documents are fetched only while that page is open, and a
+// hidden main window polls only every HIDDEN_EVERY ticks — the chip still shows the
+// per-backend numbers — and catches up the moment it is shown again.
 
 import { useApp } from "./store";
 import { isTauri, getUsageStats } from "./api";
@@ -23,14 +30,39 @@ import { effectiveServerUrl } from "./backends";
 import { hasOwn, ownProp } from "./own";
 import { toUsageQuery, type UsagePageQuery } from "./usageDerive";
 import type { Backend } from "./types";
+import { isWindowHidden, onWindowHiddenChange } from "./windowVisibility";
 
 const POLL_MS = 30_000; // steady refresh cadence
+const HIDDEN_EVERY = 10; // while the main window is hidden: one pass per 5 minutes
 const AFTER_SESSION_MS = 1_500; // the server records usage in its post-request finally
 export const TREND_DAYS = 30; // the Home strip's and the chip's fixed window
 
 let started = false;
 let pollingAll = false;
 let rerunRequested = false; // a refresh asked for mid-pass → run one more pass with the latest backends
+let statsPagesOpen = 0; // mounted Statistics pages; their documents are fetched only while > 0
+let skippedTicks = 0; // poll ticks passed over while hidden
+
+/** The Statistics page documents are wanted: the page is open and can be seen. */
+function statsPageShown(): boolean {
+  return statsPagesOpen > 0 && !isWindowHidden();
+}
+
+/** The Statistics page calls this on mount (and the returned cleanup on unmount): its two
+ *  documents are fetched now, and by the poll only while a page is open. */
+export function openStatisticsPage(): () => void {
+  statsPagesOpen++;
+  if (statsPagesOpen === 1) {
+    void refreshView().catch(() => {});
+    void refreshYear(true).catch(() => {});
+  }
+  let closed = false;
+  return () => {
+    if (closed) return;
+    closed = true;
+    statsPagesOpen--;
+  };
+}
 
 /** The Backend whose usage the chip + Home stats reflect: the Profile currently
  *  dictating, else the home target Profile (so an idle dock previews the same
@@ -74,8 +106,9 @@ export function yearPageQuery(q: UsagePageQuery): UsagePageQuery | null {
   return { range: "365", with: q.with };
 }
 
-/** Fetch the calendar's year document beside the page's, under the same rules. */
-async function refreshYear(): Promise<void> {
+/** Fetch the calendar's year document beside the page's, under the same rules. `force`
+ *  refetches a year it already has (the page reopening after the poll left it alone). */
+async function refreshYear(force = false): Promise<void> {
   const s = useApp.getState();
   const backend = viewStatsBackend(s);
   if (!backend) return;
@@ -84,7 +117,7 @@ async function refreshYear(): Promise<void> {
   const target = effectiveServerUrl(backend, s.settings);
   const tz = viewerTimeZone();
   const sig = viewSignature(backend, target, q, tz);
-  if (s.usageYear?.sig === sig && s.usageYear.stats && !pollingAll) return; // the poll refreshes it; a filter change reuses it
+  if (s.usageYear?.sig === sig && s.usageYear.stats && !pollingAll && !force) return; // the poll refreshes it; a filter change reuses it
   const stats = await getUsageStats({ serverUrl: target, backendId: backend.id, query: toUsageQuery(q, tz) });
   const now = useApp.getState();
   const cur = viewStatsBackend(now);
@@ -186,15 +219,17 @@ async function refreshAll(): Promise<void> {
           /* one backend failing must not stop the rest */
         }
       }
-      try {
-        await refreshView();
-      } catch {
-        /* the page keeps its last document */
-      }
-      try {
-        await refreshYear();
-      } catch {
-        /* the calendar keeps its last year */
+      if (statsPageShown()) {
+        try {
+          await refreshView();
+        } catch {
+          /* the page keeps its last document */
+        }
+        try {
+          await refreshYear();
+        } catch {
+          /* the calendar keeps its last year */
+        }
       }
     } while (rerunRequested); // re-reads the latest backends snapshot on the rerun
   } finally {
@@ -209,7 +244,17 @@ export function initUsageController(): void {
   // The persisted queue loads before the first pass, so a restart posts what the
   // previous run could not — refreshAll flushes again on every pass.
   void initOutcomeQueue().finally(() => void refreshAll()).catch(() => {});
-  setInterval(() => void refreshAll(), POLL_MS);
+  setInterval(() => {
+    if (isWindowHidden() && ++skippedTicks < HIDDEN_EVERY) return;
+    skippedTicks = 0;
+    void refreshAll();
+  }, POLL_MS);
+  // Shown again after ticks were passed over: catch up now, not on the next tick.
+  onWindowHiddenChange((hidden) => {
+    if (hidden || skippedTicks === 0) return;
+    skippedTicks = 0;
+    void refreshAll();
+  });
 
   let afterTimer: ReturnType<typeof setTimeout> | undefined;
   useApp.subscribe((state, prev) => {
@@ -230,7 +275,10 @@ export function initUsageController(): void {
     }
     // The Statistics page changed what it asks for, or which backend it looks at: fetch
     // that document now rather than on the next 30 s tick.
-    if (state.usageViewQuery !== prev.usageViewQuery || state.usageViewBackendId !== prev.usageViewBackendId) {
+    if (
+      statsPageShown() &&
+      (state.usageViewQuery !== prev.usageViewQuery || state.usageViewBackendId !== prev.usageViewBackendId)
+    ) {
       void refreshView().catch(() => {});
       void refreshYear().catch(() => {});
     }

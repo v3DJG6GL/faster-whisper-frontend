@@ -10,6 +10,9 @@
 //                view as hidden).
 //
 // Runs once per document from main.tsx, outside React (StrictMode cannot double it).
+//
+// The same two reasons also answer `isWindowHidden()` for the rest of the page: the main
+// window's usage poll (usage.ts) slows down while nobody can see it.
 
 import { setAccentDriftPaused } from "./theme";
 
@@ -25,11 +28,40 @@ export interface VisibilityDeps {
 /** The windows tauri.conf.json creates hidden (`visible: false`): they boot paused. */
 const BOOTS_HIDDEN = new Set(["overlay", "quickadd", "langpick"]);
 
+type Reason = "window" | "document";
+const hiddenBy = new Set<Reason>();
+const hiddenListeners = new Set<(hidden: boolean) => void>();
+
+/** Hidden for either reason. False until `watchWindowVisibility` has run. */
+export function isWindowHidden(): boolean {
+  return hiddenBy.size > 0;
+}
+
+/** Called with the new state whenever `isWindowHidden()` flips. Returns the unsubscribe. */
+export function onWindowHiddenChange(fn: (hidden: boolean) => void): () => void {
+  hiddenListeners.add(fn);
+  return () => void hiddenListeners.delete(fn);
+}
+
+function setHidden(reason: Reason, hidden: boolean): void {
+  const before = isWindowHidden();
+  if (hidden) hiddenBy.add(reason);
+  else hiddenBy.delete(reason);
+  setAccentDriftPaused(reason, hidden);
+  const now = isWindowHidden();
+  if (now !== before) for (const fn of hiddenListeners) fn(now);
+}
+
+export function _resetWindowVisibilityForTests(): void {
+  hiddenBy.clear();
+  hiddenListeners.clear();
+}
+
 export function watchWindowVisibility(label: string, deps: VisibilityDeps = defaultDeps()): void {
-  if (BOOTS_HIDDEN.has(label)) setAccentDriftPaused("window", true);
+  if (BOOTS_HIDDEN.has(label)) setHidden("window", true);
 
   const { doc } = deps;
-  const onDoc = () => setAccentDriftPaused("document", doc.visibilityState === "hidden");
+  const onDoc = () => setHidden("document", doc.visibilityState === "hidden");
   onDoc();
   doc.addEventListener("visibilitychange", onDoc);
 
@@ -41,7 +73,7 @@ export function watchWindowVisibility(label: string, deps: VisibilityDeps = defa
   void tauri
     .listen("window://visibility", (e) => {
       seq++;
-      setAccentDriftPaused("window", e.payload !== true);
+      setHidden("window", e.payload !== true);
     })
     .then(async () => {
       // An emit with no listener is dropped, never queued: a show or hide from before this
@@ -49,9 +81,9 @@ export function watchWindowVisibility(label: string, deps: VisibilityDeps = defa
       // trace — ask once. A failed query fails OPEN (drift runs, as it always did before).
       const asked = seq;
       const visible = await tauri.isVisible().catch(() => true);
-      if (seq === asked) setAccentDriftPaused("window", !visible);
+      if (seq === asked) setHidden("window", !visible);
     })
-    .catch(() => setAccentDriftPaused("window", false));
+    .catch(() => setHidden("window", false));
 }
 
 function defaultDeps(): VisibilityDeps {
