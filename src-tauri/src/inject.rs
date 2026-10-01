@@ -1036,8 +1036,7 @@ fn paste(
     #[cfg(windows)]
     let mut offer_id: Option<u64> = None;
     // Did the write already go through a live owner (so the divert/failure arms need no re-set)?
-    let persisted;
-    if remote_target {
+    let persisted = if remote_target {
         #[cfg(windows)]
         {
             match write_remote_windows(text) {
@@ -1049,13 +1048,13 @@ fn paste(
         {
             persist_transcript(text)?;
         }
-        persisted = true;
+        true
     } else if cfg!(target_os = "linux") && clipboard_privacy() {
         // The history hint turns arboard's X11 drop into a CLEAR (see `set_text_ext`), so with
         // privacy on the local paste must be served by the live owner too — the target reads the
         // selection asynchronously and may do so after this function has returned.
         persist_transcript(text)?;
-        persisted = true;
+        true
     } else {
         set_text_ext(
             &mut clipboard,
@@ -1065,8 +1064,8 @@ fn paste(
         )
         .map_err(|e| e.to_string())?;
         note_injected(text);
-        persisted = false;
-    }
+        false
+    };
     // Written: the pending restore is now either this paste's own "previous" or superseded.
     let previous = merge_pending_restore(previous, requeue.0.take(), !remote_target);
     // Let the new clipboard owner settle before pasting. A remote-desktop client additionally
