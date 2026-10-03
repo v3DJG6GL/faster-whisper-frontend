@@ -73,8 +73,10 @@ pnpm tauri:build      # produce installers (.msi + .exe NSIS / .deb / AppImage)
 ```
 
 Requires Node + pnpm, the Rust toolchain, and (on Linux) `libwebkit2gtk-4.1-dev`,
-`libayatana-appindicator3-dev`, `librsvg2-dev`, `libasound2-dev` (audio capture) and
+`libayatana-appindicator3-dev`, `librsvg2-dev`, `libasound2-dev` (ALSA, the audio fallback) and
 `libxkbcommon-dev` (Wayland keystroke injection) — the same set `.forgejo/workflows/ci.yml` installs.
+On Linux the app records and plays through PipeWire or PulseAudio over their PulseAudio-protocol
+socket (a pure-Rust client, no extra packages) and falls back to raw ALSA when no sound server runs.
 
 ## License
 
