@@ -2,7 +2,6 @@
 //! RMS levels (`audio://level`). Resampling to 16 kHz / s16le for streaming
 //! lands in M3, where it is actually consumed.
 
-use serde::Serialize;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -10,10 +9,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
+#[cfg(target_os = "linux")]
+pub mod alsa_paths;
 pub mod capture;
 pub mod device;
 pub mod host;
 pub mod playback;
+#[cfg(target_os = "linux")]
+pub mod pulse;
 pub mod resample;
 pub mod stream_errors;
 
@@ -57,14 +60,6 @@ pub fn publish_levels_with_live(
 /// lives in ONE place — retuning it at one call site would silently desync the meter from the gate.
 pub fn chip_level(rms: f32) -> f32 {
     (rms * 6.0).clamp(0.0, 1.0)
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AudioDevice {
-    pub id: String,
-    pub label: String,
-    pub is_default: bool,
 }
 
 /// Holds the active capture stream (None when idle). Dropping the handle stops

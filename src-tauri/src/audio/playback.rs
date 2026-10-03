@@ -5,8 +5,7 @@
 //! pick an output config, ask for a ~50 ms buffer (ALSA's default buffer can be seconds long),
 //! resample linearly to the device rate, and copy the mono signal to every output channel.
 
-use super::host::app_host;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{BufferSize, FromSample, SampleFormat, SizedSample, SupportedBufferSize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -22,9 +21,7 @@ pub fn play_mono(samples: Vec<f32>, rate: u32, cancelled: impl Fn() -> bool) -> 
     if samples.is_empty() || rate == 0 {
         return Ok(());
     }
-    let device = app_host()
-        .default_output_device()
-        .ok_or_else(|| "no output device".to_string())?;
+    let device = super::host::default_output().ok_or_else(|| "no output device".to_string())?;
     // Prefer a float config at the source rate (a sound server converts for us), else whatever
     // the device runs at by default and resample here.
     let supported = device
@@ -212,4 +209,18 @@ mod tests {
             BufferSize::Default
         ));
     }
+}
+
+/// `cargo test --lib live_tone -- --ignored --nocapture` plays a quiet 300 ms tone on the default
+/// output and reports how long the call blocked.
+#[cfg(test)]
+#[test]
+#[ignore]
+fn live_tone() {
+    let pcm: Vec<f32> = (0..14_400)
+        .map(|i| 0.05 * (i as f32 * 440.0 * std::f32::consts::TAU / 48_000.0).sin())
+        .collect();
+    let t = Instant::now();
+    let r = play_mono(pcm, 48_000, || false);
+    println!("result={r:?} blocked={:?}", t.elapsed());
 }

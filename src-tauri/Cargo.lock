@@ -1308,6 +1308,7 @@ dependencies = [
  "cpal",
  "enigo",
  "evdev",
+ "futures-executor",
  "futures-util",
  "gtk",
  "keyring",

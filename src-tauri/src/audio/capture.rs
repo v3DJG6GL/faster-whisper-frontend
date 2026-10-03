@@ -7,14 +7,13 @@
 //! thread; the [`CaptureHandle`] only carries a stop flag + join handle (both
 //! `Send`), so it can sit in Tauri state. Dropping the handle stops capture.
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SampleFormat, StreamConfig};
+use cpal::traits::{DeviceTrait, StreamTrait};
+use cpal::{SampleFormat, StreamConfig};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
-use crate::audio::device::device_name;
 use crate::audio::MicClip;
 
 /// Keep at most this many seconds of the most recent capture for replay.
@@ -124,29 +123,6 @@ pub fn start_level_meter(
     })
 }
 
-fn pick_device(device_id: Option<String>) -> Result<Device, String> {
-    let host = super::host::app_host();
-    match device_id {
-        // Fall back to the default input when a persisted mic name no longer resolves (reconnect /
-        // rename / reboot re-enumerates it) — mirrors open_input, so the mic test never hard-fails on
-        // a stale pin while a working default exists.
-        Some(id) => host
-            .input_devices()
-            .map_err(|e| e.to_string())?
-            .find(|d| device_name(d).map(|n| n == id).unwrap_or(false))
-            .or_else(|| {
-                tracing::warn!(
-                    "[audio] microphone '{id}' not found; falling back to the default input"
-                );
-                host.default_input_device()
-            })
-            .ok_or_else(|| "no default input device".to_string()),
-        None => host
-            .default_input_device()
-            .ok_or_else(|| "no default input device".to_string()),
-    }
-}
-
 fn run(
     app: AppHandle,
     device_id: Option<String>,
@@ -164,11 +140,17 @@ fn run(
         c.sample_rate = 0;
     }
 
-    let device = pick_device(device_id)?;
-    let supported = device.default_input_config().map_err(|e| e.to_string())?;
+    // A pinned mic that isn't connected falls back to the default input (as dictation does), and
+    // the Settings row says which one it is hearing.
+    let resolved = super::device::resolve_input(device_id.as_deref())?;
+    if let Some(fb) = &resolved.fallback {
+        let _ = app.emit("audio://mic-fallback", fb.clone());
+    }
+    let device = resolved.device;
+    let supported = super::device::input_config(&device)?;
     let sample_format = supported.sample_format();
     let channels = supported.channels() as usize;
-    let config: StreamConfig = supported.config();
+    let config: StreamConfig = super::device::capture_config(&device, &supported);
     let sample_rate = config.sample_rate;
     let cap = MAX_CLIP_SECS * sample_rate as usize;
 

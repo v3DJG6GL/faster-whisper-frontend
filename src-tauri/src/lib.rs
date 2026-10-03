@@ -253,6 +253,7 @@ pub fn run() {
             commands::copy_media_to, // plain copy of a record's media to a picked path
             commands::import_settings_file, // P30: settings import (parse+validate)
             commands::list_audio_devices,
+            commands::resolve_legacy_mic,
             commands::start_mic_test,
             commands::stop_mic_test,
             commands::play_mic_test,

@@ -1,6 +1,6 @@
 //! Tauri commands exposed to the web UI (config load/save + secret-store keys).
 
-use crate::audio::{self, AudioDevice, AudioState, MicPlayback, MicTestClip};
+use crate::audio::{self, AudioState, MicPlayback, MicTestClip};
 use crate::config::{self, Config};
 use crate::session::{self, RecordParams, RecordState, StartParams, StreamState};
 use crate::transport;
@@ -1767,9 +1767,34 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
     })
 }
 
+/// The microphone picker's list. Async + spawn_blocking: it asks the sound server (≤2 s timeout)
+/// and, with `include_paths`, walks ALSA's device hints — never on the UI thread.
 #[tauri::command]
-pub fn list_audio_devices() -> Vec<AudioDevice> {
-    audio::device::list_input_devices()
+pub async fn list_audio_devices(
+    include_paths: Option<bool>,
+) -> Result<audio::device::MicInventory, String> {
+    let include_paths = include_paths.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || audio::device::list_input_devices(include_paths))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// One-time migration of a microphone saved by display name (before pins were device ids):
+/// today's `{id, label}`, or None while that mic isn't connected (the name keeps working through
+/// the same lookup at dictation start, and the migration retries next launch).
+#[tauri::command]
+pub async fn resolve_legacy_mic(name: String) -> Result<Option<LegacyMic>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        audio::device::resolve_legacy(&name).map(|(id, label)| LegacyMic { id, label })
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+pub struct LegacyMic {
+    id: String,
+    label: String,
 }
 
 #[tauri::command]

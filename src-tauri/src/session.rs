@@ -6,11 +6,10 @@
 //! emitted as `stream://level`; transcripts as `stream://partial`/`final`;
 //! state as `stream://status`. Dropping a [`StreamSession`] stops everything.
 
-use crate::audio::device::device_name;
 use crate::audio::resample::Resampler16k;
 use crate::transport::batch;
 use crate::transport::stream::{self, StreamEvent, StreamParams};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{Device, SampleFormat, StreamConfig};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -218,7 +217,7 @@ struct UtterancePayload {
 }
 
 pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
-    let (device, format, channels, config, in_rate) = open_input(p.device_id)?;
+    let input = open_input(p.device_id.clone())?;
     let mute = SystemMuteGuard::new(p.mute_system);
     let epoch = next_session_epoch();
 
@@ -226,6 +225,21 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
     let (ws_stop_tx, ws_stop_rx) = watch::channel(false);
     let level = Arc::new(AtomicU32::new(0));
     let capture_stop = Arc::new(AtomicBool::new(false));
+    announce_mic(
+        &app,
+        epoch,
+        &input,
+        p.device_id.as_deref(),
+        capture_stop.clone(),
+    );
+    let OpenedInput {
+        device,
+        format,
+        channels,
+        config,
+        rate: in_rate,
+        ..
+    } = input;
 
     let capture_join = spawn_capture(
         app.clone(),
@@ -369,38 +383,94 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
     })
 }
 
-fn open_input(
-    device_id: Option<String>,
-) -> Result<(Device, SampleFormat, usize, StreamConfig, u32), String> {
-    let host = crate::audio::host::app_host();
-    let device = match device_id {
-        // The persisted mic is stored by NAME, which isn't stable across reconnect / rename / reboot
-        // (Bluetooth/USB re-enumerate), so a pinned id often stops resolving. Fall back to the default
-        // input rather than hard-failing ALL dictation — a working default mic beats a cryptic
-        // "input device not found" that breaks dictation until the user re-picks in Settings.
-        Some(id) => host
-            .input_devices()
-            .map_err(|e| e.to_string())?
-            .find(|d| device_name(d).map(|n| n == id).unwrap_or(false))
-            .or_else(|| {
-                tracing::warn!(
-                    "[audio] microphone '{id}' not found; falling back to the default input"
-                );
-                host.default_input_device()
-            })
-            .ok_or_else(|| "no default input device".to_string())?,
-        None => host
-            .default_input_device()
-            .ok_or_else(|| "no default input device".to_string())?,
-    };
-    let supported = device.default_input_config().map_err(|e| e.to_string())?;
-    Ok((
-        device.clone(),
-        supported.sample_format(),
-        supported.channels() as usize,
-        supported.config(),
-        supported.sample_rate(),
-    ))
+struct OpenedInput {
+    device: Device,
+    format: SampleFormat,
+    channels: usize,
+    config: StreamConfig,
+    rate: u32,
+    /// Set when the pinned mic isn't connected and the default input stands in.
+    fallback: Option<crate::audio::device::MicFallback>,
+    /// A pinned sound-server source to watch for unplugging while recording.
+    watch_source: Option<String>,
+}
+
+/// Open the pinned microphone, or the default input when it isn't connected (D77: the pin is kept,
+/// dictation still works, and the UI is told which mic stands in). A working default mic beats a
+/// cryptic "input device not found" that breaks dictation until the user re-picks in Settings.
+fn open_input(device_id: Option<String>) -> Result<OpenedInput, String> {
+    let r = crate::audio::device::resolve_input(device_id.as_deref())?;
+    let supported = crate::audio::device::input_config(&r.device)?;
+    let config = crate::audio::device::capture_config(&r.device, &supported);
+    Ok(OpenedInput {
+        device: r.device,
+        format: supported.sample_format(),
+        channels: supported.channels() as usize,
+        config,
+        rate: supported.sample_rate(),
+        fallback: r.fallback,
+        watch_source: r.watch_source,
+    })
+}
+
+/// Say so when the mic dictation records from isn't the pinned one: at once if the pin fell back
+/// at start, and — for a pinned sound-server source — when it disappears mid-session (the server
+/// then moves the recording to another source on its own). Polls every 3 s until `stop`.
+fn announce_mic(
+    app: &AppHandle,
+    epoch: u64,
+    input: &OpenedInput,
+    pin: Option<&str>,
+    stop: Arc<AtomicBool>,
+) {
+    if let Some(fb) = &input.fallback {
+        emit_if_active(app, epoch, "stream://mic-fallback", fb.clone());
+    }
+    #[cfg(target_os = "linux")]
+    if let (Some(source), Some(pin)) = (input.watch_source.clone(), pin) {
+        let app = app.clone();
+        let pin = pin.to_string();
+        let _ = std::thread::Builder::new()
+            .name("mic-watch".into())
+            .spawn(move || {
+                use std::time::Duration;
+                'watch: loop {
+                    for _ in 0..30 {
+                        if stop.load(Ordering::SeqCst) {
+                            break 'watch;
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    let Some(snap) = crate::audio::pulse::snapshot() else {
+                        continue;
+                    };
+                    if snap.microphones().any(|s| s.name == source) {
+                        continue;
+                    }
+                    let using = snap
+                        .default_source
+                        .as_deref()
+                        .and_then(|d| snap.microphones().find(|s| s.name == d))
+                        .map(|s| s.label.clone())
+                        .unwrap_or_else(|| "the default input".into());
+                    tracing::warn!("[audio] microphone '{pin}' disconnected mid-session");
+                    if !stop.load(Ordering::SeqCst) {
+                        emit_if_active(
+                            &app,
+                            epoch,
+                            "stream://mic-fallback",
+                            crate::audio::device::MicFallback {
+                                wanted_id: pin,
+                                using,
+                            },
+                        );
+                    }
+                    break;
+                }
+            });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (&input.watch_source, pin, stop);
 }
 
 /// Build a cpal stream error callback that signals `stop` on a TERMINAL device error. A mid-session
@@ -748,12 +818,27 @@ impl RecordSession {
 }
 
 pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, String> {
-    let (device, format, channels, config, in_rate) = open_input(p.device_id.clone())?;
+    let input = open_input(p.device_id.clone())?;
     let mute = SystemMuteGuard::new(p.mute_system);
     let epoch = next_session_epoch();
     let buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
     let level = Arc::new(AtomicU32::new(0));
     let capture_stop = Arc::new(AtomicBool::new(false));
+    announce_mic(
+        &app,
+        epoch,
+        &input,
+        p.device_id.as_deref(),
+        capture_stop.clone(),
+    );
+    let OpenedInput {
+        device,
+        format,
+        channels,
+        config,
+        rate: in_rate,
+        ..
+    } = input;
     // Set by the capture err_cb on a TERMINAL device loss (vs a user/finish stop), so the post-capture
     // arm below can emit a recovery "closed" only on a real disconnect.
     let device_lost = Arc::new(AtomicBool::new(false));
