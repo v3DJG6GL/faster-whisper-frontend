@@ -34,7 +34,7 @@
       "groupName": "github-actions"
     },
     {
-      "description": "Cargo.toml declares loose requirements on purpose (`tauri = \"2\"`, `cpal = \"0.15\"`). The global `bump` strategy would rewrite each of those to an exact minor on every release, churning the manifest for no gain. `update-lockfile` instead moves Cargo.lock for in-range updates and only edits Cargo.toml when the new version falls outside the existing requirement. ci.yml runs `cargo check --locked`, so the refreshed lock is exactly what gets verified.",
+      "description": "Cargo.toml declares loose requirements on purpose (`tauri = \"2\"`, `cpal = \"0.18\"`). The global `bump` strategy would rewrite each of those to an exact minor on every release, churning the manifest for no gain. `update-lockfile` instead moves Cargo.lock for in-range updates and only edits Cargo.toml when the new version falls outside the existing requirement. ci.yml runs `cargo check --locked`, so the refreshed lock is exactly what gets verified.",
       "matchManagers": ["cargo"],
       "rangeStrategy": "update-lockfile"
     },
@@ -72,14 +72,10 @@
       "matchPackageNames": ["wayland-client", "wayland-protocols-misc"]
     },
     {
-      "description": "rodio plays through cpal's backend and pins a cpal version; a lone bump of either duplicates the audio backend.",
-      "groupName": "cpal and rodio",
-      "matchPackageNames": ["cpal", "rodio"]
-    },
-    {
-      "description": "Cap cpal at rodio's ceiling. Every rodio release up to 0.22.2 requires cpal ^0.17, so a cpal 0.18 bump -- even inside the group -- links a second complete audio backend (double ALSA/WASAPI stacks) next to the one rodio uses. Raise this cap in lockstep with a rodio release that accepts the newer cpal.",
-      "matchPackageNames": ["cpal"],
-      "allowedVersions": "<0.18.0"
+      "description": "cpal and the pure-Rust `pulseaudio` protocol client: cpal's PulseAudio host is built on that crate and the app also lists microphones through it directly (src-tauri/src/audio), so a lone bump of either links two copies of the client. cpal is also the whole audio path (capture, mic test, cues); ci.yml never opens a device, so it always gets a human.",
+      "groupName": "cpal",
+      "matchPackageNames": ["cpal", "pulseaudio"],
+      "automerge": false
     },
     {
       "description": "Hold keyring on 3. The v4 'v1' compat layer broke API-key reads inside the running app on KDE (streaming connects went out unauthenticated -> 403; shipped broken as v0.1.10, reverted in v0.1.11) while a standalone test binary read the same wallet entries fine -- an async-environment interaction between keyring 4's zbus-based store and the app's tokio-reactor zbus (atspi). Lift only after reproducing keys::get() under a running tokio runtime + spawn_blocking and verifying a real dictation round-trip on Plasma.",

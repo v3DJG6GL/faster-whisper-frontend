@@ -12,7 +12,10 @@ use tauri::{AppHandle, Emitter};
 
 pub mod capture;
 pub mod device;
+pub mod host;
+pub mod playback;
 pub mod resample;
+pub mod stream_errors;
 
 /// Publish the live RMS meter to `event` at ~30 Hz until `stop` is set, decoding the level from the
 /// atomic f32-bits cell the capture callbacks write. The one cadence + bit-decode shared by all three

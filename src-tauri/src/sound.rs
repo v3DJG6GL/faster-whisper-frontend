@@ -97,18 +97,8 @@ pub fn play_cue(kind: String) {
     };
     let samples = render(notes);
     std::thread::spawn(move || {
-        // Keep `sink` (it owns the device stream) alive until the tone
-        // finishes — dropping it cuts audio.
-        let Ok(mut sink) = rodio::DeviceSinkBuilder::open_default_sink() else {
-            return;
-        };
-        sink.log_on_drop(false); // every cue would otherwise print "Dropping DeviceSink..." on stderr
-        let player = rodio::Player::connect_new(sink.mixer());
-        player.append(rodio::buffer::SamplesBuffer::new(
-            std::num::NonZero::new(1).unwrap(), // mono
-            std::num::NonZero::new(SAMPLE_RATE).unwrap(),
-            samples,
-        ));
-        player.sleep_until_end();
+        if let Err(e) = crate::audio::playback::play_mono(samples, SAMPLE_RATE, || false) {
+            tracing::debug!("[sound] cue not played: {e}");
+        }
     });
 }

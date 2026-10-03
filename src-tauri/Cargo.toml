@@ -43,17 +43,12 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "mul
 # ring as the process-wide provider at startup. One provider, no native toolchain.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
-# Microphone capture (ALSA/PipeWire on Linux, WASAPI on Windows).
-cpal = "0.17"
-
-# Synthesised start/stop/error cues, played from Rust so they fire for
-# hotkey-triggered dictations (the WebView would block autoplay). Uses the same
-# cpal 0.17 backend; no audio assets to bundle. default-features off drops the
-# media decoders we don't need; `playback` brings back the cpal output path
-# (rodio 0.22 made it optional). cpal is capped at 0.17 in Cargo.toml AND in
-# renovate.json until a rodio release accepts cpal 0.18 -- a lone cpal bump
-# past rodio's requirement puts two audio backends in the binary.
-rodio = { version = "0.22", default-features = false, features = ["playback"] }
+# Microphone capture + the synthesised start/stop/error cues (audio/playback.rs plays them
+# straight through cpal -- rodio used to, but it pinned cpal to 0.17, whose ALSA worker
+# busy-looped on POLLERR and froze dictation). WASAPI on Windows, CoreAudio on macOS; on
+# Linux the `pulseaudio` host (below) talks to pipewire-pulse / PulseAudio, with ALSA as the
+# fallback when no sound server runs.
+cpal = "0.18"
 
 # Last-resort playback decode: WebKitGTK without the proprietary GStreamer
 # plugins can't play the AAC/MP4 audio yt-dlp retains for URL transcripts;
@@ -104,6 +99,11 @@ arboard = { version = "3.6.1", default-features = false, features = ["wayland-da
 # Linux-only: XDG RemoteDesktop portal for native Wayland text injection (KWin
 # accepts NotifyKeyboardKeysym directly — no libei/EIS needed).
 [target.'cfg(target_os = "linux")'.dependencies]
+# cpal's PulseAudio host + the same pure-Rust protocol client (no libpulse, no build-time C deps)
+# for the mic list: cpal's own device description lacks the source props we need (monitor flag,
+# Bluetooth bus, ALSA card name). Keep the `pulseaudio` major in step with cpal's.
+cpal = { version = "0.18", features = ["pulseaudio"] }
+pulseaudio = "0.3"
 ashpd = { version = "0.13", features = ["remote_desktop", "screencast"] }
 xkbcommon = "0.9.0"
 # dlopen only — query the active XKB group (X11 XkbGetState) so multi-layout direct-typing uses the

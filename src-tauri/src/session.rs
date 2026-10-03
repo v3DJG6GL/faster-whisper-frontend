@@ -11,7 +11,7 @@ use crate::audio::resample::Resampler16k;
 use crate::transport::batch;
 use crate::transport::stream::{self, StreamEvent, StreamParams};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SampleFormat, StreamConfig, StreamError};
+use cpal::{Device, SampleFormat, StreamConfig};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -372,7 +372,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
 fn open_input(
     device_id: Option<String>,
 ) -> Result<(Device, SampleFormat, usize, StreamConfig, u32), String> {
-    let host = cpal::default_host();
+    let host = crate::audio::host::app_host();
     let device = match device_id {
         // The persisted mic is stored by NAME, which isn't stable across reconnect / rename / reboot
         // (Bluetooth/USB re-enumerate), so a pinned id often stops resolving. Fall back to the default
@@ -404,19 +404,16 @@ fn open_input(
 }
 
 /// Build a cpal stream error callback that signals `stop` on a TERMINAL device error. A mid-session
-/// device disconnect surfaces as StreamError::DeviceNotAvailable and then no more data callbacks
+/// device disconnect surfaces as DeviceNotAvailable / StreamInvalidated and then no more data callbacks
 /// fire — without this the capture thread stays blocked in publish_levels_with_live (loops until stop), its
 /// pcm sender never drops, and the session wedges at "listening" with a frozen meter until the user
 /// cancels. Tripping stop unblocks it so the channel closes and the session drains to Closed (the
-/// same teardown a user stop triggers). A transient BackendSpecific glitch is recoverable, so it is
-/// logged but does NOT stop the session.
-fn err_cb_with_stop(stop: Arc<AtomicBool>) -> impl FnMut(StreamError) + Send + 'static {
-    move |e| {
-        if matches!(e, StreamError::DeviceNotAvailable) {
-            stop.store(true, Ordering::SeqCst);
-        }
-        tracing::warn!("[stream] device error: {e}");
-    }
+/// same teardown a user stop triggers). Transient errors (xruns, backend glitches) are logged,
+/// throttled, and do NOT stop the session — unless they arrive as a storm (see `stream_errors`).
+fn err_cb_with_stop(stop: Arc<AtomicBool>) -> impl FnMut(cpal::Error) + Send + 'static {
+    crate::audio::stream_errors::error_callback("stream", move || {
+        stop.store(true, Ordering::SeqCst);
+    })
 }
 
 /// Like `err_cb_with_stop`, but also records that the stop was caused by a TERMINAL device loss (vs a
@@ -426,14 +423,11 @@ fn err_cb_with_stop(stop: Arc<AtomicBool>) -> impl FnMut(StreamError) + Send + '
 fn err_cb_with_lost(
     stop: Arc<AtomicBool>,
     device_lost: Arc<AtomicBool>,
-) -> impl FnMut(StreamError) + Send + 'static {
-    move |e| {
-        if matches!(e, StreamError::DeviceNotAvailable) {
-            device_lost.store(true, Ordering::SeqCst);
-            stop.store(true, Ordering::SeqCst);
-        }
-        tracing::warn!("[stream] device error: {e}");
-    }
+) -> impl FnMut(cpal::Error) + Send + 'static {
+    crate::audio::stream_errors::error_callback("stream", move || {
+        device_lost.store(true, Ordering::SeqCst);
+        stop.store(true, Ordering::SeqCst);
+    })
 }
 
 fn downmix<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> Vec<f32> {
@@ -563,7 +557,7 @@ fn run_capture(
             let mut sm = 0.0f32;
             let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
-                &config,
+                config,
                 move |data: &[f32], _| {
                     let mono = downmix(data, channels, |s| s);
                     sm = smooth(sm, &mono);
@@ -581,7 +575,7 @@ fn run_capture(
             let mut sm = 0.0f32;
             let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
-                &config,
+                config,
                 move |data: &[i16], _| {
                     let mono = downmix(data, channels, |s| s as f32 / 32768.0);
                     sm = smooth(sm, &mono);
@@ -599,7 +593,7 @@ fn run_capture(
             let mut sm = 0.0f32;
             let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
-                &config,
+                config,
                 move |data: &[u16], _| {
                     let mono = downmix(data, channels, |s| (s as f32 - 32768.0) / 32768.0);
                     sm = smooth(sm, &mono);
@@ -1279,7 +1273,7 @@ fn run_record_capture(
             let resampler = resampler.clone();
             let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
-                &config,
+                config,
                 move |data: &[f32], _| {
                     downmix_into(data, channels, |s| s, &mut mono);
                     sm = smooth(sm, &mono);
@@ -1306,7 +1300,7 @@ fn run_record_capture(
             let resampler = resampler.clone();
             let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
-                &config,
+                config,
                 move |data: &[i16], _| {
                     downmix_into(data, channels, |s| s as f32 / 32768.0, &mut mono);
                     sm = smooth(sm, &mono);
@@ -1333,7 +1327,7 @@ fn run_record_capture(
             let resampler = resampler.clone();
             let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
-                &config,
+                config,
                 move |data: &[u16], _| {
                     downmix_into(
                         data,

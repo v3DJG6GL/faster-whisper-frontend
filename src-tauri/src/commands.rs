@@ -1834,32 +1834,11 @@ pub fn play_mic_test(
     let counter = playback.0.clone();
     let generation = counter.fetch_add(1, Ordering::SeqCst) + 1;
     std::thread::spawn(move || {
-        'play: {
-            // Keep `sink` (it owns the device stream) alive until playback finishes
-            // (dropping it cuts audio).
-            let Ok(mut sink) = rodio::DeviceSinkBuilder::open_default_sink() else {
-                break 'play; // no output device / audio server down — fall through to signal "ended"
-            };
-            sink.log_on_drop(false); // every replay would otherwise print "Dropping DeviceSink..." on stderr
-                                     // Guarded by the sample_rate == 0 early-return above; still no unwrap on runtime data.
-            let Some(rate) = std::num::NonZero::new(sample_rate) else {
-                break 'play;
-            };
-            let player = rodio::Player::connect_new(sink.mixer());
-            player.append(rodio::buffer::SamplesBuffer::new(
-                std::num::NonZero::new(1).unwrap(), // mono
-                rate,
-                samples,
-            ));
-            // Play until it drains, but bail the instant a newer replay (or a new test)
-            // superseded us — that newer playback owns the "ended" signal.
-            while !player.empty() {
-                if counter.load(Ordering::SeqCst) != generation {
-                    player.stop();
-                    return;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(40));
-            }
+        // Play until it drains, but bail the instant a newer replay (or a new test) superseded
+        // us — that newer playback owns the "ended" signal.
+        let superseded = || counter.load(Ordering::SeqCst) != generation;
+        if let Err(e) = audio::playback::play_mono(samples, sample_rate, superseded) {
+            tracing::warn!("[audio] mic-test replay failed: {e}");
         }
         // Finished draining, OR no output device was available — either way nothing of ours is
         // sounding now, so signal "ended" if we're still current. Without the failure path emitting

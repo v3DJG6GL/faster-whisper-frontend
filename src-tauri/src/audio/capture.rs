@@ -8,7 +8,7 @@
 //! `Send`), so it can sit in Tauri state. Dropping the handle stops capture.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SampleFormat, StreamConfig, StreamError};
+use cpal::{Device, SampleFormat, StreamConfig};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -71,10 +71,6 @@ impl Recorder {
     }
 }
 
-fn err_cb(e: StreamError) {
-    tracing::warn!("[audio] stream error: {e}");
-}
-
 /// One pass over an interleaved block: down-mix each frame to mono (appended to
 /// `mono`, which is cleared first) and return the block RMS for the level meter.
 fn analyze<T: Copy>(
@@ -129,7 +125,7 @@ pub fn start_level_meter(
 }
 
 fn pick_device(device_id: Option<String>) -> Result<Device, String> {
-    let host = cpal::default_host();
+    let host = super::host::app_host();
     match device_id {
         // Fall back to the default input when a persisted mic name no longer resolves (reconnect /
         // rename / reboot re-enumerates it) — mirrors open_input, so the mic test never hard-fails on
@@ -192,12 +188,12 @@ fn run(
             };
             let mut mono: Vec<f32> = Vec::new();
             device.build_input_stream(
-                &config,
+                config,
                 move |data: &[f32], _| {
                     meter.push(analyze(data, channels, |s| s, &mut mono));
                     rec.push(&mono);
                 },
-                err_cb,
+                super::stream_errors::error_callback("audio", || {}),
                 None,
             )
         }
@@ -209,12 +205,12 @@ fn run(
             };
             let mut mono: Vec<f32> = Vec::new();
             device.build_input_stream(
-                &config,
+                config,
                 move |data: &[i16], _| {
                     meter.push(analyze(data, channels, |s| s as f32 / 32768.0, &mut mono));
                     rec.push(&mono);
                 },
-                err_cb,
+                super::stream_errors::error_callback("audio", || {}),
                 None,
             )
         }
@@ -226,7 +222,7 @@ fn run(
             };
             let mut mono: Vec<f32> = Vec::new();
             device.build_input_stream(
-                &config,
+                config,
                 move |data: &[u16], _| {
                     meter.push(analyze(
                         data,
@@ -236,7 +232,7 @@ fn run(
                     ));
                     rec.push(&mono);
                 },
-                err_cb,
+                super::stream_errors::error_callback("audio", || {}),
                 None,
             )
         }
