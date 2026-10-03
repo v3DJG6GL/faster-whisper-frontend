@@ -4,6 +4,7 @@ import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from "r
 import { Sidebar } from "@/components/Sidebar";
 import { useApp } from "@/lib/store";
 import { initConfig } from "@/lib/persistence";
+import { migrateLegacyMicPin } from "@/lib/micMigration";
 import { initSync } from "@/lib/sync";
 import { initOverlayController } from "@/lib/overlay";
 import { initUsageController } from "@/lib/usage";
@@ -226,6 +227,8 @@ export default function App() {
     // Runs the app was quit in the middle of: re-attach to what the server still
     // holds (orders itself after the config load via configReady).
     void initJobReconcile();
+    // A microphone saved by name moves to its device id (orders itself after configReady).
+    void migrateLegacyMicPin();
     // Sidebar Logs badge: always-on counter feed (tiny, change-gated events).
     initLogStatus();
     // History coalesces rapid record writes (chunked translate); land them on quit/reload.

@@ -16,6 +16,7 @@ import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation";
 import { configuredRouteTargets } from "@/lib/overlay";
 import { languageLabel } from "@/lib/languages";
+import { pinnedName } from "@/lib/micOptions";
 import type { Backend, Profile } from "@/lib/types";
 
 const GLYPH = { hold: Mic, handsfree: Hand } as const;
@@ -226,6 +227,8 @@ export default function Dashboard() {
   const serverWork = useApp((s) => s.serverWork);
   const dictationError = useApp((s) => s.dictationError);
   const overridesIgnored = useApp((s) => s.overridesIgnored);
+  const micFallback = useApp((s) => s.micFallback);
+  const micLabel = useApp((s) => s.settings.microphoneLabel);
   const micId = useApp((s) => s.settings.microphoneId);
   const homeProfileId = useApp((s) => s.settings.homeProfileId);
   const activeProfile = useApp((s) => s.activeProfile);
@@ -458,6 +461,17 @@ export default function Dashboard() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {micFallback && (
+        <Notice className="mt-3">
+          {safeDisplayText(
+            micFallback.wantedId === micId ? (pinnedName(micId, micLabel) ?? "Your microphone") : pinnedName(micFallback.wantedId, null),
+            80,
+          )}{" "}
+          is not connected, so this dictation records from {safeDisplayText(micFallback.using, 80)}. Plug it back in
+          and the next dictation uses it again.
+        </Notice>
+      )}
 
       {overridesIgnored.length > 0 && (
         <Notice className="mt-3">

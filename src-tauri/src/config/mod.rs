@@ -700,7 +700,11 @@ pub struct AppSettings {
     pub accent_hue: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accent_motion: Option<serde_json::Value>,
+    #[serde(default)]
     pub microphone_id: Option<String>,
+    /// The pinned microphone's name when it was picked (shown while it is unplugged). Storage only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub microphone_label: Option<String>,
     /// Which Profile the Home "click to dictate" button targets (None = first
     /// enabled). Pure storage; the frontend resolves it. `#[serde(default)]` so
     /// older configs load.
@@ -807,6 +811,7 @@ impl Default for Config {
                 accent_hue: None,
                 accent_motion: None,
                 microphone_id: None,
+                microphone_label: None,
                 home_profile_id: None,
                 quick_add_list: None,
                 general: GeneralSettings {
@@ -1267,6 +1272,32 @@ mod tests {
         assert_eq!(
             out["settings"]["general"]["excludeFromClipboardHistory"],
             serde_json::json!(false)
+        );
+    }
+
+    #[test]
+    fn microphone_pin_and_label_round_trip_and_may_be_absent() {
+        let mut json = serde_json::to_value(Config::default()).expect("default serializes");
+        let settings = json["settings"]
+            .as_object_mut()
+            .expect("settings is an object");
+        settings.remove("microphoneId");
+        settings.remove("microphoneLabel");
+        let cfg: Config = serde_json::from_value(json.clone()).expect("config parses");
+        assert_eq!(cfg.settings.microphone_id, None);
+        assert_eq!(cfg.settings.microphone_label, None);
+
+        json["settings"]["microphoneId"] = serde_json::json!("pulseaudio:alsa_input.usb-RØDE.mono");
+        json["settings"]["microphoneLabel"] = serde_json::json!("RØDE PodMic USB Mono");
+        let cfg: Config = serde_json::from_value(json).expect("config parses");
+        let out = serde_json::to_value(&cfg).expect("config serializes");
+        assert_eq!(
+            out["settings"]["microphoneId"],
+            serde_json::json!("pulseaudio:alsa_input.usb-RØDE.mono")
+        );
+        assert_eq!(
+            out["settings"]["microphoneLabel"],
+            serde_json::json!("RØDE PodMic USB Mono")
         );
     }
 }

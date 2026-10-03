@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   accentHue: 65, // the stock amber; theme.ts stamps no overrides for this value
   accentMotion: { period: 0, range: "wheel" }, // Still: the Signal colour stays where it was set
   microphoneId: null,
+  microphoneLabel: null,
   homeProfileId: null,
   quickAddList: null,
   general: {

@@ -66,7 +66,7 @@ import {
   type TranslateFailure,
 } from "./dictationTranslate";
 import { newCaptureIdBook } from "./captureIds";
-import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertionOverrides, InsertMethod, Profile, ServerWork } from "./types";
+import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertionOverrides, InsertMethod, MicFallback, Profile, ServerWork } from "./types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
 import { normalizeAppId } from "./sanitize";
@@ -2625,6 +2625,12 @@ async function ensureListeners(): Promise<void> {
   // The server refused one or more decode overrides because the field is
   // admin-locked (reported in the stream `ready` frame). Non-blocking FYI;
   // cleared at the start of the next dictation.
+  // The pinned mic isn't connected (at start, or unplugged mid-session): Rust records from the
+  // default input instead and says which. Same stale-session guard as below.
+  await reg<MicFallback>("stream://mic-fallback", (e) => {
+    if (!inSession()) return;
+    setDictation({ micFallback: e.payload });
+  });
   await reg<string[]>("stream://overrides-ignored", (e) => {
     // Same un-advanced-epoch path as `final`: ignore a cancelled/errored session's late drain
     // emit so a stale overrides-ignored notice can't appear after the session was dropped. The
@@ -3086,6 +3092,7 @@ async function startLiveInner(
     level: 0,
     dictationError: null,
     overridesIgnored: [],
+    micFallback: null,
     targetApp: insertCfg.targetApp,
     targetSkip,
     // Clear any prior session's done marker / pulse / note so the fresh session starts clean.

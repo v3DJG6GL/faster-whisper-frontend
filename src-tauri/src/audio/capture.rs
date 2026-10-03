@@ -12,7 +12,7 @@ use cpal::{SampleFormat, StreamConfig};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::audio::MicClip;
 
@@ -140,13 +140,9 @@ fn run(
         c.sample_rate = 0;
     }
 
-    // A pinned mic that isn't connected falls back to the default input (as dictation does), and
-    // the Settings row says which one it is hearing.
-    let resolved = super::device::resolve_input(device_id.as_deref())?;
-    if let Some(fb) = &resolved.fallback {
-        let _ = app.emit("audio://mic-fallback", fb.clone());
-    }
-    let device = resolved.device;
+    // A pinned mic that isn't connected falls back to the default input, as dictation does (the
+    // Settings row already says it isn't connected).
+    let device = super::device::resolve_input(device_id.as_deref())?.device;
     let supported = super::device::input_config(&device)?;
     let sample_format = supported.sample_format();
     let channels = supported.channels() as usize;

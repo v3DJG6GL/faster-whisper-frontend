@@ -465,7 +465,12 @@ export interface AppSettings {
    *  whole wheel or breathing along the short arc to `arcHue`. Every window derives the
    *  hue from the wall clock (theme.ts), so nothing is synchronised. Absent = Still. */
   accentMotion?: AccentMotion;
+  /** The pinned microphone as a device id ("pulseaudio:<source>", "alsa:plughw:CARD=X,DEV=0",
+   *  "wasapi:{…}", "coreaudio:<uid>"); null = System default. Older settings hold the device's
+   *  display name instead — see micOptions.isLegacyPin. */
   microphoneId: string | null;
+  /** The pinned microphone's name when it was picked, so it can still be named while unplugged. */
+  microphoneLabel?: string | null;
   transcribe?: TranscribeSettings; // Transcribe-screen defaults (per-run options)
   homeProfileId?: string | null; // which Profile the Home button targets (null = first enabled)
   quickAddList?: QuickAddTarget | null; // pinned "Word mappings" list the QuickAdd window targets
@@ -523,10 +528,39 @@ export interface DictationPhase {
   cancellable?: boolean;
 }
 
-export interface AudioDevice {
+/** The microphone picker's view of the audio devices (Rust audio::device::MicInventory). */
+export interface MicInventory {
+  /** "PipeWire" / "PulseAudio" when Linux records through a sound server; null otherwise. */
+  server: "PipeWire" | "PulseAudio" | null;
+  /** What "System default" resolves to right now (null when unknown). */
+  defaultLabel: string | null;
+  mics: Mic[];
+  /** Cards with raw ALSA paths but no microphone above (only when paths were requested). */
+  otherPaths: { label: string; paths: MicPath[] }[];
+  /** The "Show all audio paths" switch exists only on Linux. */
+  advancedSupported: boolean;
+}
+
+export interface Mic {
   id: string;
   label: string;
+  bluetooth: boolean;
   isDefault: boolean;
+  /** Every way to open this mic, the recommended one first (only when paths were requested). */
+  paths: MicPath[];
+}
+
+export type MicPathKind = "server" | "alsa-shared" | "alsa-exclusive" | "alsa-raw" | "alsa-dsnoop";
+
+export interface MicPath {
+  id: string;
+  kind: MicPathKind;
+}
+
+/** Dictation records from the default input because the pinned mic isn't connected. */
+export interface MicFallback {
+  wantedId: string;
+  using: string;
 }
 
 /** A model exposed by GET /v1/models. */

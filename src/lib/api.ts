@@ -5,7 +5,6 @@ import { AUDIO_SOURCE_EXTS, TEXT_SOURCE_EXTS } from "./subtitleImport";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   PlanStage,
-  AudioDevice,
   BatchProgress,
   BatchResult,
   Capabilities,
@@ -16,6 +15,7 @@ import type {
   DecodeOverrides,
   FocusedApp,
   InsertMethod,
+  MicInventory,
   PipelineFetch,
   PipelineSaveResult,
   RecentWords,
@@ -777,10 +777,27 @@ export async function savePipelineRules(args: {
   });
 }
 
-export async function listAudioDevices(): Promise<AudioDevice[]> {
-  if (!isTauri) return [];
-  return invoke<AudioDevice[]>("list_audio_devices");
+const NO_MICS: MicInventory = {
+  server: null,
+  defaultLabel: null,
+  mics: [],
+  otherPaths: [],
+  advancedSupported: false,
+};
+
+/** The microphone list. `includePaths` adds every raw ALSA path per mic (Linux, advanced). */
+export async function listAudioDevices(includePaths = false): Promise<MicInventory> {
+  if (!isTauri) return NO_MICS;
+  return invoke<MicInventory>("list_audio_devices", { includePaths });
 }
+
+/** Map a microphone saved by display name (older settings) to today's id + name; null while
+ *  that mic isn't connected. */
+export async function resolveLegacyMic(name: string): Promise<{ id: string; label: string } | null> {
+  if (!isTauri) return null;
+  return invoke<{ id: string; label: string } | null>("resolve_legacy_mic", { name });
+}
+
 
 export async function startMicTest(deviceId: string | null): Promise<void> {
   if (!isTauri) return;

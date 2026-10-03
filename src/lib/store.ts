@@ -12,6 +12,7 @@ import type {
   ServerWork,
   DictationStatus,
   FocusedApp,
+  MicFallback,
   Profile,
   SyncCategory,
   SyncSettings,
@@ -371,6 +372,8 @@ interface AppState {
   dictationError: string | null;
   /** Decode overrides the server refused (admin-locked) for the active stream. */
   overridesIgnored: string[];
+  /** The pinned mic isn't connected; this dictation records from the default input instead. */
+  micFallback: MicFallback | null;
   /** The app the active session is injecting into — drives the chip's "→ app" readout. */
   targetApp: FocusedApp | null;
   /** Why injection into the target is skipped (coerced to clipboard): a per-app `block` rule, or
@@ -560,6 +563,7 @@ interface AppState {
       activeProfile: string | null;
       dictationError: string | null;
       overridesIgnored: string[];
+      micFallback: MicFallback | null;
       targetApp: FocusedApp | null;
       targetSkip: "blocked" | "notEditable" | null;
       lastInsert: { kind: "typed" | "clipboard"; seq: number } | null;
@@ -641,6 +645,7 @@ export const useApp = create<AppState>((set) => ({
   activeProfile: null,
   dictationError: null,
   overridesIgnored: [],
+  micFallback: null,
   targetApp: null,
   targetSkip: null,
   lastInsert: null,

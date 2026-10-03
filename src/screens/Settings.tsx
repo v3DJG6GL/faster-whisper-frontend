@@ -36,7 +36,9 @@ import {
   openLogFolder,
   type EvdevStatus,
 } from "@/lib/api";
-import type { AudioDevice, OverlayQuickAction, RecordingSettings } from "@/lib/types";
+import type { MicInventory, OverlayQuickAction, RecordingSettings } from "@/lib/types";
+import { MicPicker } from "@/components/MicPicker";
+import { buildMicView, isAlsaPin, labelForPick } from "@/lib/micOptions";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
 import { METHOD_OPTIONS } from "@/components/DictationFields";
 // Row titles come from the settings manifest — the single source both this
@@ -150,8 +152,14 @@ const MIC_TEST_MAX_MS = 15000;
 
 function AudioTab() {
   const microphoneId = useApp((s) => s.settings.microphoneId);
+  const microphoneLabel = useApp((s) => s.settings.microphoneLabel);
   const updateSettings = useApp((s) => s.updateSettings);
-  const [devices, setDevices] = useState<AudioDevice[]>([]);
+  const [inv, setInv] = useState<MicInventory | null>(null);
+  // "Show all audio paths": view state only, open from the start when the pin IS a raw path
+  // (those rows only exist with the paths listed).
+  const [advanced, setAdvanced] = useState(() => isAlsaPin(microphoneId));
+  const withPaths = advanced || isAlsaPin(microphoneId);
+
   const [testing, setTesting] = useState(false);
   const [level, setLevel] = useState(0);
   // Mic is open but not yet delivering real audio (cold/Bluetooth warm-up) → show "warming up…".
@@ -169,14 +177,28 @@ function AudioTab() {
 
   const refresh = useCallback(async () => {
     try {
-      setDevices(await listAudioDevices());
+      setInv(await listAudioDevices(withPaths));
     } catch (e) {
       console.error("listing audio devices failed:", e); // keep prior list; don't float the rejection
     }
-  }, []);
+  }, [withPaths]);
 
+  // Keep the list current while this tab is on screen: plugging a mic in or out, or changing the
+  // system default, shows up within a few seconds. Listing never opens a mic (a Bluetooth headset
+  // would switch profile). Paused while the window is hidden; gone with the tab.
   useEffect(() => {
     void refresh();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 3000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [refresh]);
 
   // Mic test: subscribe to levels and open the device while `testing` is on.
@@ -318,21 +340,33 @@ function AudioTab() {
     await stopAndReplay();
   }, [testing, stopAndReplay]);
 
-  const options = [
-    { value: "default", label: "System default" },
-    ...devices.map((d) => ({ value: d.id, label: d.label })),
-  ];
+  const view = buildMicView(inv, microphoneId, microphoneLabel, advanced);
 
   return (
     <Card className="px-6">
-      <SettingRow title="Microphone" desc="Audio input device used for dictation.">
+      <SettingRow
+        title="Microphone"
+        desc="Audio input device used for dictation."
+        expand={
+          view.missing ? (
+            <Notice className="mb-3">
+              {view.pinnedLabel} is not connected. Dictation uses System default
+              {inv?.defaultLabel ? ` (${inv.defaultLabel})` : ""} until it is plugged back in.
+            </Notice>
+          ) : undefined
+        }
+      >
         <div className="flex items-center gap-2">
-          <Select
-            value={microphoneId ?? "default"}
-            onChange={(v) => updateSettings({ microphoneId: v === "default" ? null : v })}
-            options={options}
+          <MicPicker
+            inv={inv}
+            value={microphoneId}
+            savedLabel={microphoneLabel}
+            advanced={advanced}
+            onAdvancedChange={setAdvanced}
+            onPick={(id) =>
+              updateSettings({ microphoneId: id, microphoneLabel: id ? labelForPick(inv, id) : null })
+            }
             className="w-56"
-            ariaLabel="Microphone"
             // Locked during a test: switching the device mid-test re-runs the capture effect,
             // racing the old fire-and-forget stop against the new start (the late stop could tear
             // down the freshly-opened device → dead meter). Stop the test to change the mic.
@@ -359,6 +393,7 @@ function AudioTab() {
           {testing && micWarming && (
             <span className="animate-pulse font-mono text-[11px] text-faint">warming up…</span>
           )}
+
           <div className="flex items-center gap-2">
             <Button variant={testing ? "danger" : "default"} size="sm" onClick={() => void onToggle()}>
               {testing ? (

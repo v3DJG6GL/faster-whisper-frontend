@@ -462,6 +462,7 @@ export const TOP_COVERAGE = {
   accentHue: "accentHue",
   accentMotion: "accentMotion",
   microphoneId: LOCAL, // a device id — meaningless on another machine
+  microphoneLabel: LOCAL, // the pinned mic's name, kept beside its id
   homeProfileId: "homeProfile",
   quickAddList: "pinnedMappings",
   setupDismissed: LOCAL, // first-run gate bookkeeping
