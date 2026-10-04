@@ -117,8 +117,6 @@ pub struct Capabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub translation_models: Option<Vec<ServerModel>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub translation_languages: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub translate_to_default: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llama_cpp_version: Option<String>,

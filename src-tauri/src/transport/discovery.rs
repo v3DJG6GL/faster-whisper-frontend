@@ -219,7 +219,6 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     caps.translation_models = bound_models(caps.translation_models);
     caps.diarization_models = bound_models(caps.diarization_models);
     caps.separation_models = bound_models(caps.separation_models);
-    caps.translation_languages = caps.translation_languages.map(bound_codes);
     caps.translate_to_default = caps.translate_to_default.map(|mut v| {
         v.truncate(super::MAX_TARGETS);
         v.iter()

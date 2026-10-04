@@ -651,8 +651,6 @@ export interface Capabilities {
   translation_enabled?: boolean;
   /** T2T models the caller may pick per run (allowlist ∪ default ∪ loaded). */
   translation_models?: ServerModel[];
-  /** Target language codes the default T2T model supports. */
-  translation_languages?: string[];
   /** The caller's resolved TRANSLATE_TO default (seeds the toggle). */
   translate_to_default?: string[];
   /** llama-cpp-python version, only when translation is enabled. */

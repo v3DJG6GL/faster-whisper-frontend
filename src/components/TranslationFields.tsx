@@ -5,7 +5,7 @@
 import type { ReactNode } from "react";
 import { Eraser, RotateCcw } from "lucide-react";
 import { languageLabel } from "../lib/languages";
-import { translationLanguages } from "../lib/capabilities";
+import { modelShortName, translationLanguages } from "../lib/capabilities";
 import { TargetLanguagePicker } from "./LanguagePicker";
 import { cn } from "../lib/cn";
 import { safeDisplayText } from "../lib/sanitize";
@@ -104,11 +104,6 @@ export function TranslationTargetChips({
       {shown.length >= max && <span className="text-[11px] text-faint">max {max}</span>}
     </div>
   );
-}
-
-/** A translation model id as the "Supported by …" group names it: its last path part. */
-export function modelShortName(id: string | undefined): string | undefined {
-  return id ? safeDisplayText(id.split("/").pop() ?? id, 40) : undefined;
 }
 
 /** Per-run translation options — target chips, Fluent/Faithful mode, and the

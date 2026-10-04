@@ -5,11 +5,11 @@
 // no store — everything it needs arrives in the `langpick://shown` seed, and its answer
 // goes back over `langpick://commit`.
 //
-// Not a command palette. The candidate set is small and bounded (8 targets out of ~20
-// languages), so the fast path is a NUMBERED quick-pick: every candidate keeps a stable
-// digit, the profile's own targets are preselected, and the whole decision is "2 3 Enter"
-// without looking. Typing still filters, for the long tail; Enter on a filtered row picks
-// it and clears the filter.
+// Not a command palette. The fast path is a NUMBERED quick-pick: the first nine rows (Recent,
+// then the model's languages) keep a stable digit, the profile's own targets are preselected,
+// and the whole decision is "2 3 Enter" without looking. Typing still filters, for the long
+// tail; Enter on a filtered row picks it and clears the filter. Rows, groups, search and
+// movement are the main window's target picker's (lib/languages, lib/listNav, OptionRows).
 //
 // The rail across the top assembles the same `source → targets` route the chip will show a
 // second later — same arrow, same accent — so the picker teaches the chip rather than
@@ -26,7 +26,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { abortLangPick, commitLangPick, isTauri } from "@/lib/api";
-import { WHISPER_LANGUAGES, languageLabel } from "@/lib/languages";
+import { languageLabel, targetSections, toggleCode, type LangRow } from "@/lib/languages";
+import { navKey } from "@/lib/listNav";
+import { cleanRecent } from "@/lib/recent";
+import { KeyHint, OptionRows, optionId } from "@/components/ListPicker";
+import { TargetRow, untestedTitle } from "@/components/LanguagePicker";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import { safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
@@ -35,9 +39,7 @@ import type { AccentMotion, ThemeName } from "@/lib/types";
 /** Mirrors TRANSLATION_MAX_TARGETS — the server translates every context segment once per
  *  target, so the cost is linear in this number and the cap is a real one. */
 const MAX_TARGETS = 8;
-/** Recents shown above the full list. Enough to cover a working set without pushing the
- *  alphabetical list off the first screen. */
-const MAX_RECENT = 5;
+const LIST_ID = "langpick-list";
 
 /** What the main window hands over on summon. Every field optional: a malformed seed must
  *  degrade to a usable picker, never a blank window the user can't escape. */
@@ -53,8 +55,10 @@ interface Seed {
   tag?: string;
   /** "before" (hands-free, about to start) or "after" (push-to-talk, transcript ready). */
   when?: "before" | "after";
-  /** Server-advertised target codes; absent = the app's curated list. */
-  allowed?: string[];
+  /** The session's translation model's languages; null/absent = unknown (all, untagged). */
+  supported?: string[] | null;
+  /** That model's short name, for the "Supported by …" group. */
+  modelName?: string;
   theme?: ThemeName;
   /** Signal colour hue, so the accent-tinted picks match the app. */
   accentHue?: number;
@@ -122,62 +126,36 @@ export default function LangPick() {
   );
   const abort = useCallback(() => void abortLangPick().catch((e) => console.error("lang pick abort failed:", e)), []);
   // Keep the keyboard highlight on screen: arrows/digits move `active`, the list scrolls.
-  const listRef = useRef<HTMLUListElement>(null);
   useEffect(() => {
-    listRef.current?.querySelector(`[data-row="${active}"]`)?.scrollIntoView({ block: "nearest" });
+    document.getElementById(optionId(LIST_ID, active))?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
-  // Candidates: the server's list when it advertises one, else the app's curated set,
-  // minus the spoken language (translating a language into itself is a no-op that would
-  // still cost a server round-trip per phrase).
-  const candidates = useMemo(() => {
-    const base = seed.allowed?.length
-      ? seed.allowed
-      : WHISPER_LANGUAGES;
-    return [...new Set(base.filter((c) => typeof c === "string" && c.length <= 64 && c !== seed.source))];
-  }, [seed.allowed, seed.source]);
+  // Recent, then the model's languages, then the rest — never the spoken language (translating
+  // a language into itself is a no-op that would still cost a server round-trip per phrase).
+  // Grouped rather than merged: a flat list ranked by recency reorders under the user between
+  // summons, and a numbered pick is only fast if the number is where it was last time. The
+  // seed is untrusted shape, so every list is cleaned first.
+  const groups = useMemo(
+    () =>
+      targetSections({
+        query,
+        recent: cleanRecent(seed.recent),
+        supported: Array.isArray(seed.supported) ? cleanRecent(seed.supported, 500) : null,
+        modelName: typeof seed.modelName === "string" ? safeDisplayText(seed.modelName, 40) : undefined,
+        exclude: seed.source,
+      }),
+    [seed.recent, seed.supported, seed.modelName, seed.source, query],
+  );
 
-  // Recents first, then everything else. Grouped rather than merged: a flat list ranked by
-  // recency reorders under the user between summons, and a numbered pick is only fast if
-  // the number is where it was last time.
-  const groups = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const match = (c: string) =>
-      !q || c.toLowerCase().startsWith(q) || languageLabel(c).toLowerCase().startsWith(q);
-    const recent = [...new Set((seed.recent ?? []).filter((c) => typeof c === "string" && c.length <= 64 && candidates.includes(c)))].slice(0, MAX_RECENT);
-    const rest = candidates.filter((c) => !recent.includes(c));
-    return [
-      { label: "Recent", items: recent.filter(match) },
-      { label: "All languages", items: rest.filter(match) },
-    ].filter((g) => g.items.length > 0);
-  }, [candidates, seed.recent, query]);
+  // Flattened, in DISPLAY order: row i answers to digit i + 1 (1–9), so what you see and what
+  // you press can't disagree.
+  const rows = useMemo(() => groups.flatMap((g) => g.rows.map((r) => r.value)), [groups]);
 
-  // Flattened, with the digit each row answers to. Digits follow DISPLAY order so what you
-  // see and what you press can't disagree.
-  const rows = useMemo(() => {
-    const out: { code: string; digit: number | null }[] = [];
-    let n = 0;
-    for (const g of groups) {
-      for (const code of g.items) {
-        n += 1;
-        out.push({ code, digit: n <= 9 ? n : null });
-      }
-    }
-    return out;
-  }, [groups]);
-
-  const toggle = useCallback((code: string) => {
-    setChosen((cur) =>
-      cur.includes(code)
-        ? cur.filter((c) => c !== code)
-        : cur.length >= MAX_TARGETS
-          ? cur
-          : [...cur, code],
-    );
-  }, []);
+  const toggle = useCallback((code: string) => setChosen((cur) => toggleCode(cur, code, MAX_TARGETS)), []);
 
   const onKeyDown = useCallback((e: KeyboardEvent) => {
     const typing = document.activeElement === inputRef.current && query.length > 0;
+    const nav = navKey(e.key, active, rows.length);
     if (e.key === "Escape") {
       // Abort the whole action (don't start / don't insert) — see the header comment.
       abort();
@@ -187,30 +165,28 @@ export default function LangPick() {
         // preset: pick it and clear the filter so the NEXT Enter commits. No match
         // (a mistyped filter) is a no-op — committing the preset here would be the
         // very habit trap the footer hint says this key avoids.
-        const row = rows[active];
-        if (row) {
-          toggle(row.code);
+        const code = rows[active];
+        if (code) {
+          toggle(code);
           setQuery("");
           setActive(0);
         }
       } else {
         commit(chosen);
       }
-    } else if (e.key === "ArrowDown") {
-      setActive((i) => Math.max(0, Math.min(rows.length - 1, i + 1)));
-    } else if (e.key === "ArrowUp") {
-      setActive((i) => Math.max(0, i - 1));
+    } else if (nav !== null) {
+      setActive(nav);
     } else if (e.key === " " && !typing) {
-      if (rows[active]) toggle(rows[active].code);
+      if (rows[active]) toggle(rows[active]);
     } else if (e.key === "0" && !typing) {
       // Insert the original only — an explicit answer, distinct from Esc's abort.
       // Commits immediately: there is nothing left to choose.
       commit([]);
     } else if (/^[1-9]$/.test(e.key) && !typing) {
-      const row = rows.find((r) => r.digit === Number(e.key));
-      if (row) {
-        setActive(rows.indexOf(row));
-        toggle(row.code);
+      const i = Number(e.key) - 1;
+      if (rows[i]) {
+        setActive(i);
+        toggle(rows[i]);
       }
     } else if (e.key === "Backspace" && query.length === 0 && chosen.length > 0) {
       setChosen((c) => c.slice(0, -1));
@@ -296,82 +272,40 @@ export default function LangPick() {
         aria-label="Filter languages"
         role="combobox"
         aria-expanded="true"
-        aria-controls="langpick-list"
+        aria-controls={LIST_ID}
         aria-autocomplete="list"
-        aria-activedescendant={rows[active] ? `langpick-opt-${active}` : undefined}
+        aria-activedescendant={rows[active] ? optionId(LIST_ID, active) : undefined}
         className="w-full border-b border-line bg-transparent px-4 py-2.5 text-[13px] text-text outline-none placeholder:text-faint"
       />
 
-      <ul id="langpick-list" ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-1.5" role="listbox" aria-multiselectable="true">
-        {rows.length === 0 && (
-          <li role="presentation" className="px-3 py-6 text-center text-[12.5px] text-faint">
+      <OptionRows<LangRow>
+        id={LIST_ID}
+        label="Translate to"
+        multi
+        sections={groups}
+        active={active}
+        rowKey={(r) => r.value}
+        isSelected={(r) => chosen.includes(r.value)}
+        onPick={(r, i) => {
+          setActive(i);
+          toggle(r.value);
+        }}
+        renderRow={(r, { selected, index }) => <TargetRow row={r} on={selected} mark={index < 9 ? index + 1 : "·"} />}
+        rowTitle={untestedTitle}
+        empty={
+          <div className="px-3 py-6 text-center text-[12.5px] text-faint">
             No language matches “{safeDisplayText(query, 24)}”.
-          </li>
-        )}
-        {groups.map((g) => (
-          // role="group" owns its options for AT (an `option` must be a child of the listbox or
-          // of a group inside it); the inner list is presentational.
-          <li key={g.label} role="group" aria-label={g.label}>
-            <div aria-hidden className="px-2.5 pb-1 pt-2 font-mono text-[9.5px] uppercase tracking-label text-faint">
-              {g.label}
-            </div>
-            <ul role="presentation">
-              {g.items.map((code) => {
-                const i = rows.findIndex((r) => r.code === code);
-                const on = chosen.includes(code);
-                return (
-                  <li
-                    key={code}
-                    id={`langpick-opt-${i}`}
-                    data-row={i}
-                    role="option"
-                    aria-selected={on}
-                    // Keep focus in the filter field: a click on the non-focusable row otherwise
-                    // moved focus to <body>, so further typing was dropped and Space/digits
-                    // flipped meaning for the same visible state.
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      setActive(i);
-                      toggle(code);
-                    }}
-                    className={cn(
-                      "flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px]",
-                      i === active ? "bg-surface-2 text-text" : "text-dim",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "grid size-[18px] shrink-0 place-items-center rounded-md border font-mono text-[10.5px]",
-                        on
-                          ? "border-accent bg-accent text-accent-ink"
-                          : "border-line-strong text-faint",
-                      )}
-                    >
-                      {rows[i]?.digit ?? "·"}
-                    </span>
-                    <span className="truncate">{languageLabel(code)}</span>
-                    <span
-                      className={cn(
-                        "ml-auto font-mono text-[11px]",
-                        on ? "text-accent" : "text-faint",
-                      )}
-                    >
-                      {safeDisplayText(code, 12).toUpperCase()}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          </li>
-        ))}
-      </ul>
+          </div>
+        }
+        className="min-h-0 flex-1 overflow-y-auto p-1.5"
+      />
 
       {/* The three answers as real buttons (mouse users), each carrying the key that gives
           the same answer. The abort is red-tinted: it is the one that throws work away
           (hands-free: nothing starts; push-to-talk: the transcript is not inserted). */}
       <div className="flex flex-wrap items-center gap-2 border-t border-line bg-surface px-4 py-2.5 text-[11.5px] text-faint">
-        <Hint k="1–9">pick</Hint>
-        {query.length > 0 && <Hint k="↵">pick filtered</Hint>}
+        <KeyHint k="1–9">pick</KeyHint>
+        {query.length > 0 && <KeyHint k="↵">pick filtered</KeyHint>}
         {chosen.length >= MAX_TARGETS && <span className="text-warn">max {MAX_TARGETS}</span>}
         <span className="flex-1" aria-hidden />
         <FooterButton tone="danger" k="esc" onClick={abort}>
@@ -419,16 +353,5 @@ function FooterButton({
         {k}
       </span>
     </button>
-  );
-}
-
-function Hint({ k, children }: { k: string; children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <kbd className="rounded-md border border-line-strong bg-surface-2 px-1.5 py-0.5 font-mono text-[10.5px] leading-none text-dim">
-        {k}
-      </kbd>
-      {children}
-    </span>
   );
 }

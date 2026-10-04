@@ -17,6 +17,7 @@ import { sessionShape } from "./sessionShape";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
 import { configuredRouteTargets } from "./overlay";
 import { pushRecent } from "./recent";
+import { modelShortName, translationLanguages } from "./capabilities";
 import type { Backend, Profile } from "./types";
 
 export type TriggerAction = "start" | "stop" | "toggle" | "reclassify";
@@ -178,7 +179,7 @@ export function dictate(profileId: string, action: TriggerAction): void {
             theme: useApp.getState().settings.theme,
             accentHue: useApp.getState().settings.accentHue,
             accentMotion: useApp.getState().settings.accentMotion,
-            allowed: ownProp(useApp.getState().caps, backend.id)?.translation_languages ?? undefined,
+            ...targetLanguages(profile, backend),
           }).then((pick) => {
             if (pick.kind === "picked") rememberTranslationTargets(pick.targets);
             return pick;
@@ -237,7 +238,7 @@ async function startWithPickedTargets(
       theme: s.settings.theme,
       accentHue: s.settings.accentHue,
       accentMotion: s.settings.accentMotion,
-      allowed: ownProp(s.caps, backend.id)?.translation_languages ?? undefined,
+      ...targetLanguages(profile, backend),
     });
     if (pick.kind === "aborted") {
       // The user backed out: nothing starts, and the chip returns to standby (no Profile
@@ -318,6 +319,17 @@ function askTranslationTargets(seed: Record<string, unknown>): Promise<TargetPic
       // dictation goes on with the Profile's preset instead of being thrown away.
       .catch(() => finish({ kind: "unavailable" }));
   });
+}
+
+/** The picker's grouping: the languages of the session's translation model (the Profile's,
+ *  else the Backend's, else the server default) — streaming.ts trOv resolves it the same way. */
+function targetLanguages(profile: Profile, backend: Backend): { supported: string[] | null; modelName?: string } {
+  const caps = ownProp(useApp.getState().caps, backend.id);
+  const model = profile.translationOverrides?.model || backend.translationOverrides?.model;
+  return {
+    supported: translationLanguages(caps, model),
+    modelName: modelShortName(model || caps?.translation_models?.[0]?.id),
+  };
 }
 
 /** Keep the most recent picks for the picker's "Recent" group, newest first. */
