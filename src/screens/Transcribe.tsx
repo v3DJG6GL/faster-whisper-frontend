@@ -6,6 +6,7 @@ import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, C
 import { useApp } from "@/lib/store";
 import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingExpand, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
+import { SpokenLanguageRow, useLinkLanguage } from "@/components/SpokenLanguageRow";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -811,6 +812,16 @@ export default function Transcribe() {
   // exist on this server (older backend / standard server).
   const translationAvailable = !isStandard && caps?.translation_enabled === true;
   const urlMeta = useTranscribeRun((s) => s.urlMeta);
+  // The link card's spoken language and its check (D86) — per link, frozen at Add link.
+  const linkLang = useLinkLanguage({
+    url: normalizeMediaUrl(urlDraft),
+    preview: urlPreviewData,
+    serverUrl,
+    backendId: backend?.id,
+    enabled: caps?.url_language_check_enabled === true,
+    model: model || backend?.model,
+    screen: spoken.value,
+  });
 
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
   const runningOverall = useTranscribeRun(runBadgeFraction);
@@ -923,6 +934,9 @@ export default function Transcribe() {
         ...(linkKeepVideo !== null ? { keepVideo: linkKeepVideo } : {}),
         ...(linkVideoHeight !== undefined ? { videoMaxHeight: linkVideoHeight } : {}),
         ...(linkVideoFormat !== undefined ? { videoFormat: linkVideoFormat } : {}),
+        // Always written (undefined clears a re-added link's old values).
+        spokenLanguage: linkLang.sp.value !== spoken.value ? linkLang.sp.value : undefined,
+        prefetchMediaId: linkLang.prefetchMediaId ?? undefined,
       });
     }
     addFiles([url]);
@@ -1404,6 +1418,14 @@ export default function Transcribe() {
                       {safeDisplayText(urlPreviewData.extractor, 24)}
                     </span>
                   )}
+                </div>
+                <div className="mt-2.5">
+                  <SpokenLanguageRow
+                    lang={linkLang}
+                    extractor={urlPreviewData.extractor}
+                    multiOffered={multiOffered}
+                    disabled={busy}
+                  />
                 </div>
                 {/* Keep the video too: only when the server can and the link
                     has one. The quality select lists the site's own rungs;

@@ -1,7 +1,7 @@
 // One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
-  addLanguage, attachSiteTracks, derive, siteTimedTracks, siteTrackLabel, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
+  addLanguage, attachSiteTracks, derive, linkSpoken, spokenPill, siteTimedTracks, siteTrackLabel, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "./urlSource";
@@ -198,5 +198,36 @@ describe("site tracks in a result", () => {
     const out = attachSiteTracks(res, siteTimedTracks([{ id: "it", lang: "it", kind: "manual", parsed: parsed("c") }]), ["w2"]);
     expect(out.timedTracks?.map((t) => t.id)).toEqual(["it-x-site"]);
     expect(out.warnings).toEqual(["w1", "w2"]);
+  });
+});
+
+describe("the link's spoken language", () => {
+  const done = (over: object = {}) => ({
+    state: "done" as const,
+    result: {
+      language: "de", probability: 0.99, verdict: "detected" as const, also: [], media_id: null, media_expires_at: null,
+      pieces: [{ at: 289, language: "de", probability: 0.98 }, { at: 963, language: "de", probability: 1 }, { at: 1638, language: "de", probability: 1 }],
+      ...over,
+    },
+  });
+  it("your pick wins, then the check, then the site, then the screen", () => {
+    expect(linkSpoken({ siteLanguage: "en-US", check: done(), screen: "auto", edited: null })).toMatchObject({ value: "de", source: "detected" });
+    expect(linkSpoken({ siteLanguage: "en-US", check: { state: "idle" }, screen: "auto", edited: null })).toMatchObject({ value: "en", source: "site" });
+    expect(linkSpoken({ check: { state: "idle" }, screen: "fr", edited: null })).toMatchObject({ value: "fr", source: "screen" });
+    expect(linkSpoken({ check: done(), screen: "auto", edited: "it" })).toMatchObject({ value: "it", spoken: "it", source: "edited" });
+    expect(linkSpoken({ check: { state: "idle" }, screen: "auto", edited: null })).toMatchObject({ value: "auto", spoken: null });
+  });
+  it("Multiple languages keeps the detected language as the main one", () => {
+    expect(linkSpoken({ check: done(), screen: "multi", edited: null })).toMatchObject({ value: "multi", spoken: "de", multi: true });
+  });
+  it("pills: detected in n of 3, also X, from YouTube, edited, nothing while checking", () => {
+    const sp = (c: Parameters<typeof linkSpoken>[0]["check"], edited: string | null = null) =>
+      spokenPill(linkSpoken({ siteLanguage: "de", check: c, screen: "auto", edited }), c, "Youtube")?.text;
+    expect(sp(done())).toBe("detected in 3 of 3 pieces");
+    expect(sp(done({ verdict: "mixed", also: ["en"] }))).toBe("detected · also English");
+    expect(sp({ state: "idle" })).toBe("from YouTube");
+    expect(sp({ state: "running" })).toBeUndefined();
+    expect(sp({ state: "idle" }, "fr")).toBe("edited");
+    expect(spokenPill(linkSpoken({ check: { state: "failed", error: "x" }, screen: "auto", edited: null }), { state: "failed", error: "x" })).toEqual({ text: "unknown", tone: "plain", title: "x" });
   });
 });

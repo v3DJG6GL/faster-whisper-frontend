@@ -10,7 +10,8 @@
 // three states: active (used), idle (chosen but not needed — greyed), off (not chosen — struck).
 // Any badge click flips used ↔ not used and snapshots everything into Custom (v25, v27).
 
-import { languageLabel } from "./languages";
+import type { UrlLanguageCheck } from "./api";
+import { MULTI_LANGUAGE, languageLabel } from "./languages";
 import type { ImportedText } from "./subtitleImport";
 import type { BatchResult, TimedTrack } from "./types";
 import type { SiteTrackInfo } from "./urlSource";
@@ -431,4 +432,65 @@ export function attachSiteTracks(res: BatchResult, timed: readonly TimedTrack[],
 /** How a site track reads in chips and lane labels: "DE · existing", "DE · auto-generated". */
 export function siteTrackLabel(t: Pick<TimedTrack, "lang" | "kind" | "hoh">): string {
   return `${t.lang.toUpperCase()} · ${t.kind === "auto" ? "auto-generated" : "existing"}${t.hoh ? " · hearing-impaired" : ""}`;
+}
+
+// ── The link's spoken language (the link card's "Spoken language" row) ──────────────────────
+
+/** The language check of one link, as the row shows it. */
+export interface LinkLanguageCheck {
+  state: "idle" | "running" | "done" | "failed";
+  result?: UrlLanguageCheck;
+  error?: string;
+}
+
+export interface LinkSpoken {
+  /** The picker's value: a code, "auto" or MULTI_LANGUAGE. */
+  value: string;
+  /** What the link speaks without your pick (detected > the site's > the screen's), or null. */
+  base: string | null;
+  /** The language the run uses (Multiple languages: the main one); null = unknown. */
+  spoken: string | null;
+  multi: boolean;
+  source: "edited" | "detected" | "site" | "screen" | null;
+}
+
+/** Resolve a link's spoken language: your pick wins, then the check's vote (it listened), then
+ *  the language the site names, then the screen's own pick. */
+export function linkSpoken(args: {
+  siteLanguage?: string | null;
+  check: LinkLanguageCheck;
+  /** The screen's spoken-picker value. */
+  screen: string;
+  edited: string | null;
+}): LinkSpoken {
+  const r = args.check.state === "done" ? args.check.result : undefined;
+  const detected = r && r.verdict !== "unknown" && r.language ? r.language : null;
+  const site = args.siteLanguage ? trackLanguage(args.siteLanguage) : null;
+  const screen = args.screen !== "auto" && args.screen !== MULTI_LANGUAGE ? args.screen : null;
+  const base = detected ?? site ?? screen;
+  const source = args.edited ? "edited" : detected ? "detected" : site ? "site" : screen ? "screen" : null;
+  const value = args.edited ?? (args.screen === MULTI_LANGUAGE ? MULTI_LANGUAGE : base ?? "auto");
+  const multi = value === MULTI_LANGUAGE;
+  return { value, base, spoken: multi ? base : value === "auto" ? null : value, multi, source };
+}
+
+/** The pill beside the picker: "edited", "detected in 3 of 3 pieces", "detected · also English",
+ *  "from YouTube", "unknown" — or nothing (while checking, or the screen's own language). */
+export function spokenPill(
+  sp: LinkSpoken,
+  check: LinkLanguageCheck,
+  extractor?: string | null,
+): { text: string; tone: "edited" | "mixed" | "plain"; title?: string } | null {
+  if (sp.source === "edited") return { text: "edited", tone: "edited" };
+  if (check.state === "running") return null;
+  const r = check.result;
+  if (sp.source === "detected" && r) {
+    const also = r.also.filter((c) => c !== r.language);
+    if (also.length) return { text: `detected · also ${also.map(languageLabel).join(", ")}`, tone: "mixed" };
+    const n = r.pieces.filter((p) => p.language === r.language).length;
+    return { text: r.pieces.length ? `detected in ${n} of ${r.pieces.length} pieces` : "detected", tone: "plain" };
+  }
+  if (sp.source === "site") return { text: `from ${/^youtube$/i.test(extractor ?? "") ? "YouTube" : extractor || "the site"}`, tone: "plain" };
+  if (sp.source === "screen") return null;
+  return { text: "unknown", tone: "plain", ...(check.error ? { title: check.error } : {}) };
 }
