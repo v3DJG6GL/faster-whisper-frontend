@@ -1804,8 +1804,9 @@ export default function Transcribe() {
                             exclude={language !== "auto" ? language : undefined}
                           >
                             <p className="text-[12px] text-faint">
-                              Fluent joins split sentences before translating (timing untouched) ·
-                              source auto-detected · karaoke stays on the original
+                              Fluent translates whole sentences, then spreads them back over the same
+                              subtitles · Faithful translates each subtitle on its own · timing never changes ·
+                              word highlighting during playback stays on the original
                             </p>
                           </TranslationOptionsFields>
                         </SettingExpand>
