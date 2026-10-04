@@ -13,7 +13,7 @@ import {
 } from "react";
 import type { LucideIcon } from "lucide-react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, ArrowLeft, Check, Info, Minus, Plus } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Info, Minus, Plus, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { languageLabel } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
@@ -651,6 +651,68 @@ export function Segmented<T extends string>({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/* ── RangeField (labelled slider with a reset) ────────────────────────── */
+/** A labelled range slider with its value, and a ↺ reset while the value
+ *  differs from `defaultValue`. Reuses the Settings sliders' styling. */
+export function RangeField({
+  label,
+  value,
+  min,
+  max,
+  step,
+  unit = "",
+  defaultValue,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  /** Appended to the shown value (" s", " chars/s"). */
+  unit?: string;
+  defaultValue: number;
+  onChange: (v: number) => void;
+  disabled?: boolean;
+}) {
+  const id = useId();
+  return (
+    <div className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_5.5rem_1.75rem] items-center gap-3 text-[12.5px] text-dim">
+      <label htmlFor={id}>{label}</label>
+      <input
+        id={id}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="ring-signal h-2 w-full cursor-pointer appearance-none rounded-pill bg-surface-2 disabled:cursor-not-allowed"
+      />
+      <output htmlFor={id} className="text-right font-mono text-[12px] tabular-nums text-text">
+        {value}
+        {unit}
+      </output>
+      {value !== defaultValue ? (
+        <button
+          type="button"
+          title={`Reset to ${defaultValue}${unit}`}
+          aria-label={`Reset ${label.toLowerCase()} to ${defaultValue}${unit}`}
+          disabled={disabled}
+          onClick={() => onChange(defaultValue)}
+          className="ring-signal grid size-7 place-items-center rounded-lg text-accent hover:bg-surface-2"
+        >
+          <RotateCcw className="size-3.5" />
+        </button>
+      ) : (
+        <span />
+      )}
     </div>
   );
 }

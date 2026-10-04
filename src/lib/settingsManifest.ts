@@ -227,7 +227,7 @@ export const MANIFEST = [
     fields: [t("showSpeakerNames")] },
   { id: "colorizeSpeakers", label: "Colors", group: "transcribeDefaults", category: "transcription",
     fields: [t("colorizeSpeakers")] },
-  { id: "wordTimestamps", label: "Word timestamps", group: "transcribeDefaults", category: "transcription",
+  { id: "wordTimestamps", label: "Word timing", group: "transcribeDefaults", category: "transcription",
     fields: [t("wordTimestamps")] },
   { id: "exportFormat", label: "Export format", group: "transcribeDefaults", category: "transcription",
     fields: [t("exportFormat")] },

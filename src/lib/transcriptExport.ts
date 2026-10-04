@@ -599,8 +599,9 @@ function projected(result: BatchResult, opts: ExportOptions): BatchResult {
 }
 
 /** The cues of `tracks`, leaving room for the "Name: " prefix their first
- *  line will carry — shared by the export and its reading-speed check. */
-function cueGrid(result: BatchResult, opts: ExportOptions, tracks: string[]) {
+ *  line will carry — shared by the export, its reading-speed check and the
+ *  panel's preview and summary. */
+export function cueGrid(result: BatchResult, opts: ExportOptions, tracks: string[]) {
   const pre = ctxOf(result, opts);
   return buildCues(result, opts.cues, tracks, (seg) => nameReserve(pre, seg));
 }
