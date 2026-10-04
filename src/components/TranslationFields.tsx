@@ -4,7 +4,7 @@
 // "Translation defaults" editors, and retro-translate popovers.
 import type { ReactNode } from "react";
 import { Eraser, RotateCcw } from "lucide-react";
-import { LANGUAGES, languageLabel } from "../lib/languages";
+import { WHISPER_LANGUAGES, languageLabel } from "../lib/languages";
 import { cn } from "../lib/cn";
 import { safeDisplayText } from "../lib/sanitize";
 import type { Capabilities, TranscribeOptions, TranslationOverrides } from "../lib/types";
@@ -62,7 +62,7 @@ export function TranslationTargetChips({
   const candidates = (
     allowed?.length
       ? allowed
-      : LANGUAGES.filter((l) => l.value !== "auto").map((l) => l.value)
+      : WHISPER_LANGUAGES
   ).filter((code) => code !== exclude);
   const shown = chipCodes(value);
   const shownCandidates = chipCodes(candidates, 200);

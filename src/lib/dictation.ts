@@ -16,6 +16,7 @@ import { effectiveLanguage } from "./backends";
 import { sessionShape } from "./sessionShape";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
 import { configuredRouteTargets } from "./overlay";
+import { pushRecent } from "./recent";
 import type { Backend, Profile } from "./types";
 
 export type TriggerAction = "start" | "stop" | "toggle" | "reclassify";
@@ -323,10 +324,7 @@ function askTranslationTargets(seed: Record<string, unknown>): Promise<TargetPic
 function rememberTranslationTargets(picked: string[]): void {
   if (picked.length === 0) return;
   const st = useApp.getState();
-  const prev = st.settings.recentTranslationTargets ?? [];
-  st.updateSettings({
-    recentTranslationTargets: [...picked, ...prev.filter((c) => !picked.includes(c))].slice(0, 12),
-  });
+  st.updateSettings({ recentTranslationTargets: pushRecent(st.settings.recentTranslationTargets, picked) });
 }
 
 // Wire the queued-start consumer: streaming.ts owns settleIdle but can't import us

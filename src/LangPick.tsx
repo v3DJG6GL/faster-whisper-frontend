@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { abortLangPick, commitLangPick, isTauri } from "@/lib/api";
-import { LANGUAGES, languageLabel } from "@/lib/languages";
+import { WHISPER_LANGUAGES, languageLabel } from "@/lib/languages";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import { safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
@@ -133,7 +133,7 @@ export default function LangPick() {
   const candidates = useMemo(() => {
     const base = seed.allowed?.length
       ? seed.allowed
-      : LANGUAGES.filter((l) => l.value !== "auto").map((l) => l.value);
+      : WHISPER_LANGUAGES;
     return [...new Set(base.filter((c) => typeof c === "string" && c.length <= 64 && c !== seed.source))];
   }, [seed.allowed, seed.source]);
 

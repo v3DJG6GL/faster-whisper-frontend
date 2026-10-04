@@ -1,32 +1,35 @@
-// Curated Whisper language set (ISO 639-1) + "auto". Language is configured
-// per Model Profile (not globally), per the product brief.
-export const LANGUAGES: { value: string; label: string }[] = [
-  { value: "auto", label: "Auto-detect" },
-  { value: "en", label: "English" },
-  { value: "de", label: "German" },
-  { value: "fr", label: "French" },
-  { value: "it", label: "Italian" },
-  { value: "es", label: "Spanish" },
-  { value: "pt", label: "Portuguese" },
-  { value: "nl", label: "Dutch" },
-  { value: "pl", label: "Polish" },
-  { value: "ru", label: "Russian" },
-  { value: "uk", label: "Ukrainian" },
-  { value: "cs", label: "Czech" },
-  { value: "sv", label: "Swedish" },
-  { value: "da", label: "Danish" },
-  { value: "no", label: "Norwegian" },
-  { value: "fi", label: "Finnish" },
-  { value: "tr", label: "Turkish" },
-  { value: "ar", label: "Arabic" },
-  { value: "zh", label: "Chinese" },
-  { value: "ja", label: "Japanese" },
-  { value: "ko", label: "Korean" },
-];
+// Language names and the pure logic behind the language pickers (D87). Every rule a picker
+// follows — what a search matches, which groups show in which order, what a pick does to the
+// decode overrides — lives here as a plain function, so it is tested without a DOM.
 
-// English names for codes outside the curated set (a server's translation
-// targets reach well past it: el, hi, hu, ro, th, vi, …). Built lazily; null
-// where the runtime lacks Intl.DisplayNames.
+import type { DecodeOverrides } from "./types";
+
+/** Every language Whisper decodes — faster-whisper's tokenizer list (incl. yue), in its order. */
+export const WHISPER_LANGUAGES: readonly string[] = (
+  "af am ar as az ba be bg bn bo br bs ca cs cy da de el en es et eu fa fi fo fr gl gu ha haw he " +
+  "hi hr ht hu hy id is it ja jw ka kk km kn ko la lb ln lo lt lv mg mi mk ml mn mr ms mt my ne " +
+  "nl nn no oc pa pl ps pt ro ru sa sd si sk sl sn so sq sr su sv sw ta te tg th tk tl tr tt uk " +
+  "ur uz vi yi yo yue zh"
+).split(" ");
+
+/** The spoken picker's "Multiple languages" row: the language is sent as auto-detect and the
+ *  decode override `multilingual` turns on (detection per 30 s window). Not a language code. */
+export const MULTI_LANGUAGE = "multi";
+
+/** Names the runtime gets wrong or spells differently from Whisper's own list (WebKit's ICU
+ *  may not know the deprecated `jw`, says "Bangla" for bn, …), plus the pinned "auto". */
+const LABEL_FIX: Record<string, string> = {
+  auto: "Auto-detect",
+  bn: "Bengali",
+  haw: "Hawaiian",
+  ht: "Haitian Creole",
+  jw: "Javanese",
+  tl: "Filipino",
+  yue: "Cantonese",
+  "zh-Hant": "Traditional Chinese",
+};
+
+// English names, built lazily; null where the runtime lacks Intl.DisplayNames.
 let displayNames: Intl.DisplayNames | null | undefined;
 function intlName(code: string): string | undefined {
   if (displayNames === undefined) {
@@ -45,5 +48,172 @@ function intlName(code: string): string | undefined {
 
 /** English name for a language code; an unknown code comes back unchanged. */
 export function languageLabel(code: string): string {
-  return LANGUAGES.find((l) => l.value === code)?.label ?? intlName(code) ?? code;
+  return LABEL_FIX[code] ?? intlName(code) ?? code;
+}
+
+const natives = new Map<string, string>();
+/** The language's name in itself ("Deutsch" for de), or "" when the runtime has no data for it
+ *  (it then falls back to another locale — that name is not native) or it equals the English one. */
+export function nativeName(code: string): string {
+  let n = natives.get(code);
+  if (n === undefined) {
+    n = "";
+    try {
+      const dn = new Intl.DisplayNames([code], { type: "language" });
+      const own = new Intl.Locale(dn.resolvedOptions().locale).language === new Intl.Locale(code).language;
+      const name = own ? dn.of(code) ?? "" : "";
+      if (name && name !== code && name.toLowerCase() !== languageLabel(code).toLowerCase()) n = name;
+    } catch {
+      // no Intl support, or not a well-formed tag
+    }
+    natives.set(code, n);
+  }
+  return n;
+}
+
+/** Search by English name, native name (both substrings) or code (exact, or a region/script
+ *  variant of it: "zh" finds zh-Hant). */
+export function matchesLanguage(code: string, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const c = code.toLowerCase();
+  return (
+    c === q ||
+    c.startsWith(`${q}-`) ||
+    languageLabel(code).toLowerCase().includes(q) ||
+    nativeName(code).toLowerCase().includes(q)
+  );
+}
+
+const byName = (a: string, b: string) => languageLabel(a).localeCompare(languageLabel(b));
+let sortedWhisper: string[] | undefined;
+const whisperByName = () => (sortedWhisper ??= [...WHISPER_LANGUAGES].sort(byName));
+
+/** English-only Whisper checkpoints (tiny.en … medium.en) can't detect or switch languages. */
+export function isEnglishOnlyModel(model: string | null | undefined): boolean {
+  return /\.en$/i.test(model?.trim() ?? "");
+}
+
+/** One row of a language list: a code (or a pinned value) and, for translation targets, whether
+ *  the model does not officially support it. */
+export interface LangRow {
+  value: string;
+  untested?: boolean;
+}
+export interface LangSection {
+  /** "" = untitled (the pinned rows). */
+  title: string;
+  count?: number;
+  rows: LangRow[];
+}
+
+const rowsOf = (codes: readonly string[]): LangRow[] => codes.map((value) => ({ value }));
+/** Recents shown above the full list — enough for a working set without pushing the list down. */
+export const MAX_RECENT_SHOWN = 5;
+
+/** The spoken-language picker's groups. Without a query: the pinned rows (the inherit row when
+ *  the field inherits, Auto-detect, Multiple languages when offered), Recent, all languages by
+ *  name. With one: the matching languages only. */
+export function spokenSections(args: {
+  query: string;
+  recent: readonly string[];
+  /** Offer the "" row (an override field that can inherit the layer below). */
+  inherit?: boolean;
+  /** Offer "Multiple languages". */
+  multi?: boolean;
+}): LangSection[] {
+  if (args.query.trim()) {
+    const hits = whisperByName().filter((c) => matchesLanguage(c, args.query));
+    return [{ title: "Matches", count: hits.length, rows: rowsOf(hits) }];
+  }
+  const pinned = [...(args.inherit ? [""] : []), "auto", ...(args.multi ? [MULTI_LANGUAGE] : [])];
+  const recent = args.recent.filter((c) => WHISPER_LANGUAGES.includes(c)).slice(0, MAX_RECENT_SHOWN);
+  return [
+    { title: "", rows: rowsOf(pinned) },
+    ...(recent.length ? [{ title: "Recent", rows: rowsOf(recent) }] : []),
+    { title: "All languages", count: WHISPER_LANGUAGES.length, rows: rowsOf(whisperByName()) },
+  ];
+}
+
+/** The translation-target picker's groups. With the model's list known: Recent, "Supported by
+ *  <model>", then every other language as "Not officially supported" (tagged "not tested").
+ *  Unknown (null): one untagged group of all languages. The source language is left out. */
+export function targetSections(args: {
+  query: string;
+  recent: readonly string[];
+  supported: readonly string[] | null;
+  modelName?: string;
+  exclude?: string;
+}): LangSection[] {
+  const sup = args.supported;
+  const all = [...new Set([...(sup ?? []), ...WHISPER_LANGUAGES])].filter((c) => c !== args.exclude);
+  const row = (value: string): LangRow => (sup && !sup.includes(value) ? { value, untested: true } : { value });
+  const q = args.query;
+  const hits = all.filter((c) => matchesLanguage(c, q)).sort(byName);
+  const groups: LangSection[] = [];
+  if (!q.trim()) {
+    const recent = args.recent.filter((c) => all.includes(c)).slice(0, MAX_RECENT_SHOWN);
+    if (recent.length) groups.push({ title: "Recent", rows: recent.map(row) });
+  }
+  if (!sup) {
+    groups.push({ title: q.trim() ? "Matches" : "All languages", count: hits.length, rows: hits.map(row) });
+    return groups.filter((g) => g.rows.length);
+  }
+  const yes = hits.filter((c) => sup.includes(c));
+  const no = hits.filter((c) => !sup.includes(c));
+  const name = args.modelName?.trim();
+  groups.push(
+    { title: q.trim() ? "Supported" : name ? `Supported by ${name}` : "Supported", count: yes.length, rows: yes.map(row) },
+    { title: "Not officially supported", count: no.length, rows: no.map(row) },
+  );
+  return groups.filter((g) => g.rows.length);
+}
+
+/** Add or remove a code, never past `max` — the multi-select pickers' tick. */
+export function toggleCode(list: readonly string[], code: string, max: number): string[] {
+  if (list.includes(code)) return list.filter((c) => c !== code);
+  return list.length >= max ? [...list] : [...list, code];
+}
+
+/** The spoken picker's value for a stored language: "auto" with multilingual on (this layer's own
+ *  value, else the inherited one) reads as "Multiple languages". */
+export function spokenValue(language: string, own: boolean | undefined, inherited: boolean | undefined): string {
+  return language === "auto" && (own ?? inherited) === true ? MULTI_LANGUAGE : language;
+}
+
+/** The language a spoken pick stores: "Multiple languages" is auto-detect plus the decode flag. */
+export function spokenLanguage(picked: string): string {
+  return picked === MULTI_LANGUAGE ? "auto" : picked;
+}
+
+/** The decode overrides after a spoken pick: Multiple languages sets `multilingual`; Auto-detect
+ *  sends an explicit false only when the layer below would turn it on; a named language drops
+ *  the key (the server ignores it once a language is set). */
+export function applyMultilingual(
+  overrides: DecodeOverrides | undefined,
+  picked: string,
+  inherited: boolean | undefined,
+): DecodeOverrides {
+  const next = { ...overrides };
+  delete next.multilingual;
+  if (picked === MULTI_LANGUAGE) next.multilingual = true;
+  else if (picked === "auto" && inherited === true) next.multilingual = false;
+  return next;
+}
+
+/** Display text for a spoken-picker value. */
+export function spokenLabel(value: string): string {
+  return value === MULTI_LANGUAGE ? "Multiple languages" : languageLabel(value);
+}
+
+/** Whether a picker may offer "Multiple languages": the caller may send decode overrides (unknown
+ *  counts as yes), the server hasn't locked the key, it is a full backend, and the model can
+ *  detect languages at all. */
+export function offersMultilingual(args: {
+  canOverride: boolean | undefined;
+  locked: boolean;
+  standard: boolean;
+  model: string | null | undefined;
+}): boolean {
+  return args.canOverride !== false && !args.locked && !args.standard && !isEnglishOnlyModel(args.model);
 }

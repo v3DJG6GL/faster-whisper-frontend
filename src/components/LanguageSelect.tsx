@@ -2,7 +2,9 @@
 // override, Transcribe per-run) — previously three divergent option lists.
 
 import { Select } from "@/components/ui";
-import { LANGUAGES } from "@/lib/languages";
+import { WHISPER_LANGUAGES, languageLabel } from "@/lib/languages";
+
+const LANGUAGES = ["auto", ...WHISPER_LANGUAGES].map((value) => ({ value, label: languageLabel(value) }));
 
 export function LanguageSelect({
   value,
