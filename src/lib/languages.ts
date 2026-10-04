@@ -24,6 +24,26 @@ export const LANGUAGES: { value: string; label: string }[] = [
   { value: "ko", label: "Korean" },
 ];
 
+// English names for codes outside the curated set (a server's translation
+// targets reach well past it: el, hi, hu, ro, th, vi, …). Built lazily; null
+// where the runtime lacks Intl.DisplayNames.
+let displayNames: Intl.DisplayNames | null | undefined;
+function intlName(code: string): string | undefined {
+  if (displayNames === undefined) {
+    try {
+      displayNames = new Intl.DisplayNames(["en"], { type: "language", fallback: "none" });
+    } catch {
+      displayNames = null;
+    }
+  }
+  try {
+    return displayNames?.of(code) || undefined;
+  } catch {
+    return undefined; // not a well-formed language tag
+  }
+}
+
+/** English name for a language code; an unknown code comes back unchanged. */
 export function languageLabel(code: string): string {
-  return LANGUAGES.find((l) => l.value === code)?.label ?? code;
+  return LANGUAGES.find((l) => l.value === code)?.label ?? intlName(code) ?? code;
 }

@@ -69,7 +69,10 @@ export function TranslationTargetChips({
   // Membership and removal go through the SAME sanitizer as the chips: a synced " de " renders
   // "DE", so removing/re-offering it must match on that code, not on the raw entry.
   const codeOf = (c: string) => chipCodes([c])[0] ?? "";
-  const remaining = shownCandidates.filter((code) => !shown.includes(code));
+  // Alphabetical by the name the user reads, not by code (de "German" sat between da and el).
+  const remaining = shownCandidates
+    .filter((code) => !shown.includes(code))
+    .sort((a, b) => languageLabel(a).localeCompare(languageLabel(b)));
   const atCap = shown.length >= max;
 
   return (

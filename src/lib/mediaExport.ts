@@ -3,6 +3,7 @@
 // in plain node. The React side (TranscriptViewer) wires these to the
 // dialogs, the Tauri commands and the record.
 
+import { languageLabel as baseLanguageLabel } from "./languages";
 import { generateExports, type ExportOptions } from "./transcriptExport";
 import type { BatchResult, Capabilities } from "./types";
 
@@ -74,21 +75,13 @@ export interface SidecarFile {
   content: string;
 }
 
-/** English names for the track titles — the same short table the viewer's
- *  chips use; anything else is the code in caps. */
-const LANG_LABELS: Record<string, string> = {
-  en: "English", de: "German", fr: "French", it: "Italian", es: "Spanish",
-  pt: "Portuguese", nl: "Dutch", pl: "Polish", ru: "Russian", uk: "Ukrainian",
-  cs: "Czech", sv: "Swedish", da: "Danish", no: "Norwegian", fi: "Finnish",
-  tr: "Turkish", ar: "Arabic", zh: "Chinese", ja: "Japanese", ko: "Korean",
-  hu: "Hungarian", ro: "Romanian", el: "Greek", hi: "Hindi", th: "Thai",
-  vi: "Vietnamese", id: "Indonesian", et: "Estonian",
-};
-
+/** English names for the track titles — the same names the viewer's chips
+ *  use; a code with no name is shown in caps. */
 export function languageLabel(code: string): string {
   const base = code.split("-")[0].toLowerCase();
   const region = code.includes("-") ? ` (${code.split("-")[1].toUpperCase()})` : "";
-  return (LANG_LABELS[base] ?? base.toUpperCase()) + region;
+  const name = baseLanguageLabel(base);
+  return (name === base ? base.toUpperCase() : name) + region;
 }
 
 /** The language code a track is filed under: the result's language for

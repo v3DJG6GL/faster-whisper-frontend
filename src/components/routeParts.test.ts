@@ -19,7 +19,7 @@ describe("routeParts", () => {
   });
 
   it("passes an unknown code through, as languageLabel does", () => {
-    expect(routeParts("de-CH", ["rm"]).targets).toEqual(["rm"]);
+    expect(routeParts("de-CH", ["zz"]).targets).toEqual(["zz"]);
   });
 
   it("drops blank entries instead of rendering an empty chip", () => {
