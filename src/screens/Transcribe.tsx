@@ -854,8 +854,10 @@ export default function Transcribe() {
     model,
   ]);
 
-  // Debounced (500 ms) link preview. Advisory only: a failed probe shows its
-  // reason but never blocks Add — the run itself is the authority.
+  // Debounced (500 ms) link preview. Add waits for it (urlPreviewLoading also covers the debounce),
+  // so the video options are on screen — defaults preselected — before a link can be queued; a
+  // click in that window used to add the link without them. A failed probe shows its reason and
+  // unlocks Add: the run itself is the authority.
   useEffect(() => {
     const url = normalizeMediaUrl(urlDraft);
     setUrlPreviewData(null);
@@ -891,7 +893,7 @@ export default function Transcribe() {
 
   const addLink = () => {
     const url = normalizeMediaUrl(urlDraft);
-    if (!url || busy) return;
+    if (!url || busy || urlPreviewLoading) return;
     if (urlPreviewData) {
       setUrlMeta(url, {
         title: urlPreviewData.title ?? undefined,
@@ -1305,7 +1307,7 @@ export default function Transcribe() {
               value={urlDraft}
               onChange={(e) => setUrlDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && normalizeMediaUrl(urlDraft) && !busy) addLink();
+                if (e.key === "Enter" && normalizeMediaUrl(urlDraft) && !busy && !urlPreviewLoading) addLink();
               }}
               disabled={busy}
               spellCheck={false}
@@ -1316,10 +1318,19 @@ export default function Transcribe() {
             <Button
               variant="accent"
               className="shrink-0 whitespace-nowrap"
-              disabled={!normalizeMediaUrl(urlDraft) || busy}
+              disabled={!normalizeMediaUrl(urlDraft) || busy || urlPreviewLoading}
               onClick={addLink}
+              title={urlPreviewLoading ? "Waiting for the link preview and its download options" : undefined}
             >
-              <Plus className="size-4" /> Add link
+              {urlPreviewLoading ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" /> Resolving…
+                </>
+              ) : (
+                <>
+                  <Plus className="size-4" /> Add link
+                </>
+              )}
             </Button>
           </div>
           {urlDraft.trim() !== "" && !normalizeMediaUrl(urlDraft) && (
