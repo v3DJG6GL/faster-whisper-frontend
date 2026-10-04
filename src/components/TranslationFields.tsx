@@ -10,6 +10,7 @@ import { safeDisplayText } from "../lib/sanitize";
 import type { Capabilities, TranscribeOptions, TranslationOverrides } from "../lib/types";
 import { ModelPicker } from "./ModelPicker";
 import { MicroLabel, Segmented, Stepper, TextArea } from "./ui";
+import { inheritLabel, onOff } from "../lib/inherit";
 
 export const TRANSLATION_MAX_TARGETS = 8;
 
@@ -133,6 +134,7 @@ export function TranslationOptionsFields({
   onModeChange,
   model,
   onModelChange,
+  inheritedModel,
   caps,
   exclude,
   disabled,
@@ -146,6 +148,9 @@ export function TranslationOptionsFields({
   onModeChange: (m: "fluent" | "faithful") => void;
   model: string;
   onModelChange: (m: string) => void;
+  /** What an empty model runs with — the backend's translation model, when it sets one (the
+   *  run uses it before the server's default). */
+  inheritedModel?: string;
   /** The backend's /v1/me capabilities (model + language lists); null = unknown. */
   caps: Capabilities | null;
   /** The known source language — offering it as a target is a no-op. */
@@ -188,7 +193,10 @@ export function TranslationOptionsFields({
                 value={model}
                 onChange={onModelChange}
                 models={caps?.translation_models ?? []}
-                defaultLabel={`Default · ${caps?.translation_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
+                defaultLabel={inheritLabel(
+                  (inheritedModel || caps?.translation_models?.[0]?.id || "server model").split("/").pop(),
+                  "Default",
+                )}
                 ariaLabel="Translation model"
                 disabled={disabled}
               />
@@ -312,6 +320,25 @@ function OverrideLabel({
   );
 }
 
+/** What a TranslationDefaultsEditor's empty fields inherit, as display values. */
+export interface TranslationInherited {
+  /** "English, French" / "no translation" / "server default". */
+  targets?: string;
+  model?: string;
+  /** "Fluent" / "Faithful". */
+  mode?: string;
+  contextSegments?: number;
+  /** The inherited glossary text; "" = explicitly none. */
+  glossary?: string;
+  includeOriginal?: boolean;
+}
+
+/** Display text for a list of target codes: their language names, or `none` when empty. */
+export function targetsLabel(codes: unknown, none: string): string {
+  const list = chipCodes(codes);
+  return list.length ? list.map((c) => languageLabel(c)).join(", ") : none;
+}
+
 /** The Backend/Profile "Translation defaults" body — targets, model, context
  *  depth, glossary, and mode, each absent = inherit the previous layer
  *  (Backend inherits the server; a Profile inherits its Backend). */
@@ -319,15 +346,17 @@ export function TranslationDefaultsEditor({
   value,
   onChange,
   caps,
-  inheritLabel,
+  inherited,
   liveInsert,
 }: {
   value: TranslationOverrides | undefined;
   onChange: (next: TranslationOverrides | undefined) => void;
   /** The backend's /v1/me capabilities (model + language lists); null = unknown. */
   caps: Capabilities | null;
-  /** What an empty field falls back to — "server config" or "backend". */
-  inheritLabel: string;
+  /** What each empty field falls back to, as display text — the layer below's values
+   *  (a Profile shows its Backend's; a Backend shows the server's where it publishes them).
+   *  Absent members leave the bare "Inherit". */
+  inherited: TranslationInherited;
   /** Will this profile insert phrase-by-phrase? Live translation is forced to Faithful —
    *  see `translateModeFor` — so the Mode control is inert and says so rather than
    *  offering a choice that quietly doesn't apply. */
@@ -354,13 +383,15 @@ export function TranslationDefaultsEditor({
           allowed={caps?.translation_languages}
         />
         {/* An empty chip row cannot tell "none set" from "explicitly none" on its own,
-            and the two now resolve differently: absent inherits the layer below (a
-            server override-profile's TRANSLATE_TO), cleared overrides it with nothing.
-            Only shown while the row IS empty — with chips up, they say it. */}
+            and the two resolve differently: absent inherits the layer below (a Profile its
+            Backend's targets — dictation stops there; a Backend the server's TRANSLATE_TO,
+            which the Transcribe page seeds from), cleared overrides it with nothing. The
+            hint names what is inherited. Only shown while the row IS empty — with chips up,
+            they say it. */}
         {!v.translateTo?.length && (
           <div className="mt-1 text-[11px] text-faint">
             {v.translateTo === undefined
-              ? `Inherit — ${inheritLabel}`
+              ? inheritLabel(inherited.targets)
               : "(cleared — no translation, overrides the inherited targets)"}
           </div>
         )}
@@ -372,7 +403,7 @@ export function TranslationDefaultsEditor({
             value={v.model ?? ""}
             onChange={(m) => patch({ model: m || undefined })}
             models={caps?.translation_models ?? []}
-            defaultLabel={`Inherit · ${inheritLabel}`}
+            defaultLabel={inheritLabel(inherited.model)}
             ariaLabel="Translation model"
           />
         </div>
@@ -385,7 +416,7 @@ export function TranslationDefaultsEditor({
               patch({ mode: m === "inherit" ? undefined : (m as "fluent" | "faithful") })
             }
             options={[
-              { value: "inherit", label: "Inherit" },
+              { value: "inherit", label: inheritLabel(inherited.mode) },
               { value: "fluent", label: "Fluent" },
               { value: "faithful", label: "Faithful" },
             ]}
@@ -406,15 +437,30 @@ export function TranslationDefaultsEditor({
         </div>
       </div>
       <div>
-        <div className="mb-1.5 text-[12px] font-medium text-dim">Context segments</div>
+        {/* Tri-state like the fields around it: absent inherits, any number (0 = no context)
+            is an override. The Stepper shows the inherited count until it is changed. */}
+        <OverrideLabel
+          label="Context segments"
+          overridden={v.contextSegments !== undefined}
+          canClear={false}
+          clearTitle=""
+          onClear={() => {}}
+          onReset={() => patch({ contextSegments: undefined })}
+        />
         <Stepper
-          value={v.contextSegments ?? 0}
-          onChange={(n) => patch({ contextSegments: n === 0 ? undefined : n })}
+          value={v.contextSegments ?? inherited.contextSegments ?? 0}
+          onChange={(n) => patch({ contextSegments: n })}
           min={0}
           max={10}
-          zeroLabel="Inherit"
           ariaLabel="Context segments"
         />
+        {v.contextSegments === undefined && (
+          <div className="mt-1 text-[11px] text-faint">
+            {inheritLabel(
+              inherited.contextSegments !== undefined ? String(inherited.contextSegments) : undefined,
+            )}
+          </div>
+        )}
       </div>
       <div>
         <OverrideLabel
@@ -436,7 +482,9 @@ export function TranslationDefaultsEditor({
           placeholder={
             v.glossary === ""
               ? "(cleared — no glossary sent)"
-              : "One fixed term per line:\nRechnung = invoice"
+              : inherited.glossary === ""
+                ? "Inherit · no glossary"
+                : inherited.glossary || "One fixed term per line:\nRechnung = invoice"
           }
         />
       </div>
@@ -451,7 +499,7 @@ export function TranslationDefaultsEditor({
           value={v.includeOriginal === undefined ? "inherit" : v.includeOriginal ? "on" : "off"}
           onChange={(m) => patch({ includeOriginal: m === "inherit" ? undefined : m === "on" })}
           options={[
-            { value: "inherit", label: "Inherit" },
+            { value: "inherit", label: inheritLabel(onOff(inherited.includeOriginal)) },
             { value: "on", label: "On" },
             { value: "off", label: "Off" },
           ]}

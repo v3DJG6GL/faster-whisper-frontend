@@ -6,7 +6,8 @@ import { useApp } from "@/lib/store";
 import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, StatusDot, TextArea, TextInput } from "@/components/ui";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { DecodeFields } from "@/components/DecodeFields";
-import { TranslationDefaultsEditor } from "@/components/TranslationFields";
+import { TranslationDefaultsEditor, targetsLabel } from "@/components/TranslationFields";
+import { capsDecodeDefaults } from "@/lib/inherit";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -456,6 +457,7 @@ function Editor({
             value={b.decodeOverrides ?? {}}
             onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
             inherited={resolved}
+            serverDefaults={capsDecodeDefaults(caps)}
             serverKind={kind}
             canCustomize={caps?.can_request_decode_overrides}
           />
@@ -485,7 +487,13 @@ function Editor({
             value={b.translationOverrides}
             onChange={(v) => set({ translationOverrides: v })}
             caps={caps}
-            inheritLabel="server default"
+            // The server's own values where /v1/me publishes them. Its TRANSLATE_TO seeds the
+            // Transcribe page; dictation translates only into targets set here or on a profile.
+            inherited={{
+              targets: targetsLabel(caps?.translate_to_default, "server default"),
+              model: "server default",
+              includeOriginal: false,
+            }}
           />
         </DisclosureCard>
       </div>

@@ -16,7 +16,8 @@
 //     and Labeled auto-clone an accessible name onto a DIRECT Select/Toggle child; a
 //     fragment or wrapper here would silently strip the name on all three screens at once.
 
-import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
+import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
+import { inheritLabel, onOff } from "@/lib/inherit";
 import { Segmented, Select } from "@/components/ui";
 import { SETTING } from "@/lib/settingsManifest";
 import type { InsertMethod, InsertionOverrides } from "@/lib/types";
@@ -42,6 +43,10 @@ export interface DictationFieldsProps {
   onChange: (next: InsertionOverrides) => void;
   /** Disable everything (e.g. an App Rule with "never type into this app" on). */
   disabled?: boolean;
+  /** What each control falls back to, named on its Inherit option ("Inherit · Clipboard
+   *  paste"). The Profile editor passes Settings → Dictation; App Rules pass it too (a
+   *  profile may still decide first — the rule editor says so beside the controls). */
+  inherited?: Partial<Pick<InsertionOverrides, "insertMethod" | "pasteShortcut" | "autoEnter" | "restoreClipboard">>;
 }
 
 /** The four insertion controls as an object of ready-to-place elements, so each surface
@@ -50,7 +55,7 @@ export interface DictationFieldsProps {
  *  Deliberately NOT a component that renders rows: Settings uses SettingRow, the Profile
  *  editor uses a Labeled grid, and App Rules uses its own flat stack. Returning elements
  *  keeps one definition of each CONTROL while leaving the three layouts alone. */
-export function dictationControls({ value, onChange, disabled }: DictationFieldsProps) {
+export function dictationControls({ value, onChange, disabled, inherited }: DictationFieldsProps) {
   // A cleared control writes `undefined` and the key is PRUNED: "inherit" is the ABSENCE of a
   // value, which is what makes a later change to the layer below propagate. (App Rules map the
   // absence onto its stored `null` on the way out — that layer's own concern.) The prune also
@@ -75,7 +80,7 @@ export function dictationControls({ value, onChange, disabled }: DictationFields
       value={value[key] === true ? "on" : value[key] === false ? "off" : INHERIT}
       onChange={(v) => set({ [key]: v === INHERIT ? undefined : v === "on" } as Partial<InsertionOverrides>)}
       options={[
-        { value: INHERIT, label: "Inherit" },
+        { value: INHERIT, label: inheritLabel(onOff(inherited?.[key])) },
         { value: "on", label: "On" },
         { value: "off", label: "Off" },
       ]}
@@ -89,7 +94,13 @@ export function dictationControls({ value, onChange, disabled }: DictationFields
         disabled={disabled}
         value={value.insertMethod ?? INHERIT}
         onChange={(v) => set({ insertMethod: v === INHERIT ? undefined : (v as InsertMethod) })}
-        options={[{ value: INHERIT, label: "Inherit" }, ...METHOD_OPTIONS]}
+        options={[
+          {
+            value: INHERIT,
+            label: inheritLabel(METHOD_OPTIONS.find((o) => o.value === inherited?.insertMethod)?.label),
+          },
+          ...METHOD_OPTIONS,
+        ]}
       />
     ),
     pasteShortcut: (
@@ -102,7 +113,10 @@ export function dictationControls({ value, onChange, disabled }: DictationFields
         value={value.pasteShortcut ? pasteKey(value.pasteShortcut) : INHERIT}
         onChange={(v) => set({ pasteShortcut: v === INHERIT ? undefined : pasteCodes(v) })}
         options={[
-          { value: INHERIT, label: "Inherit" },
+          {
+            value: INHERIT,
+            label: inheritLabel(inherited?.pasteShortcut?.length ? pasteLabel(inherited.pasteShortcut) : undefined),
+          },
           ...PASTE_PRESETS.map((p) => ({ value: p.value, label: p.label })),
         ]}
       />

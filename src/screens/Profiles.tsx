@@ -10,7 +10,8 @@ import { starterProfiles } from "@/lib/starters";
 import { TriggerTile } from "@/components/TriggerTile";
 import { DecodeFields } from "@/components/DecodeFields";
 import { dictationControls, hasInsertionOverrides, FIELD_LABEL } from "@/components/DictationFields";
-import { TranslationDefaultsEditor } from "@/components/TranslationFields";
+import { TranslationDefaultsEditor, targetsLabel, type TranslationInherited } from "@/components/TranslationFields";
+import { capsDecodeDefaults, inheritLabel, onOff } from "@/lib/inherit";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -28,7 +29,7 @@ import { backendForProfile } from "@/lib/dictation";
 import { liveAllowed } from "@/lib/streaming";
 import { configuredRouteTargets } from "@/lib/overlay";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import type { Profile } from "@/lib/types";
+import { NO_OVERRIDE_PROFILE, type Profile, type TranslationOverrides } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
@@ -37,6 +38,19 @@ const ACTIVATION = {
   hold: { icon: Mic, label: "Push-to-talk", hint: "Hold the hotkey while you speak; release to stop." },
   handsfree: { icon: Hand, label: "Hands-free", hint: "Tap once to start, tap again to stop." },
 } as const;
+
+/** What a profile's empty translation fields inherit: its backend's values. For the targets
+ *  dictation stops at the backend — none there means no translation (streaming.ts trOv). */
+function translationInherited(t: TranslationOverrides | undefined): TranslationInherited {
+  return {
+    targets: targetsLabel(t?.translateTo, "no translation"),
+    model: t?.model ? safeDisplayText(t.model, 60) : "server default",
+    mode: t?.mode === "fluent" ? "Fluent" : t?.mode === "faithful" ? "Faithful" : undefined,
+    contextSegments: t?.contextSegments,
+    glossary: t?.glossary,
+    includeOriginal: t?.includeOriginal ?? false,
+  };
+}
 
 function blankProfile(backendId: string | null): Profile {
   return { id: crypto.randomUUID(), name: "New profile", activation: "hold", enabled: true, hotkey: [], backendId };
@@ -62,6 +76,9 @@ function Editor({
   const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
   const globalTypeAsISpeak = useApp((s) => s.settings.general.typeAsISpeak);
   const globalInsertMethod = useApp((s) => s.settings.general.insertMethod);
+  const globalPasteShortcut = useApp((s) => s.settings.general.pasteShortcut);
+  const globalAutoEnter = useApp((s) => s.settings.general.autoEnter);
+  const globalRestoreClipboard = useApp((s) => s.settings.general.restoreClipboard);
   // A low-level backend owns the chords when evdev is enabled AND permitted (Linux) or always on
   // Windows (the hook backend) — same gate as the Dictionary screen's QuickAddShortcutField
   // (formerly the Settings quick-add row), so both rebind surfaces accept the same chords (useHotkeyCapture commits modifier-only / AltGr chords ONLY then).
@@ -97,7 +114,10 @@ function Editor({
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
   // Resolve the target backend so the decode editor can show its defaults as the
   // inherited baseline and gate to the backend's detected capability.
-  const backend = backends.find((b) => b.id === p.backendId);
+  const boundBackend = backends.find((b) => b.id === p.backendId);
+  // Dictation runs a profile whose backend is gone (or unset) on the FIRST backend
+  // (dictation.ts backendForProfile) — preview that one too, and say so on the field.
+  const backend = boundBackend ?? backends[0];
   // The backend's advertised models feed the per-profile model override picker
   // (probes once per session when the connection cache is empty).
   const models = useBackendModels(backend);
@@ -269,34 +289,45 @@ function Editor({
           unrelated panels at once. */}
       <div className="mt-5">
         <div className="grid grid-cols-2 gap-4 rounded-xl border border-line bg-surface-2/40 p-4">
-          <Labeled label="Backend">
-            <Select
-              value={backends.some((b) => b.id === p.backendId) ? p.backendId! : ""}
-              onChange={(v) => set({ backendId: v || null })}
-              options={
-                backends.length
-                  ? [
-                      // Surface an orphaned/cleared backendId (e.g. its backend was deleted)
-                      // so the shown value matches state instead of silently picking the first.
-                      ...(backends.some((b) => b.id === p.backendId)
-                        ? []
-                        : [{ value: "", label: "No backend" }]),
-                      // This Select DECIDES which server a profile sends its audio and key to,
-                      // and a backend rename raises no SecurityChange — so a hostile sync server
-                      // can relabel the options silently. Same defanging as the sync-server
-                      // picker, for the same reason.
-                      ...backendOptions(backends),
-                    ]
-                  : [{ value: "", label: "No backends — add one" }]
-              }
-            />
-          </Labeled>
+          <div>
+            <Labeled label="Backend">
+              <Select
+                value={backends.some((b) => b.id === p.backendId) ? p.backendId! : ""}
+                onChange={(v) => set({ backendId: v || null })}
+                options={
+                  backends.length
+                    ? [
+                        // Surface an orphaned/cleared backendId (e.g. its backend was deleted)
+                        // so the shown value matches state instead of silently picking the first.
+                        ...(backends.some((b) => b.id === p.backendId)
+                          ? []
+                          : [{ value: "", label: "No backend" }]),
+                        // This Select DECIDES which server a profile sends its audio and key to,
+                        // and a backend rename raises no SecurityChange — so a hostile sync server
+                        // can relabel the options silently. Same defanging as the sync-server
+                        // picker, for the same reason.
+                        ...backendOptions(backends),
+                      ]
+                    : [{ value: "", label: "No backends — add one" }]
+                }
+              />
+            </Labeled>
+            {!boundBackend && backend && (
+              <Notice className="mt-2">
+                {p.backendId
+                  ? "The backend this profile used was deleted."
+                  : "No backend picked for this profile."}{" "}
+                Dictation uses “{safeDisplayText(backend.name, 60) || "your first backend"}” (your first
+                backend) until you pick one.
+              </Notice>
+            )}
+          </div>
           <Labeled label="Language">
             <LanguageSelect
               ariaLabel="Language"
               value={p.language ?? ""}
               onChange={(v) => set({ language: v || undefined })}
-              inheritLabel="Inherit from backend"
+              inheritLabel={inheritLabel(backend ? languageLabel(backend.language || "auto") : undefined)}
             />
           </Labeled>
           <Labeled label="Model">
@@ -318,7 +349,10 @@ function Editor({
                 value={p.endpoint ?? "inherit"}
                 onChange={(v) => set({ endpoint: v === "inherit" ? undefined : v })}
                 options={[
-                  { value: "inherit", label: "Inherit" },
+                  {
+                    value: "inherit",
+                    label: inheritLabel(backend ? (backend.endpoint === "batch" ? "Batch" : "Streaming") : undefined),
+                  },
                   { value: "stream", label: "Streaming" },
                   { value: "batch", label: "Batch" },
                 ]}
@@ -372,7 +406,9 @@ function Editor({
               placeholder={
                 p.prompt === ""
                   ? "(cleared — no prompt sent)"
-                  : inheritedPrompt || "Inherit from backend"
+                  : backendPromptOverride === ""
+                    ? "Inherit · no prompt"
+                    : inheritedPrompt || "Inherit · server default"
               }
             />
           </div>
@@ -401,6 +437,7 @@ function Editor({
               value={p.decodeOverrides ?? {}}
               onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
               inherited={inheritedDecode}
+              serverDefaults={capsDecodeDefaults(caps)}
               serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}
           />
@@ -453,7 +490,7 @@ function Editor({
                       set({ typeAsISpeak: v === "inherit" ? undefined : v === "on" })
                     }
                     options={[
-                      { value: "inherit", label: "Inherit" },
+                      { value: "inherit", label: inheritLabel(onOff(globalTypeAsISpeak)) },
                       { value: "on", label: "On" },
                       { value: "off", label: "Off" },
                     ]}
@@ -475,6 +512,12 @@ function Editor({
               // Same rule as `save`: an empty override object is "inherit everything" and is
               // stored as absent — here too, or set-then-revert reads as unsaved forever.
               onChange: (v) => set({ insertionOverrides: hasInsertionOverrides(v) ? v : undefined }),
+              inherited: {
+                insertMethod: globalInsertMethod,
+                pasteShortcut: globalPasteShortcut,
+                autoEnter: globalAutoEnter,
+                restoreClipboard: globalRestoreClipboard,
+              },
             });
             return (
               <div className="grid grid-cols-2 gap-4">
@@ -538,11 +581,7 @@ function Editor({
                 activation: p.activation,
                 method: p.insertionOverrides?.insertMethod ?? globalInsertMethod,
               })}
-              inheritLabel={
-                backend?.translationOverrides?.model
-                  ? safeDisplayText(backend.translationOverrides.model, 60)
-                  : "backend default"
-            }
+              inherited={translationInherited(backend?.translationOverrides)}
           />
         </DisclosureCard>
       </div>
@@ -562,7 +601,11 @@ function Editor({
             serverKind={serverKind}
             canRequest={caps?.can_request_override_profile}
             value={p.overrideProfile ?? ""}
-            inheritLabel="(inherit backend)"
+            inheritLabel={
+              backend?.overrideProfile === NO_OVERRIDE_PROFILE
+                ? "Inherit · none"
+                : inheritLabel(backend?.overrideProfile || (backend ? "server default" : undefined))
+            }
             onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
           />
         </div>

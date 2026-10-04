@@ -59,6 +59,8 @@ function Editor({
   onCancel: () => void;
 }) {
   const [r, setR] = useState<AppRule>(initial);
+  // Settings → Dictation, named on each "Inherit" option.
+  const general = useApp((s) => s.settings.general);
   const [capturing, setCapturing] = useState(false);
   const [captureMsg, setCaptureMsg] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -196,9 +198,9 @@ function Editor({
           rows and shares only the manifest labels and METHOD_OPTIONS.
 
           "Inherit" here means the ACTIVE PROFILE's value, or the global default when the
-          profile doesn't override it either. No resolved value is shown beside it, unlike
-          the Profile editor's: which profile is active differs per session, so there is no
-          single answer to show. */}
+          profile doesn't override it either. Which profile is active differs per session, so
+          the Inherit options name the GLOBAL value and the line under the controls says a
+          profile can still decide first. */}
       {(() => {
         const c = dictationControls({
           value: {
@@ -215,6 +217,12 @@ function Editor({
               restoreClipboard: v.restoreClipboard ?? null,
             }),
           disabled: r.block,
+          inherited: {
+            insertMethod: general.insertMethod,
+            pasteShortcut: general.pasteShortcut,
+            autoEnter: general.autoEnter,
+            restoreClipboard: general.restoreClipboard,
+          },
         });
         return (
           <>
@@ -222,6 +230,10 @@ function Editor({
             <Labeled label={FIELD_LABEL.pasteShortcut} className="mt-4">{c.pasteShortcut}</Labeled>
             <Labeled label={FIELD_LABEL.autoEnter} className="mt-4">{c.autoEnter}</Labeled>
             <Labeled label={FIELD_LABEL.restoreClipboard} className="mt-4">{c.restoreClipboard}</Labeled>
+            <p className="mt-2 text-[12px] text-faint">
+              Inherit uses the dictating profile&apos;s setting when it has one, else Settings →
+              Dictation (named above).
+            </p>
           </>
         );
       })()}

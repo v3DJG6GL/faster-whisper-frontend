@@ -2747,6 +2747,7 @@ export function TranscriptViewer({
                 mode={trMode}
                 onModeChange={setTrMode}
                 model={trModel}
+                inheritedModel={trBackend?.translationOverrides?.model}
                 onModelChange={setTrModel}
                 caps={trCaps}
                 exclude={result.language ?? undefined}

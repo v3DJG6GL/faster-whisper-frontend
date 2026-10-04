@@ -4,6 +4,7 @@ import { DisclosureCard, Segmented, TextInput, SectionLabel } from "@/components
 import { cn } from "@/lib/cn";
 import type { DecodeOverrides, InheritedValues } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
+import { inheritLabel, type InheritWord } from "@/lib/inherit";
 
 // Decode-param editor shared by the Backend (defaults) and Profile (override)
 // editors. Every field is OPTIONAL: empty = "inherit" (backend default ?? the
@@ -35,7 +36,7 @@ const FIELDS: Field[] = [
   { key: "beam_size", label: "Beam size", section: "primary", kind: "number", hint: "1–20", min: 1, max: 20, step: 1 },
   { key: "temperature", label: "Temperature", section: "primary", kind: "number", hint: "0–1", min: 0, max: 1, step: 0.1 },
   { key: "condition_on_previous_text", label: "Condition on previous text", section: "primary", kind: "bool" },
-  { key: "vad_filter", label: "Voice-activity filter", section: "primary", kind: "bool" },
+  { key: "vad_filter", label: "Skip silence (VAD)", section: "primary", kind: "bool" },
   { key: "hotwords", label: "Hotwords", section: "primary", kind: "text", hint: "bias terms", wide: true },
   // ── Voice activity (VAD) ──
   { key: "vad_threshold", label: "VAD threshold", section: "vad", kind: "number", hint: "0–1", min: 0, max: 1, step: 0.05 },
@@ -61,6 +62,8 @@ export function DecodeFields({
   value,
   onChange,
   inherited,
+  serverDefaults,
+  inheritWord = "Inherit",
   serverKind,
   canCustomize,
 }: {
@@ -70,6 +73,11 @@ export function DecodeFields({
    *  override-profile's values), ghosted into each control's placeholder/state
    *  so you can see what a blank field will inherit. */
   inherited?: InheritedValues;
+  /** The server's own defaults the client knows (today: `vad_filter` from GET /v1/me), the
+   *  last layer under `inherited` — so "Skip silence" says "Inherit · on" with no profile set. */
+  serverDefaults?: InheritedValues;
+  /** "Inherit" in override editors (Profile, Backend), "Default" for a per-run choice. */
+  inheritWord?: InheritWord;
   /** When "standard", a conventional Whisper server: disable everything the
    *  faster-whisper backend adds (keep only temperature). */
   serverKind?: ServerKind;
@@ -94,7 +102,7 @@ export function DecodeFields({
 
   // The inherited (baseline) value as a short string, or undefined if none.
   const fmtInherited = (f: Field): string | undefined => {
-    const iv = inherited?.[f.key];
+    const iv = inherited?.[f.key] ?? serverDefaults?.[f.key];
     if (iv === undefined || iv === null || iv === "") return undefined;
     if (f.kind === "bool") return iv ? "on" : "off";
     return String(iv);
@@ -110,7 +118,7 @@ export function DecodeFields({
     const inh = fmtInherited(f); // inherited value as a short string, or undefined
     if (f.kind === "bool") {
       const v = cur === true ? "on" : cur === false ? "off" : "inherit";
-      // Ghost the inherited state on the "Inherit" segment, e.g. "Inherit (on)".
+      // Ghost the inherited state on the "Inherit" segment, e.g. "Inherit · on".
       return (
         <Segmented
           value={v}
@@ -118,7 +126,7 @@ export function DecodeFields({
           disabled={gated}
           onChange={(nv) => setField(f.key, nv === "inherit" ? undefined : nv === "on")}
           options={[
-            { value: "inherit", label: inh ? `Inherit (${inh})` : "Inherit" },
+            { value: "inherit", label: inheritLabel(inh, inheritWord) },
             { value: "on", label: "On" },
             { value: "off", label: "Off" },
           ]}
@@ -136,7 +144,7 @@ export function DecodeFields({
           max={f.max}
           step={f.step}
           value={cur === undefined ? "" : String(cur)}
-          placeholder={inh ? `${inh} · ${f.hint}` : `inherit · ${f.hint}`}
+          placeholder={inh ? `${inh} · ${f.hint}` : `${inheritWord.toLowerCase()} · ${f.hint}`}
           onChange={(e) => {
             const s = e.target.value;
             if (s === "") return setField(f.key, undefined);
@@ -157,7 +165,7 @@ export function DecodeFields({
         // distinct from inherit), so DON'T coerce "" → undefined here: store the raw
         // value and reach inherit only via the reset button. The accent dot marks the
         // explicit-empty override; a distinct placeholder keeps it from reading as inherit.
-        placeholder={cur === "" ? "(cleared — overrides inherited)" : (inh ?? (f.hint ? `inherit — ${f.hint}` : "inherit"))}
+        placeholder={cur === "" ? "(cleared — overrides inherited)" : (inh ?? (f.hint ? `${inheritWord.toLowerCase()} · ${f.hint}` : inheritWord.toLowerCase()))}
         onChange={(e) => setField(f.key, e.target.value)}
       />
     );
@@ -166,7 +174,7 @@ export function DecodeFields({
   const fieldCell = (f: Field) => {
     const overridden = value[f.key] !== undefined;
     // The inherited value is ghosted into the control itself (placeholder /
-    // "Inherit (on)" segment) by renderControl, so no separate label is needed.
+    // "Inherit · on" segment) by renderControl, so no separate label is needed.
     return (
       <div key={f.key} className={cn(f.wide && "col-span-2")}>
         <div className="mb-1.5 flex items-center gap-1.5">

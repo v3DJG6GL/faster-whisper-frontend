@@ -9,6 +9,7 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields, pruneTargets, translationRunOptions } from "@/components/TranslationFields";
+import { capsDecodeDefaults } from "@/lib/inherit";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { TranscriptViewer } from "@/components/TranscriptViewer";
 import { speakerOrder as speakersOf } from "@/lib/transcriptExport";
@@ -1785,6 +1786,7 @@ export default function Transcribe() {
                               setTranslationModel(v);
                               persistOptions({ translationModel: v });
                             }}
+                            inheritedModel={backend?.translationOverrides?.model}
                             caps={caps}
                             exclude={language !== "auto" ? language : undefined}
                           >
@@ -1866,6 +1868,8 @@ export default function Transcribe() {
             value={runOverrides}
             onChange={setRunOverrides}
             inherited={inheritedBaseline}
+            serverDefaults={capsDecodeDefaults(caps)}
+            inheritWord="Default"
             serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}
           />
