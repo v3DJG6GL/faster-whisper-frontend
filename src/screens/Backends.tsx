@@ -8,7 +8,7 @@ import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { DecodeFields } from "@/components/DecodeFields";
 import { TranslationDefaultsEditor, targetsLabel } from "@/components/TranslationFields";
 import { inheritLabel, serverInherited } from "@/lib/inherit";
-import { LanguageSelect } from "@/components/LanguageSelect";
+import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
@@ -345,7 +345,7 @@ function Editor({
           />
         </Labeled>
         <Labeled label="Default language">
-          <LanguageSelect ariaLabel="Default language" value={b.language} onChange={(v) => set({ language: v })} />
+          <SpokenLanguagePicker ariaLabel="Default language" value={b.language} onChange={(v) => set({ language: v })} />
         </Labeled>
         <Labeled label="Endpoint">
           <Segmented

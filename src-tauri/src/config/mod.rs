@@ -750,6 +750,10 @@ pub struct AppSettings {
     /// configs round-trip byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recent_translation_targets: Option<Vec<String>>,
+    /// Most-recently picked spoken languages, newest first — the spoken-language picker's
+    /// "Recent" group. Frontend-owned and machine-local like `recent_translation_targets`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent_spoken_languages: Option<Vec<String>>,
 }
 
 impl AppSettings {
@@ -866,6 +870,7 @@ impl Default for Config {
                 logging: LoggingSettings::default(),
                 setup_dismissed: false,
                 recent_translation_targets: None,
+                recent_spoken_languages: None,
             },
             // Fresh installs start EMPTY — no seeded backend or profiles. The
             // first-run onboarding (gate → restore-or-starters → quick add) or the
@@ -1228,6 +1233,7 @@ mod tests {
         // exactly the frontend-written keys the way the UI's `save_config` payload would.
         let mut json = serde_json::to_value(Config::default()).expect("default serializes");
         json["settings"]["recentTranslationTargets"] = serde_json::json!(["fr", "de"]);
+        json["settings"]["recentSpokenLanguages"] = serde_json::json!(["de", "yue"]);
         json["settings"]["accentHue"] = serde_json::json!(330);
         json["settings"]["accentMotion"] = serde_json::json!({"period": 3600, "range": "wheel"});
         json["profiles"] = serde_json::json!([{
@@ -1244,6 +1250,10 @@ mod tests {
         assert_eq!(
             out["settings"]["recentTranslationTargets"],
             serde_json::json!(["fr", "de"])
+        );
+        assert_eq!(
+            out["settings"]["recentSpokenLanguages"],
+            serde_json::json!(["de", "yue"])
         );
         // The quick-add and picker windows read the Signal colour through this struct.
         assert_eq!(out["settings"]["accentHue"], serde_json::json!(330.0));

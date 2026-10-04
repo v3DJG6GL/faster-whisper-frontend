@@ -476,6 +476,7 @@ export const TOP_COVERAGE = {
   quickAddList: "pinnedMappings",
   setupDismissed: LOCAL, // first-run gate bookkeeping
   recentTranslationTargets: LOCAL, // picker MRU — a convenience, not a setting
+  recentSpokenLanguages: LOCAL, // picker MRU, likewise
 } as const satisfies Record<
   Exclude<keyof AppSettings, "general" | "recording" | "transcribe" | "sync" | "logging">,
   Covered

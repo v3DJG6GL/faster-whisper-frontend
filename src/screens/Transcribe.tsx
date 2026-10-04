@@ -6,7 +6,7 @@ import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, C
 import { useApp } from "@/lib/store";
 import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingExpand, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
-import { LanguageSelect } from "@/components/LanguageSelect";
+import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields, pruneTargets, translationRunOptions } from "@/components/TranslationFields";
 import { inheritLabel, onOff, serverInherited } from "@/lib/inherit";
@@ -1498,7 +1498,7 @@ export default function Transcribe() {
         </div>
         <div>
           <label className="mb-2 block text-[12px] font-medium text-dim">Language</label>
-          <LanguageSelect
+          <SpokenLanguagePicker
             ariaLabel="Language"
             value={language}
             disabled={busy}

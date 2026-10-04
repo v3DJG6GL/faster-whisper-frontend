@@ -11,12 +11,11 @@
 //  2. No clipping — the popover is PORTALED to <body> and fixed-positioned under
 //     the input, so the RuleCard's `overflow-hidden` can't crop it.
 
-import {
-  useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode,
-} from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
 import { TextInput } from "@/components/ui";
+import { useAnchoredRect } from "@/lib/useAnchoredRect";
 
 const MAX_SHOWN = 50; // popover DOM cap (the source list is already server-capped)
 
@@ -98,7 +97,6 @@ export function Combobox({
   // model filters every sibling out of the list and the dropdown looks like
   // the server only has one model.
   const [typed, setTyped] = useState(false);
-  const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const activeRef = useRef<HTMLLIElement | null>(null);
@@ -110,23 +108,7 @@ export function Combobox({
   const showPopover = open && candidates.length > 0;
 
   // Position the portaled popover under the input; track scroll/resize while open.
-  const place = useCallback(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setRect({ left: r.left, top: r.bottom + 4, width: r.width });
-  }, []);
-  useLayoutEffect(() => {
-    if (!showPopover) return;
-    place();
-    const onMove = () => place();
-    window.addEventListener("scroll", onMove, true);
-    window.addEventListener("resize", onMove);
-    return () => {
-      window.removeEventListener("scroll", onMove, true);
-      window.removeEventListener("resize", onMove);
-    };
-  }, [showPopover, place]);
+  const rect = useAnchoredRect(inputRef, showPopover);
 
   // Keep `active` in range, and scroll the highlighted option into view.
   useEffect(() => {
@@ -222,7 +204,7 @@ export function Combobox({
           <div
             // Keep the input focused for any mouse interaction inside the popover.
             onMouseDown={(e) => e.preventDefault()}
-            style={{ position: "fixed", left: rect.left, top: rect.top, minWidth: rect.width, zIndex: 60 }}
+            style={{ position: "fixed", left: rect.left, top: rect.bottom + 4, minWidth: rect.width, zIndex: 60 }}
             className="animate-combobox-pop overflow-hidden rounded-xl border border-line-strong bg-surface-2 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.55)]"
           >
             <ul id={listId} role="listbox" className="max-h-[14rem] overflow-auto py-1">

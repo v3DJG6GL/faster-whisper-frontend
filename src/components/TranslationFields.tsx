@@ -4,7 +4,9 @@
 // "Translation defaults" editors, and retro-translate popovers.
 import type { ReactNode } from "react";
 import { Eraser, RotateCcw } from "lucide-react";
-import { WHISPER_LANGUAGES, languageLabel } from "../lib/languages";
+import { languageLabel } from "../lib/languages";
+import { translationLanguages } from "../lib/capabilities";
+import { TargetLanguagePicker } from "./LanguagePicker";
 import { cn } from "../lib/cn";
 import { safeDisplayText } from "../lib/sanitize";
 import type { Capabilities, TranscribeOptions, TranslationOverrides } from "../lib/types";
@@ -41,7 +43,8 @@ export function chipCodes(v: unknown, max = 32): string[] {
 export function TranslationTargetChips({
   value,
   onChange,
-  allowed,
+  supported = null,
+  modelName,
   exclude,
   max = TRANSLATION_MAX_TARGETS,
   disabled,
@@ -49,31 +52,21 @@ export function TranslationTargetChips({
 }: {
   value: string[];
   onChange: (next: string[]) => void;
-  /** Server-advertised target codes (caps.translation_languages); absent =
-   *  the app's own curated list. Codes outside the app list still render
-   *  (label falls back to the raw code). */
-  allowed?: string[];
+  /** The translation model's languages (translationLanguages); null = unknown — the picker
+   *  then offers every language untagged. */
+  supported?: string[] | null;
+  /** The model the "Supported by …" group names. */
+  modelName?: string;
   /** The known source language — offering it as a target is a no-op. */
   exclude?: string;
   max?: number;
   disabled?: boolean;
   ariaLabel?: string;
 }) {
-  const candidates = (
-    allowed?.length
-      ? allowed
-      : WHISPER_LANGUAGES
-  ).filter((code) => code !== exclude);
   const shown = chipCodes(value);
-  const shownCandidates = chipCodes(candidates, 200);
   // Membership and removal go through the SAME sanitizer as the chips: a synced " de " renders
-  // "DE", so removing/re-offering it must match on that code, not on the raw entry.
+  // "DE", so removing it must match on that code, not on the raw entry.
   const codeOf = (c: string) => chipCodes([c])[0] ?? "";
-  // Alphabetical by the name the user reads, not by code (de "German" sat between da and el).
-  const remaining = shownCandidates
-    .filter((code) => !shown.includes(code))
-    .sort((a, b) => languageLabel(a).localeCompare(languageLabel(b)));
-  const atCap = shown.length >= max;
 
   return (
     <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={ariaLabel}>
@@ -99,32 +92,23 @@ export function TranslationTargetChips({
           </span>
         </button>
       ))}
-      {!atCap && remaining.length > 0 && (
-        <select
-          value=""
-          disabled={disabled}
-          aria-label="Add a target language"
-          onChange={(e) => {
-            const code = e.target.value;
-            if (code && !shown.includes(code)) onChange([...value, code]);
-          }}
-          className={cn(
-            "ring-signal h-7 cursor-pointer appearance-none rounded-pill border border-dashed border-line-strong",
-            "bg-transparent px-2.5 text-[11.5px] text-dim hover:text-text",
-            disabled && "cursor-not-allowed opacity-50",
-          )}
-        >
-          <option value="">+ language</option>
-          {remaining.map((code) => (
-            <option key={code} value={code}>
-              {languageLabel(code)}
-            </option>
-          ))}
-        </select>
-      )}
-      {atCap && <span className="text-[11px] text-faint">max {max}</span>}
+      <TargetLanguagePicker
+        value={shown}
+        onChange={onChange}
+        supported={supported}
+        modelName={modelName}
+        exclude={exclude}
+        max={max}
+        disabled={disabled}
+      />
+      {shown.length >= max && <span className="text-[11px] text-faint">max {max}</span>}
     </div>
   );
+}
+
+/** A translation model id as the "Supported by …" group names it: its last path part. */
+export function modelShortName(id: string | undefined): string | undefined {
+  return id ? safeDisplayText(id.split("/").pop() ?? id, 40) : undefined;
 }
 
 /** Per-run translation options — target chips, Fluent/Faithful mode, and the
@@ -174,7 +158,8 @@ export function TranslationOptionsFields({
         <TranslationTargetChips
           value={targets}
           onChange={onTargetsChange}
-          allowed={caps?.translation_languages}
+          supported={translationLanguages(caps, model || inheritedModel)}
+          modelName={modelShortName(model || inheritedModel || caps?.translation_models?.[0]?.id)}
           exclude={exclude}
           disabled={disabled}
         />
@@ -352,6 +337,7 @@ export function TranslationDefaultsEditor({
   onChange,
   caps,
   inherited,
+  inheritedModel,
   liveInsert,
 }: {
   value: TranslationOverrides | undefined;
@@ -362,6 +348,9 @@ export function TranslationDefaultsEditor({
    *  (a Profile shows its Backend's; a Backend shows the server's where it publishes them).
    *  Absent members leave the bare "Inherit". */
   inherited: TranslationInherited;
+  /** The model id an empty Model field runs with (a Profile's backend's; absent = the server's
+   *  default) — whose languages the target picker groups by. */
+  inheritedModel?: string;
   /** Will this profile insert phrase-by-phrase? Live translation is forced to Faithful —
    *  see `translateModeFor` — so the Mode control is inert and says so rather than
    *  offering a choice that quietly doesn't apply. */
@@ -385,7 +374,8 @@ export function TranslationDefaultsEditor({
         <TranslationTargetChips
           value={v.translateTo ?? []}
           onChange={(next) => patch({ translateTo: next })}
-          allowed={caps?.translation_languages}
+          supported={translationLanguages(caps, v.model || inheritedModel)}
+          modelName={modelShortName(v.model || inheritedModel || caps?.translation_models?.[0]?.id)}
         />
         {/* An empty chip row cannot tell "none set" from "explicitly none" on its own,
             and the two resolve differently: absent inherits the layer below (a Profile its

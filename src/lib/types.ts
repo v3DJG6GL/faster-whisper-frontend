@@ -494,6 +494,9 @@ export interface AppSettings {
    *  A per-machine convenience, not a setting: it has no Settings row and no manifest entry,
    *  so it never syncs (the manifest's coverage map is what decides that). */
   recentTranslationTargets?: string[];
+  /** Most-recently picked spoken languages, newest first — the spoken picker's "Recent" group.
+   *  Machine-local like recentTranslationTargets. */
+  recentSpokenLanguages?: string[];
 }
 
 /** Runtime dictation status — mirrors the Rust state machine, surfaced to the chip. */

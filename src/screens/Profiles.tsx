@@ -12,7 +12,7 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { dictationControls, hasInsertionOverrides, FIELD_LABEL } from "@/components/DictationFields";
 import { TranslationDefaultsEditor, targetsLabel, type TranslationInherited } from "@/components/TranslationFields";
 import { inheritLabel, onOff, serverInherited } from "@/lib/inherit";
-import { LanguageSelect } from "@/components/LanguageSelect";
+import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
@@ -332,7 +332,7 @@ function Editor({
             )}
           </div>
           <Labeled label="Language">
-            <LanguageSelect
+            <SpokenLanguagePicker
               ariaLabel="Language"
               value={p.language ?? ""}
               onChange={(v) => set({ language: v || undefined })}
@@ -600,6 +600,7 @@ function Editor({
                 method: p.insertionOverrides?.insertMethod ?? globalInsertMethod,
               })}
               inherited={translationInherited(backend?.translationOverrides)}
+              inheritedModel={backend?.translationOverrides?.model}
           />
         </DisclosureCard>
       </div>
