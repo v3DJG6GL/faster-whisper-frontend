@@ -83,27 +83,108 @@ function cueText(lines: string[]): { text: string; speaker?: string } {
   return { text: joined };
 }
 
-function parseSrt(body: string): ImportedText {
+/** One subtitle cue before cleanup: its clock and its raw text lines (markup intact). */
+export interface RawCue {
+  start?: number;
+  end?: number;
+  lines: string[];
+}
+
+/** Markup-free, whitespace-collapsed line — what two cues compare on. */
+function plainLine(line: string): string {
+  return line.replace(/<[^>\n]{0,64}>/g, "").replace(/\s+/g, " ").trim();
+}
+
+/** YouTube's auto captions "roll": every cue repeats the previous cue's last line above its
+ *  new one, and a 10 ms cue freezes the text between them — imported raw that is every line
+ *  two or three times. Drop cues of ≤100 ms, strip leading lines a contiguous cue repeats
+ *  from the cue before, and extend that cue when nothing new is left. Ordinary files have
+ *  neither, so they pass through unchanged. */
+export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
+  const out: RawCue[] = [];
+  for (const cue of cues) {
+    if (cue.start !== undefined && cue.end !== undefined && cue.end - cue.start <= 0.1) continue;
+    const prev = out[out.length - 1];
+    let lines = cue.lines;
+    const contiguous =
+      prev?.start !== undefined && prev.end !== undefined && cue.start !== undefined
+      && cue.start >= prev.start && cue.start <= prev.end + 0.25;
+    if (prev && contiguous) {
+      const mine = lines.map(plainLine);
+      const before = prev.lines.map(plainLine);
+      let k = Math.min(mine.length, before.length);
+      while (k > 0 && before.slice(-k).join("\n") !== mine.slice(0, k).join("\n")) k--;
+      if (k === mine.length) {
+        if (cue.end !== undefined) prev.end = Math.max(prev.end ?? cue.end, cue.end);
+        continue;
+      }
+      lines = lines.slice(k);
+    }
+    out.push({ ...cue, lines });
+  }
+  return out;
+}
+
+/** "Ein- und Ausgang" keeps its hyphen: the next line opens with a conjunction. */
+const KEEPS_HYPHEN = /^(?:und|oder|bis|and|or)(?![\p{L}\p{N}])/iu;
+/** Three or more single cased letters spaced apart ("m i t") — broadcaster emphasis. */
+const LETTER_SPACED = /(?<![\p{L}\p{N}])(?:[\p{Lu}\p{Ll}] ){2,}[\p{Lu}\p{Ll}](?![\p{L}\p{N}])/gu;
+
+/** Broadcaster subtitles (SRF and friends) hyphenate words across lines ("journa-" /
+ *  "listische") and letter-space emphasis ("m i t"). Rejoin both so the text reads — and
+ *  translates — as words. Sound tags ("[Musik]") stay. */
+export function fixBroadcasterText(lines: string[]): string[] {
+  const out: string[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    const prev = out[out.length - 1];
+    if (prev !== undefined && /\p{Ll}-$/u.test(prev) && /^\p{Ll}/u.test(line) && !KEEPS_HYPHEN.test(line)) {
+      out[out.length - 1] = prev.slice(0, -1) + line;
+    } else {
+      out.push(line);
+    }
+  }
+  return out.map((l) => l.replace(LETTER_SPACED, (m) => m.replace(/ /g, "")));
+}
+
+/** The "start --> end [settings]" line of an SRT/VTT cue. */
+const CUE_TIMES = /^(.+?)\s+--&?>\s+(.+?)(?:\s+.*)?$/;
+
+/** Raw cues → segments, after the rolling-caption and broadcaster cleanup every SRT/VTT
+ *  import gets. `<v Name>` voice tags (VTT) carry the speaker; cueText handles the rest. */
+function cuesToSegments(cues: RawCue[]): ImportedText {
   const segments: ImportedText["segments"] = [];
+  for (const { start, end, lines: raw } of dedupeRollingCues(cues)) {
+    const lines = fixBroadcasterText(raw);
+    const v = /^<v\s+([^>]{1,40})>([\s\S]*?)(?:<\/v>)?$/.exec(lines.join(" ").trim());
+    if (v) {
+      const text = v[2].replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, "").replace(/\s+/g, " ").trim();
+      if (text) segments.push({ start, end, text, speaker: v[1].trim() });
+    } else {
+      const { text, speaker } = cueText(lines);
+      if (text) segments.push({ start, end, text, speaker });
+    }
+  }
+  return { segments };
+}
+
+function parseSrt(body: string): ImportedText {
+  const cues: RawCue[] = [];
   for (const block of body.split(/\r?\n\r?\n+/)) {
     const lines = block.split(/\r?\n/).filter((l) => l.trim().length);
     if (!lines.length) continue;
     let i = 0;
     if (/^\d+$/.test(lines[0].trim())) i = 1; // cue number
-    const times = /^(.+?)\s+--&?>\s+(.+?)(?:\s+.*)?$/.exec(lines[i] ?? "");
+    const times = CUE_TIMES.exec(lines[i] ?? "");
     if (!times) continue;
-    const start = parseClock(times[1]);
-    const end = parseClock(times[2]);
-    const { text, speaker } = cueText(lines.slice(i + 1));
-    if (text) segments.push({ start, end, text, speaker });
+    cues.push({ start: parseClock(times[1]), end: parseClock(times[2]), lines: lines.slice(i + 1) });
   }
-  return { segments };
+  return cuesToSegments(cues);
 }
 
 function parseVtt(body: string): ImportedText {
-  const segments: ImportedText["segments"] = [];
-  const blocks = body.split(/\r?\n\r?\n+/);
-  for (const block of blocks) {
+  const cues: RawCue[] = [];
+  for (const block of body.split(/\r?\n\r?\n+/)) {
     const lines = block.split(/\r?\n/).filter((l) => l.trim().length);
     if (!lines.length) continue;
     const first = lines[0].trim();
@@ -112,24 +193,13 @@ function parseVtt(body: string): ImportedText {
       lines.shift();
       if (!lines.length) continue;
     }
-    let i = lines.findIndex((l) => l.includes("-->"));
+    const i = lines.findIndex((l) => l.includes("-->"));
     if (i === -1) continue;
-    const times = /^(.+?)\s+--&?>\s+(.+?)(?:\s+.*)?$/.exec(lines[i]);
+    const times = CUE_TIMES.exec(lines[i]);
     if (!times) continue;
-    const start = parseClock(times[1]);
-    const end = parseClock(times[2]);
-    // <v Name>text</v> carries the speaker; cueText handles the rest.
-    const raw = lines.slice(i + 1).join(" ");
-    const v = /^<v\s+([^>]{1,40})>([\s\S]*?)(?:<\/v>)?$/.exec(raw.trim());
-    if (v) {
-      const text = v[2].replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, "").replace(/\s+/g, " ").trim();
-      if (text) segments.push({ start, end, text, speaker: v[1].trim() });
-    } else {
-      const { text, speaker } = cueText(lines.slice(i + 1));
-      if (text) segments.push({ start, end, text, speaker });
-    }
+    cues.push({ start: parseClock(times[1]), end: parseClock(times[2]), lines: lines.slice(i + 1) });
   }
-  return { segments };
+  return cuesToSegments(cues);
 }
 
 function parseLrc(body: string): ImportedText {

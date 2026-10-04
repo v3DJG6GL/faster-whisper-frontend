@@ -4,6 +4,8 @@ import { generateExport } from "./transcriptExport";
 import {
   ACCEPTED_EXTS,
   TEXT_SOURCE_EXTS,
+  dedupeRollingCues,
+  fixBroadcasterText,
   isAcceptedSourcePath,
   isTextSourcePath,
   parseImportedText,
@@ -124,5 +126,70 @@ describe("isAcceptedSourcePath", () => {
   });
   it("accepts every text source the parser handles", () => {
     for (const ext of TEXT_SOURCE_EXTS) expect(ACCEPTED_EXTS).toContain(ext);
+  });
+});
+
+// Real-shaped excerpts: YouTube's de-orig auto captions (Dz_3b8WAWw4) and SRF Play's vtt.
+const YOUTUBE_AUTO = `WEBVTT
+Kind: captions
+Language: de
+
+00:00:00.160 --> 00:00:02.990 align:start position:0%
+ 
+Ich<00:00:00.440><c> bin</c><00:00:00.640><c> mit</c><00:00:00.960><c> Gott</c>
+
+00:00:02.990 --> 00:00:03.000 align:start position:0%
+Ich bin mit Gott
+ 
+
+00:00:03.000 --> 00:00:05.910 align:start position:0%
+Ich bin mit Gott
+aufgewachsen<00:00:03.520><c> und</c><00:00:03.900><c> [Musik]</c>
+
+00:00:05.910 --> 00:00:05.920 align:start position:0%
+aufgewachsen und [Musik]
+ 
+
+00:00:05.920 --> 00:00:07.200 align:start position:0%
+aufgewachsen und [Musik]
+ 
+`;
+
+const SRF = `WEBVTT
+
+00:01:02.000 --> 00:01:05.400
+Sie arbeitet als journa-
+listische Beraterin.
+
+00:01:05.600 --> 00:01:08.000
+Das hat m i t Vertrauen zu tun,
+Ein- und Ausgang, Vor-
+oder Nachteil.
+`;
+
+describe("site subtitle cleanup", () => {
+  it("YouTube rolling auto captions read every line once, the last cue extends the one before", () => {
+    const back = parseImportedText("vtt", YOUTUBE_AUTO);
+    expect(back.segments.map((s) => s.text)).toEqual(["Ich bin mit Gott", "aufgewachsen und [Musik]"]);
+    expect(back.segments[1]).toMatchObject({ start: 3, end: 7.2 });
+  });
+  it("broadcaster hyphenation rejoins, letter-spaced emphasis collapses, conjunctions keep their hyphen", () => {
+    const back = parseImportedText("vtt", SRF);
+    expect(back.segments.map((s) => s.text)).toEqual([
+      "Sie arbeitet als journalistische Beraterin.",
+      "Das hat mit Vertrauen zu tun, Ein- und Ausgang, Vor- oder Nachteil.",
+    ]);
+  });
+  it("ordinary cues pass through: no repeated lines, no short cues", () => {
+    const cues = [
+      { start: 0, end: 2, lines: ["Hello there."] },
+      { start: 2, end: 4, lines: ["General Kenobi.", "You are a bold one."] },
+    ];
+    expect(dedupeRollingCues(cues)).toEqual(cues);
+    expect(fixBroadcasterText(["E-", "Mail an a b"])).toEqual(["E-", "Mail an a b"]);
+  });
+  it("cleanup runs for SRT too", () => {
+    const srt = "1\n00:00:01,000 --> 00:00:02,000\nA line\n\n2\n00:00:02,000 --> 00:00:03,000\nA line\nnext line\n";
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["A line", "next line"]);
   });
 });
