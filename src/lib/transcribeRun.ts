@@ -1341,9 +1341,8 @@ function settleReattached(): void {
   }));
 }
 
-/** Translate-only run for a subtitle/text source: read + parse locally, one
- *  batched /v1/text/translations call, assemble a BatchResult the viewer,
- *  history and exports consume like any other. */
+/** Translate-only run for a subtitle/text source: read + parse locally, then
+ *  translateParsed. */
 async function translateTextSource(
   path: string,
   options: TranscribeOptions,
@@ -1353,7 +1352,20 @@ async function translateTextSource(
 ): Promise<BatchResult> {
   const ext = /\.([A-Za-z0-9]+)$/.exec(path)?.[1] ?? "txt";
   const content = await readTextFile(path);
-  const parsed = parseImportedText(ext, content);
+  return translateParsed(parseImportedText(ext, content), options, ctx, progressId, epoch);
+}
+
+/** Parsed subtitle/text segments → batched /v1/text/translations calls into
+ *  `options.translateTo` → a BatchResult the viewer, history and exports consume
+ *  like any other. Shared by text sources and links whose transcript is the
+ *  site's own subtitle track. */
+async function translateParsed(
+  parsed: ImportedText,
+  options: TranscribeOptions,
+  ctx: RunContext,
+  progressId?: string | null,
+  epoch?: number,
+): Promise<BatchResult> {
   const targets = options.translateTo ?? [];
   // Chunk well under the transport's 512-text cap — a feature-length .srt
   // easily exceeds it, and each chunk is one server round trip.
