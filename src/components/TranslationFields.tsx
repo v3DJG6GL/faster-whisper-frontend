@@ -7,6 +7,8 @@ import { Eraser, RotateCcw } from "lucide-react";
 import { languageLabel } from "../lib/languages";
 import { modelShortName, translationLanguages } from "../lib/capabilities";
 import { TargetLanguagePicker } from "./LanguagePicker";
+import { sourceTone } from "./SiteSubtitlesPanel";
+import type { ChipPart } from "../lib/siteSubtitles";
 import { cn } from "../lib/cn";
 import { safeDisplayText } from "../lib/sanitize";
 import type { Capabilities, TranscribeOptions, TranslationOverrides } from "../lib/types";
@@ -49,9 +51,15 @@ export function TranslationTargetChips({
   max = TRANSLATION_MAX_TARGETS,
   disabled,
   ariaLabel = "Translation targets",
+  parts,
+  onPart,
 }: {
   value: string[];
   onChange: (next: string[]) => void;
+  /** Compound chips (D86 site subtitles): each language's sources after its code, in fixed
+   *  order, each part clickable (`onPart` gets its key). */
+  parts?: Record<string, ChipPart[]>;
+  onPart?: (key: string) => void;
   /** The translation model's languages (translationLanguages); null = unknown — the picker
    *  then offers every language untagged. */
   supported?: string[] | null;
@@ -70,28 +78,52 @@ export function TranslationTargetChips({
 
   return (
     <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={ariaLabel}>
-      {shown.map((code) => (
-        <button
-          key={code}
-          type="button"
-          disabled={disabled}
-          onClick={() => onChange(value.filter((c) => codeOf(c) !== code))}
-          title={`Remove ${languageLabel(code)}`}
-          className={cn(
-            "ring-signal group inline-flex h-7 items-center gap-1.5 rounded-pill border px-2.5 font-mono text-[11.5px]",
-            // Selection chrome takes the accent; teal is reserved for the translating STAGE.
-            "border-accent/50 text-accent transition-colors",
-            // A click removes the chip, so hover/press previews that in the danger tone.
-            "enabled:hover:border-rec/45 enabled:hover:bg-rec/10 enabled:hover:text-rec enabled:active:bg-rec/20",
-            disabled && "opacity-50",
-          )}
-        >
-          {code.toUpperCase()}
-          <span aria-hidden className="opacity-60 transition-opacity group-enabled:group-hover:opacity-100">
-            ×
+      {shown.map((code) => {
+        const chip = (
+          <button
+            key={code}
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(value.filter((c) => codeOf(c) !== code))}
+            title={`Remove ${languageLabel(code)}`}
+            className={cn(
+              "ring-signal group inline-flex h-7 items-center gap-1.5 rounded-pill border px-2.5 font-mono text-[11.5px]",
+              // Selection chrome takes the accent; teal is reserved for the translating STAGE.
+              "border-accent/50 text-accent transition-colors",
+              // A click removes the chip, so hover/press previews that in the danger tone.
+              "enabled:hover:border-rec/45 enabled:hover:bg-rec/10 enabled:hover:text-rec enabled:active:bg-rec/20",
+              disabled && "opacity-50",
+              parts?.[code] && "rounded-none border-0",
+            )}
+          >
+            {code.toUpperCase()}
+            <span aria-hidden className="opacity-60 transition-opacity group-enabled:group-hover:opacity-100">
+              ×
+            </span>
+          </button>
+        );
+        if (!parts?.[code]) return chip;
+        return (
+          <span key={code} className="inline-flex h-7 items-stretch overflow-hidden rounded-pill border border-accent/50">
+            {chip}
+            {parts[code].map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                disabled={disabled}
+                title={p.title}
+                onClick={() => onPart?.(p.key)}
+                className={cn(
+                  "ring-signal whitespace-nowrap border-l border-line px-2.5 text-[11.5px] enabled:hover:brightness-125",
+                  p.on ? sourceTone(p.kind) : "text-faint enabled:hover:text-text",
+                )}
+              >
+                {p.text}
+              </button>
+            ))}
           </span>
-        </button>
-      ))}
+        );
+      })}
       <TargetLanguagePicker
         value={shown}
         onChange={onChange}
@@ -124,10 +156,15 @@ export function TranslationOptionsFields({
   disabled,
   className,
   sectionLabels,
+  chipParts,
+  onChipPart,
   children,
 }: {
   targets: string[];
   onTargetsChange: (next: string[]) => void;
+  /** Compound target chips (see TranslationTargetChips `parts`). */
+  chipParts?: Record<string, ChipPart[]>;
+  onChipPart?: (key: string) => void;
   mode: "fluent" | "faithful";
   onModeChange: (m: "fluent" | "faithful") => void;
   model: string;
@@ -157,6 +194,8 @@ export function TranslationOptionsFields({
           modelName={modelShortName(model || inheritedModel || caps?.translation_models?.[0]?.id)}
           exclude={exclude}
           disabled={disabled}
+          parts={chipParts}
+          onPart={onChipPart}
         />
       </div>
       <div>

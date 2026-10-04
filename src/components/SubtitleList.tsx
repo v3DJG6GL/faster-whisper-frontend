@@ -9,6 +9,7 @@ import { Pencil } from "lucide-react";
 import { LangTag } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { fmtTimestamp } from "@/lib/format";
+import { trackChipLabel } from "@/lib/siteSubtitles";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { lastStartedAt } from "@/lib/seekKeys";
 import { cueTrackLang, limitsFor, trackCues, wrapLines, type CueGrid, type CueOptions } from "@/lib/cueSplit";
@@ -129,6 +130,8 @@ export function SubtitleList({
   const layout = useMemo(() => {
     const limitOf = (track: string) => (cues ? limitsFor(cues, cueTrackLang(result, track)) : null);
     const code = (track: string) => safeDisplayText(cueTrackLang(result, track) ?? "??", 16).toUpperCase();
+    /** A lane's head: a site track says it is one ("DE · existing"), others show their code. */
+    const head = (track: string) => (result.timedTracks?.some((t) => t.id === track) ? trackChipLabel(result, track) : code(track));
     const maxDur = limitOf("orig")?.maxDur ?? 7;
     /** One track's text of a cue: name prefix, wrapped to its limits. */
     const lineOf = (track: string, text: string, speaker: string | undefined, main: boolean): Line => {
@@ -160,7 +163,7 @@ export function SubtitleList({
     };
     if (!lanes) {
       return {
-        heads: tracks.map((t) => (t === "orig" ? `${code(t)} · original` : code(t))),
+        heads: tracks.map((t) => (t === "orig" ? `${code(t)} · original` : head(t))),
         rows: grid.cues.slice(0, maxRows).map((c, i) =>
           rowOf(`${i}`, i + 1, c, i === 0 || grid.cues[i - 1].seg !== c.seg,
             tracks.map((t) => [t, t === "orig" ? c.text : (c.tr[t] ?? "")])),
@@ -175,7 +178,7 @@ export function SubtitleList({
         const list = t === "orig" ? grid.cues : trackCues(grid, t);
         return {
           track: t,
-          code: code(t),
+          code: head(t),
           rows: list.slice(0, maxRows).map((c, i) =>
             rowOf(`${t}-${i}`, i + 1, c, li === 0 && (i === 0 || list[i - 1].seg !== c.seg), [[t, c.text]])),
         };

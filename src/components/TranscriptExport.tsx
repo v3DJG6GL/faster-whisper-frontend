@@ -25,6 +25,7 @@ import { contentStates, exportSummary, type ContentItem } from "@/lib/exportSumm
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
+import { trackChipLabel } from "@/lib/siteSubtitles";
 import {
   basename, derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath, languageLabel,
   mediaExportPlan, mp4Disabled, sidecarFiles, trackLang, type MediaChoice, type MediaContainer,
@@ -47,8 +48,8 @@ const FORMAT_CARDS: { value: ExportFormat; label: string; use: string }[] = [
 
 
 export function TranscriptExport({
-  open, result, editedResult, effWords, path, mediaPath, overlayKey, initialExport, langs, allTracks,
-  visibleTracks, fileRenames, fileColors, speakers, editCount, cueOpts, fill, focus, trBackend, trCaps,
+  open, result, editedResult, effWords, path, mediaPath, overlayKey, initialExport, langs: mtLangs,
+  allTracks: mtTracks, visibleTracks: viewTracks, fileRenames, fileColors, speakers, editCount, cueOpts, fill, focus, trBackend, trCaps,
 }: {
   /** The panel shows; closed it renders nothing but keeps its state. */
   open: boolean;
@@ -77,6 +78,12 @@ export function TranscriptExport({
   trBackend: Backend | undefined;
   trCaps: Capabilities | null | undefined;
 }) {
+  // The site's own subtitle tracks (D86) are export tracks too, picked by default: the viewer's
+  // track lists hold only the original and its machine translations.
+  const timedIds = useMemo(() => (result.timedTracks ?? []).map((t) => t.id), [result.timedTracks]);
+  const langs = useMemo(() => [...mtLangs, ...timedIds], [mtLangs, timedIds]);
+  const allTracks = useMemo(() => [...mtTracks, ...timedIds], [mtTracks, timedIds]);
+  const visibleTracks = useMemo(() => [...viewTracks, ...timedIds], [viewTracks, timedIds]);
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
   const persistOptions = (patch: Partial<TranscribeSettings>) => {
@@ -669,7 +676,7 @@ export function TranscriptExport({
                   : "border-line bg-surface-2 text-dim hover:text-text",
               )}
             >
-              {t === "orig" ? `${origCode} · original` : safeDisplayText(t, 16).toUpperCase()}
+              {t === "orig" ? `${origCode} · original` : trackChipLabel(result, t)}
             </button>
           );
         })}
@@ -808,7 +815,7 @@ export function TranscriptExport({
                 ))}
               </div>
             )}
-            {langs.length > 0 && (
+            {mtLangs.length > 0 && (
               <div className="flex flex-col gap-2 border-t border-line pt-3">
                 <span className="text-[12.5px] text-dim">Translation timing</span>
                 <div role="radiogroup" aria-label="Translation timing" className="flex gap-2.5">

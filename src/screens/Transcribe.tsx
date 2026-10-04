@@ -7,6 +7,9 @@ import { useApp } from "@/lib/store";
 import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingExpand, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguageRow, useLinkLanguage } from "@/components/SpokenLanguageRow";
+import { SiteSubtitlesPanel } from "@/components/SiteSubtitlesPanel";
+import { addLanguage, derive, flip, initialSiteState, toggleTarget, type SiteChange, type SiteSubsState } from "@/lib/siteSubtitles";
+import { modelShortName, translationLanguages } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -813,6 +816,13 @@ export default function Transcribe() {
   const translationAvailable = !isStandard && caps?.translation_enabled === true;
   const urlMeta = useTranscribeRun((s) => s.urlMeta);
   // The link card's spoken language and its check (D86) — per link, frozen at Add link.
+  // The link card's site subtitles (D86): the panel's state per link (a new preview starts
+  // over), its input, and what derive() makes of both — the table, the chips and the run.
+  const [siteState, setSiteState] = useState<SiteSubsState | null>(null);
+  useEffect(() => {
+    setSiteState(urlPreviewData?.subtitle_tracks?.length ? initialSiteState(translationAvailable ? translateTo : []) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per preview
+  }, [urlPreviewData]);
   const linkLang = useLinkLanguage({
     url: normalizeMediaUrl(urlDraft),
     preview: urlPreviewData,
@@ -822,6 +832,46 @@ export default function Transcribe() {
     model: model || backend?.model,
     screen: spoken.value,
   });
+  const siteInput = siteState && caps?.url_subtitles_enabled === true && urlPreviewData?.subtitle_tracks?.length
+    ? {
+        tracks: urlPreviewData.subtitle_tracks,
+        spoken: linkLang.sp.spoken,
+        multi: linkLang.sp.multi,
+        targets: translationAvailable ? translateTo : [],
+      }
+    : null;
+  const siteView = siteInput && siteState ? derive(siteInput, siteState) : null;
+  /** One door for every panel or chip change: the panel's state, and the Processing card's
+   *  targets when the change wrote them. */
+  const applySite = (ch: SiteChange) => {
+    setSiteState(ch.state);
+    if (translationAvailable && ch.targets.join() !== translateTo.join()) {
+      setTranslateTo(ch.targets);
+      persistOptions({ translateTo: ch.targets });
+    }
+  };
+  /** The translation chips while the panel is in charge: the wanted languages, each with its
+   *  sources as compound parts. */
+  const siteChips = siteInput && siteState?.subs && siteView
+    ? {
+        targets: siteView.chips.map((c) => c.code),
+        parts: Object.fromEntries(siteView.chips.map((c) => [c.code, c.parts])),
+        onTargetsChange: (next: string[]) => {
+          let input = siteInput;
+          let st = siteState;
+          let ch: SiteChange = { state: st, targets: [...input.targets] };
+          const step = (c: SiteChange) => {
+            ch = c;
+            input = { ...input, targets: c.targets };
+            st = c.state;
+          };
+          for (const code of siteView.chips.map((c) => c.code)) if (!next.includes(code)) step(toggleTarget(input, st, code, false));
+          for (const code of next) if (!siteView.chips.some((c) => c.code === code)) step(addLanguage(input, st, code));
+          applySite(ch);
+        },
+        onPart: (key: string) => applySite(flip(siteInput, siteState, key)),
+      }
+    : null;
 
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
   const runningOverall = useTranscribeRun(runBadgeFraction);
@@ -937,6 +987,13 @@ export default function Transcribe() {
         // Always written (undefined clears a re-added link's old values).
         spokenLanguage: linkLang.sp.value !== spoken.value ? linkLang.sp.value : undefined,
         prefetchMediaId: linkLang.prefetchMediaId ?? undefined,
+        siteSubs: siteView?.run
+          ? {
+              ...siteView.run,
+              mtTargets: translationAvailable ? siteView.run.mtTargets : [],
+              tracks: siteInput?.tracks.filter((t) => siteView.run!.fetch.includes(t.id)),
+            }
+          : undefined,
       });
     }
     addFiles([url]);
@@ -1470,6 +1527,20 @@ export default function Transcribe() {
                       </div>
                     );
                   })()}
+                {siteInput && siteState && (
+                  <div className="mt-3">
+                    <SiteSubtitlesPanel
+                      input={siteInput}
+                      state={siteState}
+                      onChange={applySite}
+                      detecting={linkLang.check.state === "running"}
+                      mt={translationAvailable}
+                      supported={translationLanguages(caps, translationModel || backend?.translationOverrides?.model)}
+                      modelName={modelShortName(translationModel || backend?.translationOverrides?.model || caps?.translation_models?.[0]?.id)}
+                      disabled={busy}
+                    />
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1819,11 +1890,13 @@ export default function Transcribe() {
                         <SettingExpand>
                           <TranslationOptionsFields
                             sectionLabels
-                            targets={translateTo}
-                            onTargetsChange={(next) => {
+                            targets={siteChips?.targets ?? translateTo}
+                            onTargetsChange={siteChips?.onTargetsChange ?? ((next) => {
                               setTranslateTo(next);
                               persistOptions({ translateTo: next });
-                            }}
+                            })}
+                            chipParts={siteChips?.parts}
+                            onChipPart={siteChips?.onPart}
                             mode={translationMode}
                             onModeChange={(m) => {
                               setTranslationMode(m);

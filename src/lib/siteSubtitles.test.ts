@@ -1,7 +1,7 @@
 // One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
-  addLanguage, attachSiteTracks, derive, linkSpoken, spokenPill, siteTimedTracks, siteTrackLabel, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
+  addLanguage, attachSiteTracks, derive, linkSpoken, spokenPill, trackChipLabel, siteTimedTracks, siteTrackLabel, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "./urlSource";
@@ -191,6 +191,8 @@ describe("site tracks in a result", () => {
     expect(timed[1]).toMatchObject({ hoh: true, label: "Deutsch (SDH)", source: "site" });
     expect(timed[0].cues).toEqual([{ start: 1, end: 2, text: "a" }]);
     expect(siteTrackLabel(timed[2])).toBe("DE · auto-generated");
+    expect(trackChipLabel({ timedTracks: timed }, "de-x-site-hoh")).toBe("DE · existing · hearing-impaired");
+    expect(trackChipLabel({ timedTracks: timed }, "en")).toBe("EN");
   });
   it("attaching keeps the result's own tracks and warnings", () => {
     const res = { text: "", segments: [], warnings: ["w1"] } as never;

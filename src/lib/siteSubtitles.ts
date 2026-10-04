@@ -12,6 +12,7 @@
 
 import type { UrlLanguageCheck } from "./api";
 import { MULTI_LANGUAGE, languageLabel } from "./languages";
+import { safeDisplayText } from "./sanitize";
 import type { ImportedText } from "./subtitleImport";
 import type { BatchResult, TimedTrack } from "./types";
 import type { SiteTrackInfo } from "./urlSource";
@@ -431,7 +432,14 @@ export function attachSiteTracks(res: BatchResult, timed: readonly TimedTrack[],
 
 /** How a site track reads in chips and lane labels: "DE · existing", "DE · auto-generated". */
 export function siteTrackLabel(t: Pick<TimedTrack, "lang" | "kind" | "hoh">): string {
-  return `${t.lang.toUpperCase()} · ${t.kind === "auto" ? "auto-generated" : "existing"}${t.hoh ? " · hearing-impaired" : ""}`;
+  return `${safeDisplayText(t.lang, 16).toUpperCase()} · ${t.kind === "auto" ? "auto-generated" : "existing"}${t.hoh ? " · hearing-impaired" : ""}`;
+}
+
+/** A non-original track's chip or lane label: a site track says what it is, a machine
+ *  translation is its code. */
+export function trackChipLabel(result: Pick<BatchResult, "timedTracks">, track: string): string {
+  const tt = result.timedTracks?.find((t) => t.id === track);
+  return tt ? siteTrackLabel(tt) : safeDisplayText(track, 16).toUpperCase();
 }
 
 // ── The link's spoken language (the link card's "Spoken language" row) ──────────────────────
