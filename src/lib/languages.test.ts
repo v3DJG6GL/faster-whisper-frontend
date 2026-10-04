@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, languageLabel, matchesLanguage,
-  nativeName, offersMultilingual, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode,
+  nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode,
 } from "./languages";
 
 const values = (rows: { value: string }[]) => rows.map((r) => r.value);
@@ -141,5 +141,13 @@ describe("Multiple languages", () => {
     expect(offersMultilingual({ ...ok, locked: true })).toBe(false);
     expect(offersMultilingual({ ...ok, standard: true })).toBe(false);
     expect(offersMultilingual({ ...ok, model: "small.en" })).toBe(false);
+  });
+  it("a field reads and writes both layers, and leaves the flag alone where it isn't offered", () => {
+    const f = spokenField("auto", { multilingual: true }, false, true);
+    expect(f.value).toBe(MULTI_LANGUAGE);
+    expect(f.pick("de")).toEqual({ language: "de", overrides: {} });
+    const locked = spokenField("auto", { multilingual: true }, false, false);
+    expect(locked.value).toBe("auto");
+    expect(locked.pick("auto")).toEqual({ language: "auto", overrides: { multilingual: true } });
   });
 });

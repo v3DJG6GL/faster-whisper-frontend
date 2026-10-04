@@ -16,7 +16,7 @@ import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
-import { languageLabel } from "@/lib/languages";
+import { languageLabel, offersMultilingual, spokenField, spokenLabel, spokenValue } from "@/lib/languages";
 import { useBackendModels } from "@/lib/useBackendModels";
 import { conflicts as chordConflicts, conflictsByProfile, findChordConflict, quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/conflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
@@ -143,6 +143,16 @@ function Editor({
   });
   const streams = (p.endpoint ?? backend?.endpoint ?? "stream") === "stream";
   const server = serverInherited(decodeDefaults, backend?.decodeOverrides, streams ? "stream" : "batch", "Backend default");
+  // "Multiple languages" is the profile's `multilingual` decode override over its backend's —
+  // sent with every request, the streaming handshake included.
+  const multiOffered = offersMultilingual({
+    canOverride: caps?.can_request_decode_overrides,
+    locked: server.locked.has("multilingual"),
+    standard: serverKind === "standard",
+    model: p.model?.trim() || backend?.model,
+  });
+  const multiInherited = typeof server.values.multilingual === "boolean" ? server.values.multilingual : undefined;
+  const spoken = spokenField(p.language ?? "", p.decodeOverrides, multiInherited, multiOffered);
   // The "Vocabulary / prompt" this profile inherits when it sets none: the backend's
   // own prompt, else the server's default prompt. Read through the backend's TRI-state —
   // a backend whose prompt is explicitly CLEARED inherits nothing, so ghosting the server's
@@ -334,9 +344,15 @@ function Editor({
           <Labeled label="Language">
             <SpokenLanguagePicker
               ariaLabel="Language"
-              value={p.language ?? ""}
-              onChange={(v) => set({ language: v || undefined })}
-              inheritLabel={inheritLabel(backend ? languageLabel(backend.language || "auto") : undefined)}
+              value={spoken.value}
+              multi={multiOffered}
+              onChange={(v) => {
+                const { language, overrides } = spoken.pick(v);
+                set({ language: language || undefined, decodeOverrides: overrides && Object.keys(overrides).length ? overrides : undefined });
+              }}
+              inheritLabel={inheritLabel(
+                backend ? spokenLabel(spokenValue(backend.language || "auto", undefined, multiInherited)) : undefined,
+              )}
             />
           </Labeled>
           <Labeled label="Model">

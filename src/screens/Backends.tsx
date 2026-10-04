@@ -12,7 +12,7 @@ import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
-import { languageLabel } from "@/lib/languages";
+import { languageLabel, offersMultilingual, spokenField } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey, syncPull } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/syncTypes";
@@ -151,6 +151,14 @@ function Editor({
     serverKind: kind,
   });
   const server = serverInherited(decodeDefaults);
+  // "Multiple languages" is the backend's default `multilingual` decode override.
+  const multiOffered = offersMultilingual({
+    canOverride: caps?.can_request_decode_overrides,
+    locked: server.locked.has("multilingual"),
+    standard: kind === "standard",
+    model: debouncedModel,
+  });
+  const spoken = spokenField(b.language, b.decodeOverrides, server.values.multilingual, multiOffered);
   const promptLocked = server.prompt?.locked === true;
 
   // The Server URL / API-key fields stay editable during an in-flight test (only the Test button
@@ -345,7 +353,15 @@ function Editor({
           />
         </Labeled>
         <Labeled label="Default language">
-          <SpokenLanguagePicker ariaLabel="Default language" value={b.language} onChange={(v) => set({ language: v })} />
+          <SpokenLanguagePicker
+            ariaLabel="Default language"
+            value={spoken.value}
+            multi={multiOffered}
+            onChange={(v) => {
+              const { language, overrides } = spoken.pick(v);
+              set({ language, decodeOverrides: overrides && Object.keys(overrides).length ? overrides : undefined });
+            }}
+          />
         </Labeled>
         <Labeled label="Endpoint">
           <Segmented

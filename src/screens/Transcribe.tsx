@@ -7,6 +7,7 @@ import { useApp } from "@/lib/store";
 import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingExpand, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
+import { offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields, pruneTargets, translationRunOptions } from "@/components/TranslationFields";
 import { inheritLabel, onOff, serverInherited } from "@/lib/inherit";
@@ -782,6 +783,15 @@ export default function Transcribe() {
   const vadBaseline = inheritedBaseline.vad_filter;
   const vadInherited = typeof vadBaseline === "boolean" ? vadBaseline : undefined;
   const vadLocked = server.locked.has("vad_filter");
+  // "Multiple languages" is this run's `multilingual` decode override (not persisted, like the
+  // rest of runOverrides), offered where the server would honour it.
+  const multiOffered = offersMultilingual({
+    canOverride: caps?.can_request_decode_overrides,
+    locked: server.locked.has("multilingual"),
+    standard: isStandard,
+    model: model || backend?.model,
+  });
+  const spoken = spokenField(language, runOverrides, inheritedBaseline.multilingual, multiOffered);
 
   // Pre-flight availability of the optional pipeline stages (additive
   // capability fields). Only an explicit false disables the toggle — absent
@@ -1500,16 +1510,19 @@ export default function Transcribe() {
           <label className="mb-2 block text-[12px] font-medium text-dim">Language</label>
           <SpokenLanguagePicker
             ariaLabel="Language"
-            value={language}
+            value={spoken.value}
+            multi={multiOffered}
             disabled={busy}
             onChange={(v) => {
               resetForInputChange();
-              setLanguage(v);
+              const { language: lang, overrides } = spoken.pick(v);
+              setLanguage(lang);
+              setRunOverrides(overrides ?? {});
               // The seed never targets the known source; keep that true when the
               // source changes AFTER seeding (a de→de stage is a no-op run).
-              const next = pruneTargets(translateTo, v);
+              const next = pruneTargets(translateTo, lang);
               if (next.length !== translateTo.length) setTranslateTo(next);
-              persistOptions({ backendId, language: v, translateTo: next });
+              persistOptions({ backendId, language: lang, translateTo: next });
             }}
           />
         </div>
