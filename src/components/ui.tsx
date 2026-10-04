@@ -604,8 +604,10 @@ export function Segmented<T extends string>({
 }: {
   value: T;
   onChange: (v: T) => void;
-  /** `title`: a tooltip for one option (e.g. where an inherited value comes from). */
-  options: { value: T; label: string; title?: string }[];
+  /** `title`: a tooltip for one option (e.g. where an inherited value comes from);
+   *  `icon` leads the label, `dot` marks the option (e.g. "has corrections"),
+   *  `disabled` greys out just that option. */
+  options: { value: T; label: string; title?: string; icon?: LucideIcon; dot?: boolean; disabled?: boolean }[];
   disabled?: boolean;
   ariaLabel?: string;
 }) {
@@ -622,6 +624,8 @@ export function Segmented<T extends string>({
     >
       {options.map((o) => {
         const active = o.value === value;
+        const off = disabled || o.disabled;
+        const Icon = o.icon;
         return (
           <button
             key={o.value}
@@ -629,18 +633,21 @@ export function Segmented<T extends string>({
             // Single-select state for screen readers (mirrors Toggle's role=switch and the Dictionary
             // pin's aria-pressed) — otherwise the active option reads as just another plain button.
             aria-pressed={active}
-            disabled={disabled}
+            disabled={off}
             title={o.title}
             onClick={() => onChange(o.value)}
             className={cn(
               // Labels are short by design and read as one token ("Clipboard paste"):
               // wrapping one across two lines makes the group look broken.
-              "ring-signal whitespace-nowrap rounded-pill px-3.5 py-1 text-[13px] font-medium transition-colors",
+              "ring-signal inline-flex items-center gap-1.5 whitespace-nowrap rounded-pill px-3.5 py-1 text-[13px] font-medium transition-colors",
               active ? "bg-accent text-accent-ink" : "text-dim hover:text-text",
-              disabled && "cursor-not-allowed hover:text-dim",
+              off && "cursor-not-allowed hover:text-dim",
+              o.disabled && !disabled && "opacity-40",
             )}
           >
+            {Icon && <Icon className="size-3.5" />}
             {o.label}
+            {o.dot && <span aria-hidden className={cn("size-1.5 rounded-full", active ? "bg-accent-ink" : "bg-accent")} />}
           </button>
         );
       })}

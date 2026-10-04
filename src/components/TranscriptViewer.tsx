@@ -10,7 +10,7 @@ import {
   memo, useCallback, useEffect, useMemo, useRef, useState,
 } from "react";
 import {
-  ArrowDownToLine, Check, Copy, Download, ExternalLink, Maximize2,
+  ArrowDownToLine, BookOpen, Check, Copy, Download, ExternalLink, Maximize2,
   Minimize2, Pause, Pencil, Play, X as XIcon,
 } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -18,7 +18,7 @@ import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { Button, LangTag } from "@/components/ui";
+import { Button, LangTag, Segmented } from "@/components/ui";
 import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import { lastStartedAt, seekKeyTarget } from "@/lib/seekKeys";
 import {
@@ -615,9 +615,13 @@ export function TranscriptViewer({
   const [showFullText, setShowFullText] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  const [showExport, setShowExport] = useState(false);
+  // Read · Edit · Export (D85): Edit corrects the transcript in place,
+  // Export replaces the player and the list with the export panel.
+  const [mode, setMode] = useState<"read" | "edit" | "export">("read");
+  const editMode = mode === "edit";
+  const reading = mode !== "export";
   useEffect(() => {
-    if (initialExport) setShowExport(true);
+    if (initialExport) setMode("export");
   }, [initialExport]);
   // Display toggles — the view IS the export (shared with its Content box).
   const { showTs, showNames, colorize, setShowTs, setShowNames, setColorize } = useDisplayToggles();
@@ -626,8 +630,6 @@ export function TranscriptViewer({
   const [viewTracks, setViewTracks] = useState<string[]>(
     () => settings.transcribe?.viewTracks ?? [],
   );
-  // Pre-export corrections mode.
-  const [editMode, setEditMode] = useState(false);
   const [reassignRow, setReassignRow] = useState<number | null>(null);
   // Full-viewport reading mode (F toggles, Esc exits). The component doesn't
   // remount on the way in or out, so playback, scroll and edits carry over.
@@ -1226,7 +1228,7 @@ export function TranscriptViewer({
     setBrokenDetail(null);
     setAudioNote(null);
     setFollow(true);
-    setEditMode(false);
+    setMode((m) => (m === "edit" ? "read" : m));
     setReassignRow(null);
     if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
     blobUrlRef.current = null;
@@ -1512,11 +1514,11 @@ export function TranscriptViewer({
       stickyShiftRef.current = 0;
       clear();
     };
-    // editMode/showFullText remount the box node, result changes its natural
-    // height, the export/translate panels above the box move its flow position
+    // The mode and showFullText remount the box node, result changes its natural
+    // height, the translate panel above the box moves its flow position
     // and the row-content toggles change its natural height — re-grab and
     // re-measure on each.
-  }, [fill, focus, editMode, showFullText, hasSegments, result, showExport, showTranslate, visLangsKey, showTs, showNames, colorize]);
+  }, [fill, focus, mode, showFullText, hasSegments, result, showTranslate, visLangsKey, showTs, showNames, colorize]);
 
   // Follow: keep the active row centred while playing. Primarily by scrolling
   // the transcript BOX (its own scroll container); only when the box alone
@@ -1636,8 +1638,8 @@ export function TranscriptViewer({
       box.removeEventListener("wheel", disarm);
       box.removeEventListener("touchmove", disarm);
     };
-    // editMode/showFullText/focus remount the box — re-attach to the fresh node.
-  }, [playing, follow, editMode, showFullText, focus]);
+    // The mode/showFullText/focus remount the box — re-attach to the fresh node.
+  }, [playing, follow, mode, showFullText, focus]);
 
   // Space play/pause, ←/→ word-by-word, ↑/↓ line-by-line, F focus toggle,
   // Esc exit — never while typing somewhere, and never when another control
@@ -1796,23 +1798,40 @@ export function TranscriptViewer({
               ),
         )}
       >
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="font-mono text-[11px] uppercase tracking-label text-faint">
-          transcript
-          {/* Identity first: same-URL records only differ by when they ran. */}
-          {stamp ? (
-            <>
-              {" · "}
-              <span className="text-dim">{stamp}</span>
-            </>
-          ) : null}
-          {fileLabel ? ` · ${fileLabel}` : ""}
-          {result.language ? ` · ${safeDisplayText(result.language, 16)}` : ""}
-          {result.duration
-            ? ` · ${result.duration < 60 ? `${result.duration.toFixed(1)}s` : fmtDurationExact(result.duration)}`
-            : ""}
-          {hasSpeakers ? ` · ${speakers.length} speakers` : ""}
-        </div>
+      <div className="mb-2.5 font-mono text-[11px] uppercase tracking-label text-faint">
+        transcript
+        {/* Identity first: same-URL records only differ by when they ran. */}
+        {stamp ? (
+          <>
+            {" · "}
+            <span className="text-dim">{stamp}</span>
+          </>
+        ) : null}
+        {fileLabel ? ` · ${fileLabel}` : ""}
+        {result.language ? ` · ${safeDisplayText(result.language, 16)}` : ""}
+        {result.duration
+          ? ` · ${result.duration < 60 ? `${result.duration.toFixed(1)}s` : fmtDurationExact(result.duration)}`
+          : ""}
+        {hasSpeakers ? ` · ${speakers.length} speakers` : ""}
+      </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Segmented
+          ariaLabel="Viewer mode"
+          value={mode}
+          onChange={(m) => {
+            setMode(m);
+            setReassignRow(null);
+          }}
+          options={[
+            { value: "read", label: "Read", icon: BookOpen },
+            {
+              value: "edit", label: "Edit", icon: Pencil, disabled: !hasSegments, dot: editCount > 0,
+              title: editCount ? `${editCount} correction${editCount === 1 ? "" : "s"}` : undefined,
+            },
+            { value: "export", label: "Export", icon: Download },
+          ]}
+        />
+        <span className="flex-1" />
         <div className="flex items-center gap-2">
           {urlSource && (
             <Button
@@ -1823,12 +1842,6 @@ export function TranscriptViewer({
             >
               <ExternalLink className="size-4" />
               Open link
-            </Button>
-          )}
-          {hasSegments && !editMode && (
-            <Button variant="ghost" size="sm" onClick={() => setEditMode(true)}>
-              <Pencil className="size-4" />
-              Edit
             </Button>
           )}
           <Button variant="ghost" size="sm" onClick={copy}>
@@ -1844,17 +1857,6 @@ export function TranscriptViewer({
           >
             {focus ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
             {focus ? "Exit focus" : "Focus"}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowExport((v) => !v)}
-            aria-expanded={showExport}
-            // Open = the same active tint Focus, Follow and the chips wear.
-            className={cn(showExport && "border-accent/35 bg-accent-soft text-accent hover:border-accent/35 hover:bg-accent-soft hover:text-accent")}
-          >
-            <Download className="size-4" />
-            Export
           </Button>
           {onClose && (
             <Button
@@ -1905,7 +1907,7 @@ export function TranscriptViewer({
             size="sm"
             onClick={() => {
               clearEdits(okey);
-              setEditMode(false);
+              setMode("read");
               setReassignRow(null);
             }}
           >
@@ -1915,18 +1917,20 @@ export function TranscriptViewer({
             variant="accent"
             size="sm"
             onClick={() => {
-              setEditMode(false);
+              setMode("read");
               setReassignRow(null);
             }}
           >
+            <Check className="size-4" />
             Done
           </Button>
         </div>
       )}
 
       {audioSrc && !audioBroken && (
-        <div className="mb-3 flex items-center gap-3.5 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2.5">
-          {/* key forces a clean reload per file */}
+        <>
+          {/* key forces a clean reload per file; mounted in every mode, so
+              Export keeps the playhead and Space still plays */}
           <audio
             key={blobSrc ?? path}
             ref={attachAudio}
@@ -1953,99 +1957,103 @@ export function TranscriptViewer({
               );
             }}
           />
-          <button
-            type="button"
-            aria-label={playing ? "Pause" : "Play"}
-            onClick={togglePlay}
-            className="ring-signal grid size-9 shrink-0 place-items-center rounded-full bg-accent text-accent-ink"
-          >
-            {playing ? <Pause className="size-4" /> : <Play className="ml-0.5 size-4" />}
-          </button>
-          <span className="shrink-0 font-mono text-[12px] tabular-nums text-text">
-            {fmtTimestamp(curTime)}
-            <span className="text-faint"> / {fmtTimestamp(audioLen || result.duration || 0)}</span>
-          </span>
-          <div
-            role="slider"
-            aria-label="Seek"
-            aria-valuemin={0}
-            aria-valuemax={Math.round(audioLen)}
-            aria-valuenow={Math.round(curTime)}
-            tabIndex={0}
-            className="relative h-5 flex-1 cursor-pointer touch-none"
-            // Pointer capture makes this a real drag scrubber: after the
-            // press, moves anywhere on screen keep seeking until release.
-            onPointerDown={(e) => {
-              e.currentTarget.setPointerCapture(e.pointerId);
-              const rect = e.currentTarget.getBoundingClientRect();
-              const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-              seekTo(frac * (audioLen || 0));
-            }}
-            onPointerMove={(e) => {
-              if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-              const rect = e.currentTarget.getBoundingClientRect();
-              const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-              seekTo(frac * (audioLen || 0));
-            }}
-            // The window key handler concedes Space/arrows to a focused slider,
-            // so this one has to own them — a focusable ARIA slider without
-            // keyboard seeking was dead on exactly the control built for it.
-            onKeyDown={(e) => {
-              const next = seekKeyTarget(e.key, curTime, audioLen || 0, e.shiftKey);
-              if (next === "toggle") {
-                e.preventDefault();
-                togglePlay();
-                return;
-              }
-              if (next === null) return;
-              e.preventDefault();
-              seekTo(next);
-            }}
-          >
-            <div className="absolute inset-x-0 top-1/2 h-[5px] -translate-y-1/2 overflow-hidden rounded-pill bg-surface-2">
+          {reading && (
+            <div className="mb-3 flex items-center gap-3.5 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2.5">
+              <button
+                type="button"
+                aria-label={playing ? "Pause" : "Play"}
+                onClick={togglePlay}
+                className="ring-signal grid size-9 shrink-0 place-items-center rounded-full bg-accent text-accent-ink"
+              >
+                {playing ? <Pause className="size-4" /> : <Play className="ml-0.5 size-4" />}
+              </button>
+              <span className="shrink-0 font-mono text-[12px] tabular-nums text-text">
+                {fmtTimestamp(curTime)}
+                <span className="text-faint"> / {fmtTimestamp(audioLen || result.duration || 0)}</span>
+              </span>
               <div
-                className="h-full rounded-pill bg-accent"
-                style={{ width: `${audioLen ? Math.min(100, (curTime / audioLen) * 100) : 0}%` }}
-              />
+                role="slider"
+                aria-label="Seek"
+                aria-valuemin={0}
+                aria-valuemax={Math.round(audioLen)}
+                aria-valuenow={Math.round(curTime)}
+                tabIndex={0}
+                className="relative h-5 flex-1 cursor-pointer touch-none"
+                // Pointer capture makes this a real drag scrubber: after the
+                // press, moves anywhere on screen keep seeking until release.
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+                  seekTo(frac * (audioLen || 0));
+                }}
+                onPointerMove={(e) => {
+                  if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+                  seekTo(frac * (audioLen || 0));
+                }}
+                // The window key handler concedes Space/arrows to a focused slider,
+                // so this one has to own them — a focusable ARIA slider without
+                // keyboard seeking was dead on exactly the control built for it.
+                onKeyDown={(e) => {
+                  const next = seekKeyTarget(e.key, curTime, audioLen || 0, e.shiftKey);
+                  if (next === "toggle") {
+                    e.preventDefault();
+                    togglePlay();
+                    return;
+                  }
+                  if (next === null) return;
+                  e.preventDefault();
+                  seekTo(next);
+                }}
+              >
+                <div className="absolute inset-x-0 top-1/2 h-[5px] -translate-y-1/2 overflow-hidden rounded-pill bg-surface-2">
+                  <div
+                    className="h-full rounded-pill bg-accent"
+                    style={{ width: `${audioLen ? Math.min(100, (curTime / audioLen) * 100) : 0}%` }}
+                  />
+                </div>
+                <span
+                  className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-text shadow"
+                  style={{ left: `${audioLen ? Math.min(100, (curTime / audioLen) * 100) : 0}%` }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={cycleRate}
+                className="ring-signal shrink-0 rounded-pill border border-line px-2.5 py-0.5 font-mono text-[11.5px] text-dim hover:text-text"
+                title="Playback speed"
+              >
+                {rate}×
+              </button>
+              <button
+                type="button"
+                onClick={() => setFollow((v) => !v)}
+                aria-pressed={follow}
+                title="Auto-scroll to the spoken segment"
+                className={cn(
+                  "ring-signal inline-flex shrink-0 items-center gap-1.5 rounded-pill border px-2.5 py-0.5 text-[11.5px] font-medium",
+                  follow
+                    ? "border-accent/35 bg-accent-soft text-accent"
+                    : "border-line bg-surface-2 text-dim",
+                )}
+              >
+                <ArrowDownToLine className="size-3" />
+                Follow
+              </button>
             </div>
-            <span
-              className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-text shadow"
-              style={{ left: `${audioLen ? Math.min(100, (curTime / audioLen) * 100) : 0}%` }}
-            />
-          </div>
-          <button
-            type="button"
-            onClick={cycleRate}
-            className="ring-signal shrink-0 rounded-pill border border-line px-2.5 py-0.5 font-mono text-[11.5px] text-dim hover:text-text"
-            title="Playback speed"
-          >
-            {rate}×
-          </button>
-          <button
-            type="button"
-            onClick={() => setFollow((v) => !v)}
-            aria-pressed={follow}
-            title="Auto-scroll to the spoken segment"
-            className={cn(
-              "ring-signal inline-flex shrink-0 items-center gap-1.5 rounded-pill border px-2.5 py-0.5 text-[11.5px] font-medium",
-              follow
-                ? "border-accent/35 bg-accent-soft text-accent"
-                : "border-line bg-surface-2 text-dim",
-            )}
-          >
-            <ArrowDownToLine className="size-3" />
-            Follow
-          </button>
-        </div>
+          )}
+        </>
       )}
 
-      {audioNote === "copy" && !audioBroken && (
+      {reading && audioNote === "copy" && !audioBroken && (
         <div className="-mt-2 mb-3 px-1 text-[11.5px] text-faint">
           Playing the app's saved copy — the original file was moved or deleted.
         </div>
       )}
 
-      {audioBroken && (
+      {reading && audioBroken && (
         <div className="mb-3 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2 text-[12px] text-dim">
           {brokenWhy !== "gone"
             ? "Playback isn't available — every playback path failed for this audio. The transcript and exports still work."
@@ -2063,14 +2071,14 @@ export function TranscriptViewer({
         </div>
       )}
 
-      {urlSource && !mediaPath && !audioBroken && (
+      {reading && urlSource && !mediaPath && !audioBroken && (
         <div className="mb-3 rounded-xl border border-line bg-surface-2/50 px-3.5 py-2 text-[12px] text-dim">
           No audio is stored for this link — run it again to restore playback.
           The transcript and edits still work.
         </div>
       )}
 
-      {hasSegments && langs.length > 0 && (
+      {reading && hasSegments && langs.length > 0 && (
         <div className="mb-2.5 flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -2129,7 +2137,7 @@ export function TranscriptViewer({
         <TranslateProgressCard run={trRun} modeLabel={trRunMode} onCancel={cancelTranslate} />
       ) : (
         <>
-          {hasSegments && langs.length === 0 && isTauri && retroTranslateAvailable && (
+          {reading && hasSegments && langs.length === 0 && isTauri && retroTranslateAvailable && (
             <div className="mb-2.5">
               <button
                 type="button"
@@ -2147,7 +2155,7 @@ export function TranscriptViewer({
               </button>
             </div>
           )}
-          {showTranslate && hasSegments && langs.length === 0 && retroTranslateAvailable && (
+          {reading && showTranslate && hasSegments && langs.length === 0 && retroTranslateAvailable && (
             <div className="mb-3 rounded-xl border border-line bg-surface-2/60 p-4">
               <div className="mb-2.5 font-mono text-[10.5px] uppercase tracking-label text-faint">
                 translate this transcript
@@ -2189,7 +2197,7 @@ export function TranscriptViewer({
         </>
       )}
 
-      {hasSegments && (
+      {reading && hasSegments && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
           {(
             [
@@ -2221,7 +2229,7 @@ export function TranscriptViewer({
         </div>
       )}
 
-      {hasSpeakers && showNames && (
+      {reading && hasSpeakers && showNames && (
         <div className="mb-2.5 flex flex-wrap items-center gap-2">
           {speakers.map((label) => {
             const color = colorOf(label);
@@ -2303,7 +2311,7 @@ export function TranscriptViewer({
       </div>
 
       <TranscriptExport
-        open={showExport}
+        open={mode === "export"}
         result={result}
         editedResult={editedResult}
         effWords={effWords}
@@ -2318,6 +2326,7 @@ export function TranscriptViewer({
         fileColors={fileColors}
         speakers={speakers}
         editCount={editCount}
+        fill={fill}
         focus={focus}
         trBackend={trBackend}
         trCaps={trCaps}
@@ -2327,7 +2336,7 @@ export function TranscriptViewer({
           bidi overrides and other invisible format characters from an untrusted server reach
           this node by design. The Copy button above already strips them; without the same
           treatment here what the user READS can be reordered relative to what they paste. */}
-      {!hasSegments ? (
+      {!reading ? null : !hasSegments ? (
         <div
           className={cn(
             "select-text whitespace-pre-wrap text-[14px] leading-relaxed text-text",
@@ -2399,13 +2408,13 @@ export function TranscriptViewer({
         </div>
       )}
 
-      {hasSegments && effSegments.length > MAX_SEGMENT_ROWS && (
+      {reading && hasSegments && effSegments.length > MAX_SEGMENT_ROWS && (
         <div className={cn("mt-3 text-[12px] text-faint", focus && "flex-none px-6 pb-4")}>
           Showing the first {MAX_SEGMENT_ROWS.toLocaleString()} of {effSegments.length.toLocaleString()}{" "}
           lines. Copy and every export write all of them.
         </div>
       )}
-      {audioSrc && !audioBroken && hasSegments && !editMode && (
+      {audioSrc && !audioBroken && hasSegments && mode === "read" && (
         <div
           className={cn(
             "border-t border-line font-mono text-[11px] text-faint",
@@ -2417,7 +2426,7 @@ export function TranscriptViewer({
         </div>
       )}
 
-      {!hasSegments && !showFullText && result.text.length > TRANSCRIPT_PREVIEW_CHARS && (
+      {reading && !hasSegments && !showFullText && result.text.length > TRANSCRIPT_PREVIEW_CHARS && (
         <div className={cn("mt-3 flex items-center gap-3", focus && "flex-none px-6 pb-4")}>
           <Button variant="ghost" size="sm" onClick={() => setShowFullText(true)}>
             Show full transcript

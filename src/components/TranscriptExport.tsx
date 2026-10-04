@@ -55,7 +55,7 @@ type ContractRow = {
 
 export function TranscriptExport({
   open, result, editedResult, effWords, path, mediaPath, overlayKey, initialExport, langs, allTracks,
-  visibleTracks, fileRenames, fileColors, speakers, editCount, focus, trBackend, trCaps,
+  visibleTracks, fileRenames, fileColors, speakers, editCount, fill, focus, trBackend, trCaps,
 }: {
   /** The panel shows; closed it renders nothing but keeps its state. */
   open: boolean;
@@ -77,6 +77,7 @@ export function TranscriptExport({
   fileColors: Record<string, number>;
   speakers: string[];
   editCount: number;
+  fill?: boolean;
   focus: boolean;
   trBackend: Backend | undefined;
   trCaps: Capabilities | null | undefined;
@@ -640,7 +641,10 @@ export function TranscriptExport({
     <div
       className={cn(
         "mb-4 rounded-xl border border-line bg-surface-2/60 p-4",
-        focus && "mx-6 mt-3 flex-none",
+        // The panel replaces the list: in the studio pane and focus mode it
+        // is the part that scrolls.
+        (fill || focus) && "min-h-0 flex-1 overflow-y-auto",
+        focus && "mx-6 mt-3",
       )}
     >
       {/* Format cards — radio semantics, always visible. */}
