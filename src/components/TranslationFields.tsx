@@ -85,14 +85,16 @@ export function TranslationTargetChips({
           onClick={() => onChange(value.filter((c) => codeOf(c) !== code))}
           title={`Remove ${languageLabel(code)}`}
           className={cn(
-            "ring-signal inline-flex h-7 items-center gap-1.5 rounded-pill border px-2.5 font-mono text-[11.5px]",
+            "ring-signal group inline-flex h-7 items-center gap-1.5 rounded-pill border px-2.5 font-mono text-[11.5px]",
             // Selection chrome takes the accent; teal is reserved for the translating STAGE.
-            "border-accent/50 text-accent",
+            "border-accent/50 text-accent transition-colors",
+            // A click removes the chip, so hover/press previews that in the danger tone.
+            "enabled:hover:border-rec/45 enabled:hover:bg-rec/10 enabled:hover:text-rec enabled:active:bg-rec/20",
             disabled && "opacity-50",
           )}
         >
           {code.toUpperCase()}
-          <span aria-hidden className="opacity-60">
+          <span aria-hidden className="opacity-60 transition-opacity group-enabled:group-hover:opacity-100">
             ×
           </span>
         </button>

@@ -273,10 +273,10 @@ export default function LangPick() {
               type="button"
               onClick={() => toggle(c)}
               title={`Remove ${languageLabel(c)}`}
-              className="ring-signal inline-flex items-center gap-1.5 rounded-pill border border-accent/50 px-2.5 py-1 font-mono text-[12px] text-accent"
+              className="ring-signal group inline-flex items-center gap-1.5 rounded-pill border border-accent/50 px-2.5 py-1 font-mono text-[12px] text-accent transition-colors hover:border-rec/45 hover:bg-rec/10 hover:text-rec active:bg-rec/20"
             >
               {safeDisplayText(c, 12).toUpperCase()}
-              <span aria-hidden className="opacity-60">
+              <span aria-hidden className="opacity-60 transition-opacity group-hover:opacity-100">
                 ×
               </span>
             </button>
