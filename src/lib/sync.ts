@@ -35,6 +35,7 @@ import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } 
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "./paste";
 import { IS_WINDOWS } from "./platform";
 import { hasOwn, ownProp } from "./own";
+import { sanitizeCueLimits } from "./cueSplit";
 import { normalizeAppId, safeDisplayText } from "./sanitize";
 import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./conflicts";
 import { LEGACY_HANDSFREE } from "./types";
@@ -1046,6 +1047,14 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
   if (fmt === "srt" || fmt === "vtt" || fmt === "txt" || fmt === "lrc" || fmt === "json") {
     out.exportFormat = fmt;
   }
+  const len = ownProp(v, "subtitleLength");
+  if (len === "transcribed" || len === "standard" || len === "short" || len === "custom") {
+    out.subtitleLength = len;
+  }
+  const custom = sanitizeCueLimits(ownProp(v, "subtitleCustom"));
+  if (custom) out.subtitleCustom = custom;
+  const timing = ownProp(v, "translationTiming");
+  if (timing === "same" || timing === "own") out.translationTiming = timing;
   // The sub-toggle-gated picks: free strings, bounded. backendId is only a
   // reference — the Transcribe screen ignores ids that don't resolve.
   for (const k of ["backendId", "model", "language", "translationModel"]) {

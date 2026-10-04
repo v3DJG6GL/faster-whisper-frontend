@@ -231,6 +231,12 @@ export const MANIFEST = [
     fields: [t("wordTimestamps")] },
   { id: "exportFormat", label: "Export format", group: "transcribeDefaults", category: "transcription",
     fields: [t("exportFormat")] },
+  { id: "subtitleLength", label: "Subtitle length", group: "transcribeDefaults", category: "transcription",
+    desc: "SRT/VTT cues: As transcribed, Standard, Short or Custom, and the Custom limits.",
+    fields: [t("subtitleLength"), t("subtitleCustom")] },
+  { id: "translationTiming", label: "Translation timing", group: "transcribeDefaults", category: "transcription",
+    desc: "Machine translations share the original's subtitles or get their own.",
+    fields: [t("translationTiming")] },
   { id: "exportMedia", label: "Export media", group: "transcribeDefaults", category: "transcription",
     desc: "What the Save also writes: nothing, the audio, or the video (with its subtitle tracks).",
     fields: [t("exportMedia"), t("exportContainer"), t("exportSubtitleMode")] },
@@ -447,6 +453,9 @@ export const TRANSCRIBE_COVERAGE = {
   exportMedia: "exportMedia",
   exportContainer: "exportMedia",
   exportSubtitleMode: "exportMedia",
+  subtitleLength: "subtitleLength",
+  subtitleCustom: "subtitleLength",
+  translationTiming: "translationTiming",
 } as const satisfies Record<keyof TranscribeSettings, Covered>;
 
 export const LOGGING_COVERAGE = {

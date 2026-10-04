@@ -39,6 +39,7 @@ import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
   cpsWarnings, DEFAULT_SPEAKER_COLORS, generateExports, prettySpeaker, speakerColorIndex, speakerHex, speakerOrder, type ExportFormat, type ExportOptions, exportFileNames } from "@/lib/transcriptExport";
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
+import { cueOptionsOf } from "@/lib/cueSplit";
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
@@ -1877,6 +1878,9 @@ export function TranscriptViewer({
   /** One source of truth for Save AND the live preview: the display toggles
    *  map onto the generator options (colors on → "line" mode; names/timestamps
    *  gate their prefixes). */
+  /** Subtitle length + translation timing: read from the saved settings
+   *  (Standard unless changed), like History's quick export. */
+  const cueOpts = useMemo(() => cueOptionsOf(settings.transcribe), [settings.transcribe]);
   // Memoized over exactly what it reads, so the preview below (and anything
   // else keyed on it) holds across the re-renders that don't touch the export
   // choices — playhead ticks, and a media export's progress events.
@@ -1892,6 +1896,7 @@ export function TranscriptViewer({
       Object.keys(fileColors).map((l) => [l, speakerHex(speakers, fileColors, l)]),
     ),
     wordTimestamps: wordTs,
+    cues: cueOpts,
     // Intersect with THIS file's tracks — a pick left over from another
     // file must never silently empty the export.
     ...(langs.length
@@ -1902,7 +1907,7 @@ export function TranscriptViewer({
       : {}),
   }), [
     exportFormat, fileRenames, hasSpeakers, colorize, showNames, showTs, fileColors, speakers,
-    wordTs, langs, exportTracks, visibleTracks, allTracks, lineOrder,
+    wordTs, langs, exportTracks, visibleTracks, allTracks, lineOrder, cueOpts,
   ]);
   const exportOpts = (): ExportOptions => exportOptions;
 

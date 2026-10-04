@@ -2,6 +2,8 @@
 // faster-whisper-backend contract. The frontend never holds raw API keys — those
 // live in the OS keyring (Rust); the UI only knows whether a key is set.
 
+import type { CueLimits, SubtitleLength, TranslationTiming } from "./cueSplit";
+
 export type EndpointKind = "stream" | "batch";
 export type ResponseFormat = "json" | "verbose_json";
 /** Full faster-whisper-backend vs a conventional Whisper server. "auto" (or
@@ -438,6 +440,12 @@ export interface TranscribeSettings {
   exportMedia?: "none" | "audio" | "video";
   exportContainer?: "mkv" | "mp4";
   exportSubtitleMode?: "embedded" | "sidecar" | "both";
+  /** SRT/VTT cue length (cueSplit): absent = "standard". */
+  subtitleLength?: SubtitleLength;
+  /** The Custom preset's limits (kept while another preset is picked). */
+  subtitleCustom?: CueLimits;
+  /** Machine translations share the original's cues, or get their own. */
+  translationTiming?: TranslationTiming;
 }
 
 /** Capture threshold for the in-app log ring + session file — lower levels

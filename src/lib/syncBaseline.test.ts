@@ -394,6 +394,28 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(useApp.getState().settings.transcribe?.translationMode).toBe("faithful"); // bogus value dropped
   });
 
+  it("subtitle cue settings travel in the transcription block and are clamped on apply", async () => {
+    const cfg = slice();
+    cfg.settings.transcribe = {
+      ...cfg.settings.transcribe, subtitleLength: "custom", translationTiming: "own",
+      subtitleCustom: { cpl: 37, lines: 2, maxDur: 6, cps: 15 },
+    };
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    expect(blob.transcription).toMatchObject({ subtitleLength: "custom", translationTiming: "own" });
+    useApp.setState({ settings: settings() });
+    await applyBlob(
+      { transcription: { subtitleLength: "short", translationTiming: "own", subtitleCustom: { cpl: 999, lines: 0, maxDur: 6, cps: 15 } } as never },
+      { ...CATS_ALL, backends: false },
+    );
+    const t = useApp.getState().settings.transcribe;
+    expect(t).toMatchObject({ subtitleLength: "short", translationTiming: "own", subtitleCustom: { cpl: 60, lines: 1, maxDur: 6, cps: 15 } });
+    await applyBlob(
+      { transcription: { subtitleLength: "huge", translationTiming: "late", subtitleCustom: { cpl: "x" } } as never },
+      { ...CATS_ALL, backends: false },
+    );
+    expect(useApp.getState().settings.transcribe).toMatchObject({ subtitleLength: "short", translationTiming: "own", subtitleCustom: { cpl: 60 } });
+  });
+
   it("an explicit restore applies machine-specific settings the sync switches would gate", async () => {
     // Chip position's switch is OFF on a stock install; a backup must still restore it.
     useApp.setState({ settings: settings() });
