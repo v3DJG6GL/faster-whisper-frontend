@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useSearchParams } from "react-router-dom";
-import { Server, Pencil, Copy, Trash2, Plug, Loader2, Eraser, RotateCcw } from "lucide-react";
+import { Server, Pencil, Copy, Trash2, Plug, Loader2, Eraser, RotateCcw, Lock } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, StatusDot, TextArea, TextInput } from "@/components/ui";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { DecodeFields } from "@/components/DecodeFields";
 import { TranslationDefaultsEditor, targetsLabel } from "@/components/TranslationFields";
-import { capsDecodeDefaults } from "@/lib/inherit";
+import { inheritLabel, serverInherited } from "@/lib/inherit";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -22,6 +22,7 @@ import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, in
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
+import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { RestoreFromServer } from "./SettingsSync";
 import { relTime } from "@/lib/format";
 
@@ -69,8 +70,8 @@ function Editor({
     const t = setTimeout(() => setDebouncedKey(key), 400);
     return () => clearTimeout(t);
   }, [key]);
-  // Debounced on the EFFECTIVE address. This value feeds `useOverrideContext`, whose three probes
-  // (getCapabilities, getOverrideProfile, listOverrideProfiles) carry the bearer credential — the
+  // Debounced on the EFFECTIVE address. This value feeds `useOverrideContext` / `useDecodeDefaults`,
+  // whose probes (getCapabilities, getDecodeDefaults, listOverrideProfiles) carry the bearer credential — the
   // typed key, or, when the field is blank, the STORED keyring key Rust resolves for this id. On
   // the canonical url those requests went to the very host a user had redirected this backend away
   // from, and the override-profile names the picker offered came from that host while the name
@@ -126,15 +127,31 @@ function Editor({
   // classification (a manual override wins). `kind` gates the decode-override editor.
   const detected = classifyConnection(result);
   const kind = effectiveServerKind(b, result);
-  // Caller capabilities + the selected override-profile's resolved values, for
-  // gating the decode editor and ghosting its inherited defaults.
-  const { caps, resolved, resolvedPrompt } = useOverrideContext({
+  // Caller capabilities, for gating the decode editor.
+  const { caps } = useOverrideContext({
     serverUrl: debouncedUrl,
     backendId: b.id,
     apiKey: debouncedKey || null,
+    serverKind: kind,
+  });
+  // The model is typed too: debounce it like the address so typing doesn't fetch per character.
+  const [debouncedModel, setDebouncedModel] = useState(initial.model ?? "");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedModel(b.model ?? ""), 400);
+    return () => clearTimeout(t);
+  }, [b.model]);
+  // What the server gives this backend's requests (its model + override profile) — the values
+  // its blank decode fields and prompt inherit. Batch terms: the backend serves both.
+  const decodeDefaults = useDecodeDefaults({
+    serverUrl: debouncedUrl,
+    backendId: b.id,
+    apiKey: debouncedKey || null,
+    model: debouncedModel,
     profileName: b.overrideProfile,
     serverKind: kind,
   });
+  const server = serverInherited(decodeDefaults);
+  const promptLocked = server.prompt?.locked === true;
 
   // The Server URL / API-key fields stay editable during an in-flight test (only the Test button
   // is disabled), so a result that resolves after the user edits them describes a server they've
@@ -385,7 +402,7 @@ function Editor({
       )}
 
       {/* Tri-state, the same shape the Profile editor and the decode fields use:
-          undefined = inherit the server override-profile's DEFAULT_PROMPT (omit the
+          undefined = inherit the server's default prompt (omit the
           field), "" = explicit clear (send an empty prompt, so nothing is inherited),
           value = use it. Stored as `prompt` + `promptCleared` — see `backendPrompt`. */}
       <div className="mt-4">
@@ -396,8 +413,9 @@ function Editor({
           <label className="text-[12px] font-medium text-dim">
             Default vocabulary / prompt (optional)
           </label>
+          {promptLocked && <Lock className="size-3 shrink-0 text-faint" aria-hidden />}
           <div className="ml-auto flex items-center gap-2">
-            {promptOverride !== "" && (
+            {promptOverride !== "" && !promptLocked && (
               <button
                 type="button"
                 onClick={() => set(backendPromptFields(""))}
@@ -421,17 +439,26 @@ function Editor({
         </div>
         <TextArea
           aria-label="Default vocabulary / prompt"
-          value={promptOverride ?? ""}
+          value={promptLocked ? "" : (promptOverride ?? "")}
           onChange={(e) => set(backendPromptFields(e.target.value))}
           rows={2}
-          // Ghost the selected server override-profile's DEFAULT_PROMPT as the
+          disabled={promptLocked}
+          title={promptLocked ? "Your server admin fixed this value." : server.prompt?.source}
+          // Ghost the server's default prompt (its own, or the override profile's) as the
           // inherited baseline; a cleared field says so instead.
           placeholder={
-            promptOverride === ""
-              ? "(cleared — no prompt sent)"
-              : resolvedPrompt || "Bias terms — names, jargon…"
+            promptLocked
+              ? inheritLabel(server.prompt?.value ?? "no prompt", "Set by server")
+              : promptOverride === ""
+                ? "(cleared — no prompt sent)"
+                : server.prompt
+                  ? inheritLabel(server.prompt.value ?? "no prompt")
+                  : "Bias terms — names, jargon…"
           }
         />
+        {promptLocked && promptOverridden && (
+          <div className="mt-1 text-[11px] text-faint">This prompt is ignored · locked by the server.</div>
+        )}
       </div>
 
       <div className="mt-5">
@@ -456,8 +483,9 @@ function Editor({
           <DecodeFields
             value={b.decodeOverrides ?? {}}
             onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
-            inherited={resolved}
-            serverDefaults={capsDecodeDefaults(caps)}
+            inherited={server.values}
+            sources={server.sources}
+            locked={server.locked}
             serverKind={kind}
             canCustomize={caps?.can_request_decode_overrides}
           />

@@ -2,7 +2,7 @@
 
 use super::{
     base_url, client, friendly_err, get_json, with_auth, Capabilities, ConnectionInfo,
-    ResolvedOverrideProfile, ServerModel, UsageStats,
+    DecodeDefault, DecodeDefaults, ServerModel, UsageStats,
 };
 use serde::Deserialize;
 
@@ -44,10 +44,6 @@ struct ModelObj {
 const MAX_MODELS: usize = 500;
 /// Ceiling on a single server-supplied name rendered in the UI.
 const MAX_NAME: usize = 120;
-/// Whisper caps `initial_prompt` at 224 tokens server-side, so this cannot clip a real one.
-const PROMPT_MAX: usize = 2000;
-/// The decode-values map is a handful of scalars; anything past this is not a real profile.
-const VALUES_MAX_BYTES: usize = 64 * 1024;
 /// Ceiling on the usage trend points kept. With `all=1` and `from`/`to` the server sends up
 /// to a 10-year daily window (3,653 points). The per-field caps below trim the result after
 /// the read; `USAGE_MAX_BODY` sizes the read itself.
@@ -202,7 +198,7 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     let base = base_url(server_url);
     let mut caps: Capabilities = get_json(format!("{base}/v1/me"), api_key).await?;
     // The one server-supplied string list in this module with no ceiling of its own, while every
-    // sibling here — `models`, `list_override_profiles`, `ResolvedOverrideProfile.locked` — takes
+    // sibling here — `models`, `list_override_profiles` — takes
     // `MAX_MODELS` plus a per-entry `bounded_name`. `get_json`'s only ceiling is the generic 32 MiB
     // body cap, and `Capabilities` is `Serialize`, so the whole list crossed the IPC and was
     // JSON-parsed on the webview main thread from a gesture-free effect that re-fires as the
@@ -419,57 +415,190 @@ pub async fn get_usage_stats(
     Some(u)
 }
 
-/// A single override-profile's decode values + locked client keys
-/// (`GET /v1/override-profiles/{name}`), for previewing inherited defaults.
-/// Best-effort: any error (incl. 404 when the caller may not request it) → None.
-pub async fn get_override_profile(
-    server_url: &str,
-    name: &str,
-    api_key: Option<&str>,
-) -> Option<ResolvedOverrideProfile> {
-    // Enforce the slug invariant before interpolating `name` into the path: server profile
-    // names are `[a-z0-9-_]`. A free-typed "custom name" that isn't one can't match a real
-    // profile, and pasting it raw could escape the path (e.g. "../") or break URL parsing —
-    // so a non-slug name is treated as "no such profile" (None), consistent with best-effort.
-    if name.is_empty()
-        || !name
+/// The longest model id sent to `/v1/decode-defaults` (the server refuses longer ones too).
+const MODEL_ID_MAX: usize = 200;
+/// Prompts and hotwords: the server caps both at 2048 characters.
+const SERVER_TEXT_MAX: usize = 2048;
+
+fn is_profile_slug(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_NAME
+        && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// `{base}/v1/decode-defaults?model=…&override_profile=…`. Model ids carry `/` and `:`, so both
+/// go through the URL's own query encoder. An over-long model is sent as "" (the server's default
+/// model) rather than refused; a profile that is not a server slug (`[A-Za-z0-9_-]`, which
+/// includes `__none__`) is left out — it could not name a real profile.
+fn decode_defaults_url(
+    server_url: &str,
+    model: &str,
+    profile: Option<&str>,
+) -> Option<reqwest::Url> {
+    let mut url =
+        reqwest::Url::parse(&format!("{}/v1/decode-defaults", base_url(server_url))).ok()?;
     {
-        return None;
-    }
-    let base = base_url(server_url);
-    let url = format!("{base}/v1/override-profiles/{name}");
-    // Its sibling `list_override_profiles` is capped; this one returned every field straight off
-    // the wire, and the editor fetches it from a `useEffect` with no user gesture — `prompt`
-    // becomes a textarea placeholder and each `values` entry a Segmented option label.
-    let mut p: ResolvedOverrideProfile = get_json(url, api_key).await?;
-    p.name = bounded_name(&p.name);
-    p.prompt = p.prompt.map(|s| super::bounded_server_text(&s, PROMPT_MAX));
-    p.locked.truncate(MAX_MODELS);
-    p.locked = p.locked.iter().map(|s| bounded_name(s)).collect();
-    // `values` is an opaque map rendered as option labels; drop it wholesale if it is absurd
-    // rather than trying to bound each leaf of an arbitrary JSON shape.
-    if serde_json::to_string(&p.values).map_or(true, |s| s.len() > VALUES_MAX_BYTES) {
-        p.values = serde_json::json!({});
-    }
-    // Under that ceiling, still bound each leaf: `values` is documented as a FLAT
-    // {client_decode_key: scalar} map, and `DecodeFields` puts `String(v)` into a Segmented
-    // option label and an input placeholder. A single 64 KiB string, or one carrying bidi marks,
-    // reached both surfaces raw — the one field in this response that skipped the treatment its
-    // three siblings above get. Flat pass only: never recurse into attacker-chosen nesting.
-    if let Some(map) = p.values.as_object_mut() {
-        for v in map.values_mut() {
-            if let Some(text) = v.as_str() {
-                *v = serde_json::Value::String(super::bounded_server_text(text, MAX_NAME));
-            }
+        let mut q = url.query_pairs_mut();
+        let model = model.trim();
+        q.append_pair(
+            "model",
+            if model.chars().count() > MODEL_ID_MAX {
+                ""
+            } else {
+                model
+            },
+        );
+        if let Some(p) = profile.map(str::trim).filter(|p| is_profile_slug(p)) {
+            q.append_pair("override_profile", p);
         }
     }
-    Some(p)
+    Some(url)
+}
+
+/// Every server string here ends up in a Segmented label, a placeholder or a tooltip.
+fn bound_decode_default(d: &mut DecodeDefault, text_max: usize) {
+    d.value = match std::mem::take(&mut d.value) {
+        serde_json::Value::String(s) => {
+            serde_json::Value::String(super::bounded_server_text(&s, text_max))
+        }
+        // Documented as a scalar; an array or object is not a value the editor can show.
+        v @ (serde_json::Value::Bool(_) | serde_json::Value::Number(_)) => v,
+        _ => serde_json::Value::Null,
+    };
+    d.source = bounded_name(&d.source);
+    d.label = bounded_name(&d.label);
+}
+
+fn bound_decode_defaults(d: &mut DecodeDefaults) {
+    d.model = bounded_name(&d.model);
+    d.profile_applied = d.profile_applied.as_deref().map(bounded_name);
+    for entry in d.settings.each_mut() {
+        bound_decode_default(entry, SERVER_TEXT_MAX);
+    }
+    bound_decode_default(&mut d.prompt, SERVER_TEXT_MAX);
+}
+
+/// The decode values the caller inherits from the server for `model` (and `profile`, the
+/// override profile the request would name) — `GET /v1/decode-defaults`. Best-effort: any
+/// error → None, and the editor shows the bare "Inherit".
+pub async fn get_decode_defaults(
+    server_url: &str,
+    model: &str,
+    profile: Option<&str>,
+    api_key: Option<&str>,
+) -> Option<DecodeDefaults> {
+    let url = decode_defaults_url(server_url, model, profile)?;
+    let mut d: DecodeDefaults = get_json(url.into(), api_key).await?;
+    bound_decode_defaults(&mut d);
+    Some(d)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::{bound_decode_defaults, decode_defaults_url};
+    use crate::transport::DecodeDefaults;
+
+    #[test]
+    fn decode_defaults_url_encodes_the_model_and_keeps_only_a_slug_profile() {
+        let u = decode_defaults_url("http://h:8000", "org/repo:q8 x", Some("studio")).unwrap();
+        assert_eq!(
+            u.as_str(),
+            "http://h:8000/v1/decode-defaults?model=org%2Frepo%3Aq8+x&override_profile=studio"
+        );
+        let none = decode_defaults_url("http://h:8000", "", Some("__none__")).unwrap();
+        assert_eq!(none.query(), Some("model=&override_profile=__none__"));
+        let bad = decode_defaults_url("http://h:8000", "tiny", Some("../x")).unwrap();
+        assert_eq!(bad.query(), Some("model=tiny"));
+        let long = decode_defaults_url("http://h:8000", &"m".repeat(201), None).unwrap();
+        assert_eq!(long.query(), Some("model="));
+    }
+
+    /// The typed mirror drops what it does not name: every decode key, the prompt and the
+    /// streaming pins must survive the round trip to the webview.
+    #[test]
+    fn decode_defaults_keep_every_key() {
+        let keys = [
+            "beam_size",
+            "best_of",
+            "vad_filter",
+            "vad_min_silence_duration_ms",
+            "vad_speech_pad_ms",
+            "vad_threshold",
+            "condition_on_previous_text",
+            "no_speech_threshold",
+            "log_prob_threshold",
+            "compression_ratio_threshold",
+            "hotwords",
+            "temperature",
+            "patience",
+            "length_penalty",
+            "repetition_penalty",
+            "no_repeat_ngram_size",
+            "suppress_tokens",
+            "prepend_punctuations",
+            "append_punctuations",
+        ];
+        let settings: serde_json::Map<String, serde_json::Value> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, k)| {
+                let v = serde_json::json!({"value": i, "source": "server", "label": "global default", "locked": i == 3});
+                (k.to_string(), v)
+            })
+            .collect();
+        let raw = serde_json::json!({
+            "model": "tiny", "profile_applied": "studio", "settings": settings,
+            "prompt": {"value": "Hallo", "source": "account", "label": "key · direct", "locked": true},
+            "streaming": {"condition_on_previous_text": {"final": false, "partial": false, "pinned": true},
+                          "best_of": {"value": 1}},
+        });
+        let d: DecodeDefaults = serde_json::from_value(raw).unwrap();
+        let out = serde_json::to_value(d).unwrap();
+        for (i, k) in keys.iter().enumerate() {
+            assert_eq!(out["settings"][k]["value"], i, "{k}");
+        }
+        assert_eq!(
+            out["settings"]["vad_min_silence_duration_ms"]["locked"],
+            true
+        );
+        assert_eq!(out["prompt"]["value"], "Hallo");
+        assert_eq!(out["profile_applied"], "studio");
+        assert_eq!(
+            out["streaming"]["condition_on_previous_text"]["pinned"],
+            true
+        );
+        assert_eq!(
+            out["streaming"]["condition_on_previous_text"]["final"],
+            false
+        );
+        assert_eq!(out["streaming"]["best_of"]["value"], 1);
+    }
+
+    #[test]
+    fn decode_defaults_are_bounded_scalars() {
+        let raw = serde_json::json!({
+            "model": "m".repeat(500),
+            "settings": {
+                "beam_size": {"value": [1, 2]},
+                "temperature": {"value": "0.0,0.2"},
+                "hotwords": {"value": "w".repeat(5000), "label": "l".repeat(500)},
+                "vad_filter": {"value": {"x": 1}},
+            },
+            "prompt": {"value": "p\u{202e}x"},
+        });
+        let mut d: DecodeDefaults = serde_json::from_value(raw).unwrap();
+        bound_decode_defaults(&mut d);
+        assert!(d.settings.beam_size.value.is_null());
+        assert!(d.settings.vad_filter.value.is_null());
+        assert_eq!(d.settings.temperature.value, "0.0,0.2");
+        assert!(d.settings.hotwords.value.as_str().unwrap().chars().count() <= 2049); // + "…"
+        assert!(d.settings.hotwords.label.chars().count() <= 121);
+        assert!(d.model.chars().count() <= 121);
+        assert!(!d.prompt.value.as_str().unwrap().contains('\u{202e}'));
+    }
+
     use super::UsageQuery;
 
     /// The typed mirror drops what it does not name: the jobs keys the

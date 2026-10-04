@@ -592,9 +592,6 @@ export interface Capabilities {
   can_request_decode_overrides: boolean;
   /** ["*"] = unrestricted (free choice); explicit names = restricted; [] = none. */
   allowed_override_profiles: string[];
-  /** Server-wide VAD default (newer backends) — labels the Skip-silence
-   *  control's "Default" segment. Absent on older servers. */
-  vad_filter_default?: boolean;
   /** Whether the optional pipeline stages exist on this server (newer
    *  backends) — pre-flight-disables the Separate-music / diarization
    *  toggles. Absent = unknown ⇒ assume available. */
@@ -649,22 +646,43 @@ export interface Capabilities {
   separation_models?: ServerModel[];
 }
 
-/** A baseline shown (ghosted) under the decode editor: backend defaults and/or a
- *  selected override-profile's resolved values. Loosely typed because the server
+/** A baseline shown (ghosted) under the decode editor: the server's decode defaults
+ *  (GET /v1/decode-defaults) with the backend's own defaults over them. Loosely typed because the server
  *  may send `temperature` as a string (a ladder); display-only. A DecodeOverrides
  *  is assignable to it, so backend defaults merge in cleanly. */
 export type InheritedValues = Partial<Record<keyof DecodeOverrides, number | string | boolean>>;
 
-/** One server override-profile's decode-relevant values + locked client keys
- *  (GET /v1/override-profiles/{name}) — shown as inherited defaults in the editor. */
-export interface ResolvedOverrideProfile {
-  name: string;
-  values: InheritedValues;
-  locked: string[];
-  /** The profile's own DEFAULT_PROMPT (NOT a decode key, so absent from `values`)
-   *  — shown as the inherited "Vocabulary / prompt". Undefined when none. */
-  prompt?: string;
-  prompt_locked?: boolean;
+/** Where an inherited decode value comes from (GET /v1/decode-defaults): the server's global
+ *  config, its per-model config, a layer bound to the caller's key/user, the override profile
+ *  the request names, or faster-whisper's own default (value null). */
+export type DecodeSource = "server" | "model" | "account" | "override_profile" | "builtin";
+
+/** One inherited decode value as the server resolves it. */
+export interface DecodeDefault {
+  /** null = faster-whisper's own default. `temperature` is the server's ladder string. */
+  value: number | string | boolean | null;
+  source: DecodeSource | string;
+  /** The winning layer's own name, e.g. "user · profile studio". */
+  label: string;
+  /** An admin fixed it: a client value is ignored. */
+  locked: boolean;
+}
+
+/** GET /v1/decode-defaults: what the caller's requests get when they send no decode_overrides,
+ *  for one model and override profile. */
+export interface DecodeDefaults {
+  /** The model the server resolved ("" → its default model). */
+  model: string;
+  profile_applied: string | null;
+  settings: Record<keyof DecodeOverrides, DecodeDefault>;
+  /** The default prompt (DEFAULT_PROMPT); value null = none. */
+  prompt: DecodeDefault;
+  /** Live dictation's final decode: condition_on_previous_text is pinned (a client value is
+   *  ignored); best_of has its own default (a client value still wins). */
+  streaming: {
+    condition_on_previous_text: { final: boolean; partial: boolean; pinned: boolean };
+    best_of: { value: number };
+  };
 }
 
 // --- P17: pipeline ("Dictionary") rules — LIVE server state, not persisted ---

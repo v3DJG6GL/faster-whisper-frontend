@@ -19,7 +19,7 @@ import type {
   PipelineFetch,
   PipelineSaveResult,
   RecentWords,
-  ResolvedOverrideProfile,
+  DecodeDefaults,
   TranscribeOptions,
   UsageOutcome,
   UsageOutcomePostResult,
@@ -576,21 +576,24 @@ export async function preloadModels(args: {
   }
 }
 
-/** One override-profile's decode values + locked client keys, for previewing
- *  inherited defaults. Best-effort: null outside Tauri or on any error (incl.
- *  404 when the caller may not request that profile). */
-export async function getOverrideProfile(args: {
+/** The decode values the caller inherits from the server for one model and override profile
+ *  (GET /v1/decode-defaults) — the "Inherit · <value>" labels. `model` "" = the server's default
+ *  model; `overrideProfile` is what the request would name (NO_OVERRIDE_PROFILE included).
+ *  Best-effort: null outside Tauri or on any error. */
+export async function getDecodeDefaults(args: {
   serverUrl: string;
   backendId?: string | null;
   apiKey?: string | null;
-  name: string;
-}): Promise<ResolvedOverrideProfile | null> {
+  model: string;
+  overrideProfile?: string | null;
+}): Promise<DecodeDefaults | null> {
   if (!isTauri) return null;
-  return invoke<ResolvedOverrideProfile | null>("get_override_profile", {
+  return invoke<DecodeDefaults | null>("get_decode_defaults", {
     serverUrl: args.serverUrl,
     backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
-    name: args.name,
+    model: args.model,
+    overrideProfile: args.overrideProfile?.trim() || null,
   });
 }
 

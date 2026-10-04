@@ -201,15 +201,15 @@ pub fn run() {
             commands::test_connection,
             commands::transcribe_file,
             commands::list_override_profiles,
-            commands::get_capabilities,     // P11: GET /v1/me capabilities
-            commands::preload_models,       // POST /v1/models/preload (best-effort warm hint)
-            commands::get_override_profile, // P11: GET /v1/override-profiles/{name}
-            commands::get_pipeline_rules,   // P17: GET /v1/pipeline-rules
-            commands::save_pipeline_rules,  // P17: PATCH /v1/pipeline-rules
-            commands::get_recent_words,     // P18: GET /v1/recent-words (key suggestions)
-            commands::get_usage_stats,      // P28: GET /v1/usage (per-user usage document)
-            commands::post_usage_outcomes,  // POST /v1/usage/outcome (end-of-dictation facets)
-            commands::load_usage_outcomes,  // on-disk outcome queue (survives restarts)
+            commands::get_capabilities,    // P11: GET /v1/me capabilities
+            commands::preload_models,      // POST /v1/models/preload (best-effort warm hint)
+            commands::get_decode_defaults, // GET /v1/decode-defaults
+            commands::get_pipeline_rules,  // P17: GET /v1/pipeline-rules
+            commands::save_pipeline_rules, // P17: PATCH /v1/pipeline-rules
+            commands::get_recent_words,    // P18: GET /v1/recent-words (key suggestions)
+            commands::get_usage_stats,     // P28: GET /v1/usage (per-user usage document)
+            commands::post_usage_outcomes, // POST /v1/usage/outcome (end-of-dictation facets)
+            commands::load_usage_outcomes, // on-disk outcome queue (survives restarts)
             commands::save_usage_outcomes,
             commands::load_jobs_ledger, // on-disk in-flight jobs ledger (re-attach after a restart)
             commands::save_jobs_ledger,

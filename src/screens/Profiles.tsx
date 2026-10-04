@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useSearchParams } from "react-router-dom";
-import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser, Command } from "lucide-react";
+import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser, Command, Lock } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Badge, Button, Card, ConfirmLeave, RouteBadge, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextArea, TextInput, Toggle } from "@/components/ui";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
@@ -11,7 +11,7 @@ import { TriggerTile } from "@/components/TriggerTile";
 import { DecodeFields } from "@/components/DecodeFields";
 import { dictationControls, hasInsertionOverrides, FIELD_LABEL } from "@/components/DictationFields";
 import { TranslationDefaultsEditor, targetsLabel, type TranslationInherited } from "@/components/TranslationFields";
-import { capsDecodeDefaults, inheritLabel, onOff } from "@/lib/inherit";
+import { inheritLabel, onOff, serverInherited } from "@/lib/inherit";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -29,6 +29,7 @@ import { backendForProfile } from "@/lib/dictation";
 import { liveAllowed } from "@/lib/streaming";
 import { configuredRouteTargets } from "@/lib/overlay";
 import { useOverrideContext } from "@/lib/useOverrideContext";
+import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { NO_OVERRIDE_PROFILE, type Profile, type TranslationOverrides } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
@@ -125,26 +126,34 @@ function Editor({
     ? effectiveServerKind(backend, p.backendId ? ownProp(connections, p.backendId) : undefined)
     : "unknown";
   // The effective override-profile (Profile over Backend) and the caller's
-  // capabilities, so the decode editor ghosts the profile's resolved values
-  // (under the backend defaults) and gates on what this connection allows.
+  // capabilities, so the decode editor gates on what this connection allows.
   const effectiveProfile = p.overrideProfile?.trim() ? p.overrideProfile.trim() : backend?.overrideProfile;
-  const { caps, resolved, resolvedPrompt } = useOverrideContext({
-    // Per-device address override wins for the actual requests (display
-    // contexts elsewhere keep showing the canonical serverUrl).
-    serverUrl: backend ? effectiveServerUrl(backend, useApp.getState().settings) : "",
+  // Per-device address override wins for the actual requests (display
+  // contexts elsewhere keep showing the canonical serverUrl).
+  const serverUrl = backend ? effectiveServerUrl(backend, useApp.getState().settings) : "";
+  const { caps } = useOverrideContext({ serverUrl, backendId: backend?.id ?? null, serverKind });
+  // What the server gives this profile's requests (its model + override profile), with the
+  // backend's defaults over it — in live dictation's terms when the profile streams.
+  const decodeDefaults = useDecodeDefaults({
+    serverUrl,
     backendId: backend?.id ?? null,
+    model: p.model?.trim() || backend?.model,
     profileName: effectiveProfile,
     serverKind,
   });
-  const inheritedDecode = { ...resolved, ...backend?.decodeOverrides };
+  const streams = (p.endpoint ?? backend?.endpoint ?? "stream") === "stream";
+  const server = serverInherited(decodeDefaults, backend?.decodeOverrides, streams ? "stream" : "batch", "Backend default");
   // The "Vocabulary / prompt" this profile inherits when it sets none: the backend's
-  // own prompt, else the selected server override-profile's DEFAULT_PROMPT. Read
-  // through the backend's TRI-state — a backend whose prompt is explicitly CLEARED
-  // inherits nothing, so ghosting the server's DEFAULT_PROMPT under it would promise
-  // a prompt this profile will never send (`backend.prompt || …` did exactly that,
-  // because a clear and an unset prompt are the same empty string).
+  // own prompt, else the server's default prompt. Read through the backend's TRI-state —
+  // a backend whose prompt is explicitly CLEARED inherits nothing, so ghosting the server's
+  // DEFAULT_PROMPT under it would promise a prompt this profile will never send. A prompt
+  // the server locks wins over both (the request's prompt is ignored).
   const backendPromptOverride = backend ? backendPrompt(backend) : undefined;
-  const inheritedPrompt = (backendPromptOverride ?? resolvedPrompt) ?? "";
+  const promptLocked = server.prompt?.locked === true;
+  const inheritedPrompt = (promptLocked ? server.prompt?.value : (backendPromptOverride ?? server.prompt?.value)) ?? "";
+  // Unknown (server unreachable, backend inherits) leaves the bare "Inherit".
+  const inheritedPromptText =
+    promptLocked || backendPromptOverride !== undefined || decodeDefaults ? inheritedPrompt || "no prompt" : undefined;
   const promptOverridden = p.prompt !== undefined; // "" = explicit clear, value = set
 
   const capture = useHotkeyCapture({
@@ -373,8 +382,9 @@ function Editor({
                 <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
               )}
               <label className="text-[12px] font-medium text-dim">Vocabulary / prompt</label>
+              {promptLocked && <Lock className="size-3 shrink-0 text-faint" aria-hidden />}
               <div className="ml-auto flex items-center gap-2">
-                {p.prompt !== "" && (
+                {p.prompt !== "" && !promptLocked && (
                   <button
                     type="button"
                     onClick={() => set({ prompt: "" })}
@@ -398,19 +408,24 @@ function Editor({
             </div>
             <TextArea
               aria-label="Vocabulary / prompt"
-              value={p.prompt ?? ""}
+              value={promptLocked ? "" : (p.prompt ?? "")}
               onChange={(e) => set({ prompt: e.target.value })}
               rows={2}
+              disabled={promptLocked}
+              title={promptLocked ? "Your server admin fixed this value." : backendPromptOverride === undefined ? server.prompt?.source : "Backend default"}
               // Tri-state: empty an existing value → "" (clear, suppresses the
               // inherited prompt); reset → undefined (inherit, ghosts the baseline).
               placeholder={
-                p.prompt === ""
-                  ? "(cleared — no prompt sent)"
-                  : backendPromptOverride === ""
-                    ? "Inherit · no prompt"
-                    : inheritedPrompt || "Inherit · server default"
+                promptLocked
+                  ? inheritLabel(inheritedPromptText, "Set by server")
+                  : p.prompt === ""
+                    ? "(cleared — no prompt sent)"
+                    : inheritLabel(inheritedPromptText)
               }
             />
+            {promptLocked && promptOverridden && (
+              <div className="mt-1 text-[11px] text-faint">This prompt is ignored · locked by the server.</div>
+            )}
           </div>
         </div>
       </div>
@@ -436,8 +451,11 @@ function Editor({
           <DecodeFields
               value={p.decodeOverrides ?? {}}
               onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
-              inherited={inheritedDecode}
-              serverDefaults={capsDecodeDefaults(caps)}
+              inherited={server.values}
+              sources={server.sources}
+              locked={server.locked}
+              pinned={server.pinned}
+              ignored={server.ignored}
               serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}
           />

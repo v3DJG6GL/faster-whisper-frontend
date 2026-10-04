@@ -604,7 +604,8 @@ export function Segmented<T extends string>({
 }: {
   value: T;
   onChange: (v: T) => void;
-  options: { value: T; label: string }[];
+  /** `title`: a tooltip for one option (e.g. where an inherited value comes from). */
+  options: { value: T; label: string; title?: string }[];
   disabled?: boolean;
   ariaLabel?: string;
 }) {
@@ -629,6 +630,7 @@ export function Segmented<T extends string>({
             // pin's aria-pressed) — otherwise the active option reads as just another plain button.
             aria-pressed={active}
             disabled={disabled}
+            title={o.title}
             onClick={() => onChange(o.value)}
             className={cn(
               // Labels are short by design and read as one token ("Clipboard paste"):

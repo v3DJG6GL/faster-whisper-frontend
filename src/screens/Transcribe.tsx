@@ -9,11 +9,12 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields, pruneTargets, translationRunOptions } from "@/components/TranslationFields";
-import { capsDecodeDefaults } from "@/lib/inherit";
+import { inheritLabel, onOff, serverInherited } from "@/lib/inherit";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { TranscriptViewer } from "@/components/TranscriptViewer";
 import { speakerOrder as speakersOf } from "@/lib/transcriptExport";
 import { useOverrideContext } from "@/lib/useOverrideContext";
+import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useBackendModels } from "@/lib/useBackendModels";
 import { fmtBitrate, fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
@@ -756,29 +757,31 @@ export default function Transcribe() {
 
   // Capability gate + inherited baseline for the per-run decode editor —
   // the same context the Backend/Profile editors use.
-  const { caps, resolved } = useOverrideContext({
-    serverUrl: backend ? effectiveServerUrl(backend, settings) : "",
+  const serverUrl = backend ? effectiveServerUrl(backend, settings) : "";
+  const { caps } = useOverrideContext({ serverUrl, backendId: backend?.id, serverKind });
+  // What the server gives this run: the EFFECTIVE model and profile — the per-run picks win,
+  // exactly as the run sends them — so every "Default · X" describes what this run inherits.
+  const decodeDefaults = useDecodeDefaults({
+    serverUrl,
     backendId: backend?.id,
-    // The EFFECTIVE profile — the per-run pick wins, exactly as the run sends it — so the
-    // ghosted "Empty = inherit" baseline and the Skip-silence "Default · on/off" describe
-    // what this run will actually inherit, not the backend's profile.
-    profileName: (runOverrideProfile || backend?.overrideProfile) || undefined,
+    model: model || backend?.model,
+    profileName: runOverrideProfile || backend?.overrideProfile,
     serverKind,
   });
-  // What a blank per-run field inherits: profile baseline, overridden by the
-  // Backend's stored decode defaults (the Profiles editor's merge precedent).
-  const inheritedBaseline = { ...resolved, ...backend?.decodeOverrides };
+  // What a blank per-run field inherits: the server's values, the Backend's stored decode
+  // defaults over them (the Profiles editor's merge), locked keys back to the server's.
+  const server = serverInherited(decodeDefaults, backend?.decodeOverrides, "batch", "Backend default");
+  const inheritedBaseline = server.values;
 
   // Per-run model pick: "" = backend default. The advertised list comes from
   // the shared hook (session connection cache + one background probe).
   const advertised = useBackendModels(backend);
 
-  // The Skip-silence row's "Default" label: what a blank vad_filter inherits —
-  // the Backend/profile baseline first, else the server-reported default.
-  // undefined = unknown (older server) → plain "Default".
+  // The Skip-silence row's "Default" label: what a blank vad_filter inherits.
+  // undefined = unknown (server unreachable) → plain "Default".
   const vadBaseline = inheritedBaseline.vad_filter;
-  const vadInherited =
-    typeof vadBaseline === "boolean" ? vadBaseline : caps?.vad_filter_default;
+  const vadInherited = typeof vadBaseline === "boolean" ? vadBaseline : undefined;
+  const vadLocked = server.locked.has("vad_filter");
 
   // Pre-flight availability of the optional pipeline stages (additive
   // capability fields). Only an explicit false disables the toggle — absent
@@ -1596,31 +1599,41 @@ export default function Transcribe() {
                 >
                   <Segmented
                     value={
-                      runOverrides.vad_filter === true
-                        ? "on"
-                        : runOverrides.vad_filter === false
-                          ? "off"
-                          : "inherit"
+                      vadLocked
+                        ? "inherit"
+                        : runOverrides.vad_filter === true
+                          ? "on"
+                          : runOverrides.vad_filter === false
+                            ? "off"
+                            : "inherit"
                     }
                     ariaLabel="Skip silence (VAD)"
-                    disabled={caps?.can_request_decode_overrides === false}
+                    disabled={caps?.can_request_decode_overrides === false || vadLocked}
                     onChange={(v) => {
                       const next = { ...runOverrides };
                       if (v === "inherit") delete next.vad_filter;
                       else next.vad_filter = v === "on";
                       setRunOverrides(next);
                     }}
-                    options={[
-                      {
-                        value: "inherit",
-                        label:
-                          vadInherited === undefined
-                            ? "Default"
-                            : `Default · ${vadInherited ? "on" : "off"}`,
-                      },
-                      { value: "on", label: "On" },
-                      { value: "off", label: "Off" },
-                    ]}
+                    options={
+                      vadLocked
+                        ? [
+                            {
+                              value: "inherit",
+                              label: inheritLabel(onOff(vadInherited), "Set by server"),
+                              title: "Your server admin fixed this value.",
+                            },
+                          ]
+                        : [
+                            {
+                              value: "inherit",
+                              label: inheritLabel(onOff(vadInherited), "Default"),
+                              title: server.sources.vad_filter,
+                            },
+                            { value: "on", label: "On" },
+                            { value: "off", label: "Off" },
+                          ]
+                    }
                   />
                 </SettingRow>
               </div>
@@ -1868,7 +1881,9 @@ export default function Transcribe() {
             value={runOverrides}
             onChange={setRunOverrides}
             inherited={inheritedBaseline}
-            serverDefaults={capsDecodeDefaults(caps)}
+            sources={server.sources}
+            locked={server.locked}
+            ignored={server.ignored}
             inheritWord="Default"
             serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}

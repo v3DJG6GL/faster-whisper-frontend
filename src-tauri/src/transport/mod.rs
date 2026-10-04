@@ -69,10 +69,6 @@ pub struct Capabilities {
     /// explicit allowed names; `[]` = none.
     #[serde(default)]
     pub allowed_override_profiles: Vec<String>,
-    /// Server-wide VAD default (additive, newer backends only) — labels the
-    /// client's Skip-silence "Default" segment. Absent on older servers.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vad_filter_default: Option<bool>,
     /// Whether the server runs the optional pipeline stages at all (additive,
     /// newer backends only) — pre-flight-disables the client's "Separate
     /// music" / "Speaker diarization" toggles. Absent = unknown ⇒ assume
@@ -161,24 +157,137 @@ pub struct MediaPackageCaps {
     pub ffmpeg_version: Option<String>,
 }
 
-/// A single override-profile's decode-relevant values + locked client keys,
-/// from `GET /v1/override-profiles/{name}` — for previewing inherited defaults.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ResolvedOverrideProfile {
-    pub name: String,
-    /// `{client_decode_key: value}` (e.g. `{"beam_size": 8}`); `temperature`
-    /// may arrive as a string (the server stores it as a ladder).
+/// One inherited decode value from `GET /v1/decode-defaults`: what the server uses when the
+/// request sends nothing for the key, where it comes from, and whether an admin locked it.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct DecodeDefault {
+    /// A scalar (number / bool / string) or null = faster-whisper's own default.
+    /// `temperature` arrives as the server's ladder string ("0.0,0.2,…").
     #[serde(default)]
-    pub values: serde_json::Value,
+    pub value: serde_json::Value,
+    /// `server` | `model` | `account` | `override_profile` | `builtin`.
     #[serde(default)]
-    pub locked: Vec<String>,
-    /// The profile's own DEFAULT_PROMPT, exposed separately (it is NOT a client
-    /// decode key, so it never appears in `values`) so the editor can ghost it as
-    /// the inherited "Vocabulary / prompt". `null` when the profile sets none.
+    pub source: String,
+    /// The winning layer's own name ("user · profile studio", "per-model · large-v3").
     #[serde(default)]
-    pub prompt: Option<String>,
+    pub label: String,
     #[serde(default)]
-    pub prompt_locked: bool,
+    pub locked: bool,
+}
+
+/// The 19 client decode keys, named (not a map) so a key the server renames fails the
+/// round-trip test instead of silently vanishing from the editor.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct DecodeDefaultSettings {
+    #[serde(default)]
+    pub beam_size: DecodeDefault,
+    #[serde(default)]
+    pub best_of: DecodeDefault,
+    #[serde(default)]
+    pub vad_filter: DecodeDefault,
+    #[serde(default)]
+    pub vad_min_silence_duration_ms: DecodeDefault,
+    #[serde(default)]
+    pub vad_speech_pad_ms: DecodeDefault,
+    #[serde(default)]
+    pub vad_threshold: DecodeDefault,
+    #[serde(default)]
+    pub condition_on_previous_text: DecodeDefault,
+    #[serde(default)]
+    pub no_speech_threshold: DecodeDefault,
+    #[serde(default)]
+    pub log_prob_threshold: DecodeDefault,
+    #[serde(default)]
+    pub compression_ratio_threshold: DecodeDefault,
+    #[serde(default)]
+    pub hotwords: DecodeDefault,
+    #[serde(default)]
+    pub temperature: DecodeDefault,
+    #[serde(default)]
+    pub patience: DecodeDefault,
+    #[serde(default)]
+    pub length_penalty: DecodeDefault,
+    #[serde(default)]
+    pub repetition_penalty: DecodeDefault,
+    #[serde(default)]
+    pub no_repeat_ngram_size: DecodeDefault,
+    #[serde(default)]
+    pub suppress_tokens: DecodeDefault,
+    #[serde(default)]
+    pub prepend_punctuations: DecodeDefault,
+    #[serde(default)]
+    pub append_punctuations: DecodeDefault,
+}
+
+impl DecodeDefaultSettings {
+    pub fn each_mut(&mut self) -> [&mut DecodeDefault; 19] {
+        [
+            &mut self.beam_size,
+            &mut self.best_of,
+            &mut self.vad_filter,
+            &mut self.vad_min_silence_duration_ms,
+            &mut self.vad_speech_pad_ms,
+            &mut self.vad_threshold,
+            &mut self.condition_on_previous_text,
+            &mut self.no_speech_threshold,
+            &mut self.log_prob_threshold,
+            &mut self.compression_ratio_threshold,
+            &mut self.hotwords,
+            &mut self.temperature,
+            &mut self.patience,
+            &mut self.length_penalty,
+            &mut self.repetition_penalty,
+            &mut self.no_repeat_ngram_size,
+            &mut self.suppress_tokens,
+            &mut self.prepend_punctuations,
+            &mut self.append_punctuations,
+        ]
+    }
+}
+
+/// Live dictation's final decode pins `condition_on_previous_text` (a client value is ignored).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct StreamingConditionPin {
+    #[serde(default)]
+    pub r#final: bool,
+    #[serde(default)]
+    pub partial: bool,
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+/// Live dictation's own `best_of` default (a client value still wins).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct StreamingBestOf {
+    #[serde(default)]
+    pub value: u32,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct StreamingDefaults {
+    #[serde(default)]
+    pub condition_on_previous_text: StreamingConditionPin,
+    #[serde(default)]
+    pub best_of: StreamingBestOf,
+}
+
+/// `GET /v1/decode-defaults`: the decode values the caller's requests get when they send no
+/// `decode_overrides`, resolved by the server for one model and override profile — the
+/// "Inherit · <value>" labels in every decode editor.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct DecodeDefaults {
+    /// The model the values are for, as the server resolved it ("" → its default model).
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub profile_applied: Option<String>,
+    #[serde(default)]
+    pub settings: DecodeDefaultSettings,
+    /// The default prompt (`DEFAULT_PROMPT`); value null = none.
+    #[serde(default)]
+    pub prompt: DecodeDefault,
+    #[serde(default)]
+    pub streaming: StreamingDefaults,
 }
 
 // P28: per-user usage stats (`GET /v1/usage`). snake_case passthrough like

@@ -1,14 +1,15 @@
-import { useState } from "react";
-import { RotateCcw, Info, Eraser } from "lucide-react";
+import { useId, useState } from "react";
+import { RotateCcw, Info, Eraser, Lock } from "lucide-react";
 import { DisclosureCard, Segmented, TextInput, SectionLabel } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { DecodeOverrides, InheritedValues } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
-import { inheritLabel, type InheritWord } from "@/lib/inherit";
+import { inheritLabel, LOCKED_REASON, type DecodeKey, type InheritWord, type ServerInherited } from "@/lib/inherit";
 
 // Decode-param editor shared by the Backend (defaults) and Profile (override)
-// editors. Every field is OPTIONAL: empty = "inherit" (backend default ?? the
-// server's per-model config). Booleans are tri-state (Inherit/On/Off) because an
+// editors and Transcribe. Every field is OPTIONAL: empty = "inherit" (backend default ?? the
+// server's resolved default, GET /v1/decode-defaults — see serverInherited). A key the server
+// admin locked is read-only and shows the server's value; live dictation's pinned key likewise. Booleans are tri-state (Inherit/On/Off) because an
 // unset boolean must stay distinct from an explicit false. The backend clamps
 // every value, so the ranges shown here are guidance, not hard gates.
 //
@@ -62,7 +63,10 @@ export function DecodeFields({
   value,
   onChange,
   inherited,
-  serverDefaults,
+  sources,
+  locked,
+  pinned,
+  ignored,
   inheritWord = "Inherit",
   serverKind,
   canCustomize,
@@ -73,9 +77,14 @@ export function DecodeFields({
    *  override-profile's values), ghosted into each control's placeholder/state
    *  so you can see what a blank field will inherit. */
   inherited?: InheritedValues;
-  /** The server's own defaults the client knows (today: `vad_filter` from GET /v1/me), the
-   *  last layer under `inherited` — so "Skip silence" says "Inherit · on" with no profile set. */
-  serverDefaults?: InheritedValues;
+  /** Tooltip per key: where the inherited value comes from (serverInherited().sources). */
+  sources?: ServerInherited["sources"];
+  /** Keys the server admin locked: read-only, showing the server's value. */
+  locked?: ReadonlySet<DecodeKey>;
+  /** Keys the decode forces whatever is sent (live dictation's condition_on_previous_text). */
+  pinned?: ServerInherited["pinned"];
+  /** Keys whose value from the layer below the server ignores (locked). */
+  ignored?: readonly DecodeKey[];
   /** "Inherit" in override editors (Profile, Backend), "Default" for a per-run choice. */
   inheritWord?: InheritWord;
   /** When "standard", a conventional Whisper server: disable everything the
@@ -92,6 +101,20 @@ export function DecodeFields({
   const blocked = canCustomize === false; // capability gate: all params disabled
   const standard = serverKind === "standard";
   const isGated = (f: Field) => blocked || (standard && f.key !== "temperature");
+  // Per-key server lock / dictation pin. Skipped when the whole editor is blocked: the banner says
+  // it once, and every key reads as locked then.
+  const pinOf = (f: Field) => (blocked ? undefined : pinned?.[f.key]);
+  const isLocked = (f: Field) => !blocked && !pinOf(f) && !!locked?.has(f.key);
+  const readOnly = (f: Field) => isGated(f) || isLocked(f) || !!pinOf(f);
+  const uid = useId();
+  const descId = (f: Field) => `${uid}-${f.key}-src`;
+  /** The tooltip / screen-reader line for a field's inherited value. */
+  const sourceOf = (f: Field): string | undefined => {
+    const pin = pinOf(f);
+    if (pin) return pin.reason;
+    if (isLocked(f)) return LOCKED_REASON;
+    return sources?.[f.key];
+  };
 
   const setField = (key: keyof DecodeOverrides, v: number | boolean | string | undefined) => {
     const next: DecodeOverrides = { ...value };
@@ -102,7 +125,7 @@ export function DecodeFields({
 
   // The inherited (baseline) value as a short string, or undefined if none.
   const fmtInherited = (f: Field): string | undefined => {
-    const iv = inherited?.[f.key] ?? serverDefaults?.[f.key];
+    const iv = inherited?.[f.key];
     if (iv === undefined || iv === null || iv === "") return undefined;
     if (f.kind === "bool") return iv ? "on" : "off";
     return String(iv);
@@ -116,20 +139,29 @@ export function DecodeFields({
     const cur = value[f.key];
     const gated = isGated(f);
     const inh = fmtInherited(f); // inherited value as a short string, or undefined
+    const pin = pinOf(f);
+    const title = sourceOf(f);
+    const described = title ? descId(f) : undefined;
+    // A locked or pinned key shows the value the server uses, not this layer's (ignored) one.
+    const fixedLabel = pin ? `Dictation always · ${pin.value}` : isLocked(f) ? inheritLabel(inh, "Set by server") : undefined;
     if (f.kind === "bool") {
-      const v = cur === true ? "on" : cur === false ? "off" : "inherit";
+      const v = fixedLabel ? "inherit" : cur === true ? "on" : cur === false ? "off" : "inherit";
       // Ghost the inherited state on the "Inherit" segment, e.g. "Inherit · on".
       return (
         <Segmented
           value={v}
           ariaLabel={f.label}
-          disabled={gated}
+          disabled={gated || !!fixedLabel}
           onChange={(nv) => setField(f.key, nv === "inherit" ? undefined : nv === "on")}
-          options={[
-            { value: "inherit", label: inheritLabel(inh, inheritWord) },
-            { value: "on", label: "On" },
-            { value: "off", label: "Off" },
-          ]}
+          options={
+            fixedLabel
+              ? [{ value: "inherit", label: fixedLabel, title }]
+              : [
+                  { value: "inherit", label: inheritLabel(inh, inheritWord), title },
+                  { value: "on", label: "On" },
+                  { value: "off", label: "Off" },
+                ]
+          }
         />
       );
     }
@@ -139,12 +171,14 @@ export function DecodeFields({
         <TextInput
           type="number"
           aria-label={f.label}
-          disabled={gated}
+          aria-describedby={described}
+          title={title}
+          disabled={gated || !!fixedLabel}
           min={f.min}
           max={f.max}
           step={f.step}
-          value={cur === undefined ? "" : String(cur)}
-          placeholder={inh ? `${inh} · ${f.hint}` : `${inheritWord.toLowerCase()} · ${f.hint}`}
+          value={fixedLabel || cur === undefined ? "" : String(cur)}
+          placeholder={fixedLabel ?? `${inheritLabel(inh, inheritWord)} · ${f.hint}`}
           onChange={(e) => {
             const s = e.target.value;
             if (s === "") return setField(f.key, undefined);
@@ -159,13 +193,24 @@ export function DecodeFields({
     return (
       <TextInput
         aria-label={f.label}
-        disabled={gated}
-        value={cur === undefined ? "" : String(cur)}
+        aria-describedby={described}
+        title={title}
+        disabled={gated || !!fixedLabel}
+        value={fixedLabel || cur === undefined ? "" : String(cur)}
         // An explicit empty string is a real override ("clear this — send empty",
         // distinct from inherit), so DON'T coerce "" → undefined here: store the raw
         // value and reach inherit only via the reset button. The accent dot marks the
         // explicit-empty override; a distinct placeholder keeps it from reading as inherit.
-        placeholder={cur === "" ? "(cleared — overrides inherited)" : (inh ?? (f.hint ? `${inheritWord.toLowerCase()} · ${f.hint}` : inheritWord.toLowerCase()))}
+        placeholder={
+          fixedLabel ??
+          (cur === ""
+            ? "(cleared — overrides inherited)"
+            : inh
+              ? inheritLabel(inh, inheritWord)
+              : f.hint
+                ? `${inheritWord} · ${f.hint}`
+                : inheritWord)
+        }
         onChange={(e) => setField(f.key, e.target.value)}
       />
     );
@@ -173,18 +218,26 @@ export function DecodeFields({
 
   const fieldCell = (f: Field) => {
     const overridden = value[f.key] !== undefined;
+    const fixed = isLocked(f) || !!pinOf(f);
+    const title = sourceOf(f);
     // The inherited value is ghosted into the control itself (placeholder /
     // "Inherit · on" segment) by renderControl, so no separate label is needed.
     return (
       <div key={f.key} className={cn(f.wide && "col-span-2")}>
         <div className="mb-1.5 flex items-center gap-1.5">
-          {overridden && <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />}
+          {overridden && !fixed && <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />}
           <label className="text-[12px] font-medium text-dim">{f.label}</label>
+          {fixed && <Lock className="size-3 shrink-0 text-faint" aria-hidden />}
+          {title && (
+            <span id={descId(f)} className="sr-only">
+              {title}
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-2">
             {/* Text fields can be CLEARED to an explicit empty override (suppress the
                 inherited value) — the discoverable alternative to deleting the text.
                 Hidden once already cleared. Numbers/bools clear via empty/Inherit. */}
-            {f.kind === "text" && value[f.key] !== "" && !isGated(f) && (
+            {f.kind === "text" && value[f.key] !== "" && !readOnly(f) && (
               <button
                 type="button"
                 onClick={() => setField(f.key, "")}
@@ -194,6 +247,8 @@ export function DecodeFields({
                 <Eraser className="size-3" /> clear
               </button>
             )}
+            {/* Reset stays offered on a locked/pinned key: the stored value is ignored, and
+                clearing it is the only thing left to do with it. */}
             {overridden && !isGated(f) && (
               <button
                 type="button"
@@ -207,6 +262,14 @@ export function DecodeFields({
           </div>
         </div>
         {renderControl(f)}
+        {overridden && fixed && (
+          <div className="mt-1 text-[11px] text-faint">
+            {pinOf(f) ? "This value is ignored in live dictation." : "This value is ignored · locked by the server."}
+          </div>
+        )}
+        {!overridden && !fixed && ignored?.includes(f.key) && (
+          <div className="mt-1 text-[11px] text-faint">Backend value ignored · locked by the server.</div>
+        )}
       </div>
     );
   };

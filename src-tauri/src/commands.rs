@@ -1168,17 +1168,24 @@ pub async fn preload_models(
     transport::preload::preload_models(&server_url, key.as_deref(), models).await
 }
 
-/// One override-profile's decode values + locked client keys, for previewing
-/// inherited defaults when a profile is selected. Best-effort — null on error.
+/// The decode values the caller inherits from the server for one model and override profile
+/// (`GET /v1/decode-defaults`) — the "Inherit · <value>" labels. Best-effort — null on error.
 #[tauri::command]
-pub async fn get_override_profile(
+pub async fn get_decode_defaults(
     server_url: String,
     backend_id: Option<String>,
     api_key: Option<String>,
-    name: String,
-) -> Option<transport::ResolvedOverrideProfile> {
-    let key = resolve_key(api_key, backend_id);
-    transport::discovery::get_override_profile(&server_url, &name, key.as_deref()).await
+    model: String,
+    override_profile: Option<String>,
+) -> Option<transport::DecodeDefaults> {
+    let key = resolve_key_async(api_key, backend_id).await;
+    transport::discovery::get_decode_defaults(
+        &server_url,
+        &model,
+        override_profile.as_deref(),
+        key.as_deref(),
+    )
+    .await
 }
 
 /// P17: the post-processing (pipeline) rules the caller may view + edit
