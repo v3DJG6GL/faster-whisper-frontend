@@ -39,6 +39,7 @@ function dd(over: Partial<DecodeDefaults> = {}): DecodeDefaults {
       hotwords: entry(null, { source: "builtin" }),
       no_speech_threshold: entry(null, { source: "builtin" }),
       patience: entry(1, { locked: true }),
+      multilingual: entry(false, { locked: true }),
     } as DecodeDefaults["settings"],
     prompt: entry("Medizin", { source: "account", label: "user · profile studio", locked: true }),
     streaming: { condition_on_previous_text: { final: false, partial: false, pinned: true }, best_of: { value: 1 } },
@@ -59,6 +60,8 @@ describe("serverInherited", () => {
   it("takes only real booleans for on/off keys", () => {
     expect(serverInherited(dd()).values.vad_filter).toBeUndefined();
     expect(serverInherited(dd()).values.condition_on_previous_text).toBe(true);
+    expect(serverInherited(dd()).values.multilingual).toBe(false);
+    expect(serverInherited(dd()).locked.has("multilingual")).toBe(true);
   });
   it("lets the backend beat the server, except where the server locks", () => {
     const s = serverInherited(dd(), { beam_size: 3, patience: 2 }, "batch", "Backend default");

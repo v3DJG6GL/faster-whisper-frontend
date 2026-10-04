@@ -29,6 +29,11 @@ pub struct ServerModel {
     pub id: String,
     #[serde(default)]
     pub loaded: bool,
+    /// Translation models only (`/v1/me` `translation_models`): the target codes the model
+    /// supports; `None` = unknown (the picker offers every language, untagged). Bounded in
+    /// discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub languages: Option<Vec<String>>,
 }
 
 /// Result of a connection test — mirrors the TS `ConnectionInfo`.
@@ -175,7 +180,7 @@ pub struct DecodeDefault {
     pub locked: bool,
 }
 
-/// The 19 client decode keys, named (not a map) so a key the server renames fails the
+/// The 20 client decode keys, named (not a map) so a key the server renames fails the
 /// round-trip test instead of silently vanishing from the editor.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct DecodeDefaultSettings {
@@ -217,10 +222,12 @@ pub struct DecodeDefaultSettings {
     pub prepend_punctuations: DecodeDefault,
     #[serde(default)]
     pub append_punctuations: DecodeDefault,
+    #[serde(default)]
+    pub multilingual: DecodeDefault,
 }
 
 impl DecodeDefaultSettings {
-    pub fn each_mut(&mut self) -> [&mut DecodeDefault; 19] {
+    pub fn each_mut(&mut self) -> [&mut DecodeDefault; 20] {
         [
             &mut self.beam_size,
             &mut self.best_of,
@@ -241,6 +248,7 @@ impl DecodeDefaultSettings {
             &mut self.suppress_tokens,
             &mut self.prepend_punctuations,
             &mut self.append_punctuations,
+            &mut self.multilingual,
         ]
     }
 }

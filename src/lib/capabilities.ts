@@ -94,3 +94,15 @@ export function translationWarm(caps: Capabilities | null, model?: string): bool
   // answer, and a model outside it is certainly not resident.
   return hit ? hit.loaded : false;
 }
+
+/** The target codes a translation model supports — `model` empty = the server's default model
+ *  (it lists that one first). `null` means UNKNOWN (no caps, an older server, a model the
+ *  server has no list for, or one it doesn't offer): the picker then offers every language
+ *  without a "not tested" tag. */
+export function translationLanguages(caps: Capabilities | null | undefined, model?: string): string[] | null {
+  const list = caps?.translation_models;
+  if (!list?.length) return null;
+  const want = model?.trim();
+  const hit = want ? list.find((m) => m.id === want) : list[0];
+  return Array.isArray(hit?.languages) ? hit.languages.filter((c) => typeof c === "string") : null;
+}

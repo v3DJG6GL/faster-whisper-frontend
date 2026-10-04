@@ -26,7 +26,7 @@ export type DecodeKey = keyof DecodeOverrides;
 /** Which decode the values are for: a batch file run, or live dictation (its final decode). */
 export type DecodeMode = "batch" | "stream";
 
-const BOOL_KEYS: ReadonlySet<DecodeKey> = new Set(["vad_filter", "condition_on_previous_text"]);
+const BOOL_KEYS: ReadonlySet<DecodeKey> = new Set(["vad_filter", "condition_on_previous_text", "multilingual"]);
 /** A null threshold switches that check off; null hotwords are none. */
 const NULL_TEXT: Partial<Record<DecodeKey, string>> = {
   hotwords: "none",

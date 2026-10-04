@@ -128,6 +128,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                         .map(|m| ServerModel {
                             id: bounded_name(&m.id),
                             loaded: m.loaded,
+                            languages: None,
                         })
                         .collect(),
                     boot_id: parsed.boot_id.map(|s| bounded_name(&s)),
@@ -215,27 +216,10 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
         .llama_cpp_version
         .map(|v| super::bounded_server_text(&v, 32));
     caps.media_package = caps.media_package.map(bound_media_package);
-    // Per-stage model lists feed pickers — same treatment as `models`.
-    let bound_models = |list: Option<Vec<ServerModel>>| {
-        list.map(|mut v| {
-            v.truncate(MAX_MODELS);
-            v.into_iter()
-                .map(|m| ServerModel {
-                    id: bounded_name(&m.id),
-                    loaded: m.loaded,
-                })
-                .collect::<Vec<_>>()
-        })
-    };
     caps.translation_models = bound_models(caps.translation_models);
     caps.diarization_models = bound_models(caps.diarization_models);
     caps.separation_models = bound_models(caps.separation_models);
-    caps.translation_languages = caps.translation_languages.map(|mut v| {
-        v.truncate(MAX_MODELS);
-        v.iter()
-            .map(|s| super::bounded_server_text(s, 16))
-            .collect()
-    });
+    caps.translation_languages = caps.translation_languages.map(bound_codes);
     caps.translate_to_default = caps.translate_to_default.map(|mut v| {
         v.truncate(super::MAX_TARGETS);
         v.iter()
@@ -243,6 +227,29 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
             .collect()
     });
     Some(caps)
+}
+
+/// Per-stage model lists feed pickers — same treatment as `models`; a translation model's
+/// language list feeds the target picker's rows.
+fn bound_models(list: Option<Vec<ServerModel>>) -> Option<Vec<ServerModel>> {
+    list.map(|mut v| {
+        v.truncate(MAX_MODELS);
+        v.into_iter()
+            .map(|m| ServerModel {
+                id: bounded_name(&m.id),
+                loaded: m.loaded,
+                languages: m.languages.map(bound_codes),
+            })
+            .collect()
+    })
+}
+
+/// A server list of language codes: at most `MAX_MODELS` entries, 16 chars each.
+fn bound_codes(mut v: Vec<String>) -> Vec<String> {
+    v.truncate(MAX_MODELS);
+    v.iter()
+        .map(|s| super::bounded_server_text(s, 16))
+        .collect()
 }
 
 /// The packaging detail block carries two server strings rendered as UI
@@ -539,6 +546,7 @@ mod tests {
             "suppress_tokens",
             "prepend_punctuations",
             "append_punctuations",
+            "multilingual",
         ];
         let settings: serde_json::Map<String, serde_json::Value> = keys
             .iter()
@@ -654,6 +662,29 @@ mod tests {
             out["media_package"]["containers"],
             serde_json::json!(["mkv", "mp4"])
         );
+    }
+
+    /// Per-model translation languages survive the typed mirror, bounded; an unknown model
+    /// (no list) stays unknown rather than becoming an empty list.
+    #[test]
+    fn capabilities_keep_bounded_translation_languages() {
+        let raw = serde_json::json!({
+            "translation_models": [
+                {"id": "hy-mt", "loaded": true, "languages": ["de", "x".repeat(40)]},
+                {"id": "custom", "loaded": false, "languages": null},
+                {"id": "big", "loaded": false, "languages": vec!["en"; 600]},
+            ]
+        });
+        let caps: super::super::Capabilities = serde_json::from_value(raw).unwrap();
+        let models = super::bound_models(caps.translation_models).unwrap();
+        let langs = models[0].languages.as_ref().unwrap();
+        assert_eq!(langs[0], "de");
+        assert!(langs[1].chars().count() <= 17); // 16 + "…"
+        assert_eq!(models[1].languages, None);
+        assert_eq!(models[2].languages.as_ref().unwrap().len(), 500);
+        let out = serde_json::to_value(&models).unwrap();
+        assert_eq!(out[0]["languages"][0], "de");
+        assert!(out[1].get("languages").is_none());
     }
 
     #[test]

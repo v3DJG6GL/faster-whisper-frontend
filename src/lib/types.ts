@@ -37,6 +37,9 @@ export interface DecodeOverrides {
   length_penalty?: number; // 0.1..5
   repetition_penalty?: number; // 0.5..5
   no_repeat_ngram_size?: number; // 0..10
+  /** Language detection per 30 s window instead of once per file ("Multiple languages");
+   *  the server ignores it when the request names a language. */
+  multilingual?: boolean;
 }
 
 /** A configured connection to a faster-whisper / OpenAI-compatible server. */
@@ -575,6 +578,8 @@ export interface MicFallback {
 export interface ServerModel {
   id: string;
   loaded: boolean;
+  /** Translation models only: the target codes the model supports; null/absent = unknown. */
+  languages?: string[] | null;
 }
 
 export interface ConnectionInfo {

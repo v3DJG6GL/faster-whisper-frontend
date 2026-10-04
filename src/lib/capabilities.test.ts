@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { translationWarm } from "./capabilities";
+import { translationLanguages, translationWarm } from "./capabilities";
 import type { Capabilities } from "./types";
 
 function caps(patch: Partial<Capabilities>): Capabilities {
@@ -65,5 +65,22 @@ describe("translationWarm", () => {
 
   it("is empty-list false, not null", () => {
     expect(translationWarm(caps({ translation_models: [] }))).toBe(false);
+  });
+});
+
+describe("translationLanguages", () => {
+  const models = [
+    { id: "hy-mt", loaded: true, languages: ["de", "fr"] },
+    { id: "custom", loaded: false, languages: null },
+  ];
+  it("reads the named model's list, and the default (first) model's when none is named", () => {
+    expect(translationLanguages(caps({ translation_models: models }), "hy-mt")).toEqual(["de", "fr"]);
+    expect(translationLanguages(caps({ translation_models: models }), "")).toEqual(["de", "fr"]);
+  });
+  it("is null (unknown) for a model without a list, an unlisted model, or no caps", () => {
+    expect(translationLanguages(caps({ translation_models: models }), "custom")).toBe(null);
+    expect(translationLanguages(caps({ translation_models: models }), "other")).toBe(null);
+    expect(translationLanguages(caps({}))).toBe(null);
+    expect(translationLanguages(null)).toBe(null);
   });
 });
