@@ -13,6 +13,9 @@
   --color-panel: var(--c-panel);
   --color-surface: var(--c-surface);
   --color-surface-2: var(--c-surface-2);
+  /* A pressable keycap (the trigger tile's shortcut keys): one step off surface-2 so it sits
+     ON the key strip, with a darker lower edge so it reads as a key, not a tag. */
+  --color-key: var(--c-key);
   --color-line: var(--c-line);
   --color-line-strong: var(--c-line-strong);
   --color-text: var(--c-text);
@@ -60,6 +63,8 @@
   --c-panel: #141210;
   --c-surface: #1a1714;
   --c-surface-2: #221e19;
+  --c-key: #332c25;
+  --c-key-edge: rgba(0, 0, 0, 0.6);
   --c-line: rgba(244, 238, 229, 0.08);
   --c-line-strong: rgba(244, 238, 229, 0.16);
   --c-text: #f3eee6;
@@ -128,6 +133,8 @@
   --c-panel: #fbf8f1;
   --c-surface: #fffdf9;
   --c-surface-2: #f1eadd;
+  --c-key: #fffdf9;
+  --c-key-edge: rgba(30, 22, 12, 0.22);
   --c-line: rgba(30, 22, 12, 0.1);
   --c-line-strong: rgba(30, 22, 12, 0.18);
   --c-text: #221b13;

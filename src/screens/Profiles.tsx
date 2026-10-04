@@ -7,7 +7,7 @@ import { Badge, Button, Card, ConfirmLeave, RouteBadge, DisclosureCard, EditorHe
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { starterProfiles } from "@/lib/starters";
-import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
+import { TriggerTile } from "@/components/TriggerTile";
 import { DecodeFields } from "@/components/DecodeFields";
 import { dictationControls, hasInsertionOverrides, FIELD_LABEL } from "@/components/DictationFields";
 import { TranslationDefaultsEditor } from "@/components/TranslationFields";
@@ -17,7 +17,7 @@ import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
 import { languageLabel } from "@/lib/languages";
 import { useBackendModels } from "@/lib/useBackendModels";
-import { conflicts as chordConflicts, conflictsByProfile, quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/conflicts";
+import { conflicts as chordConflicts, conflictsByProfile, findChordConflict, quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/conflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
@@ -53,7 +53,8 @@ function Editor({
 }: {
   initial: Profile;
   others: Profile[];
-  onSave: (p: Profile) => void;
+  /** `takeovers`: bindings whose shortcut this profile took ("Use it here") — cleared on save. */
+  onSave: (p: Profile, takeovers: string[]) => void;
   onCancel: () => void;
 }) {
   const backends = useApp((s) => s.backends);
@@ -73,6 +74,9 @@ function Editor({
   const lowLevelActive = IS_WINDOWS || (!!evdev?.permitted && evdevEnabled);
   const [p, setP] = useState<Profile>(initial);
   const [capturing, setCapturing] = useState(false);
+  // Shortcuts taken from other bindings in this edit ("Use it here"); applied with Save, so
+  // Cancel leaves them untouched.
+  const [takeovers, setTakeovers] = useState<string[]>([]);
   // Each disclosure opens when it has something in it -- the same "open when
   // non-empty" rule the Backends editor uses for its two. The old combined
   // flag also watched model/language/endpoint/prompt/overrideProfile, which
@@ -123,16 +127,18 @@ function Editor({
   const inheritedPrompt = (backendPromptOverride ?? resolvedPrompt) ?? "";
   const promptOverridden = p.prompt !== undefined; // "" = explicit clear, value = set
 
-  const { heldCodes, warn } = useHotkeyCapture({
+  const capture = useHotkeyCapture({
     capturing,
     lowLevelActive,
-    others,
+    // A binding whose keys this edit already took no longer clashes.
+    others: others.map((o) => (takeovers.includes(o.id) ? { ...o, hotkey: [] } : o)),
     selfKind: p.activation === "handsfree" ? "handsfree" : "hold",
     onCommit: (codes) => {
       set({ hotkey: codes });
       setCapturing(false);
     },
     onCancel: () => setCapturing(false),
+    onTakeOver: (id) => setTakeovers((t) => (t.includes(id) ? t : [...t, id])),
   });
 
   const Glyph = ACTIVATION[p.activation].icon;
@@ -152,7 +158,8 @@ function Editor({
   });
 
   const save = () =>
-    onSave({
+    onSave(
+      {
       ...p,
       name: p.name.trim() || "Untitled profile",
       // Empty = derive the chip tag from the name → store as undefined (omitted).
@@ -168,7 +175,14 @@ function Editor({
       // An override object with nothing in it is "inherit everything" — store it as absent,
       // or `isDirty` reports a change the moment the disclosure is opened.
       insertionOverrides: hasInsertionOverrides(p.insertionOverrides) ? p.insertionOverrides : undefined,
-    });
+      },
+      // Only a take-over the saved chord still needs: re-recording something else since
+      // leaves the other binding alone.
+      takeovers.filter((id) => {
+        const o = others.find((x) => x.id === id);
+        return !!o && !!findChordConflict(p.hotkey, [o], !lowLevelActive, p.activation === "handsfree" ? "handsfree" : "hold");
+      }),
+    );
 
   return (
     <Card className="p-6">
@@ -194,62 +208,58 @@ function Editor({
         />
       )}
 
-      <div className="grid grid-cols-2 gap-4">
-        <Labeled label="Name">
-          <TextInput value={p.name} onChange={(e) => set({ name: e.target.value })} placeholder="Email — German" />
-        </Labeled>
-        <Labeled label="Chip tag">
-          <TextInput
-            value={p.tag ?? ""}
-            // A blank (or whitespace-only) tag is stored as absent — the save path trims — or a
-            // set-then-clear read as "unsaved" forever (the sibling controls normalise alike).
-            onChange={(e) => set({ tag: e.target.value.trim() ? e.target.value : undefined })}
-            placeholder={deriveChipTag(p.name) || "From name"}
-            maxLength={16}
-          />
-        </Labeled>
-        <Labeled label="Activation">
-          <Segmented
-            value={p.activation}
-            onChange={(v) => set({ activation: v })}
-            options={[
-              { value: "hold", label: "Push-to-talk" },
-              { value: "handsfree", label: "Hands-free" },
-            ]}
-          />
-        </Labeled>
-        <Labeled label="Backend">
-          <Select
-            value={backends.some((b) => b.id === p.backendId) ? p.backendId! : ""}
-            onChange={(v) => set({ backendId: v || null })}
-            options={
-              backends.length
-                ? [
-                    // Surface an orphaned/cleared backendId (e.g. its backend was deleted)
-                    // so the shown value matches state instead of silently picking the first.
-                    ...(backends.some((b) => b.id === p.backendId)
-                      ? []
-                      : [{ value: "", label: "No backend" }]),
-                    // This Select DECIDES which server a profile sends its audio and key to,
-                    // and a backend rename raises no SecurityChange — so a hostile sync server
-                    // can relabel the options silently. Same defanging as the sync-server
-                    // picker, for the same reason.
-                    ...backendOptions(backends),
-                  ]
-                : [{ value: "", label: "No backends — add one" }]
-            }
-          />
-        </Labeled>
-        <Labeled label="Shortcut">
-          <HotkeyCaptureControl
+      {/* Shortcut Field D80 B: the shortcut and how its keys behave are one object, beside the
+          profile's name — a tile across the full width was mostly empty strip. Name and tag are
+          short, so they take a third and the tile two. */}
+      <div className="grid grid-cols-3 items-start gap-4">
+        <div className="flex flex-col gap-4">
+          <Labeled label="Name">
+            <TextInput value={p.name} onChange={(e) => set({ name: e.target.value })} placeholder="Email — German" />
+          </Labeled>
+          <Labeled label="Chip tag">
+            <TextInput
+              value={p.tag ?? ""}
+              // A blank (or whitespace-only) tag is stored as absent — the save path trims — or a
+              // set-then-clear read as "unsaved" forever (the sibling controls normalise alike).
+              onChange={(e) => set({ tag: e.target.value.trim() ? e.target.value : undefined })}
+              placeholder={deriveChipTag(p.name) || "From name"}
+              maxLength={16}
+            />
+          </Labeled>
+        </div>
+        <div className="col-span-2">
+          <TriggerTile
+            purpose="dictation"
             codes={p.hotkey}
             capturing={capturing}
-            heldCodes={heldCodes}
-            warn={warn}
+            capture={capture}
+            activation={p.activation}
+            onActivationChange={(v) => set({ activation: v })}
             onToggle={() => setCapturing((c) => !c)}
+            onRetry={() => {
+              capture.dismissPending();
+              setCapturing(true);
+            }}
             onClear={() => set({ hotkey: [] })}
           />
-        </Labeled>
+        </div>
+      </div>
+
+      {/* What the platform's hotkey backend can bind: right under the trigger tile, across the
+          full width (in the narrow name column it took several lines). */}
+      <div className="mt-3 flex items-start gap-2 text-[12px] text-faint">
+        <Info className="mt-0.5 size-3.5 shrink-0" />
+        {IS_LINUX ? (
+          <>
+            On Wayland, push-to-talk (and modifier-only / AltGr chords) need the evdev backend (Settings →
+            Permissions). Hands-free works everywhere; you can also bind it in your desktop’s shortcut settings.
+          </>
+        ) : (
+          <>
+            Every chord type works globally on Windows — push-to-talk, hands-free, modifier-only (like
+            Ctrl+Shift), and left/right-specific modifiers.
+          </>
+        )}
       </div>
 
       {/* Laid out like the Backends editor: the plain fields sit flat, and
@@ -259,6 +269,28 @@ function Editor({
           unrelated panels at once. */}
       <div className="mt-5">
         <div className="grid grid-cols-2 gap-4 rounded-xl border border-line bg-surface-2/40 p-4">
+          <Labeled label="Backend">
+            <Select
+              value={backends.some((b) => b.id === p.backendId) ? p.backendId! : ""}
+              onChange={(v) => set({ backendId: v || null })}
+              options={
+                backends.length
+                  ? [
+                      // Surface an orphaned/cleared backendId (e.g. its backend was deleted)
+                      // so the shown value matches state instead of silently picking the first.
+                      ...(backends.some((b) => b.id === p.backendId)
+                        ? []
+                        : [{ value: "", label: "No backend" }]),
+                      // This Select DECIDES which server a profile sends its audio and key to,
+                      // and a backend rename raises no SecurityChange — so a hostile sync server
+                      // can relabel the options silently. Same defanging as the sync-server
+                      // picker, for the same reason.
+                      ...backendOptions(backends),
+                    ]
+                  : [{ value: "", label: "No backends — add one" }]
+              }
+            />
+          </Labeled>
           <Labeled label="Language">
             <LanguageSelect
               ariaLabel="Language"
@@ -301,7 +333,7 @@ function Editor({
               </Notice>
             )}
           </div>
-          <div>
+          <div className="col-span-2">
             <div className="mb-2 flex items-center gap-1.5">
               {promptOverridden && (
                 <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
@@ -536,21 +568,6 @@ function Editor({
         </div>
       </div>
 
-      <div className="mt-5 flex items-start gap-2 text-[12px] text-faint">
-        <Info className="mt-0.5 size-3.5 shrink-0" />
-        {IS_LINUX ? (
-          <>
-            On Wayland, push-to-talk (and modifier-only / AltGr chords) need the evdev backend (Settings →
-            Permissions). Hands-free works everywhere; you can also bind it in your desktop’s shortcut settings.
-          </>
-        ) : (
-          <>
-            Every chord type works globally on Windows — push-to-talk, hands-free, modifier-only (like
-            Ctrl+Shift), and left/right-specific modifiers.
-          </>
-        )}
-      </div>
-
       <div className="mt-6 flex items-center justify-between">
         <Button variant="ghost" onClick={() => guard.guardExit(onCancel)}>
           Cancel
@@ -662,6 +679,8 @@ export default function Profiles() {
   const profiles = useApp((s) => s.profiles);
   const backends = useApp((s) => s.backends);
   const upsertProfile = useApp((s) => s.upsertProfile);
+  const updateProfile = useApp((s) => s.updateProfile);
+  const updateGeneral = useApp((s) => s.updateGeneral);
   const removeProfile = useApp((s) => s.removeProfile);
   const duplicateProfile = useApp((s) => s.duplicateProfile);
   const moveProfile = useApp((s) => s.moveProfile);
@@ -730,7 +749,12 @@ export default function Profiles() {
     setDraft(p);
     setEditingId(p.id);
   };
-  const onSave = (p: Profile) => {
+  const onSave = (p: Profile, takeovers: string[]) => {
+    // "Use it here": the bindings this profile took its shortcut from lose theirs.
+    for (const id of takeovers) {
+      if (id === QUICK_ADD_PEER_ID) updateGeneral({ quickAddHotkey: [] });
+      else updateProfile(id, { hotkey: [] });
+    }
     upsertProfile(p);
     setDraft(null);
     setEditingId(null);

@@ -10,13 +10,20 @@ import { evdevStatus } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { IS_WINDOWS } from "@/lib/platform";
-import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
+import { TriggerTile } from "@/components/TriggerTile";
 
-export function QuickAddShortcutField({ allowClear = false }: { allowClear?: boolean }) {
+export function QuickAddShortcutField({
+  allowClear = false,
+  title = "Shortcut",
+}: {
+  allowClear?: boolean;
+  title?: string;
+}) {
   const codes = useApp((s) => s.settings.general.quickAddHotkey);
   const profiles = useApp((s) => s.profiles);
   const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
   const updateGeneral = useApp((s) => s.updateGeneral);
+  const updateProfile = useApp((s) => s.updateProfile);
   const [capturing, setCapturing] = useState(false);
   const [lowLevel, setLowLevel] = useState(IS_WINDOWS);
   useEffect(() => {
@@ -25,7 +32,7 @@ export function QuickAddShortcutField({ allowClear = false }: { allowClear?: boo
       .then((s) => setLowLevel(!!(s.permitted && evdevEnabled)))
       .catch(() => {});
   }, [evdevEnabled]);
-  const { heldCodes, warn } = useHotkeyCapture({
+  const capture = useHotkeyCapture({
     capturing,
     lowLevelActive: lowLevel,
     others: profiles,
@@ -35,14 +42,22 @@ export function QuickAddShortcutField({ allowClear = false }: { allowClear?: boo
       setCapturing(false);
     },
     onCancel: () => setCapturing(false),
+    // "Use it here": the profile that had these keys loses its shortcut (applied at once, like
+    // every quick-add change).
+    onTakeOver: (id) => updateProfile(id, { hotkey: [] }),
   });
   return (
-    <HotkeyCaptureControl
+    <TriggerTile
+      title={title}
+      purpose="quickadd"
       codes={codes}
       capturing={capturing}
-      heldCodes={heldCodes}
-      warn={warn}
+      capture={capture}
       onToggle={() => setCapturing((c) => !c)}
+      onRetry={() => {
+        capture.dismissPending();
+        setCapturing(true);
+      }}
       onClear={allowClear ? () => updateGeneral({ quickAddHotkey: [] }) : undefined}
     />
   );

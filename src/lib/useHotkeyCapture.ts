@@ -1,7 +1,9 @@
 // Shared hotkey-capture hook. Tracks held modifiers live; finalizes on the first
 // real key (or, with a low-level backend active, on release of a modifier-only
-// chord). Warns (never silently drops) on a clash with another binding or a
-// non-registerable chord. Suspends global hotkeys for the duration so a press only
+// chord). Warns (never silently drops) on a non-registerable chord. A chord that
+// clashes with another binding ends the capture as `pending`: the trigger tile
+// names the owner and offers to take the keys over (`acceptPending`, which calls
+// `onTakeOver` with the owner's id) or to try again (Shortcut Field D82 R1). Suspends global hotkeys for the duration so a press only
 // rebinds. `lowLevelActive` = the platform's raw-key backend owns the chords
 // (Linux evdev when enabled+permitted; the always-on Windows keyboard hook), which
 // distinguishes modifier sides and accepts modifier-only / AltGr chords — when
@@ -24,7 +26,7 @@ import {
   altGrPhantomActive,
 } from "./keys";
 import { learnLetter } from "./keyboardLayout";
-import { findChordConflict, type BindingKind } from "./conflicts";
+import { findChordConflict, type BindingKind, type ConflictKind } from "./conflicts";
 import type { Profile } from "./types";
 
 export function useHotkeyCapture(opts: {
@@ -37,10 +39,19 @@ export function useHotkeyCapture(opts: {
   selfKind: BindingKind;
   onCommit: (codes: string[]) => void;
   onCancel: () => void;
-}): { heldCodes: string[]; warn: string | null } {
+  /** "Use it here" on a clash: clear the binding with this id (a profile, or QUICK_ADD_PEER_ID). */
+  onTakeOver: (otherId: string) => void;
+}): {
+  heldCodes: string[];
+  warn: string | null;
+  pending: PendingChord | null;
+  acceptPending: () => void;
+  dismissPending: () => void;
+} {
   const { capturing, lowLevelActive } = opts;
   const [heldCodes, setHeldCodes] = useState<string[]>([]);
   const [warn, setWarn] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingChord | null>(null);
   // Keep the latest callbacks/others without retriggering the capture effect
   // (which would re-add listeners + re-suspend hotkeys on every render).
   const ref = useRef(opts);
@@ -52,6 +63,7 @@ export function useHotkeyCapture(opts: {
       setWarn(null);
       return;
     }
+    setPending(null); // a new capture replaces an unanswered clash
     void suspendShortcuts().catch((e) => console.error("suspendShortcuts failed", e));
     const pressed = new Set<string>();
     let peak: string[] = [];
@@ -61,29 +73,34 @@ export function useHotkeyCapture(opts: {
     // cancelled-flag guard in useOverrideContext).
     let cancelled = false;
     const finalize = (codes: string[]) => {
-      // No low-level backend ⇒ the plugin registers and collapses L/R modifier sides, so collapse
-      // them for the clash check too (a side-only-different chord would otherwise warn-free yet collide).
-      const clash = findChordConflict(codes, ref.current.others, !lowLevelActive, ref.current.selfKind);
-      if (clash) {
-        // The name is peer/blob-authored (`sanitizeProfiles` type-checks it but does not bound it),
-        // and this is the sentence the user reads to decide whether a chord is safe to bind — so it
-        // gets the same defanging as the conflict banner's copy in Profiles.tsx.
-        const clashName = safeDisplayText(clash.name, 60) || "another profile";
-        setWarn(
-          clash.kind === "duplicate"
-            ? `Same shortcut as “${clashName}”`
-            : `Overlaps “${clashName}” — one chord shadows the other`,
-        );
-        done = false;
-        return;
-      }
-      if (lowLevelActive) {
+      // A registerable chord that clashes with another binding ends the capture as `pending`
+      // (the tile offers "Use it here" / "Try again"); a free one commits.
+      const settle = () => {
+        // No low-level backend ⇒ the plugin registers and collapses L/R modifier sides, so collapse
+        // them for the clash check too (a side-only-different chord would otherwise warn-free yet collide).
+        const clash = findChordConflict(codes, ref.current.others, !lowLevelActive, ref.current.selfKind);
+        if (clash) {
+          // The name is peer/blob-authored (`sanitizeProfiles` type-checks it but does not bound it),
+          // and this is the sentence the user reads to decide whether to take the keys over — so it
+          // gets the same defanging as the conflict banner's copy in Profiles.tsx.
+          setPending({
+            codes,
+            otherId: clash.id,
+            otherName: safeDisplayText(clash.name, 60) || "another profile",
+            kind: clash.kind,
+          });
+          ref.current.onCancel();
+          return;
+        }
         ref.current.onCommit(codes);
+      };
+      if (lowLevelActive) {
+        settle();
       } else {
         void validateCodes(codes)
           .then((ok) => {
             if (cancelled) return; // capture torn down / cancelled while validating
-            if (ok) ref.current.onCommit(codes);
+            if (ok) settle();
             else {
               setWarn("Can’t register that — add a letter/digit, or enable evdev (Settings → Permissions) for modifier-only / AltGr");
               done = false;
@@ -154,12 +171,12 @@ export function useHotkeyCapture(opts: {
       if (!done && pressed.size === 0 && peak.length > 0) {
         if (lowLevelActive) {
           done = true;
-          // Consume `peak` before finalizing: on a CONFLICTING modifier-only chord, finalize sets
-          // done=false and keeps capture open, but `peak` (a monotonic high-water mark) would stay —
-          // so a retry with an equal-or-shorter modifier-only chord (never exceeds peak.length, so
-          // line ~92 doesn't update it) would re-finalize the OLD stale chord. Clear it so the next
-          // attempt rebuilds from scratch; on a successful commit capture ends anyway, so clearing is
-          // harmless. (Complements the real-key-press clear — this is the modifier-only sibling.)
+          // Consume `peak` before finalizing: `peak` is a monotonic high-water mark, so if this chord
+          // does not end the capture, a retry with an equal-or-shorter modifier-only chord (never
+          // exceeds peak.length, so the keydown branch doesn't update it) would re-finalize the OLD
+          // stale chord. Clear it so the next attempt rebuilds from scratch; when the capture ends
+          // (commit, or a clash parked as `pending`) clearing is harmless. (Complements the
+          // real-key-press clear — this is the modifier-only sibling.)
           const chord = peak;
           peak = [];
           finalize(chord);
@@ -188,5 +205,22 @@ export function useHotkeyCapture(opts: {
     };
   }, [capturing, lowLevelActive]);
 
-  return { heldCodes, warn };
+  const acceptPending = () => {
+    if (!pending) return;
+    ref.current.onTakeOver(pending.otherId);
+    ref.current.onCommit(pending.codes);
+    setPending(null);
+  };
+  const dismissPending = () => setPending(null);
+
+  return { heldCodes, warn, pending, acceptPending, dismissPending };
+}
+
+/** A recorded chord another binding already owns, waiting for "Use it here" / "Try again". */
+export interface PendingChord {
+  codes: string[];
+  otherId: string;
+  /** Display-safe name of the owner (profile name, or "Quick add"). */
+  otherName: string;
+  kind: ConflictKind;
 }

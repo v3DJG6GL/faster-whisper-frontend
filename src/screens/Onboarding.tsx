@@ -10,15 +10,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BrandMark } from "@/components/Sidebar";
-import { HotkeyCaptureControl } from "@/components/HotkeyCaptureControl";
+import { TriggerTile } from "@/components/TriggerTile";
 import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
-import { Button, Labeled, Notice, Segmented, Select, TextInput } from "@/components/ui";
+import { Button, Labeled, Notice, Select, TextInput } from "@/components/ui";
 import {
   evdevStatus, getPipelineRules, importSettingsFile, pickImportFile, setBackendKey,
   syncPull, testConnection,
 } from "@/lib/api";
 import { insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
-import { quickAddPeer } from "@/lib/conflicts";
+import { quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/conflicts";
 import { ALL_CATEGORIES, applyBlob, categorySelection, migrateBlob } from "@/lib/sync";
 import { starterProfiles } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";
@@ -347,6 +347,7 @@ function StartersStep({
 }) {
   const quickAddHotkey = useApp((s) => s.settings.general.quickAddHotkey);
   const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
+  const updateGeneral = useApp((s) => s.updateGeneral);
   const [drafts, setDrafts] = useState<Profile[]>(() => starterProfiles(backendId));
   const [lowLevel, setLowLevel] = useState(IS_WINDOWS);
   useEffect(() => {
@@ -374,6 +375,9 @@ function StartersStep({
             others={[...drafts.filter((x) => x.id !== p.id), ...(quickAddHotkey.length ? [quickAddPeer(quickAddHotkey)] : [])]}
             lowLevelActive={lowLevel}
             onPatch={(patchP) => patch(p.id, patchP)}
+            onTakeOver={(id) =>
+              id === QUICK_ADD_PEER_ID ? updateGeneral({ quickAddHotkey: [] }) : patch(id, { hotkey: [] })
+            }
           />
         ))}
       </div>
@@ -391,14 +395,17 @@ function StarterCard({
   others,
   lowLevelActive,
   onPatch,
+  onTakeOver,
 }: {
   profile: Profile;
   others: Profile[];
   lowLevelActive: boolean;
   onPatch: (p: Partial<Profile>) => void;
+  /** "Use it here": the starter (or quick add) that had these keys loses its shortcut. */
+  onTakeOver: (otherId: string) => void;
 }) {
   const [capturing, setCapturing] = useState(false);
-  const { heldCodes, warn } = useHotkeyCapture({
+  const capture = useHotkeyCapture({
     capturing,
     lowLevelActive,
     others,
@@ -408,6 +415,7 @@ function StarterCard({
       setCapturing(false);
     },
     onCancel: () => setCapturing(false),
+    onTakeOver,
   });
   return (
     <div className="rounded-card border border-line bg-surface p-4">
@@ -415,29 +423,23 @@ function StarterCard({
         value={p.name}
         onChange={(e) => onPatch({ name: e.target.value })}
         aria-label="Profile name"
-        className="mb-2.5"
+        className="mb-3"
       />
-      <Segmented
-        value={p.activation}
-        onChange={(v) => onPatch({ activation: v })}
-        options={[
-          { value: "hold", label: "Push-to-talk" },
-          { value: "handsfree", label: "Hands-free" },
-        ]}
+      {/* No ×: a starter is only created with a shortcut. */}
+      <TriggerTile
+        purpose="dictation"
+        codes={p.hotkey}
+        capturing={capturing}
+        capture={capture}
+        activation={p.activation}
+        onActivationChange={(v) => onPatch({ activation: v })}
+        onToggle={() => setCapturing((c) => !c)}
+        onRetry={() => {
+          capture.dismissPending();
+          setCapturing(true);
+        }}
       />
-      <div className="mt-3">
-        <HotkeyCaptureControl
-          codes={p.hotkey}
-          capturing={capturing}
-          heldCodes={heldCodes}
-          warn={warn}
-          onToggle={() => setCapturing((c) => !c)}
-        />
-      </div>
-      <div className="mt-2.5 text-[11px] text-faint">
-        {p.activation === "hold" ? "Hold to dictate, release to stop." : "Tap to start hands-free, tap to stop."}{" "}
-        Language, vocabulary and more: Profiles screen, any time.
-      </div>
+      <div className="mt-2.5 text-[11px] text-faint">Language, vocabulary and more: Profiles screen, any time.</div>
     </div>
   );
 }
@@ -521,9 +523,7 @@ function QuickAddStep({
             />
           </Labeled>
         )}
-        <Labeled label="Quick-add hotkey">
-          <QuickAddShortcutField />
-        </Labeled>
+        <QuickAddShortcutField title="Quick-add hotkey" />
       </div>
       <div className="mt-7 flex w-full max-w-[430px] items-center justify-between">
         <span className="font-mono text-[10px] uppercase tracking-label text-faint">

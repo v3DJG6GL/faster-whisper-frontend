@@ -16,7 +16,7 @@ import { ownProp } from "@/lib/own";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import {
   BookA, Loader2, RefreshCw, Plus, Trash2, Lock, RotateCcw, ChevronRight,
-  ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair,
+  ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair, Info,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard";
@@ -957,40 +957,43 @@ export default function Dictionary() {
       )}
 
       {/* Quick add: the global shortcut + which list it feeds — the feature's complete local
-          config, side by side (the pairing Onboarding's quick-add step already uses). Lives HERE
+          config, together (the pairing Onboarding's quick-add step already uses). Lives HERE
           rather than Settings → General because the app already treats Dictionary as quick-add's
           home (the setup checklist and the quick-add window's empty state both route here). Above
           the server-gated states block on purpose: the shortcut stays configurable when no
           compatible backend is reachable. */}
       <Card className="px-6 py-4">
         <SectionLabel>Quick add</SectionLabel>
-        <div className="mt-3 grid grid-cols-1 gap-5 sm:grid-cols-2">
-          <Labeled label="Shortcut">
-            <QuickAddShortcutField allowClear />
-          </Labeled>
-          <Labeled label="Pinned list">
-            {pinnedLabel ? (
-              <div className="flex min-h-[34px] items-center gap-2 text-[13.5px] text-text">
-                <Crosshair className="size-4 shrink-0 text-accent" />
-                <span className="truncate">{pinnedLabel}</span>
-              </div>
-            ) : (
-              <div className="flex min-h-[34px] items-center text-[12.5px] leading-snug text-faint">
-                No list pinned — use the crosshair on a word-mapping list below.
+        {/* Same split as the Profiles editor: the short setting takes a third, the trigger tile two. */}
+        <div className="mt-3 grid grid-cols-1 gap-5 sm:grid-cols-3">
+          <div className="flex flex-col gap-3">
+            <Labeled label="Pinned list">
+              {pinnedLabel ? (
+                <div className="flex min-h-[34px] items-center gap-2 text-[13.5px] text-text">
+                  <Crosshair className="size-4 shrink-0 text-accent" />
+                  <span className="truncate">{pinnedLabel}</span>
+                </div>
+              ) : (
+                <div className="flex min-h-[34px] items-center text-[12.5px] leading-snug text-faint">
+                  No list pinned — use the crosshair on a word-mapping list below.
+                </div>
+              )}
+            </Labeled>
+            {/* Platform notes about the shortcut sit at the foot of the short column, not under the tile. */}
+            {IS_LINUX && (
+              <div className="mt-auto flex items-start gap-2 text-[12px] text-faint">
+                <Info className="mt-0.5 size-3.5 shrink-0" />
+                <span>
+                  On Wayland this needs the evdev backend (Settings → Permissions); otherwise bind a desktop
+                  shortcut to <span className="font-mono text-[11px]">app --quick-add</span>.
+                </span>
               </div>
             )}
-          </Labeled>
+          </div>
+          <div className="self-start sm:col-span-2">
+            <QuickAddShortcutField allowClear />
+          </div>
         </div>
-        <p className="mt-2.5 text-[11.5px] leading-snug text-faint">
-          Press the shortcut over any app to map a misheard word onto the pinned list.
-          {IS_LINUX && (
-            <>
-              {" "}
-              On Wayland this needs the evdev backend (Settings → Permissions); otherwise bind a
-              desktop shortcut to <span className="font-mono text-[10.5px]">app --quick-add</span>.
-            </>
-          )}
-        </p>
       </Card>
 
       {guard.asking && (
