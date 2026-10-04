@@ -100,6 +100,13 @@ pub struct Capabilities {
     /// Server-side height ceiling for kept videos; `null` = best available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url_video_default_max_height: Option<u32>,
+    /// Whether a link's own subtitle tracks can be listed and fetched
+    /// (POST /v1/audio/url-subtitles), and whether the spoken-language check
+    /// runs (POST /v1/audio/url-language). Same `Some(true)`-only contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_subtitles_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_language_check_enabled: Option<bool>,
     /// The one media ceiling (uploads, link audio/video), in bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_max_bytes: Option<u64>,

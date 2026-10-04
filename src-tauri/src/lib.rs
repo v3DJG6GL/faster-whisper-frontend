@@ -247,6 +247,9 @@ pub fn run() {
             commands::fetch_url_media, // pull downloaded audio for local playback
             commands::fetch_url_video, // pull a link run's kept video for export
             commands::url_video_download, // fetch a link's video on demand (export panel)
+            commands::url_audio_download, // fetch a link's audio on demand (site-subtitle runs)
+            commands::url_subtitles,  // download a link's picked subtitle tracks
+            commands::url_language_check, // which language a link speaks
             commands::package_media,  // export a video with subtitle tracks (server mux)
             commands::cancel_media_export,
             commands::get_media_streams,

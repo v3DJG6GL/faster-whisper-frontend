@@ -625,6 +625,10 @@ export interface Capabilities {
   url_video_enabled?: boolean;
   /** Server-side height ceiling for kept videos; null = best available. */
   url_video_default_max_height?: number | null;
+  /** Whether a link's own subtitle tracks can be fetched, and whether the
+   *  spoken-language check runs. ABSENT = the feature does not exist. */
+  url_subtitles_enabled?: boolean;
+  url_language_check_enabled?: boolean;
   /** The one media ceiling (uploads, link audio/video), in bytes. */
   media_max_bytes?: number;
   /** Subtitle packaging (server-side ffmpeg mux). ABSENT = the feature does
@@ -1059,6 +1063,9 @@ export interface TranscribeOptions {
   /** The rung's yt-dlp format id when the user picked one on the link card;
    *  absent = the Settings height cap decides (best available by default). */
   videoFormat?: string | null;
+  /** URL runs: audio the spoken-language check already downloaded — the
+   *  server reuses it instead of downloading again (and downloads when it can't). */
+  prefetchedMediaId?: string | null;
   /** File runs: keep the uploaded video on the server for a while so a
    *  packaging export right after needs no second upload. */
   retainMedia?: boolean;

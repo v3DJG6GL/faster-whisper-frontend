@@ -688,7 +688,7 @@ pub async fn url_video_download(
     max_height: Option<u32>,
     format_id: Option<String>,
     progress_id: Option<String>,
-) -> Result<transport::batch::UrlVideoDownload, String> {
+) -> Result<transport::batch::UrlMediaDownload, String> {
     let key = resolve_key(api_key, backend_id);
     transport::batch::url_video_download(
         &server_url,
@@ -696,6 +696,60 @@ pub async fn url_video_download(
         &url,
         max_height,
         format_id.as_deref(),
+        progress_id.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Ask the server to fetch a link's AUDIO on demand (POST /v1/audio/url-media/audio) —
+/// a run whose transcript comes from the site's subtitles still keeps the audio.
+#[tauri::command]
+pub async fn url_audio_download(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    url: String,
+    progress_id: Option<String>,
+) -> Result<transport::batch::UrlMediaDownload, String> {
+    let key = resolve_key(api_key, backend_id);
+    transport::batch::url_audio_download(&server_url, key.as_deref(), &url, progress_id.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Download a link's picked subtitle tracks (POST /v1/audio/url-subtitles).
+#[tauri::command]
+pub async fn url_subtitles(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    url: String,
+    tracks: Vec<String>,
+) -> Result<transport::batch::UrlSubtitles, String> {
+    let key = resolve_key(api_key, backend_id);
+    transport::batch::url_subtitles(&server_url, key.as_deref(), &url, &tracks)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Which language a link speaks (POST /v1/audio/url-language). Cancel with
+/// `cancel_text_translation` on the same progress id (the shared cancel route).
+#[tauri::command]
+pub async fn url_language_check(
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    url: String,
+    model: Option<String>,
+    progress_id: Option<String>,
+) -> Result<transport::batch::UrlLanguageCheck, String> {
+    let key = resolve_key(api_key, backend_id);
+    transport::batch::url_language_check(
+        &server_url,
+        key.as_deref(),
+        &url,
+        model.as_deref(),
         progress_id.as_deref(),
     )
     .await

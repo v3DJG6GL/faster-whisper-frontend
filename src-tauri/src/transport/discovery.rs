@@ -632,6 +632,8 @@ mod tests {
             "url_download_enabled": true,
             "url_video_enabled": true,
             "url_video_default_max_height": null,
+            "url_subtitles_enabled": true,
+            "url_language_check_enabled": false,
             "media_max_bytes": 10_000_000_000u64,
             "media_package_enabled": true,
             "media_package": {
@@ -645,6 +647,8 @@ mod tests {
         });
         let caps: super::super::Capabilities = serde_json::from_value(raw).unwrap();
         assert_eq!(caps.url_video_enabled, Some(true));
+        assert_eq!(caps.url_subtitles_enabled, Some(true));
+        assert_eq!(caps.url_language_check_enabled, Some(false));
         assert_eq!(caps.url_video_default_max_height, None);
         assert_eq!(caps.media_max_bytes, Some(10_000_000_000));
         assert_eq!(caps.media_package_enabled, Some(true));

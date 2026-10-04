@@ -100,6 +100,20 @@ export interface UrlPreview {
   video_ladder?: VideoRung[] | null;
   /** The server's one media ceiling, for labelling over-cap rungs. */
   media_max_bytes?: number | null;
+  /** The spoken language the site names (YouTube does, most sites don't). */
+  language?: string | null;
+  /** The site's own subtitle tracks (ids only; the server keeps the URLs). */
+  subtitle_tracks?: SiteTrackInfo[] | null;
+}
+
+/** One subtitle track a link offers. `hoh` = hearing-impaired, from its name. */
+export interface SiteTrackInfo {
+  id: string;
+  lang: string;
+  name?: string | null;
+  kind: "manual" | "auto";
+  ext: "vtt" | "srt";
+  hoh: boolean;
 }
 
 /** One rung of a link's video ladder (server-built from yt-dlp's formats). */

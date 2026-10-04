@@ -420,13 +420,15 @@ export async function fetchUrlVideo(args: {
   });
 }
 
-/** What the server answers when a video was fetched on demand. */
-export interface UrlVideoDownload {
+/** What the server answers when a link's video or audio was fetched on demand. */
+export interface UrlMediaDownload {
   mediaId: string;
   expiresAt: number | null;
   height: number | null;
   container: string | null;
   bytes: number | null;
+  /** Audio only: the file's extension ("m4a"). */
+  ext?: string | null;
 }
 
 /** Fetch a link's VIDEO on demand (a run that did not keep it, or whose copy
@@ -441,15 +443,93 @@ export async function fetchUrlVideoOnDemand(args: {
   maxHeight?: number | null;
   formatId?: string | null;
   progressId?: string | null;
-}): Promise<UrlVideoDownload> {
+}): Promise<UrlMediaDownload> {
   if (!isTauri) throw new Error("Video download requires the desktop app.");
-  return invoke<UrlVideoDownload>("url_video_download", {
+  return invoke<UrlMediaDownload>("url_video_download", {
     serverUrl: args.serverUrl,
     backendId: args.backendId ?? null,
     apiKey: args.apiKey ?? null,
     url: args.url,
     maxHeight: args.maxHeight ?? null,
     formatId: args.formatId ?? null,
+    progressId: args.progressId ?? null,
+  });
+}
+
+/** Fetch a link's AUDIO on demand into the server's media store — a run whose
+ *  transcript comes from the site's subtitles still keeps the audio; pull it
+ *  with fetchUrlMedia. */
+export async function fetchUrlAudioOnDemand(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  url: string;
+  progressId?: string | null;
+}): Promise<UrlMediaDownload> {
+  if (!isTauri) throw new Error("Audio download requires the desktop app.");
+  return invoke<UrlMediaDownload>("url_audio_download", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    url: args.url,
+    progressId: args.progressId ?? null,
+  });
+}
+
+/** What POST /v1/audio/url-subtitles answers: the raw VTT/SRT text of each
+ *  fetched track, and the ones that failed with a client-safe reason. */
+export interface UrlSubtitles {
+  tracks: { id: string; lang: string; kind: "manual" | "auto"; ext: "vtt" | "srt"; text: string }[];
+  failed: { id: string; error: string }[];
+}
+
+/** Download a link's picked subtitle tracks (≤ 8 ids from its preview). */
+export async function fetchUrlSubtitles(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  url: string;
+  tracks: string[];
+}): Promise<UrlSubtitles> {
+  if (!isTauri) throw new Error("Subtitle download requires the desktop app.");
+  return invoke<UrlSubtitles>("url_subtitles", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    url: args.url,
+    tracks: args.tracks,
+  });
+}
+
+/** What POST /v1/audio/url-language answers: the vote over three sampled
+ *  pieces, plus the downloaded audio a run can reuse (prefetchedMediaId). */
+export interface UrlLanguageCheck {
+  language: string | null;
+  probability: number;
+  verdict: "detected" | "mixed" | "unknown";
+  also: string[];
+  pieces: { at: number; language: string | null; probability: number }[];
+  media_id: string | null;
+  media_expires_at: number | null;
+}
+
+/** Which language does this link speak? Slow (the server downloads the audio
+ *  first); cancel with cancelTextTranslation on the same `progressId`. */
+export async function urlLanguageCheck(args: {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+  url: string;
+  model?: string | null;
+  progressId?: string | null;
+}): Promise<UrlLanguageCheck> {
+  if (!isTauri) throw new Error("The language check requires the desktop app.");
+  return invoke<UrlLanguageCheck>("url_language_check", {
+    serverUrl: args.serverUrl,
+    backendId: args.backendId ?? null,
+    apiKey: args.apiKey ?? null,
+    url: args.url,
+    model: args.model ?? null,
     progressId: args.progressId ?? null,
   });
 }

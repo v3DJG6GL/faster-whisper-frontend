@@ -92,6 +92,10 @@ pub struct BatchOptions {
     /// The rung's yt-dlp format id from the link card (regex-gated before it
     /// rides the form; the server ignores an id no longer on the ladder).
     pub video_format: Option<String>,
+    /// URL runs: the media id of audio the spoken-language check already
+    /// downloaded (`POST /v1/audio/url-language`) — the server reuses it
+    /// instead of downloading again, and silently downloads when it can't.
+    pub prefetched_media_id: Option<String>,
     /// File runs: keep the uploaded video on the server (packaging follows).
     pub retain_media: Option<bool>,
     /// Client-generated hex id the server keys live progress under
@@ -253,9 +257,68 @@ fn translate_to_field(requested: Option<&[String]>) -> Option<String> {
 #[cfg(test)]
 mod wire_field_tests {
     use super::{
-        bound_progress, bound_rung, is_format_id, to_batch_result, translate_to_field,
-        BatchProgress, VerboseJson, VideoRung,
+        bound_language_check, bound_progress, bound_rung, bound_subtitles, bound_tracks,
+        is_format_id, is_track_id, to_batch_result, translate_to_field, BatchProgress,
+        UrlLanguageCheck, UrlSubtitles, VerboseJson, VideoRung,
     };
+
+    /// Preview tracks: ids and languages gated (they ride back in a body), kinds
+    /// whitelisted, names bounded, at most 24.
+    #[test]
+    fn subtitle_tracks_are_gated_and_bounded() {
+        let mut raw: Vec<serde_json::Value> = vec![
+            serde_json::json!({"id": "de-CH", "lang": "de-CH", "name": "n".repeat(100), "kind": "manual", "ext": "vtt", "hoh": false}),
+            serde_json::json!({"id": "../x", "lang": "de", "kind": "manual", "ext": "vtt"}),
+            serde_json::json!({"id": "a", "lang": "d e", "kind": "manual", "ext": "vtt"}),
+            serde_json::json!({"id": "b", "lang": "de", "kind": "asr", "ext": "vtt"}),
+            serde_json::json!({"id": "c", "lang": "de", "kind": "auto", "ext": "m3u8"}),
+        ];
+        raw.extend((0..30).map(|i| serde_json::json!({"id": format!("t{i}"), "lang": "en", "kind": "auto", "ext": "srt", "hoh": true})));
+        let tracks = bound_tracks(serde_json::from_value(serde_json::Value::Array(raw)).unwrap());
+        assert_eq!(tracks.len(), 24);
+        assert_eq!(tracks[0].id, "de-CH");
+        assert_eq!(
+            tracks[0].name.as_deref().map(|n| n.chars().count()),
+            Some(65)
+        );
+        assert_eq!(tracks[1].id, "t0");
+        assert!(tracks[1].hoh);
+        assert!(is_track_id("de_orig-1") && !is_track_id("") && !is_track_id(&"x".repeat(33)));
+    }
+
+    #[test]
+    fn fetched_subtitles_keep_their_text_and_drop_bad_tracks() {
+        let raw = serde_json::json!({
+            "tracks": [
+                {"id": "de", "lang": "de", "kind": "manual", "ext": "vtt", "text": "WEBVTT\n\n00:00.000 --> 00:01.000\nHallo"},
+                {"id": "big", "lang": "de", "kind": "manual", "ext": "vtt", "text": "x".repeat(3 * 1024 * 1024)},
+                {"id": "x/y", "lang": "de", "kind": "manual", "ext": "vtt", "text": ""},
+            ],
+            "failed": [{"id": "en", "error": "e".repeat(500)}, {"id": "../", "error": "x"}]
+        });
+        let s = bound_subtitles(serde_json::from_value::<UrlSubtitles>(raw).unwrap());
+        assert_eq!(s.tracks.len(), 1);
+        assert!(s.tracks[0].text.ends_with("Hallo"));
+        assert_eq!(s.failed.len(), 1);
+        assert_eq!(s.failed[0].error.chars().count(), 201);
+    }
+
+    #[test]
+    fn language_check_is_bounded() {
+        let raw = serde_json::json!({
+            "language": "de", "probability": 0.97, "verdict": "maybe", "also": ["en", "<b>"],
+            "pieces": [{"at": 289.0, "language": "en", "probability": 0.91}, {"at": 963.0, "language": "x x", "probability": 1.0}],
+            "media_id": "../../etc", "media_expires_at": 1_700_000_000
+        });
+        let c = bound_language_check(serde_json::from_value::<UrlLanguageCheck>(raw).unwrap());
+        assert_eq!(c.language.as_deref(), Some("de"));
+        assert_eq!(c.verdict, "unknown");
+        assert_eq!(c.also, vec!["en"]);
+        assert_eq!(c.pieces[0].language.as_deref(), Some("en"));
+        assert_eq!(c.pieces[1].language, None);
+        assert_eq!(c.media_id, None);
+        assert_eq!(c.media_expires_at, Some(1_700_000_000));
+    }
 
     /// The stored result of a lost run goes through the same door as the
     /// POST body: media ids screened, labels bounded, output untouched.
@@ -1007,6 +1070,13 @@ async fn post(
     if let Some(r) = opts.retain_media {
         form = form.text("retain_media", if r { "true" } else { "false" });
     }
+    if let Some(m) = opts
+        .prefetched_media_id
+        .as_deref()
+        .filter(|m| is_progress_id(m))
+    {
+        form = form.text("prefetched_media_id", m.to_string());
+    }
     if let Some(k) = opts.keep_video {
         form = form.text("keep_video", if k { "true" } else { "false" });
         // The height cap rides only with keep_video, and only in the range the
@@ -1223,6 +1293,58 @@ pub struct UrlPreview {
     /// The server's one media ceiling, for labelling over-cap rungs.
     #[serde(default)]
     pub media_max_bytes: Option<u64>,
+    /// The spoken language the site names (YouTube does, most sites don't).
+    #[serde(default)]
+    pub language: Option<String>,
+    /// The site's own subtitle tracks (server-collapsed: YouTube's machine
+    /// translations of its auto track are not listed). Ids only — the
+    /// subtitle URLs never leave the server.
+    #[serde(default)]
+    pub subtitle_tracks: Vec<SubtitleTrackInfo>,
+}
+
+/// One subtitle track a link offers, as the preview lists it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubtitleTrackInfo {
+    pub id: String,
+    pub lang: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// "manual" (uploaded by a person) or "auto" (the site's speech recognition).
+    pub kind: String,
+    pub ext: String,
+    /// Hearing-impaired (SDH), from the track's name.
+    #[serde(default)]
+    pub hoh: bool,
+}
+
+/// Most tracks a preview lists — the server caps the same.
+const MAX_SUBTITLE_TRACKS: usize = 24;
+
+/// A subtitle track id as the server mints it: `^[A-Za-z0-9_-]{1,32}$`. It rides
+/// back in the url-subtitles body, so it is gated on the way in too.
+pub(crate) fn is_track_id(s: &str) -> bool {
+    (1..=32).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+fn is_track_kind(kind: &str, ext: &str) -> bool {
+    matches!(kind, "manual" | "auto") && matches!(ext, "vtt" | "srt")
+}
+
+fn bound_tracks(tracks: Vec<SubtitleTrackInfo>) -> Vec<SubtitleTrackInfo> {
+    tracks
+        .into_iter()
+        .filter(|t| {
+            is_track_id(&t.id) && super::is_lang_code(&t.lang) && is_track_kind(&t.kind, &t.ext)
+        })
+        .take(MAX_SUBTITLE_TRACKS)
+        .map(|t| SubtitleTrackInfo {
+            name: t.name.map(|n| super::bounded_server_text(&n, 64)),
+            ..t
+        })
+        .collect()
 }
 
 /// One rung of a link's video ladder — advisory for the client's picker.
@@ -1310,34 +1432,53 @@ const URL_PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
 /// A 512 KB thumbnail cap server-side; anything bigger here is hostile.
 const MAX_THUMBNAIL_DATA_URI: usize = 1024 * 1024;
 
+/// POST a JSON body to a link route, then read the answer under `cap` — the one
+/// request shape every `/v1/audio/url-*` call shares.
+async fn post_url_json<T: serde::de::DeserializeOwned>(
+    server_url: &str,
+    api_key: Option<&str>,
+    path: &str,
+    body: &serde_json::Value,
+    timeout: Duration,
+    cap: usize,
+    what: &'static str,
+) -> anyhow::Result<T> {
+    let base = base_url(server_url);
+    let resp = with_auth(client().post(format!("{base}{path}")), api_key)
+        .timeout(timeout)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = body_capped_to(resp, MAX_ERROR_BODY)
+            .await
+            .unwrap_or_else(|reason| reason);
+        bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
+    }
+    json_capped_to::<T>(resp, cap)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))
+        .context(what)
+}
+
 pub async fn url_preview(
     server_url: &str,
     api_key: Option<&str>,
     url: &str,
 ) -> anyhow::Result<UrlPreview> {
     validate_media_url(url)?;
-    let base = base_url(server_url);
-    let resp = with_auth(
-        client().post(format!("{base}/v1/audio/url-preview")),
+    let parsed: UrlPreview = post_url_json(
+        server_url,
         api_key,
+        "/v1/audio/url-preview",
+        &serde_json::json!({ "url": url }),
+        URL_PREVIEW_TIMEOUT,
+        MAX_META_BODY,
+        "decoding preview",
     )
-    .timeout(URL_PREVIEW_TIMEOUT)
-    .json(&serde_json::json!({ "url": url }))
-    .send()
-    .await
-    .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
-    let status = resp.status();
-    if !status.is_success() {
-        let body = match body_capped_to(resp, MAX_ERROR_BODY).await {
-            Ok(b) => b,
-            Err(reason) => reason,
-        };
-        bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
-    }
-    let parsed: UrlPreview = json_capped_to::<UrlPreview>(resp, MAX_META_BODY)
-        .await
-        .map_err(|e| anyhow::anyhow!(e))
-        .context("decoding preview")?;
+    .await?;
     Ok(UrlPreview {
         // Media titles/uploaders are third-party remote text relayed by the
         // server — bound them like every other server string label.
@@ -1354,14 +1495,202 @@ pub async fn url_preview(
             .take(MAX_LADDER_RUNGS)
             .map(bound_rung)
             .collect(),
+        language: parsed.language.filter(|l| super::is_lang_code(l)),
+        subtitle_tracks: bound_tracks(parsed.subtitle_tracks),
         ..parsed
     })
 }
 
-/// What `POST /v1/audio/url-media/video` answers.
+/// One fetched subtitle track (`POST /v1/audio/url-subtitles`): the raw VTT/SRT
+/// text the webview parses with its subtitle importer.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FetchedSubtitle {
+    pub id: String,
+    pub lang: String,
+    pub kind: String,
+    pub ext: String,
+    pub text: String,
+}
+
+/// A track the server could not fetch, with its client-safe reason.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FailedSubtitle {
+    pub id: String,
+    #[serde(default)]
+    pub error: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UrlSubtitles {
+    #[serde(default)]
+    pub tracks: Vec<FetchedSubtitle>,
+    #[serde(default)]
+    pub failed: Vec<FailedSubtitle>,
+}
+
+/// Most tracks one request asks for (the server refuses more).
+const MAX_SUBTITLE_FETCH: usize = 8;
+/// The server caps one track at 2 MB of text and the answer at 8 MB; JSON
+/// escaping (newlines, quotes) adds a little on top of that.
+const MAX_SUBTITLE_TEXT: usize = 2 * 1024 * 1024;
+const MAX_SUBTITLES_BODY: usize = 10 * 1024 * 1024;
+/// A fresh probe plus up to eight small downloads.
+const URL_SUBTITLES_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Download the picked subtitle tracks of a link (ids from its preview).
+pub async fn url_subtitles(
+    server_url: &str,
+    api_key: Option<&str>,
+    url: &str,
+    tracks: &[String],
+) -> anyhow::Result<UrlSubtitles> {
+    validate_media_url(url)?;
+    let ids: Vec<&String> = tracks
+        .iter()
+        .filter(|t| is_track_id(t))
+        .take(MAX_SUBTITLE_FETCH)
+        .collect();
+    if ids.is_empty() {
+        bail!("no subtitle track picked");
+    }
+    let parsed: UrlSubtitles = post_url_json(
+        server_url,
+        api_key,
+        "/v1/audio/url-subtitles",
+        &serde_json::json!({ "url": url, "tracks": ids }),
+        URL_SUBTITLES_TIMEOUT,
+        MAX_SUBTITLES_BODY,
+        "decoding the subtitles",
+    )
+    .await?;
+    Ok(bound_subtitles(parsed))
+}
+
+/// Tracks keep their text (that IS the payload, capped per track); ids,
+/// languages and kinds are gated like the preview's, error texts bounded.
+fn bound_subtitles(parsed: UrlSubtitles) -> UrlSubtitles {
+    UrlSubtitles {
+        tracks: parsed
+            .tracks
+            .into_iter()
+            .filter(|t| {
+                is_track_id(&t.id)
+                    && super::is_lang_code(&t.lang)
+                    && is_track_kind(&t.kind, &t.ext)
+                    && t.text.len() <= MAX_SUBTITLE_TEXT
+            })
+            .take(MAX_SUBTITLE_FETCH)
+            .collect(),
+        failed: parsed
+            .failed
+            .into_iter()
+            .filter(|f| is_track_id(&f.id))
+            .take(MAX_SUBTITLE_FETCH)
+            .map(|f| FailedSubtitle {
+                error: super::bounded_server_text(&f.error, super::MAX_ERROR_TEXT),
+                ..f
+            })
+            .collect(),
+    }
+}
+
+/// One sampled piece of the language check: where it starts and what Whisper heard.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LanguagePiece {
+    pub at: f64,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub probability: f64,
+}
+
+/// What `POST /v1/audio/url-language` answers. The check downloads the audio,
+/// which the run then reuses through `prefetched_media_id`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UrlLanguageCheck {
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub probability: f64,
+    /// "detected" | "mixed" | "unknown".
+    #[serde(default)]
+    pub verdict: String,
+    /// Other languages heard with confidence (a mixed link).
+    #[serde(default)]
+    pub also: Vec<String>,
+    #[serde(default)]
+    pub pieces: Vec<LanguagePiece>,
+    #[serde(default)]
+    pub media_id: Option<String>,
+    #[serde(default)]
+    pub media_expires_at: Option<i64>,
+}
+
+/// The check downloads a whole link's audio before it listens.
+const URL_LANGUAGE_TIMEOUT: Duration = Duration::from_secs(240);
+
+/// Ask the server which language a link speaks. Slow (it downloads the
+/// audio); cancel through the shared progress cancel route on `progress_id`.
+pub async fn url_language_check(
+    server_url: &str,
+    api_key: Option<&str>,
+    url: &str,
+    model: Option<&str>,
+    progress_id: Option<&str>,
+) -> anyhow::Result<UrlLanguageCheck> {
+    validate_media_url(url)?;
+    let mut body = serde_json::json!({ "url": url });
+    if let Some(m) = model.filter(|m| !m.is_empty() && m.len() <= 128) {
+        body["model"] = serde_json::json!(m);
+    }
+    if let Some(pid) = progress_id.filter(|p| is_progress_id(p)) {
+        body["progress_id"] = serde_json::json!(pid);
+    }
+    let parsed: UrlLanguageCheck = post_url_json(
+        server_url,
+        api_key,
+        "/v1/audio/url-language",
+        &body,
+        URL_LANGUAGE_TIMEOUT,
+        MAX_META_BODY,
+        "decoding the language check",
+    )
+    .await?;
+    Ok(bound_language_check(parsed))
+}
+
+fn bound_language_check(parsed: UrlLanguageCheck) -> UrlLanguageCheck {
+    let lang = |l: Option<String>| l.filter(|l| super::is_lang_code(l));
+    UrlLanguageCheck {
+        language: lang(parsed.language),
+        verdict: match parsed.verdict.as_str() {
+            "detected" | "mixed" => parsed.verdict,
+            _ => "unknown".into(),
+        },
+        also: parsed
+            .also
+            .into_iter()
+            .filter(|l| super::is_lang_code(l))
+            .take(8)
+            .collect(),
+        pieces: parsed
+            .pieces
+            .into_iter()
+            .take(8)
+            .map(|p| LanguagePiece {
+                language: lang(p.language),
+                ..p
+            })
+            .collect(),
+        media_id: parsed.media_id.filter(|m| is_progress_id(m)),
+        ..parsed
+    }
+}
+
+/// What `POST /v1/audio/url-media/{video,audio}` answers.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UrlVideoDownload {
+pub struct UrlMediaDownload {
     #[serde(alias = "media_id")]
     pub media_id: String,
     #[serde(default, alias = "expires_at")]
@@ -1372,6 +1701,9 @@ pub struct UrlVideoDownload {
     pub container: Option<String>,
     #[serde(default)]
     pub bytes: Option<u64>,
+    /// Audio only: the file's extension ("m4a").
+    #[serde(default)]
+    pub ext: Option<String>,
 }
 
 /// A 10 GB video on a slow uplink: the server's own wall clock for one video
@@ -1388,45 +1720,79 @@ pub async fn url_video_download(
     max_height: Option<u32>,
     format_id: Option<&str>,
     progress_id: Option<&str>,
-) -> anyhow::Result<UrlVideoDownload> {
-    validate_media_url(url)?;
-    let base = base_url(server_url);
-    let mut body = serde_json::json!({ "url": url });
+) -> anyhow::Result<UrlMediaDownload> {
+    let mut body = serde_json::json!({});
     if let Some(h) = max_height.filter(|h| (144..=4320).contains(h)) {
         body["max_height"] = serde_json::json!(h);
     }
     if let Some(f) = format_id.filter(|f| is_format_id(f)) {
         body["format_id"] = serde_json::json!(f);
     }
+    url_media_download(
+        server_url,
+        api_key,
+        url,
+        "video",
+        body,
+        progress_id,
+        URL_VIDEO_TIMEOUT,
+    )
+    .await
+}
+
+/// Ask the server to fetch a link's AUDIO into its media store — the site-subtitle
+/// run's path: its transcript comes from the site, the audio is still kept for
+/// playback.
+pub async fn url_audio_download(
+    server_url: &str,
+    api_key: Option<&str>,
+    url: &str,
+    progress_id: Option<&str>,
+) -> anyhow::Result<UrlMediaDownload> {
+    url_media_download(
+        server_url,
+        api_key,
+        url,
+        "audio",
+        serde_json::json!({}),
+        progress_id,
+        FILE_TRANSCRIBE_TIMEOUT,
+    )
+    .await
+}
+
+/// The on-demand media body both kinds share: url + progress id on top of the
+/// kind's own fields, then the answer's id gated and its labels bounded.
+async fn url_media_download(
+    server_url: &str,
+    api_key: Option<&str>,
+    url: &str,
+    kind: &str,
+    mut body: serde_json::Value,
+    progress_id: Option<&str>,
+    timeout: Duration,
+) -> anyhow::Result<UrlMediaDownload> {
+    validate_media_url(url)?;
+    body["url"] = serde_json::json!(url);
     if let Some(pid) = progress_id.filter(|p| is_progress_id(p)) {
         body["progress_id"] = serde_json::json!(pid);
     }
-    let resp = with_auth(
-        client()
-            .post(format!("{base}/v1/audio/url-media/video"))
-            .json(&body),
+    let parsed: UrlMediaDownload = post_url_json(
+        server_url,
         api_key,
+        &format!("/v1/audio/url-media/{kind}"),
+        &body,
+        timeout,
+        MAX_META_BODY,
+        "decoding the media download answer",
     )
-    .timeout(URL_VIDEO_TIMEOUT)
-    .send()
-    .await
-    .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
-    let status = resp.status();
-    if !status.is_success() {
-        let body = body_capped_to(resp, MAX_ERROR_BODY)
-            .await
-            .unwrap_or_else(|reason| reason);
-        bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
-    }
-    let parsed: UrlVideoDownload = json_capped_to::<UrlVideoDownload>(resp, MAX_META_BODY)
-        .await
-        .map_err(|e| anyhow::anyhow!(e))
-        .context("decoding the video download answer")?;
+    .await?;
     if !is_progress_id(&parsed.media_id) {
         bail!("the server answered with a malformed media id");
     }
-    Ok(UrlVideoDownload {
+    Ok(UrlMediaDownload {
         container: parsed.container.map(|s| super::bounded_server_text(&s, 8)),
+        ext: parsed.ext.map(|s| super::bounded_server_text(&s, 8)),
         height: parsed.height.filter(|h| (1..=8192).contains(h)),
         ..parsed
     })
