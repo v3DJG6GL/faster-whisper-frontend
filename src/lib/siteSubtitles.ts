@@ -11,6 +11,8 @@
 // Any badge click flips used ↔ not used and snapshots everything into Custom (v25, v27).
 
 import { languageLabel } from "./languages";
+import type { ImportedText } from "./subtitleImport";
+import type { BatchResult, TimedTrack } from "./types";
 import type { SiteTrackInfo } from "./urlSource";
 
 export type SitePolicy = "prefer" | "both" | "generate" | "custom";
@@ -100,6 +102,8 @@ export interface SiteSubsRun {
   transcriptTrackId: string | null;
   /** Languages to machine-translate into. */
   mtTargets: string[];
+  /** The preview's facts about the fetched tracks (name, hearing-impaired), for their labels. */
+  tracks?: SiteTrackInfo[];
 }
 
 export interface SiteSubsView {
@@ -378,4 +382,53 @@ export function removeLanguage(input: SiteSubsInput, st: SiteSubsState, code: st
 export function listedLanguages(input: SiteSubsInput, st: SiteSubsState): string[] {
   const m = model(input, st);
   return input.spoken ? [input.spoken, ...m.codes] : m.codes;
+}
+
+/** One downloaded site track after parsing. */
+export interface ParsedSiteTrack {
+  id: string;
+  lang: string;
+  kind: "manual" | "auto";
+  parsed: ImportedText;
+}
+
+/** Downloaded site tracks → timed tracks with their own timing. Ids are `<lang>-x-site` (a
+ *  BCP-47 private use tag, never an MT code), `-auto` / `-hoh` / a number added only when two
+ *  tracks of a language would collide. */
+export function siteTimedTracks(fetched: readonly ParsedSiteTrack[], infos: readonly SiteTrackInfo[] = []): TimedTrack[] {
+  const out: TimedTrack[] = [];
+  for (const f of fetched) {
+    const info = infos.find((t) => t.id === f.id);
+    const hoh = info?.hoh ?? false;
+    const base = `${f.lang}-x-site`;
+    const taken = (id: string) => out.some((t) => t.id === id);
+    let id = base;
+    if (taken(id)) id = `${base}${f.kind === "auto" ? "-auto" : hoh ? "-hoh" : ""}`;
+    for (let n = 2; taken(id); n++) id = `${base}-${n}`;
+    const cues = f.parsed.segments.flatMap((s) =>
+      s.start !== undefined && s.end !== undefined ? [{ start: s.start, end: s.end, text: s.text }] : [],
+    );
+    if (!cues.length) continue;
+    out.push({
+      id, lang: f.lang, source: "site", kind: f.kind, cues,
+      ...(hoh ? { hoh } : {}),
+      ...(info?.name ? { label: info.name } : {}),
+    });
+  }
+  return out;
+}
+
+/** Add site tracks (and the warnings their download produced) to a result. */
+export function attachSiteTracks(res: BatchResult, timed: readonly TimedTrack[], warnings: readonly string[]): BatchResult {
+  if (!timed.length && !warnings.length) return res;
+  return {
+    ...res,
+    ...(timed.length ? { timedTracks: [...(res.timedTracks ?? []), ...timed] } : {}),
+    ...(warnings.length ? { warnings: [...(res.warnings ?? []), ...warnings] } : {}),
+  };
+}
+
+/** How a site track reads in chips and lane labels: "DE · existing", "DE · auto-generated". */
+export function siteTrackLabel(t: Pick<TimedTrack, "lang" | "kind" | "hoh">): string {
+  return `${t.lang.toUpperCase()} · ${t.kind === "auto" ? "auto-generated" : "existing"}${t.hoh ? " · hearing-impaired" : ""}`;
 }

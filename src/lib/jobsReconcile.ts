@@ -21,7 +21,7 @@ import { configReady } from "./persistence";
 import { forgetRow, initLedger, ledgerRows, MAX_AGE_MS, type LedgerRow } from "./jobsLedger";
 import { useApp } from "./store";
 import {
-  failJob, foldProgress, ingestJobResult, reattachRun, setReattachStop, useTranscribeRun,
+  failJob, foldProgress, ingestJobResult, reattachRun, setReattachStop, useTranscribeRun, withSiteTracks,
 } from "./transcribeRun";
 import type { JobStatus } from "./types";
 
@@ -61,7 +61,7 @@ async function ingestDone(row: LedgerRow, status: JobStatus, attached: boolean):
   const r = await getJobResult({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
   switch (r.kind) {
     case "ok":
-      ingestJobResult(row, r.value, tookMsOf(status, row), { attached });
+      ingestJobResult(row, await withSiteTracks(r.value, row.path, row.urlMeta, row.ctx), tookMsOf(status, row), { attached });
       await forgetRow(row.jobId);
       return true;
     case "running":

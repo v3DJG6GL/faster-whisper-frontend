@@ -8,9 +8,9 @@
 
 import { create } from "zustand";
 import {
-  audioBasePref, cancelBackendTranscription, cancelFileTranscription, fetchUrlMedia,
-  fetchUrlVideo, fetchUrlVideoOnDemand, getTranscribeProgress, readTextFile, saveTranscriptMedia,
-  transcribeFile, transcribeUrl, translateText,
+  audioBasePref, cancelBackendTranscription, cancelFileTranscription, fetchUrlAudioOnDemand, fetchUrlMedia,
+  fetchUrlSubtitles, fetchUrlVideo, fetchUrlVideoOnDemand, getTranscribeProgress, readTextFile,
+  saveTranscriptMedia, transcribeFile, transcribeUrl, translateText,
 } from "./api";
 import { transportErrorDoorway } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
@@ -26,6 +26,10 @@ import type {
 import type { VideoRung } from "./urlSource";
 import { isVideoSourcePath } from "./mediaExport";
 import { forgetRow, persistRow, type LedgerRow } from "./jobsLedger";
+import { applyMultilingual, spokenLanguage } from "./languages";
+import {
+  attachSiteTracks, siteTimedTracks, trackLanguage, type ParsedSiteTrack, type SiteSubsRun,
+} from "./siteSubtitles";
 
 export type ItemStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
@@ -446,6 +450,13 @@ export interface TranscribeRunState {
     videoFormat?: string | null;
     videoLadder?: VideoRung[];
     mediaMaxBytes?: number;
+    /** The link card's spoken language (a code, "auto" or MULTI_LANGUAGE) when it
+     *  differs from the screen's — named by the site, detected, or picked. */
+    spokenLanguage?: string;
+    /** Audio the spoken-language check already downloaded; the run reuses it. */
+    prefetchMediaId?: string;
+    /** The link card's site-subtitle plan (D86), frozen at Add link. */
+    siteSubs?: SiteSubsRun;
   }>;
   /** Options/overrides of the current or last run (rail layout + Retry). */
   lastOptions?: TranscribeOptions;
@@ -1376,7 +1387,7 @@ async function translateParsed(
   let model: string | undefined;
   let source: string | undefined;
   let plan: PlanStage[] | undefined;
-  for (let at = 0; at < parsed.segments.length; at += CHUNK) {
+  for (let at = 0; targets.length && at < parsed.segments.length; at += CHUNK) {
     // A cancel or an input change bumps the epoch; the pump only checks it after this
     // function returns, so without this a feature-length file kept POSTing chunk after
     // chunk for minutes after Cancel. The partial result is discarded by the pump.
@@ -1419,10 +1430,14 @@ async function translateParsed(
           .join(" "),
       ]),
     ),
-    translation: {
-      model, targets, source: source ?? parsed.language,
-      ...(options.translationMode ? { mode: options.translationMode } : {}),
-    },
+    ...(targets.length
+      ? {
+          translation: {
+            model, targets, source: source ?? parsed.language,
+            ...(options.translationMode ? { mode: options.translationMode } : {}),
+          },
+        }
+      : {}),
     ...(parsed.segments.every((seg) => seg.start === undefined && seg.end === undefined)
       ? { timingSynthesized: true }
       : {}),
@@ -1448,6 +1463,124 @@ export function assembleTranslatedSegments(
     ...(results[i] && Object.keys(results[i]).length ? { translations: results[i] } : {}),
     ...(keptAll[i]?.length ? { translationsKept: keptAll[i] } : {}),
   }));
+}
+
+/** The request fields every transcription shares (pump's `common`). */
+type TranscribeCommon = Omit<Parameters<typeof transcribeUrl>[0], "sourceUrl">;
+
+/** Download a link's frozen site tracks and parse them. Never throws: a failed
+ *  download or an unreadable track becomes a warning, and the run carries on
+ *  without it. The transcript track (when one is named) comes back on its own. */
+async function fetchSiteSubs(
+  url: string,
+  site: SiteSubsRun,
+  ctx: RunContext,
+): Promise<{ transcript?: ParsedSiteTrack; others: ParsedSiteTrack[]; warnings: string[] }> {
+  const warnings: string[] = [];
+  const parsed: ParsedSiteTrack[] = [];
+  try {
+    const got = await fetchUrlSubtitles({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, url, tracks: site.fetch });
+    for (const t of got.tracks) {
+      try {
+        parsed.push({ id: t.id, lang: t.lang, kind: t.kind, parsed: parseImportedText(t.ext, t.text) });
+      } catch {
+        warnings.push(`The site's ${t.lang.toUpperCase()} subtitles were empty or unreadable — left out.`);
+      }
+    }
+    for (const f of got.failed) warnings.push(`The site's subtitles "${f.id}" could not be downloaded: ${f.error}`);
+  } catch (e) {
+    warnings.push(`The site's subtitles could not be downloaded: ${String(e).replace(/^Error:\s*/, "")}`);
+  }
+  const transcript = parsed.find((p) => p.id === site.transcriptTrackId);
+  if (site.transcriptTrackId && !transcript) warnings.push("The audio was transcribed instead of using the site's subtitles.");
+  return { transcript, others: parsed.filter((p) => p !== transcript), warnings };
+}
+
+/** A transcription result + the link's site tracks (D86). Shared by the run and
+ *  by a job result ingested after a restart. */
+export async function withSiteTracks(
+  res: BatchResult,
+  url: string,
+  meta: TranscribeRunState["urlMeta"][string] | undefined,
+  ctx: RunContext,
+): Promise<BatchResult> {
+  const site = meta?.siteSubs;
+  if (!site?.fetch.length) return res;
+  const got = await fetchSiteSubs(url, { ...site, transcriptTrackId: null }, ctx);
+  return attachSiteTracks(res, siteTimedTracks(got.others, site.tracks), got.warnings);
+}
+
+/** A link run: the link card's spoken language and reused audio, and — when the
+ *  card picked them — the site's own subtitles: as the transcript (no transcription;
+ *  the audio is still fetched for playback, the video on demand when kept) or next
+ *  to the transcription. `videoPid` = the progress id a kept video downloads under. */
+async function runLink(
+  url: string,
+  common: TranscribeCommon,
+  ctx: RunContext,
+  pid: string | null,
+  epoch: number,
+): Promise<{ res: BatchResult; videoPid?: string }> {
+  const meta = get().urlMeta[url];
+  const site = meta?.siteSubs;
+  const spoken = meta?.spokenLanguage;
+  const opts = common.options ?? {};
+  const translateTo = site && (site.mtTargets.length || opts.translateTo) ? site.mtTargets : opts.translateTo;
+  const options: TranscribeOptions = {
+    ...opts,
+    ...(translateTo ? { translateTo } : {}),
+    ...(meta?.prefetchMediaId ? { prefetchedMediaId: meta.prefetchMediaId } : {}),
+  };
+  const req = {
+    ...common,
+    ...(spoken
+      ? { language: spokenLanguage(spoken), decodeOverrides: applyMultilingual(common.decodeOverrides ?? undefined, spoken, undefined) }
+      : {}),
+  };
+  if (!site?.fetch.length) return { res: await transcribeUrl({ ...req, sourceUrl: url, options }) };
+  const got = await fetchSiteSubs(url, site, ctx);
+  const timed = siteTimedTracks(got.others, site.tracks);
+  if (!got.transcript) {
+    const res = await transcribeUrl({ ...req, sourceUrl: url, options });
+    return { res: attachSiteTracks(res, timed, got.warnings) };
+  }
+  // The transcript is the site's: keep the audio (the check's download, else one now).
+  const warnings = [...got.warnings];
+  let audio = meta?.prefetchMediaId ?? null;
+  if (!audio && epoch === get().epoch) {
+    try {
+      audio = (await fetchUrlAudioOnDemand({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, url, progressId: pid })).mediaId;
+    } catch (e) {
+      warnings.push(`The audio could not be downloaded, so there is no playback: ${String(e).replace(/^Error:\s*/, "")}`);
+    }
+  }
+  const parsed = { ...got.transcript.parsed, language: trackLanguage(got.transcript.lang) };
+  const res = await translateParsed(parsed, { ...options, translateTo: site.mtTargets }, ctx, pid, epoch);
+  let videoPid: string | undefined;
+  if (options.keepVideo && epoch === get().epoch) {
+    videoPid = crypto.randomUUID().replace(/-/g, "");
+    void fetchUrlVideoOnDemand({
+      serverUrl: ctx.serverUrl,
+      backendId: ctx.backendId,
+      url,
+      maxHeight: options.videoMaxHeight ?? null,
+      formatId: options.videoFormat ?? null,
+      progressId: videoPid,
+    }).catch((e) => console.error("on-demand video failed:", e));
+  }
+  return {
+    res: attachSiteTracks(
+      {
+        ...res,
+        ...(meta?.durationSec ? { duration: meta.durationSec } : {}),
+        ...(audio ? { sourceMediaId: audio } : {}),
+        ...(videoPid ? { sourceVideoPending: true } : {}),
+      },
+      timed,
+      warnings,
+    ),
+    videoPid,
+  };
 }
 
 async function pump(
@@ -1573,8 +1706,10 @@ async function pump(
         // server's job row and ours share this id, and a quit in the first
         // second must still find the run at the next launch. Text sources
         // post N chunk requests under one id (translateTextSource) — a
-        // server job row is one chunk, not the run — so they stay out.
-        if (pid && ctx.jobsEnabled && !isText) {
+        // server job row is one chunk, not the run — so they stay out, and
+        // so does a link whose transcript is the site's own subtitle track.
+        const siteTranscript = isUrl && !!get().urlMeta[next.path]?.siteSubs?.transcriptTrackId;
+        if (pid && ctx.jobsEnabled && !isText && !siteTranscript) {
           try {
             await persistRow({
               v: 1,
@@ -1594,11 +1729,15 @@ async function pump(
             console.error("jobs ledger write failed:", e);
           }
         }
-        const res = isText
-          ? await translateTextSource(next.path, options!, ctx, pid, epoch)
-          : isUrl
-            ? await transcribeUrl({ ...common, sourceUrl: next.path })
-            : await transcribeFile({ ...common, filePath: next.path });
+        let videoPid: string | undefined;
+        let res: BatchResult;
+        if (isText) {
+          res = await translateTextSource(next.path, options!, ctx, pid, epoch);
+        } else if (isUrl) {
+          ({ res, videoPid } = await runLink(next.path, common, ctx, pid, epoch));
+        } else {
+          res = await transcribeFile({ ...common, filePath: next.path });
+        }
         if (epoch !== get().epoch) return;
         const tookMs = Date.now() - fileT0;
         patchItem(next.path, { status: "done", result: res, tookMs });
@@ -1612,10 +1751,11 @@ async function pump(
           if (res.sourceMediaId) fetchRunUrlMedia(next.path, rec, ctx, res.sourceMediaId);
           if (res.sourceVideoMediaId) {
             fetchRunUrlVideo(rec, ctx, res.sourceVideoMediaId);
-          } else if (res.sourceVideoPending && pid) {
+          } else if (res.sourceVideoPending && (videoPid ?? pid)) {
             // The transcript came back before the video did: keep polling
-            // the same id (the server leaves the entry to the video task).
-            awaitRunUrlVideo(rec, ctx, pid, epoch);
+            // the same id (the server leaves the entry to the video task),
+            // or the on-demand one a site-subtitle run started.
+            awaitRunUrlVideo(rec, ctx, (videoPid ?? pid)!, epoch);
           }
         } else if (!isText) {
           copyRunMedia(next.path, rec);

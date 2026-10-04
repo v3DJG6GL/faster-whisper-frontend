@@ -1,7 +1,7 @@
 // One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
-  addLanguage, derive, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
+  addLanguage, attachSiteTracks, derive, siteTimedTracks, siteTrackLabel, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "./urlSource";
@@ -171,5 +171,32 @@ describe("tracks and switches", () => {
     const inp = input();
     const [, st] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "generate"));
     expect(derive(inp, st).counter).toEqual({ used: 0, of: 5, existing: 5 });
+  });
+});
+
+describe("site tracks in a result", () => {
+  const parsed = (text: string) => ({ segments: [{ start: 1, end: 2, text }, { text: "untimed" }] });
+  it("ids are <lang>-x-site, made unique by kind, hearing-impaired or a number; untimed cues drop", () => {
+    const timed = siteTimedTracks(
+      [
+        { id: "de", lang: "de", kind: "manual", parsed: parsed("a") },
+        { id: "de-hoh", lang: "de", kind: "manual", parsed: parsed("b") },
+        { id: "de-orig", lang: "de", kind: "auto", parsed: parsed("c") },
+        { id: "de2", lang: "de", kind: "manual", parsed: parsed("d") },
+        { id: "en", lang: "en", kind: "manual", parsed: { segments: [{ text: "x" }] } },
+      ],
+      [tr("de-hoh", "de", { hoh: true, name: "Deutsch (SDH)" })],
+    );
+    expect(timed.map((t) => t.id)).toEqual(["de-x-site", "de-x-site-hoh", "de-x-site-auto", "de-x-site-2"]);
+    expect(timed[1]).toMatchObject({ hoh: true, label: "Deutsch (SDH)", source: "site" });
+    expect(timed[0].cues).toEqual([{ start: 1, end: 2, text: "a" }]);
+    expect(siteTrackLabel(timed[2])).toBe("DE · auto-generated");
+  });
+  it("attaching keeps the result's own tracks and warnings", () => {
+    const res = { text: "", segments: [], warnings: ["w1"] } as never;
+    expect(attachSiteTracks(res, [], [])).toBe(res);
+    const out = attachSiteTracks(res, siteTimedTracks([{ id: "it", lang: "it", kind: "manual", parsed: parsed("c") }]), ["w2"]);
+    expect(out.timedTracks?.map((t) => t.id)).toEqual(["it-x-site"]);
+    expect(out.warnings).toEqual(["w1", "w2"]);
   });
 });
