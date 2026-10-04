@@ -18,7 +18,7 @@ import {
   cpsWarnings, cueGrid, generateExports, prettySpeaker, speakerHex, type ExportFormat, type ExportOptions, exportFileNames,
 } from "@/lib/transcriptExport";
 import {
-  CUE_PRESETS, CUE_RANGES, cueOptionsOf, cueTrackLang, limitsFor, sanitizeCueLimits, type CueLimits,
+  CUE_PRESETS, CUE_RANGES, cueTrackLang, limitsFor, sanitizeCueLimits, type CueLimits, type CueOptions,
   type SubtitleLength,
 } from "@/lib/cueSplit";
 import { contentStates, exportSummary, type ContentItem } from "@/lib/exportSummary";
@@ -48,7 +48,7 @@ const FORMAT_CARDS: { value: ExportFormat; label: string; use: string }[] = [
 
 export function TranscriptExport({
   open, result, editedResult, effWords, path, mediaPath, overlayKey, initialExport, langs, allTracks,
-  visibleTracks, fileRenames, fileColors, speakers, editCount, fill, focus, trBackend, trCaps,
+  visibleTracks, fileRenames, fileColors, speakers, editCount, cueOpts, fill, focus, trBackend, trCaps,
 }: {
   /** The panel shows; closed it renders nothing but keeps its state. */
   open: boolean;
@@ -70,6 +70,8 @@ export function TranscriptExport({
   fileColors: Record<string, number>;
   speakers: string[];
   editCount: number;
+  /** Subtitle length + translation timing from the saved settings. */
+  cueOpts: CueOptions | undefined;
   fill?: boolean;
   focus: boolean;
   trBackend: Backend | undefined;
@@ -178,9 +180,6 @@ export function TranscriptExport({
     setSaveError(null);
     setSaved(false);
   }, [overlayKey, path]);
-  /** Subtitle length + translation timing: read from the saved settings
-   *  (Standard unless changed), like History's quick export. */
-  const cueOpts = useMemo(() => cueOptionsOf(settings.transcribe), [settings.transcribe]);
   /** One source of truth for Save AND the live preview: the display toggles
    *  map onto the generator options (colors on → "line" mode; names/timestamps
    *  gate their prefixes). */

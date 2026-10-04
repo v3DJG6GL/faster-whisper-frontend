@@ -37,7 +37,7 @@ import {
 } from "@/lib/transcribeRun";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
-  DEFAULT_SPEAKER_COLORS, prettySpeaker, speakerColorIndex, speakerOrder,
+  cueGrid, DEFAULT_SPEAKER_COLORS, prettySpeaker, speakerColorIndex, speakerOrder,
 } from "@/lib/transcriptExport";
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
 import { cn } from "@/lib/cn";
@@ -48,6 +48,8 @@ import { releaseMedia } from "@/lib/media";
 import { useTranscriptHistory } from "@/lib/transcriptHistory";
 import { useDisplayToggles } from "@/lib/useDisplayToggles";
 import { TranscriptExport } from "@/components/TranscriptExport";
+import { SubtitleList } from "@/components/SubtitleList";
+import { cueOptionsOf, limitsFor } from "@/lib/cueSplit";
 import type { BatchResult, TranscriptWord } from "@/lib/types";
 
 /** Live retro-translate controls, keyed by record. MODULE scope on purpose:
@@ -625,6 +627,14 @@ export function TranscriptViewer({
   }, [initialExport]);
   // Display toggles — the view IS the export (shared with its Content box).
   const { showTs, showNames, colorize, setShowTs, setShowNames, setColorize } = useDisplayToggles();
+  /** Subtitle length + translation timing: read from the saved settings
+   *  (Standard unless changed), like History's quick export. */
+  const cueOpts = useMemo(() => cueOptionsOf(settings.transcribe), [settings.transcribe]);
+  // Read shows the transcript as Whisper's segments or as the subtitles an
+  // SRT/VTT export writes; Edit always works on segments.
+  const [view, setView] = useState<"segments" | "subtitles">("segments");
+  // "Edit its segment": the segment row to scroll to once Edit has rendered.
+  const [jumpSeg, setJumpSeg] = useState<number | null>(null);
   // Visible language tracks ("orig" + target codes). Empty/absent = all.
   // LOCAL view state (like layout) — persisted but never synced.
   const [viewTracks, setViewTracks] = useState<string[]>(
@@ -862,6 +872,33 @@ export function TranscriptViewer({
   const origVisible = visibleTracks.includes("orig") || editMode;
   const visLangs = useMemo(() => visibleTracks.filter((t) => t !== "orig"), [visibleTracks]);
   const visLangsKey = visLangs.join(","); // stable string for the row memo
+
+  // ── Subtitles view ───────────────────────────────────────────────────────
+  const subtitlesView = view === "subtitles" && !editMode && hasSegments;
+  /** What the Subtitles view shows: the visible tracks + site tracks. */
+  const subTracks = useMemo(
+    () => [...visibleTracks, ...(result.timedTracks ?? []).map((t) => t.id)],
+    [visibleTracks, result.timedTracks],
+  );
+  /** The export's cues — memoized on edits, options and tracks, never on the
+   *  playhead (the list picks its active cue by binary search). */
+  const subGrid = useMemo(
+    () => (subtitlesView
+      ? cueGrid(editedResult, { format: "srt", cues: cueOpts, renames: fileRenames, speakerNames: showNames }, subTracks)
+      : null),
+    [subtitlesView, editedResult, cueOpts, fileRenames, showNames, subTracks],
+  );
+  const onEditSegment = useCallback((seg: number) => {
+    setMode("edit");
+    setJumpSeg(seg);
+  }, []);
+  useEffect(() => {
+    if (jumpSeg === null || !editMode) return;
+    const row = transcriptBoxRef.current?.querySelector<HTMLElement>(`#seg-row-${jumpSeg}`);
+    row?.scrollIntoView({ block: "center" });
+    row?.querySelector<HTMLElement>("[contenteditable]")?.focus();
+    setJumpSeg(null);
+  }, [jumpSeg, editMode]);
   const toggleTrack = (t: string) => {
     const cur = visibleTracks;
     const next = cur.includes(t) ? cur.filter((x) => x !== t) : allTracks.filter((x) => cur.includes(x) || x === t);
@@ -1518,7 +1555,7 @@ export function TranscriptViewer({
     // height, the translate panel above the box moves its flow position
     // and the row-content toggles change its natural height — re-grab and
     // re-measure on each.
-  }, [fill, focus, mode, showFullText, hasSegments, result, showTranslate, visLangsKey, showTs, showNames, colorize]);
+  }, [fill, focus, mode, view, showFullText, hasSegments, result, showTranslate, visLangsKey, showTs, showNames, colorize]);
 
   // Follow: keep the active row centred while playing. Primarily by scrolling
   // the transcript BOX (its own scroll container); only when the box alone
@@ -1766,6 +1803,12 @@ export function TranscriptViewer({
   );
 
   const canSeek = !!audioSrc && !audioBroken;
+  /** The Subtitles option's tooltip: the limits the cues follow. */
+  const subtitlesTitle = (() => {
+    if (!cueOpts) return "As transcribed: one subtitle per segment";
+    const l = limitsFor(cueOpts, result.language);
+    return `${l.lines} × ${l.cpl} characters · up to ${l.maxDur} s · ${cueOpts.timing === "own" ? "own timing per language" : "same timing for every language"}`;
+  })();
 
   // ── render ───────────────────────────────────────────────────────────────
   return (
@@ -2199,6 +2242,16 @@ export function TranscriptViewer({
 
       {reading && hasSegments && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Segmented
+            ariaLabel="Show transcript as"
+            value={editMode ? "segments" : view}
+            onChange={setView}
+            options={[
+              { value: "segments", label: "Segments" },
+              { value: "subtitles", label: "Subtitles", disabled: editMode, title: subtitlesTitle },
+            ]}
+          />
+          <span className="h-5 w-px bg-line" />
           {(
             [
               ["Timestamps", showTs, setShowTs, true],
@@ -2326,6 +2379,7 @@ export function TranscriptViewer({
         fileColors={fileColors}
         speakers={speakers}
         editCount={editCount}
+        cueOpts={cueOpts}
         fill={fill}
         focus={focus}
         trBackend={trBackend}
@@ -2371,7 +2425,23 @@ export function TranscriptViewer({
             // matter how wide the window is.
             className={focus ? "mx-auto max-w-[72ch] px-6 py-10 text-[15.5px] leading-[1.8]" : undefined}
           >
-            {effSegments.slice(0, MAX_SEGMENT_ROWS).map((seg, i) => (
+            {subGrid ? (
+              <SubtitleList
+                result={editedResult}
+                grid={subGrid}
+                tracks={subTracks}
+                cues={cueOpts}
+                curTime={curTime}
+                canSeek={canSeek}
+                seekTo={seekTo}
+                onEditSegment={onEditSegment}
+                showNames={showNames}
+                colorize={colorize}
+                displayName={displayName}
+                colorOf={colorOf}
+                maxRows={MAX_SEGMENT_ROWS}
+              />
+            ) : effSegments.slice(0, MAX_SEGMENT_ROWS).map((seg, i) => (
               <SegmentRow
                 key={i}
                 seg={seg}
