@@ -987,6 +987,19 @@ export interface TranscriptSegment {
   translationsKept?: string[];
 }
 
+/** A subtitle track with its OWN timing (e.g. existing subtitles from the
+ *  link's site): never re-timed onto the transcript's segments. `id` is the
+ *  track id used in export track lists (`<lang>-x-site…`, never an MT code). */
+export interface TimedTrack {
+  id: string;
+  lang: string;
+  label?: string;
+  source: "site";
+  kind: "manual" | "auto";
+  hoh?: boolean;
+  cues: { start: number; end: number; text: string }[];
+}
+
 /** A word-level timestamp from verbose_json's flat `words` list. */
 export interface TranscriptWord {
   word: string;
@@ -1209,6 +1222,9 @@ export interface BatchResult {
   /** Text-source run whose input carried no cue timing — the segment clocks are
    *  synthesized (1 s per line) and must not feed reading-speed checks. */
   timingSynthesized?: boolean;
+  /** Subtitle tracks with their own timing (site subtitles), exported as
+   *  their own tracks and never cut onto the segments. */
+  timedTracks?: TimedTrack[];
   /** The run plan's receipt: every stage with its measured wall time and the
    *  per-language units. The progress entry is gone before the response
    *  arrives, so this is the only complete copy. */
