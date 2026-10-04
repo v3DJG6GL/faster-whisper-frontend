@@ -118,6 +118,7 @@ type ContractRow = {
   label: string;
   state: "always" | "on" | "off" | "na";
   why: string;
+  title?: string;
   onToggle?: () => void;
 };
 
@@ -1910,14 +1911,14 @@ export function TranscriptViewer({
     () => (langs.length ? (exportTracks ?? visibleTracks) : []),
     [langs, exportTracks, visibleTracks],
   );
-  /** Reading-speed scan over every translated cue — memoized so the contract
-   *  rows in JSX don't re-walk the transcript at playhead cadence. */
+  /** Reading-speed scan over every cue the file carries — memoized so the
+   *  contract rows in JSX don't re-walk the transcript at playhead cadence. */
   const cpsWarn = useMemo(
     () =>
-      effTracks.some((t) => t !== "orig") && exportFormat !== "json"
-        ? cpsWarnings(editedResult, effTracks)
+      showExport && isSubtitleFormat(exportFormat)
+        ? cpsWarnings(editedResult, { ...exportOptions, tracks: effTracks })
         : [],
-    [editedResult, effTracks, exportFormat],
+    [showExport, editedResult, effTracks, exportFormat, exportOptions],
   );
 
   /** The "in this file" rows for the selected format (see ContractRow). */
@@ -2057,13 +2058,14 @@ export function TranscriptViewer({
         state: "always",
         why: `machine-translated${result.translation?.model ? ` (${result.translation.model.split("/").pop()})` : ""} · timing from the original`,
       });
-      if (cpsWarn.length) {
-        rows.push({
-          label: "Reading speed",
-          state: "na",
-          why: `${cpsWarn.length} translated cue${cpsWarn.length === 1 ? "" : "s"} exceed 20 chars/sec (language expansion) — flagged, never reflowed`,
-        });
-      }
+    }
+    if (cpsWarn.length) {
+      rows.push({
+        label: "Reading speed",
+        state: "na",
+        why: `${cpsWarn.length} subtitle${cpsWarn.length === 1 ? "" : "s"} too fast`,
+        title: "Characters per second above the limit for the language — flagged, never reflowed",
+      });
     }
     if (exportFormat === "json" && langs.length) {
       rows.push({
@@ -2114,7 +2116,7 @@ export function TranscriptViewer({
     const opts = exportOpts();
     return mediaExportPlan({
       choice: mediaChoice, container, subtitleMode, format: exportFormat,
-      textFileNames: exportFileNames(opts),
+      textFileNames: exportFileNames(opts, editedResult.timedTracks),
       audioExt,
       tracks: effTracks.length ? effTracks : ["orig"],
       origLang: trackLang(editedResult, "orig"),
@@ -3134,6 +3136,7 @@ export function TranscriptViewer({
               ) : (
                 <div
                   key={r.label}
+                  title={r.title}
                   className="flex w-full items-center gap-2.5 py-1.5 text-[12.5px]"
                 >
                   {inner}

@@ -167,7 +167,8 @@ interface Tok {
 }
 
 /** Word timings mapped onto char spans of `text`; null when the words don't
- *  line up with the text (the segment then stays whole). */
+ *  line up with the text (the segment then stays whole). Each span runs to the
+ *  next word, so punctuation between words never falls out of a cue. */
 function tokensOf(text: string, words: { word: string; start: number; end: number }[]): Tok[] | null {
   if (!words.length) return null;
   const out: Tok[] = [];
@@ -178,10 +179,14 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
     const at = text.indexOf(tw, cur);
     // Only whitespace/punctuation may sit between consecutive words.
     if (at < 0 || !/^[\s\p{P}]*$/u.test(text.slice(cur, at))) return null;
+    if (out.length) out[out.length - 1].to = at;
     out.push({ from: at, to: at + tw.length, s: w.start, e: Math.max(w.start, w.end) });
     cur = at + tw.length;
   }
-  return out.length ? out : null;
+  // Text the words don't reach (a word timed past the segment) = mismatch.
+  if (!out.length || !/^[\s\p{P}]*$/u.test(text.slice(cur))) return null;
+  out[out.length - 1].to = text.length;
+  return out;
 }
 
 /** Evenly spread token times over [a, b] by character share — for text that
@@ -206,12 +211,15 @@ function spreadTokens(text: string, a: number, b: number): Tok[] {
 
 const sliceOf = (text: string, ts: Tok[]) => text.slice(ts[0].from, ts[ts.length - 1].to).trim();
 
-function fits(text: string, ts: Tok[], L: CueLimits): boolean {
-  return sliceOf(text, ts).length <= L.cpl * L.lines && ts[ts.length - 1].e - ts[0].s <= L.maxDur;
+/** Limits of one segment's text: `reserve` = chars a "Name: " prefix takes. */
+type Budget = CueLimits & { reserve: number };
+
+function fits(text: string, ts: Tok[], L: Budget): boolean {
+  return sliceOf(text, ts).length + L.reserve <= L.cpl * L.lines && ts[ts.length - 1].e - ts[0].s <= L.maxDur;
 }
 
 /** Recursive best-gap split until every piece fits. */
-function splitTokens(text: string, ts: Tok[], L: CueLimits): Tok[][] {
+function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
   if (ts.length < 2 || fits(text, ts, L)) return [ts];
   const total = sliceOf(text, ts).length || 1;
   let best = -Infinity;
@@ -221,7 +229,7 @@ function splitTokens(text: string, ts: Tok[], L: CueLimits): Tok[][] {
     const left = ts.slice(0, i);
     const right = ts.slice(i);
     const gap = ts[i].s - ts[i - 1].e;
-    let s = breakScore(text.slice(ts[i - 1].from, ts[i - 1].to), text.slice(ts[i].from, ts[i].to));
+    let s = breakScore(text.slice(ts[i - 1].from, ts[i - 1].to).trim(), text.slice(ts[i].from, ts[i].to).trim());
     s += gap >= 0.5 ? 150 : 120 * Math.max(gap, 0);
     s -= (30 * Math.abs(sliceOf(text, left).length - sliceOf(text, right).length)) / total;
     if (left[left.length - 1].e - left[0].s < 1 || right[right.length - 1].e - right[0].s < 1) s -= 60;
@@ -235,7 +243,7 @@ function splitTokens(text: string, ts: Tok[], L: CueLimits): Tok[][] {
 }
 
 /** A one-word or too-short piece joins its shorter neighbour when the merge still fits. */
-function mergeOrphans(text: string, groups: Tok[][], L: CueLimits): Tok[][] {
+function mergeOrphans(text: string, groups: Tok[][], L: Budget): Tok[][] {
   const out = groups.slice();
   for (let i = 0; i < out.length && out.length > 1; i++) {
     const g = out[i];
@@ -261,7 +269,7 @@ function timedPieces(
   ts: Tok[],
   start: number,
   end: number,
-  L: CueLimits,
+  L: Budget,
 ): { start: number; end: number; text: string }[] {
   const groups = mergeOrphans(text, splitTokens(text, ts, L), L);
   const out = groups.map((g, k) => ({
@@ -366,8 +374,14 @@ export function wrapLines(text: string, cpl: number, lines: number, firstReserve
 const trackLang = (track: string, origLang?: string) => (track === "orig" ? origLang : track);
 
 /** Cues for the export/viewer. `tracks` = "orig" + translation codes + timed-track
- *  ids; `o` undefined = one cue per segment (as transcribed). */
-export function buildCues(result: BatchResult, o: CueOptions | undefined, tracks: string[]): CueGrid {
+ *  ids; `o` undefined = one cue per segment (as transcribed). `reserve(seg)` =
+ *  chars a speaker-name prefix will take on that segment's cues. */
+export function buildCues(
+  result: BatchResult,
+  o: CueOptions | undefined,
+  tracks: string[],
+  reserve: (seg: TranscriptSegment) => number = () => 0,
+): CueGrid {
   const segs = result.segments ?? [];
   const words = result.words ?? [];
   const ranges = o && words.length && !result.timingSynthesized ? segmentWordRanges(segs, words) : null;
@@ -382,14 +396,14 @@ export function buildCues(result: BatchResult, o: CueOptions | undefined, tracks
   segs.forEach((seg, si) => {
     const toks = ranges && L ? tokensOf(seg.text, words.slice(ranges[si][0], ranges[si][1])) : null;
     const pieces = toks && L
-      ? timedPieces(seg.text, toks, seg.start, seg.end, L)
+      ? timedPieces(seg.text, toks, seg.start, seg.end, { ...L, reserve: reserve(seg) })
       : [{ start: seg.start, end: seg.end, text: seg.text.trim() }];
     const mine: Cue[] = pieces.map((p) => ({ seg: si, ...p, speaker: seg.speaker, tr: {} }));
     for (const lang of mtLangs) {
       const t = trText(seg, lang);
       if (t === null) continue;
       if (ownMt) {
-        const LL = limitsFor(o!, lang);
+        const LL = { ...limitsFor(o!, lang), reserve: reserve(seg) };
         const parts = toks ? timedPieces(t, spreadTokens(t, seg.start, seg.end), seg.start, seg.end, LL) : [
           { start: seg.start, end: seg.end, text: t },
         ];

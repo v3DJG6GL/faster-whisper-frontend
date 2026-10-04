@@ -3,6 +3,7 @@
 // in plain node. The React side (TranscriptViewer) wires these to the
 // dialogs, the Tauri commands and the record.
 
+import { cueTrackLang } from "./cueSplit";
 import { languageLabel as baseLanguageLabel } from "./languages";
 import { generateExports, type ExportOptions } from "./transcriptExport";
 import type { BatchResult, Capabilities } from "./types";
@@ -85,9 +86,10 @@ export function languageLabel(code: string): string {
 }
 
 /** The language code a track is filed under: the result's language for
- *  the original ("und" when unknown), the target code otherwise. */
+ *  the original ("und" when unknown), a site track's language, the target
+ *  code otherwise. */
 export function trackLang(result: BatchResult, track: string): string {
-  return track === "orig" ? (result.language ?? "").trim() || "und" : track;
+  return (cueTrackLang(result, track) ?? "").trim() || "und";
 }
 
 /** One single-language SRT per chosen track, generated exactly as the

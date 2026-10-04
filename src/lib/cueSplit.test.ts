@@ -101,6 +101,22 @@ describe("buildCues", () => {
     mismatch.words![3] = { word: " banana", start: 1, end: 1.2 };
     expect(buildCues(mismatch, STD, ["orig"]).cues).toHaveLength(1);
     expect(buildCues({ ...seg1(LONG, 0, 20), timingSynthesized: true }, STD, ["orig"]).cues).toHaveLength(1);
+    // The last words timed past the segment (another segment's range): never cut text off.
+    const short = seg1(LONG, 0, 20);
+    short.words = short.words!.slice(0, -2);
+    expect(buildCues(short, STD, ["orig"]).cues.map((c) => c.text)).toEqual([LONG]);
+  });
+
+  it("punctuation outside the word tokens stays in the cue text", () => {
+    const r = seg1(LONG, 0, 20);
+    r.words = r.words!.map((w) => ({ ...w, word: w.word.replace(/[.,]$/, "") }));
+    expect(buildCues(r, STD, ["orig"]).cues.map((c) => c.text).join(" ")).toBe(LONG);
+  });
+
+  it("a name prefix counts against the cue's room", () => {
+    const text = "The scientists who measure it every summer say the pace is still accelerating.";
+    expect(buildCues(seg1(text, 0, 6), STD, ["orig"]).cues).toHaveLength(1);
+    expect(buildCues(seg1(text, 0, 6), STD, ["orig"], () => 11).cues.length).toBeGreaterThan(1);
   });
 
   it("as transcribed (no options) = one cue per segment", () => {

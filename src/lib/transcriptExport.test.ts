@@ -333,14 +333,14 @@ describe("generateExports / filenames / cps", () => {
     expect(exportStemSuffix(["orig", "de"])).toBe("");
     expect(exportStemSuffix(undefined)).toBe("");
   });
-  it("cps flags only translated cues over 20 chars/sec", () => {
-    const slow = cpsWarnings(TRANSLATED, ["orig", "de"]);
+  it("cps flags cues over 20 chars/sec without cue options", () => {
+    const slow = cpsWarnings(TRANSLATED, { tracks: ["orig", "de"] });
     expect(slow).toEqual([]); // both cues are comfortably under 20 cps
     const fast: BatchResult = {
       ...TRANSLATED,
       segments: [{ start: 0, end: 1, text: "Hi.", translations: { de: "x".repeat(30) } }],
     };
-    const warns = cpsWarnings(fast, ["de"]);
+    const warns = cpsWarnings(fast, { tracks: ["de"] });
     expect(warns).toHaveLength(1);
     expect(warns[0]).toMatchObject({ lang: "de", index: 0, cps: 30 });
   });
@@ -430,7 +430,7 @@ describe("kept-original translations (quality guard)", () => {
         i === 1 ? { ...s, translations: { de: "x".repeat(200) } } : s,
       ),
     };
-    expect(cpsWarnings(long, ["de"])).toEqual([]);
+    expect(cpsWarnings(long, { tracks: ["de"] })).toEqual([]);
   });
 
   it("cps warnings are silent when the source carried no timing (synthesized 1 s clocks)", () => {
@@ -439,7 +439,7 @@ describe("kept-original translations (quality guard)", () => {
       timingSynthesized: true,
       segments: [{ start: 0, end: 1, text: "Hello there.", translations: { de: "x".repeat(60) } }],
     };
-    expect(cpsWarnings(synth, ["de"])).toEqual([]);
+    expect(cpsWarnings(synth, { tracks: ["de"] })).toEqual([]);
   });
 });
 
@@ -604,5 +604,130 @@ describe("lrc word tags", () => {
     const out = generateExport(r, { format: "lrc", wordTimestamps: true });
     expect(out.split("<00:01.00>").length - 1).toBe(1);
     expect(out).toContain("[00:01.00]<00:01.00>b");
+  });
+});
+
+// ── subtitle cues (D83/D84) ─────────────────────────────────────────────────
+
+const GLACIER =
+  "The glacier behind me has lost almost forty percent of its volume since 1980. " +
+  "The scientists who measure it every summer say the pace is still accelerating.";
+const GLACIER_WORDS = GLACIER.split(" ");
+/** One 12 s diarized segment with evenly spread word timings and two targets. */
+const CUED: BatchResult = {
+  text: GLACIER,
+  language: "en",
+  speakers: ["SPEAKER_00"],
+  segments: [{
+    start: 10, end: 22, text: " " + GLACIER, speaker: "SPEAKER_00",
+    translations: {
+      de: "Der Gletscher hinter mir hat seit 1980 fast vierzig Prozent seines Volumens verloren. " +
+        "Die Forscher, die ihn jeden Sommer messen, sagen, dass es immer schneller geht.",
+      fr: "Le glacier derrière moi a perdu près de quarante pour cent de son volume depuis 1980. " +
+        "Les scientifiques qui le mesurent chaque été disent que le rythme s'accélère encore.",
+    },
+  }],
+  words: GLACIER_WORDS.map((w, i) => ({ word: " " + w, start: 10 + i * 0.44, end: 10 + i * 0.44 + 0.4 })),
+};
+const STANDARD = { length: "standard", timing: "same" } as const;
+
+describe("subtitle cues", () => {
+  it("no cue options ⇒ one cue per segment, unwrapped (the pre-cue output)", () => {
+    const out = generateExport(CUED, { format: "srt", tracks: ["orig", "de"] });
+    expect(out.split("\n\n").filter(Boolean)).toHaveLength(1);
+    expect(out).toContain(`Speaker 1: ${GLACIER}`);
+  });
+
+  it("srt: split cues, wrapped lines inside the <font> span, [DE]/[FR] tags kept first", () => {
+    const out = generateExport(CUED, {
+      format: "srt", tracks: ["orig", "de", "fr"], speakerColors: "line", cues: STANDARD,
+    });
+    expect(out.startsWith(
+      "1\n00:00:10,000 --> 00:00:13,080\n" +
+      '<font color="#ff9e2c">Speaker 1: The glacier\nbehind me has lost almost</font>\n' +
+      '<font color="#ff9e2c">Speaker 1: [DE] Der Gletscher\nhinter mir hat seit 1980</font>\n' +
+      '<font color="#ff9e2c">Speaker 1: [FR] Le glacier\nderrière moi a perdu près</font>\n\n' +
+      "2\n00:00:13,080 --> 00:00:16,160\n" +
+      '<font color="#ff9e2c">Speaker 1: forty percent\nof its volume since 1980.</font>\n' +
+      '<font color="#ff9e2c">Speaker 1: [DE] fast vierzig\nProzent seines Volumens verloren.</font>\n',
+    )).toBe(true);
+    for (const cue of out.trim().split("\n\n")) {
+      const lines = cue.split("\n").slice(2).map((l) => l.replace(/<[^>]+>/g, ""));
+      for (const l of lines) expect(l.length).toBeLessThanOrEqual(42);
+    }
+  });
+
+  it("vtt: the wrapped line break stays inside the <c> span", () => {
+    const out = generateExport(CUED, {
+      format: "vtt", tracks: ["orig", "de"], speakerColors: "line", cues: STANDARD,
+    });
+    expect(out).toContain(
+      "00:00:10.000 --> 00:00:13.080\n" +
+      "<c.spk1>Speaker 1: The glacier\nbehind me has lost almost</c>\n" +
+      "<c.mt.spk1>Speaker 1: Der Gletscher\nhinter mir hat seit 1980</c>\n",
+    );
+  });
+
+  it("own timing: stem.srt + stem.de.srt, each language on its own cues", () => {
+    const files = generateExports(CUED, {
+      format: "srt", tracks: ["orig", "de"], cues: { ...STANDARD, timing: "own" },
+    });
+    expect(files.map((f) => f.name("stem"))).toEqual(["stem.srt", "stem.de.srt"]);
+    expect(files[0].content).not.toContain("Gletscher");
+    expect(files[1].content).not.toContain("glacier");
+    expect(files[1].content).toMatch(/^1\n00:00:10,000 --> /);
+    expect(files[1].content).toContain("--> 00:00:22,000\n");
+    expect(exportFileNames({ format: "srt", tracks: ["orig", "de"], cues: { ...STANDARD, timing: "own" } })
+      .map((n) => n("stem"))).toEqual(["stem.srt", "stem.de.srt"]);
+  });
+
+  it("lrc names stay byte-identical with cue options", () => {
+    const names = exportFileNames({ format: "lrc", tracks: ["orig", "de"], cues: { ...STANDARD, timing: "own" } });
+    expect(names.map((n) => n("talk"))).toEqual(["talk.lrc", "talk.de.lrc"]);
+  });
+
+  it("a site track gets its own file, on its own cues, in every format", () => {
+    const site: BatchResult = {
+      ...CUED,
+      timedTracks: [{
+        id: "de-x-site", lang: "de", source: "site", kind: "manual",
+        cues: [{ start: 10.5, end: 12, text: "Hallo zusammen." }, { start: 12.5, end: 14, text: "Grüezi." }],
+      }],
+    };
+    const srt = generateExports(site, { format: "srt", tracks: ["orig", "fr", "de-x-site"] });
+    expect(srt.map((f) => f.name("s"))).toEqual(["s.srt", "s.de.srt"]);
+    expect(srt[1].content).toBe("1\n00:00:10,500 --> 00:00:12,000\nHallo zusammen.\n\n2\n00:00:12,500 --> 00:00:14,000\nGrüezi.\n");
+    expect(srt[0].content).toContain("Le glacier");
+    // A machine translation into the same language keeps the plain name.
+    expect(exportFileNames({ format: "vtt", tracks: ["de", "de-x-site"] }, site.timedTracks).map((n) => n("s")))
+      .toEqual(["s.de.vtt", "s.de-x-site.vtt"]);
+    const txt = generateExports(site, { format: "txt", tracks: ["de-x-site"] });
+    expect(txt[0].content).toBe("Hallo zusammen. Grüezi.\n");
+    const json = JSON.parse(generateExport(site, { format: "json" }));
+    expect(json.timedTracks[0]).toEqual({
+      id: "de-x-site", lang: "de", source: "site", kind: "manual",
+      cues: [{ start: 10.5, end: 12, text: "Hallo zusammen." }, { start: 12.5, end: 14, text: "Grüezi." }],
+    });
+  });
+
+  it("json strips control characters from timed tracks", () => {
+    const evil: BatchResult = {
+      ...RESULT,
+      timedTracks: [{ id: "de‮", lang: "de", label: "x‮y", source: "site", kind: "auto",
+        cues: [{ start: 0, end: 1, text: "a‮b" }] }],
+    };
+    const j = JSON.parse(generateExport(evil, { format: "json" }));
+    expect(j.timedTracks[0]).toMatchObject({ id: "de", label: "xy", cues: [{ text: "ab" }] });
+  });
+
+  it("cps runs on the cues, original included, against each language's limit", () => {
+    const fast: BatchResult = {
+      text: "x", language: "de",
+      segments: [{ start: 0, end: 1, text: "Achtzehn Zeichen!!", translations: { en: "Nineteen chars here" } }],
+    };
+    // 18 chars/s: over German's 17, under English's 20.
+    expect(cpsWarnings(fast, { tracks: ["orig", "en"], cues: STANDARD })).toEqual([{ lang: "orig", index: 0, cps: 18 }]);
+    expect(cpsWarnings(fast, { tracks: ["orig", "en"] })).toEqual([]);
+    expect(cpsWarnings(CUED, { tracks: ["orig", "de", "fr"], cues: STANDARD })).toEqual([]);
   });
 });
