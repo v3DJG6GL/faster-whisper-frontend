@@ -37,6 +37,7 @@ import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { urlHost } from "@/lib/urlSource";
 import { exportStem, isVideoSourcePath } from "@/lib/mediaExport";
 import { cueOptionsOf } from "@/lib/cueSplit";
+import { displayToggles } from "@/lib/useDisplayToggles";
 import { cn } from "@/lib/cn";
 import { releaseMedia } from "@/lib/media";
 
@@ -469,21 +470,21 @@ export default function History() {
         ...(rec.result?.timedTracks ?? []).map((tt) => tt.id),
       ]),
     );
+    // The viewer's display toggles (legacy speakerColorMode migration included).
+    const view = displayToggles(t);
     try {
       const files = generateExports(recordEditedResult(rec), {
         format,
         renames: rec.renames ?? {},
-        // Match TranscriptViewer's legacy migration: the modern keys fall back
-        // through the legacy `speakerColorMode` when absent.
-        speakerColors: order.length && (t.colorizeSpeakers ?? (t.speakerColorMode ? t.speakerColorMode !== "off" : true)) ? "line" : "off",
-        speakerNames: t.showSpeakerNames ?? (t.speakerColorMode !== "line-only"),
-        timestamps: t.showTimestamps ?? false,
+        speakerColors: order.length && view.colorize ? "line" : "off",
+        speakerNames: view.showNames,
+        timestamps: view.showTs,
         // THE resolver (viewer + exports) — an open-coded modulo here lacked its
         // range guards and could disagree with the viewer on a persisted index.
         colors: Object.fromEntries(
           Object.keys(rec.speakerColors ?? {}).map((l) => [l, speakerHex(order, rec.speakerColors, l)]),
         ),
-        wordTimestamps: t.wordTimestamps ?? false,
+        wordTimestamps: view.wordTs,
         cues: cueOptionsOf(t),
         ...(recLangs.length ? { tracks: ["orig", ...recLangs] } : {}),
       });

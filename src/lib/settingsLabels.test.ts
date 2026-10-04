@@ -1,9 +1,9 @@
 // Drift guard for manifest labels that render as STRING LITERALS on screens
 // which keep their own bespoke controls (Transcribe.tsx / TranscriptViewer /
-// the Audio-storage block). Settings.tsx rows reference `SETTING.x.label`
-// directly, so they can't drift; these literals could — this test pins each
-// one to the manifest by reading the source. Renaming either side without
-// the other fails here.
+// TranscriptExport / the Audio-storage block). Settings.tsx rows reference
+// `SETTING.x.label` directly, so they can't drift; these literals could — this
+// test pins each one to the manifest by reading the source. Renaming either
+// side without the other fails here.
 
 import { describe, expect, it } from "vitest";
 import { SETTING } from "./settingsManifest";
@@ -12,11 +12,13 @@ import { SETTING } from "./settingsManifest";
 import transcribeSrc from "../screens/Transcribe.tsx?raw";
 import settingsSrc from "../screens/Settings.tsx?raw";
 import viewerSrc from "../components/TranscriptViewer.tsx?raw";
+import exportSrc from "../components/TranscriptExport.tsx?raw";
 
 const SOURCES: Record<string, string> = {
   "screens/Transcribe.tsx": transcribeSrc,
   "screens/Settings.tsx": settingsSrc,
   "components/TranscriptViewer.tsx": viewerSrc,
+  "components/TranscriptExport.tsx": exportSrc,
 };
 const src = (p: string) => SOURCES[p];
 
@@ -30,8 +32,8 @@ describe("manifest labels match the screens' literal labels", () => {
     ["components/TranscriptViewer.tsx", "showTimestamps"],
     ["components/TranscriptViewer.tsx", "showSpeakerNames"],
     ["components/TranscriptViewer.tsx", "colorizeSpeakers"],
-    ["components/TranscriptViewer.tsx", "wordTimestamps"],
-    ["components/TranscriptViewer.tsx", "exportFormat"], // aria-label on the bespoke radiogroup
+    ["components/TranscriptExport.tsx", "wordTimestamps"],
+    ["components/TranscriptExport.tsx", "exportFormat"], // aria-label on the bespoke radiogroup
     ["screens/Settings.tsx", "audioFolder"], // bespoke Audio-storage block heading
   ];
   for (const [file, id] of cases) {

@@ -20,6 +20,10 @@ export function isSubtitleFormat(format: string): format is SubtitleFormat {
   return (SUBTITLE_FORMATS as readonly string[]).includes(format);
 }
 
+export function basename(path: string): string {
+  return path.split(/[\\/]/).pop() || path;
+}
+
 /** Video containers the picker accepts and the packaging route can read. */
 export const VIDEO_SOURCE_EXTS = ["mp4", "mkv", "webm", "mov", "m4v"] as const;
 
