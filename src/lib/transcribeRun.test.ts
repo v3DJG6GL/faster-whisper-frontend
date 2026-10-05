@@ -18,7 +18,7 @@ import {
   railIndex, railOf, railStages, selectPath, setRename, skippedStages,
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
-  cancelRun, retryFile, runBadgeFraction, runTotals, settledPanelItem,
+  cancelRun, retryFile, retryRunVideo, runBadgeFraction, runTotals, settledPanelItem,
 } from "./transcribeRun";
 import type { PlanStage } from "./types";
 import type { QueueItem } from "./transcribeRun";
@@ -840,6 +840,28 @@ describe("keep_video: the secondary download folds into the Download row's meta"
     } finally {
       vi.useRealTimers();
       useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
+    }
+  });
+});
+
+describe("an on-demand video that fails outright shows on the Video row", () => {
+  it("retryRunVideo queues the row, then marks it failed with the request's error", async () => {
+    vi.stubGlobal("window", { setInterval: () => 0, clearInterval: () => {} });
+    const url = "https://youtu.be/v";
+    try {
+      openHistoryRecord({
+        schemaVersion: 1, kind: "url", id: "rec-v", createdAt: "2026-10-05T12:00:00Z",
+        sourcePath: url, sourceName: "Talk", status: "done",
+      });
+      useTranscribeRun.setState({ stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+      retryRunVideo(url, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
+      // Outside Tauri the request rejects at once — the run used to only log that.
+      await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
+      expect(useTranscribeRun.getState().stageMeta.downloading?.video?.error).toBe("Video download requires the desktop app.");
+    } finally {
+      vi.unstubAllGlobals();
+      useTranscribeRun.setState({ stageMeta: {} });
     }
   });
 });

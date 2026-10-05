@@ -867,11 +867,9 @@ export function retryRunVideo(path: string, ctx: RunContext): void {
   // the panel may show an older same-link one.
   const open = s.openRecordId ? registered(s.openRecordId) : undefined;
   const rec = open && open.sourcePath === path ? open : registered(path);
-  const meta = s.urlMeta[path];
   if (!rec || !s.stageMeta.downloading?.video) return;
   const epoch = s.epoch;
   const pid = crypto.randomUUID().replace(/-/g, "");
-  const st = useApp.getState().settings.transcribe;
   set((st2) => ({
     stageMeta: {
       ...st2.stageMeta,
@@ -884,12 +882,26 @@ export function retryRunVideo(path: string, ctx: RunContext): void {
     },
   }));
   awaitRunUrlVideo(rec, ctx, pid, epoch);
+  startOnDemandVideo(path, ctx, pid, epoch);
+}
+
+/** The video height a link downloads at: the link card's pick, else the Settings default. */
+function videoMaxHeightOf(url: string): number | null {
+  const meta = get().urlMeta[url];
+  return meta?.videoMaxHeight !== undefined
+    ? meta.videoMaxHeight
+    : useApp.getState().settings.transcribe?.urlVideoMaxHeight ?? null;
+}
+
+/** Fetch a link's video on demand under `pid` (awaitRunUrlVideo folds its progress into the
+ *  Video row); a request that fails outright marks the Video row failed. */
+function startOnDemandVideo(url: string, ctx: RunContext, pid: string, epoch: number): void {
   void fetchUrlVideoOnDemand({
     serverUrl: ctx.serverUrl,
     backendId: ctx.backendId,
-    url: path,
-    maxHeight: meta?.videoMaxHeight !== undefined ? meta.videoMaxHeight : st?.urlVideoMaxHeight ?? null,
-    formatId: meta?.videoFormat ?? null,
+    url,
+    maxHeight: videoMaxHeightOf(url),
+    formatId: get().urlMeta[url]?.videoFormat ?? null,
     progressId: pid,
   }).catch((e) => {
     if (epoch !== get().epoch) return;
@@ -1559,14 +1571,7 @@ async function runLink(
   let videoPid: string | undefined;
   if (options.keepVideo && epoch === get().epoch) {
     videoPid = crypto.randomUUID().replace(/-/g, "");
-    void fetchUrlVideoOnDemand({
-      serverUrl: ctx.serverUrl,
-      backendId: ctx.backendId,
-      url,
-      maxHeight: options.videoMaxHeight ?? null,
-      formatId: options.videoFormat ?? null,
-      progressId: videoPid,
-    }).catch((e) => console.error("on-demand video failed:", e));
+    startOnDemandVideo(url, ctx, videoPid, epoch);
   }
   return {
     res: attachSiteTracks(
@@ -1678,13 +1683,10 @@ async function pump(
           const st = useApp.getState().settings.transcribe;
           const keepVideo = meta?.keepVideo ?? st?.keepUrlVideoCopies ?? true;
           if (keepVideo) {
-            const videoMaxHeight = meta?.videoMaxHeight !== undefined
-              ? meta.videoMaxHeight
-              : st?.urlVideoMaxHeight ?? null;
             itemOptions = {
               ...(options ?? {}),
               keepVideo: true,
-              videoMaxHeight,
+              videoMaxHeight: videoMaxHeightOf(next.path),
               ...(meta?.videoFormat ? { videoFormat: meta.videoFormat } : {}),
             };
           }
