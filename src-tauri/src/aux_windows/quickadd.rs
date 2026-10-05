@@ -737,7 +737,7 @@ pub(crate) mod win_seed {
                 }
                 if Instant::now() >= deadline {
                     // The one line that distinguishes "the copy never landed" (this)
-                    // from "the reader gave up" (commands.rs's fetch log) in the field.
+                    // from "the reader gave up" (commands/inject.rs's fetch log) in the field.
                     tracing::info!(
                         "[quickadd-seed] no clipboard bump within {}ms (remote={}); treating as no selection",
                         injected_at.elapsed().as_millis(),

@@ -318,7 +318,7 @@ pub fn typing_segments(text: &str, max_chars: usize) -> Vec<TypeSeg<'_>> {
 /// It stays set while a read that outlived its 400ms cap is STILL running on its blocking thread —
 /// which on Windows means that thread still holds (or is waiting on) `OpenClipboard`. Any write we
 /// make meanwhile either fails outright or, worse, races the stuck reader, so every write path asks
-/// `wait_clip_read_idle` first. Lives here (not in commands.rs) so the writers can see it.
+/// `wait_clip_read_idle` first. Lives here (not in commands/) so the writers can see it.
 pub(crate) static CLIP_READ_BUSY: AtomicBool = AtomicBool::new(false);
 
 fn clip_read_busy() -> bool {
@@ -707,7 +707,7 @@ pub fn read_primary_selection() -> Option<String> {
 
 /// Put `text` on the clipboard. Used by the Wayland paste path, which sets the clipboard
 /// here and synthesizes Ctrl+V via the portal. The prior clipboard is captured separately
-/// and TIME-BOUNDED by the caller (read_selection_bounded — see commands.rs), so this no
+/// and TIME-BOUNDED by the caller (read_selection_bounded — see commands/mod.rs), so this no
 /// longer does the unbounded get_text() that could wedge on a dead clipboard owner.
 ///
 /// With clipboard privacy on (Linux), the write goes through the live owner instead: the history

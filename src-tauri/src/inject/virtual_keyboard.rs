@@ -367,7 +367,7 @@ mod imp {
                 // Same mid-typing cancellation as the portal path: this loop sleeps between every
                 // key, so a long transcript otherwise keeps going long after the user stopped.
                 // `Ok(Landed::Yes)` whether or not a key went out: Ok never reaches the portal
-                // fallback in commands.rs (only an Err with `after_typing: false` does), so the
+                // fallback in commands/inject.rs (only an Err with `after_typing: false` does), so the
                 // landed prefix is never re-typed; and a user cancel is not a transport failure,
                 // so run_thread must not tear the connection down for it (inject.rs /
                 // wayland.rs report the same event the same way). The keymap build, the
