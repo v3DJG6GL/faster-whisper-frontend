@@ -1,12 +1,11 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useSearchParams } from "react-router-dom";
-import { Server, Pencil, Copy, Trash2, Plug, Loader2, Info } from "lucide-react";
+import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, IconButton, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, SetSummary, StatusDot, TextInput } from "@/components/ui";
+import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, SetSummary, StatusDot, TextInput } from "@/components/ui";
 import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "@/components/OverrideField";
-import { ServerInfoPanel } from "@/components/ServerInfoPanel";
-import { capturesOn } from "@/lib/serverInfo";
+import { ServerInfoButton, ServerInfoPanel } from "@/components/ServerInfoPanel";
 import { backendChips } from "@/lib/backendChips";
 import { countSet } from "@/lib/decodeKeys";
 import { envDesc } from "@/lib/settingDesc";
@@ -29,8 +28,9 @@ import { ALL_CATEGORIES, migrateBlob } from "@/lib/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
 import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
-import { ownProp } from "@/lib/own";
+import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
+import { refreshCaps } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { RestoreFromServer } from "./SettingsSync";
 import { relTime } from "@/lib/format";
@@ -328,23 +328,7 @@ function Editor({
                 ? "Error"
                 : "Untested"}
           </span>
-          {caps?.server_info && (
-            <IconButton
-              label="What this server allows and keeps"
-              onClick={() => setShowInfo((v) => !v)}
-              expanded={showInfo}
-              controls={infoId}
-              className="relative"
-            >
-              <Info className="size-4" />
-              {capturesOn(caps.server_info) && (
-                <span
-                  className="absolute right-1 top-1 size-[7px] rounded-full bg-rec shadow-[0_0_0_2px_var(--c-surface-2)]"
-                  aria-hidden
-                />
-              )}
-            </IconButton>
-          )}
+          <ServerInfoButton info={caps?.server_info} open={showInfo} onToggle={() => setShowInfo((v) => !v)} controls={infoId} />
         </div>
         {showInfo && caps?.server_info && <ServerInfoPanel id={infoId} info={caps.server_info} reportApp={reportApp} />}
       </div>
@@ -918,6 +902,17 @@ function RestoreOffer({
 export default function Backends() {
   const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
+  const caps = useApp((s) => s.caps);
+  const reportApp = useApp((s) => s.settings.recording.reportTargetApp);
+  // The list row's ⓘ: one backend's panel open at a time.
+  const [infoOpen, setInfoOpen] = useState<string | null>(null);
+  const infoBase = useId();
+  // A row tested OK shows its ⓘ live: fetch the caps a list row never otherwise asks for.
+  useEffect(() => {
+    for (const b of backends) {
+      if (ownProp(connections, b.id)?.ok && !hasOwn(caps, b.id)) void refreshCaps(b);
+    }
+  }, [backends, connections, caps]);
   // Subscribed, not read imperatively, so the card re-renders when an override changes.
   const urlOverrides = useApp((s) => s.settings.sync?.urlOverrides);
   /** Where requests for this backend ACTUALLY go — mirrors `effectiveServerUrl`, which the Test
@@ -1086,87 +1081,100 @@ export default function Backends() {
               const eff = effectiveUrl(b);
               const auth = authorityOf(eff);
               return (
-                <Card key={b.id} className="flex items-center gap-4 p-5">
-                  <ReorderControls
-                    canUp={i > 0}
-                    canDown={i < backends.length - 1}
-                    onUp={() => moveBackend(b.id, "up")}
-                    onDown={() => moveBackend(b.id, "down")}
-                  />
-                  <div className="grid size-10 place-items-center rounded-xl bg-surface-2 text-accent">
-                    <Server className="size-[18px]" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-[14px] font-semibold text-text" title={safeDisplayText(b.name, 200)}>
-                        {/* Sanitized like the address line below it, and for the same reason: a
-                            rename raises no security change, so a name arrives on this card from
-                            an unattended pull with no prompt — and bidi marks in it can make one
-                            server read as another on the screen used to check where audio goes. */}
-                        {/* `safeIdentityText`, like the address line below: the display filter
-                            truncates with no marker and leaves whitespace runs to CSS, so
-                            `"Work" + 100 spaces + "Evil"` renders as exactly `Work` on the very
-                            card this comment calls the audit surface. */}
-                        {safeIdentityText(b.name, 80)}
-                      </span>
-                      <Badge tone="accent">{b.endpoint}</Badge>
-                      {/* "" = the backend leaves the language to the server. */}
-                      <Badge>{b.language ? safeDisplayText(languageLabel(b.language), 40) : "server lang"}</Badge>
-                      {b.hasApiKey && <Badge>key</Badge>}
-                      {backendChips(b, conn).map((c) => (
-                        <Badge key={c}>{c}</Badge>
-                      ))}
+                <Card key={b.id} className="p-5">
+                  <div className="flex items-center gap-4">
+                    <ReorderControls
+                      canUp={i > 0}
+                      canDown={i < backends.length - 1}
+                      onUp={() => moveBackend(b.id, "up")}
+                      onDown={() => moveBackend(b.id, "down")}
+                    />
+                    <div className="grid size-10 place-items-center rounded-xl bg-surface-2 text-accent">
+                      <Server className="size-[18px]" />
                     </div>
-                    <div className="mt-1 flex items-center gap-2 font-mono text-[12px] text-dim">
-                      {/* The card is the audit surface — non-security sync categories still apply
-                          silently, so this is where a user checks where dictation goes. Two ways
-                          that went wrong. A URL's real authority is whatever follows the last `@`,
-                          and the truncate class hides the tail, so `http://localhost:8000@evil.tld/v1`
-                          read as loopback — hence the parsed host and the badge. And this line
-                          showed the CANONICAL address while every request goes to
-                          `effectiveServerUrl`, which prefers a per-backend URL override: the
-                          override applies whether or not sync is on, survives turning sync off,
-                          and the Test button beside this line already used it. So the row could
-                          name one host while the audio and the bearer key went to another. Show
-                          the address actually used, and say so when it isn't the configured one. */}
-                      <span className="truncate" title={safeDisplayText(eff, 200)}>
-                        {safeIdentityText(auth?.host, 80) || safeIdentityText(eff, 80)}
-                      </span>
-                      {auth?.hasUserinfo && (
-                        <Badge tone="warn">address hides the real host</Badge>
-                      )}
-                      {eff !== b.serverUrl && (
-                        <span title={`Configured: ${safeDisplayText(b.serverUrl, 200)}`}>
-                          <Badge tone="warn">override in use</Badge>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-[14px] font-semibold text-text" title={safeDisplayText(b.name, 200)}>
+                          {/* Sanitized like the address line below it, and for the same reason: a
+                              rename raises no security change, so a name arrives on this card from
+                              an unattended pull with no prompt — and bidi marks in it can make one
+                              server read as another on the screen used to check where audio goes. */}
+                          {/* `safeIdentityText`, like the address line below: the display filter
+                              truncates with no marker and leaves whitespace runs to CSS, so
+                              `"Work" + 100 spaces + "Evil"` renders as exactly `Work` on the very
+                              card this comment calls the audit surface. */}
+                          {safeIdentityText(b.name, 80)}
                         </span>
-                      )}
-                      {/* No model = the server's default: no separator dangling before nothing. */}
-                      {b.model.trim() && (
-                        <>
-                          <span className="text-faint">·</span>
-                          <span className="text-faint">{safeDisplayText(b.model, 80)}</span>
-                        </>
-                      )}
+                        <Badge tone="accent">{b.endpoint}</Badge>
+                        {/* "" = the backend leaves the language to the server. */}
+                        <Badge>{b.language ? safeDisplayText(languageLabel(b.language), 40) : "server lang"}</Badge>
+                        {b.hasApiKey && <Badge>key</Badge>}
+                        {backendChips(b, conn).map((c) => (
+                          <Badge key={c}>{c}</Badge>
+                        ))}
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 font-mono text-[12px] text-dim">
+                        {/* The card is the audit surface — non-security sync categories still apply
+                            silently, so this is where a user checks where dictation goes. Two ways
+                            that went wrong. A URL's real authority is whatever follows the last `@`,
+                            and the truncate class hides the tail, so `http://localhost:8000@evil.tld/v1`
+                            read as loopback — hence the parsed host and the badge. And this line
+                            showed the CANONICAL address while every request goes to
+                            `effectiveServerUrl`, which prefers a per-backend URL override: the
+                            override applies whether or not sync is on, survives turning sync off,
+                            and the Test button beside this line already used it. So the row could
+                            name one host while the audio and the bearer key went to another. Show
+                            the address actually used, and say so when it isn't the configured one. */}
+                        <span className="truncate" title={safeDisplayText(eff, 200)}>
+                          {safeIdentityText(auth?.host, 80) || safeIdentityText(eff, 80)}
+                        </span>
+                        {auth?.hasUserinfo && (
+                          <Badge tone="warn">address hides the real host</Badge>
+                        )}
+                        {eff !== b.serverUrl && (
+                          <span title={`Configured: ${safeDisplayText(b.serverUrl, 200)}`}>
+                            <Badge tone="warn">override in use</Badge>
+                          </span>
+                        )}
+                        {/* No model = the server's default: no separator dangling before nothing. */}
+                        {b.model.trim() && (
+                          <>
+                            <span className="text-faint">·</span>
+                            <span className="text-faint">{safeDisplayText(b.model, 80)}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex w-24 items-center justify-end gap-1.5 text-[12px] text-dim" title={conn?.error}>
+                      <StatusDot tone={testing.has(b.id) ? "idle" : conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
+                      {testing.has(b.id) ? "testing…" : conn?.ok ? "connected" : conn?.error ? "error" : "untested"}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <ServerInfoButton
+                        info={ownProp(caps, b.id)?.server_info}
+                        open={infoOpen === b.id}
+                        onToggle={() => setInfoOpen((cur) => (cur === b.id ? null : b.id))}
+                        controls={`${infoBase}-${b.id}`}
+                      />
+                      <Button variant="ghost" size="sm" title="Test connection" onClick={() => handleTest(b)} disabled={testing.has(b.id)}>
+                        {testing.has(b.id) ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
+                      </Button>
+                      <Button variant="ghost" size="sm" title="Edit" onClick={() => setFlow({ step: "edit", draft: b })}>
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button variant="ghost" size="sm" title="Duplicate" onClick={() => duplicateBackend(b.id)}>
+                        <Copy className="size-4" />
+                      </Button>
+                      <Button variant="ghost" size="sm" title="Remove" onClick={() => handleRemove(b.id)}>
+                        <Trash2 className="size-4" />
+                      </Button>
                     </div>
                   </div>
-                  <div className="flex w-24 items-center justify-end gap-1.5 text-[12px] text-dim" title={conn?.error}>
-                    <StatusDot tone={testing.has(b.id) ? "idle" : conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
-                    {testing.has(b.id) ? "testing…" : conn?.ok ? "connected" : conn?.error ? "error" : "untested"}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="sm" title="Test connection" onClick={() => handleTest(b)} disabled={testing.has(b.id)}>
-                      {testing.has(b.id) ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
-                    </Button>
-                    <Button variant="ghost" size="sm" title="Edit" onClick={() => setFlow({ step: "edit", draft: b })}>
-                      <Pencil className="size-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" title="Duplicate" onClick={() => duplicateBackend(b.id)}>
-                      <Copy className="size-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" title="Remove" onClick={() => handleRemove(b.id)}>
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </div>
+                  {infoOpen === b.id && ownProp(caps, b.id)?.server_info && (
+                    <div className="mt-4 border-t border-line pt-4">
+                      <ServerInfoPanel id={`${infoBase}-${b.id}`} info={ownProp(caps, b.id)?.server_info} reportApp={reportApp} />
+                    </div>
+                  )}
                 </Card>
               );
             })}

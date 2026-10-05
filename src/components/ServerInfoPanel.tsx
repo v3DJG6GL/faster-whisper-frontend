@@ -1,8 +1,10 @@
 // The Backends ⓘ panel: what this server limits and what it keeps (GET /v1/me `server_info`),
 // one ENV-titled row each with the backend's own description. Show-only.
+import { Info } from "lucide-react";
+import { IconButton } from "@/components/ui";
 import { OverrideHeader } from "@/components/OverrideField";
 import { envDesc } from "@/lib/settingDesc";
-import { keepRows, limitRows, type InfoRow, type KeepTone } from "@/lib/serverInfo";
+import { capturesOn, keepRows, limitRows, type InfoRow, type KeepTone } from "@/lib/serverInfo";
 import type { ServerInfo } from "@/lib/types";
 
 const TONE: Record<KeepTone, string> = {
@@ -47,5 +49,39 @@ export function ServerInfoPanel({ id, info, reportApp }: { id: string; info: Ser
       <Group title="Limits" rows={limitRows(info)} />
       <Group title="What this server keeps" rows={keepRows(info, reportApp)} />
     </div>
+  );
+}
+
+/** The ⓘ that opens the panel — on the Backends list row and in the editor header. Always shown:
+ *  until the server's info is known (no connection test yet, or an older server) it greys out
+ *  and says why. The red dot = this server records requests (captures on). */
+export function ServerInfoButton({
+  info,
+  open,
+  onToggle,
+  controls,
+}: {
+  info: ServerInfo | undefined;
+  open: boolean;
+  onToggle: () => void;
+  controls: string;
+}) {
+  return (
+    <IconButton
+      label={info ? "What this server allows and keeps" : "Test the connection to see what this server allows and keeps"}
+      onClick={onToggle}
+      disabled={!info}
+      expanded={!!info && open}
+      controls={controls}
+      className="relative disabled:opacity-40"
+    >
+      <Info className="size-4" />
+      {info && capturesOn(info) && (
+        <span
+          className="absolute right-1 top-1 size-[7px] rounded-full bg-rec shadow-[0_0_0_2px_var(--c-surface-2)]"
+          aria-hidden
+        />
+      )}
+    </IconButton>
   );
 }
