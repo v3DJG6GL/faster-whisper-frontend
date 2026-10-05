@@ -108,11 +108,6 @@ export interface RawCue {
   lines: string[];
 }
 
-/** Markup-free, whitespace-collapsed line — what two cues compare on. */
-function plainLine(line: string): string {
-  return stripMarkup(line);
-}
-
 /** YouTube's auto captions "roll": every cue repeats the previous cue's last line above its
  *  new one, and a 10 ms cue freezes the text between them — imported raw that is every line
  *  two or three times. Drop cues of ≤100 ms, strip leading lines a contiguous cue repeats
@@ -128,8 +123,9 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
       prev?.start !== undefined && prev.end !== undefined && cue.start !== undefined
       && cue.start >= prev.start && cue.start <= prev.end + 0.25;
     if (prev && contiguous) {
-      const mine = lines.map(plainLine);
-      const before = prev.lines.map(plainLine);
+      // Compared markup-free and whitespace-collapsed.
+      const mine = lines.map(stripMarkup);
+      const before = prev.lines.map(stripMarkup);
       let k = Math.min(mine.length, before.length);
       while (k > 0 && before.slice(-k).join("\n") !== mine.slice(0, k).join("\n")) k--;
       if (k === mine.length) {
@@ -186,38 +182,32 @@ function cuesToSegments(cues: RawCue[]): ImportedText {
   return { segments };
 }
 
-function parseSrt(body: string): ImportedText {
+/** An SRT/VTT body as raw cues: blank-line separated blocks, each with its
+ *  "start --> end" line at `timesAt(lines)` (-1 = not a cue) and its text below. */
+function blocksToCues(body: string, timesAt: (lines: string[]) => number): RawCue[] {
   const cues: RawCue[] = [];
   for (const block of body.split(/\r?\n\r?\n+/)) {
     const lines = block.split(/\r?\n/).filter((l) => l.trim().length);
-    if (!lines.length) continue;
-    let i = 0;
-    if (/^\d+$/.test(lines[0].trim())) i = 1; // cue number
-    const times = CUE_TIMES.exec(lines[i] ?? "");
+    const i = lines.length ? timesAt(lines) : -1;
+    const times = i >= 0 ? CUE_TIMES.exec(lines[i] ?? "") : null;
     if (!times) continue;
     cues.push({ start: parseClock(times[1]), end: parseClock(times[2]), lines: lines.slice(i + 1) });
   }
-  return cuesToSegments(cues);
+  return cues;
+}
+
+function parseSrt(body: string): ImportedText {
+  // The times follow an optional cue number.
+  return cuesToSegments(blocksToCues(body, (lines) => (/^\d+$/.test(lines[0].trim()) ? 1 : 0)));
 }
 
 function parseVtt(body: string): ImportedText {
-  const cues: RawCue[] = [];
-  for (const block of body.split(/\r?\n\r?\n+/)) {
-    const lines = block.split(/\r?\n/).filter((l) => l.trim().length);
-    if (!lines.length) continue;
+  // STYLE, NOTE and REGION blocks are not cues; the WEBVTT header block has no times.
+  return cuesToSegments(blocksToCues(body, (lines) => {
     const first = lines[0].trim();
-    if (first === "STYLE" || first === "NOTE" || first === "REGION") continue;
-    if (/^WEBVTT/.test(first)) {
-      lines.shift();
-      if (!lines.length) continue;
-    }
-    const i = lines.findIndex((l) => l.includes("-->"));
-    if (i === -1) continue;
-    const times = CUE_TIMES.exec(lines[i]);
-    if (!times) continue;
-    cues.push({ start: parseClock(times[1]), end: parseClock(times[2]), lines: lines.slice(i + 1) });
-  }
-  return cuesToSegments(cues);
+    if (first === "STYLE" || first === "NOTE" || first === "REGION") return -1;
+    return lines.findIndex((l) => l.includes("-->"));
+  }));
 }
 
 function parseLrc(body: string): ImportedText {
