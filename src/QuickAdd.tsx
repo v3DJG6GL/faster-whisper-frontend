@@ -14,9 +14,9 @@
 // Re-fetching on each summon re-syncs any out-of-band edits — adequate for a
 // single-user quick-capture surface (the Dictionary screen keeps explicit-save).
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from "lucide-react";
-import { Button, TextInput } from "@/components/ui";
+import { Button, Kbd, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
@@ -54,14 +54,6 @@ function normalizedAppRules(rules: AppRule[] | undefined | null): AppRule[] {
 type Target = { serverUrl: string; backendId: string; slug: string };
 type Phase = "loading" | "nopin" | "error" | "ok";
 type SaveState = "idle" | "saving" | "saved" | "error";
-
-function Kbd({ children }: { children: ReactNode }) {
-  return (
-    <kbd className="rounded-md border border-line-strong bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] leading-none text-dim">
-      {children}
-    </kbd>
-  );
-}
 
 function SaveStatus({ state, onRetry }: { state: SaveState; onRetry: () => void }) {
   if (state === "saving")
@@ -644,14 +636,14 @@ export default function QuickAdd() {
             {/* footer hints */}
             <div className="flex items-center gap-3 border-t border-line px-4 py-2.5 text-[12px] text-faint">
               <span className="flex items-center gap-1.5">
-                <Kbd>↵</Kbd> save &amp; add another
+                <Kbd size="sm">↵</Kbd> save &amp; add another
               </span>
               <span className="flex items-center gap-1.5">
-                <Kbd>Esc</Kbd> done
+                <Kbd size="sm">Esc</Kbd> done
               </span>
               <span className="ml-auto flex items-center gap-1.5 opacity-80">
-                <Kbd>↑</Kbd>
-                <Kbd>↓</Kbd> recent
+                <Kbd size="sm">↑</Kbd>
+                <Kbd size="sm">↓</Kbd> recent
               </span>
             </div>
           </>

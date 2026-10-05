@@ -16,6 +16,7 @@ import { createPortal } from "react-dom";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { navKey } from "@/lib/listNav";
+import { Kbd } from "@/components/ui";
 import { useAnchoredRect } from "@/lib/useAnchoredRect";
 import { useOutsidePress } from "@/lib/useOutsidePress";
 
@@ -139,9 +140,7 @@ export function OptionRows<R>({
 export function KeyHint({ k, children }: { k: string; children: ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1.5">
-      <kbd className="rounded-md border border-line-strong bg-surface-2 px-1.5 py-0.5 font-mono text-[10.5px] leading-none text-dim">
-        {k}
-      </kbd>
+      <Kbd size="xs">{k}</Kbd>
       {children}
     </span>
   );
