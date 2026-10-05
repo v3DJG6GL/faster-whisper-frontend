@@ -115,6 +115,36 @@ export function speakerHex(
   return DEFAULT_SPEAKER_COLORS[speakerColorIndex(order, picks, label)];
 }
 
+/** The export's options from the transcript's display toggles (the view is the export) — one
+ *  builder for the export panel and History's quick export. Colors on → "line" mode;
+ *  names/timestamps gate their prefixes; the palette picks become the wire's hexes through
+ *  the shared resolver. `tracks` in track order (D92); none = the original only. */
+export function exportOptionsFor(a: {
+  format: ExportFormat;
+  /** speakerOrder of the result. */
+  speakers: string[];
+  renames: Record<string, string>;
+  /** Speaker label → palette index (the user's picks). */
+  colorPicks: Record<string, number>;
+  toggles: { showTs: boolean; showNames: boolean; colorize: boolean; wordTs: boolean };
+  cues: CueOptions | undefined;
+  tracks?: string[];
+}): ExportOptions {
+  return {
+    format: a.format,
+    renames: a.renames,
+    speakerColors: a.speakers.length && a.toggles.colorize ? "line" : "off",
+    speakerNames: a.toggles.showNames,
+    timestamps: a.toggles.showTs,
+    colors: Object.fromEntries(
+      Object.keys(a.colorPicks).map((l) => [l, speakerHex(a.speakers, a.colorPicks, l)]),
+    ),
+    wordTimestamps: a.toggles.wordTs,
+    cues: a.cues,
+    ...(a.tracks?.length ? { tracks: a.tracks } : {}),
+  };
+}
+
 function clean(s: string): string {
   // Exports are single-logical-line records; a newline inside segment text
   // would corrupt SRT/LRC framing, so collapse it.

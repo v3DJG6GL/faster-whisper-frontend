@@ -46,7 +46,9 @@ import { isTextSourcePath } from "@/lib/subtitleImport";
 import { basename, withTrackSites, type MediaChoice } from "@/lib/mediaExport";
 import { releaseMedia } from "@/lib/media";
 import { patchRecord, useTranscriptHistory } from "@/lib/transcriptHistory";
-import { defaultViewTracks, mergeOrder, readTrackPrefs, trackOrder, type TrackPrefs } from "@/lib/exportTracks";
+import {
+  defaultViewTracks, mergeOrder, readTrackPrefs, trackOrder, transcriptTracks, translationTracks, type TrackPrefs,
+} from "@/lib/exportTracks";
 import { ExportTrackChips } from "@/components/ExportTrackChips";
 import { useDisplayToggles } from "@/lib/useDisplayToggles";
 import { TranscriptExport } from "@/components/TranscriptExport";
@@ -818,14 +820,7 @@ export function TranscriptViewer({
   );
   const editCount = Object.keys(fileEdits).length + Object.keys(fileSpkEdits).length;
   // Translated tracks present on this result, in target order.
-  const langs = useMemo(() => {
-    const seen: string[] = [];
-    for (const t of result.translation?.targets ?? []) if (!seen.includes(t)) seen.push(t);
-    for (const seg of result.segments ?? []) {
-      for (const k of Object.keys(seg.translations ?? {})) if (!seen.includes(k)) seen.push(k);
-    }
-    return seen;
-  }, [result]);
+  const langs = useMemo(() => translationTracks(result), [result]);
   const untranslatedIdxs = useMemo(() => untranslatedIndexes(result.segments, langs), [result, langs]);
   const effSegments = useMemo(
     (): EffSegment[] =>
@@ -884,7 +879,7 @@ export function TranscriptViewer({
   }, [recId]);
   useEffect(() => setLocalTrackPrefs((p) => (Object.keys(p).length ? {} : p)), [overlayKey, path]);
   const timedIds = useMemo(() => (result.timedTracks ?? []).map((t) => t.id), [result.timedTracks]);
-  const allTracks = useMemo(() => ["orig", ...langs, ...timedIds], [langs, timedIds]);
+  const allTracks = useMemo(() => transcriptTracks(result), [result]);
   const trackOrd = useMemo(() => trackOrder(result, allTracks, trackPrefs.order), [result, allTracks, trackPrefs.order]);
   const visibleTracks = useMemo(() => {
     const pick = trackOrd.filter((t) => viewTracks.includes(t));

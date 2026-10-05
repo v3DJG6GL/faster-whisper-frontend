@@ -3,7 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  cpsWarnings, cueGrid, previewExport, DEFAULT_SPEAKER_COLORS, exportFileNames, exportStemSuffix, generateExport, generateExports,
+  cpsWarnings, cueGrid, previewExport, DEFAULT_SPEAKER_COLORS, exportFileNames, exportOptionsFor, exportStemSuffix, generateExport,
+  generateExports,
   prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
   type ExportOptions,
 } from "./transcriptExport";
@@ -754,5 +755,24 @@ describe("subtitle cues", () => {
     expect(cpsWarnings(fast, { tracks: ["orig", "en"], cues: STANDARD })).toEqual([{ lang: "orig", index: 0, cps: 18 }]);
     expect(cpsWarnings(fast, { tracks: ["orig", "en"] })).toEqual([]);
     expect(cpsWarnings(CUED, { tracks: ["orig", "de", "fr"], cues: STANDARD })).toEqual([]);
+  });
+});
+
+describe("exportOptionsFor (the panel's and History's one builder)", () => {
+  const toggles = { showTs: true, showNames: false, colorize: true, wordTs: true };
+  it("maps the display toggles and resolves the palette picks to hexes", () => {
+    const o = exportOptionsFor({
+      format: "srt", speakers: ["SPEAKER_00", "SPEAKER_01"], renames: { SPEAKER_00: "Ann" },
+      colorPicks: { SPEAKER_01: 3 }, toggles, cues: undefined, tracks: ["orig", "en"],
+    });
+    expect(o).toEqual({
+      format: "srt", renames: { SPEAKER_00: "Ann" }, speakerColors: "line", speakerNames: false, timestamps: true,
+      colors: { SPEAKER_01: DEFAULT_SPEAKER_COLORS[3] }, wordTimestamps: true, cues: undefined, tracks: ["orig", "en"],
+    });
+  });
+  it("no speakers → no colour mode; no tracks → the original only", () => {
+    const o = exportOptionsFor({ format: "txt", speakers: [], renames: {}, colorPicks: {}, toggles, cues: undefined, tracks: [] });
+    expect(o.speakerColors).toBe("off");
+    expect("tracks" in o).toBe(false);
   });
 });

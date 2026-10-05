@@ -60,6 +60,20 @@ export function languageLabel(code: string): string {
   return (name === base ? base.toUpperCase() : name) + region;
 }
 
+/** The machine-translated tracks a result carries: its targets, then any other language its
+ *  segments hold. */
+export function translationTracks(result: Pick<BatchResult, "translation" | "segments">): string[] {
+  const seen = new Set(result.translation?.targets ?? []);
+  for (const seg of result.segments ?? []) for (const k of Object.keys(seg.translations ?? {})) seen.add(k);
+  return [...seen];
+}
+
+/** Every track of a transcript: the original, its machine translations, the site's own
+ *  tracks — the viewer's and History's quick export's one list. */
+export function transcriptTracks(result: Pick<BatchResult, "translation" | "segments" | "timedTracks">): string[] {
+  return ["orig", ...translationTracks(result), ...(result.timedTracks ?? []).map((t) => t.id)];
+}
+
 // ── Track order (D92) ───────────────────────────────────────────────────────────────────────
 
 /** Within a language: Whisper, the site's, the site's auto-generated, machine translation. */

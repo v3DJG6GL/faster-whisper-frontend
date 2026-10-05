@@ -17,7 +17,7 @@ import {
 } from "@/lib/api";
 import { safeDisplayText } from "@/lib/sanitize";
 import {
-  cpsWarnings, cueGrid, exportFileGroups, generateExports, prettySpeaker, previewExport, speakerHex, type ExportFormat,
+  cpsWarnings, cueGrid, exportFileGroups, exportOptionsFor, generateExports, prettySpeaker, previewExport, type ExportFormat,
   type ExportOptions, exportFileNames,
 } from "@/lib/transcriptExport";
 import {
@@ -208,26 +208,10 @@ export function TranscriptExport({
   // Memoized over exactly what it reads, so the preview below (and anything
   // else keyed on it) holds across the re-renders that don't touch the export
   // choices — playhead ticks, and a media export's progress events.
-  const exportOptions = useMemo((): ExportOptions => ({
-    format: exportFormat,
-    renames: fileRenames,
-    speakerColors: hasSpeakers && colorize ? "line" : "off",
-    speakerNames: showNames,
-    timestamps: showTs,
-    // The wire format is explicit hexes, resolved by the SAME shared resolver
-    // the chips use — a pick can't render one color and export another.
-    colors: Object.fromEntries(
-      Object.keys(fileColors).map((l) => [l, speakerHex(speakers, fileColors, l)]),
-    ),
-    wordTimestamps: wordTs,
-    cues: cueOpts,
-    // In track order (D92) — the order of the files and of the lines a
-    // stacked subtitle holds.
-    ...(effTracks.length ? { tracks: effTracks } : {}),
-  }), [
-    exportFormat, fileRenames, hasSpeakers, colorize, showNames, showTs, fileColors, speakers,
-    wordTs, effTracks, cueOpts,
-  ]);
+  const exportOptions = useMemo((): ExportOptions => exportOptionsFor({
+    format: exportFormat, speakers, renames: fileRenames, colorPicks: fileColors,
+    toggles: { showTs, showNames, colorize, wordTs }, cues: cueOpts, tracks: effTracks,
+  }), [exportFormat, fileRenames, colorize, showNames, showTs, fileColors, speakers, wordTs, effTracks, cueOpts]);
   const exportOpts = (): ExportOptions => exportOptions;
   const subs = isSubtitleFormat(exportFormat);
   /** The original track's cues — the preview's slice and the summary's

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   cleanTrackTitle, defaultTrackOrder, defaultViewTracks, languageGroups, mergeOrder, moveItem, moveLanguage, moveTrack, planTracks, sourceWord, stepSlot,
-  readTrackPrefs, toggleLanguage, toggleTrack, trackChipLabel, trackFileSuffixes, trackInfo, trackOrder,
+  readTrackPrefs, toggleLanguage, toggleTrack, trackChipLabel, trackFileSuffixes, trackInfo, trackOrder, transcriptTracks,
+  translationTracks,
 } from "./exportTracks";
 import type { BatchResult } from "./types";
 
@@ -132,5 +133,19 @@ describe("per-transcript prefs", () => {
       .toEqual({ order: ["orig", "en"], names: { en: "English", y: "z".repeat(64) } });
     expect(readTrackPrefs("nope")).toEqual({});
     expect(readTrackPrefs({ names: ["a"] })).toEqual({});
+  });
+});
+
+describe("a transcript's tracks", () => {
+  it("the original, the targets then any other translated language, the site's tracks", () => {
+    const r: BatchResult = {
+      text: "",
+      translation: { targets: ["fr", "en"] },
+      segments: [{ start: 0, end: 1, text: "a", translations: { en: "x", it: "y" } }],
+      timedTracks: [site("de-x-site", "de")],
+    };
+    expect(translationTracks(r)).toEqual(["fr", "en", "it"]);
+    expect(transcriptTracks(r)).toEqual(["orig", "fr", "en", "it", "de-x-site"]);
+    expect(transcriptTracks({})).toEqual(["orig"]);
   });
 });

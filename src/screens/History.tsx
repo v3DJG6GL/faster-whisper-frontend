@@ -30,12 +30,13 @@ import {
 } from "@/lib/transcriptHistory";
 import { addFiles, openHistoryRecord, useTranscribeRun } from "@/lib/transcribeRun";
 import {
-  EXPORT_EXTENSIONS, generateExports, speakerHex, speakerOrder,
+  EXPORT_EXTENSIONS, exportOptionsFor, generateExports, speakerOrder,
   type ExportFormat,
 } from "@/lib/transcriptExport";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { urlHost } from "@/lib/urlSource";
-import { exportStem, isVideoSourcePath } from "@/lib/mediaExport";
+import { exportStem, isVideoSourcePath, withTrackSites } from "@/lib/mediaExport";
+import { readTrackPrefs, trackOrder, transcriptTracks } from "@/lib/exportTracks";
 import { cueOptionsOf } from "@/lib/cueSplit";
 import { displayToggles } from "@/lib/useDisplayToggles";
 import { cn } from "@/lib/cn";
@@ -466,32 +467,21 @@ export default function History() {
       return;
     }
     if (!path) return;
-    const order = speakerOrder(rec.result ?? { text: "" });
-    // Every track the record carries rides the quick export ("orig" + targets).
-    const recLangs = Array.from(
-      new Set([
-        ...(rec.result?.segments ?? []).flatMap((seg) => Object.keys(seg.translations ?? {})),
-        ...(rec.result?.timedTracks ?? []).map((tt) => tt.id),
-      ]),
-    );
-    // The viewer's display toggles (legacy speakerColorMode migration included).
-    const view = displayToggles(t);
+    // The viewer's tracks in the viewer's order (a dragged order included), site tracks
+    // named from the link — the same files the export panel writes.
+    const result = withTrackSites(recordEditedResult(rec), rec.sourcePath);
+    const all = transcriptTracks(result);
     try {
-      const files = generateExports(recordEditedResult(rec), {
+      const files = generateExports(result, exportOptionsFor({
         format,
+        speakers: speakerOrder(rec.result ?? { text: "" }),
         renames: rec.renames ?? {},
-        speakerColors: order.length && view.colorize ? "line" : "off",
-        speakerNames: view.showNames,
-        timestamps: view.showTs,
-        // THE resolver (viewer + exports) — an open-coded modulo here lacked its
-        // range guards and could disagree with the viewer on a persisted index.
-        colors: Object.fromEntries(
-          Object.keys(rec.speakerColors ?? {}).map((l) => [l, speakerHex(order, rec.speakerColors, l)]),
-        ),
-        wordTimestamps: view.wordTs,
+        colorPicks: rec.speakerColors ?? {},
+        // The viewer's display toggles (legacy speakerColorMode migration included).
+        toggles: displayToggles(t),
         cues: cueOptionsOf(t),
-        ...(recLangs.length ? { tracks: ["orig", ...recLangs] } : {}),
-      });
+        tracks: all.length > 1 ? trackOrder(result, all, readTrackPrefs(rec.exportTracks).order) : [],
+      }));
       if (files.length === 1) {
         await saveTextFile(path, files[0].content);
       } else {
