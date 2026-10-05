@@ -23,7 +23,8 @@
 
 import { useApp } from "./store";
 import { translateFailureDoorway } from "./errors";
-import { attachRecordingPath, recordDictation } from "./transcriptHistory";
+import { attachRecordingPath, patchRecord, recordDictation } from "./transcriptHistory";
+import { appendChunk, appendDelta, finalDelta, mergeTracks } from "./utteranceHistory";
 import { enqueueOutcome } from "./usageOutcome";
 import { backendPrompt, effectiveLanguage, effectiveServerUrl } from "./backends";
 import { effectiveServerKind } from "./serverKind";
@@ -376,6 +377,40 @@ type RecordingFrame = { path: string; utterance: number | null; durationMs: numb
 // slow disk can invert that, so a late arrival patches the already-saved record.
 let sessionRecordingPath: string | null = null;
 let capturedRecordId: string | null = null;
+
+// ── Per-utterance History (hands-free type-as-you-speak) ────────────────────
+// Such a session types each utterance as it finishes, so History keeps one record per
+// utterance too — written at its `final`, not at settle, so a crash keeps what was said.
+// Insert-at-stop and push-to-talk sessions keep the one record per session above.
+/** Decided once at stream start (the per-utterance clip param can only be said then): a
+ *  later in-place upgrade to hands-free keeps the settle-time record. */
+let sessionPerUtterance = false;
+/** An ordinal `final` arrived, so the per-utterance records own this session's history and
+ *  the settle capture stands down. A server that predates the ordinal never sets it. */
+let utteranceFinalSeen = false;
+/** Where the previous `final` ended in `committedDoc`; resets with the document at a break. */
+let utteranceDocEnd = 0;
+/** Wall-clock `open` time per announced utterance — its record's createdAt. */
+const utteranceOpenedAt = new Map<number, number>();
+let lastUtteranceFinalAt = 0;
+/** The last finished utterance. A release final appends its held-back words to this record
+ *  (or creates it, when the utterance's own final carried no text); its clip lands here when it
+ *  arrives before the record exists. */
+let lastUtterance: {
+  ordinal: number;
+  id: string | null;
+  openedAt: number;
+  clip?: { path: string; durationMs: number | null };
+} | null = null;
+
+function resetUtteranceHistory(): void {
+  sessionPerUtterance = false;
+  utteranceFinalSeen = false;
+  utteranceDocEnd = 0;
+  utteranceOpenedAt.clear();
+  lastUtteranceFinalAt = 0;
+  lastUtterance = null;
+}
 
 // ── T2T dictation translation (per-profile "Translate output") ──────────────
 // Frozen per session from Backend→Profile translationOverrides; target set =
@@ -733,16 +768,124 @@ async function translatePhrase(
   }
 }
 
+/** The session's metadata when it may be recorded to History at all — never for an
+ *  App-rules-blocked target (the setting's promise), nor with "Keep dictation history" off. */
+function historyMeta(): NonNullable<typeof sessionMeta> | null {
+  const meta = sessionMeta;
+  if (!meta || meta.blocked) return null;
+  if (useApp.getState().settings.transcribe?.keepDictationHistory === false) return null;
+  return meta;
+}
+
+/** The session facts every dictation record carries. */
+function recordMeta(meta: NonNullable<typeof sessionMeta>) {
+  return {
+    backendId: meta.backendId,
+    model: meta.model,
+    language: meta.language,
+    appId: meta.appId,
+    appTitle: meta.appTitle,
+    profileName: meta.profileName,
+    profileTag: meta.profileTag,
+    activation: meta.activation,
+  };
+}
+
+/** Per-utterance sessions: book one `final` into History right away. An ordinal final opens
+ *  its utterance's record; a release final (no ordinal) appends the held-back words it carries
+ *  to the last utterance's — or creates that record, when the utterance's own final carried no
+ *  text. Returns the record the final's insert reports to, and the text this final added. */
+function recordUtteranceFinal(ordinal: number | null): { id: string | null; delta: string } {
+  const delta = finalDelta(committedDoc, utteranceDocEnd);
+  utteranceDocEnd = committedDoc.length;
+  const now = Date.now();
+  if (ordinal !== null) {
+    utteranceFinalSeen = true;
+    // No `open` seen (a forced commit's second half, say): it began after the previous final.
+    const openedAt = utteranceOpenedAt.get(ordinal) ?? (lastUtteranceFinalAt || sessionMeta?.startedAt || now);
+    utteranceOpenedAt.delete(ordinal);
+    lastUtteranceFinalAt = now;
+    lastUtterance = { ordinal, id: null, openedAt };
+  }
+  const utt = lastUtterance;
+  const meta = historyMeta();
+  if (!utt || !meta || !delta.trim()) return { id: utt?.id ?? null, delta };
+  if (utt.id) {
+    patchRecord(utt.id, (r) => {
+      const text = appendDelta(r.result?.text ?? "", delta);
+      return { ...r, result: { ...r.result, text }, wordCount: text.split(/\s+/).filter(Boolean).length };
+    });
+    return { id: utt.id, delta };
+  }
+  try {
+    utt.id = recordDictation({
+      text: delta.trim(),
+      startedAt: utt.openedAt,
+      // Until the clip says how long the audio is.
+      durationMs: Math.max(0, now - utt.openedAt),
+      ...recordMeta(meta),
+      // Patched by the insert (bookUtteranceInsert) once it lands.
+      insertMethod: "none",
+      translationTarget: sessionTranslation?.targets.join(", "),
+      translationTargets: sessionTranslation ? [...sessionTranslation.targets] : undefined,
+      includeOriginal: sessionTranslation?.includeOriginal || undefined,
+    });
+  } catch (e) {
+    console.error("dictation history capture failed:", e);
+    return { id: null, delta };
+  }
+  if (utt.clip) attachUtteranceClip(utt.id, utt.clip);
+  return { id: utt.id, delta };
+}
+
+/** Link an utterance's clip to its record; the clip's length is the record's duration. */
+function attachUtteranceClip(id: string, clip: { path: string; durationMs: number | null }): void {
+  const ms = clip.durationMs;
+  patchRecord(id, (r) => ({
+    ...r,
+    sourcePath: clip.path,
+    ...(ms != null && r.result ? { tookMs: ms, result: { ...r.result, duration: ms / 1000 } } : {}),
+  }));
+}
+
+/** Per-utterance sessions: stamp what one live insert did onto its utterance's record — where
+ *  the text went and, when the insert carried exactly that final's text, its translation. An
+ *  insert that carried more (a clipboard window spanning utterances, a hard-break carry, a
+ *  retype after an own-window skip) books only where it went: that translation is not this
+ *  record's alone. */
+function bookUtteranceInsert(
+  rec: { id: string | null; delta: string } | null,
+  how: "typed" | "clipboard",
+  sent: string,
+  phrase: PhraseOut,
+): void {
+  if (!rec?.id) return;
+  const own = sessionTranslation != null && sent.trim() === rec.delta.trim();
+  patchRecord(rec.id, (r) => ({
+    ...r,
+    insertMethod: r.insertMethod === "typed" ? "typed" : how,
+    ...(!own
+      ? {}
+      : phrase.translated
+        ? {
+            translatedText: appendChunk(r.translatedText, phrase.text),
+            translations: mergeTracks(r.translations, phrase.byLang),
+            translationInjected: true,
+            translationAttempted: true,
+          }
+        : { translationAttempted: true, translationFailure: sessionTranslateFailure ?? undefined }),
+  }));
+}
+
 /** Save the finished session to History — the settleIdle hook. Skips: empty
  *  sessions, App-rules-blocked targets, and the "Keep dictation history" off
- *  switch. Runs once per session (capturedRecordId latch). Returns whether a record
+ *  switch. Runs once per session (capturedRecordId latch), and not at all once
+ *  per-utterance records took the session over. Returns whether a record
  *  was written by THIS call — the chip's "not inserted · saved to History" note must
  *  only promise a record that exists. */
 function captureDictationHistory(): boolean {
-  const meta = sessionMeta;
-  if (!meta || capturedRecordId) return false;
-  if (meta.blocked) return false; // blocked apps are never recorded (the setting's promise)
-  if (useApp.getState().settings.transcribe?.keepDictationHistory === false) return false;
+  const meta = historyMeta();
+  if (!meta || capturedRecordId || utteranceFinalSeen) return false;
   const text = (bankedDoc + committedDoc).trim();
   if (!text) return false;
   try {
@@ -750,14 +893,7 @@ function captureDictationHistory(): boolean {
       text,
       startedAt: meta.startedAt,
       durationMs: Math.max(0, Date.now() - meta.startedAt),
-      backendId: meta.backendId,
-      model: meta.model,
-      language: meta.language,
-      appId: meta.appId,
-      appTitle: meta.appTitle,
-      profileName: meta.profileName,
-      profileTag: meta.profileTag,
-      activation: meta.activation,
+      ...recordMeta(meta),
       insertMethod: endOutcome(),
       recordingPath: sessionRecordingPath ?? undefined,
       translatedText: sessionTranslatedText ?? undefined,
@@ -1670,6 +1806,10 @@ async function ensureListeners(): Promise<void> {
     // land up to PARTIAL_MIN_MS later and regress this publish.
     resetPartialPreview();
     setDictation({ partial: committedDoc });
+    // Per-utterance History: written now, before the insert — the queued task reports back to it.
+    const uttRec = sessionPerUtterance
+      ? recordUtteranceFinal(typeof e.payload.utterance === "number" ? e.payload.utterance : null)
+      : null;
     // Live mode (append-only): type the newest phrase from `tail` immediately,
     // only ever APPENDING what's new beyond what we've already typed — we never
     // backspace/revise. On the rare occasion the backend re-tidies a seam (e.g.
@@ -1800,6 +1940,7 @@ async function ensureListeners(): Promise<void> {
             if (!t.isSelf && landed) {
               sessionClipboard = true;
               signalInsert("clipboard");
+              bookUtteranceInsert(uttRec, "clipboard", phraseClip, { text: clipOut, translated, byLang });
               // The clipboard now holds THIS clipboard-only transcript (what the user wants to
               // paste), not our earlier paste transcript — so we no longer owe a restore. Clear
               // clipDirty so neither the per-phrase restore (bumpPhraseEnd) nor the end-of-session
@@ -2007,6 +2148,7 @@ async function ensureListeners(): Promise<void> {
                 sessionTyped = true;
                 signalInsert("typed");
               }
+              bookUtteranceInsert(uttRec, diverted ? "clipboard" : "typed", body, phrase);
             }
           }
         }
@@ -2029,6 +2171,17 @@ async function ensureListeners(): Promise<void> {
   await reg<RecordingFrame>("stream://recording", (e) => {
     const path = e.payload?.path;
     if (!path) return;
+    const ordinal = e.payload.utterance;
+    if (typeof ordinal === "number") {
+      // One utterance's clip. Rust emits it right behind that utterance's `final`, so it is
+      // the last utterance's; its record may not exist yet (a release final can still create it).
+      const utt = lastUtterance;
+      const clip = { path, durationMs: e.payload.durationMs };
+      if (utt?.ordinal !== ordinal) console.debug(`[dictation] clip for utterance #${ordinal} found no record`);
+      else if (utt.id) attachUtteranceClip(utt.id, clip);
+      else utt.clip = clip;
+      return;
+    }
     // The saved .wav's path. Stash for the capture at settle; if the session
     // already settled (slow disk), patch the record it produced.
     sessionRecordingPath = path;
@@ -2052,6 +2205,11 @@ async function ensureListeners(): Promise<void> {
     const state = e.payload?.state;
     if (typeof state !== "string") return;
     const ordinal = typeof e.payload.utterance === "number" ? e.payload.utterance : null;
+    // Per-utterance History: when the utterance began is its record's time (the first `open`).
+    if (sessionPerUtterance && ordinal !== null && inSession()) {
+      if (state === "open" && !utteranceOpenedAt.has(ordinal)) utteranceOpenedAt.set(ordinal, Date.now());
+      else if (state === "dropped") utteranceOpenedAt.delete(ordinal);
+    }
     if (!isCapturing()) {
       // The post-stop drain: the chip already reads "finalizing…", and nothing here may
       // resurrect a mic-open state. A `decoding` is still proof of life for a slow last phrase,
@@ -2116,6 +2274,10 @@ async function ensureListeners(): Promise<void> {
     clipBaseline = "";
     clipBooked = null;
     seenDoc = "";
+    // A new document: utterance text restarts at 0, and no release final reaches back across
+    // a break (the server sends them before it).
+    utteranceDocEnd = 0;
+    lastUtterance = null;
     // The TYPED baseline is cleared IN the inject chain, not here: a phrase task enqueued before
     // this boundary diffs against `injectedText` at DRAIN time (deliberately — see the final
     // handler's skip-and-retype note), so a synchronous clear made it re-type everything already
@@ -3058,6 +3220,7 @@ async function startLiveInner(
     };
     sessionRecordingPath = null;
     capturedRecordId = null;
+    resetUtteranceHistory();
     sessionOutcomeReported = false;
   }
   committedDoc = "";
@@ -3127,6 +3290,9 @@ async function startLiveInner(
     applyReclassify(upgraded);
   }
   startTargetPoll(); // keep the chip's target readout live as focus moves during the session
+  // Hands-free type-as-you-speak keeps one History record (and clip) per utterance. Decided
+  // here, with the upgrade above applied, because the clip param goes out with the start.
+  sessionPerUtterance = insertCfg?.live === true && insertCfg.activation === "handsfree";
 
   // The clipboard snapshot for "restore after" is taken PER PHRASE now, just before each paste
   // (see the live `final` handler) — not once here — so it tracks what you actually had on the
@@ -3186,6 +3352,7 @@ async function startLiveInner(
         save: rec.saveRecordings,
         recordingsDir: audioBasePref(rec),
         trimSilence: rec.trimSilence,
+        perUtteranceClips: sessionPerUtterance,
         muteSystem: rec.muteSystemAudio,
       });
     }
@@ -3399,7 +3566,8 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   // A cancelled session still happened on the server (its utterances are counted); tell it
   // nothing landed, so the Dictation panel shows "Nothing" rather than "unreported".
   reportSessionOutcome("none");
-  sessionMeta = null; // a cancelled session is never recorded to History
+  sessionMeta = null; // a cancelled session is never recorded to History…
+  resetUtteranceHistory(); // …beyond the utterances it already typed (their records stay)
   // A translate may be in flight for a phrase this cancel just discarded. Tell
   // the server to stop: dropping our end leaves it generating tokens for text
   // nobody will read (Rust waits an hour on that request). Every cancel entry
