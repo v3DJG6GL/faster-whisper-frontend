@@ -29,6 +29,7 @@
   /* The armed ("ready to speak") state. It used to borrow the accent; since the Signal
      colour can be anything — and can drift with time — state colours are fixed. */
   --color-armed: var(--c-armed);
+  --color-whisper: var(--c-whisper);
   --color-ok: var(--c-ok);
   --color-warn: var(--c-warn);
   --color-think: var(--c-think);
@@ -83,6 +84,7 @@
   --c-think: #6faed9; /* cool steel blue: machine working (finalizing/inserting/warm-up) — the only cool hue, so it can't be read as off-grey, armed-amber, live-green, or error-red */
   --c-translate: #4dd0c4; /* teal: the T2T translating stage — unclaimed by any other stage hue */
   --c-para: #4dd0c4; /* the live-dictation preview's hard break (new paragraph) */
+  --c-whisper: #ff9e2c; /* identity: a Whisper-transcribed track (the default accent's amber, fixed — it never drifts with the Signal colour) */
   /* Remaining pipeline-stage hues. These were bare hexes inside STAGE_COLORS
      in Transcribe.tsx, which meant they had NO light-theme value at all —
      #c68fb4 is barely legible on a light background. They are also what the
@@ -154,6 +156,7 @@
   --c-think: #33719f; /* cool steel blue: machine working (darker for light bg) */
   --c-translate: #0f8a7e; /* teal, darkened for cream backgrounds */
   --c-para: #0f8f86;
+  --c-whisper: #bf6f12; /* fixed (see the dark block) */
   --c-separate: #33719f;  /* stage hues, darkened for cream backgrounds */
   --c-diarize: #9a5a84;
   --c-download: #a06f22;

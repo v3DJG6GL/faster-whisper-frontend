@@ -1,4 +1,5 @@
-// A source's colour: transcribe = accent, existing = ok, auto-generated = warn,
+// A source's colour: transcribe = the fixed Whisper amber (identity, so never the drifting
+// accent), existing = ok, auto-generated = warn,
 // hearing-impaired = the diarize lilac, machine translation = think blue. One table so a
 // source reads the same in the link card's subtitles table, the compound translation chips
 // and the export's tracks.
@@ -10,7 +11,7 @@ import type { SiteBadge } from "./siteSubtitles";
 export type ToneVariant = "soft" | "dot";
 
 const SOURCE_TONE: Record<SiteBadge["kind"] | "hoh", Record<ToneVariant, string>> = {
-  transcribe: { soft: "bg-accent-soft text-accent", dot: "bg-accent" },
+  transcribe: { soft: "bg-whisper/15 text-whisper", dot: "bg-whisper" },
   mt: { soft: "bg-think/10 text-think", dot: "bg-think" },
   auto: { soft: "bg-warn/10 text-warn", dot: "bg-warn" },
   existing: { soft: "bg-ok/10 text-ok", dot: "bg-ok" },
