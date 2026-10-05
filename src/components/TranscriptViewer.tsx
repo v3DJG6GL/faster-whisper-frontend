@@ -1878,11 +1878,15 @@ export function TranscriptViewer({
         ref={toolbarRef}
         className={cn(
           focus
-            ? "flex-none border-b border-line bg-surface/95 px-6 pb-0.5 pt-4"
+            ? "flex-none border-b bg-surface/95 px-6 pb-0.5 pt-4"
             : cn(
-                "-mx-5 -mt-5 rounded-t-card border-b border-line bg-surface/95 px-5 pb-0.5 pt-5",
+                "-mx-5 -mt-5 rounded-t-card border-b bg-surface/95 px-5 pb-0.5 pt-5",
                 fill ? "flex-none" : "sticky -top-px z-10 backdrop-blur-md",
               ),
+          // The rule edges the list; over the export panel it ran along the
+          // Format/Summary boxes' top borders. Transparent there, not removed:
+          // the gap under the toolbar stays the same in every mode.
+          reading ? "border-line" : "border-transparent",
         )}
       >
       <div className="mb-2.5 font-mono text-[11px] uppercase tracking-label text-faint">
