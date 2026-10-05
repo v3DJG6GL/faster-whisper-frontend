@@ -30,7 +30,7 @@ import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
   activeRailIndex, addFiles, cancelRun, etaSecOf, overallOf, planOf, planTimeline, railStages, runBadgeFraction, unitsFraction,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
-  setUrlMeta, skippedStages, startRun, useTranscribeRun,
+  setUrlMeta, skippedStages, stagePick, startRun, useTranscribeRun,
   type RailStage, type RunContext, type StepState, settledPanelItem, runTotals } from "@/lib/transcribeRun";
 import { displayLabel, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, pickRung, rungFacts, tierWords, type UrlPreview, type VideoRung, urlHost } from "@/lib/urlSource";
 import {
@@ -48,7 +48,7 @@ import { cn } from "@/lib/cn";
 import { useOutsidePress } from "@/lib/useOutsidePress";
 import {
   NO_OVERRIDE_PROFILE,
-  type BatchProgress, type DecodeOverrides, type TranscribeOptions, type VideoProgress,
+  type BatchProgress, type DecodeDefault, type DecodeOverrides, type TranscribeOptions, type VideoProgress,
 } from "@/lib/types";
 
 /** Bound the "server ignored N overrides" list — untrusted response, real DOM. */
@@ -545,6 +545,38 @@ function aboutLeft(ms: number): string {
   return `about ${Math.round(s / 60)}m left`;
 }
 
+/** A pipeline stage's switch (music separation, diarization) as a tri-state: "Default · on/off"
+ *  takes the server's default for this caller (request-default-settings), On/Off say it. The
+ *  same pattern as the VAD row; an unknown default leaves the bare "Default". */
+function StageSwitch({
+  value,
+  serverDefault,
+  onChange,
+  disabled,
+  ariaLabel,
+}: {
+  value: boolean | undefined;
+  serverDefault: DecodeDefault | undefined;
+  onChange: (v: boolean | undefined) => void;
+  disabled?: boolean;
+  ariaLabel: string;
+}) {
+  const def = typeof serverDefault?.value === "boolean" ? serverDefault.value : undefined;
+  return (
+    <Segmented
+      ariaLabel={ariaLabel}
+      disabled={disabled}
+      value={value === true ? "on" : value === false ? "off" : "inherit"}
+      onChange={(v) => onChange(v === "inherit" ? undefined : v === "on")}
+      options={[
+        { value: "inherit", label: inheritLabel(onOff(def), "Default"), title: serverDefault ? "This server's default" : undefined },
+        { value: "on", label: "On" },
+        { value: "off", label: "Off" },
+      ]}
+    />
+  );
+}
+
 export default function Transcribe() {
   // History's "Save audio…/Save video…" open the workbench straight onto the
   // export panel: the choice rides in router state and is consumed once.
@@ -601,7 +633,8 @@ export default function Transcribe() {
   // "Silence skipping ate the file" notice — dismissed per file path.
   const [vadNoticeDismissed, setVadNoticeDismissed] = useState<string | null>(null);
   // Per-run stage options, seeded from the persisted screen defaults.
-  const [diarize, setDiarize] = useState(() => settings.transcribe?.diarize ?? false);
+  // undefined = the server's default (request-default-settings `diarize`), shown as "Default · …".
+  const [diarize, setDiarize] = useState<boolean | undefined>(() => settings.transcribe?.diarize);
   // Speaker count as an explicit MODE (auto / count / range) instead of a
   // stepper whose 0 doubles as "auto" — one accidental "−" click used to flip
   // the mode silently and persist. Legacy blobs have no speakerMode: a pinned
@@ -639,7 +672,8 @@ export default function Transcribe() {
   // One-line notice under whichever translate row was auto-switched off (the
   // two translation mechanisms are mutually exclusive). Cleared on interaction.
   const [translateExclNotice, setTranslateExclNotice] = useState<"whisper" | "t2t" | null>(null);
-  const [separateBgm, setSeparateBgm] = useState(() => settings.transcribe?.separateBgm ?? false);
+  // undefined = the server's default (request-default-settings `separate_bgm`).
+  const [separateBgm, setSeparateBgm] = useState<boolean | undefined>(() => settings.transcribe?.separateBgm);
   // Per-RUN decode overrides layered over the Backend's stored defaults —
   // deliberately not persisted: this is "for this file, try beam 5", not a
   // settings edit (those live on the Backend / Profile editors).
@@ -808,10 +842,13 @@ export default function Transcribe() {
   // unsupported (the run would then just soft-fail into a "skipped" rail row).
   const bgmAvailable = caps?.bgm_separation_enabled !== false;
   const diarAvailable = caps?.diarization_enabled !== false;
-  // The two stages as the run will actually request them: a standard server
-  // has neither, whatever the persisted toggles say.
-  const effDiarize = diarize && diarAvailable && !isStandard;
-  const effBgm = separateBgm && bgmAvailable && !isStandard;
+  // The two stages as the run will actually request them: the screen's pick, else the server's
+  // default; undefined = neither says (an older server), so no field is sent. A standard server
+  // has neither stage, whatever the persisted toggles say.
+  const diarWire = diarAvailable && !isStandard ? stagePick(diarize, decodeDefaults?.diarize) : undefined;
+  const bgmWire = bgmAvailable && !isStandard ? stagePick(separateBgm, decodeDefaults?.separate_bgm) : undefined;
+  const effDiarize = diarWire === true;
+  const effBgm = bgmWire === true;
   // Transcribe-from-URL is opt-in, unlike the two stage gates above: absent
   // means the endpoint does not exist (older backend / standard server), so
   // only an explicit true shows the link affordance.
@@ -1169,7 +1206,7 @@ export default function Transcribe() {
     // Always present for a standard server (it carries the wire-shaping `standard` flag
     // even when no stage is on), else only when a stage asked for something.
     const options: TranscribeOptions | undefined =
-      isStandard || diarize || translate || separateBgm || t2tOptions.translateTo !== undefined
+      isStandard || diarWire !== undefined || translate || bgmWire !== undefined || t2tOptions.translateTo !== undefined
         ? {
             ...(isStandard ? { standard: true } : {}),
             // Belt-and-braces exclusivity: when a sync race left both set,
@@ -1178,6 +1215,8 @@ export default function Transcribe() {
               ? { task: "translate" as const, useTranslationsEndpoint: isStandard }
               : {}),
             ...t2tOptions,
+            // An explicit boolean whenever the stage exists and anyone named a value: "off" has
+            // to be SAID, or a server whose default is on runs the stage anyway.
             ...(effDiarize
               ? {
                   diarize: true,
@@ -1185,10 +1224,14 @@ export default function Transcribe() {
                   ...(speakerMode === "range" ? { minSpeakers, maxSpeakers } : {}),
                   ...(diarizationModel ? { diarizationModel } : {}),
                 }
-              : {}),
+              : diarWire === false
+                ? { diarize: false }
+                : {}),
             ...(effBgm
               ? { separateBgm: true, ...(separationModel ? { separationModel } : {}) }
-              : {}),
+              : bgmWire === false
+                ? { separateBgm: false }
+                : {}),
           }
         : undefined;
     const ctx = buildCtx(runOverrides);
@@ -1696,8 +1739,9 @@ export default function Transcribe() {
                     ) : undefined
                   }
                 >
-                  <Toggle
-                    checked={effBgm}
+                  <StageSwitch
+                    value={separateBgm}
+                    serverDefault={decodeDefaults?.separate_bgm}
                     disabled={!bgmAvailable}
                     ariaLabel="Music source separation"
                     onChange={(v) => {
@@ -1881,8 +1925,9 @@ export default function Transcribe() {
                     ) : undefined
                   }
                 >
-                  <Toggle
-                    checked={effDiarize}
+                  <StageSwitch
+                    value={diarize}
+                    serverDefault={decodeDefaults?.diarize}
                     disabled={!diarAvailable}
                     ariaLabel="Speaker diarization"
                     onChange={(v) => {

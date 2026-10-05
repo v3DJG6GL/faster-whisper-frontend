@@ -100,6 +100,17 @@ export interface StageMeta {
  *  separation and jumps straight to "transcribing"). */
 const RAIL_ORDER: RailStage[] = ["downloading", "separating", "transcribing", "diarizing", "translating"];
 
+/** A stage switch (diarization, music separation) as the run sends it: the screen's own pick
+ *  (true/false), else the server's default for this caller (request-default-settings
+ *  `diarize` / `separate_bgm`), else undefined — an older server that names no default gets no
+ *  field, so its own default still applies. The rail, the preload plan and the request all read
+ *  this one value; `=== true` is "the stage runs". */
+export function stagePick(own: boolean | undefined, serverDefault: { value: unknown } | null | undefined): boolean | undefined {
+  if (typeof own === "boolean") return own;
+  const v = serverDefault?.value;
+  return typeof v === "boolean" ? v : undefined;
+}
+
 /** The stages of a run in server order — transcribe always, the optional
  *  stages only when the run switched them on, and (URL items) the leading
  *  server-side download. Text sources (subtitle/txt files) run the

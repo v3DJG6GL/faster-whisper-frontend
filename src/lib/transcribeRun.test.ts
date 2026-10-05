@@ -15,7 +15,7 @@ vi.mock("./api", async (importOriginal) => ({
 import {
   activeRailIndex, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
   overallOf, etaSecOf, planOf, planTimeline, unitsFraction,
-  railIndex, railOf, railStages, selectPath, setRename, skippedStages,
+  railIndex, railOf, railStages, selectPath, setRename, skippedStages, stagePick,
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
   cancelRun, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
@@ -38,6 +38,25 @@ describe("railOf", () => {
   });
   it("maps the translating stage to its own row", () => {
     expect(railOf("translating")).toBe("translating");
+  });
+});
+
+describe("stagePick", () => {
+  it("the screen's own pick wins, an explicit off included", () => {
+    expect(stagePick(false, { value: true })).toBe(false);
+    expect(stagePick(true, { value: false })).toBe(true);
+  });
+  it("else the server's default for this caller", () => {
+    expect(stagePick(undefined, { value: true })).toBe(true);
+    expect(stagePick(undefined, { value: false })).toBe(false);
+  });
+  it("an older server that names no default gets no field", () => {
+    expect(stagePick(undefined, undefined)).toBeUndefined();
+    expect(stagePick(undefined, { value: "true" })).toBeUndefined();
+  });
+  it("feeds the rail: only a true pick lights the stage", () => {
+    expect(railStages({ diarize: stagePick(undefined, { value: true }) })).toContain("diarizing");
+    expect(railStages({ diarize: stagePick(false, { value: true }) })).not.toContain("diarizing");
   });
 });
 
