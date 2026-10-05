@@ -170,17 +170,7 @@ export function dictate(profileId: string, action: TriggerAction): void {
   setSettleTargetPicker(
     profile.askTranslationTargets && profile.activation === "hold"
       ? () =>
-          askTranslationTargets({
-            source: effectiveLanguage(profile.language, backend.language),
-            preset: configuredRouteTargets(profile, backend) ?? [],
-            recent: useApp.getState().settings.recentTranslationTargets ?? [],
-            tag: profile.tag?.trim() || profile.name,
-            when: "after",
-            theme: useApp.getState().settings.theme,
-            accentHue: useApp.getState().settings.accentHue,
-            accentMotion: useApp.getState().settings.accentMotion,
-            ...targetLanguages(profile, backend),
-          }).then((pick) => {
+          askTranslationTargets(targetPickerSeed(profile, backend, "after")).then((pick) => {
             if (pick.kind === "picked") rememberRecent("recentTranslationTargets", pick.targets);
             return pick;
           })
@@ -220,26 +210,14 @@ async function startWithPickedTargets(
 ): Promise<void> {
   if (pickerOpen) return;
   pickerOpen = true;
-  const s = useApp.getState();
   const preset = configuredRouteTargets(profile, backend) ?? [];
-  const backendLang = backend.language;
   try {
     // Resolve the injection target BEFORE taking focus — see the docblock. Non-fatal: an
     // AT-SPI/IPC reject here used to escape as an unhandled rejection from a bare `void`
     // caller and silently drop the whole start; null = no known target, the session still runs.
     const targetApp = await getFocusedApp().catch(() => null);
     useApp.getState().setDictation({ activeProfile: profile.id, routePending: "choosing" });
-    const pick = await askTranslationTargets({
-      source: effectiveLanguage(profile.language, backendLang),
-      preset,
-      recent: s.settings.recentTranslationTargets ?? [],
-      tag: profile.tag?.trim() || profile.name,
-      when: "before",
-      theme: s.settings.theme,
-      accentHue: s.settings.accentHue,
-      accentMotion: s.settings.accentMotion,
-      ...targetLanguages(profile, backend),
-    });
+    const pick = await askTranslationTargets(targetPickerSeed(profile, backend, "before"));
     if (pick.kind === "aborted") {
       // The user backed out: nothing starts, and the chip returns to standby (no Profile
       // claimed, no route pending). `pickerOpen` is released in `finally`.
@@ -321,12 +299,25 @@ function askTranslationTargets(seed: Record<string, unknown>): Promise<TargetPic
   });
 }
 
-/** The picker's grouping: the languages of the session's translation model (the Profile's,
- *  else the Backend's, else the server default) — streaming.ts trOv resolves it the same way. */
-function targetLanguages(profile: Profile, backend: Backend): { supported: string[] | null; modelName?: string } {
-  const caps = ownProp(useApp.getState().caps, backend.id);
+/** What the picker opens with for a Profile's session (`when`: before it starts, or at the
+ *  push-to-talk settle): the spoken language, the configured targets, the recent picks, the
+ *  Profile's tag and the theme — and its grouping by the session's translation model (the
+ *  Profile's, else the Backend's, else the server default; streaming.ts trOv resolves it the
+ *  same way). */
+function targetPickerSeed(profile: Profile, backend: Backend, when: "before" | "after"): Record<string, unknown> {
+  const st = useApp.getState();
   const model = profile.translationOverrides?.model || backend.translationOverrides?.model;
-  return translationTargetInfo(caps, model);
+  return {
+    source: effectiveLanguage(profile.language, backend.language),
+    preset: configuredRouteTargets(profile, backend) ?? [],
+    recent: st.settings.recentTranslationTargets ?? [],
+    tag: profile.tag?.trim() || profile.name,
+    when,
+    theme: st.settings.theme,
+    accentHue: st.settings.accentHue,
+    accentMotion: st.settings.accentMotion,
+    ...translationTargetInfo(ownProp(st.caps, backend.id), model),
+  };
 }
 
 // Wire the queued-start consumer: streaming.ts owns settleIdle but can't import us
