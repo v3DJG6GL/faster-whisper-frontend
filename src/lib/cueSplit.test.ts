@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildCues, cueOptionsOf, cueResult, cutByShare, limitsFor, sanitizeCueLimits, trackCues, wrapLines,
+  buildCues, cueOptionsOf, cueResult, cutByShare, limitsFor, sanitizeCueLimits, trackCues, trackLang, wrapLines,
   type CueOptions,
 } from "./cueSplit";
 import type { BatchResult, TranscriptWord } from "./types";
@@ -206,5 +206,13 @@ describe("cutByShare", () => {
   });
   it("cuts CJK text at character boundaries", () => {
     expect(cutByShare("今日は晴れ。明日は雨。", [1, 1])).toEqual(["今日は晴れ。", "明日は雨。"]);
+  });
+});
+
+describe("trackLang", () => {
+  it("the original's language, a site track's own, a target's code — und when unknown", () => {
+    const r: BatchResult = { text: "", language: " de ", timedTracks: [{ id: "x", lang: "fr", source: "site", kind: "manual", cues: [] }] };
+    expect(["orig", "en", "x"].map((t) => trackLang(r, t))).toEqual(["de", "en", "fr"]);
+    expect(trackLang({}, "orig")).toBe("und");
   });
 });

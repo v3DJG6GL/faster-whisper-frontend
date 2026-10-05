@@ -5,6 +5,7 @@ import { Waveform } from "@/components/Waveform";
 import { setChipHitRegion, chipPointerOver, emitOverlayAction, showMainAtScreen, isTauri } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { safeDisplayText, safeIdentityText, stripControlChars } from "@/lib/sanitize";
+import { langCode } from "@/lib/languages";
 import { quickLaunchMeta } from "@/lib/screens";
 import { newSpeakMemo, stepSpeaking } from "@/lib/speaking";
 import { dictationVisual, isActiveDictation, isProcessing, type DictationTone } from "@/lib/dictationVisual";
@@ -543,7 +544,7 @@ export default function Overlay() {
   // it cannot be a thing you have to hover to discover. Codes, not names: this shares a line
   // with the live transcript, and "German → French, Italian" is 26 characters of it.
   const routeTargets = (state.translateTo ?? [])
-    .map((t) => safeDisplayText(t, 12).toUpperCase())
+    .map((t) => langCode(t, 12))
     .filter(Boolean);
   const hasRoute = routeTargets.length > 0;
   // A bounded number from our own overlay.ts, but it rides the peer-adjacent payload: clamp.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cleanTrackTitle, defaultTrackOrder, defaultViewTracks, languageGroups, mergeOrder, moveItem, moveLanguage, moveTrack, planTracks, sourceWord, stepSlot,
-  readTrackPrefs, toggleLanguage, toggleTrack, trackChipLabel, trackFileSuffixes, trackInfo, trackOrder, transcriptTracks,
+  readTrackPrefs, toggleLanguage, toggleTrack, trackChipLabel, trackCode, trackFileSuffixes, trackInfo, trackOrder, transcriptTracks,
   translationTracks,
 } from "./exportTracks";
 import type { BatchResult } from "./types";
@@ -20,6 +20,11 @@ describe("source words", () => {
       .toEqual(["DE · Whisper", "EN · Machine translation", "DE · YouTube", "DE · YouTube auto", "DE · YouTube SDH", "EN · Site"]);
     expect(trackInfo({}, "orig")).toEqual({ id: "orig", lang: "und", source: "whisper", hoh: false });
     expect(sourceWord(trackInfo(RESULT, "de-x-site-hoh"))).toBe("YouTube SDH");
+  });
+  it("track codes: one fallback (UND) for the original, a target and a site track", () => {
+    expect(["orig", "en", "de-x-site"].map((t) => trackCode(RESULT, t))).toEqual(["DE", "EN", "DE"]);
+    expect(trackCode({}, "orig")).toBe("UND");
+    expect(trackCode({ language: "  " }, "orig")).toBe("UND");
   });
 });
 

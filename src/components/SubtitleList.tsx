@@ -14,10 +14,11 @@ import { LangTag } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { fmtTimestamp } from "@/lib/format";
 import { trackChipLabel } from "@/lib/exportTracks";
-import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
+import { stripControlChars } from "@/lib/sanitize";
 import { lastStartedAt } from "@/lib/seekKeys";
 import { rowsToRender } from "@/lib/virtualRows";
-import { cueTrackLang, limitsFor, trackCues, wrapLines, type CueGrid, type CueOptions } from "@/lib/cueSplit";
+import { limitsFor, trackCues, trackLang, wrapLines, type CueGrid, type CueOptions } from "@/lib/cueSplit";
+import { trackCode } from "@/lib/exportTracks";
 import type { BatchResult } from "@/lib/types";
 
 interface Line {
@@ -218,8 +219,7 @@ export function SubtitleList({
 }) {
   const lanes = tracks.some((t) => grid.own[t]);
   const layout = useMemo(() => {
-    const limitOf = (track: string) => (cues ? limitsFor(cues, cueTrackLang(result, track)) : null);
-    const code = (track: string) => safeDisplayText(cueTrackLang(result, track) ?? "??", 16).toUpperCase();
+    const limitOf = (track: string) => (cues ? limitsFor(cues, trackLang(result, track)) : null);
     const maxDur = limitOf("orig")?.maxDur ?? 7;
     /** One track's text of a cue: name prefix, wrapped to its limits. */
     const lineOf = (track: string, text: string, speaker: string | undefined, main: boolean): Line => {
@@ -244,7 +244,7 @@ export function SubtitleList({
       return {
         key, n, seg: c.seg, start: c.start, end: c.end, first,
         lines: cols.map(([t, text]) => lineOf(t, text, c.speaker, t === "orig")),
-        cps: `${d.toFixed(1)} s · ${fast && cols.length > 1 ? `${code(worst.t)} ` : ""}${worst.rate.toFixed(fast ? 1 : 0)} chars/s`,
+        cps: `${d.toFixed(1)} s · ${fast && cols.length > 1 ? `${trackCode(result, worst.t)} ` : ""}${worst.rate.toFixed(fast ? 1 : 0)} chars/s`,
         fast,
         bar: Math.min(100, (d / maxDur) * 100),
       };

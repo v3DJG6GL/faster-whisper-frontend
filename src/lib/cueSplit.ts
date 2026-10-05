@@ -370,8 +370,6 @@ export function wrapLines(text: string, cpl: number, lines: number, firstReserve
 
 // ── the grid ────────────────────────────────────────────────────────────────
 
-const trackLang = (track: string, origLang?: string) => (track === "orig" ? origLang : track);
-
 /** Cues for the export/viewer. `tracks` = "orig" + translation codes + timed-track
  *  ids; `o` undefined = one cue per segment (as transcribed). `reserve(seg)` =
  *  chars a speaker-name prefix will take on that segment's cues. */
@@ -440,10 +438,11 @@ export function trackCues(grid: CueGrid, track: string): { start: number; end: n
     .filter((c) => c.text);
 }
 
-/** The language a track's text is written in ("orig" → the transcript's). */
-export function cueTrackLang(result: BatchResult, track: string): string | undefined {
+/** The language code a track is filed under: the transcript's for the original, a site
+ *  track's own, the target code otherwise — "und" when unknown. */
+export function trackLang(result: Pick<BatchResult, "language" | "timedTracks">, track: string): string {
   const tt = result.timedTracks?.find((t) => t.id === track);
-  return tt ? tt.lang : trackLang(track, result.language);
+  return ((tt ? tt.lang : track === "orig" ? result.language : track) ?? "").trim() || "und";
 }
 
 /** Cues as a BatchResult, so the existing generators render them unchanged:

@@ -2,6 +2,7 @@
 // follows — what a search matches, which groups show in which order, what a pick does to the
 // decode overrides — lives here as a plain function, so it is tested without a DOM.
 
+import { safeDisplayText } from "./sanitize";
 import type { DecodeOverrides } from "./types";
 
 /** Every language Whisper decodes — faster-whisper's tokenizer list (incl. yue), in its order. */
@@ -50,6 +51,11 @@ function intlName(code: string): string | undefined {
  *  "de-orig" are German). */
 export function primarySubtag(code: string | null | undefined): string {
   return (code ?? "").toLowerCase().split(/[-_]/)[0];
+}
+
+/** A language code as chips, tabs and summaries show it: bounded, then in caps ("DE", "PT-BR"). */
+export function langCode(code: string, max = 16): string {
+  return safeDisplayText(code, max).toUpperCase();
 }
 
 /** English name for a language code; an unknown code comes back unchanged. */

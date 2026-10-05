@@ -15,7 +15,7 @@ import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation";
 import { configuredRouteTargets } from "@/lib/overlay";
-import { languageLabel } from "@/lib/languages";
+import { langCode, languageLabel } from "@/lib/languages";
 import { pinnedName } from "@/lib/micOptions";
 import type { Backend, Profile } from "@/lib/types";
 
@@ -59,7 +59,7 @@ function profileRoute(p: Profile | undefined, backend: Backend | undefined): str
 /** The same route as codes — "DE → EN, FR" — the way the chip and the tray write it, for
  *  the row's narrow column; the full names ride on the cell's tooltip. */
 function profileRouteShort(p: Profile | undefined, backend: Backend | undefined): string {
-  const code = (v: string) => safeDisplayText(v.trim(), 8).toUpperCase();
+  const code = (v: string) => langCode(v.trim(), 8);
   const lang = p?.language?.trim() ? p.language : (backend?.language ?? "");
   const source = lang && lang !== "auto" ? code(lang) : "auto";
   const targets = (configuredRouteTargets(p, backend) ?? []).filter((t) => typeof t === "string" && t.trim()).map(code);

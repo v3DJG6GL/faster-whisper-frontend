@@ -11,7 +11,7 @@ import {
   languageGroups, languageLabel, moveLanguage, moveTrack, sourceKind, sourceWord, stepSlot, toggleLanguage, toggleTrack,
   trackInfo,
 } from "@/lib/exportTracks";
-import { safeDisplayText } from "@/lib/sanitize";
+import { langCode } from "@/lib/languages";
 import type { ChipPart } from "@/lib/siteSubtitles";
 import type { BatchResult } from "@/lib/types";
 
@@ -157,7 +157,7 @@ export function ExportTrackChips({
                     on ? "text-accent" : "text-faint hover:text-text",
                   )}
                 >
-                  {safeDisplayText(g.lang, 16).toUpperCase()}
+                  {langCode(g.lang)}
                 </button>
               }
               parts={parts}

@@ -2,8 +2,8 @@
 // reads in chips, tabs and lane labels, and — from the track order — which track is a
 // language's plain one, its title in a video and its file name. Pure; unit-tested.
 
-import { cueTrackLang } from "./cueSplit";
-import { languageLabel as baseLanguageLabel, primarySubtag } from "./languages";
+import { trackLang } from "./cueSplit";
+import { langCode, languageLabel as baseLanguageLabel, primarySubtag } from "./languages";
 import { safeDisplayText, stripControlChars } from "./sanitize";
 import { MT_WORD, WHISPER_WORD, siteWord, type SiteBadge } from "./siteSubtitles";
 import type { BatchResult } from "./types";
@@ -26,7 +26,7 @@ export interface TrackInfo {
 }
 
 export function trackInfo(result: TrackResult, track: string): TrackInfo {
-  const lang = (cueTrackLang(result as BatchResult, track) ?? "").trim() || "und";
+  const lang = trackLang(result, track);
   const tt = result.timedTracks?.find((t) => t.id === track);
   if (tt) return { id: track, lang, source: tt.kind === "auto" ? "auto" : "site", hoh: !!tt.hoh, site: tt.site };
   return { id: track, lang, source: track === "orig" ? "whisper" : "mt", hoh: false };
@@ -48,7 +48,12 @@ export function sourceKind(t: TrackInfo): SiteBadge["kind"] {
  *  "DE · YouTube auto". */
 export function trackChipLabel(result: TrackResult, track: string): string {
   const t = trackInfo(result, track);
-  return `${safeDisplayText(t.lang, 16).toUpperCase()} · ${sourceWord(t)}`;
+  return `${langCode(t.lang)} · ${sourceWord(t)}`;
+}
+
+/** A track's language code as chips, lane cues and the Summary show it: "DE", "UND". */
+export function trackCode(result: TrackResult, track: string): string {
+  return langCode(trackLang(result, track));
 }
 
 /** English names for the track titles — the same names the viewer's chips use; a code with

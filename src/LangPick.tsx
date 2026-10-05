@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { abortLangPick, commitLangPick, isTauri } from "@/lib/api";
-import { languageLabel, targetSections, toggleCode, type LangRow } from "@/lib/languages";
+import { langCode, languageLabel, targetSections, toggleCode, type LangRow } from "@/lib/languages";
 import { navKey } from "@/lib/listNav";
 import { cleanRecent } from "@/lib/recent";
 import { KeyHint, OptionRows, optionId } from "@/components/ListPicker";
@@ -206,7 +206,7 @@ export default function LangPick() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onKeyDown]);
 
-  const src = safeDisplayText(seed.source ?? "", 12).toUpperCase() || "AUTO";
+  const src = langCode(seed.source ?? "", 12) || "AUTO";
   const verb = seed.when === "after" ? "Insert" : "Start";
 
   return (
@@ -251,7 +251,7 @@ export default function LangPick() {
               title={`Remove ${languageLabel(c)}`}
               className="ring-signal group inline-flex items-center gap-1.5 rounded-pill border border-accent/50 px-2.5 py-1 font-mono text-[12px] text-accent transition-colors hover:border-rec/45 hover:bg-rec/10 hover:text-rec active:bg-rec/20"
             >
-              {safeDisplayText(c, 12).toUpperCase()}
+              {langCode(c, 12)}
               <span aria-hidden className="opacity-60 transition-opacity group-hover:opacity-100">
                 ×
               </span>

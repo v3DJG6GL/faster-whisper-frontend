@@ -16,20 +16,21 @@ import {
   fetchUrlVideoOnDemand, getMediaStreams, onMediaExportProgress, packageMedia,
 } from "@/lib/api";
 import { safeDisplayText } from "@/lib/sanitize";
+import { langCode } from "@/lib/languages";
 import {
   cpsWarnings, cueGrid, exportFileGroups, exportOptionsFor, generateExports, prettySpeaker, previewExport, type ExportFormat,
   type ExportOptions, exportFileNames,
 } from "@/lib/transcriptExport";
 import {
-  CUE_PRESETS, CUE_RANGES, cueTrackLang, limitsFor, sanitizeCueLimits, type CueLimits, type CueOptions,
-  type SubtitleLength,
+  CUE_PRESETS, CUE_RANGES, limitsFor, sanitizeCueLimits, type CueLimits, type CueOptions,
+  type SubtitleLength, trackLang,
 } from "@/lib/cueSplit";
 import { contentStates, exportSummary, type ContentItem } from "@/lib/exportSummary";
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
 import {
-  TRACK_TITLE_MAX, cleanTrackTitle, planTracks, sourceKind, sourceWord, trackChipLabel, trackInfo, trackOrder,
+  TRACK_TITLE_MAX, cleanTrackTitle, planTracks, sourceKind, sourceWord, trackChipLabel, trackCode, trackInfo, trackOrder,
   type TrackPrefs,
 } from "@/lib/exportTracks";
 import {
@@ -234,7 +235,6 @@ export function TranscriptExport({
     colors: () => setColorize(!colorize),
     words: () => setWordTs(!wordTs),
   };
-  const origCode = safeDisplayText((result.language ?? "??").toUpperCase(), 16);
   /** The tracks a video carries, inside or beside it. */
   const videoTracks = useMemo(() => (effTracks.length ? effTracks : ["orig"]), [effTracks]);
   const videoPlan = mediaChoice === "video" && hasVideoSource;
@@ -514,12 +514,11 @@ export function TranscriptExport({
   const names = plan.files.map((f) => f.name(stem));
   const textNames = plan.files.filter((f) => f.kind === "text");
   const cpsLimits = new Set(
-    (effTracks.length ? effTracks : ["orig"]).map((t) => (cueOpts ? limitsFor(cueOpts, cueTrackLang(editedResult, t)).cps : 20)),
+    (effTracks.length ? effTracks : ["orig"]).map((t) => (cueOpts ? limitsFor(cueOpts, trackLang(editedResult, t)).cps : 20)),
   );
   const summary = exportSummary({
     format: exportFormat,
-    trackCodes: videoTracks.map((t) =>
-      t === "orig" ? origCode : safeDisplayText(cueTrackLang(editedResult, t) ?? t, 16).toUpperCase()),
+    trackCodes: videoTracks.map((t) => trackCode(editedResult, t)),
     stacked: textNames.length === 1,
     filePerTrack: textNames.length > 1 || !!plan.sidecars,
     cueCount: grid ? grid.cues.length : null,
@@ -736,7 +735,7 @@ export function TranscriptExport({
       {planned.map((t, i) => (
         <div key={t.id} className="grid grid-cols-[auto_2.5rem_minmax(0,1fr)_1.75rem] items-center gap-x-2 gap-y-1">
           <span aria-hidden className={cn("size-1.5 rounded-full", trackDot(t.id))} />
-          <span className="font-mono text-[11px] text-dim">{safeDisplayText(t.lang, 16).toUpperCase()}</span>
+          <span className="font-mono text-[11px] text-dim">{langCode(t.lang)}</span>
           <TextInput
             aria-label={`${trackChipLabel(editedResult, t.id)} track name`}
             value={trackNames[t.id] ?? t.defaultTitle}

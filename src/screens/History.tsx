@@ -34,6 +34,7 @@ import {
   type ExportFormat,
 } from "@/lib/transcriptExport";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import { langCode } from "@/lib/languages";
 import { urlHost } from "@/lib/urlSource";
 import { derivePickedStem, exportStem, isVideoSourcePath, withTrackSites } from "@/lib/mediaExport";
 import { readTrackPrefs, trackOrder, transcriptTracks } from "@/lib/exportTracks";
@@ -632,7 +633,7 @@ export default function History() {
                     type="button"
                     onClick={() => copyTrack(rec, lang, text)}
                     className="absolute right-0 top-0 rounded px-1.5 py-0.5 font-mono text-[10px] text-faint opacity-0 transition hover:text-text focus-visible:opacity-100 group-hover/track:opacity-100"
-                    title={`Copy the ${safeDisplayText(lang, 8).toUpperCase()} track`}
+                    title={`Copy the ${langCode(lang, 8)} track`}
                   >
                     {copiedId === `${rec.id}:${lang}` ? "copied" : "copy"}
                   </button>

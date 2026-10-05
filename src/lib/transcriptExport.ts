@@ -4,7 +4,7 @@
 // segment/word text is server-controlled and speaker names are user-typed,
 // and both end up in files that get opened elsewhere.
 
-import { buildCues, cueResult, cueTrackLang, limitsFor, trackCues, wrapLines, type CueOptions } from "./cueSplit";
+import { buildCues, cueResult, trackLang, limitsFor, trackCues, wrapLines, type CueOptions } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { stripControlChars } from "./sanitize";
 import { segmentWordRanges } from "./wordAlign";
@@ -660,7 +660,7 @@ function ctxOf(result: BatchResult, opts: ExportOptions): Ctx {
     lineTracks,
     wrap: (text, track, reserve) => {
       if (!cues) return text;
-      const L = limitsFor(cues, cueTrackLang(result, track));
+      const L = limitsFor(cues, trackLang(result, track));
       return wrapLines(text, L.cpl, L.lines, reserve).join("\n");
     },
   };
@@ -805,7 +805,7 @@ export function cpsWarnings(
   const grid = cueGrid(result, { ...opts, format: "srt" }, tracks);
   const out: { lang: string; index: number; cps: number }[] = [];
   for (const track of tracks) {
-    const limit = opts.cues ? limitsFor(opts.cues, cueTrackLang(result, track)).cps : 20;
+    const limit = opts.cues ? limitsFor(opts.cues, trackLang(result, track)).cps : 20;
     // Kept-original lines are never exported — trackCues never yields them.
     for (const c of trackCues(grid, track)) {
       const dur = c.end - c.start;

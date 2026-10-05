@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, languageLabel, matchesLanguage, primarySubtag,
+  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, languageLabel, matchesLanguage, primarySubtag,
   nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode,
 } from "./languages";
 
@@ -157,5 +157,14 @@ describe("primarySubtag", () => {
     expect(["de-CH", "DE_ch", "de-orig", "de", "zh-Hant"].map(primarySubtag)).toEqual(["de", "de", "de", "de", "zh"]);
     expect(primarySubtag(undefined)).toBe("");
     expect(primarySubtag(null)).toBe("");
+  });
+});
+
+describe("langCode", () => {
+  it("bounds, then capitalises; control characters go", () => {
+    expect(langCode("pt-BR")).toBe("PT-BR");
+    expect(langCode("de\u202e")).toBe("DE");
+    expect(langCode("x".repeat(20))).toBe("X".repeat(16));
+    expect(langCode("abcdefghij", 8)).toBe("ABCDEFGH");
   });
 });
