@@ -9,7 +9,7 @@ import { Loader2, RefreshCw, RotateCcw } from "lucide-react";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { cancelTextTranslation, urlLanguageCheck } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { MULTI_LANGUAGE, languageLabel } from "@/lib/languages";
+import { languageLabel, namedLanguage } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
 import { linkSpoken, spokenPill, type LinkLanguageCheck, type LinkSpoken } from "@/lib/siteSubtitles";
 import type { UrlPreview } from "@/lib/urlSource";
@@ -77,7 +77,7 @@ export function useLinkLanguage(args: {
   useEffect(() => {
     setEdited(null);
     setCheck({ state: "idle" });
-    const fixed = screen !== "auto" && screen !== MULTI_LANGUAGE;
+    const fixed = namedLanguage(screen);
     if (preview && !preview.language && !fixed) start();
     else cancel();
     return cancel;

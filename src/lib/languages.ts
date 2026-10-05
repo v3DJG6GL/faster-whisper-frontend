@@ -222,6 +222,12 @@ export function applyMultilingual(
   return next;
 }
 
+/** A spoken-picker value that names a language — not inherit (""), Auto-detect or
+ *  Multiple languages. */
+export function namedLanguage(value: string | null | undefined): value is string {
+  return !!value && value !== "auto" && value !== MULTI_LANGUAGE;
+}
+
 /** Display text for a spoken-picker value. */
 export function spokenLabel(value: string): string {
   return value === MULTI_LANGUAGE ? "Multiple languages" : languageLabel(value);

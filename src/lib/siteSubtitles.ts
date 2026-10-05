@@ -11,7 +11,7 @@
 // Any badge click flips used ↔ not used and snapshots everything into Custom (v25, v27).
 
 import type { UrlLanguageCheck } from "./api";
-import { MULTI_LANGUAGE, languageLabel, primarySubtag } from "./languages";
+import { MULTI_LANGUAGE, languageLabel, namedLanguage, primarySubtag, spokenLabel } from "./languages";
 import { safeDisplayText } from "./sanitize";
 import type { ImportedText } from "./subtitleImport";
 import type { BatchResult, TimedTrack } from "./types";
@@ -272,7 +272,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   const rows: SiteRow[] = [{
     code: null,
     label: "Original language",
-    sub: multi ? `Multiple languages · main: ${sp ? languageLabel(sp) : "unknown"}` : sp ? languageLabel(sp) : "Unknown",
+    sub: multi ? `${spokenLabel(MULTI_LANGUAGE)} · main: ${sp ? languageLabel(sp) : "unknown"}` : sp ? languageLabel(sp) : "Unknown",
     badges: origBadges,
     deletable: false,
   }];
@@ -485,7 +485,7 @@ export function linkSpoken(args: {
   const r = args.check.state === "done" ? args.check.result : undefined;
   const detected = r && r.verdict !== "unknown" && r.language ? r.language : null;
   const site = args.siteLanguage ? primarySubtag(args.siteLanguage) : null;
-  const screen = args.screen !== "auto" && args.screen !== MULTI_LANGUAGE ? args.screen : null;
+  const screen = namedLanguage(args.screen) ? args.screen : null;
   const base = detected ?? site ?? screen;
   const source = args.edited ? "edited" : detected ? "detected" : site ? "site" : screen ? "screen" : null;
   const value = args.edited ?? (args.screen === MULTI_LANGUAGE ? MULTI_LANGUAGE : base ?? "auto");

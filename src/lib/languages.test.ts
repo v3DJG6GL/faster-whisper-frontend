@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, languageLabel, matchesLanguage, primarySubtag, trackLanguageName,
+  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, languageLabel, matchesLanguage, namedLanguage, primarySubtag, trackLanguageName,
   nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode,
 } from "./languages";
 
@@ -174,5 +174,11 @@ describe("trackLanguageName", () => {
     expect(trackLanguageName("pt-BR")).toBe("Portuguese (BR)");
     expect(trackLanguageName("fi")).toBe("Finnish");
     expect(trackLanguageName("xx")).toBe("XX");
+  });
+});
+
+describe("namedLanguage", () => {
+  it("a code names a language; inherit, Auto-detect and Multiple languages do not", () => {
+    expect(["de", "", "auto", MULTI_LANGUAGE, null, undefined].map(namedLanguage)).toEqual([true, false, false, false, false, false]);
   });
 });

@@ -10,7 +10,7 @@ import { Check, ChevronDown } from "lucide-react";
 import { KeyHint, ListPicker, type TriggerProps } from "@/components/ListPicker";
 import { cn } from "@/lib/cn";
 import {
-  MULTI_LANGUAGE, WHISPER_LANGUAGES, languageLabel, nativeName, spokenLabel, spokenSections, targetSections,
+  WHISPER_LANGUAGES, languageLabel, namedLanguage, nativeName, spokenLabel, spokenSections, targetSections,
   toggleCode, type LangRow,
 } from "@/lib/languages";
 import { cleanRecent, pushRecent } from "@/lib/recent";
@@ -138,7 +138,7 @@ export function SpokenLanguagePicker({
       }}
       onClose={flush}
       renderRow={(r, { selected }) => {
-        const code = r.value && r.value !== "auto" && r.value !== MULTI_LANGUAGE ? r.value : undefined;
+        const code = namedLanguage(r.value) ? r.value : undefined;
         return (
           <LanguageRow
             code={code}
