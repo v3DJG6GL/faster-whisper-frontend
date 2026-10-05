@@ -6,7 +6,7 @@
 // and it was previously only observable by running a dictation.
 
 import { describe, expect, it } from "vitest";
-import { holdCoerced, liveAllowed, resolveInjectionTarget } from "./streaming";
+import { holdCoerced, liveAllowed, resolveInjectionTarget } from "./dictation/streaming";
 import type { AppRule, FocusedApp, GeneralSettings } from "./types";
 
 const G: GeneralSettings = {

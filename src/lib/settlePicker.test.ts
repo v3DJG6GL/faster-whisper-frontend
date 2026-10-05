@@ -8,8 +8,8 @@
 //
 // Same `?raw` + brace-slice idiom as cancelAudit.test.ts: the seams are module-private.
 import { describe, expect, it } from "vitest";
-import streamingSrc from "./streaming.ts?raw";
-import dictationSrc from "./dictation.ts?raw";
+import streamingSrc from "./dictation/streaming.ts?raw";
+import dictationSrc from "./dictation/dictation.ts?raw";
 
 function mask(src: string): string {
   const out = src.split("");

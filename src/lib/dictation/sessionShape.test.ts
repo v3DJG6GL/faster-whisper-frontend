@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { sessionShape } from "./sessionShape";
-import type { Backend, Profile } from "./types";
+import type { Backend, Profile } from "../types";
 
 const backend = (over: Partial<Backend> = {}): Backend =>
   ({ id: "b1", name: "b1", serverUrl: "http://x", hasApiKey: false, model: "", endpoint: "stream", language: "auto", prompt: "", responseFormat: "verbose_json", ...over }) as Backend;

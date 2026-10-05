@@ -21,16 +21,16 @@
 // the old document was never typed (an own-window skip, a paste Rust declined to attempt) is
 // CARRIED over the break and typed ahead of the next phrase, joined by that separator.
 
-import { useApp } from "./store";
-import { translateFailureDoorway } from "./errors";
-import { attachRecordingPath, patchRecord, recordDictation } from "./transcriptHistory";
+import { useApp } from "../store";
+import { translateFailureDoorway } from "../errors";
+import { attachRecordingPath, patchRecord, recordDictation } from "../transcriptHistory";
 import { appendChunk, appendDelta, finalDelta, mergeTracks } from "./utteranceHistory";
-import { enqueueOutcome } from "./usageOutcome";
-import { backendPrompt, effectiveLanguage, effectiveServerUrl } from "./backends";
-import { effectiveServerKind } from "./serverKind";
-import { maxTranslationTargets, refreshCaps, translationWarm } from "./capabilities";
-import { acquireWarm, preloadPlanFor, type WarmLease } from "./preload";
-import { ownProp } from "./own";
+import { enqueueOutcome } from "../usageOutcome";
+import { backendPrompt, effectiveLanguage, effectiveServerUrl } from "../backends";
+import { effectiveServerKind } from "../serverKind";
+import { maxTranslationTargets, refreshCaps, translationWarm } from "../capabilities";
+import { acquireWarm, preloadPlanFor, type WarmLease } from "../preload";
+import { ownProp } from "../own";
 import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
 import {
   display as pendingDisplay, holdRemainingMs, isLive as pendingIsLive, msUntilStale, newUtterancePending,
@@ -59,7 +59,7 @@ import {
   cancelTextTranslation,
   getTranscribeProgress,
   logLine,
-} from "./api";
+} from "../api";
 import {
   newAbortHandle,
   runDictationTranslate,
@@ -67,12 +67,12 @@ import {
   type TranslateFailure,
 } from "./dictationTranslate";
 import { newCaptureIdBook } from "./captureIds";
-import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertionOverrides, InsertMethod, MicFallback, Profile, ServerWork } from "./types";
+import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertionOverrides, InsertMethod, MicFallback, Profile, ServerWork } from "../types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
-import { normalizeAppId } from "./sanitize";
+import { normalizeAppId } from "../sanitize";
 import { baselineDivergence, commonPrefixLen, joinCarry, untypedRemainder, withCarry } from "./typedBaseline";
-import { newProgressId } from "./ids";
+import { newProgressId } from "../ids";
 
 let wired = false;
 

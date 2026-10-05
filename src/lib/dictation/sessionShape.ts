@@ -4,8 +4,8 @@
 // activation, typing mode, insertion overrides and label — but NOT what the session was opened
 // with. Two Profiles whose shapes differ can't share a session: dictation.ts restarts instead.
 
-import { backendPrompt, effectiveLanguage } from "./backends";
-import type { Backend, Profile } from "./types";
+import { backendPrompt, effectiveLanguage } from "../backends";
+import type { Backend, Profile } from "../types";
 
 /** The backend, and the model / language / prompt / decode / translation setup resolved
  *  against it the way startLiveInner does, plus the hands-free translation-target picker

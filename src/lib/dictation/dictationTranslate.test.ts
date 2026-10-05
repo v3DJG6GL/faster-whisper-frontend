@@ -9,7 +9,7 @@ import {
   newAbortHandle, pricedMs, runDictationTranslate, translateCeilingMs, translateStallMs,
   type DictationTranslateRequest, type TranslateDeps,
 } from "./dictationTranslate";
-import type { TextTranslationResult } from "./api";
+import type { TextTranslationResult } from "../api";
 
 const PID = "deadbeefcafe";
 

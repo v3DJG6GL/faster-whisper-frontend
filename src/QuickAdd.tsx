@@ -25,7 +25,7 @@ import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
   getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText,
 } from "@/lib/api";
-import { resolveInjectionTarget } from "@/lib/streaming";
+import { resolveInjectionTarget } from "@/lib/dictation/streaming";
 import { effectiveServerUrl } from "@/lib/backends";
 import { IS_WINDOWS } from "@/lib/platform";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";

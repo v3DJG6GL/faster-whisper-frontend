@@ -7,8 +7,8 @@ import { cn } from "@/lib/cn";
 import { safeDisplayText, safeIdentityText, stripControlChars } from "@/lib/sanitize";
 import { langCode } from "@/lib/languages";
 import { quickLaunchMeta } from "@/lib/screenRegistry";
-import { newSpeakMemo, stepSpeaking } from "@/lib/speaking";
-import { dictationVisual, isActiveDictation, isProcessing, type DictationTone } from "@/lib/dictationVisual";
+import { newSpeakMemo, stepSpeaking } from "@/lib/dictation/speaking";
+import { dictationVisual, isActiveDictation, isProcessing, type DictationTone } from "@/lib/dictation/dictationVisual";
 import {
   CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipExpansion, chipTuckHold, currentPhase,
   phaseClock, phaseElapsedMs,
@@ -348,7 +348,7 @@ export default function Overlay() {
   }, []);
 
   // Derive speaking vs silent from the level stream (only while listening), via the
-  // SHARED detector so the chip agrees with the main-window surfaces (see lib/speaking).
+  // SHARED detector so the chip agrees with the main-window surfaces (see lib/dictation/speaking).
   const [speaking, setSpeaking] = useState(false);
   const speakMemo = useRef(newSpeakMemo());
   useEffect(() => {

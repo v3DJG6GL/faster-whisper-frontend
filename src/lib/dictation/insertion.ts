@@ -2,7 +2,7 @@
 // once for Settings → Dictation, the Profile editor and App Rules — see
 // components/DictationFields.tsx) and how much an insertion override layer sets.
 
-import type { InsertMethod, InsertionOverrides } from "./types";
+import type { InsertMethod, InsertionOverrides } from "../types";
 
 export const METHOD_OPTIONS: { value: InsertMethod; label: string }[] = [
   { value: "paste", label: "Clipboard paste" },

@@ -12,7 +12,7 @@
 // so they can disagree for a frame — and a stale phase is precisely what would pop
 // the pill open (or hold the ✕ up) after the stage it described has ended.
 
-import { isProcessing } from "./dictationVisual";
+import { isProcessing } from "./dictation/dictationVisual";
 import type { DictationPhase, DictationStatus, ServerWork } from "./types";
 
 /** How long a processing stage must persist before it earns the pill. Below this a

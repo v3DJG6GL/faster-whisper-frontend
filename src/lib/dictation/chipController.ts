@@ -10,12 +10,12 @@
 import { useApp } from "../store";
 import { isTauri, showOverlay, setOverlayScale, hideOverlay, setTrayState, playCue } from "../api";
 import { chipTagFor } from "../profileTag";
-import { backendForProfile, homeTargetProfile } from "../dictation";
+import { backendForProfile, homeTargetProfile } from "./dictation";
 import { activeStatsBackend } from "../usage";
 import { fmtCompact, fmtDuration } from "../format";
 import { ownProp } from "../own";
 import { effectiveLanguage } from "../backends";
-import { isActiveDictation } from "../dictationVisual";
+import { isActiveDictation } from "./dictationVisual";
 import type { OverlayStatsMetric, ServerWork, UsageStats } from "../types";
 
 /** How many translation targets the chip spells out before the rest become "+N". Two, not

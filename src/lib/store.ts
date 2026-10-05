@@ -21,8 +21,8 @@ import type {
   UsageStats,
 } from "./types";
 import type { TranslateRunUi } from "./retroTranslate";
-import type { TranslateFailure } from "./dictationTranslate";
-import { newSpeakMemo, stepSpeaking } from "./speaking";
+import type { TranslateFailure } from "./dictation/dictationTranslate";
+import { newSpeakMemo, stepSpeaking } from "./dictation/speaking";
 import { swap } from "./arr";
 import { hasOwn } from "./own";
 import { normalizeAppId } from "./sanitize";

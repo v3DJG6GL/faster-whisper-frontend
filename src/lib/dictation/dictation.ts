@@ -3,22 +3,22 @@
 // streaming/batch path. Driven by global triggers (CLI / hotkeys) and in-app
 // affordances.
 
-import { useApp } from "./store";
+import { useApp } from "../store";
 import {
   startLive, stopLive, cancelLive, requestStopIfStarting, cancelStopIfStarting, isStarting,
   queuePendingHoldStart, voidPendingHoldStart, registerPendingStartRunner, reclassifyLive, abortDictationTranslate,
   isCapturing, setSettleTargetPicker, setRouteHint, restartLiveAs,
 } from "./streaming";
 import type { TargetPick } from "./streaming";
-import { getFocusedApp, isTauri, showLangPick, showQuickAdd } from "./api";
-import { ownProp } from "./own";
-import { effectiveLanguage } from "./backends";
+import { getFocusedApp, isTauri, showLangPick, showQuickAdd } from "../api";
+import { ownProp } from "../own";
+import { effectiveLanguage } from "../backends";
 import { sessionShape } from "./sessionShape";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
-import { configuredRouteTargets } from "./dictation/chipController";
-import { rememberRecent } from "./recent";
-import { maxTranslationTargets, translationTargetInfo } from "./capabilities";
-import type { Backend, Profile } from "./types";
+import { configuredRouteTargets } from "./chipController";
+import { rememberRecent } from "../recent";
+import { maxTranslationTargets, translationTargetInfo } from "../capabilities";
+import type { Backend, Profile } from "../types";
 
 export type TriggerAction = "start" | "stop" | "toggle" | "reclassify";
 

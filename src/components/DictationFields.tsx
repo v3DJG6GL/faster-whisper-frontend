@@ -1,7 +1,7 @@
 // The insertion controls for the two OVERRIDE layers of the cascade — the Profile editor
 // (per task) and App Rules (per target app) — which share the tri-state "Inherit" shape.
 // Settings → Dictation, the global default the two inherit from, has no inherit state and
-// keeps its own two-state rows; it imports `METHOD_OPTIONS` (lib/insertion) so the method's labels and
+// keeps its own two-state rows; it imports `METHOD_OPTIONS` (lib/dictation/insertion) so the method's labels and
 // order are pinned there too, and takes its row labels from the same manifest entries.
 //
 // One module because the surfaces had already drifted: App Rules called the method
@@ -18,7 +18,7 @@
 
 import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
 import { inheritLabel, onOff } from "@/lib/inherit";
-import { METHOD_OPTIONS } from "@/lib/insertion";
+import { METHOD_OPTIONS } from "@/lib/dictation/insertion";
 import { Segmented, Select } from "@/components/ui";
 import { SETTING } from "@/lib/settingsManifest";
 import type { InsertMethod, InsertionOverrides } from "@/lib/types";

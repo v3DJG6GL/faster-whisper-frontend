@@ -24,7 +24,7 @@
 import { useApp } from "./store";
 import { isTauri, getUsageStats } from "./api";
 import { flushOutcomes, initOutcomeQueue } from "./usageOutcome";
-import { backendForProfile, homeTargetProfile } from "./dictation";
+import { backendForProfile, homeTargetProfile } from "./dictation/dictation";
 import { effectiveServerKind } from "./serverKind";
 import { effectiveServerUrl } from "./backends";
 import { hasOwn, ownProp } from "./own";

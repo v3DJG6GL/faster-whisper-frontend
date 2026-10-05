@@ -105,7 +105,7 @@ import {
   type UsageScope,
   ordinal,
 } from "@/lib/usageDerive";
-import { homeTargetProfile } from "@/lib/dictation";
+import { homeTargetProfile } from "@/lib/dictation/dictation";
 import { ownProp } from "@/lib/own";
 import { safeDisplayText } from "@/lib/sanitize";
 import { useOutsidePress } from "@/lib/useOutsidePress";

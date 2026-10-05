@@ -1,4 +1,4 @@
-import type { DictationStatus, ServerWork } from "./types";
+import type { DictationStatus, ServerWork } from "../types";
 
 /**
  * THE single source of truth mapping dictation state → colour / shape / label,

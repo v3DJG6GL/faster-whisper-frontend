@@ -19,9 +19,9 @@
 //     ("Ich weiss es nicht") was given 1.95 s for 2.4 s of work and lost the
 //     race EVERY time, deterministically. Elapsed time is now a ceiling only;
 //     the real signal is whether the server's progress entry is still moving.
-import type { TextTranslationResult } from "./api";
-import type { BatchProgress } from "./types";
-import { newProgressId } from "./ids";
+import type { TextTranslationResult } from "../api";
+import type { BatchProgress } from "../types";
+import { newProgressId } from "../ids";
 
 /** The translation mode a dictation request must use.
  *

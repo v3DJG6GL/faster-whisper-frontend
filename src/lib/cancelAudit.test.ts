@@ -11,7 +11,7 @@
 // the only cross-file regression mechanism here that needs no Tauri), slices
 // each function body by brace depth, and asserts the call appears in it.
 import { describe, expect, it } from "vitest";
-import streamingSrc from "./streaming.ts?raw";
+import streamingSrc from "./dictation/streaming.ts?raw";
 import transcribeRunSrc from "./transcribeRun.ts?raw";
 
 /** Blank out comments, strings and template literals — same length, so indexes
