@@ -11,6 +11,7 @@
 import type { DecodeDefault, DecodeDefaults, InheritedValues, ServerModel } from "./types";
 import { languageLabel } from "./languages";
 import { safeDisplayText } from "./sanitize";
+import { escapeText } from "./escapeText";
 import { BOOL_KEYS, isDecodeKey, keySpec, NULL_TEXT, type DecodeKey } from "./decodeKeys";
 
 export type InheritWord = "Inherit" | "Default";
@@ -186,4 +187,20 @@ export function serverInherited(
         }
       : undefined;
   return { values, sources, locked, pinned, ignored, prompt, known };
+}
+
+/** The placeholder of an override text field: what an untouched field inherits, or — once it
+ *  holds the explicit empty override — that it is empty on purpose. */
+export function overrideTextPlaceholder(args: {
+  value: string | undefined;
+  inherited?: string;
+  inheritWord?: InheritWord;
+  escape?: boolean;
+  /** A locked/pinned field shows the value the server uses instead. */
+  fixedLabel?: string;
+}): string {
+  if (args.fixedLabel) return args.fixedLabel;
+  if (args.value === "") return "Empty · overrides the inherited value";
+  const inh = args.inherited !== undefined && args.escape ? escapeText(args.inherited) : args.inherited;
+  return inheritLabel(inh, args.inheritWord ?? "Inherit");
 }

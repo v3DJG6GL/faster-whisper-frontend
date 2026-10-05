@@ -10,7 +10,7 @@ import type { ReactNode } from "react";
 import { Eraser, Lock, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { escapeText, unescapeText } from "@/lib/escapeText";
-import { inheritLabel, type InheritWord } from "@/lib/inherit";
+import { overrideTextPlaceholder, type InheritWord } from "@/lib/inherit";
 import { TextArea, TextInput } from "@/components/ui";
 
 const ACTION =
@@ -142,22 +142,6 @@ export function OverrideHeader({
       </div>
     </div>
   );
-}
-
-/** The placeholder of an override text field: what an untouched field inherits, or — once it
- *  holds the explicit empty override — that it is empty on purpose. Pure, for the tests. */
-export function overrideTextPlaceholder(args: {
-  value: string | undefined;
-  inherited?: string;
-  inheritWord?: InheritWord;
-  escape?: boolean;
-  /** A locked/pinned field shows the value the server uses instead. */
-  fixedLabel?: string;
-}): string {
-  if (args.fixedLabel) return args.fixedLabel;
-  if (args.value === "") return "Empty · overrides the inherited value";
-  const inh = args.inherited !== undefined && args.escape ? escapeText(args.inherited) : args.inherited;
-  return inheritLabel(inh, args.inheritWord ?? "Inherit");
 }
 
 /** A tri-state text override: undefined = inherit (the inherited value ghosted as placeholder),
