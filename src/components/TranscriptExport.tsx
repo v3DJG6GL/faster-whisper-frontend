@@ -529,11 +529,6 @@ export function TranscriptExport({
   const pct = mediaJob && mediaJob.total ? Math.round((mediaJob.done / mediaJob.total) * 100) : null;
   const custom = sanitizeCueLimits(settings.transcribe?.subtitleCustom) ?? CUE_PRESETS.standard;
   const length = settings.transcribe?.subtitleLength ?? "standard";
-  const cardCls = (on: boolean, off: boolean) => cn(
-    "ring-signal min-w-0 flex-1 rounded-xl border px-3 py-2 text-left transition-colors",
-    on ? "border-accent/55 bg-accent-soft" : "border-line bg-surface-2 hover:border-line-strong",
-    off && "cursor-not-allowed opacity-50 hover:border-line",
-  );
   const expand = (
     <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setWide((w) => !w)}
       title={wide ? "Put the preview back beside the settings" : "Show the preview full width, below the settings"}>
@@ -595,30 +590,23 @@ export function TranscriptExport({
         ? noPackageWhy
         : null;
     const pick = (c: MediaChoice) => { setSwitchNote(null); setMediaChoice(c); persistOptions({ exportMedia: c }); };
+    // `why` = not on offer, and why (the card's tooltip).
+    const cards: { value: MediaChoice; label: string; sub: string; why?: string }[] = [
+      { value: "none", label: "None", sub: "text file only" },
+      ...(urlSource ? [{
+        value: "audio" as const, label: "Audio",
+        sub: mediaPath ? `${audioExt} copy` : audioAvailable ? "from the server" : "not stored",
+        why: audioAvailable ? undefined : "no audio is stored for this link",
+      }] : []),
+      { value: "video", label: "Video", sub: videoWhy ? "not available" : "with subtitles", why: videoWhy ?? undefined },
+    ];
     return (
       <PanelBox title="Media">
         <div role="radiogroup" aria-label="Export media" className="flex gap-2">
-          <button type="button" role="radio" aria-checked={mediaChoice === "none"}
-            onClick={() => pick("none")} className={cardCls(mediaChoice === "none", false)}>
-            <span className={cn("block text-[13px] font-medium", mediaChoice === "none" ? "text-accent" : "text-text")}>None</span>
-            <span className="mt-0.5 block text-[10.5px] leading-snug text-faint">text file only</span>
-          </button>
-          {urlSource && (
-            <button type="button" role="radio" aria-checked={mediaChoice === "audio"} disabled={!audioAvailable}
-              title={audioAvailable ? undefined : "no audio is stored for this link"}
-              onClick={() => audioAvailable && pick("audio")} className={cardCls(mediaChoice === "audio", !audioAvailable)}>
-              <span className={cn("block text-[13px] font-medium", mediaChoice === "audio" ? "text-accent" : "text-text")}>Audio</span>
-              <span className="mt-0.5 block text-[10.5px] leading-snug text-faint">
-                {mediaPath ? `${audioExt} copy` : audioAvailable ? "from the server" : "not stored"}
-              </span>
-            </button>
-          )}
-          <button type="button" role="radio" aria-checked={mediaChoice === "video"} disabled={!!videoWhy}
-            title={videoWhy ?? undefined}
-            onClick={() => !videoWhy && pick("video")} className={cardCls(mediaChoice === "video", !!videoWhy)}>
-            <span className={cn("block text-[13px] font-medium", mediaChoice === "video" ? "text-accent" : "text-text")}>Video</span>
-            <span className="mt-0.5 block text-[10.5px] leading-snug text-faint">{videoWhy ? "not available" : "with subtitles"}</span>
-          </button>
+          {cards.map((c) => (
+            <ChoiceCard key={c.value} on={mediaChoice === c.value} off={!!c.why} title={c.why} label={c.label} sub={c.sub}
+              onPick={() => pick(c.value)} />
+          ))}
         </div>
         {mediaChoice === "video" && !videoWhy && (
           <div className="flex flex-col gap-2 text-[12px]">
@@ -737,26 +725,20 @@ export function TranscriptExport({
                 const on = exportFormat === f.value;
                 const notSubtitle = mediaChoice === "video" && !isSubtitleFormat(f.value);
                 return (
-                  <button
+                  <ChoiceCard
                     key={f.value}
-                    type="button"
-                    role="radio"
-                    aria-checked={on}
-                    disabled={notSubtitle}
+                    on={on}
+                    off={notSubtitle}
                     title={notSubtitle ? "not a subtitle format" : f.use}
-                    onClick={() => {
-                      if (notSubtitle) return;
+                    label={f.label}
+                    sub={f.use}
+                    mono
+                    onPick={() => {
                       setSwitchNote(null);
                       setExportFormat(f.value);
                       persistOptions({ exportFormat: f.value });
                     }}
-                    className={cardCls(on, notSubtitle)}
-                  >
-                    <span className={cn("block font-mono text-[13px] font-medium", on ? "text-accent" : "text-text")}>
-                      {f.label}
-                    </span>
-                    <span className="mt-0.5 block truncate text-[10.5px] leading-snug text-faint">{f.use}</span>
-                  </button>
+                  />
                 );
               })}
             </div>
@@ -821,19 +803,17 @@ export function TranscriptExport({
                     const on = (settings.transcribe?.translationTiming ?? "same") === v;
                     const off = !subs || !cueOpts;
                     return (
-                      <button
+                      <ChoiceCard
                         key={v}
-                        type="button"
-                        role="radio"
-                        aria-checked={on}
-                        disabled={off}
+                        on={on}
+                        off={off}
                         title={off ? "Needs SRT or VTT with split subtitles" : why}
-                        onClick={() => persistOptions({ translationTiming: v })}
-                        className={cn(cardCls(on, off), "flex items-center gap-3")}
+                        onPick={() => persistOptions({ translationTiming: v })}
+                        className="flex items-center gap-3"
                       >
                         <TimingMini own={v === "own"} />
                         <span className={cn("text-[12.5px] font-medium", on ? "text-accent" : "text-text")}>{label}</span>
-                      </button>
+                      </ChoiceCard>
                     );
                   })}
                 </div>
@@ -920,6 +900,40 @@ function PanelBox({
       ) : <span className={BOX_TITLE}>{title}</span>}
       {children}
     </div>
+  );
+}
+
+/** A radio card (Format, Media, Translation timing); `off` greys it out and ignores clicks.
+ *  With `label` it draws the name over a one-liner (`mono` = a format's code name, its
+ *  one-liner cut to one line); otherwise its children. */
+function ChoiceCard({
+  on, off, title, onPick, label, sub, mono, className, children,
+}: {
+  on: boolean; off: boolean; title?: string; onPick: () => void;
+  label?: string; sub?: string; mono?: boolean; className?: string; children?: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={on}
+      disabled={off}
+      title={title}
+      onClick={() => { if (!off) onPick(); }}
+      className={cn(
+        "ring-signal min-w-0 flex-1 rounded-xl border px-3 py-2 text-left transition-colors",
+        on ? "border-accent/55 bg-accent-soft" : "border-line bg-surface-2 hover:border-line-strong",
+        off && "cursor-not-allowed opacity-50 hover:border-line",
+        className,
+      )}
+    >
+      {children ?? (
+        <>
+          <span className={cn("block text-[13px] font-medium", mono && "font-mono", on ? "text-accent" : "text-text")}>{label}</span>
+          <span className={cn("mt-0.5 block text-[10.5px] leading-snug text-faint", mono && "truncate")}>{sub}</span>
+        </>
+      )}
+    </button>
   );
 }
 
