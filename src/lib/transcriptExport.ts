@@ -5,7 +5,7 @@
 // and both end up in files that get opened elsewhere.
 
 import {
-  buildCues, cueResult, limitsFor, timedTrack, trText, trackCues, trackLang, wrapLines, type CueOptions,
+  TRANSCRIBED_CPS, buildCues, cueResult, timedTrack, trText, trackCues, trackLimits, wrapLines, type CueOptions,
 } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { codeSlug, stripControlChars } from "./sanitize";
@@ -668,8 +668,8 @@ function ctxOf(result: BatchResult, opts: ExportOptions): Ctx {
     origIncluded: lineTracks.includes("orig"),
     lineTracks,
     wrap: (text, track, reserve) => {
-      if (!cues) return text;
-      const L = limitsFor(cues, trackLang(result, track));
+      const L = trackLimits(result, cues, track);
+      if (!L) return text;
       return wrapLines(text, L.cpl, L.lines, reserve).join("\n");
     },
   };
@@ -810,7 +810,7 @@ export function cpsWarnings(
   const grid = cueGrid(result, { ...opts, format: "srt" }, tracks);
   const out: { lang: string; index: number; cps: number }[] = [];
   for (const track of tracks) {
-    const limit = opts.cues ? limitsFor(opts.cues, trackLang(result, track)).cps : 20;
+    const limit = trackLimits(result, opts.cues, track)?.cps ?? TRANSCRIBED_CPS;
     // Kept-original lines are never exported — trackCues never yields them.
     for (const c of trackCues(grid, track)) {
       const dur = c.end - c.start;

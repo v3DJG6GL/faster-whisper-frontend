@@ -1,6 +1,11 @@
 // Number + duration formatting for usage stats (and any figures elsewhere).
 // Pair these with the `.font-num` class so digits align (tabular numerals).
 
+/** A count with its noun: "1 subtitle", "1,240 subtitles" (`many` for an irregular plural). */
+export function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+}
+
 /** Full integer with thousands separators, e.g. `1,240`. */
 export function fmtFull(n: number): string {
   return Math.round(n || 0).toLocaleString("en-US");

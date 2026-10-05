@@ -17,7 +17,9 @@ import { trackChipLabel } from "@/lib/exportTracks";
 import { stripControlChars } from "@/lib/sanitize";
 import { lastStartedAt } from "@/lib/seekKeys";
 import { rowsToRender } from "@/lib/virtualRows";
-import { limitsFor, trackCues, trackLang, wrapLines, type CueGrid, type CueOptions } from "@/lib/cueSplit";
+import {
+  TRANSCRIBED_CPS, trackCues, trackLimits, wrapLines, type CueGrid, type CueOptions,
+} from "@/lib/cueSplit";
 import { trackCode } from "@/lib/exportTracks";
 import type { BatchResult } from "@/lib/types";
 
@@ -219,7 +221,7 @@ export function SubtitleList({
 }) {
   const lanes = tracks.some((t) => grid.own[t]);
   const layout = useMemo(() => {
-    const limitOf = (track: string) => (cues ? limitsFor(cues, trackLang(result, track)) : null);
+    const limitOf = (track: string) => trackLimits(result, cues, track);
     const maxDur = limitOf("orig")?.maxDur ?? 7;
     /** One track's text of a cue: name prefix, wrapped to its limits. */
     const lineOf = (track: string, text: string, speaker: string | undefined, main: boolean): Line => {
@@ -238,7 +240,7 @@ export function SubtitleList({
     ): Row => {
       const d = Math.max(0.001, c.end - c.start);
       // The column reading fastest against its own language's limit.
-      const rates = cols.map(([t, text]) => ({ t, rate: text.length / d, limit: limitOf(t)?.cps ?? 20 }));
+      const rates = cols.map(([t, text]) => ({ t, rate: text.length / d, limit: limitOf(t)?.cps ?? TRANSCRIBED_CPS }));
       const worst = rates.reduce((a, b) => (b.rate - b.limit > a.rate - a.limit ? b : a));
       const fast = worst.rate > worst.limit;
       return {

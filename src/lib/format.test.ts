@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fmtBytes, fmtTimestamp, relTime } from "./format";
+import { fmtBytes, fmtTimestamp, plural, relTime } from "./format";
 
 describe("fmtTimestamp", () => {
   it("never renders 60.0 seconds — rounds to the tenth before splitting", () => {
@@ -45,5 +45,14 @@ describe("relTime", () => {
     expect(relTime(0, 30_000)).toBe("just now");
     expect(relTime(0, 4 * 60_000 + 20_000)).toBe("4m ago");
     expect(relTime(0, 3 * 3_600_000)).toBe("3h ago");
+  });
+});
+
+describe("plural", () => {
+  it("a count with its noun, grouped; an irregular plural by hand", () => {
+    expect(plural(1, "subtitle")).toBe("1 subtitle");
+    expect(plural(0, "subtitle")).toBe("0 subtitles");
+    expect(plural(1240, "line")).toBe("1,240 lines");
+    expect(plural(2, "switch", "switches")).toBe("2 switches");
   });
 });

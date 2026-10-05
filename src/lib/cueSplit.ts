@@ -12,6 +12,7 @@
 // synthesized clocks) are never split — only their lines are wrapped.
 // Pure, no Tauri imports.
 
+import { plural } from "./format";
 import { primarySubtag } from "./languages";
 import { segmentWordRanges } from "./wordAlign";
 import type { BatchResult, TimedTrack, TranscriptSegment } from "./types";
@@ -108,6 +109,21 @@ export function limitsFor(o: CueOptions, lang?: string): CueLimits {
     o.length === "custom" ? (o.custom ?? CUE_PRESETS.standard) : { ...CUE_PRESETS[o.length], cps: b === "en" ? 20 : 17 };
   const cjk = CJK_CPL[b];
   return cjk ? { ...base, cpl: Math.min(base.cpl, cjk) } : base;
+}
+
+/** The reading speed flagged when the subtitles stay as transcribed (no cue options). */
+export const TRANSCRIBED_CPS = 20;
+
+/** One track's limits — its language's under the cue options; null = as transcribed. */
+export function trackLimits(
+  result: Pick<BatchResult, "language" | "timedTracks">, o: CueOptions | undefined, track: string,
+): CueLimits | null {
+  return o ? limitsFor(o, trackLang(result, track)) : null;
+}
+
+/** Limits as a tooltip: "2 lines × 42 characters · up to 7 s · 17 chars/s". */
+export function limitsTitle(l: CueLimits): string {
+  return `${plural(l.lines, "line")} × ${l.cpl} characters · up to ${l.maxDur} s · ${l.cps} chars/s`;
 }
 
 // ── break scoring ───────────────────────────────────────────────────────────

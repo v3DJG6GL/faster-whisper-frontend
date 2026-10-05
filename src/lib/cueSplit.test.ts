@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildCues, cueOptionsOf, cueResult, cutByShare, limitsFor, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
+  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cueOptionsOf, cueResult, cutByShare, limitsFor, limitsTitle, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
   type CueOptions,
 } from "./cueSplit";
 import type { BatchResult, TranscriptWord } from "./types";
@@ -223,5 +223,21 @@ describe("trText", () => {
   it("a usable translation, trimmed; none when kept-original, absent or blank", () => {
     const seg = { start: 0, end: 1, text: "Hallo", translations: { en: " Hello ", fr: "  ", it: "Ciao" }, translationsKept: ["it"] };
     expect(["en", "fr", "it", "es"].map((l) => trText(seg, l))).toEqual(["Hello", null, null, null]);
+  });
+});
+
+describe("trackLimits / limitsTitle", () => {
+  it("a track's language's limits; null as transcribed", () => {
+    const r: BatchResult = { text: "", language: "de" };
+    const o: CueOptions = { length: "standard", timing: "same" };
+    expect(trackLimits(r, o, "orig")?.cps).toBe(17);
+    expect(trackLimits(r, o, "en")?.cps).toBe(20);
+    expect(trackLimits(r, o, "ja")?.cpl).toBe(13);
+    expect(trackLimits(r, undefined, "orig")).toBeNull();
+    expect(TRANSCRIBED_CPS).toBe(20);
+  });
+  it("the tooltip names lines, characters, duration and speed", () => {
+    expect(limitsTitle(CUE_PRESETS.standard)).toBe("2 lines × 42 characters · up to 7 s · 17 chars/s");
+    expect(limitsTitle(CUE_PRESETS.short)).toBe("1 line × 42 characters · up to 4 s · 17 chars/s");
   });
 });

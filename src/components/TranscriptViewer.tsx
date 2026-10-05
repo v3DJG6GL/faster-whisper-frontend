@@ -53,7 +53,7 @@ import { ExportTrackChips } from "@/components/ExportTrackChips";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import { TranscriptExport } from "@/components/TranscriptExport";
 import { SubtitleList } from "@/components/SubtitleList";
-import { cueOptionsOf, limitsFor, trText } from "@/lib/cueSplit";
+import { cueOptionsOf, limitsFor, limitsTitle, trText } from "@/lib/cueSplit";
 import type { BatchResult, TranscriptWord } from "@/lib/types";
 
 /** Live retro-translate controls, keyed by record. MODULE scope on purpose:
@@ -1884,7 +1884,7 @@ export function TranscriptViewer({
   const subtitlesTitle = (() => {
     if (!cueOpts) return "As transcribed: one subtitle per segment";
     const l = limitsFor(cueOpts, result.language);
-    return `${l.lines} × ${l.cpl} characters · up to ${l.maxDur} s · ${cueOpts.timing === "own" ? "own timing per language" : "same timing for every language"}`;
+    return `${limitsTitle(l)} · ${cueOpts.timing === "own" ? "own timing per language" : "same timing for every language"}`;
   })();
 
   // ── render ───────────────────────────────────────────────────────────────

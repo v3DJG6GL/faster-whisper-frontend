@@ -23,8 +23,8 @@ import {
   type ExportOptions, exportFileNames,
 } from "@/lib/transcriptExport";
 import {
-  CUE_PRESETS, CUE_RANGES, limitsFor, sanitizeCueLimits, type CueLimits, type CueOptions,
-  type SubtitleLength, trackLang,
+  CUE_PRESETS, CUE_RANGES, TRANSCRIBED_CPS, limitsTitle, sanitizeCueLimits, trackLimits, type CueLimits,
+  type CueOptions, type SubtitleLength,
 } from "@/lib/cueSplit";
 import { contentStates, exportSummary, type ContentItem } from "@/lib/exportSummary";
 import { cn } from "@/lib/cn";
@@ -515,7 +515,7 @@ export function TranscriptExport({
   const names = plan.files.map((f) => f.name(stem));
   const textNames = plan.files.filter((f) => f.kind === "text");
   const cpsLimits = new Set(
-    (effTracks.length ? effTracks : ["orig"]).map((t) => (cueOpts ? limitsFor(cueOpts, trackLang(editedResult, t)).cps : 20)),
+    (effTracks.length ? effTracks : ["orig"]).map((t) => trackLimits(editedResult, cueOpts, t)?.cps ?? TRANSCRIBED_CPS),
   );
   const summary = exportSummary({
     format: exportFormat,
@@ -983,11 +983,6 @@ const CUE_SLIDERS: [keyof CueLimits, string, string][] = [
   ["maxDur", "Longest subtitle", " s"],
   ["cps", "Reading speed", " chars/s"],
 ];
-
-/** A preset's limits as its tooltip. */
-function limitsTitle(l: CueLimits): string {
-  return `${l.lines} ${l.lines === 1 ? "line" : "lines"} × ${l.cpl} characters · up to ${l.maxDur} s · ${l.cps} chars/s`;
-}
 
 /** The Translation timing cards' picture: original cues on top, the
  *  translation's below — sharing the grid, or on their own. */
