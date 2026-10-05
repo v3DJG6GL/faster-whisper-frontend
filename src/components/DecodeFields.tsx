@@ -1,7 +1,8 @@
 import { useId, useState } from "react";
 import { Info } from "lucide-react";
 import { DisclosureCard, Segmented, SetSummary, Stepper, TextInput } from "@/components/ui";
-import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "@/components/OverrideField";
+import { OverrideHeader, OverrideText } from "@/components/OverrideField";
+import { OVERRIDE_CONTROL_W } from "@/components/styles";
 import type { DecodeOverrides, InheritedValues } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
 import { inheritLabel, LOCKED_REASON, NOT_ON_SERVER_REASON, type DecodeKey, type InheritWord, type ServerInherited } from "@/lib/inherit";

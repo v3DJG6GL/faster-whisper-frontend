@@ -134,6 +134,10 @@ export interface LangRow {
   value: string;
   untested?: boolean;
 }
+
+/** The tooltip of a "not tested" row. */
+export const untestedTitle = (r: LangRow) =>
+  r.untested ? "Not in the model's supported list — quality unknown" : undefined;
 export interface LangSection {
   /** "" = untitled (the pinned rows). */
   title: string;

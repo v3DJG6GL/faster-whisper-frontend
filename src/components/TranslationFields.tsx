@@ -3,7 +3,8 @@
 // remaining candidates. Reused by the Processing card, the Backend/Profile
 // "Translation defaults" editors, and retro-translate popovers.
 import type { ReactNode } from "react";
-import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "./OverrideField";
+import { OverrideHeader, OverrideText } from "./OverrideField";
+import { OVERRIDE_CONTROL_W } from "./styles";
 import { envDesc } from "../lib/envDesc";
 import { TRANSLATION_MAX_TARGETS } from "../lib/languages";
 import { chipCodes, pruneTranslationOverrides } from "../lib/translationTargets";

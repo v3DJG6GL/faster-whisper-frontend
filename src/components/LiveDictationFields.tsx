@@ -8,7 +8,8 @@
 // the server would rewrite. Nothing here acts on the values — the preview just draws them.
 import { useId, type CSSProperties } from "react";
 import { RangeField, Stepper } from "@/components/ui";
-import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "@/components/OverrideField";
+import { OverrideHeader, OverrideText } from "@/components/OverrideField";
+import { OVERRIDE_CONTROL_W } from "@/components/styles";
 import type { DecodeOverrides, InheritedValues } from "@/lib/types";
 import { keySpec, sectionKeys, type DecodeKey } from "@/lib/decodeKeys";
 import { LOCKED_REASON, NOT_ON_SERVER_REASON, type ServerInherited } from "@/lib/inherit";

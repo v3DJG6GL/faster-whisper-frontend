@@ -12,15 +12,11 @@ import { FieldTrigger } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import {
   WHISPER_LANGUAGES, languageLabel, namedLanguage, nativeName, spokenLabel, spokenSections, targetSections,
-  toggleCode, type LangRow,
+  toggleCode, untestedTitle, type LangRow,
 } from "@/lib/languages";
 import { cleanRecent, rememberRecent } from "@/lib/recent";
 import { safeDisplayText } from "@/lib/sanitize";
 import { useApp } from "@/lib/store";
-
-/** The tooltip of a "not tested" row. */
-export const untestedTitle = (r: LangRow) =>
-  r.untested ? "Not in the model's supported list — quality unknown" : undefined;
 
 /** Name, native name and code — the body of one language row. */
 function LanguageRow({ code, label, mark, untested }: { code?: string; label: string; mark: ReactNode; untested?: boolean }) {
@@ -61,7 +57,7 @@ export function TargetRow({ row, on, mark }: { row: LangRow; on: boolean; mark?:
 }
 
 /** The hint line of a multi-select list. */
-export const MULTI_KEYS = (
+const MULTI_KEYS = (
   <>
     <KeyHint k="↑↓">move</KeyHint>
     <KeyHint k="Space">tick</KeyHint>

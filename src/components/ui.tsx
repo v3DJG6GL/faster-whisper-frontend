@@ -19,7 +19,8 @@ import { AlertTriangle, ArrowLeft, Check, ChevronDown, Info, Minus, Plus, Rotate
 import { cn } from "@/lib/cn";
 import { langCode, languageLabel } from "@/lib/languages";
 import { routeParts } from "@/lib/routeParts";
-import { KeyHint, ListPicker, POPOVER_PANEL } from "@/components/ListPicker";
+import { KeyHint, ListPicker } from "@/components/ListPicker";
+import { POPOVER_PANEL } from "@/components/styles";
 import { navKey } from "@/lib/listNav";
 import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
 import { useOutsidePress } from "@/lib/useOutsidePress";

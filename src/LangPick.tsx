@@ -26,12 +26,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { abortLangPick, commitLangPick, isTauri } from "@/lib/api";
-import { langCode, targetCap, targetSections, toggleCode, type LangRow } from "@/lib/languages";
-import { navKey } from "@/lib/listNav";
+import { langCode, targetCap, targetSections, toggleCode, untestedTitle, type LangRow } from "@/lib/languages";
+import { comboboxInputProps, navKey } from "@/lib/listNav";
 import { cleanRecent } from "@/lib/recent";
-import { KeyHint, OptionRows, comboboxInputProps } from "@/components/ListPicker";
+import { KeyHint, OptionRows } from "@/components/ListPicker";
 import { CodeChip } from "@/components/ui";
-import { TargetRow, untestedTitle } from "@/components/LanguagePicker";
+import { TargetRow } from "@/components/LanguagePicker";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import { safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";

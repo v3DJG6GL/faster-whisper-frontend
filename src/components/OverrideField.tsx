@@ -16,9 +16,6 @@ import { TextArea, TextInput } from "@/components/ui";
 const ACTION =
   "ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text";
 
-/** The width a single-line control takes in a row's right column (the full width when the row
- *  is too narrow and the control drops under the title). */
-export const OVERRIDE_CONTROL_W = "w-full @[560px]:w-56";
 
 export function OverrideHeader({
   title,

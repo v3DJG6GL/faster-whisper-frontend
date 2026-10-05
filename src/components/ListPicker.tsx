@@ -26,7 +26,8 @@ import {
 import { createPortal } from "react-dom";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { navKey } from "@/lib/listNav";
+import { comboboxInputProps, navKey, optionId } from "@/lib/listNav";
+import { POPOVER_PANEL } from "@/components/styles";
 import { Kbd } from "@/components/Kbd";
 import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
 import { useOutsidePress } from "@/lib/useOutsidePress";
@@ -48,17 +49,6 @@ export interface TriggerProps {
   onClick: () => void;
   onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
 }
-
-export const optionId = (listId: string, i: number) => `${listId}-opt-${i}`;
-
-/** The search field's half of the listbox: it owns focus, the list follows `active`. */
-export const comboboxInputProps = (listId: string, active: number, hasRow: boolean) => ({
-  role: "combobox" as const,
-  "aria-expanded": true,
-  "aria-controls": listId,
-  "aria-autocomplete": "list" as const,
-  "aria-activedescendant": hasRow ? optionId(listId, active) : undefined,
-});
 
 /** The grouped listbox: section headers with counts, options with the active one outlined and
  *  kept on screen. Rows never take focus (a mouse press is swallowed so the search field keeps
@@ -167,10 +157,6 @@ export function KeyHint({ k, children }: { k: string; children: ReactNode }) {
     </span>
   );
 }
-
-/** The portaled popover's frame — shared with ui.tsx's SplitButton menu. */
-export const POPOVER_PANEL =
-  "animate-combobox-pop overflow-hidden rounded-xl border border-line-strong bg-panel shadow-[0_12px_32px_-8px_rgba(0,0,0,0.55)]";
 
 /** Popover width floor and list height ceiling (px). */
 const MIN_WIDTH = 320;
