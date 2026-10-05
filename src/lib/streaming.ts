@@ -71,6 +71,7 @@ import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
 import { normalizeAppId } from "./sanitize";
 import { baselineDivergence, commonPrefixLen, joinCarry, untypedRemainder, withCarry } from "./typedBaseline";
+import { newProgressId } from "./ids";
 
 let wired = false;
 
@@ -3040,8 +3041,7 @@ async function startLiveInner(
       startedAt: Date.now(),
       backendId: backend.id,
       serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
-      // 32 hex, the shape the server validates (`^[0-9a-f]{8,64}$`).
-      clientJob: endpoint === "batch" ? null : crypto.randomUUID().replace(/-/g, ""),
+      clientJob: endpoint === "batch" ? null : newProgressId(),
       model,
       language,
       profileName: prof?.name,

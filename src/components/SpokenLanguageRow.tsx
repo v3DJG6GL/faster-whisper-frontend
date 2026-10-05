@@ -13,6 +13,8 @@ import { languageLabel, namedLanguage } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
 import { linkSpoken, spokenPill, type LinkLanguageCheck, type LinkSpoken } from "@/lib/siteSubtitles";
 import type { UrlPreview } from "@/lib/urlSource";
+import { errorText } from "@/lib/errors";
+import { newProgressId } from "@/lib/ids";
 
 export interface LinkLanguage {
   sp: LinkSpoken;
@@ -56,7 +58,7 @@ export function useLinkLanguage(args: {
     cancel();
     if (!url || !enabled) return;
     const s = seq.current;
-    const progressId = crypto.randomUUID().replace(/-/g, "");
+    const progressId = newProgressId();
     inFlight.current = { serverUrl, backendId, progressId };
     setCheck({ state: "running" });
     urlLanguageCheck({ serverUrl, backendId, url, model, progressId })
@@ -68,7 +70,7 @@ export function useLinkLanguage(args: {
       .catch((e) => {
         if (seq.current !== s) return;
         inFlight.current = null;
-        setCheck({ state: "failed", error: safeDisplayText(String(e).replace(/^Error:\s*/, ""), 200) });
+        setCheck({ state: "failed", error: safeDisplayText(errorText(e), 200) });
       });
   }, [cancel, url, enabled, serverUrl, backendId, model]);
 

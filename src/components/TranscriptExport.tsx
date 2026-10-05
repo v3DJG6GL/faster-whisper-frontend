@@ -43,6 +43,7 @@ import { patchRecord, type TranscriptRecord } from "@/lib/transcriptHistory";
 import { useTranscribeRun } from "@/lib/transcribeRun";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import type { Backend, BatchResult, Capabilities, TranscriptWord } from "@/lib/types";
+import { newProgressId } from "@/lib/ids";
 
 /** The five export formats as always-visible cards (5 options is below every
  *  buttons-vs-dropdown threshold — NN/g, Fluent, Apple HIG). The one-liner
@@ -365,7 +366,7 @@ export function TranscriptExport({
     // The spoken language is known here; the source file's audio tag is
     // whatever the uploader's default was ("en" on a German video).
     const audioLang = (editedResult.language ?? "").trim() || null;
-    const jobId = crypto.randomUUID().replace(/-/g, "");
+    const jobId = newProgressId();
     setMediaJob({ jobId, phase: source.sourcePath ? "uploading" : "packaging", done: 0, total: null });
     const unsub = await onMediaExportProgress((p) => {
       if (p.jobId !== jobId) return;

@@ -30,6 +30,12 @@ const GERUND: Record<TransportErrorKind, string> = {
   dictation: "dictating",
 };
 
+/** An error as text for a sentence or a row: its message without the "Error: " prefix
+ *  String(e) adds, bounded to `max` characters. */
+export function errorText(e: unknown, max = Infinity): string {
+  return String(e).replace(/^Error:\s*/, "").slice(0, max);
+}
+
 /** The transport error's cause in a few words — for call sites that keep
  *  their own sentence and just want the reason appended. */
 export function shortCause(e: unknown): string {

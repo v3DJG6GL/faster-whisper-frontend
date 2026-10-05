@@ -55,6 +55,7 @@ import { TranscriptExport } from "@/components/TranscriptExport";
 import { SubtitleList } from "@/components/SubtitleList";
 import { cueOptionsOf, limitsFor, limitsTitle, trText } from "@/lib/cueSplit";
 import type { BatchResult, TranscriptWord } from "@/lib/types";
+import { newProgressId } from "@/lib/ids";
 
 /** Live retro-translate controls, keyed by record. MODULE scope on purpose:
  *  the chunk loop + its 1 s poller must keep running (and keep the store's
@@ -1047,7 +1048,7 @@ export function TranscriptViewer({
     const serverUrl = effectiveServerUrl(backend, useApp.getState().settings);
     const trOv = backend.translationOverrides;
     const mode = opts?.mode ?? trOv?.mode;
-    const pid = crypto.randomUUID().replace(/-/g, "");
+    const pid = newProgressId();
     const ctl = { pid, cancelled: false, serverUrl, backendId: backend.id };
     trCtls.set(okey, ctl);
     window.clearTimeout(trDoneTimers.get(okey));

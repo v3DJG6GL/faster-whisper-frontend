@@ -21,6 +21,7 @@
 //     the real signal is whether the server's progress entry is still moving.
 import type { TextTranslationResult } from "./api";
 import type { BatchProgress } from "./types";
+import { newProgressId } from "./ids";
 
 /** The translation mode a dictation request must use.
  *
@@ -236,10 +237,6 @@ export function newAbortHandle(): AbortHandle & { abort(): void } {
   return h;
 }
 
-function defaultId(): string {
-  return crypto.randomUUID().replace(/-/g, "");
-}
-
 /** Translate one dictation payload, or give the ORIGINAL text back. Never
  *  throws — every failure is a `cause` the caller reports once per session. */
 export async function runDictationTranslate(
@@ -247,7 +244,7 @@ export async function runDictationTranslate(
   deps: TranslateDeps,
 ): Promise<DictationTranslateResult> {
   const original = req.text;
-  const progressId = (deps.newId ?? defaultId)();
+  const progressId = (deps.newId ?? newProgressId)();
   // Every character the server will actually translate, not just this phrase's.
   const submittedChars =
     req.context.reduce((n, c) => n + c.length, 0) + original.length;

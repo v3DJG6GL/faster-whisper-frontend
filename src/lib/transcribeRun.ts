@@ -12,7 +12,7 @@ import {
   fetchUrlSubtitles, fetchUrlVideo, fetchUrlVideoOnDemand, getTranscribeProgress, readTextFile,
   saveTranscriptMedia, transcribeFile, transcribeUrl, translateText,
 } from "./api";
-import { transportErrorDoorway } from "./errors";
+import { errorText, transportErrorDoorway } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText, type ImportedText } from "./subtitleImport";
 import { useApp } from "./store";
@@ -28,6 +28,7 @@ import { isVideoSourcePath, siteDisplayName } from "./mediaExport";
 import { forgetRow, persistRow, type LedgerRow } from "./jobsLedger";
 import { applyMultilingual, primarySubtag, spokenLanguage } from "./languages";
 import { trText } from "./cueSplit";
+import { newProgressId } from "./ids";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
 } from "./siteSubtitles";
@@ -870,7 +871,7 @@ export function retryRunVideo(path: string, ctx: RunContext): void {
   const rec = open && open.sourcePath === path ? open : registered(path);
   if (!rec || !s.stageMeta.downloading?.video) return;
   const epoch = s.epoch;
-  const pid = crypto.randomUUID().replace(/-/g, "");
+  const pid = newProgressId();
   set((st2) => ({
     stageMeta: {
       ...st2.stageMeta,
@@ -912,7 +913,7 @@ function startOnDemandVideo(url: string, ctx: RunContext, pid: string, epoch: nu
         downloading: {
           ...st2.stageMeta.downloading,
           video: { ...(st2.stageMeta.downloading?.video as VideoProgress), state: "failed",
-                   error: String(e).replace(/^Error:\s*/, "").slice(0, 200) },
+                   error: errorText(e, 200) },
         },
       },
     }));
@@ -1502,7 +1503,7 @@ async function fetchSiteSubs(
     }
     for (const f of got.failed) warnings.push(`The site's subtitles "${f.id}" could not be downloaded: ${f.error}`);
   } catch (e) {
-    warnings.push(`The site's subtitles could not be downloaded: ${String(e).replace(/^Error:\s*/, "")}`);
+    warnings.push(`The site's subtitles could not be downloaded: ${errorText(e)}`);
   }
   const transcript = parsed.find((p) => p.id === site.transcriptTrackId);
   if (site.transcriptTrackId && !transcript) warnings.push("The audio was transcribed instead of using the site's subtitles.");
@@ -1575,14 +1576,14 @@ async function runLink(
     try {
       audio = (await fetchUrlAudioOnDemand({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, url, progressId: pid })).mediaId;
     } catch (e) {
-      warnings.push(`The audio could not be downloaded, so there is no playback: ${String(e).replace(/^Error:\s*/, "")}`);
+      warnings.push(`The audio could not be downloaded, so there is no playback: ${errorText(e)}`);
     }
   }
   const parsed = { ...got.transcript.parsed, language: primarySubtag(got.transcript.lang) };
   const res = await translateParsed(parsed, { ...options, translateTo: site.mtTargets }, ctx, pid, epoch);
   let videoPid: string | undefined;
   if (options.keepVideo && epoch === get().epoch) {
-    videoPid = crypto.randomUUID().replace(/-/g, "");
+    videoPid = newProgressId();
     startOnDemandVideo(url, ctx, videoPid, epoch);
   }
   return {
@@ -1642,7 +1643,7 @@ async function pump(
       // error (older backend, standard server) just leaves it indeterminate.
       // Text runs poll too: /v1/text/translations registers the same progress
       // entry (stage "translating" + last_text live line).
-      const pid = ctx.standard ? null : crypto.randomUUID().replace(/-/g, "");
+      const pid = ctx.standard ? null : newProgressId();
       activeCancel = pid
         ? { serverUrl: ctx.serverUrl, backendId: ctx.backendId, progressId: pid }
         : null;
