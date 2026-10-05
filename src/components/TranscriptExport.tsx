@@ -681,6 +681,7 @@ export function TranscriptExport({
       <div className="flex flex-wrap items-center justify-between gap-2.5">
         <span className={boxTitle}>Tracks</span>
         <span
+          className="-my-2 flex"
           title={effTracks.length < 2 ? "Pick a second track to set the order"
             : textNames.length > 1 ? "Each language goes to its own file" : "Lines inside each subtitle follow the chips"}
         >
@@ -807,7 +808,7 @@ export function TranscriptExport({
           <div className={box}>
             <div className="flex flex-wrap items-center justify-between gap-2.5">
               <span className={boxTitle}>Subtitle length</span>
-              <span title={subs ? undefined : "Only SRT and VTT have subtitles to split"}>
+              <span className="-my-2 flex" title={subs ? undefined : "Only SRT and VTT have subtitles to split"}>
                 <Segmented<SubtitleLength>
                   ariaLabel="Subtitle length"
                   value={length}
