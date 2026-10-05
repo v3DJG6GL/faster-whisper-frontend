@@ -44,7 +44,7 @@ import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/transcript/subtitleImport";
 import { basename, withTrackSites, type MediaChoice } from "@/lib/transcript/mediaExport";
-import { releaseDetachedMedia } from "@/lib/transcript/media";
+import { releaseDetachedMedia } from "@/lib/mediaElement";
 import { patchRecord, useRecord } from "@/lib/transcript/transcriptHistory";
 import {
   defaultViewTracks, mergeOrder, readTrackPrefs, trackOrder, transcriptTracks, translationTracks, type TrackPrefs,

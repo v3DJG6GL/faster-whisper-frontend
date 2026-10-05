@@ -41,7 +41,7 @@ import { readTrackPrefs, trackOrder, transcriptTracks } from "@/lib/transcript/e
 import { cueOptionsOf } from "@/lib/transcript/cueSplit";
 import { displayToggles } from "@/lib/useDisplayToggles";
 import { cn } from "@/lib/cn";
-import { releaseDetachedMedia } from "@/lib/transcript/media";
+import { releaseDetachedMedia } from "@/lib/mediaElement";
 
 /** "Today" / "Yesterday" / a local date — the bucket a record sorts under. */
 function dayBucket(iso: string): string {
