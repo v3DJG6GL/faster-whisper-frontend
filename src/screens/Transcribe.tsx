@@ -2,7 +2,7 @@ import { ownProp } from "@/lib/own";
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, ChevronDown, Link2, AudioLines, Film } from "lucide-react";
+import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, Link2, AudioLines } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { patchTranscribe } from "@/lib/useDisplayToggles";
 import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingExpand, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
@@ -31,14 +31,14 @@ import { speakerOrder as speakersOf } from "@/lib/transcript/transcriptFormats";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useBackendModels } from "@/lib/useBackendModels";
-import { fmtBitrate, fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
+import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
   activeRailIndex, addFiles, axisLayout, cancelRun, etaSecOf, overallOf, planOf, planTimeline, railStages, runBadgeFraction, unitsFraction,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stagePick, startRun, useTranscribeRun,
-  type RailStage, type RunContext, type StepState, settledPanelItem, runTotals } from "@/lib/transcribeRun";
-import { displayLabel, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, pickRung, rungFacts, tierWords, type UrlPreview, type VideoRung, urlHost } from "@/lib/urlSource";
+  type RunContext, type StepState, settledPanelItem, runTotals } from "@/lib/transcribeRun";
+import { displayLabel, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, pickRung, type UrlPreview, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
@@ -51,11 +51,17 @@ import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/transcript/subtitl
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
-import { useOutsidePress } from "@/lib/useOutsidePress";
 import {
   NO_OVERRIDE_PROFILE,
-  type BatchProgress, type DecodeDefault, type DecodeOverrides, type TranscribeOptions, type VideoProgress,
+  type BatchProgress, type DecodeOverrides, type TranscribeOptions,
 } from "@/lib/types";
+import { OtherTranslateRuns } from "@/components/transcribe/OtherTranslateRuns";
+import { RungPicker } from "@/components/transcribe/RungPicker";
+import { StageSwitch } from "@/components/transcribe/StageSwitch";
+import { VideoBranchRow } from "@/components/transcribe/VideoBranchRow";
+import {
+  aboutLeft, AXIS_NAMES, fmtElapsed, RAIL_DESCRIPTIONS, RAIL_NAMES, STAGE_COLORS, UNIT_LABELS, UNIT_NOUN,
+} from "@/components/transcribe/railTheme";
 
 /** Bound the "server ignored N overrides" list — untrusted response, real DOM. */
 const MAX_IGNORED_SHOWN = 50;
@@ -73,51 +79,6 @@ const STUDIO_PANE_MIN = 560;
  *  between window.innerWidth and the two content panes. */
 const STUDIO_CHROME = 340;
 
-/** Retro-translate runs whose transcript is NOT the one on screen: a slim
- *  strip in the Processing-card design language, so a run started on another
- *  record (same-URL siblings, or a record since closed) stays visible and
- *  reachable instead of silently running headless. */
-function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | null)[] }) {
-  const trRuns = useApp((s) => s.trRuns);
-  const records = useTranscriptHistory((s) => s.records);
-  const running = useTranscribeRun((s) => s.running); // openHistoryRecord refuses mid-run
-  const entries = Object.entries(trRuns).filter(([k]) => !excludeKeys.includes(k));
-  if (entries.length === 0) return null;
-  return (
-    <div className="mt-3 rounded-xl border border-line bg-surface-2/60 px-3.5 py-2.5">
-      <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-label text-faint">
-        translating elsewhere
-      </div>
-      {entries.map(([key, { run }]) => {
-        // Runs key by record id (or, before one exists, by source path).
-        const rec = records.find((r) => r.id === key || r.sourcePath === key);
-        return (
-          <div key={key} className="flex items-center gap-3 py-1">
-            <span className="size-1.5 shrink-0 rounded-full bg-[color:var(--c-translate)]" />
-            <span className="min-w-0 truncate font-mono text-[11.5px] text-text">
-              {safeDisplayText(run.title ?? rec?.sourceName ?? key, 60)}
-            </span>
-            <span className="shrink-0 font-mono text-[11px] uppercase text-dim">
-              {run.targets.join(", ")}
-              {run.target && run.phase !== "done" ? (
-                <span className="text-[color:var(--c-translate)]"> → {safeDisplayText(run.target, 8)}</span>
-              ) : null}
-            </span>
-            <span className="shrink-0 font-mono text-[11px] tabular-nums text-[color:var(--c-translate)]">
-              {run.phase === "done" ? "done" : `${Math.round(run.pct * 100)}%`}
-            </span>
-            <span className="flex-1" />
-            {rec && (
-              <Button variant="ghost" size="sm" disabled={running} onClick={() => openHistoryRecord(rec)}>
-                Open
-              </Button>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 /** "today 21:04 · 11m 10s · de · 4 speakers" — the recent-strip meta line. */
 function recentMeta(rec: TranscriptRecord): string {
@@ -168,299 +129,9 @@ function stageLabel(p: BatchProgress | null, forText = false): string {
   }
 }
 
-/** m:ss-style elapsed time for the rail's stage rows. */
-function fmtElapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
-  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
-}
 
-/** Display names + one-line explanations for the rail rows (the stage order
- *  itself lives in transcribeRun.railStages). */
-const RAIL_NAMES: Record<RailStage, string> = {
-  downloading: "Audio",
-  separating: "Music source separation",
-  transcribing: "Transcribe",
-  diarizing: "Speaker diarization",
-  translating: "Translation",
-};
-const RAIL_DESCRIPTIONS: Record<RailStage, string> = {
-  downloading: "The server fetches the link's audio before the pipeline runs.",
-  separating: "Vocals kept, music removed — the transcript decodes from the clean stem.",
-  transcribing: "",
-  diarizing: "Labels each segment with who is speaking.",
-  translating: "Translates the finished segments into your target languages.",
-};
 
-/** Plain names for the diarizing stage's units — pyannote's step names
- *  ride as `target`; the technical name stays beside the plain one so a
- *  server log line and a ledger line can be matched. */
-const UNIT_LABELS: Record<string, string> = {
-  segmentation: "Finding speech turns",
-  embeddings: "Voice fingerprints",
-  clustering: "Grouping speakers",
-};
-const UNIT_NOUN: Partial<Record<RailStage, string>> = {
-  translating: "languages",
-  diarizing: "steps",
-};
 
-/** The link card's quality picker (D67 B): a listbox whose rows carry the
- *  tier word on top and the facts beneath — resolution, bitrate, size,
- *  container — so nothing truncates and each rung reads in one glance. The
- *  ladder arrives rank-ordered from the server; the tier words follow that
- *  order and never repeat (tierWords). */
-function RungPicker({
-  ladder,
-  chosen,
-  onChange,
-}: {
-  ladder: VideoRung[];
-  chosen: VideoRung | null;
-  onChange: (rung: VideoRung) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const rungs = ladder.filter((r) => r.kind === "video");
-  const words = tierWords(rungs.length);
-  const idx = Math.max(0, chosen ? rungs.indexOf(chosen) : 0);
-  const cur = rungs[idx];
-  useOutsidePress([ref], open, () => setOpen(false));
-  const fmt = { bytes: fmtBytes, bitrate: fmtBitrate };
-  const spec = (r: VideoRung) =>
-    r.note && r.label ? r.label.replace(r.note, "").trim() : r.label ?? "";
-  const move = (dir: 1 | -1) => {
-    let i = idx;
-    for (let n = 0; n < rungs.length; n++) {
-      i = Math.min(rungs.length - 1, Math.max(0, i + dir));
-      if (!rungs[i]?.over_cap) break;
-    }
-    if (rungs[i] && !rungs[i].over_cap) onChange(rungs[i]);
-  };
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label="Video quality"
-        onClick={() => setOpen((v) => !v)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") setOpen(false);
-          else if (e.key === "ArrowDown") { e.preventDefault(); move(1); }
-          else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
-        }}
-        className="ring-signal inline-flex h-9 min-w-[250px] items-center justify-between gap-3 rounded-xl border border-line-strong bg-surface-2 px-3 text-[13px] text-text"
-      >
-        <span className="truncate">
-          {words[idx] ? `${words[idx]}${rungs.length > 1 ? " quality" : ""}` : "Quality"}
-          {cur && spec(cur) ? <span className="text-dim"> · {safeDisplayText(spec(cur), 20)}</span> : null}
-        </span>
-        <ChevronDown className="size-3.5 shrink-0 text-faint" />
-      </button>
-      {open && (
-        <ul
-          role="listbox"
-          aria-label="Video quality"
-          className="absolute left-0 top-full z-20 mt-1 max-h-[340px] w-[400px] overflow-auto rounded-xl border border-line-strong bg-panel p-1.5 shadow-lg"
-        >
-          {rungs.map((r, i) => {
-            const selected = i === idx;
-            const facts = rungFacts({ ...r, label: spec(r) }, fmt);
-            return (
-              <li
-                key={r.format_id ?? `${r.height ?? "best"}-${i}`}
-                role="option"
-                aria-selected={selected}
-                aria-disabled={!!r.over_cap}
-                onClick={() => {
-                  if (r.over_cap) return;
-                  onChange(r);
-                  setOpen(false);
-                }}
-                className={cn(
-                  "cursor-pointer rounded-lg px-2.5 py-1.5",
-                  selected && "bg-accent-soft",
-                  r.over_cap && "cursor-not-allowed opacity-50",
-                )}
-              >
-                <div className="flex items-baseline gap-2 text-[13px] text-text">
-                  {words[i] ? `${words[i]}${rungs.length > 1 ? " quality" : ""}` : "\u00a0"}
-                  {r.note && (
-                    <span className="rounded-md bg-[color:var(--c-download)]/15 px-1.5 font-mono text-[10px] uppercase tracking-label text-[color:var(--c-download)]">
-                      {safeDisplayText(r.note, 10)}
-                    </span>
-                  )}
-                </div>
-                <div className="font-mono text-[11px] text-dim">
-                  {safeDisplayText(facts, 64)}
-                  {r.over_cap ? " · over the server limit" : ""}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-/** The Video row: the kept copy's own download, hanging off the Audio
- *  stage by a dashed connector — its own status word, its own clock, a
- *  thinner bar. Past an approximate total the bar holds at 99 % and the
- *  label says what arrived, never a number the picture contradicts. */
-function VideoBranchRow({
-  v,
-  dlStart,
-  now,
-  onRetry,
-}: {
-  v: VideoProgress;
-  dlStart?: number;
-  now: number;
-  onRetry?: () => void;
-}) {
-  const terminal = v.state === "done" || v.state === "failed" || v.state === "cancelled";
-  const elapsed = dlStart ? Math.max(0, now - dlStart) : 0;
-  const total = v.totalBytes ?? null;
-  const got = v.downloadedBytes ?? 0;
-  const over = v.state === "downloading" && !!total && got >= total;
-  const rate =
-    v.state === "downloading" && got > 0 && elapsed > 5000 ? got / (elapsed / 1000) : null;
-  const left =
-    !over && rate && total && got < total ? ((total - got) / rate) * 1000 : null;
-  const fill =
-    v.state === "downloading"
-      ? over ? 0.99
-        : Math.max(0.02, Math.min(0.99, typeof v.progress === "number" ? v.progress : total ? got / total : 0.02))
-      : 1;
-  const busy = v.state === "queued" || v.state === "merging" || v.state === "registering";
-  const codec = v.vcodec ? v.vcodec.split(".")[0].replace(/^vp09$/, "vp9").replace(/^av01$/, "av1") : null;
-  const spec = [v.label, codec, v.container].filter(Boolean).map((x) => safeDisplayText(String(x), 20)).join(" · ");
-  const tone =
-    v.state === "failed" ? "text-warn" : v.state === "done" ? "text-ok" : "text-faint";
-  const word =
-    v.state === "queued" ? "queued"
-      : v.state === "downloading" ? "downloading"
-        : v.state === "merging" ? "merging"
-          : v.state === "registering" ? "saving"
-            : v.state;
-  return (
-    <div className="relative flex gap-3.5 border-b border-line py-3 pl-0 last:border-b-0">
-      <span className="absolute left-3 top-0 h-2.5 border-l border-dashed border-line-strong" aria-hidden />
-      <span
-        className={cn(
-          "mt-1 grid size-6 shrink-0 place-items-center rounded-full border-[1.5px] border-dashed",
-          v.state === "done" ? "border-ok/60 text-ok"
-            : v.state === "failed" ? "border-warn/60 text-warn"
-              : "border-line-strong text-[color:var(--c-download)]",
-        )}
-      >
-        {v.state === "done" ? <Check className="size-3.5" /> : <Film className="size-3" />}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-3">
-          <span className="text-[13px] font-medium text-dim">
-            Video
-            {v.state === "failed" && v.error ? (
-              <span className="font-normal text-faint"> — {safeDisplayText(v.error, 120)}</span>
-            ) : null}
-          </span>
-          <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
-            <span className={tone}>{word}</span>
-            {elapsed > 0 || terminal ? ` · ${fmtElapsed(elapsed)}` : ""}
-          </span>
-        </div>
-        {!terminal && (
-          <div
-            role="progressbar"
-            aria-label="Video"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={v.state === "downloading" && !over ? Math.round(fill * 100) : undefined}
-            className="mt-2 h-1 overflow-hidden rounded-pill bg-surface-2"
-          >
-            <div
-              className={cn(
-                "h-full rounded-pill transition-[width] duration-500",
-                (busy || over) && "animate-pulse motion-reduce:animate-none motion-reduce:opacity-80",
-              )}
-              style={{
-                width: `${Math.round(fill * 100)}%`,
-                background: STAGE_COLORS.downloading,
-                opacity: 0.85,
-              }}
-            />
-          </div>
-        )}
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 font-mono text-[11px] tabular-nums text-faint">
-          {spec ? <span>{spec}</span> : null}
-          {v.state === "downloading" && (
-            <>
-              <span>
-                <span className="text-text">{fmtBytes(got)}</span>
-                {over
-                  ? " received · finishing…"
-                  : total ? ` of ${v.totalApprox ? "≈" : ""}${fmtBytes(total)}` : ""}
-              </span>
-              {rate ? <span>{fmtBytes(rate)}/s</span> : null}
-              {left !== null && left > 0 ? <span>{aboutLeft(left)}</span> : null}
-            </>
-          )}
-          {v.state === "queued" && <span>waiting for a download slot…</span>}
-          {v.state === "done" && (
-            <>
-              {v.bytes ? (
-                <span className="rounded-md bg-surface-2 px-2 py-0.5 text-[10.5px] text-dim">
-                  <span className="font-medium text-text">{fmtBytes(v.bytes)}</span>
-                </span>
-              ) : null}
-              {v.bytes && elapsed > 1000 ? (
-                <span className="rounded-md bg-surface-2 px-2 py-0.5 text-[10.5px] text-dim">
-                  <span className="font-medium text-text">{fmtBytes(v.bytes / (elapsed / 1000))}/s</span> avg
-                </span>
-              ) : null}
-            </>
-          )}
-          {v.state === "failed" && (
-            <>
-              <span className="rounded-md bg-warn/15 px-2 py-0.5 text-[10.5px] text-warn">the transcript is unaffected</span>
-              {onRetry && (
-                <button
-                  type="button"
-                  onClick={onRetry}
-                  className="ring-signal rounded-md border border-line-strong px-2 py-0.5 text-[10.5px] text-text hover:bg-surface-2"
-                >
-                  Try again
-                </button>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Timeline-strip identity: a muted hue and a compact lowercase axis name
- *  per stage. Identity is carried by position + name — hue is redundant
- *  reinforcement, never the only channel. */
-const STAGE_COLORS: Record<RailStage, string> = {
-  downloading: "var(--c-download)",
-  separating: "var(--c-separate)",
-  transcribing: "var(--c-ok)",
-  diarizing: "var(--c-diarize)",
-  translating: "var(--c-translate)",
-};
-const AXIS_NAMES: Record<RailStage, string> = {
-  downloading: "audio",
-  separating: "music source separation (MSS)",
-  transcribing: "transcribe",
-  diarizing: "speaker diarization",
-  translating: "translate",
-};
 
 /** Measure an axis label's real pixel width in the app's mono face —
  *  estimating from a per-character constant undershot the variable-metrics
@@ -482,50 +153,7 @@ function axisTextWidth(text: string): number {
   return axisMeasureCtx.measureText(text).width + text.length * 0.32;
 }
 
-/** "about X left", rounded coarsely (5 s under ten minutes, whole minutes
- *  above) so consecutive polls never make the estimate jitter. */
-function aboutLeft(ms: number): string {
-  const s = Math.max(5, Math.round(ms / 1000 / 5) * 5);
-  if (s < 600) {
-    const m = Math.floor(s / 60);
-    return m > 0
-      ? `about ${m}m ${String(s % 60).padStart(2, "0")}s left`
-      : `about ${s}s left`;
-  }
-  return `about ${Math.round(s / 60)}m left`;
-}
 
-/** A pipeline stage's switch (music separation, diarization) as a tri-state: "Default · on/off"
- *  takes the server's default for this caller (request-default-settings), On/Off say it. The
- *  same pattern as the VAD row; an unknown default leaves the bare "Default". */
-function StageSwitch({
-  value,
-  serverDefault,
-  onChange,
-  disabled,
-  ariaLabel,
-}: {
-  value: boolean | undefined;
-  serverDefault: DecodeDefault | undefined;
-  onChange: (v: boolean | undefined) => void;
-  disabled?: boolean;
-  ariaLabel: string;
-}) {
-  const def = typeof serverDefault?.value === "boolean" ? serverDefault.value : undefined;
-  return (
-    <Segmented
-      ariaLabel={ariaLabel}
-      disabled={disabled}
-      value={value === true ? "on" : value === false ? "off" : "inherit"}
-      onChange={(v) => onChange(v === "inherit" ? undefined : v === "on")}
-      options={[
-        { value: "inherit", label: inheritLabel(onOff(def), "Default"), title: serverDefault ? "This server's default" : undefined },
-        { value: "on", label: "On" },
-        { value: "off", label: "Off" },
-      ]}
-    />
-  );
-}
 
 export default function Transcribe() {
   // History's "Save audio…/Save video…" open the workbench straight onto the
