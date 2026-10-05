@@ -28,7 +28,7 @@ import { isTextSourcePath } from "@/lib/subtitleImport";
 import { trackChipLabel } from "@/lib/exportTracks";
 import {
   basename, derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath, languageLabel,
-  mediaExportPlan, mp4Disabled, sidecarFiles, trackLang, type MediaChoice, type MediaContainer,
+  legacyTrackIndices, mediaExportPlan, mp4Disabled, sidecarFiles, type MediaChoice, type MediaContainer,
   type MediaExportPhase, type MediaStreams, type SubtitleMode,
 } from "@/lib/mediaExport";
 import { patchRecord, useTranscriptHistory } from "@/lib/transcriptHistory";
@@ -214,8 +214,8 @@ export function TranscriptExport({
     // file must never silently empty the export.
     ...(langs.length
       ? {
-          tracks: (exportTracks ?? visibleTracks).filter((t) => allTracks.includes(t)),
-          lineOrder,
+          tracks: (lineOrder === "orig-first" ? allTracks : [...langs, "orig"])
+            .filter((t) => (exportTracks ?? visibleTracks).includes(t)),
         }
       : {}),
   }), [
@@ -294,10 +294,10 @@ export function TranscriptExport({
     const opts = exportOpts();
     return mediaExportPlan({
       choice: mediaChoice, container, subtitleMode, format: exportFormat,
-      textFileNames: exportFileNames(opts, editedResult.timedTracks),
+      textFileNames: exportFileNames(opts, editedResult),
       audioExt,
       tracks: effTracks.length ? effTracks : ["orig"],
-      origLang: trackLang(editedResult, "orig"),
+      result: editedResult,
       hasVideoSource,
     });
   };
@@ -381,9 +381,7 @@ export function TranscriptExport({
     }
     const opts = exportOpts();
     const subtitles = embedded.length ? embeddedSubtitleTracks(editedResult, opts, embedded) : [];
-    const origIdx = subtitles.findIndex((t) => t.original);
-    const defaultTrack = subtitles.length ? Math.max(0, origIdx) : null;
-    const originalTrack = origIdx >= 0 ? origIdx : null;
+    const { defaultTrack, originalTrack } = legacyTrackIndices(subtitles);
     // The spoken language is known here; the source file's audio tag is
     // whatever the uploader's default was ("en" on a German video).
     const audioLang = (editedResult.language ?? "").trim() || null;

@@ -5,6 +5,7 @@
 // and both end up in files that get opened elsewhere.
 
 import { buildCues, cueResult, cueTrackLang, limitsFor, trackCues, wrapLines, type CueOptions } from "./cueSplit";
+import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { stripControlChars } from "./sanitize";
 import { segmentWordRanges } from "./wordAlign";
 import type { BatchResult, TimedTrack, TranscriptSegment } from "./types";
@@ -32,12 +33,12 @@ export interface ExportOptions {
    *  paragraphs (the screen's Timestamps toggle; cue formats always carry
    *  times — that is the format). */
   timestamps?: boolean;
-  /** Language tracks to include: "orig" + target codes. Undefined = original
-   *  only, exactly the pre-translation output (golden-stable). For LRC with
-   *  more than one track use generateExports — one FILE per track. */
+  /** Language tracks to include: "orig" + target codes, IN ORDER — the order
+   *  of the files, and of the lines inside a subtitle that stacks several
+   *  (D92). Undefined = original only, exactly the pre-translation output
+   *  (golden-stable). For LRC with more than one track use generateExports —
+   *  one FILE per track. */
   tracks?: string[];
-  /** Multi-track cue layout: which line comes first (default orig-first). */
-  lineOrder?: "orig-first" | "trans-first";
   /** SRT/VTT subtitle cues (D83/D84): split long segments and wrap lines.
    *  Undefined = one cue per segment, unwrapped — the pre-cue output. */
   cues?: CueOptions;
@@ -150,6 +151,8 @@ interface Ctx {
   /** Translated tracks to include (empty = original-only output). */
   visLangs: string[];
   origIncluded: boolean;
+  /** The included tracks in line order ("orig" among them). */
+  lineTracks: string[];
   /** Line-wrap one cue line of `track` (identity without cue options);
    *  `reserve` = chars a prefix takes on the first line. */
   wrap: (text: string, track: string, reserve: number) => string;
@@ -190,7 +193,7 @@ function vttClass(lang: string): string {
   return safe || "x";
 }
 
-/** Cue text lines for one segment across the included tracks, in lineOrder.
+/** Cue text lines for one segment across the included tracks, in track order.
  *  `mt` renders a translated line; the speaker is language-independent, so the
  *  color modes style it exactly as they style the original.
  *
@@ -204,15 +207,11 @@ function cueLines(
   orig: string,
   mt: (text: string, seg: TranscriptSegment, lang: string) => string,
 ): string[] {
-  const trLines: string[] = [];
-  for (const lang of ctx.visLangs) {
+  return ctx.lineTracks.flatMap((lang) => {
+    if (lang === "orig") return [orig];
     const t = trOf(seg, lang);
-    if (t !== null) trLines.push(mt(t, seg, lang));
-  }
-  const origLines = ctx.origIncluded ? [orig] : [];
-  return ctx.opts.lineOrder === "trans-first"
-    ? [...trLines, ...origLines]
-    : [...origLines, ...trLines];
+    return t === null ? [] : [mt(t, seg, lang)];
+  });
 }
 
 function nameOf(ctx: Ctx, label: string): string {
@@ -250,24 +249,21 @@ function txtTime(seconds: number): string {
 function txtExport(result: BatchResult, ctx: Ctx): string {
   if (ctx.opts.timestamps && result.segments?.length) {
     // Timestamps on: one "[mm:ss] Name: text" line per segment (+ one
-    // indented line per included translated track).
+    // indented line per included translated track). With the original
+    // included the segment's FIRST emitted line carries the time and the rest
+    // indent under it (a kept-original or absent translation emits nothing,
+    // so the time never vanishes); translations alone each carry it.
     return (
       result.segments
         .flatMap((seg) => {
           const prefix = seg.speaker && ctx.names ? `${nameOf(ctx, seg.speaker)}: ` : "";
-          const tranFirst = ctx.opts.lineOrder === "trans-first";
-          // Whether at least one translated line will actually emit for this
-          // segment — a kept-original or absent translation produces nothing.
-          // Without this check, trans-first with no trans lines leaves the
-          // original with only an indent and the segment's timestamp vanishes.
-          const hasTrans = ctx.origIncluded && ctx.visLangs.some((l) => trOf(seg, l) !== null);
+          const time = `[${txtTime(seg.start)}] `;
           return cueLines(
             ctx,
             seg,
-            `${hasTrans && tranFirst ? "        " : `[${txtTime(seg.start)}] `}${prefix}${clean(seg.text)}`,
-            (t, s, lang) =>
-              `${ctx.origIncluded && !tranFirst ? "        " : `[${txtTime(s.start)}] `}${ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
-          );
+            `${prefix}${clean(seg.text)}`,
+            (t, _s, lang) => `${ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
+          ).map((line, i) => (i && ctx.origIncluded ? "        " : time) + line);
         })
         .join("\n") + "\n"
     );
@@ -277,15 +273,11 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
     const paras: string[] = [];
     let who: string | null = null;
     let bufs: string[][] = [];
-    const trackCount = (ctx.origIncluded ? 1 : 0) + ctx.visLangs.length;
+    const trackCount = ctx.lineTracks.length;
     // Which language each buffer slot holds, so a paragraph can say what it
     // is. Without this every track produced an identically-prefixed paragraph
     // and a reader had only paragraph ORDER to go on.
-    const slotLangs: (string | null)[] = [
-      ...(ctx.opts.lineOrder !== "trans-first" && ctx.origIncluded ? [null] : []),
-      ...ctx.visLangs,
-      ...(ctx.opts.lineOrder === "trans-first" && ctx.origIncluded ? [null] : []),
-    ];
+    const slotLangs = ctx.lineTracks.map((t) => (t === "orig" ? null : t));
     const flush = () => {
       if (bufs.some((b) => b.length)) {
         const prefix = who && ctx.names ? `${nameOf(ctx, who)}: ` : "";
@@ -305,18 +297,10 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
         flush();
         who = label;
       }
-      let slot = 0;
-      if (ctx.opts.lineOrder !== "trans-first" && ctx.origIncluded) {
-        bufs[slot++].push(clean(seg.text));
-      }
-      for (const lang of ctx.visLangs) {
-        const t = trOf(seg, lang);
+      slotLangs.forEach((lang, slot) => {
+        const t = lang === null ? clean(seg.text) : trOf(seg, lang);
         if (t) bufs[slot].push(t);
-        slot++;
-      }
-      if (ctx.opts.lineOrder === "trans-first" && ctx.origIncluded) {
-        bufs[slot].push(clean(seg.text));
-      }
+      });
     }
     flush();
     return paras.join("\n\n") + "\n";
@@ -634,16 +618,16 @@ export function generateExport(source: BatchResult, opts: ExportOptions): string
 
 function ctxOf(result: BatchResult, opts: ExportOptions): Ctx {
   const order = speakerOrder(result);
-  const visLangs =
-    opts.format === "json" ? [] : (opts.tracks?.filter((t) => t !== "orig") ?? []);
+  const lineTracks = exportTrackList(opts);
   const cues = isSubtitle(opts.format) ? opts.cues : undefined;
   return {
     opts,
     order,
     hasSpeakers: order.length > 0,
     names: order.length > 0 && opts.speakerNames !== false,
-    visLangs,
-    origIncluded: !opts.tracks || opts.tracks.includes("orig"),
+    visLangs: lineTracks.filter((t) => t !== "orig"),
+    origIncluded: lineTracks.includes("orig"),
+    lineTracks,
     wrap: (text, track, reserve) => {
       if (!cues) return text;
       const L = limitsFor(cues, cueTrackLang(result, track));
@@ -659,16 +643,18 @@ export interface ExportFileGroup {
   name: (stem: string) => string;
 }
 
-/** The files an export writes, in order — shared by generateExports and the
- *  panel's file names (no content serialized). JSON is one file carrying
- *  every track. A track goes to a file of its own when the format can't
- *  stack it with the others: LRC (duplicate-timestamp bilingual LRC renders
- *  unreliably across players), SRT/VTT under own translation timing (cues no
- *  longer line up), and site tracks with their own timing; the rest share
- *  one file. Names depend only on format, tracks and cue timing. */
+/** The files an export writes, in track order — shared by generateExports
+ *  and the panel's file names (no content serialized). JSON is one file
+ *  carrying every track. A track goes to a file of its own when the format
+ *  can't stack it with the others: LRC (duplicate-timestamp bilingual LRC
+ *  renders unreliably across players), SRT/VTT under own translation timing
+ *  (cues no longer line up), and site tracks with their own timing; the rest
+ *  share one file. A file of its own is named by trackFileSuffixes (D89): its
+ *  language's plain track `stem.de.srt` (the original `stem.srt`), the others
+ *  `stem.YouTube.de.srt`. Names depend only on format, tracks and cue timing. */
 export function exportFileGroups(
   opts: ExportOptions,
-  timed: readonly Pick<TimedTrack, "id" | "lang">[] = [],
+  result: Pick<BatchResult, "language" | "timedTracks"> = {},
 ): ExportFileGroup[] {
   const ext = EXPORT_EXTENSIONS[opts.format];
   // JSON carries every track regardless of the picker (see ctxOf), so the stem
@@ -677,54 +663,55 @@ export function exportFileGroups(
   if (opts.format === "json") return [{ tracks: opts.tracks, name: (stem) => `${stem}.${ext}` }];
   const tracks = exportTrackList(opts);
   const perTrack = opts.format === "lrc" || (isSubtitle(opts.format) && opts.cues?.timing === "own");
-  const alone = tracks.filter((t) => perTrack || timed.some((x) => x.id === t));
-  if (!alone.length || tracks.length === 1) {
+  const alone = tracks.filter((t) => perTrack || result.timedTracks?.some((x) => x.id === t));
+  if (!alone.length) {
     const suffix = exportStemSuffix(opts.tracks);
     return [{ tracks: opts.tracks, name: (stem) => `${stem}${suffix}.${ext}` }];
   }
   const shared = tracks.filter((t) => !alone.includes(t));
-  // A site track is filed under its language, unless another track of this
-  // export already is (a machine translation into the same language).
-  const slugOf = (t: string) => trackSlug(timed.find((x) => x.id === t)?.lang ?? t);
-  const clash = (t: string) => tracks.some((o) => o !== t && slugOf(o) === slugOf(t));
-  return [
-    ...(shared.length
-      ? [{ tracks: shared, name: (stem: string) => `${stem}${exportStemSuffix(shared)}.${ext}` }]
-      : []),
-    ...alone.map((track) => {
-      // Positional fallback for a code whose slug is empty ("!!"): an empty suffix collided
-      // with the "orig" file and every such track overwrote the one before it.
-      const slug = (clash(track) ? trackSlug(track) : slugOf(track)) || `t${tracks.indexOf(track)}`;
-      return { tracks: [track], name: (stem: string) => (track === "orig" ? `${stem}.${ext}` : `${stem}.${slug}.${ext}`) };
-    }),
+  const sharedSuffix = `${exportStemSuffix(shared)}.${ext}`;
+  // Planned over every track, so a language's plain track is its first in the
+  // order whichever file it lands in.
+  const plan = planTracks(result, tracks);
+  const suffixes = trackFileSuffixes(plan.filter((t) => alone.includes(t.id)), ext, {
+    origBare: true,
+    taken: shared.length ? [sharedSuffix] : [],
+  });
+  const groups: ExportFileGroup[] = [
+    ...(shared.length ? [{ tracks: shared, name: (stem: string) => stem + sharedSuffix }] : []),
+    ...alone.map((track, i) => ({ tracks: [track], name: (stem: string) => stem + suffixes[i] })),
   ];
+  // Files follow the track order (the shared file sits where its first track does).
+  return groups.sort((a, b) => tracks.indexOf(a.tracks![0]) - tracks.indexOf(b.tracks![0]));
 }
 
 /** Like generateExport, but one entry per file the export writes (see
- *  exportFileGroups). `name(stem)` appends the track suffix. */
+ *  exportFileGroups). `name(stem)` appends the track suffix; `tracks` = the
+ *  tracks the file carries (undefined = the original only). */
 export function generateExports(
   result: BatchResult,
   opts: ExportOptions,
-): { name: (stem: string) => string; content: string }[] {
-  return exportFileGroups(opts, result.timedTracks).map((g) => ({
+): { name: (stem: string) => string; content: string; tracks?: string[] }[] {
+  return exportFileGroups(opts, result).map((g) => ({
     name: g.name,
+    tracks: g.tracks,
     content: generateExport(result, { ...opts, tracks: g.tracks }),
   }));
 }
 
-/** The tracks an export writes, in file order. */
+/** The tracks an export writes, in order (the original only without a pick). */
 function exportTrackList(opts: ExportOptions): string[] {
-  const visLangs = opts.format === "json" ? [] : (opts.tracks?.filter((t) => t !== "orig") ?? []);
-  return [...(!opts.tracks || opts.tracks.includes("orig") ? ["orig"] : []), ...visLangs];
+  if (opts.format === "json") return opts.tracks?.includes("orig") === false ? [] : ["orig"];
+  return opts.tracks ?? ["orig"];
 }
 
 /** The file names an export would write — NO content serialized, so the export panel can
  *  show them in a render path (generateExports rendered the whole document per repaint). */
 export function exportFileNames(
   opts: ExportOptions,
-  timed?: readonly Pick<TimedTrack, "id" | "lang">[],
+  result?: Pick<BatchResult, "language" | "timedTracks">,
 ): ((stem: string) => string)[] {
-  return exportFileGroups(opts, timed).map((g) => g.name);
+  return exportFileGroups(opts, result).map((g) => g.name);
 }
 
 /** Track codes reach a filename (the stem suffix and the per-track LRC name); they come

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath, languageLabel,
-  linkSiteName, mediaExportPlan, siteDisplayName, withTrackSites, mp4Disabled, sidecarFiles, sidecarName, stemTimestamp,
+  legacyTrackIndices, linkSiteName, mediaExportPlan, siteDisplayName, withTrackSites, mp4Disabled, sidecarFiles,
+  sidecarNames, stemTimestamp,
 } from "./mediaExport";
 import type { BatchResult } from "./types";
 
@@ -64,9 +65,31 @@ describe("embeddedSubtitleTracks", () => {
     expect(files[0].content).not.toContain("Hello world");
     expect(files[1].content).toContain("Hello world");
     // Codes reach a path: keep them safe, never empty.
-    expect(sidecarName("../x", "srt")("t")).toBe("t.x.srt");
-    expect(sidecarName("!!", "srt")("t")).toBe("t.und.srt");
-    expect(sidecarName("pt-BR", "srt")("t")).toBe("t.pt-BR.srt");
+    expect(sidecarNames({ language: "!!" }, ["orig", "../x", "pt-BR"], "srt").map((n) => n("t")))
+      .toEqual(["t.und.srt", "t.x.srt", "t.pt-BR.srt"]);
+  });
+  it("a language's further tracks are labelled and carry their flags (D89)", () => {
+    const site: BatchResult = {
+      ...result,
+      timedTracks: [
+        { id: "de-x-site", lang: "de", source: "site", kind: "manual", site: "YouTube", hoh: true,
+          cues: [{ start: 0, end: 1, text: "Hallo" }] },
+        { id: "en-x-site", lang: "en", source: "site", kind: "auto", site: "YouTube", cues: [{ start: 0, end: 1, text: "Hi" }] },
+      ],
+    };
+    const order = ["orig", "de-x-site", "en", "en-x-site"];
+    const tracks = embeddedSubtitleTracks(site, { format: "srt" }, order, { en: "  English (DeepL)\u0007 " });
+    expect(tracks.map((t) => [t.label, t.original, t.default, t.hearingImpaired])).toEqual([
+      ["German [Whisper]", true, true, false],
+      ["German [YouTube, SDH]", true, false, true],
+      ["English (DeepL)", false, true, false],
+      ["English [YouTube, auto-generated]", false, false, false],
+    ]);
+    expect(legacyTrackIndices(tracks)).toEqual({ defaultTrack: 0, originalTrack: 0 });
+    expect(legacyTrackIndices(tracks.slice(2))).toEqual({ defaultTrack: 0, originalTrack: null });
+    expect(legacyTrackIndices([])).toEqual({ defaultTrack: null, originalTrack: null });
+    expect(sidecarFiles(site, { format: "srt" }, order, "srt").map((f) => f.name("s")))
+      .toEqual(["s.de.srt", "s.YouTube.de.sdh.srt", "s.en.srt", "s.YouTube-auto.en.srt"]);
   });
   it("isSubtitleFormat: only SRT and VTT ride with a video", () => {
     expect(["srt", "vtt", "txt", "lrc", "json"].filter(isSubtitleFormat)).toEqual(["srt", "vtt"]);
@@ -85,21 +108,21 @@ describe("mediaExportPlan", () => {
   const names = [(s: string) => `${s}.srt`];
   it("none → the text files only", () => {
     const p = mediaExportPlan({ choice: "none", container: "mkv", subtitleMode: "embedded", format: "srt",
-      textFileNames: names, audioExt: "m4a", tracks: ["orig"], origLang: "de", hasVideoSource: true });
+      textFileNames: names, audioExt: "m4a", tracks: ["orig"], result: { language: "de" }, hasVideoSource: true });
     expect(p.files.map((f) => f.kind)).toEqual(["text"]);
     expect(p.saveLabel).toBe("Save SRT");
     expect(p.primary.name("x")).toBe("x.srt");
   });
   it("audio → the copy first, then the text", () => {
     const p = mediaExportPlan({ choice: "audio", container: "mkv", subtitleMode: "embedded", format: "srt",
-      textFileNames: names, audioExt: "m4a", tracks: ["orig"], origLang: "de", hasVideoSource: false });
+      textFileNames: names, audioExt: "m4a", tracks: ["orig"], result: { language: "de" }, hasVideoSource: false });
     expect(p.files.map((f) => f.kind)).toEqual(["audio", "text"]);
     expect(p.saveLabel).toBe("Save 2 files");
     expect(p.primaryExt).toBe("m4a");
   });
   it("video: embedded is one file, sidecar/both add the text and only embedded modes carry tracks", () => {
     const base = { choice: "video" as const, container: "mp4" as const, format: "srt",
-      textFileNames: names, audioExt: "m4a", tracks: ["orig", "en"], origLang: "de", hasVideoSource: true };
+      textFileNames: names, audioExt: "m4a", tracks: ["orig", "en"], result: { language: "de" }, hasVideoSource: true };
     const emb = mediaExportPlan({ ...base, subtitleMode: "embedded" });
     expect(emb.files.map((f) => f.kind)).toEqual(["video"]);
     expect(emb.embedded).toEqual(["orig", "en"]);
@@ -122,7 +145,7 @@ describe("mediaExportPlan", () => {
   });
   it("video without a source degrades to the text plan", () => {
     const p = mediaExportPlan({ choice: "video", container: "mkv", subtitleMode: "embedded", format: "vtt",
-      textFileNames: [], audioExt: null, tracks: [], origLang: "de", hasVideoSource: false });
+      textFileNames: [], audioExt: null, tracks: [], result: { language: "de" }, hasVideoSource: false });
     expect(p.files.map((f) => f.kind)).toEqual(["text"]);
     expect(p.saveLabel).toBe("Save VTT");
   });

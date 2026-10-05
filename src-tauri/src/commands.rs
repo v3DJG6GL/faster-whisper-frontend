@@ -882,14 +882,7 @@ pub async fn package_media(
     // An unusable audio language is dropped, not fatal: the mux still works,
     // only the audio stream keeps whatever tag the source carried.
     let audio_lang = audio_lang.filter(|l| lang_ok(l));
-    let audio_label = audio_label
-        .map(|l| {
-            l.chars()
-                .filter(|c| !c.is_control())
-                .take(64)
-                .collect::<String>()
-        })
-        .filter(|l| !l.trim().is_empty());
+    let audio_label = media::bound_label(audio_label.as_deref());
     let dest = PathBuf::from(&dest_path);
     let Some(parent) = dest.parent().filter(|p| p.is_dir()) else {
         return Err("the export folder does not exist".into());

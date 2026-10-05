@@ -21,11 +21,51 @@ pub const MEDIA_EXPORT_TIMEOUT: Duration = Duration::from_secs(4 * 3600);
 
 /// One subtitle track as the webview sends it (already-generated SRT text).
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SubtitleTrack {
     pub lang: String,
     #[serde(default)]
     pub label: Option<String>,
     pub srt: String,
+    /// Written in the spoken language (Matroska FlagOriginal).
+    #[serde(default)]
+    pub original: bool,
+    /// Its language's default track.
+    #[serde(default)]
+    pub default: bool,
+    #[serde(default)]
+    pub hearing_impaired: bool,
+}
+
+/// The longest track title the server keeps.
+pub const MAX_LABEL_CHARS: usize = 64;
+
+/// A track title as the server takes it: control characters dropped,
+/// bounded, blank = none.
+pub fn bound_label(label: Option<&str>) -> Option<String> {
+    label
+        .map(|l| {
+            l.chars()
+                .filter(|c| !c.is_control())
+                .take(MAX_LABEL_CHARS)
+                .collect::<String>()
+        })
+        .filter(|l| !l.trim().is_empty())
+}
+
+/// The wire's `subtitles` list: each track with its (bounded) title and
+/// flags — a server before the flags ignores them and reads the legacy
+/// `default_track` / `original_track` indices instead.
+fn subtitles_json(subtitles: &[SubtitleTrack]) -> Vec<serde_json::Value> {
+    subtitles
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "lang": t.lang, "label": bound_label(t.label.as_deref()), "srt": t.srt,
+                "original": t.original, "default": t.default, "hearing_impaired": t.hearing_impaired,
+            })
+        })
+        .collect()
 }
 
 /// Codec facts the export panel decides MP4 vs MKV on.
@@ -272,9 +312,7 @@ pub async fn package_to_path(
     let base = base_url(server_url);
     let body = serde_json::json!({
         "container": container,
-        "subtitles": subtitles.iter().map(|t| serde_json::json!({
-            "lang": t.lang, "label": t.label, "srt": t.srt,
-        })).collect::<Vec<_>>(),
+        "subtitles": subtitles_json(subtitles),
         "default_track": default_track,
         "original_track": original_track,
         "audio_lang": audio_lang,
@@ -386,6 +424,27 @@ mod tests {
         let (code, msg) = error_code(r#"{"detail":"container must be mkv or mp4"}"#);
         assert!(code.is_none());
         assert!(msg.contains("container"));
+    }
+
+    #[test]
+    fn subtitle_tracks_carry_their_flags_and_a_bounded_title() {
+        let subs: Vec<SubtitleTrack> = serde_json::from_value(serde_json::json!([
+            {"lang": "de", "label": format!("German\u{7}{}", "x".repeat(80)), "srt": "1",
+             "original": true, "default": true, "hearingImpaired": true},
+            {"lang": "en", "label": " ", "srt": "2"},
+        ]))
+        .unwrap();
+        let body = subtitles_json(&subs);
+        assert_eq!(body[0]["original"], true);
+        assert_eq!(body[0]["default"], true);
+        assert_eq!(body[0]["hearing_impaired"], true);
+        let label = body[0]["label"].as_str().unwrap();
+        assert!(label.starts_with("Germanx"));
+        assert_eq!(label.chars().count(), MAX_LABEL_CHARS);
+        assert_eq!(body[1]["label"], serde_json::Value::Null);
+        assert_eq!(body[1]["original"], false);
+        assert_eq!(body[1]["default"], false);
+        assert_eq!(body[1]["hearing_impaired"], false);
     }
 
     #[test]

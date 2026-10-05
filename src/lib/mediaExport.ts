@@ -4,7 +4,7 @@
 // dialogs, the Tauri commands and the record.
 
 import { cueTrackLang } from "./cueSplit";
-import { languageLabel as baseLanguageLabel } from "./languages";
+import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { generateExports, type ExportOptions } from "./transcriptExport";
 import type { BatchResult, Capabilities } from "./types";
 import { isSourceUrl } from "./urlSource";
@@ -60,20 +60,25 @@ export function mp4Disabled(
   return null;
 }
 
+/** One subtitle stream of the packaged video — the wire's `subtitles[i]`. */
 export interface EmbeddedTrack {
   lang: string;
-  /** The plain language name — "German". The original is marked by the
-   *  container's original-language flag, never by the name. */
+  /** The track title (planTracks): "German", or "German [YouTube]" when the
+   *  language has several tracks, or the user's name. The original is marked
+   *  by the container's original-language flag, never by the name. */
   label: string;
   srt: string;
+  /** Written in the spoken language (Matroska FlagOriginal). */
   original: boolean;
+  /** Its language's plain track (FlagDefault). */
+  default: boolean;
+  hearingImpaired: boolean;
 }
 
 /** One sidecar subtitle file, single-language, named `stem.<code>.<ext>` —
  *  the dot + ISO 639-1 form every player parses (VLC, mpv, Plex, Jellyfin,
- *  Kodi, Emby, Infuse, MPC-HC). The original file carries the result's
- *  language code; there is no player convention for "original", so the
- *  panel says it instead. */
+ *  Kodi, Emby, Infuse, MPC-HC) — or, for a language's further tracks,
+ *  `stem.<Label>.<code>.<ext>` (trackFileSuffixes). */
 export interface SidecarFile {
   track: string;
   lang: string;
@@ -81,14 +86,7 @@ export interface SidecarFile {
   content: string;
 }
 
-/** English names for the track titles — the same names the viewer's chips
- *  use; a code with no name is shown in caps. */
-export function languageLabel(code: string): string {
-  const base = code.split("-")[0].toLowerCase();
-  const region = code.includes("-") ? ` (${code.split("-")[1].toUpperCase()})` : "";
-  const name = baseLanguageLabel(base);
-  return (name === base ? base.toUpperCase() : name) + region;
-}
+export { languageLabel } from "./exportTracks";
 
 /** The language code a track is filed under: the result's language for
  *  the original ("und" when unknown), a site track's language, the target
@@ -97,23 +95,40 @@ export function trackLang(result: BatchResult, track: string): string {
   return (cueTrackLang(result, track) ?? "").trim() || "und";
 }
 
-/** One single-language SRT per chosen track, generated exactly as the
- *  panel's own SRT export would (edits, renames and speaker colouring
- *  included), so the embedded tracks match the sidecars byte for byte. */
+/** One single-language SRT per chosen track (in track order), generated
+ *  exactly as the panel's own SRT export would (edits, renames and speaker
+ *  colouring included), so the embedded tracks match the sidecars byte for
+ *  byte. `names` = the user's track titles by track id. */
 export function embeddedSubtitleTracks(
   result: BatchResult,
   opts: ExportOptions,
   tracks: string[],
+  names?: Record<string, string>,
 ): EmbeddedTrack[] {
-  const out: EmbeddedTrack[] = [];
-  for (const t of tracks) {
-    const files = generateExports(result, { ...opts, format: "srt", tracks: [t] });
-    const srt = files[0]?.content ?? "";
-    if (!srt.trim()) continue;
-    const lang = trackLang(result, t);
-    out.push({ lang, label: languageLabel(lang), srt, original: t === "orig" });
-  }
-  return out;
+  return planTracks(result, tracks, names).flatMap((t) => {
+    const srt = generateExports(result, { ...opts, format: "srt", tracks: [t.id] })[0]?.content ?? "";
+    return srt.trim()
+      ? [{ lang: t.lang, label: t.title, srt, original: t.original, default: t.plain, hearingImpaired: t.hoh }]
+      : [];
+  });
+}
+
+/** The wire's legacy indices (servers before the per-track flags): the
+ *  first original track, and the default = that one, else the first. */
+export function legacyTrackIndices(tracks: readonly EmbeddedTrack[]): { defaultTrack: number | null; originalTrack: number | null } {
+  const orig = tracks.findIndex((t) => t.original && t.default);
+  const originalTrack = orig >= 0 ? orig : null;
+  return { defaultTrack: tracks.length ? (originalTrack ?? 0) : null, originalTrack };
+}
+
+/** Each chosen track's sidecar name (trackFileSuffixes): `stem.de.srt`,
+ *  `stem.YouTube.de.srt`. */
+export function sidecarNames(
+  result: Pick<BatchResult, "language" | "timedTracks">,
+  tracks: string[],
+  format: SubtitleFormat,
+): ((stem: string) => string)[] {
+  return trackFileSuffixes(planTracks(result, tracks), format).map((suffix) => (stem) => stem + suffix);
 }
 
 /** One sidecar file per chosen track, in track order, in the panel's
@@ -126,21 +141,11 @@ export function sidecarFiles(
   tracks: string[],
   format: SubtitleFormat,
 ): SidecarFile[] {
-  const out: SidecarFile[] = [];
-  for (const t of tracks) {
-    const files = generateExports(result, { ...opts, format, tracks: [t] });
-    const content = files[0]?.content ?? "";
-    if (!content.trim()) continue;
-    const lang = trackLang(result, t);
-    out.push({ track: t, lang, name: sidecarName(lang, format), content });
-  }
-  return out;
-}
-
-/** `stem.de.srt` — codes are user/server-authored, so keep them path-safe. */
-export function sidecarName(lang: string, format: SubtitleFormat): (stem: string) => string {
-  const code = lang.replace(/[^A-Za-z0-9-]/g, "").slice(0, 12) || "und";
-  return (stem) => `${stem}.${code}.${format}`;
+  const names = sidecarNames(result, tracks, format);
+  return tracks.flatMap((t, i) => {
+    const content = generateExports(result, { ...opts, format, tracks: [t] })[0]?.content ?? "";
+    return content.trim() ? [{ track: t, lang: trackLang(result, t), name: names[i], content }] : [];
+  });
 }
 
 export interface PlannedFile {
@@ -174,8 +179,8 @@ export function mediaExportPlan(a: {
   textFileNames: ((stem: string) => string)[];
   audioExt: string | null;
   tracks: string[];
-  /** The original track's language code (names its sidecar). */
-  origLang: string;
+  /** The result the tracks belong to (names their sidecars). */
+  result: Pick<BatchResult, "language" | "timedTracks">;
   hasVideoSource: boolean;
 }): MediaExportPlan {
   const text: PlannedFile[] = a.textFileNames.map((name) => ({ name, kind: "text" }));
@@ -197,7 +202,7 @@ export function mediaExportPlan(a: {
     const format: SubtitleFormat = a.format === "vtt" ? "vtt" : "srt";
     const sidecars = a.subtitleMode === "embedded" ? null : { tracks: a.tracks, format };
     const side: PlannedFile[] = sidecars
-      ? a.tracks.map((t) => ({ name: sidecarName(t === "orig" ? a.origLang : t, format), kind: "text" }))
+      ? sidecarNames(a.result, a.tracks, format).map((name) => ({ name, kind: "text" }))
       : [];
     const files = [video, ...side];
     return {

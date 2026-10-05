@@ -295,6 +295,11 @@ export interface SubtitleTrackIn {
   lang: string;
   label?: string;
   srt: string;
+  /** Per-track flags (servers before them ignore the keys): written in the
+   *  spoken language, its language's default track, hearing-impaired. */
+  original?: boolean;
+  default?: boolean;
+  hearingImpaired?: boolean;
 }
 export type PackageOutcomeKind =
   | "ok" | "expired" | "mp4_incompatible" | "no_video" | "too_large"

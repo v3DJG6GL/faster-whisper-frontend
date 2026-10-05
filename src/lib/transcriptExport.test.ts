@@ -266,11 +266,15 @@ describe("multi-track (tracks option)", () => {
       "1\n00:00:00,400 --> 00:00:02,000\nSpeaker 1: Hello there.\nSpeaker 1: Hallo zusammen.",
     );
   });
-  it("srt: trans-first flips the line order", () => {
-    const out = generateExport(TRANSLATED, {
-      format: "srt", tracks: ["orig", "de"], lineOrder: "trans-first",
-    });
+  it("srt: the track order is the line order", () => {
+    const out = generateExport(TRANSLATED, { format: "srt", tracks: ["de", "orig"] });
     expect(out).toContain("Speaker 1: Hallo zusammen.\nSpeaker 1: Hello there.");
+  });
+  it("txt: the first line of a segment carries the time, the rest indent under it", () => {
+    const out = generateExport(TRANSLATED, { format: "txt", timestamps: true, tracks: ["de", "orig"] });
+    expect(out.split("\n").slice(0, 2)).toEqual(["[00:00] Speaker 1: Hallo zusammen.", "        Speaker 1: Hello there."]);
+    const paras = generateExport(TRANSLATED, { format: "txt", tracks: ["de", "orig"] });
+    expect(paras.indexOf("Hallo zusammen.")).toBeLessThan(paras.indexOf("Hello there."));
   });
   it("srt: translations-only drops the original line", () => {
     const out = generateExport(TRANSLATED, { format: "srt", tracks: ["de"] });
@@ -699,8 +703,8 @@ describe("subtitle cues", () => {
     expect(srt[1].content).toBe("1\n00:00:10,500 --> 00:00:12,000\nHallo zusammen.\n\n2\n00:00:12,500 --> 00:00:14,000\nGrüezi.\n");
     expect(srt[0].content).toContain("Le glacier");
     // A machine translation into the same language keeps the plain name.
-    expect(exportFileNames({ format: "vtt", tracks: ["de", "de-x-site"] }, site.timedTracks).map((n) => n("s")))
-      .toEqual(["s.de.vtt", "s.de-x-site.vtt"]);
+    expect(exportFileNames({ format: "vtt", tracks: ["de", "de-x-site"] }, site).map((n) => n("s")))
+      .toEqual(["s.de.vtt", "s.Site.de.vtt"]);
     const txt = generateExports(site, { format: "txt", tracks: ["de-x-site"] });
     expect(txt[0].content).toBe("Hallo zusammen. Grüezi.\n");
     const json = JSON.parse(generateExport(site, { format: "json" }));
