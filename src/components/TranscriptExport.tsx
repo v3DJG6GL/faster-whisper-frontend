@@ -629,13 +629,13 @@ export function TranscriptExport({
             title={videoWhy ?? undefined}
             onClick={() => !videoWhy && pick("video")} className={cardCls(mediaChoice === "video", !!videoWhy)}>
             <span className={cn("block text-[13px] font-medium", mediaChoice === "video" ? "text-accent" : "text-text")}>Video</span>
-            <span className="mt-0.5 block truncate text-[10.5px] leading-snug text-faint">{videoWhy ? "not available" : "with subtitles"}</span>
+            <span className="mt-0.5 block text-[10.5px] leading-snug text-faint">{videoWhy ? "not available" : "with subtitles"}</span>
           </button>
         </div>
         {mediaChoice === "video" && !videoWhy && (
           <div className="flex flex-col gap-2 text-[12px]">
-            <span className="inline-flex items-center gap-2">
-              <span className="w-[72px] font-mono text-[10.5px] uppercase tracking-label text-faint">container</span>
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="w-[72px] shrink-0 font-mono text-[10.5px] uppercase tracking-label text-faint">container</span>
               {(["mkv", "mp4"] as const).map((c) => {
                 const off = subtitleMode === "sidecar" && !!localVideo && !serverVideoId
                   ? c !== (/\.([a-z0-9]+)$/i.exec(localVideo)?.[1]?.toLowerCase() === "mp4" ? "mp4" : "mkv")
@@ -655,8 +655,8 @@ export function TranscriptExport({
                 );
               })}
             </span>
-            <span className="inline-flex items-center gap-2">
-              <span className="w-[72px] font-mono text-[10.5px] uppercase tracking-label text-faint">subtitles</span>
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="w-[72px] shrink-0 font-mono text-[10.5px] uppercase tracking-label text-faint">subtitles</span>
               {([["embedded", "embedded"], ["sidecar", "files"], ["both", "both"]] as const).map(([v, l]) => (
                 <button key={v} type="button" aria-pressed={subtitleMode === v}
                   disabled={v !== "sidecar" && !packageOn}
@@ -800,12 +800,8 @@ export function TranscriptExport({
             </div>
           </div>
 
-          {(tracksBox || media) && (
-            <div className={cn("grid gap-3.5", tracksBox && media && panelW >= 560 && "grid-cols-2")}>
-              {tracksBox}
-              {media}
-            </div>
-          )}
+          {tracksBox}
+          {media}
 
           <div className={box}>
             <div className="flex flex-wrap items-center justify-between gap-2.5">
