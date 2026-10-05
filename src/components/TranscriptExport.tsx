@@ -7,7 +7,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, Circle, Download, Minus, PanelBottom, PanelRight, RotateCcw, TriangleAlert } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
-import { Button, RangeField, Segmented, TextInput } from "@/components/ui";
+import { Button, ChipToggle, RangeField, Segmented, TextInput } from "@/components/ui";
 import { ExportTrackChips } from "@/components/ExportTrackChips";
 import { sourceDot, sourceTone } from "@/components/SiteSubtitlesPanel";
 import { fmtBytes } from "@/lib/format";
@@ -578,21 +578,10 @@ export function TranscriptExport({
             const tracks = tracksOf(f);
             const on = f === previewFile;
             return (
-              <button
-                key={f.key}
-                type="button"
-                role="tab"
-                aria-selected={on}
-                title={fileLine(f)}
-                onClick={() => setPreviewKey(f.key)}
-                className={cn(
-                  "ring-signal inline-flex h-6 items-center gap-1.5 rounded-pill border px-2.5 text-[11px]",
-                  on ? "border-accent/45 text-accent" : "border-line bg-surface-2 text-dim hover:text-text",
-                )}
-              >
+              <ChipToggle key={f.key} tab on={on} size="xs" title={fileLine(f)} onClick={() => setPreviewKey(f.key)}>
                 <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", trackDot(tracks[0]))} />
                 {tracks.map((t) => trackChipLabel(editedResult, t)).join(" + ")}
-              </button>
+              </ChipToggle>
             );
           })}
         </div>
@@ -658,35 +647,24 @@ export function TranscriptExport({
                 const off = subtitleMode === "sidecar" && !!localVideo && !serverVideoId
                   ? c !== (/\.([a-z0-9]+)$/i.exec(localVideo)?.[1]?.toLowerCase() === "mp4" ? "mp4" : "mkv")
                   : c === "mp4" && !!mp4Why;
-                const on = container === c;
                 return (
-                  <button key={c} type="button" aria-pressed={on} disabled={off}
+                  <ChipToggle key={c} on={container === c} disabled={off} size="xs" className="font-mono font-medium"
                     title={c === "mp4" && mp4Why ? mp4Why : subtitleMode === "sidecar" && !!localVideo && !serverVideoId ? "a plain copy keeps the original container" : undefined}
-                    onClick={() => { if (!off) { setContainer(c); persistOptions({ exportContainer: c }); } }}
-                    className={cn(
-                      "ring-signal inline-flex h-6 items-center rounded-pill border px-2.5 font-mono text-[11px] font-medium",
-                      on ? "border-accent/45 text-accent" : "border-line bg-surface-2 text-dim hover:text-text",
-                      off && "cursor-not-allowed opacity-50 hover:text-dim",
-                    )}>
+                    onClick={() => { if (!off) { setContainer(c); persistOptions({ exportContainer: c }); } }}>
                     {c.toUpperCase()}
-                  </button>
+                  </ChipToggle>
                 );
               })}
             </span>
             <span className="flex flex-wrap items-center gap-2">
               <span className="w-[72px] shrink-0 font-mono text-[10.5px] uppercase tracking-label text-faint">subtitles</span>
               {([["embedded", "embedded"], ["sidecar", "files"], ["both", "both"]] as const).map(([v, l]) => (
-                <button key={v} type="button" aria-pressed={subtitleMode === v}
-                  disabled={v !== "sidecar" && !packageOn}
+                <ChipToggle key={v} on={subtitleMode === v} disabled={v !== "sidecar" && !packageOn}
+                  size="xs" className="font-mono font-medium"
                   title={v !== "sidecar" && !packageOn ? (trCaps?.media_package?.reason ?? "this server can't package subtitles") : undefined}
-                  onClick={() => { setSubtitleMode(v); persistOptions({ exportSubtitleMode: v }); }}
-                  className={cn(
-                    "ring-signal inline-flex h-6 items-center rounded-pill border px-2.5 font-mono text-[11px] font-medium",
-                    subtitleMode === v ? "border-accent/45 text-accent" : "border-line bg-surface-2 text-dim hover:text-text",
-                    v !== "sidecar" && !packageOn && "cursor-not-allowed opacity-50",
-                  )}>
+                  onClick={() => { setSubtitleMode(v); persistOptions({ exportSubtitleMode: v }); }}>
                   {l}
-                </button>
+                </ChipToggle>
               ))}
             </span>
           </div>
@@ -812,30 +790,14 @@ export function TranscriptExport({
           <div className={box}>
             <span className={boxTitle}>Content</span>
             <div className="flex flex-wrap gap-2">
-              {content.map((c) => {
-                const locked = c.state === "fixed" || c.state === "na";
-                return (
-                  <button
-                    key={c.key}
-                    type="button"
-                    aria-pressed={c.state === "on" || c.state === "fixed"}
-                    aria-disabled={locked}
-                    title={c.why}
-                    onClick={locked ? undefined : toggleContent[c.key]}
-                    className={cn(
-                      "ring-signal inline-flex h-[30px] items-center gap-1.5 rounded-pill border px-3 text-[12.5px] transition-colors",
-                      c.state === "on" && "border-accent/45 text-accent",
-                      c.state === "off" && "border-line bg-surface-2 text-dim hover:text-text",
-                      c.state === "fixed" && "cursor-default border-ok/35 text-ok",
-                      c.state === "na" && "cursor-not-allowed border-line bg-surface-2 text-dim line-through opacity-45",
-                    )}
-                  >
-                    {c.state === "on" || c.state === "fixed" ? <Check className="size-3.5" />
-                      : c.state === "na" ? <Minus className="size-3.5" /> : <Circle className="size-3" />}
-                    {c.label}
-                  </button>
-                );
-              })}
+              {content.map((c) => (
+                <ChipToggle key={c.key} on={c.state === "on"} size="md" title={c.why} onClick={toggleContent[c.key]}
+                  lock={c.state === "fixed" ? "on" : c.state === "na" ? "off" : undefined}>
+                  {c.state === "on" || c.state === "fixed" ? <Check className="size-3.5" />
+                    : c.state === "na" ? <Minus className="size-3.5" /> : <Circle className="size-3" />}
+                  {c.label}
+                </ChipToggle>
+              ))}
             </div>
           </div>
 

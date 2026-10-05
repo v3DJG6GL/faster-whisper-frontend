@@ -18,7 +18,7 @@ import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { Button, LangTag, Segmented } from "@/components/ui";
+import { Button, ChipToggle, LangTag, Segmented } from "@/components/ui";
 import { fmtBytes, fmtDurationExact, fmtTimestamp, plural } from "@/lib/format";
 import { lastStartedAt, seekKeyTarget } from "@/lib/seekKeys";
 import {
@@ -2150,21 +2150,11 @@ export function TranscriptViewer({
               >
                 {rate}×
               </button>
-              <button
-                type="button"
-                onClick={() => setFollow((v) => !v)}
-                aria-pressed={follow}
-                title="Auto-scroll to the spoken segment"
-                className={cn(
-                  "ring-signal inline-flex shrink-0 items-center gap-1.5 rounded-pill border px-2.5 py-0.5 text-[11.5px] font-medium",
-                  follow
-                    ? "border-accent/35 bg-accent-soft text-accent"
-                    : "border-line bg-surface-2 text-dim",
-                )}
-              >
+              <ChipToggle on={follow} size="bar" className="shrink-0 font-medium"
+                title="Auto-scroll to the spoken segment" onClick={() => setFollow((v) => !v)}>
                 <ArrowDownToLine className="size-3" />
                 Follow
-              </button>
+              </ChipToggle>
             </div>
           )}
         </>
@@ -2247,7 +2237,7 @@ export function TranscriptViewer({
                 className={cn(
                   "ring-signal inline-flex h-7 items-center gap-1.5 rounded-pill border px-3 text-[12px] transition-colors",
                   showTranslate
-                    ? "border-accent/45 text-accent"
+                    ? "border-accent/35 bg-accent-soft text-accent"
                     : "border-dashed border-line-strong text-dim hover:text-text",
                 )}
                 title="Translate this transcript (server-side MT)"
@@ -2318,20 +2308,9 @@ export function TranscriptViewer({
             ] as const
           ).map(([label, on, setter, available]) =>
             available ? (
-              <button
-                key={label}
-                type="button"
-                aria-pressed={on}
-                onClick={() => setter(!on)}
-                className={cn(
-                  "ring-signal inline-flex h-7 items-center rounded-pill border px-3 text-[12px] font-medium transition-colors",
-                  on
-                    ? "border-accent/35 bg-accent-soft text-accent"
-                    : "border-line bg-surface-2 text-dim hover:text-text",
-                )}
-              >
+              <ChipToggle key={label} on={on} className="font-medium" onClick={() => setter(!on)}>
                 {label}
-              </button>
+              </ChipToggle>
             ) : null,
           )}
           <span className="text-[11.5px] text-faint">

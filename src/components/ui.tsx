@@ -1014,6 +1014,69 @@ export function Button({
   );
 }
 
+/* ── ChipToggle ───────────────────────────────────────────────────────── */
+const CHIP_TOGGLE_SIZE = {
+  xs: "h-6 px-2.5 text-[11px]",
+  sm: "h-7 px-3 text-[12px]",
+  md: "h-[30px] px-3 text-[12.5px]",
+  // Inline with the player bar's speed pill: no fixed height.
+  bar: "px-2.5 py-0.5 text-[11.5px]",
+} as const;
+
+/** A pill that switches something on or off (aria-pressed): filled accent when on.
+ *  `tab` makes it one tab of a tablist (aria-selected). `lock` pins it on (ok tone —
+ *  always included) or off (struck through) while keeping it focusable, so its title
+ *  still explains why; `disabled` greys out an option that is unavailable right now. */
+export function ChipToggle({
+  on,
+  disabled,
+  lock,
+  tab,
+  size = "sm",
+  title,
+  onClick,
+  className,
+  children,
+}: {
+  on: boolean;
+  disabled?: boolean;
+  lock?: "on" | "off";
+  tab?: boolean;
+  size?: keyof typeof CHIP_TOGGLE_SIZE;
+  title?: string;
+  onClick?: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role={tab ? "tab" : undefined}
+      aria-selected={tab ? on : undefined}
+      aria-pressed={tab ? undefined : on || lock === "on"}
+      aria-disabled={lock ? true : undefined}
+      disabled={disabled}
+      title={title}
+      onClick={lock ? undefined : onClick}
+      className={cn(
+        "ring-signal inline-flex items-center gap-1.5 rounded-pill border transition-colors",
+        CHIP_TOGGLE_SIZE[size],
+        lock === "on"
+          ? "cursor-default border-ok/35 text-ok"
+          : lock === "off"
+            ? "cursor-not-allowed border-line bg-surface-2 text-dim line-through opacity-45"
+            : on
+              ? "border-accent/35 bg-accent-soft text-accent"
+              : "border-line bg-surface-2 text-dim hover:text-text",
+        disabled && "cursor-not-allowed opacity-50 hover:text-dim",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 /* ── Keycap ───────────────────────────────────────────────────────────── */
 export function Kbd({ children }: { children: ReactNode }) {
   return (
