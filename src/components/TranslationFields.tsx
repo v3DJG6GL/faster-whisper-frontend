@@ -3,7 +3,8 @@
 // remaining candidates. Reused by the Processing card, the Backend/Profile
 // "Translation defaults" editors, and retro-translate popovers.
 import type { ReactNode } from "react";
-import { Eraser, RotateCcw } from "lucide-react";
+import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "./OverrideField";
+import { envDesc } from "../lib/settingDesc";
 import { TRANSLATION_MAX_TARGETS, languageLabel } from "../lib/languages";
 import { cleanCodes } from "../lib/recent";
 import { translationTargetInfo } from "../lib/capabilities";
@@ -13,7 +14,7 @@ import type { ChipPart } from "../lib/siteSubtitles";
 import { cn } from "../lib/cn";
 import type { Capabilities, TranscribeOptions, TranslationOverrides } from "../lib/types";
 import { ModelPicker } from "./ModelPicker";
-import { CodeChip, MicroLabel, Segmented, Stepper, TextArea } from "./ui";
+import { CodeChip, MicroLabel, Segmented, Stepper } from "./ui";
 import { inheritLabel, onOff } from "../lib/inherit";
 
 /** Drop the known source language from a target list — a source→source stage
@@ -250,57 +251,6 @@ export function translationRunOptions(args: {
   };
 }
 
-/** The clear/reset field header the tri-state override editors share (the same
- *  affordance `DecodeFields` and the Profile prompt use): an accent dot while the
- *  field overrides its inherited value, a "clear" button that writes the explicit
- *  EMPTY override, and a "reset" that goes back to inherit. */
-function OverrideLabel({
-  label,
-  overridden,
-  canClear,
-  clearTitle,
-  onClear,
-  onReset,
-}: {
-  label: string;
-  /** The field holds an override (empty or not) — shows the dot and the reset. */
-  overridden: boolean;
-  /** Not already cleared — hides "clear" once the override IS the empty one. */
-  canClear: boolean;
-  clearTitle: string;
-  onClear: () => void;
-  onReset: () => void;
-}) {
-  return (
-    <div className="mb-1.5 flex items-center gap-1.5">
-      {overridden && <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />}
-      <label className="text-[12px] font-medium text-dim">{label}</label>
-      <div className="ml-auto flex items-center gap-2">
-        {canClear && (
-          <button
-            type="button"
-            onClick={onClear}
-            title={clearTitle}
-            className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
-          >
-            <Eraser className="size-3" /> clear
-          </button>
-        )}
-        {overridden && (
-          <button
-            type="button"
-            onClick={onReset}
-            title="Reset to inherited"
-            className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
-          >
-            <RotateCcw className="size-3" /> reset
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 /** What a TranslationDefaultsEditor's empty fields inherit, as display values. */
 export interface TranslationInherited {
   /** "English, French" / "no translation" / "server default". */
@@ -329,6 +279,7 @@ export function TranslationDefaultsEditor({
   caps,
   inherited,
   inheritedModel,
+  inheritedFrom,
   liveInsert,
 }: {
   value: TranslationOverrides | undefined;
@@ -342,6 +293,8 @@ export function TranslationDefaultsEditor({
   /** The model id an empty Model field runs with (a Profile's backend's; absent = the server's
    *  default) — whose languages the target picker groups by. */
   inheritedModel?: string;
+  /** Whose values the inherited ones are ("backend", "server") — shown after a greyed number. */
+  inheritedFrom?: string;
   /** Will this profile insert phrase-by-phrase? Live translation is forced to Faithful —
    *  see `translateModeFor` — so the Mode control is inert and says so rather than
    *  offering a choice that quietly doesn't apply. */
@@ -351,39 +304,44 @@ export function TranslationDefaultsEditor({
   const patch = (p: Partial<TranslationOverrides>) =>
     onChange(pruneTranslationOverrides({ ...v, ...p }));
 
+  // Live translation forces Faithful (translateModeFor): the Mode row is inert and says why in
+  // its tooltip, with the stored value it returns to when this profile inserts on stop.
+  const liveModeWhy = liveInsert
+    ? `Always Faithful while “Type as I speak” is on — a live phrase is translated on its own, and Fluent merges sentences across it, which can drop the opening clause. ${v.mode ? `Set to ${v.mode}; applies` : "Applies"} when this profile inserts on stop.`
+    : undefined;
+
   return (
-    <div className="space-y-3">
-      <div>
-        <OverrideLabel
-          label="Translate to"
-          overridden={v.translateTo !== undefined}
-          canClear={v.translateTo?.length !== 0}
-          clearTitle="Override with none (translate into nothing, ignoring the inherited targets)"
-          onClear={() => patch({ translateTo: [] })}
-          onReset={() => patch({ translateTo: undefined })}
-        />
+    <div>
+      <OverrideHeader
+        title="TRANSLATE_TO"
+        desc={envDesc("TRANSLATE_TO")}
+        overridden={v.translateTo !== undefined}
+        onClear={() => patch({ translateTo: [] })}
+        canClear={v.translateTo?.length !== 0}
+        clearTitle="Override with none (translate into nothing, ignoring the inherited targets)"
+        onReset={() => patch({ translateTo: undefined })}
+        note={
+          // An empty chip row cannot tell "none set" from "explicitly none" on its own, and the
+          // two resolve differently — so while the row IS empty it names which one it is.
+          !v.translateTo?.length
+            ? v.translateTo === undefined
+              ? inheritLabel(inherited.targets)
+              : "Empty · no translation"
+            : undefined
+        }
+      >
         <TranslationTargetChips
           value={v.translateTo ?? []}
           onChange={(next) => patch({ translateTo: next })}
           {...translationTargetInfo(caps, v.model || inheritedModel)}
         />
-        {/* An empty chip row cannot tell "none set" from "explicitly none" on its own,
-            and the two resolve differently: absent inherits the layer below (a Profile its
-            Backend's targets — dictation stops there; a Backend the server's TRANSLATE_TO,
-            which the Transcribe page seeds from), cleared overrides it with nothing. The
-            hint names what is inherited. Only shown while the row IS empty — with chips up,
-            they say it. */}
-        {!v.translateTo?.length && (
-          <div className="mt-1 text-[11px] text-faint">
-            {v.translateTo === undefined
-              ? inheritLabel(inherited.targets)
-              : "(cleared — no translation, overrides the inherited targets)"}
-          </div>
-        )}
-      </div>
-      <div className="grid grid-cols-2 items-start gap-4">
-        <div>
-          <div className="mb-1.5 text-[12px] font-medium text-dim">Model</div>
+      </OverrideHeader>
+      <OverrideHeader
+        title="TRANSLATION_MODEL"
+        desc={envDesc("TRANSLATION_MODEL")}
+        overridden={v.model !== undefined}
+      >
+        <div className={OVERRIDE_CONTROL_W}>
           <ModelPicker
             value={v.model ?? ""}
             onChange={(m) => patch({ model: m || undefined })}
@@ -392,94 +350,72 @@ export function TranslationDefaultsEditor({
             ariaLabel="Translation model"
           />
         </div>
-        <div>
-          <div className="mb-1.5 text-[12px] font-medium text-dim">Mode</div>
-          <Segmented
-            value={liveInsert ? "faithful" : v.mode ?? "inherit"}
-            disabled={liveInsert}
-            onChange={(m) =>
-              patch({ mode: m === "inherit" ? undefined : (m as "fluent" | "faithful") })
-            }
-            options={[
-              { value: "inherit", label: inheritLabel(inherited.mode) },
-              { value: "fluent", label: "Fluent" },
-              { value: "faithful", label: "Faithful" },
-            ]}
-            ariaLabel="Translation mode"
-          />
-          {liveInsert && (
-            // Full contrast, not dimmed with the control: the reason is the one thing on a
-            // dead row that has to stay readable (the same rule SettingRow's disabledReason
-            // follows). Shows the stored value so switching this profile back to
-            // insert-on-stop makes plain what it will return to.
-            <div className="mt-1.5 text-[12px] text-warn">
-              Always Faithful while “Type as I speak” is on — a live phrase is translated on
-              its own, and Fluent merges sentences across it, which can drop the opening
-              clause. {v.mode ? `Set to ${v.mode}; applies` : "Applies"} when this profile
-              inserts on stop.
-            </div>
-          )}
-        </div>
-      </div>
-      <div>
-        {/* Tri-state like the fields around it: absent inherits, any number (0 = no context)
-            is an override. The Stepper shows the inherited count until it is changed. */}
-        <OverrideLabel
-          label="Context segments"
-          overridden={v.contextSegments !== undefined}
-          canClear={false}
-          clearTitle=""
-          onClear={() => {}}
-          onReset={() => patch({ contextSegments: undefined })}
+      </OverrideHeader>
+      <OverrideHeader
+        title="TRANSLATION_MODE"
+        desc={envDesc("TRANSLATION_MODE")}
+        overridden={v.mode !== undefined}
+        disabled={liveInsert}
+        disabledTitle={liveModeWhy}
+        note={liveInsert ? "Faithful while typing as you speak" : undefined}
+      >
+        <Segmented
+          value={liveInsert ? "faithful" : v.mode ?? "inherit"}
+          disabled={liveInsert}
+          onChange={(m) => patch({ mode: m === "inherit" ? undefined : (m as "fluent" | "faithful") })}
+          options={[
+            { value: "inherit", label: inheritLabel(inherited.mode) },
+            { value: "fluent", label: "Fluent" },
+            { value: "faithful", label: "Faithful" },
+          ]}
+          ariaLabel="Translation mode"
         />
+      </OverrideHeader>
+      <OverrideHeader
+        title="TRANSLATION_CONTEXT_SEGMENTS"
+        desc={envDesc("TRANSLATION_CONTEXT_SEGMENTS")}
+        overridden={v.contextSegments !== undefined}
+      >
+        {/* Tri-state: absent inherits (shown greyed), any number (0 = no context) overrides. */}
         <Stepper
-          value={v.contextSegments ?? inherited.contextSegments ?? 0}
+          value={v.contextSegments}
+          inherited={inherited.contextSegments}
+          inheritNote={inheritedFrom}
+          onReset={() => patch({ contextSegments: undefined })}
           onChange={(n) => patch({ contextSegments: n })}
           min={0}
           max={10}
+          unit="segments"
           ariaLabel="Context segments"
         />
-        {v.contextSegments === undefined && (
-          <div className="mt-1 text-[11px] text-faint">
-            {inheritLabel(
-              inherited.contextSegments !== undefined ? String(inherited.contextSegments) : undefined,
-            )}
-          </div>
-        )}
-      </div>
-      <div>
-        <OverrideLabel
-          label="Glossary"
-          overridden={v.glossary !== undefined}
-          canClear={v.glossary !== ""}
-          clearTitle="Override with empty (suppress the inherited glossary)"
-          onClear={() => patch({ glossary: "" })}
-          onReset={() => patch({ glossary: undefined })}
-        />
-        <TextArea
-          aria-label="Translation glossary"
-          value={v.glossary ?? ""}
-          // Tri-state: emptying an existing value stores "" (clear — the server's own
-          // glossary is suppressed); reset stores undefined (inherit). Coercing
-          // "" → undefined here made the two indistinguishable.
-          onChange={(e) => patch({ glossary: e.target.value })}
+      </OverrideHeader>
+      <OverrideHeader
+        title="TRANSLATION_GLOSSARY"
+        desc={envDesc("TRANSLATION_GLOSSARY")}
+        overridden={v.glossary !== undefined}
+        onClear={() => patch({ glossary: "" })}
+        canClear={v.glossary !== ""}
+        clearTitle="Override with empty (suppress the inherited glossary)"
+        onReset={() => patch({ glossary: undefined })}
+        wide
+      >
+        <OverrideText
+          ariaLabel="Translation glossary"
           rows={3}
-          placeholder={
-            v.glossary === ""
-              ? "(cleared — no glossary sent)"
-              : inherited.glossary === ""
-                ? "Inherit · no glossary"
-                : inherited.glossary || "One fixed term per line:\nRechnung = invoice"
-          }
+          value={v.glossary}
+          // Tri-state: emptying an existing value stores "" (clear — the server's own glossary
+          // is suppressed); reset stores undefined (inherit).
+          onChange={(g) => patch({ glossary: g })}
+          inherited={inherited.glossary === "" ? "no glossary" : inherited.glossary}
         />
-      </div>
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <div className="text-[12px] font-medium text-dim">Include original (dictation)</div>
-          <div className="text-[11px] text-faint">
-            Inject the untranslated text first, then each language — blank-line separated.
-          </div>
-        </div>
+      </OverrideHeader>
+      <OverrideHeader
+        title="Include original (dictation)"
+        env={false}
+        hint="Inject the untranslated text first, then each language — blank-line separated."
+        overridden={v.includeOriginal !== undefined}
+        last
+      >
         <Segmented
           value={v.includeOriginal === undefined ? "inherit" : v.includeOriginal ? "on" : "off"}
           onChange={(m) => patch({ includeOriginal: m === "inherit" ? undefined : m === "on" })}
@@ -490,7 +426,7 @@ export function TranslationDefaultsEditor({
           ]}
           ariaLabel="Include original text in dictation output"
         />
-      </div>
+      </OverrideHeader>
     </div>
   );
 }

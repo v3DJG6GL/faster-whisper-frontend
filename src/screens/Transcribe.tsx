@@ -1973,21 +1973,17 @@ export default function Transcribe() {
         <DisclosureCard
           open={showOverrides}
           onToggle={() => setShowOverrides((v) => !v)}
-          title={
-            <>
-              Decode overrides
-              {Object.keys(runOverrides).length > 0 && (
-                <span className="text-faint"> · {Object.keys(runOverrides).length} set for this run</span>
-              )}
-              {runOverrideProfile && (
-                <span className="text-faint"> · server profile set for this run</span>
-              )}
-            </>
+          title="Decode overrides"
+          summary={
+            Object.keys(runOverrides).length > 0 || runOverrideProfile ? (
+              <span className="text-accent">
+                {Object.keys(runOverrides).length > 0 && `· ${Object.keys(runOverrides).length} set for this run`}
+                {runOverrideProfile && " · server profile set for this run"}
+              </span>
+            ) : undefined
           }
+          hint="Only for this run — your Backend and Profile defaults are untouched. Empty = inherit."
         >
-          <p className="mb-4 text-[12.5px] text-dim">
-            Only for this run — your Backend and Profile defaults are untouched. Empty = inherit.
-          </p>
           <DecodeFields
             value={runOverrides}
             onChange={setRunOverrides}

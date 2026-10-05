@@ -1,17 +1,20 @@
 import { useEffect, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useSearchParams } from "react-router-dom";
-import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, RotateCcw, Eraser, Command, Lock } from "lucide-react";
+import { Mic, Hand, Pencil, Copy, Trash2, AlertTriangle, Info, Server, Command } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, ConfirmLeave, RouteBadge, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, TextArea, TextInput, Toggle } from "@/components/ui";
+import { Badge, Button, Card, ConfirmLeave, RouteBadge, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, Select, SetSummary, TextInput, Toggle } from "@/components/ui";
+import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "@/components/OverrideField";
+import { countSet } from "@/lib/decodeKeys";
+import { envDesc } from "@/lib/settingDesc";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { starterProfiles } from "@/lib/starters";
 import { TriggerTile } from "@/components/TriggerTile";
 import { DecodeFields } from "@/components/DecodeFields";
-import { dictationControls, hasInsertionOverrides, FIELD_LABEL } from "@/components/DictationFields";
+import { dictationControls, hasInsertionOverrides, insertionSetCount, FIELD_LABEL } from "@/components/DictationFields";
 import { TranslationDefaultsEditor, targetsLabel, type TranslationInherited } from "@/components/TranslationFields";
-import { inheritLabel, onOff, serverInherited } from "@/lib/inherit";
+import { inheritLabel, LOCKED_REASON, onOff, serverInherited } from "@/lib/inherit";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -95,23 +98,10 @@ function Editor({
   // Shortcuts taken from other bindings in this edit ("Use it here"); applied with Save, so
   // Cancel leaves them untouched.
   const [takeovers, setTakeovers] = useState<string[]>([]);
-  // Each disclosure opens when it has something in it -- the same "open when
-  // non-empty" rule the Backends editor uses for its two. The old combined
-  // flag also watched model/language/endpoint/prompt/overrideProfile, which
-  // now sit flat and need no flag at all.
-  const [showDecode, setShowDecode] = useState(
-    () => !!initial.decodeOverrides && Object.keys(initial.decodeOverrides).length > 0,
-  );
-  const [showInsertion, setShowInsertion] = useState(
-    () => hasInsertionOverrides(initial.insertionOverrides) || initial.typeAsISpeak !== undefined,
-  );
-  // "Ask for target languages" lives inside this disclosure too — a profile whose only
-  // translation setting is that toggle must open with it visible and read as "set".
-  const [showTranslation, setShowTranslation] = useState(
-    () =>
-      (!!initial.translationOverrides && Object.keys(initial.translationOverrides).length > 0) ||
-      initial.askTranslationTargets !== undefined,
-  );
+  // Every disclosure starts closed; its header's "· n set" says whether it holds anything.
+  const [showDecode, setShowDecode] = useState(false);
+  const [showInsertion, setShowInsertion] = useState(false);
+  const [showTranslation, setShowTranslation] = useState(false);
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
   // Resolve the target backend so the decode editor can show its defaults as the
   // inherited baseline and gate to the backend's detected capability.
@@ -301,47 +291,46 @@ function Editor({
         )}
       </div>
 
-      {/* Laid out like the Backends editor: the plain fields sit flat, and
-          decode + translation each get their OWN disclosure. One combined
-          "Overrides" fold meant the two screens that edit the SAME two
-          settings groups looked nothing alike, and opening it produced four
-          unrelated panels at once. */}
-      <div className="mt-5">
-        <div className="grid grid-cols-2 gap-4 rounded-xl border border-line bg-surface-2/40 p-4">
-          <div>
-            <Labeled label="Backend">
-              <Select
-                value={backends.some((b) => b.id === p.backendId) ? p.backendId! : ""}
-                onChange={(v) => set({ backendId: v || null })}
-                options={
-                  backends.length
-                    ? [
-                        // Surface an orphaned/cleared backendId (e.g. its backend was deleted)
-                        // so the shown value matches state instead of silently picking the first.
-                        ...(backends.some((b) => b.id === p.backendId)
-                          ? []
-                          : [{ value: "", label: "No backend" }]),
-                        // This Select DECIDES which server a profile sends its audio and key to,
-                        // and a backend rename raises no SecurityChange — so a hostile sync server
-                        // can relabel the options silently. Same defanging as the sync-server
-                        // picker, for the same reason.
-                        ...backendOptions(backends),
-                      ]
-                    : [{ value: "", label: "No backends — add one" }]
-                }
-              />
-            </Labeled>
-            {!boundBackend && backend && (
-              <Notice className="mt-2">
-                {p.backendId
-                  ? "The backend this profile used was deleted."
-                  : "No backend picked for this profile."}{" "}
-                Dictation uses “{safeDisplayText(backend.name, 60) || "your first backend"}” (your first
-                backend) until you pick one.
-              </Notice>
-            )}
+      {/* Laid out like the Backends editor: the plain fields are rows in one card, and decode,
+          insertion and translation each get their OWN disclosure (all closed when the editor
+          opens; the open one is accented). */}
+      <div className="mt-5 rounded-card border border-line bg-surface-2/40 px-[18px] py-1">
+        <OverrideHeader title="Backend" env={false}>
+          <div className={OVERRIDE_CONTROL_W}>
+            <Select
+              ariaLabel="Backend"
+              value={backends.some((b) => b.id === p.backendId) ? p.backendId! : ""}
+              onChange={(v) => set({ backendId: v || null })}
+              options={
+                backends.length
+                  ? [
+                      // Surface an orphaned/cleared backendId (e.g. its backend was deleted)
+                      // so the shown value matches state instead of silently picking the first.
+                      ...(backends.some((b) => b.id === p.backendId)
+                        ? []
+                        : [{ value: "", label: "No backend" }]),
+                      // This Select DECIDES which server a profile sends its audio and key to,
+                      // and a backend rename raises no SecurityChange — so a hostile sync server
+                      // can relabel the options silently. Same defanging as the sync-server
+                      // picker, for the same reason.
+                      ...backendOptions(backends),
+                    ]
+                  : [{ value: "", label: "No backends — add one" }]
+              }
+            />
           </div>
-          <Labeled label="Language">
+          {!boundBackend && backend && (
+            <Notice className="mt-1">
+              {p.backendId
+                ? "The backend this profile used was deleted."
+                : "No backend picked for this profile."}{" "}
+              Dictation uses “{safeDisplayText(backend.name, 60) || "your first backend"}” (your first
+              backend) until you pick one.
+            </Notice>
+          )}
+        </OverrideHeader>
+        <OverrideHeader title="DEFAULT_LANGUAGE" desc={envDesc("DEFAULT_LANGUAGE")} overridden={!!p.language}>
+          <div className={OVERRIDE_CONTROL_W}>
             <SpokenLanguagePicker
               ariaLabel="Language"
               value={spoken.value}
@@ -354,125 +343,108 @@ function Editor({
                 backend ? spokenLabel(spokenValue(backend.language || "auto", undefined, multiInherited)) : undefined,
               )}
             />
-          </Labeled>
-          <Labeled label="Model">
+          </div>
+        </OverrideHeader>
+        <OverrideHeader title="DEFAULT_MODEL" desc={envDesc("DEFAULT_MODEL")} overridden={!!p.model}>
+          <div className={OVERRIDE_CONTROL_W}>
             <ModelPicker
               ariaLabel="Model"
               value={p.model ?? ""}
               onChange={(v) => set({ model: v || undefined })}
               models={models}
-              defaultLabel={
-                backend?.model ? `Inherit · ${backend.model}` : "Inherit from backend"
-              }
+              defaultLabel={backend?.model ? `Inherit · ${backend.model}` : "Inherit from backend"}
             />
-          </Labeled>
-          <div>
-            <Labeled label="Endpoint">
-              {/* Same switch as the Backends editor, plus the tri-state "Inherit" the other
-                  overrides have — mirroring the Server-type Segmented's Auto sentinel. */}
-              <Segmented
-                value={p.endpoint ?? "inherit"}
-                onChange={(v) => set({ endpoint: v === "inherit" ? undefined : v })}
-                options={[
-                  {
-                    value: "inherit",
-                    label: inheritLabel(backend ? (backend.endpoint === "batch" ? "Batch" : "Streaming") : undefined),
-                  },
-                  { value: "stream", label: "Streaming" },
-                  { value: "batch", label: "Batch" },
-                ]}
-              />
-            </Labeled>
-            {/* Mirror the Backends editor's standard-server warning for a PROFILE-forced stream
-                (an inherited stream endpoint already warns over there). */}
-            {p.endpoint === "stream" && serverKind === "standard" && (
-              <Notice className="mt-2">
-                A standard Whisper server has no streaming endpoint — this override won’t work on{" "}
-                <span className="font-medium">{safeDisplayText(backend?.name, 80) || "this backend"}</span>.
-              </Notice>
-            )}
           </div>
-          <div className="col-span-2">
-            <div className="mb-2 flex items-center gap-1.5">
-              {promptOverridden && (
-                <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
-              )}
-              <label className="text-[12px] font-medium text-dim">Vocabulary / prompt</label>
-              {promptLocked && <Lock className="size-3 shrink-0 text-faint" aria-hidden />}
-              <div className="ml-auto flex items-center gap-2">
-                {p.prompt !== "" && !promptLocked && (
-                  <button
-                    type="button"
-                    onClick={() => set({ prompt: "" })}
-                    title="Override with empty (suppress the inherited prompt)"
-                    className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
-                  >
-                    <Eraser className="size-3" /> clear
-                  </button>
-                )}
-                {promptOverridden && (
-                  <button
-                    type="button"
-                    onClick={() => set({ prompt: undefined })}
-                    title="Reset to inherited"
-                    className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
-                  >
-                    <RotateCcw className="size-3" /> reset
-                  </button>
-                )}
-              </div>
-            </div>
-            <TextArea
-              aria-label="Vocabulary / prompt"
-              value={promptLocked ? "" : (p.prompt ?? "")}
-              onChange={(e) => set({ prompt: e.target.value })}
-              rows={2}
-              disabled={promptLocked}
-              title={promptLocked ? "Your server admin fixed this value." : backendPromptOverride === undefined ? server.prompt?.source : "Backend default"}
-              // Tri-state: empty an existing value → "" (clear, suppresses the
-              // inherited prompt); reset → undefined (inherit, ghosts the baseline).
-              placeholder={
-                promptLocked
-                  ? inheritLabel(inheritedPromptText, "Set by server")
-                  : p.prompt === ""
-                    ? "(cleared — no prompt sent)"
-                    : inheritLabel(inheritedPromptText)
+        </OverrideHeader>
+        <OverrideHeader title="Endpoint" env={false} overridden={p.endpoint !== undefined}>
+          {/* Same switch as the Backends editor, plus the tri-state "Inherit" the other
+              overrides have — mirroring the Server-type Segmented's Auto sentinel. */}
+          <Segmented
+            ariaLabel="Endpoint"
+            value={p.endpoint ?? "inherit"}
+            onChange={(v) => set({ endpoint: v === "inherit" ? undefined : v })}
+            options={[
+              {
+                value: "inherit",
+                label: inheritLabel(backend ? (backend.endpoint === "batch" ? "Batch" : "Streaming") : undefined),
+              },
+              { value: "stream", label: "Streaming" },
+              { value: "batch", label: "Batch" },
+            ]}
+          />
+          {/* Mirror the Backends editor's standard-server warning for a PROFILE-forced stream
+              (an inherited stream endpoint already warns over there). */}
+          {p.endpoint === "stream" && serverKind === "standard" && (
+            <Notice className="mt-1">
+              A standard Whisper server has no streaming endpoint — this override won’t work on{" "}
+              <span className="font-medium">{safeDisplayText(backend?.name, 80) || "this backend"}</span>.
+            </Notice>
+          )}
+        </OverrideHeader>
+        <OverrideHeader
+          title="DEFAULT_PROMPT"
+          desc={envDesc("DEFAULT_PROMPT")}
+          overridden={promptOverridden}
+          lockReason={promptLocked ? LOCKED_REASON : undefined}
+          onClear={() => set({ prompt: "" })}
+          canClear={p.prompt !== ""}
+          clearTitle="Override with empty (suppress the inherited prompt)"
+          onReset={() => set({ prompt: undefined })}
+          note={promptLocked && promptOverridden ? "Ignored · locked by the server" : undefined}
+          wide
+        >
+          {/* Tri-state: empty an existing value → "" (clear, suppresses the inherited prompt);
+              reset → undefined (inherit, ghosts the baseline). */}
+          <OverrideText
+            ariaLabel="Vocabulary / prompt"
+            rows={2}
+            value={p.prompt}
+            onChange={(v) => set({ prompt: v })}
+            inherited={inheritedPromptText}
+            fixedLabel={promptLocked ? inheritLabel(inheritedPromptText, "Set by server") : undefined}
+            title={promptLocked ? LOCKED_REASON : backendPromptOverride === undefined ? server.prompt?.source : "Backend default"}
+          />
+        </OverrideHeader>
+        {/* Rendered unconditionally (disable-not-hide): if the bound backend was deleted
+            (backendId cleared), a stored overrideProfile still applies to the fallback backend at
+            dictation time, so the user must be able to SEE and clear it. With no resolvable
+            backend the picker degrades to its free-text path (serverKind "unknown"). */}
+        <OverrideHeader title="Server override profile" env={false} overridden={!!p.overrideProfile} last>
+          <div className={OVERRIDE_CONTROL_W}>
+            <OverrideProfilePicker
+              serverUrl={backend ? effectiveServerUrl(backend, useApp.getState().settings) : ""}
+              backendId={backend?.id ?? ""}
+              serverKind={serverKind}
+              canRequest={caps?.can_request_override_profile}
+              value={p.overrideProfile ?? ""}
+              inheritLabel={
+                backend?.overrideProfile === NO_OVERRIDE_PROFILE
+                  ? "Inherit · none"
+                  : inheritLabel(backend?.overrideProfile || (backend ? "server default" : undefined))
               }
+              onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
             />
-            {promptLocked && promptOverridden && (
-              <div className="mt-1 text-[11px] text-faint">This prompt is ignored · locked by the server.</div>
-            )}
           </div>
-        </div>
+        </OverrideHeader>
       </div>
 
       <div className="mt-5">
         <DisclosureCard
           open={showDecode}
           onToggle={() => setShowDecode((v) => !v)}
-          title={
-            <>
-              Decode overrides{" "}
-              {p.decodeOverrides && Object.keys(p.decodeOverrides).length ? (
-                <span className="text-accent">· set</span>
-              ) : (
-                <span className="text-faint">· inherit backend</span>
-              )}
-            </>
-          }
+          title="Decode overrides"
+          summary={<SetSummary count={countSet(p.decodeOverrides, "decode")} inherit="inherit backend" />}
+          hint="Only for this profile. Empty inherits the bound backend's defaults."
         >
-          <p className="mb-3 text-[12px] text-dim">
-            Only for this profile. Empty inherits the bound backend&apos;s defaults.
-          </p>
           <DecodeFields
-              value={p.decodeOverrides ?? {}}
-              onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
-              inherited={server.values}
-              sources={server.sources}
-              locked={server.locked}
-              pinned={server.pinned}
-              ignored={server.ignored}
-              serverKind={serverKind}
+            value={p.decodeOverrides ?? {}}
+            onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
+            inherited={server.values}
+            sources={server.sources}
+            locked={server.locked}
+            pinned={server.pinned}
+            ignored={server.ignored}
+            serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}
           />
         </DisclosureCard>
@@ -482,28 +454,21 @@ function Editor({
         <DisclosureCard
           open={showInsertion}
           onToggle={() => setShowInsertion((v) => !v)}
-          title={
-            <>
-              Insertion overrides{" "}
-              {hasInsertionOverrides(p.insertionOverrides) || p.typeAsISpeak !== undefined ? (
-                <span className="text-accent">· set</span>
-              ) : (
-                <span className="text-faint">· inherit global</span>
-              )}
-            </>
+          title="Insertion overrides"
+          summary={
+            <SetSummary
+              count={insertionSetCount(p.insertionOverrides) + (p.typeAsISpeak !== undefined ? 1 : 0)}
+              inherit="inherit global"
+            />
           }
+          hint="Only for this profile. Inherit takes the Settings → Dictation default; an app rule still wins over both for the app you dictate into."
         >
-          <p className="mb-3 text-[12px] text-dim">
-            Only for this profile. Inherit takes the Settings → Dictation default; an app rule
-            still wins over both for the app you dictate into.
-          </p>
-
-          {/* "Type as I speak" is the profile-scoped replacement for the old global
-              three-way. It only produces a distinct outcome on a STREAMING, HANDS-FREE
-              profile, so the other combinations say why rather than silently doing nothing.
-              Note the gate is on the PROFILE's activation for display only — the runtime
-              value is what liveAllowed tests, because the Home button and the chip's
-              quick-launch both start a hold profile hands-free. */}
+          {/* "Type as I speak" is the profile-scoped replacement for the old global three-way.
+              It only produces a distinct outcome on a STREAMING, HANDS-FREE profile, so the other
+              combinations say why (tooltip) rather than silently doing nothing. The gate is on
+              the PROFILE's activation for display only — the runtime value is what liveAllowed
+              tests, because the Home button and the chip's quick-launch both start a hold
+              profile hands-free. */}
           {(() => {
             const effEndpoint = p.endpoint ?? backend?.endpoint;
             const batch = effEndpoint === "batch";
@@ -513,34 +478,8 @@ function Editor({
               : hold
                 ? "Push-to-talk holds the chord for the whole dictation, so injected keys would fold into it — these profiles always insert on release. The Home button and the chip's quick-launch run any profile hands-free, and this setting applies there."
                 : undefined;
-            return (
-              <div className="mb-4">
-                <Labeled label="Type as I speak">
-                  <Segmented
-                    ariaLabel="Type as I speak"
-                    disabled={batch}
-                    value={p.typeAsISpeak === true ? "on" : p.typeAsISpeak === false ? "off" : "inherit"}
-                    onChange={(v) =>
-                      set({ typeAsISpeak: v === "inherit" ? undefined : v === "on" })
-                    }
-                    options={[
-                      { value: "inherit", label: inheritLabel(onOff(globalTypeAsISpeak)) },
-                      { value: "on", label: "On" },
-                      { value: "off", label: "Off" },
-                    ]}
-                  />
-                </Labeled>
-                <div className={cn("mt-1.5 text-[12px]", why ? "text-warn" : "text-dim")}>
-                  {why ??
-                    "Insert each phrase into the focused field as you talk, instead of waiting until the session ends."}
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* The same four controls as App Rules — one component, so the labels and the
-              option order can't drift apart. Settings → Dictation keeps its own two-state rows. */}
-          {(() => {
+            // The same four controls as App Rules — one component, so the labels and the
+            // option order can't drift apart. Settings → Dictation keeps its own two-state rows.
             const c = dictationControls({
               value: p.insertionOverrides ?? {},
               // Same rule as `save`: an empty override object is "inherit everything" and is
@@ -553,12 +492,50 @@ function Editor({
                 restoreClipboard: globalRestoreClipboard,
               },
             });
+            const ov = p.insertionOverrides ?? {};
             return (
-              <div className="grid grid-cols-2 gap-4">
-                <Labeled label={FIELD_LABEL.insertMethod}>{c.insertMethod}</Labeled>
-                <Labeled label={FIELD_LABEL.pasteShortcut}>{c.pasteShortcut}</Labeled>
-                <Labeled label={FIELD_LABEL.autoEnter}>{c.autoEnter}</Labeled>
-                <Labeled label={FIELD_LABEL.restoreClipboard}>{c.restoreClipboard}</Labeled>
+              <div>
+                <OverrideHeader
+                  title="Type as I speak"
+                  env={false}
+                  hint={
+                    why ??
+                    "Insert each phrase into the focused field as you talk, instead of waiting until the session ends."
+                  }
+                  overridden={p.typeAsISpeak !== undefined}
+                  disabled={batch}
+                  disabledTitle={why}
+                  note={hold && !batch ? "Push-to-talk inserts on release" : undefined}
+                >
+                  <Segmented
+                    ariaLabel="Type as I speak"
+                    disabled={batch}
+                    value={p.typeAsISpeak === true ? "on" : p.typeAsISpeak === false ? "off" : "inherit"}
+                    onChange={(v) => set({ typeAsISpeak: v === "inherit" ? undefined : v === "on" })}
+                    options={[
+                      { value: "inherit", label: inheritLabel(onOff(globalTypeAsISpeak)) },
+                      { value: "on", label: "On" },
+                      { value: "off", label: "Off" },
+                    ]}
+                  />
+                </OverrideHeader>
+                <OverrideHeader title={FIELD_LABEL.insertMethod} env={false} overridden={ov.insertMethod !== undefined}>
+                  <div className={OVERRIDE_CONTROL_W}>{c.insertMethod}</div>
+                </OverrideHeader>
+                <OverrideHeader title={FIELD_LABEL.pasteShortcut} env={false} overridden={ov.pasteShortcut !== undefined}>
+                  <div className={OVERRIDE_CONTROL_W}>{c.pasteShortcut}</div>
+                </OverrideHeader>
+                <OverrideHeader title={FIELD_LABEL.autoEnter} env={false} overridden={ov.autoEnter !== undefined}>
+                  {c.autoEnter}
+                </OverrideHeader>
+                <OverrideHeader
+                  title={FIELD_LABEL.restoreClipboard}
+                  env={false}
+                  overridden={ov.restoreClipboard !== undefined}
+                  last
+                >
+                  {c.restoreClipboard}
+                </OverrideHeader>
               </div>
             );
           })()}
@@ -569,81 +546,52 @@ function Editor({
         <DisclosureCard
           open={showTranslation}
           onToggle={() => setShowTranslation((v) => !v)}
-          title={
-            <>
-              Translation overrides{" "}
-              {(p.translationOverrides && Object.keys(p.translationOverrides).length) ||
-              p.askTranslationTargets !== undefined ? (
-                <span className="text-accent">· set</span>
-              ) : (
-                <span className="text-faint">· inherit backend</span>
-              )}
-            </>
+          title="Translation overrides"
+          summary={
+            <SetSummary
+              count={Object.keys(p.translationOverrides ?? {}).length + (p.askTranslationTargets !== undefined ? 1 : 0)}
+              inherit="inherit backend"
+            />
           }
+          hint="Only for this profile. Empty inherits the bound backend's defaults; dictation injects every target."
         >
-          <p className="mb-3 text-[12px] text-dim">
-            Only for this profile. Empty inherits the bound backend&apos;s defaults;
-            dictation injects every target.
-          </p>
-          <div className="mb-4 rounded-xl border border-line bg-surface-2/40 p-3.5">
-            <Labeled label="Ask for target languages">
-              <Toggle
-                ariaLabel="Ask for target languages"
-                checked={p.askTranslationTargets === true}
-                onChange={(v) => set({ askTranslationTargets: v || undefined })}
-              />
-            </Labeled>
-            <div className="mt-1.5 text-[12px] text-dim">
-              {p.activation === "hold"
+          <OverrideHeader
+            title="Ask for target languages"
+            env={false}
+            hint={
+              p.activation === "hold"
                 ? "Asks after you release the shortcut, before the text is inserted — a prompt while the chord is held would swallow the keys. The targets below are preselected, so Enter inserts as this profile would; 0 inserts the original only; Esc inserts nothing and keeps the transcript in History."
-                : "Asks before the microphone opens. The targets below are preselected, so pressing Enter does exactly what this profile does today; 0 starts without translating; Esc cancels and nothing starts."}
-            </div>
-          </div>
+                : "Asks before the microphone opens. The targets below are preselected, so pressing Enter does exactly what this profile does today; 0 starts without translating; Esc cancels and nothing starts."
+            }
+            overridden={p.askTranslationTargets !== undefined}
+          >
+            <Toggle
+              ariaLabel="Ask for target languages"
+              checked={p.askTranslationTargets === true}
+              onChange={(v) => set({ askTranslationTargets: v || undefined })}
+            />
+          </OverrideHeader>
           <TranslationDefaultsEditor
-              value={p.translationOverrides}
-              onChange={(v) => set({ translationOverrides: v })}
-              caps={caps}
-              // Resolved with the SAME predicate the session uses (`liveAllowed`): the
-              // profile's own opinion else the Dictation-tab default, a streaming endpoint,
-              // and a delivery that is safe while the chord may still be held — a push-to-talk
-              // profile typing via paste/direct inserts on release, so its Mode is honoured.
-              // (An app rule can still override the method per window; the editor can't
-              // know the window, so profile-else-global is the closest honest read.)
-              liveInsert={liveAllowed({
-                wants: p.typeAsISpeak ?? globalTypeAsISpeak,
-                endpoint: p.endpoint ?? backend?.endpoint ?? "stream",
-                activation: p.activation,
-                method: p.insertionOverrides?.insertMethod ?? globalInsertMethod,
-              })}
-              inherited={translationInherited(backend?.translationOverrides)}
-              inheritedModel={backend?.translationOverrides?.model}
+            value={p.translationOverrides}
+            onChange={(v) => set({ translationOverrides: v })}
+            caps={caps}
+            // Resolved with the SAME predicate the session uses (`liveAllowed`): the
+            // profile's own opinion else the Dictation-tab default, a streaming endpoint,
+            // and a delivery that is safe while the chord may still be held — a push-to-talk
+            // profile typing via paste/direct inserts on release, so its Mode is honoured.
+            // (An app rule can still override the method per window; the editor can't
+            // know the window, so profile-else-global is the closest honest read.)
+            liveInsert={liveAllowed({
+              wants: p.typeAsISpeak ?? globalTypeAsISpeak,
+              endpoint: p.endpoint ?? backend?.endpoint ?? "stream",
+              activation: p.activation,
+              method: p.insertionOverrides?.insertMethod ?? globalInsertMethod,
+            })}
+            inherited={translationInherited(backend?.translationOverrides)}
+            inheritedModel={backend?.translationOverrides?.model}
+            inheritedFrom="backend"
           />
         </DisclosureCard>
-      </div>
-
-      {/* Render unconditionally like the sibling Language/Decode blocks (disable-not-hide): if the
-          bound backend was deleted (backendId cleared), a stored overrideProfile still applies to
-          the fallback backend at dictation time, so the user must be able to SEE and clear it. With
-          no resolvable backend the picker degrades to its free-text path (serverKind "unknown"). */}
-      <div className="mt-5">
-        <div className="rounded-xl border border-line bg-surface-2/40 p-4">
-          <div className="mb-3 text-[12px] font-medium text-dim">
-            Server override profile <span className="text-faint">· empty inherits the backend</span>
-          </div>
-          <OverrideProfilePicker
-            serverUrl={backend ? effectiveServerUrl(backend, useApp.getState().settings) : ""}
-            backendId={backend?.id ?? ""}
-            serverKind={serverKind}
-            canRequest={caps?.can_request_override_profile}
-            value={p.overrideProfile ?? ""}
-            inheritLabel={
-              backend?.overrideProfile === NO_OVERRIDE_PROFILE
-                ? "Inherit · none"
-                : inheritLabel(backend?.overrideProfile || (backend ? "server default" : undefined))
-            }
-            onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
-          />
-        </div>
       </div>
 
       <div className="mt-6 flex items-center justify-between">

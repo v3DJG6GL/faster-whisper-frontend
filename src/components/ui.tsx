@@ -411,23 +411,37 @@ export function DisclosureToggle({
   );
 }
 
-/** A disclosure whose HEADER LIVES INSIDE THE BOX: collapsed it is a slim
- *  tinted strip, expanding grows the same framed panel. Replaces the older
- *  "floating toggle above a card" pattern, which left the label stranded on
- *  the page background. `nested` renders the sub-panel scale (one surface
- *  step up, tighter padding) for a disclosure inside another panel. */
+/** The summary after a disclosure's title: "· 3 set" in the accent while the block holds
+ *  overrides, else what it inherits ("· inherit backend"), quiet. */
+export function SetSummary({ count, inherit }: { count: number; inherit: string }) {
+  return count > 0 ? (
+    <span className="text-accent">· {count} set</span>
+  ) : (
+    <span className="text-faint">· {inherit}</span>
+  );
+}
+
+/** A disclosure whose HEADER LIVES INSIDE THE BOX: the title, a summary of what is inside
+ *  ("· 2 set" / "· inherit backend"), and a chevron at the far end. Every block starts closed
+ *  (the caller's state); an OPEN block stands out — accent edge, accent-soft header, accent
+ *  title and chevron — so it is clear which one you are in. `nested` is the sub-panel scale
+ *  for a block inside another; `hint` is the header's tooltip (no prose inside the block). */
 export function DisclosureCard({
   open,
   onToggle,
   title,
+  summary,
+  hint,
   nested,
   className,
   children,
 }: {
   open: boolean;
   onToggle: () => void;
-  /** Header content — the label plus any "· 2 set" style suffixes. */
   title: ReactNode;
+  /** Right after the title, e.g. <SetSummary/>. */
+  summary?: ReactNode;
+  hint?: string;
   nested?: boolean;
   className?: string;
   children: ReactNode;
@@ -436,27 +450,36 @@ export function DisclosureCard({
   return (
     <div
       className={cn(
-        "overflow-hidden border border-line",
-        nested ? "rounded-xl" : "rounded-card bg-surface/80",
+        "border transition-colors",
+        nested ? "rounded-xl bg-surface-2/40" : "rounded-card bg-surface/80",
+        open ? "border-accent/45" : "border-line",
         className,
       )}
     >
       <button
         type="button"
         onClick={onToggle}
+        title={hint}
         aria-expanded={open}
         aria-controls={open ? panelId : undefined} // the panel node exists only while open (Combobox rule)
         className={cn(
-          "ring-signal flex w-full items-center gap-2 text-left font-medium text-dim hover:text-text",
-          nested ? "bg-surface-2/70 px-3.5 py-2.5 text-[12px]" : "bg-surface-2/60 px-4 py-3 text-[12.5px]",
-          open && "border-b border-line",
+          "group ring-signal flex w-full items-center gap-2 text-left",
+          nested ? "rounded-[11px] px-4 py-3 text-[13px]" : "rounded-[13px] px-[18px] py-3.5 text-[14px]",
+          open && "rounded-b-none bg-accent-soft",
         )}
       >
-        <span className={cn("transition-transform", open && "rotate-90")}>›</span>
-        <span className="min-w-0 flex-1">{title}</span>
+        <span className={cn("min-w-0 font-medium", open ? "text-accent" : "text-text")}>{title}</span>
+        {summary && <span className="min-w-0 truncate text-[12.5px]">{summary}</span>}
+        <ChevronDown
+          aria-hidden
+          className={cn(
+            "ml-auto size-4 shrink-0 transition-transform",
+            open ? "text-accent" : "-rotate-90 text-faint group-hover:text-text",
+          )}
+        />
       </button>
       {open && (
-        <div id={panelId} className={nested ? "p-3.5" : "p-5"}>
+        <div id={panelId} className={nested ? "px-4 pb-2 pt-1" : "px-[18px] pb-3 pt-1.5"}>
           {children}
         </div>
       )}
@@ -822,9 +845,13 @@ export function Select<T extends string>({
 /** A −/+ numeric field for granular timeout-style settings. The value is typeable
  *  (clamped to [min,max] on blur/Enter; decimals allowed when `decimals` > 0) and
  *  steppable via the buttons (press-and-hold to repeat) or the Arrow keys. `zeroLabel`
- *  shows a word in place of 0 (e.g. "Never" / "Instant"). */
+ *  shows a word in place of 0 (e.g. "Never" / "Instant").
+ *
+ *  Inherit state (override editors): `value` undefined shows `inherited` greyed with
+ *  "· {inheritNote}" after it, and the first step or typed number becomes the override;
+ *  `onReset` adds a ↺ that goes back to inherit while a value is set. */
 export function Stepper({
-  value,
+  value: own,
   onChange,
   min = 0,
   max = Number.MAX_SAFE_INTEGER,
@@ -834,8 +861,11 @@ export function Stepper({
   zeroLabel,
   ariaLabel,
   disabled,
+  inherited,
+  inheritNote,
+  onReset,
 }: {
-  value: number;
+  value: number | undefined;
   onChange: (v: number) => void;
   min?: number;
   max?: number;
@@ -845,7 +875,14 @@ export function Stepper({
   zeroLabel?: string;
   ariaLabel?: string;
   disabled?: boolean;
+  /** What an unset value inherits (shown greyed); unknown = `min`. */
+  inherited?: number;
+  /** Who the inherited value belongs to ("server", "backend"). */
+  inheritNote?: string;
+  onReset?: () => void;
 }) {
+  const inheriting = own === undefined;
+  const value = own ?? inherited ?? min;
   const [text, setText] = useState(String(value));
   const [focused, setFocused] = useState(false);
   // Refs so the press-and-hold repeat always steps from the LATEST value / handler — a
@@ -892,6 +929,8 @@ export function Stepper({
   useEffect(() => stopRepeat, []); // stop any running repeat on unmount
 
   const commit = () => {
+    // Focusing and leaving an inheriting field changes nothing: only a typed number overrides.
+    if (inheriting && text === String(value)) return;
     const n = decimals > 0 ? parseFloat(text) : parseInt(text, 10);
     const next = Number.isFinite(n) ? round(clamp(n)) : value;
     onChange(next);
@@ -965,10 +1004,13 @@ export function Stepper({
           }}
           className={cn(
             "w-16 bg-transparent text-center text-[13px] leading-none tabular-nums text-text outline-none",
-            showZero && "text-dim",
+            (showZero || (inheriting && !focused)) && "text-faint",
           )}
         />
         {!showZero && unit && <span className="shrink-0 text-[12px] leading-none text-faint">{unit}</span>}
+        {inheriting && inheritNote && !focused && (
+          <span className="shrink-0 whitespace-nowrap text-[12px] leading-none text-faint">· {inheritNote}</span>
+        )}
       </div>
       <button
         type="button"
@@ -990,6 +1032,18 @@ export function Stepper({
       >
         <Plus className="size-4" />
       </button>
+      {onReset && !inheriting && (
+        <button
+          type="button"
+          title={inheritNote ? `Back to the ${inheritNote} value` : "Reset to inherited"}
+          aria-label={`Reset${ariaLabel ? ` ${ariaLabel}` : ""}`}
+          disabled={disabled}
+          onClick={onReset}
+          className={cn(btn, "w-8 border-l border-line text-faint")}
+        >
+          <RotateCcw className="size-3.5" />
+        </button>
+      )}
     </div>
   );
 }

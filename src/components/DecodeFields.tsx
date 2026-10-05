@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
-import { RotateCcw, Info, Eraser, Lock } from "lucide-react";
+import { Info } from "lucide-react";
 import { DisclosureCard, Segmented, TextInput, SectionLabel } from "@/components/ui";
-import { cn } from "@/lib/cn";
+import { OverrideHeader, OVERRIDE_CONTROL_W } from "@/components/OverrideField";
 import type { DecodeOverrides, InheritedValues } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
 import { inheritLabel, LOCKED_REASON, type DecodeKey, type InheritWord, type ServerInherited } from "@/lib/inherit";
@@ -95,9 +95,7 @@ export function DecodeFields({
    *  ("unknown") = permitted (never gate a knob we can't prove is disabled). */
   canCustomize?: boolean;
 }) {
-  const [showAdvanced, setShowAdvanced] = useState(
-    FIELDS.some((f) => f.section !== "primary" && value[f.key] !== undefined),
-  );
+  const [showAdvanced, setShowAdvanced] = useState(false); // every block starts closed
   const blocked = canCustomize === false; // capability gate: all params disabled
   const standard = serverKind === "standard";
   const isGated = (f: Field) => blocked || (standard && f.key !== "temperature");
@@ -216,67 +214,43 @@ export function DecodeFields({
     );
   };
 
-  const fieldCell = (f: Field) => {
+  const fieldCell = (f: Field, last: boolean) => {
     const overridden = value[f.key] !== undefined;
     const fixed = isLocked(f) || !!pinOf(f);
     const title = sourceOf(f);
-    // The inherited value is ghosted into the control itself (placeholder /
-    // "Inherit · on" segment) by renderControl, so no separate label is needed.
+    // The inherited value is ghosted into the control itself (placeholder / "Inherit · on"
+    // segment) by renderControl; the row names the field and carries clear / reset.
     return (
-      <div key={f.key} className={cn(f.wide && "col-span-2")}>
-        <div className="mb-1.5 flex items-center gap-1.5">
-          {overridden && !fixed && <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />}
-          <label className="text-[12px] font-medium text-dim">{f.label}</label>
-          {fixed && <Lock className="size-3 shrink-0 text-faint" aria-hidden />}
-          {title && (
-            <span id={descId(f)} className="sr-only">
-              {title}
-            </span>
-          )}
-          <div className="ml-auto flex items-center gap-2">
-            {/* Text fields can be CLEARED to an explicit empty override (suppress the
-                inherited value) — the discoverable alternative to deleting the text.
-                Hidden once already cleared. Numbers/bools clear via empty/Inherit. */}
-            {f.kind === "text" && value[f.key] !== "" && !readOnly(f) && (
-              <button
-                type="button"
-                onClick={() => setField(f.key, "")}
-                title="Override with empty (suppress the inherited value)"
-                className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
-              >
-                <Eraser className="size-3" /> clear
-              </button>
-            )}
-            {/* Reset stays offered on a locked/pinned key: the stored value is ignored, and
-                clearing it is the only thing left to do with it. */}
-            {overridden && !isGated(f) && (
-              <button
-                type="button"
-                onClick={() => setField(f.key, undefined)}
-                title="Reset to inherited"
-                className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
-              >
-                <RotateCcw className="size-3" /> reset
-              </button>
-            )}
-          </div>
-        </div>
-        {renderControl(f)}
-        {overridden && fixed && (
-          <div className="mt-1 text-[11px] text-faint">
-            {pinOf(f) ? "This value is ignored in live dictation." : "This value is ignored · locked by the server."}
-          </div>
-        )}
-        {!overridden && !fixed && ignored?.includes(f.key) && (
-          <div className="mt-1 text-[11px] text-faint">Backend value ignored · locked by the server.</div>
-        )}
-      </div>
+      <OverrideHeader
+        key={f.key}
+        title={f.label}
+        env={false}
+        overridden={overridden && !fixed}
+        lockReason={fixed ? title : undefined}
+        describedById={title ? descId(f) : undefined}
+        // Text fields can be CLEARED to an explicit empty override (suppress the inherited value).
+        onClear={f.kind === "text" && !readOnly(f) ? () => setField(f.key, "") : undefined}
+        canClear={value[f.key] !== ""}
+        // Reset stays offered on a locked/pinned key: the stored value is ignored, and clearing
+        // it is the only thing left to do with it.
+        onReset={isGated(f) ? undefined : () => setField(f.key, undefined)}
+        note={
+          overridden && fixed
+            ? pinOf(f)
+              ? "Ignored in live dictation"
+              : "Ignored · locked by the server"
+            : !overridden && !fixed && ignored?.includes(f.key)
+              ? "Backend value ignored · locked by the server"
+              : undefined
+        }
+        last={last}
+      >
+        {f.kind === "bool" ? renderControl(f) : <div className={OVERRIDE_CONTROL_W}>{renderControl(f)}</div>}
+      </OverrideHeader>
     );
   };
 
-  const grid = (fields: Field[]) => (
-    <div className="grid grid-cols-2 gap-x-4 gap-y-3">{fields.map(fieldCell)}</div>
-  );
+  const grid = (fields: Field[]) => <div>{fields.map((f, i) => fieldCell(f, i === fields.length - 1))}</div>;
 
   return (
     <div>
@@ -306,6 +280,10 @@ export function DecodeFields({
         open={showAdvanced}
         onToggle={() => setShowAdvanced((v) => !v)}
         title="Advanced decode params"
+        summary={(() => {
+          const n = FIELDS.filter((f) => f.section !== "primary" && value[f.key] !== undefined).length;
+          return n ? <span className="text-accent">· {n} set</span> : undefined;
+        })()}
       >
         {/* Guarded at the call site: `children` are built before DisclosureCard runs, so the
             ~19 advanced cells were created on every keystroke in a primary field while

@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useSearchParams } from "react-router-dom";
-import { Server, Pencil, Copy, Trash2, Plug, Loader2, Eraser, RotateCcw, Lock } from "lucide-react";
+import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, StatusDot, TextArea, TextInput } from "@/components/ui";
+import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, SetSummary, StatusDot, TextInput } from "@/components/ui";
+import { OverrideHeader, OverrideText } from "@/components/OverrideField";
+import { countSet } from "@/lib/decodeKeys";
+import { envDesc } from "@/lib/settingDesc";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { DecodeFields } from "@/components/DecodeFields";
 import { TranslationDefaultsEditor, targetsLabel } from "@/components/TranslationFields";
-import { inheritLabel, serverInherited } from "@/lib/inherit";
+import { inheritLabel, LOCKED_REASON, serverInherited } from "@/lib/inherit";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -113,12 +116,9 @@ function Editor({
   // key that was never stored.
   const [savingKey, setSavingKey] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
-  const [showDecode, setShowDecode] = useState(
-    () => !!initial.decodeOverrides && Object.keys(initial.decodeOverrides).length > 0,
-  );
-  const [showTranslation, setShowTranslation] = useState(
-    () => !!initial.translationOverrides && Object.keys(initial.translationOverrides).length > 0,
-  );
+  // Every disclosure starts closed; its header's "· n set" says whether it holds anything.
+  const [showDecode, setShowDecode] = useState(false);
+  const [showTranslation, setShowTranslation] = useState(false);
   const set = (patch: Partial<Backend>) => setB((x) => ({ ...x, ...patch }));
   // The prompt's tri-state view: undefined = inherit, "" = explicit clear, value = set.
   const promptOverride = backendPrompt(b);
@@ -422,80 +422,41 @@ function Editor({
           field), "" = explicit clear (send an empty prompt, so nothing is inherited),
           value = use it. Stored as `prompt` + `promptCleared` — see `backendPrompt`. */}
       <div className="mt-4">
-        <div className="mb-2 flex items-center gap-1.5">
-          {promptOverridden && (
-            <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
-          )}
-          <label className="text-[12px] font-medium text-dim">
-            Default vocabulary / prompt (optional)
-          </label>
-          {promptLocked && <Lock className="size-3 shrink-0 text-faint" aria-hidden />}
-          <div className="ml-auto flex items-center gap-2">
-            {promptOverride !== "" && !promptLocked && (
-              <button
-                type="button"
-                onClick={() => set(backendPromptFields(""))}
-                title="Override with empty (suppress the inherited prompt)"
-                className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
-              >
-                <Eraser className="size-3" /> clear
-              </button>
-            )}
-            {promptOverridden && (
-              <button
-                type="button"
-                onClick={() => set(backendPromptFields(undefined))}
-                title="Reset to inherited"
-                className="ring-signal inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text"
-              >
-                <RotateCcw className="size-3" /> reset
-              </button>
-            )}
-          </div>
-        </div>
-        <TextArea
-          aria-label="Default vocabulary / prompt"
-          value={promptLocked ? "" : (promptOverride ?? "")}
-          onChange={(e) => set(backendPromptFields(e.target.value))}
-          rows={2}
-          disabled={promptLocked}
-          title={promptLocked ? "Your server admin fixed this value." : server.prompt?.source}
-          // Ghost the server's default prompt (its own, or the override profile's) as the
-          // inherited baseline; a cleared field says so instead.
-          placeholder={
-            promptLocked
-              ? inheritLabel(server.prompt?.value ?? "no prompt", "Set by server")
-              : promptOverride === ""
-                ? "(cleared — no prompt sent)"
-                : server.prompt
-                  ? inheritLabel(server.prompt.value ?? "no prompt")
-                  : "Bias terms — names, jargon…"
-          }
-        />
-        {promptLocked && promptOverridden && (
-          <div className="mt-1 text-[11px] text-faint">This prompt is ignored · locked by the server.</div>
-        )}
+        <OverrideHeader
+          title="DEFAULT_PROMPT"
+          desc={envDesc("DEFAULT_PROMPT")}
+          overridden={promptOverridden}
+          lockReason={promptLocked ? LOCKED_REASON : undefined}
+          onClear={() => set(backendPromptFields(""))}
+          canClear={promptOverride !== ""}
+          clearTitle="Override with empty (suppress the inherited prompt)"
+          onReset={() => set(backendPromptFields(undefined))}
+          note={promptLocked && promptOverridden ? "Ignored · locked by the server" : undefined}
+          wide
+          last
+        >
+          {/* Ghost the server's default prompt (its own, or the override profile's) as the
+              inherited baseline; a cleared field says so instead. */}
+          <OverrideText
+            ariaLabel="Default vocabulary / prompt"
+            rows={2}
+            value={promptOverride}
+            onChange={(v) => set(backendPromptFields(v))}
+            inherited={server.prompt ? (server.prompt.value ?? "no prompt") : undefined}
+            fixedLabel={promptLocked ? inheritLabel(server.prompt?.value ?? "no prompt", "Set by server") : undefined}
+            title={promptLocked ? LOCKED_REASON : server.prompt?.source}
+          />
+        </OverrideHeader>
       </div>
 
       <div className="mt-5">
         <DisclosureCard
           open={showDecode}
           onToggle={() => setShowDecode((v) => !v)}
-          title={
-            <>
-              Decode defaults{" "}
-              {b.decodeOverrides && Object.keys(b.decodeOverrides).length ? (
-                <span className="text-accent">· set</span>
-              ) : (
-                <span className="text-faint">· inherit server</span>
-              )}
-            </>
-          }
+          title="Decode defaults"
+          summary={<SetSummary count={countSet(b.decodeOverrides, "decode")} inherit="inherit server" />}
+          hint="Defaults for every profile that uses this backend (a profile can still override per field). Empty = the server's per-model config."
         >
-          <p className="mb-3 text-[12px] text-dim">
-            Defaults for every profile that uses this backend (a profile can still
-            override per field). Empty = the server&apos;s per-model config.
-          </p>
           <DecodeFields
             value={b.decodeOverrides ?? {}}
             onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
@@ -512,21 +473,10 @@ function Editor({
         <DisclosureCard
           open={showTranslation}
           onToggle={() => setShowTranslation((v) => !v)}
-          title={
-            <>
-              Translation defaults{" "}
-              {b.translationOverrides && Object.keys(b.translationOverrides).length ? (
-                <span className="text-accent">· set</span>
-              ) : (
-                <span className="text-faint">· inherit server</span>
-              )}
-            </>
-          }
+          title="Translation defaults"
+          summary={<SetSummary count={Object.keys(b.translationOverrides ?? {}).length} inherit="inherit server" />}
+          hint="T2T defaults for runs and profiles on this backend (a profile can still override). Empty = the server's translation config."
         >
-          <p className="mb-3 text-[12px] text-dim">
-            T2T defaults for runs and profiles on this backend (a profile can
-            still override). Empty = the server&apos;s translation config.
-          </p>
           <TranslationDefaultsEditor
             value={b.translationOverrides}
             onChange={(v) => set({ translationOverrides: v })}
