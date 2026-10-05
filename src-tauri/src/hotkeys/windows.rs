@@ -664,7 +664,7 @@ mod imp {
             // HC_ACTION
             let kb = &*(lparam as *const KBDLLHOOKSTRUCT);
             // LLKHF_INJECTED = SendInput. Drop only OUR OWN synthetic input —
-            // enigo tags its events with EVENT_MARKER in dwExtraInfo (inject.rs
+            // enigo tags its events with EVENT_MARKER in dwExtraInfo (inject/mod.rs
             // typing/paste, quickadd's win_seed grab); tracking those could break
             // a live chord mid-inject, wedge the HeldKeys gate, or self-trigger a
             // chord matching the paste shortcut. THIRD-PARTY injected input is
@@ -1053,7 +1053,7 @@ mod imp {
     ///
     /// `GetAsyncKeyState`'s high bit is the real, current keyboard state: it is maintained
     /// above the hook chain and independently of any message queue, so it can arbitrate a
-    /// held-set the hook chain may have lied to. `quickadd::win_seed` already leans on the
+    /// held-set the hook chain may have lied to. `aux_windows::quickadd::win_seed` already leans on the
     /// same authority for the same reason before it injects.
     ///
     /// `id & 0xFF` strips the synthetic extended bit we fold into NumpadEnter: the OS knows

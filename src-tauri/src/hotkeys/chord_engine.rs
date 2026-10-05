@@ -2,7 +2,7 @@
 // (`evdev` on Linux, `windows` on Windows). The backends translate
 // bindings into u16 key codes (evdev codes / Windows VKs — both u16), feed the
 // current held-key set per key event, and dispatch the returned `Fire`s
-// (emit "trigger", quickadd::show, ACTIVE_HOLDS bookkeeping). Keeping the
+// (emit "trigger", aux_windows::quickadd::show, ACTIVE_HOLDS bookkeeping). Keeping the
 // chord-family DECISION here means those semantics exist exactly once;
 // the DISPATCH of each `Fire` variant lives in each backend's `commit()`
 // (evdev::commit and windows::commit — both must be updated

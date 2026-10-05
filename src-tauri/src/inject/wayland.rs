@@ -427,7 +427,7 @@ mod imp {
             "KeyV" => KEY_V,
             "Insert" => 110,
             // Any other letter (KeyA..KeyZ) so a custom paste shortcut whose main key isn't V/Insert
-            // is honored on Wayland too — the X11 path (inject.rs code_to_enigo) already maps all
+            // is honored on Wayland too — the X11 path (inject/mod.rs code_to_enigo) already maps all
             // letters, so without this the configured key was silently dropped to a Ctrl+V fallback.
             _ => return letter_keycode(code),
         })
@@ -470,7 +470,7 @@ mod imp {
     }
     /// The MAIN (non-modifier) key's keycode, resolved by KEYSYM via the active-layout charmap so the
     /// focused app receives the intended character (e.g. 'v' for Ctrl+V) regardless of physical layout —
-    /// matching the X11 path (inject.rs binds keysym 'v'). Falls back to the fixed physical position when
+    /// matching the X11 path (inject/mod.rs binds keysym 'v'). Falls back to the fixed physical position when
     /// the layout has no such keysym, or for a non-letter main key (Insert).
     fn main_key_keycode(code: &str, charmap: &HashMap<char, KeySpec>) -> Option<i32> {
         if let Some(letter) = code.strip_prefix("Key").filter(|s| s.len() == 1) {
@@ -502,7 +502,7 @@ mod imp {
             return vec![KEY_LEFTCTRL, v];
         }
         // A main key but no recognized modifier would press a BARE key — typing the literal char
-        // instead of pasting. Prepend Ctrl, mirroring the X11 path (inject.rs paste_keystroke).
+        // instead of pasting. Prepend Ctrl, mirroring the X11 path (inject/mod.rs paste_keystroke).
         if mods.is_empty() {
             mods.push(KEY_LEFTCTRL);
         }
@@ -696,7 +696,7 @@ mod imp {
                         release!(code);
                     }
                     // The enigo sibling has `if auto_enter && !injection_cancelled(epoch)`
-                    // (inject.rs) — N1 gave that path a pre-job check, a per-chunk check AND a
+                    // (inject/mod.rs) — N1 gave that path a pre-job check, a per-chunk check AND a
                     // check before the auto-Enter. This path got the first two (K12 turned the
                     // in-loop `break` into a `return`) but never the third, so a cancel landing
                     // during the paste chord still submitted the transcript.
@@ -706,7 +706,7 @@ mod imp {
                     // a custom 3-key chord), and Return is the one synthesized key that ACTS
                     // rather than inserts: in our own settings, API-key or dictionary UI it
                     // presses whatever button holds focus. Its three siblings each carry an
-                    // own-window probe at this exact point — `inject.rs` (X11/Windows), the
+                    // own-window probe at this exact point — `inject/mod.rs` (X11/Windows), the
                     // portal typing arm above, and `virtual_keyboard.rs`'s `i == last` — and this
                     // arm was the one left with a cancel-only condition. `Landed::Yes` stays
                     // correct on the skip: the chord already landed the text, so reporting

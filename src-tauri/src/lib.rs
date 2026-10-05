@@ -1,3 +1,18 @@
+//! Crate layout: `commands/` holds every Tauri command, one file per domain, all re-exported so
+//! the handler list below names them `commands::x`. The logic they call lives in the feature
+//! modules: `audio/`, `aux_windows/` (dictation chip, quick-add, language picker), `focus/`
+//! (focused-app detection), `hotkeys/`, `inject/` (text insertion), `store/` (local data files),
+//! `transport/` (the server protocol) and `config/` (settings model + keyring).
+//!
+//! Platform convention. A module that only exists for one OS is cfg-gated on its `mod` line and
+//! its few call sites carry the same cfg: `win_session_end` here, and `aux_windows::{kwin,
+//! topmost}`, `focus::{atspi, windows}` and `audio::{alsa_paths, pulse}` in their parents. A
+//! platform backend that portable code calls into is compiled everywhere instead: its OS-specific
+//! part sits in an inner `imp` module and the other platforms get stubs with the same signatures
+//! (`hotkeys::{evdev, windows}`, `inject::{wayland, virtual_keyboard, windows_clipboard}`,
+//! `memwatch`). Callers then need no cfg of their own, and the portable surface type-checks (and
+//! its tests run) on Linux; the Windows `imp` bodies are only compiled by the Windows CI leg.
+
 mod audio;
 mod aux_windows;
 mod commands;

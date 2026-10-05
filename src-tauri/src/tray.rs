@@ -336,7 +336,7 @@ mod sni {
 
 pub(crate) fn show_main(app: &AppHandle) {
     // Hop the GTK window ops onto the main thread: callers run off the main thread
-    // (triggers::handle_cli_args, the single-instance handler; the Linux tray's D-Bus task), and
+    // (hotkeys::triggers::handle_cli_args, the single-instance handler; the Linux tray's D-Bus task), and
     // GTK window calls off the main thread can crash/hang. run_on_main_thread queues onto the
     // loop, so the already-on-main callers (tray menu events, the sync show_main_at_screen
     // command) stay correct without deadlocking.

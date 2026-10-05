@@ -1,8 +1,8 @@
 //! Remote-desktop / VDI client detection, shared by every place that has to treat such a
-//! target differently: the paste path (`commands::inject_text` — longer settle, no restore, the
+//! target differently: the paste path (`inject::text` — longer settle, no restore, the
 //! delayed-rendering clipboard owner on Windows), the per-app rule editor
 //! (`commands::remote_desktop_auto_detected`, which shows what "Auto" would decide) and the
-//! Quick-Add copy-chord grab (`quickadd::win_seed`, which holds its window for the copy to cross).
+//! Quick-Add copy-chord grab (`aux_windows::quickadd::win_seed`, which holds its window for the copy to cross).
 //!
 //! Two independent detectors, because neither is complete on its own:
 //!   * **by app id** ([`is_remote_desktop_app`]) — the focused app's exe basename (Windows) or

@@ -369,7 +369,7 @@ mod imp {
                 // `Ok(Landed::Yes)` whether or not a key went out: Ok never reaches the portal
                 // fallback in inject/text.rs (only an Err with `after_typing: false` does), so the
                 // landed prefix is never re-typed; and a user cancel is not a transport failure,
-                // so run_thread must not tear the connection down for it (inject.rs /
+                // so run_thread must not tear the connection down for it (inject/mod.rs /
                 // wayland.rs report the same event the same way). The keymap build, the
                 // memfd write and the compositor roundtrip sit between the pre-loop check and
                 // here, so this also covers a bare auto-Enter job (`order == ["Return"]`)

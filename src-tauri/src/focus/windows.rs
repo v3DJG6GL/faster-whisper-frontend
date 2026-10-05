@@ -23,7 +23,7 @@
 //! `editable` stays `None` (unknown): the field guard is positive-only, so
 //! unknown degrades to "type" — Linux parity for apps without an a11y tree.
 //! Selection reads stay `Unavailable` (quick-add seeds via the copy-chord grab
-//! in `quickadd::win_seed` instead).
+//! in `aux_windows::quickadd::win_seed` instead).
 
 use super::{FocusedApp, Snapshot, APP_ID_MAX};
 use std::sync::{Arc, OnceLock};

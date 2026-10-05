@@ -122,7 +122,7 @@ gtk = "0.18"
 # Native-Wayland virtual keyboard (zwp_virtual_keyboard_v1) for layout-/Caps-Lock-
 # independent direct typing on KWin/wlroots: we upload our own one-shot keymap so the
 # typed text is exactly the transcript regardless of the active layout or Caps Lock.
-# Absent on GNOME → falls back to the portal path (wayland_inject.rs). `memfd` carries
+# Absent on GNOME → falls back to the portal path (inject/wayland.rs). `memfd` carries
 # the keymap fd to the compositor.
 wayland-client = "0.31"
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
@@ -150,10 +150,10 @@ atspi-connection = { version = "0.14", default-features = false, features = ["wr
 # Rides the zbus 5 + tokio already in the tree (atspi) — keep it on the same zbus major.
 ksni = "0.3.6"
 
-# Windows-only: the hybrid hotkey backend (win_hotkeys.rs — raw input + a
+# Windows-only: the hybrid hotkey backend (hotkeys/windows.rs — raw input + a
 # re-armed observation hook, so modifier-only/L-R/N-key chords work and survive a
 # focused RDP client's keyboard capture) and the foreground-app tracker
-# (win_focus.rs — per-app rules + the chip's target readout; Accessibility is
+# (focus/windows.rs — per-app rules + the chip's target readout; Accessibility is
 # where SetWinEventHook lives). windows-sys 0.61 is already in the dependency
 # tree (mio, muda, socket2, rustls-platform-verifier …; 0.60 too, via arboard/
 # keyring/rfd), so this adds no new crate version.

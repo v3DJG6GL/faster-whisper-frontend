@@ -5,7 +5,7 @@ use crate::commands::{own_window_focused, read_selection_bounded};
 use crate::inject::wayland::WaylandTyper;
 use tauri::{AppHandle, Manager, State};
 
-/// How long a manufactured-stop latch stays valid — see `held_keys::take_lost_if_fresh`.
+/// How long a manufactured-stop latch stays valid — see `hotkeys::held_keys::take_lost_if_fresh`.
 ///
 /// Deliberately generous, and sized against the LONGEST leg it has to span rather than a guessed
 /// round-trip: what sits in the middle is the untrusted server returning a final, so anything
@@ -628,7 +628,7 @@ pub(crate) async fn inject_text(
         // blocking pool, and everything past that point — `Enigo::new`, `Clipboard::new`, an
         // un-timed blocking clipboard read, the settle — happens after the guard that ran before
         // the dispatch, so it needs to re-ask at its own sinks. Passing a probe rather than the
-        // handle keeps `inject.rs` Tauri-free; it is safe from the blocking pool because Tauri's
+        // handle keeps `inject/mod.rs` Tauri-free; it is safe from the blocking pool because Tauri's
         // `is_focused` posts to the event loop and waits on a channel, so the toolkit call runs on
         // the main thread whichever thread asks. No deadlock: this command runs on the async
         // runtime, so the main thread is never waiting on us.

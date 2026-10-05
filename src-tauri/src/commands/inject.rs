@@ -211,7 +211,7 @@ pub async fn get_quickadd_seed(
     seed_rdv: State<'_, crate::aux_windows::quickadd::SeedRendezvous>,
 ) -> Result<Option<String>, String> {
     // Windows: no AT-SPI / PRIMARY — the copy chord fired BEFORE the window took focus
-    // (quickadd::show → win_seed), but the clipboard may still be settling (Office
+    // (aux_windows::quickadd::show → win_seed), but the clipboard may still be settling (Office
     // delayed rendering, RDP clipboard redirection), so AWAIT this summon's grab via
     // the generation-stamped rendezvous rather than reading a cache. The bound covers
     // the grab's LONGEST copy deadline (the 6s remote-desktop one) plus read retries —
@@ -288,7 +288,7 @@ pub async fn get_quickadd_seed(
 /// which would be stale). This keeps the "check first, then replace" guarantee in rich-text editors.
 ///
 /// Windows has no a11y selection read: RE-GRAB via the same copy-chord + clipboard-diff as the
-/// summon seed (`quickadd::win_seed`), which lands in the source app since focus is back there.
+/// summon seed (`aux_windows::quickadd::win_seed`), which lands in the source app since focus is back there.
 /// An unchanged clipboard (selection gone / collapsed) reads as `None` — same check-first
 /// guarantee, verified against the live app rather than a cache.
 #[tauri::command]
