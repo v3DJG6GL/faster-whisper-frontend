@@ -4,19 +4,17 @@
 // "Translation defaults" editors, and retro-translate popovers.
 import type { ReactNode } from "react";
 import { Eraser, RotateCcw } from "lucide-react";
-import { languageLabel } from "../lib/languages";
+import { TRANSLATION_MAX_TARGETS, languageLabel } from "../lib/languages";
+import { cleanCodes } from "../lib/recent";
 import { translationTargetInfo } from "../lib/capabilities";
 import { TargetLanguagePicker } from "./LanguagePicker";
 import { CompoundChip } from "./CompoundChip";
 import type { ChipPart } from "../lib/siteSubtitles";
 import { cn } from "../lib/cn";
-import { safeDisplayText } from "../lib/sanitize";
 import type { Capabilities, TranscribeOptions, TranslationOverrides } from "../lib/types";
 import { ModelPicker } from "./ModelPicker";
 import { CodeChip, MicroLabel, Segmented, Stepper, TextArea } from "./ui";
 import { inheritLabel, onOff } from "../lib/inherit";
-
-export const TRANSLATION_MAX_TARGETS = 8;
 
 /** Drop the known source language from a target list — a source→source stage
  *  is a no-op run. "auto" is not a known source, so nothing is pruned. */
@@ -30,17 +28,7 @@ export function pruneTargets(targets: string[], source: string): string[] {
  *  in the render body and — with no error boundary — unmounted the window on every launch.
  *  Strings only, trimmed, bounded per code and in count, de-duplicated (the chips are keyed on
  *  the code). Removal still filters the ORIGINAL array, so nothing is lost by rendering less. */
-export function chipCodes(v: unknown, max = 32): string[] {
-  if (!Array.isArray(v)) return [];
-  const out: string[] = [];
-  for (const c of v) {
-    if (typeof c !== "string" || !c.trim()) continue;
-    const code = safeDisplayText(c.trim(), 12);
-    if (code && !out.includes(code)) out.push(code);
-    if (out.length >= max) break;
-  }
-  return out;
-}
+export const chipCodes = (v: unknown, max = 32) => cleanCodes(v, { max, bound: 12 });
 
 export function TranslationTargetChips({
   value,

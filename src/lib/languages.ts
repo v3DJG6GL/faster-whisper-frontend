@@ -17,6 +17,10 @@ export const WHISPER_LANGUAGES: readonly string[] = (
  *  decode override `multilingual` turns on (detection per 30 s window). Not a language code. */
 export const MULTI_LANGUAGE = "multi";
 
+/** How many translation targets one run takes — the server translates every context segment
+ *  once per target, so the cost is linear in this number and the cap is a real one. */
+export const TRANSLATION_MAX_TARGETS = 8;
+
 /** Names the runtime gets wrong or spells differently from Whisper's own list (WebKit's ICU
  *  may not know the deprecated `jw`, says "Bangla" for bn, …), plus the pinned "auto". */
 const LABEL_FIX: Record<string, string> = {
