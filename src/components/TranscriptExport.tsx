@@ -9,7 +9,6 @@ import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
 import { Button, ChipToggle, RangeField, Segmented, TextInput } from "@/components/ui";
 import { ExportTrackChips } from "@/components/ExportTrackChips";
-import { sourceDot, sourceTone } from "@/components/SiteSubtitlesPanel";
 import { fmtBytes } from "@/lib/format";
 import {
   pickExportPath, saveTextFile, audioBasePref, cancelMediaExport, copyMediaTo, fetchUrlMedia, fetchUrlVideo,
@@ -30,8 +29,9 @@ import { contentStates, exportSummary, type ContentItem } from "@/lib/exportSumm
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
+import { trackTone } from "@/lib/sourceTone";
 import {
-  TRACK_TITLE_MAX, cleanTrackTitle, planTracks, sourceKind, sourceWord, trackChipLabel, trackCode, trackInfo,
+  TRACK_TITLE_MAX, cleanTrackTitle, planTracks, sourceWord, trackChipLabel, trackCode, trackInfo,
   type TrackPrefs,
 } from "@/lib/exportTracks";
 import {
@@ -554,10 +554,6 @@ export function TranscriptExport({
     </Button>
   );
   const planned = planTracks(editedResult, videoTracks, trackNames);
-  const trackDot = (track: string) => {
-    const t = trackInfo(editedResult, track);
-    return sourceDot(sourceKind(t), t.hoh);
-  };
   /** A track as its file name, or — riding inside the video only — as its title there. */
   const fileLine = (f: (typeof previewFiles)[number]) =>
     f.name ? f.name(stem) : `${stem}.${container} · ${planned.find((t) => t.id === f.key)?.title ?? ""}`;
@@ -579,7 +575,7 @@ export function TranscriptExport({
             const on = f === previewFile;
             return (
               <ChipToggle key={f.key} tab on={on} size="xs" title={fileLine(f)} onClick={() => setPreviewKey(f.key)}>
-                <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", trackDot(tracks[0]))} />
+                <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", trackTone(trackInfo(editedResult, tracks[0]), "dot"))} />
                 {tracks.map((t) => trackChipLabel(editedResult, t)).join(" + ")}
               </ChipToggle>
             );
@@ -710,7 +706,7 @@ export function TranscriptExport({
       <span className="-mt-2 truncate font-mono text-[11px] text-faint">{`${stem}.${container}`}</span>
       {planned.map((t, i) => (
         <div key={t.id} className="grid grid-cols-[auto_2.5rem_minmax(0,1fr)_1.75rem] items-center gap-x-2 gap-y-1">
-          <span aria-hidden className={cn("size-1.5 rounded-full", trackDot(t.id))} />
+          <span aria-hidden className={cn("size-1.5 rounded-full", trackTone(t, "dot"))} />
           <span className="font-mono text-[11px] text-dim">{langCode(t.lang)}</span>
           <TextInput
             aria-label={`${trackChipLabel(editedResult, t.id)} track name`}
@@ -731,7 +727,7 @@ export function TranscriptExport({
           ) : <span />}
           <span className="col-start-3 flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[10.5px] text-faint">
             {sideNames && <span className="min-w-0 truncate">{sideNames[i](stem)}</span>}
-            <span className={cn("rounded-pill px-1.5 font-sans leading-4", sourceTone(sourceKind(t), t.hoh))}>{sourceWord(t)}</span>
+            <span className={cn("rounded-pill px-1.5 font-sans leading-4", trackTone(t))}>{sourceWord(t)}</span>
             {([[t.original, "original"], [t.plain, "default"], [t.hoh, "SDH"]] as const).map(([on, flag]) => on && (
               <span key={flag} className="rounded-pill border border-line px-1.5 leading-4">{flag}</span>
             ))}

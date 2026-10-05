@@ -4,8 +4,8 @@
 // Translate-into chips and the export's Tracks chips so a source reads the same in both.
 
 import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { sourceTone } from "@/components/SiteSubtitlesPanel";
 import { cn } from "@/lib/cn";
+import { sourceTone } from "@/lib/sourceTone";
 import type { ChipPart } from "@/lib/siteSubtitles";
 
 export function CompoundChip({

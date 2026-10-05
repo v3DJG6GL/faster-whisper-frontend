@@ -8,31 +8,14 @@ import { ChevronDown, Loader2, Trash2 } from "lucide-react";
 import { TargetLanguagePicker } from "@/components/LanguagePicker";
 import { Segmented, Toggle } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { sourceTone } from "@/lib/sourceTone";
 import {
   SITE_POLICIES, addLanguage, derive, flip, listedLanguages, pickPolicy, removeLanguage,
   type SiteBadge, type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "@/lib/siteSubtitles";
 
-/** Colour of a source: transcribe = accent, existing = ok, auto-generated = warn,
- *  hearing-impaired = the diarize lilac, machine translation = think blue. Shared with the
- *  compound translation chips so a source reads the same in both places. */
-export function sourceTone(kind: SiteBadge["kind"] | "existing", hoh?: boolean): string {
-  if (kind === "transcribe") return "bg-accent-soft text-accent";
-  if (kind === "mt") return "bg-think/10 text-think";
-  if (kind === "auto") return "bg-warn/10 text-warn";
-  return hoh ? "bg-[var(--c-diarize)]/10 text-[var(--c-diarize)]" : "bg-ok/10 text-ok";
-}
-
-/** A source's colour as a dot (the export's track names and preview tabs). */
-export function sourceDot(kind: SiteBadge["kind"], hoh?: boolean): string {
-  if (kind === "transcribe") return "bg-accent";
-  if (kind === "mt") return "bg-think";
-  if (kind === "auto") return "bg-warn";
-  return hoh ? "bg-[var(--c-diarize)]" : "bg-ok";
-}
-
 /** The three badge states: idle greys out, off strikes through. */
-export const stateTone = (state: SiteBadge["state"]) =>
+const stateTone = (state: SiteBadge["state"]) =>
   state === "idle" ? "opacity-45 grayscale" : state === "off" ? "opacity-40 line-through" : "";
 
 export function SiteSubtitlesPanel({

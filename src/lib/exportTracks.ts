@@ -41,7 +41,7 @@ export function sourceWord(t: TrackInfo, style: SourceWordStyle = "word"): strin
 }
 
 /** The badge kind a source is coloured as (sourceTone). */
-export function sourceKind(t: TrackInfo): SiteBadge["kind"] {
+export function sourceKind(t: Pick<TrackInfo, "source">): SiteBadge["kind"] {
   return t.source === "whisper" ? "transcribe" : t.source === "site" ? "existing" : t.source;
 }
 
