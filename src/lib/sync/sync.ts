@@ -17,7 +17,7 @@
 //    surfaces in the Sync tab's conflict dialog. appRules sub-merge per-OS
 //    bucket, so two machines editing different OSes' rules never conflict.
 
-import { useApp, CONFIG_VERSION } from "./store";
+import { useApp, CONFIG_VERSION } from "../store";
 import {
   deleteBackendKey,
   isTauri,
@@ -29,18 +29,18 @@ import {
   syncDeviceInfo,
   syncPull,
   syncPush,
-} from "./api";
-import { configReady } from "./persistence";
-import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } from "./backends";
-import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "./paste";
-import { IS_WINDOWS } from "./platform";
-import { hasOwn, ownProp } from "./own";
-import { sanitizeCueLimits } from "./transcript/cueSplit";
-import { normalizeAppId, safeDisplayText } from "./sanitize";
-import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./hotkeyConflicts";
-import { LEGACY_HANDSFREE } from "./types";
-import { TRANSLATION_MAX_TARGETS } from "./languages";
-import { clampDecodeOverrides, DECODE_KEYS, TYPED_TEXT_KEYS } from "./decodeKeys";
+} from "../api";
+import { configReady } from "../persistence";
+import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } from "../backends";
+import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "../paste";
+import { IS_WINDOWS } from "../platform";
+import { hasOwn, ownProp } from "../own";
+import { sanitizeCueLimits } from "../transcript/cueSplit";
+import { normalizeAppId, safeDisplayText } from "../sanitize";
+import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "../hotkeyConflicts";
+import { LEGACY_HANDSFREE } from "../types";
+import { TRANSLATION_MAX_TARGETS } from "../languages";
+import { clampDecodeOverrides, DECODE_KEYS, TYPED_TEXT_KEYS } from "../decodeKeys";
 import type {
   ActivationKind,
   AppRule,
@@ -60,7 +60,7 @@ import type {
   ThemeName,
   TranscribeSettings,
   TranslationOverrides,
-} from "./types";
+} from "../types";
 import {
   CHIP_FIELDS,
   DICTATION_HISTORY_FIELDS,
@@ -81,9 +81,9 @@ import type {
   SyncState,
   SyncTranscription,
 } from "./syncTypes";
-import type { SyncSubSettings } from "./types";
-import { MANIFEST, completeGates } from "./settingsManifest";
-import { isValidAccentMotion } from "./theme";
+import type { SyncSubSettings } from "../types";
+import { MANIFEST, completeGates } from "../settingsManifest";
+import { isValidAccentMotion } from "../theme";
 import {
   APP_RULE_OVERRIDE_FIELDS,
   APP_RULE_PASTE_FIELDS,
@@ -165,7 +165,7 @@ const OTHER_BUCKET: "linux" | "windows" = IS_WINDOWS ? "linux" : "windows";
 
 // ── canonical hash ──────────────────────────────────────────────────────────
 
-import { stableStringify } from "./stable";
+import { stableStringify } from "../stable";
 
 /** FNV-1a over the canonical string — a compact change-detection token (NOT
  *  crypto; it only gates "did anything sync-relevant change?"). */

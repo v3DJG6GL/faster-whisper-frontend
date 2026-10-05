@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { CONFIG_VERSION } from "../store";
-import { categorySelection } from "../sync";
+import { categorySelection } from "./sync";
 import type { SyncCategory } from "../types";
-import type { ImportResult, SyncBlob } from "../syncTypes";
+import type { ImportResult, SyncBlob } from "./syncTypes";
 
 vi.mock("../api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../api")>();
@@ -15,8 +15,8 @@ vi.mock("../api", async (importOriginal) => {
 
 // applyImport delegates to the sync engine; keep the real migrator (its output
 // is part of the contract under test) but spy on both entry points.
-vi.mock("../sync", async (importOriginal) => {
-  const mod = await importOriginal<typeof import("../sync")>();
+vi.mock("./sync", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("./sync")>();
   return {
     ...mod,
     applyBlob: vi.fn(async () => {}),
@@ -69,7 +69,7 @@ describe("buildEnvelope", () => {
 describe("applyImport", () => {
   it("refuses while a dictation session is live, without touching the store", async () => {
     const { useApp } = await import("../store");
-    const { applyBlob } = await import("../sync");
+    const { applyBlob } = await import("./sync");
     vi.mocked(applyBlob).mockClear();
     const prev = useApp.getState().status;
     useApp.setState({ status: "listening" });
@@ -83,7 +83,7 @@ describe("applyImport", () => {
   });
 
   it("carries the plaintext secrets only when the backends category is selected", async () => {
-    const { applyBlob } = await import("../sync");
+    const { applyBlob } = await import("./sync");
     const { applyImport } = await import("./settingsFile");
     const result: ImportResult = {
       ...emptyResult(),
@@ -103,7 +103,7 @@ describe("applyImport", () => {
   });
 
   it("migrates a pre-split file: chip fields leave recording, the quick-add chord leaves general", async () => {
-    const { applyBlob, migrateBlob } = await import("../sync");
+    const { applyBlob, migrateBlob } = await import("./sync");
     const { applyImport } = await import("./settingsFile");
     vi.mocked(applyBlob).mockClear();
     const preSplit = {
@@ -129,7 +129,7 @@ describe("applyImport", () => {
   });
 
   it("always applies with the sub-toggle gates bypassed", async () => {
-    const { applyBlob } = await import("../sync");
+    const { applyBlob } = await import("./sync");
     const { applyImport } = await import("./settingsFile");
     vi.mocked(applyBlob).mockClear();
     const sel = { ...allOff(), general: true };

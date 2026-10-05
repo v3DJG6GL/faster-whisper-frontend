@@ -13,7 +13,7 @@ import {
   settingsOfGroup,
   type FieldRef,
 } from "./settingsManifest";
-import { DICTATION_HISTORY_FIELDS, FILE_TRANSCRIPTION_FIELDS, TRANSCRIPTION_FIELDS, TRANSCRIPTION_PICK_FIELDS } from "./syncTypes";
+import { DICTATION_HISTORY_FIELDS, FILE_TRANSCRIPTION_FIELDS, TRANSCRIPTION_FIELDS, TRANSCRIPTION_PICK_FIELDS } from "./sync/syncTypes";
 
 
 describe("manifest integrity", () => {

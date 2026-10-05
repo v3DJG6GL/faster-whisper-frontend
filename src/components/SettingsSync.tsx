@@ -1,7 +1,7 @@
 // Settings → Sync: file backup (export/import with per-category preview) and
 // cross-device sync through a faster-whisper-backend (enable + server picker +
 // per-device category toggles + status/manual controls + conflict dialog).
-// The engine lives in lib/sync.ts; this screen only drives it.
+// The engine lives in lib/sync/sync.ts; this screen only drives it.
 
 import { useMemo, useState, type ReactNode, useEffect } from "react";
 import { createPortal } from "react-dom";
@@ -38,7 +38,7 @@ import {
   resolveSyncConflicts,
   sanitizeProfiles,
   type SecurityChange,
-} from "@/lib/sync";
+} from "@/lib/sync/sync";
 import { authorityOf, backendOptions, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
 import { ownProp } from "@/lib/own";
 import { relTime } from "@/lib/format";
@@ -46,7 +46,7 @@ import { conflicts as chordConflicts, quickAddPeer } from "@/lib/hotkeyConflicts
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import type { Backend, SyncCategory } from "@/lib/types";
-import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/syncTypes";
+import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTypes";
 
 const MY_BUCKET = IS_WINDOWS ? ("windows" as const) : ("linux" as const);
 const OTHER_BUCKET = IS_WINDOWS ? ("linux" as const) : ("windows" as const);

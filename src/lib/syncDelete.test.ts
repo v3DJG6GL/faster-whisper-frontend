@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deleteFailureMessage } from "./sync";
+import { deleteFailureMessage } from "./sync/sync";
 
 // "Delete server copy" used to discard the transport result entirely: a failed
 // delete looked like success, cleared the local base, and the next push merged

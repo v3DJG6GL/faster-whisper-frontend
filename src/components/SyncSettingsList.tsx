@@ -29,7 +29,7 @@ import {
   type SettingId,
   type SyncGroup,
 } from "@/lib/settingsManifest";
-import { groupPanelState, type Gates } from "@/lib/syncGates";
+import { groupPanelState, type Gates } from "@/lib/sync/syncGates";
 import { DisclosureToggle, Segmented, Toast, Toggle } from "@/components/ui";
 
 const UI_STATE_KEY = "fwf.syncUi.v1";

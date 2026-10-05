@@ -4,13 +4,13 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { applyBlob, backendsBlobIncomplete, categorySelection, composeBlob, mergeBlobs } from "./sync";
-import { completeGates, DEFAULT_SETTING_SYNC, type SettingDef, type SettingId } from "./settingsManifest";
+import { completeGates, DEFAULT_SETTING_SYNC, type SettingDef, type SettingId } from "../settingsManifest";
 import { catsFromGates, gateApplyScalar, gateComposeScalar, groupPanelState } from "./syncGates";
-import { stableStringify } from "./stable";
-import { useApp } from "./store";
-import { DEFAULT_SETTINGS } from "./defaults";
+import { stableStringify } from "../stable";
+import { useApp } from "../store";
+import { DEFAULT_SETTINGS } from "../defaults";
 import type { SyncBlob } from "./syncTypes";
-import type { AppSettings, Backend, Profile, SyncSubSettings } from "./types";
+import type { AppSettings, Backend, Profile, SyncSubSettings } from "../types";
 
 const CATS_ALL = categorySelection(true);
 const SUB_ALL: SyncSubSettings = {

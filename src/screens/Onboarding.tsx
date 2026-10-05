@@ -19,7 +19,7 @@ import {
 } from "@/lib/api";
 import { insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
 import { quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/hotkeyConflicts";
-import { ALL_CATEGORIES, applyBlob, categorySelection, migrateBlob } from "@/lib/sync";
+import { ALL_CATEGORIES, applyBlob, categorySelection, migrateBlob } from "@/lib/sync/sync";
 import { starterProfiles } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
@@ -28,7 +28,7 @@ import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText } from "@/lib/sanitize";
 import { ImportPreview, IncomingAddresses } from "@/components/SettingsSync";
 import { relTime } from "@/lib/format";
-import type { ImportResult, SyncPullResult } from "@/lib/syncTypes";
+import type { ImportResult, SyncPullResult } from "@/lib/sync/syncTypes";
 import type { Backend, ConnectionInfo, PipelineRule, Profile } from "@/lib/types";
 
 

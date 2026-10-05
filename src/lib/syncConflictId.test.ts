@@ -4,7 +4,7 @@ import {
   getPendingReview,
   raiseConflictForTests,
   resolveSyncConflicts,
-} from "./sync";
+} from "./sync/sync";
 import { useApp } from "./store";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { DEFAULT_SETTING_SYNC } from "./settingsManifest";

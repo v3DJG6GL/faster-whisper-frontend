@@ -13,7 +13,7 @@ import type {
   ThemeName,
   TranscribeSettings,
   AccentMotion,
-} from "./types";
+} from "../types";
 
 /** The `general` category: settings.theme + the portable general fields.
  *  Machine-local fields (evdevEnabled) are excluded by construction — this
@@ -188,7 +188,7 @@ export type SyncFileTranscriptions = Partial<
  *  machine-specific path behind its gate (default off) and never travels in
  *  an export (the export contract composes without gates → extractor omits). */
 export type SyncLogging = Partial<
-  Pick<import("./types").LoggingSettings, "logLevel" | "keepDays" | "showInSidebar" | "logDir">
+  Pick<import("../types").LoggingSettings, "logLevel" | "keepDays" | "showInSidebar" | "logDir">
 >;
 
 /** The per-machine-by-default Transcribe picks behind the sub-toggle. */

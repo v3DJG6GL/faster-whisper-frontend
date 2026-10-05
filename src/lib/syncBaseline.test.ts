@@ -12,11 +12,11 @@ import {
   migrateBlob,
   sanitizeProfiles,
   securityChanges,
-} from "./sync";
+} from "./sync/sync";
 import { useApp } from "./store";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { IS_WINDOWS } from "./platform";
-import type { SyncBlob } from "./syncTypes";
+import type { SyncBlob } from "./sync/syncTypes";
 import type { AppSettings, Backend, Profile, SyncSubSettings } from "./types";
 
 /** Test seam for the ONE await inside applyBlob (the keyring reconciliation): while it is

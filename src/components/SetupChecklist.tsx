@@ -11,7 +11,7 @@ import { useNavigate } from "react-router-dom";
 import { Button, Card } from "@/components/ui";
 import { importSettingsFile, pickImportFile } from "@/lib/api";
 import { useApp } from "@/lib/store";
-import type { ImportResult } from "@/lib/syncTypes";
+import type { ImportResult } from "@/lib/sync/syncTypes";
 import { ImportPreview } from "@/components/SettingsSync";
 import { safeDisplayText } from "@/lib/sanitize";
 

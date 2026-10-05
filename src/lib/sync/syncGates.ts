@@ -22,7 +22,7 @@ import {
   type SettingDef,
   type SettingId,
   type WireCategory,
-} from "./settingsManifest";
+} from "../settingsManifest";
 
 export type Gates = Record<SettingId, boolean>;
 

@@ -327,7 +327,7 @@ export interface QuickAddTarget {
 
 /** The toggleable settings-sync categories (what travels in the synced blob /
  *  an export file). Machine-local fields (mic device, evdev, the sync meta
- *  itself) are excluded by construction — see lib/sync.ts for the
+ *  itself) are excluded by construction — see lib/sync/sync.ts for the
  *  authoritative category → config-path mapping. Pre-split blobs (one
  *  "recording" holding the chip fields, the quick-add chord under "general",
  *  the pin under "backends") are normalized by `migrateBlob` on every inbound

@@ -5,7 +5,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { useApp } from "@/lib/store";
 import { initConfig } from "@/lib/persistence";
 import { migrateLegacyMicPin } from "@/lib/micMigration";
-import { initSync } from "@/lib/sync";
+import { initSync } from "@/lib/sync/sync";
 import { initOverlayController } from "@/lib/dictation/chipController";
 import { initUsageController } from "@/lib/usage";
 import { initCapsController } from "@/lib/capabilities";
