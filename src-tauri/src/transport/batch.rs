@@ -104,6 +104,9 @@ pub struct BatchOptions {
     pub prefetched_media_id: Option<String>,
     /// File runs: keep the uploaded video on the server (packaging follows).
     pub retain_media: Option<bool>,
+    /// File runs: the server's MEDIA_MAX_BYTES (`/v1/me`). A bigger file stops before a byte is
+    /// uploaded ([`UploadTooLarge`]) instead of streaming gigabytes into a 413.
+    pub media_max_bytes: Option<u64>,
     /// Client-generated hex id the server keys live progress under
     /// (GET /v1/audio/transcriptions/progress/<id> while the POST runs).
     pub progress_id: Option<String>,
@@ -300,6 +303,25 @@ mod wire_field_tests {
             serde_json::to_value(p).unwrap()["url_max_duration_s"],
             14400.0
         );
+    }
+
+    /// A file over the server's limit stops before the upload, in the shape the webview reads;
+    /// an unknown (or zero) limit leaves the decision to the server.
+    #[test]
+    fn an_upload_over_the_server_limit_is_refused_up_front() {
+        use super::check_upload_size;
+        let err = check_upload_size(3_000_000_001, Some(3_000_000_000)).unwrap_err();
+        assert_eq!(err.to_string(), "upload_too_large:3000000001:3000000000");
+        assert_eq!(
+            anyhow::Error::from(err).to_string(),
+            "upload_too_large:3000000001:3000000000"
+        );
+        assert!(check_upload_size(3_000_000_000, Some(3_000_000_000)).is_ok());
+        assert!(check_upload_size(u64::MAX, None).is_ok());
+        assert!(check_upload_size(5, Some(0)).is_ok());
+        let o: super::BatchOptions =
+            serde_json::from_value(serde_json::json!({"mediaMaxBytes": 2_000_000_000u64})).unwrap();
+        assert_eq!(o.media_max_bytes, Some(2_000_000_000));
     }
 
     /// Live dictation's keys never ride a batch request; everything else does, verbatim.
@@ -880,6 +902,24 @@ fn mime_for(path: &Path) -> &'static str {
     }
 }
 
+/// A file over the server's upload limit, refused before the upload. Its text is a fixed,
+/// machine-read shape (`upload_too_large:<bytes>:<limit>`): the webview turns it into the
+/// sentence, with its own decimal byte formatting (`uploadTooLarge` in errors.ts).
+#[derive(Debug, thiserror::Error)]
+#[error("upload_too_large:{len}:{cap}")]
+pub struct UploadTooLarge {
+    pub len: u64,
+    pub cap: u64,
+}
+
+/// Refuse a `len`-byte upload over the server's `cap` (none known = let the server decide).
+fn check_upload_size(len: u64, cap: Option<u64>) -> Result<(), UploadTooLarge> {
+    match cap {
+        Some(cap) if cap > 0 && len > cap => Err(UploadTooLarge { len, cap }),
+        _ => Ok(()),
+    }
+}
+
 /// Transcribe a file from disk (used by the Transcribe screen).
 #[allow(clippy::too_many_arguments)]
 pub async fn transcribe(
@@ -912,6 +952,7 @@ pub async fn transcribe(
         .await
         .with_context(|| format!("reading {file_path}"))?
         .len();
+    check_upload_size(len, options.as_ref().and_then(|o| o.media_max_bytes))?;
     let body = reqwest::Body::wrap_stream(super::file_stream(file, None));
     let part = Part::stream_with_length(body, len)
         .file_name(filename)

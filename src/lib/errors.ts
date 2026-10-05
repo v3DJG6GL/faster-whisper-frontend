@@ -1,4 +1,5 @@
 import { safeDisplayText } from "./sanitize";
+import { fmtBytes } from "./format";
 // Truthful error toasts ("Job Signals"): one template mapping the Rust
 // transport's classified error strings (friendly_err's "Could not connect…" /
 // "Timed out…" + the "HTTP nnn: detail" form) onto cause + backend name + one
@@ -47,6 +48,20 @@ export function shortCause(e: unknown): string {
   return "see the log";
 }
 
+/** Rust's refusal of a file over the server's upload limit (`batch::UploadTooLarge`), read back
+ *  from its fixed `upload_too_large:<bytes>:<limit>` shape; null for any other error. */
+export function uploadTooLarge(e: unknown): { size: number; limit: number } | null {
+  const m = /upload_too_large:(\d+):(\d+)/.exec(String(e ?? ""));
+  return m ? { size: Number(m[1]), limit: Number(m[2]) } : null;
+}
+
+/** The sentence for an over-limit file, naming both sizes in decimal units (fmtBytes) — the
+ *  queue row's error. null for any other error. */
+export function uploadTooLargeText(e: unknown): string | null {
+  const t = uploadTooLarge(e);
+  return t ? `The file is ${fmtBytes(t.size)}, over the server's upload limit of ${fmtBytes(t.limit)} — nothing was uploaded.` : null;
+}
+
 /** Classify a transport-layer failure into the app-global error template. */
 export function describeTransportError(
   kind: TransportErrorKind,
@@ -58,6 +73,14 @@ export function describeTransportError(
   const label = safeDisplayText(backendLabel, 80) || "the backend";
 
   const msg = String(e ?? "");
+  const big = uploadTooLarge(e);
+  if (big) {
+    return {
+      title: `The file is ${fmtBytes(big.size)}, over ${label}'s upload limit of ${fmtBytes(big.limit)} — nothing was uploaded.`,
+      hint: "",
+      showLogs: false,
+    };
+  }
   if (msg.includes("Could not connect")) {
     return {
       title: `Could not reach ${label} — nothing was started.`,

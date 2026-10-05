@@ -1137,6 +1137,8 @@ export interface TranscribeOptions {
   /** File runs: keep the uploaded video on the server for a while so a
    *  packaging export right after needs no second upload. */
   retainMedia?: boolean;
+  /** File runs: the server's upload limit — a bigger file stops before the upload. */
+  mediaMaxBytes?: number;
 }
 
 /** Live progress of an in-flight file transcription. */

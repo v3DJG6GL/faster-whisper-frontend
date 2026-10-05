@@ -968,7 +968,8 @@ export default function Transcribe() {
         estimatedBytes: urlPreviewData.estimated_bytes ?? undefined,
         format: formatLabel(urlPreviewData.ext, urlPreviewData.abr) ?? undefined,
         videoLadder: urlPreviewData.video_ladder ?? undefined,
-        mediaMaxBytes: urlPreviewData.media_max_bytes ?? undefined,
+        // The preview's own ceiling, else the server's from /v1/me (now always sent).
+        mediaMaxBytes: urlPreviewData.media_max_bytes ?? caps?.media_max_bytes ?? undefined,
         // Only an explicit pick rides along; absent = the Settings default
         // at run time (so a later Settings change still applies).
         ...(linkKeepVideo !== null ? { keepVideo: linkKeepVideo } : {}),
@@ -1128,6 +1129,7 @@ export default function Transcribe() {
       urlVideoEnabled: urlAvailable && caps?.url_video_enabled === true,
       mediaPackageEnabled: !isStandard && caps?.media_package_enabled === true,
       jobsEnabled: !isStandard && caps?.jobs_enabled === true,
+      mediaMaxBytes: caps?.media_max_bytes,
     };
   };
 

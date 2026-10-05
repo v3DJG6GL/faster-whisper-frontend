@@ -2,7 +2,15 @@
 // backend + one fix out. The exact friendly_err phrases come from
 // src-tauri/src/transport/mod.rs — keep the two in step.
 import { describe, expect, it } from "vitest";
-import { describeTransportError, errorText, shortCause, transportErrorDoorway, translateFailureDoorway } from "./errors";
+import {
+  describeTransportError,
+  errorText,
+  shortCause,
+  transportErrorDoorway,
+  translateFailureDoorway,
+  uploadTooLarge,
+  uploadTooLargeText,
+} from "./errors";
 
 describe("describeTransportError", () => {
   it("connect refusal: names the backend, promises nothing started, no log detour", () => {
@@ -98,5 +106,25 @@ describe("errorText", () => {
     expect(errorText(new Error("HTTP 500"))).toBe("HTTP 500");
     expect(errorText("plain")).toBe("plain");
     expect(errorText(new Error("x".repeat(300)), 200)).toHaveLength(200);
+  });
+});
+
+describe("a file over the server's upload limit", () => {
+  // Rust refuses it before the upload in a fixed shape (batch::UploadTooLarge).
+  const e = "upload_too_large:3210000000:2000000000";
+
+  it("reads both sizes back and names them in decimal units", () => {
+    expect(uploadTooLarge(e)).toEqual({ size: 3_210_000_000, limit: 2_000_000_000 });
+    expect(uploadTooLargeText(e)).toBe(
+      "The file is 3.21 GB, over the server's upload limit of 2.00 GB — nothing was uploaded.",
+    );
+    expect(uploadTooLarge("HTTP 413: too large")).toBeNull();
+    expect(uploadTooLargeText("Could not connect")).toBeNull();
+  });
+
+  it("the doorway names the backend and offers no logs", () => {
+    const d = describeTransportError("transcribe", e, "studio");
+    expect(d.title).toBe("The file is 3.21 GB, over studio's upload limit of 2.00 GB — nothing was uploaded.");
+    expect(d.showLogs).toBe(false);
   });
 });

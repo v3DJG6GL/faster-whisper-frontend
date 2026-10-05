@@ -12,7 +12,7 @@ import {
   fetchUrlSubtitles, fetchUrlVideo, fetchUrlVideoOnDemand, getTranscribeProgress, readTextFile,
   saveTranscriptMedia, transcribeFile, transcribeUrl, translateText,
 } from "./api";
-import { errorText, transportErrorDoorway } from "./errors";
+import { errorText, transportErrorDoorway, uploadTooLargeText } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText, type ImportedText } from "./subtitleImport";
 import { useApp } from "./store";
@@ -402,6 +402,9 @@ export interface RunContext {
    *  is a run written to the in-flight ledger so it can be re-attached to
    *  after a restart (lib/jobsLedger.ts, lib/jobsReconcile.ts). */
   jobsEnabled?: boolean;
+  /** The server's upload limit (caps.media_max_bytes): a local file over it stops before
+   *  the upload (Rust checks the size) instead of streaming gigabytes into a 413. */
+  mediaMaxBytes?: number;
 }
 
 export interface TranscribeRunState {
@@ -1753,7 +1756,10 @@ async function pump(
         } else if (isUrl) {
           ({ res, videoPid } = await runLink(next.path, common, ctx, pid, epoch));
         } else {
-          res = await transcribeFile({ ...common, filePath: next.path });
+          // The limit rides as an option, not a pre-check here: Rust reads the size from the
+          // file it is about to stream, so the two can't disagree.
+          const fileOptions = ctx.mediaMaxBytes ? { ...common.options, mediaMaxBytes: ctx.mediaMaxBytes } : common.options;
+          res = await transcribeFile({ ...common, options: fileOptions, filePath: next.path });
         }
         if (epoch !== get().epoch) return;
         const tookMs = Date.now() - fileT0;
@@ -1779,7 +1785,7 @@ async function pump(
         }
       } catch (e) {
         if (epoch !== get().epoch) return;
-        failFile(next.path, String(e));
+        failFile(next.path, uploadTooLargeText(e) ?? String(e));
         // Failure doorway banner → Logs screen (pre-filtered to Warn+). The
         // queue item keeps the raw error; the doorway gets the truthful
         // template (cause + backend + one fix). A text source only ran the
