@@ -13,9 +13,9 @@ vi.mock("./api", async (importOriginal) => ({
 }));
 
 import {
-  activeRailIndex, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
+  activeRailIndex, axisLayout, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
   overallOf, etaSecOf, planOf, planTimeline, unitsFraction,
-  railIndex, railOf, railStages, selectPath, setRename, skippedStages, stagePick,
+  railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
   cancelRun, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
@@ -893,5 +893,44 @@ describe("withSiteTracks", () => {
     expect(out.timedTracks).toBeUndefined();
     expect(out.warnings).toEqual(["w1", "The site's subtitles could not be downloaded: Subtitle download requires the desktop app."]);
     expect(await withSiteTracks(res, "https://youtu.be/q", undefined, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false })).toBe(res);
+  });
+});
+
+describe("axisLayout", () => {
+  it("never prints two labels of one row through each other", () => {
+    // Two tiny early stages at the 5px floor, then a long transcribe segment.
+    const px = [5, 5, 626];
+    const labelPx = [52, 170, 65];
+    const out = axisLayout(px, labelPx, 640);
+    const starts = out.map((o, i) => px.slice(0, i).reduce((a, w) => a + w + 2, 0) + o.offset);
+    for (const row of [0, 1] as const) {
+      const idx = out.map((o, i) => (o.row === row ? i : -1)).filter((i) => i >= 0);
+      for (let k = 1; k < idx.length; k++) {
+        expect(starts[idx[k]]).toBeGreaterThanOrEqual(starts[idx[k - 1]] + labelPx[idx[k - 1]]);
+      }
+    }
+  });
+  it("wide segments all sit on the top row at their own start", () => {
+    expect(axisLayout([200, 200, 200], [50, 50, 50], 604)).toEqual([
+      { row: 0, offset: 0 },
+      { row: 0, offset: 0 },
+      { row: 0, offset: 0 },
+    ]);
+  });
+  it("a label that overflows the right edge is pulled left", () => {
+    const out = axisLayout([300, 300], [50, 320], 602);
+    expect(out[1].offset).toBeLessThanOrEqual(0);
+    expect(300 + 2 + out[1].offset + 320).toBeLessThanOrEqual(602);
+  });
+});
+
+describe("SKIPPED_EXPLANATIONS", () => {
+  it("every optional stage on a full rail has its own sentence", () => {
+    const rail = railStages({ separateBgm: true, diarize: true, translateTo: ["de"] } as never, true);
+    for (const st of rail) {
+      if (st === "transcribing") continue;
+      expect(SKIPPED_EXPLANATIONS[st].length).toBeGreaterThan(0);
+    }
+    expect(SKIPPED_EXPLANATIONS.translating).not.toBe(SKIPPED_EXPLANATIONS.diarizing);
   });
 });

@@ -34,9 +34,9 @@ import { useBackendModels } from "@/lib/useBackendModels";
 import { fmtBitrate, fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
 import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
-  activeRailIndex, addFiles, cancelRun, etaSecOf, overallOf, planOf, planTimeline, railStages, runBadgeFraction, unitsFraction,
+  activeRailIndex, addFiles, axisLayout, cancelRun, etaSecOf, overallOf, planOf, planTimeline, railStages, runBadgeFraction, unitsFraction,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
-  setUrlMeta, skippedStages, stagePick, startRun, useTranscribeRun,
+  setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stagePick, startRun, useTranscribeRun,
   type RailStage, type RunContext, type StepState, settledPanelItem, runTotals } from "@/lib/transcribeRun";
 import { displayLabel, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, pickRung, rungFacts, tierWords, type UrlPreview, type VideoRung, urlHost } from "@/lib/urlSource";
 import {
@@ -192,17 +192,6 @@ const RAIL_DESCRIPTIONS: Record<RailStage, string> = {
   transcribing: "",
   diarizing: "Labels each segment with who is speaking.",
   translating: "Translates the finished segments into your target languages.",
-};
-
-/** Why a stage the run asked for did not happen — one sentence per stage. The
- *  old two-way branch predated `translating`/`downloading` on the rail and
- *  printed the diarization sentence for both. */
-export const SKIPPED_EXPLANATIONS: Record<RailStage, string> = {
-  downloading: " — the server already had the media.",
-  separating: " — transcribing the original audio instead.",
-  transcribing: "",
-  diarizing: " — segments stay unlabeled.",
-  translating: " — the transcript stays in its source language.",
 };
 
 /** Plain names for the diarizing stage's units — pyannote's step names
@@ -491,51 +480,6 @@ function axisTextWidth(text: string): number {
   if (!axisMeasureCtx) return text.length * 7;
   // tracking-[.03em] on the name line ≈ 0.32px per character.
   return axisMeasureCtx.measureText(text).width + text.length * 0.32;
-}
-
-/** Greedy left-to-right layout for the axis labels under the strip. A label
- *  keeps the top row when it fits inside its own segment and nothing before
- *  it overflows into its spot; otherwise it drops to the stagger row on a
- *  longer leader tick. A label that would run past the strip's right edge is
- *  pulled left to end exactly at it (`offset` ≤ 0, applied relative to its
- *  column). `px` are segment widths, `labelPx` measured label widths. */
-export function axisLayout(
-  px: number[],
-  labelPx: number[],
-  totalW: number,
-): { row: 0 | 1; offset: number }[] {
-  const out: { row: 0 | 1; offset: number }[] = [];
-  let x = 0;
-  let topEnd = -Infinity;
-  let dropEnd = -Infinity;
-  px.forEach((w, i) => {
-    // Clamp so the label never crosses the strip's right edge.
-    const xl = Math.min(x, Math.max(totalW - labelPx[i], 0));
-    const clamped = xl < x - 0.5;
-    const fitsOwn = (labelPx[i] <= w - 2 || i === px.length - 1) && !clamped;
-    const maxStart = Math.max(totalW - labelPx[i], 0);
-    let row: 0 | 1;
-    let xUse = xl;
-    if (fitsOwn && xl >= topEnd) {
-      row = 0;
-      topEnd = xl + labelPx[i] + 16;
-    } else if (xl >= dropEnd) {
-      row = 1;
-      dropEnd = xl + labelPx[i] + 16;
-    } else {
-      // Neither row is clear at xl: take the row that frees up first and
-      // start where it ends, so the label is pushed right instead of printed
-      // through its predecessor (two tiny early stages at the 5px floor).
-      const useTop = topEnd <= dropEnd;
-      row = useTop ? 0 : 1;
-      xUse = Math.min(Math.max(xl, useTop ? topEnd : dropEnd), maxStart);
-      if (useTop) topEnd = xUse + labelPx[i] + 16;
-      else dropEnd = xUse + labelPx[i] + 16;
-    }
-    out.push({ row, offset: xUse - x });
-    x += w + 2;
-  });
-  return out;
 }
 
 /** "about X left", rounded coarsely (5 s under ten minutes, whole minutes

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chipCodes } from "./translationTargets";
+import { chipCodes, pruneTargets } from "./translationTargets";
 
 // `translationOverrides.translateTo` is peer-synced and never element-clamped by the
 // sanitizers; the chip renderer is the last line of defence (mirrors overlay.test.ts).
@@ -14,5 +14,13 @@ describe("chipCodes", () => {
   });
   it("returns nothing for a non-array", () => {
     expect(chipCodes("fr")).toEqual([]);
+  });
+});
+
+describe("pruneTargets", () => {
+  it("drops the known source, keeps everything under auto", () => {
+    expect(pruneTargets(["de", "fr"], "de")).toEqual(["fr"]);
+    expect(pruneTargets(["de"], "auto")).toEqual(["de"]);
+    expect(pruneTargets(["de"], "")).toEqual(["de"]);
   });
 });
