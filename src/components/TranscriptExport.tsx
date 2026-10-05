@@ -678,7 +678,24 @@ export function TranscriptExport({
   })();
   const tracksBox = langs.length > 0 && exportFormat !== "json" && (
     <div className={box}>
-      <span className={boxTitle}>Tracks</span>
+      <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <span className={boxTitle}>Tracks</span>
+        <span
+          title={effTracks.length < 2 ? "Pick a second track to set the order"
+            : textNames.length > 1 ? "Each language goes to its own file" : "Lines inside each subtitle follow the chips"}
+        >
+          <Segmented
+            ariaLabel="Line order"
+            value={lineOrder}
+            onChange={setLineOrder}
+            disabled={effTracks.length < 2 || textNames.length > 1}
+            options={[
+              { value: "orig-first", label: "Original first" },
+              { value: "trans-first", label: "Translations first" },
+            ]}
+          />
+        </span>
+      </div>
       <div className="flex flex-wrap gap-1.5">
         {chipTracks.map((t) => {
           const on = effTracks.includes(t);
@@ -705,22 +722,6 @@ export function TranscriptExport({
           );
         })}
       </div>
-      <span
-        className="self-start"
-        title={effTracks.length < 2 ? "Pick a second track to set the order"
-          : textNames.length > 1 ? "Each language goes to its own file" : "Lines inside each subtitle follow the chips"}
-      >
-        <Segmented
-          ariaLabel="Line order"
-          value={lineOrder}
-          onChange={setLineOrder}
-          disabled={effTracks.length < 2 || textNames.length > 1}
-          options={[
-            { value: "orig-first", label: "Original first" },
-            { value: "trans-first", label: "Translations first" },
-          ]}
-        />
-      </span>
     </div>
   );
 
