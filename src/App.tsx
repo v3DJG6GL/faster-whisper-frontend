@@ -8,6 +8,7 @@ import { migrateLegacyMicPin } from "@/lib/micMigration";
 import { initSync } from "@/lib/sync";
 import { initOverlayController } from "@/lib/overlay";
 import { initUsageController } from "@/lib/usage";
+import { initCapsController } from "@/lib/capabilities";
 import { initJobReconcile } from "@/lib/jobsReconcile";
 import { noteRoute, onTrigger, onSystemResumed, onOverlayAction, onAppNavigate } from "@/lib/api";
 import { dictate, runOverlayAction } from "@/lib/dictation";
@@ -224,6 +225,7 @@ export default function App() {
     void initSync();
     void initOverlayController();
     initUsageController();
+    initCapsController();
     // Runs the app was quit in the middle of: re-attach to what the server still
     // holds (orders itself after the config load via configReady).
     void initJobReconcile();

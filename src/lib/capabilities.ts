@@ -79,6 +79,20 @@ export async function refreshCaps(backend: Backend, opts?: { force?: boolean }):
   }
 }
 
+/** A fresh connection verdict (Test connection, a save, onboarding) re-reads that Backend's
+ *  capabilities: the test is the moment a user checks a server they just upgraded or
+ *  reconfigured, and without it the cache kept the previous server's /v1/me until the next
+ *  dictation (a v0.1.154 server showed no info panel). Called once from App. */
+export function initCapsController(): void {
+  useApp.subscribe((state, prev) => {
+    if (state.connections === prev.connections) return;
+    for (const b of state.backends) {
+      const now = ownProp(state.connections, b.id);
+      if (now?.ok && now !== ownProp(prev.connections, b.id)) void refreshCaps(b, { force: true });
+    }
+  });
+}
+
 /** Whether a translation model is already resident on the server.
  *
  *  `null` means UNKNOWN — no caps fetched yet, or an older backend that sends no
