@@ -3,7 +3,7 @@
 // it stays mounted with the viewer (hidden while closed), so its picks and a
 // running media export survive closing the panel.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Circle, Download, Minus, PanelBottom, PanelRight, RotateCcw, TriangleAlert } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
@@ -534,8 +534,6 @@ export function TranscriptExport({
     on ? "border-accent/55 bg-accent-soft" : "border-line bg-surface-2 hover:border-line-strong",
     off && "cursor-not-allowed opacity-50 hover:border-line",
   );
-  const box = "flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface/50 px-4 py-3.5";
-  const boxTitle = "font-display text-[14px] font-semibold text-text";
   const expand = (
     <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setWide((w) => !w)}
       title={wide ? "Put the preview back beside the settings" : "Show the preview full width, below the settings"}>
@@ -548,16 +546,14 @@ export function TranscriptExport({
   const fileLine = (f: (typeof previewFiles)[number]) =>
     f.name ? f.name(stem) : `${stem}.${container} · ${planned.find((t) => t.id === f.key)?.title ?? ""}`;
   const preview = (
-    <div className={box}>
-      <div className="flex items-center gap-3">
-        <span className={boxTitle}>Preview</span>
-        <span className="font-mono text-[11px] text-faint">
-          {exportPreview && previewFile && (isSubtitleFormat(previewFile.format)
-            ? `first ${exportPreview.count} of ${exportPreview.total.toLocaleString("en")} subtitles`
-            : exportPreview.total > exportPreview.count ? "start of the file" : "")}
-        </span>
-        {expand}
-      </div>
+    <PanelBox title="Preview" right={<>
+      <span className="font-mono text-[11px] text-faint">
+        {exportPreview && previewFile && (isSubtitleFormat(previewFile.format)
+          ? `first ${exportPreview.count} of ${exportPreview.total.toLocaleString("en")} subtitles`
+          : exportPreview.total > exportPreview.count ? "start of the file" : "")}
+      </span>
+      {expand}
+    </>}>
       {previewFiles.length > 1 && (
         <div role="tablist" aria-label="Files" className="flex flex-wrap gap-1.5">
           {previewFiles.map((f) => {
@@ -585,7 +581,7 @@ export function TranscriptExport({
       >
         {exportPreview?.text ?? "No segments to preview."}
       </pre>
-    </div>
+    </PanelBox>
   );
 
   // Media: what the Save also writes. Audio = the app's copy of a link's
@@ -600,8 +596,7 @@ export function TranscriptExport({
         : null;
     const pick = (c: MediaChoice) => { setSwitchNote(null); setMediaChoice(c); persistOptions({ exportMedia: c }); };
     return (
-      <div className={box}>
-        <span className={boxTitle}>Media</span>
+      <PanelBox title="Media">
         <div role="radiogroup" aria-label="Export media" className="flex gap-2">
           <button type="button" role="radio" aria-checked={mediaChoice === "none"}
             onClick={() => pick("none")} className={cardCls(mediaChoice === "none", false)}>
@@ -655,12 +650,11 @@ export function TranscriptExport({
             </span>
           </div>
         )}
-      </div>
+      </PanelBox>
     );
   })();
   const tracksBox = order.length > 1 && exportFormat !== "json" && (
-    <div className={box}>
-      <span className={boxTitle}>Tracks</span>
+    <PanelBox title="Tracks">
       <ExportTrackChips
         result={editedResult}
         order={order}
@@ -668,7 +662,7 @@ export function TranscriptExport({
         onChosen={setExportTracks}
         onOrder={(next) => setPrefs({ order: next })}
       />
-    </div>
+    </PanelBox>
   );
 
   // Track names (D89): what each track is called inside the video, its
@@ -683,16 +677,12 @@ export function TranscriptExport({
   };
   const resetIcon = <RotateCcw className="size-3" />;
   const namesBox = videoPlan && (
-    <div className={box}>
-      <div className="flex items-center gap-3">
-        <span className={boxTitle}>Track names</span>
-        {planned.some(renamed) && (
-          <button type="button" onClick={() => setPrefs({ names: {} })} title="Every track back to its default name"
-            className="ring-signal ml-auto inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text">
-            {resetIcon} Reset all
-          </button>
-        )}
-      </div>
+    <PanelBox title="Track names" right={planned.some(renamed) && (
+      <button type="button" onClick={() => setPrefs({ names: {} })} title="Every track back to its default name"
+        className="ring-signal ml-auto inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text">
+        {resetIcon} Reset all
+      </button>
+    )}>
       <span className="-mt-2 truncate font-mono text-[11px] text-faint">{`${stem}.${container}`}</span>
       {planned.map((t, i) => (
         <div key={t.id} className="grid grid-cols-[auto_2.5rem_minmax(0,1fr)_1.75rem] items-center gap-x-2 gap-y-1">
@@ -724,7 +714,7 @@ export function TranscriptExport({
           </span>
         </div>
       ))}
-    </div>
+    </PanelBox>
   );
 
   return (
@@ -740,8 +730,7 @@ export function TranscriptExport({
     >
       <div className={cn("grid items-start", twoCol ? "grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-4" : "gap-3.5")}>
         <div className="flex min-w-0 flex-col gap-3.5">
-          <div className={box}>
-            <span className={boxTitle}>Format</span>
+          <PanelBox title="Format">
             {/* Format cards — radio semantics, always visible. */}
             <div role="radiogroup" aria-label="Export format" className="flex gap-2">
               {FORMAT_CARDS.map((f) => {
@@ -771,10 +760,9 @@ export function TranscriptExport({
                 );
               })}
             </div>
-          </div>
+          </PanelBox>
 
-          <div className={box}>
-            <span className={boxTitle}>Content</span>
+          <PanelBox title="Content">
             <div className="flex flex-wrap gap-2">
               {content.map((c) => (
                 <ChipToggle key={c.key} on={c.state === "on"} size="md" title={c.why} onClick={toggleContent[c.key]}
@@ -785,15 +773,13 @@ export function TranscriptExport({
                 </ChipToggle>
               ))}
             </div>
-          </div>
+          </PanelBox>
 
           {tracksBox}
           {media}
           {namesBox}
 
-          <div className={box}>
-            <div className="flex flex-wrap items-start justify-between gap-2.5">
-              <span className={boxTitle}>Subtitle length</span>
+          <PanelBox title="Subtitle length" head="flex flex-wrap items-start justify-between gap-2.5" right={
               <span className="flex" title={subs ? undefined : "Only SRT and VTT have subtitles to split"}>
                 <Segmented<SubtitleLength>
                   ariaLabel="Subtitle length"
@@ -808,7 +794,7 @@ export function TranscriptExport({
                   ]}
                 />
               </span>
-            </div>
+            }>
             {length === "custom" && subs && (
               <div className="flex flex-col gap-2.5 rounded-xl border border-line-strong bg-surface px-3.5 py-3">
                 {CUE_SLIDERS.map(([k, label, unit]) => (
@@ -853,15 +839,11 @@ export function TranscriptExport({
                 </div>
               </div>
             )}
-          </div>
+          </PanelBox>
         </div>
 
         <div className={cn("flex min-w-0 flex-col gap-3.5", twoCol && "sticky top-[calc(var(--viewer-bar,0px)+0.75rem)]")}>
-          <div className={cn(box, "gap-0.5")}>
-            <div className="mb-1 flex items-center gap-3">
-              <span className={boxTitle}>Summary</span>
-              {expand}
-            </div>
+          <PanelBox title="Summary" className="gap-0.5" head="mb-1 flex items-center gap-3" right={expand}>
             {summary.map((r) => (
               <div key={r.label} className="flex items-start gap-2.5 py-1 text-[12.5px]">
                 {r.state === "on" ? <Check className="mt-0.5 size-3.5 shrink-0 text-ok" />
@@ -912,11 +894,31 @@ export function TranscriptExport({
                 )}
               </span>
             )}
-          </div>
+          </PanelBox>
           {!wide && preview}
         </div>
       </div>
       {wide && preview}
+    </div>
+  );
+}
+
+const BOX_TITLE = "font-display text-[14px] font-semibold text-text";
+
+/** One of the panel's boxes: its title — with `right`, a header row holding the title and
+ *  that control (`head` = the row's classes) — then the body. */
+function PanelBox({
+  title, right, head = "flex items-center gap-3", className, children,
+}: { title: string; right?: ReactNode; head?: string; className?: string; children: ReactNode }) {
+  return (
+    <div className={cn("flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface/50 px-4 py-3.5", className)}>
+      {right ? (
+        <div className={head}>
+          <span className={BOX_TITLE}>{title}</span>
+          {right}
+        </div>
+      ) : <span className={BOX_TITLE}>{title}</span>}
+      {children}
     </div>
   );
 }
