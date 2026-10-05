@@ -34,7 +34,7 @@ import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { refreshCaps } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
-import { RestoreFromServer } from "@/components/SettingsSync";
+import { RestoreFromServer } from "@/components/sync/SettingsSync";
 import { relTime } from "@/lib/format";
 
 function Editor({
