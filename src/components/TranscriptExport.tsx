@@ -9,7 +9,7 @@ import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
 import { Button, RangeField, Segmented, TextInput } from "@/components/ui";
 import { ExportTrackChips } from "@/components/ExportTrackChips";
-import { sourceDot } from "@/components/SiteSubtitlesPanel";
+import { sourceDot, sourceTone } from "@/components/SiteSubtitlesPanel";
 import { fmtBytes } from "@/lib/format";
 import {
   pickExportPath, saveTextFile, audioBasePref, cancelMediaExport, copyMediaTo, fetchUrlMedia, fetchUrlVideo,
@@ -29,7 +29,7 @@ import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
 import {
-  TRACK_TITLE_MAX, cleanTrackTitle, planTracks, sourceKind, trackChipLabel, trackInfo, trackOrder,
+  TRACK_TITLE_MAX, cleanTrackTitle, planTracks, sourceKind, sourceWord, trackChipLabel, trackInfo, trackOrder,
   type TrackPrefs,
 } from "@/lib/exportTracks";
 import {
@@ -775,6 +775,7 @@ export function TranscriptExport({
           ) : <span />}
           <span className="col-start-3 flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[10.5px] text-faint">
             {sideNames && <span className="min-w-0 truncate">{sideNames[i](stem)}</span>}
+            <span className={cn("rounded-pill px-1.5 font-sans leading-4", sourceTone(sourceKind(t), t.hoh))}>{sourceWord(t)}</span>
             {([[t.original, "original"], [t.plain, "default"], [t.hoh, "SDH"]] as const).map(([on, flag]) => on && (
               <span key={flag} className="rounded-pill border border-line px-1.5 leading-4">{flag}</span>
             ))}
