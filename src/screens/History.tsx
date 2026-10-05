@@ -25,7 +25,7 @@ import { useApp } from "@/lib/store";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
 import { pickExportPath, readMediaFile, revealSaved, saveTextFile } from "@/lib/api";
 import {
-  deleteRecord, loadHistory, recordEditedResult, recordText,
+  appChipLabel, appLabel, deleteRecord, loadHistory, recordEditedResult, recordText, recordTracks,
   useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcriptHistory";
 import { addFiles, openHistoryRecord, useTranscribeRun } from "@/lib/transcribeRun";
@@ -63,57 +63,6 @@ function timeOf(iso: string): string {
 }
 
 const isDictation = (r: TranscriptRecord) => r.kind === "dictation";
-
-/** The record's language tracks, original first, or null when it has none.
- *
- *  Returns null for records written before per-language tracks existed: their
- *  `translatedText` is a blank-line join and a transcript contains its own
- *  line breaks, so splitting it back apart would mislabel text rather than
- *  recover it. Those records render as one untitled block instead — the most
- *  that can honestly be said about them. */
-export function tracksOf(
-  rec: TranscriptRecord,
-): { lang: string; text: string; orig?: boolean }[] | null {
-  const tr = rec.translations;
-  if (!tr || typeof tr !== "object") return null;
-  // Both fields are file-borne and unvalidated on load: a string where the
-  // target list belongs, or a number where a track belongs, must not throw.
-  const targets = Array.isArray(rec.translationTargets) ? rec.translationTargets : Object.keys(tr);
-  const map = tr as Record<string, unknown>;
-  const langs = targets.filter(
-    (l): l is string => typeof l === "string" && typeof map[l] === "string" && (map[l] as string).trim() !== "",
-  );
-  if (!langs.length) return null;
-  const original = recordText(rec).trim();
-  // The original is a track like any other, dimmed and carrying its own code.
-  // Rendering it as a separate labelled section BELOW the blob is what showed
-  // it twice, because the blob already began with it.
-  // Always a track: `includeOriginal` says what was INJECTED, not what the record should
-  // show — gating on it hid the spoken transcript for the default configuration. The
-  // tracks come from the translations map, which never carries the source, so this
-  // cannot duplicate anything.
-  const head = original
-    ? [{ lang: rec.language && rec.language !== "auto" ? rec.language : "orig", text: original, orig: true }]
-    : [];
-  return [...head, ...langs.map((lang) => ({ lang, text: map[lang] as string }))];
-}
-
-/** Human app label from a dictation record — the stored window title, else the
- *  app id's last dot-segment, capitalized ("org.mozilla.thunderbird" → "Thunderbird"). */
-function appLabel(r: TranscriptRecord): string {
-  if (r.sourceName && r.sourceName !== "Dictation") return r.sourceName;
-  const seg = r.appId?.split(".").pop()?.trim();
-  return seg ? seg.charAt(0).toUpperCase() + seg.slice(1) : "Dictation";
-}
-
-/** Label for the "dictated into" chip. The chip groups by app id, so it must
- *  name the APP ("Thunderbird"), not the first grouped session's window title
- *  ("Re: invoice — Mozilla Thunderbird"), which is what `appLabel` returns for a
- *  row heading and which changed as newer sessions arrived. */
-export function appChipLabel(r: Pick<TranscriptRecord, "appId" | "sourceName">): string {
-  const seg = r.appId?.split(".").pop()?.trim();
-  return seg ? seg.charAt(0).toUpperCase() + seg.slice(1) : appLabel(r as TranscriptRecord);
-}
 
 type Segment = "all" | "file" | "url" | "text" | "dictation";
 
@@ -578,7 +527,7 @@ export default function History() {
 
   const dictationExpanded = (rec: TranscriptRecord) => {
     const backendName = backends.find((b) => b.id === rec.backendId)?.name;
-    const tracks = tracksOf(rec);
+    const tracks = recordTracks(rec);
     return (
       <div key={rec.id} className="my-2 rounded-xl border border-accent/25 bg-accent-soft/30 px-4 py-3">
         <div className="flex items-center gap-2.5">

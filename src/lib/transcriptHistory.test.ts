@@ -17,8 +17,8 @@ vi.mock("./api", async (importOriginal) => ({
 }));
 
 const {
-  currentRecord, deleteRecord, dropPendingWrites, loadHistory, patchRecord, recordDictation, upsertRecord,
-  selectRecord, useTranscriptHistory,
+  appChipLabel, currentRecord, deleteRecord, dropPendingWrites, loadHistory, patchRecord, recordDictation, recordTracks,
+  upsertRecord, selectRecord, useTranscriptHistory,
 } = await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
 
@@ -405,5 +405,130 @@ describe("selectRecord (useRecord's selector)", () => {
     expect(selectRecord("b")({ records: [a, b] })).toBe(b);
     expect(selectRecord("c")({ records: [a, b] })).toBeUndefined();
     expect(selectRecord(undefined)({ records: [a] })).toBeUndefined();
+  });
+});
+
+// The duplicate-original bug, pinned.
+//
+// A dictation translated to EN+FR rendered the INJECTED blob (which, with
+// "include original" on, already begins with the original) and then rendered
+// result.text again beneath it under an "original" label — so the source
+// language appeared twice, under a heading naming only the targets. recordTracks
+// is the decision that fixes it, extracted so it can be tested: there is no
+// jsdom, so the rendering itself cannot be.
+describe("history record display", () => {
+  const base = {
+    schemaVersion: 1 as const,
+    kind: "dictation" as const,
+    id: "r1",
+    createdAt: "2026-08-31T18:23:00.000Z",
+    sourcePath: "",
+    sourceName: "kate",
+    status: "done" as const,
+    language: "de",
+    result: { text: "Hallo das ist ein Test", duration: 11 },
+  };
+
+  const rec = (over: Partial<TranscriptRecord> = {}): TranscriptRecord =>
+    ({ ...base, ...over }) as TranscriptRecord;
+
+  describe("recordTracks", () => {
+    it("renders the original exactly once, as its own dimmed track", () => {
+      const t = recordTracks(
+        rec({
+          translations: { en: "Hello this is a test", fr: "Salut c'est un test" },
+          translationTargets: ["en", "fr"],
+          includeOriginal: true,
+        }),
+      );
+      expect(t).toEqual([
+        { lang: "de", text: "Hallo das ist ein Test", orig: true },
+        { lang: "en", text: "Hello this is a test" },
+        { lang: "fr", text: "Salut c'est un test" },
+      ]);
+      // The reported bug: the source text must appear in exactly one track.
+      const originals = t!.filter((x) => x.text === base.result.text);
+      expect(originals).toHaveLength(1);
+    });
+
+    it("keeps the original track even when it was not injected", () => {
+      // `includeOriginal` is about the injected blob; the record must still show what was
+      // spoken, or a translated dictation's transcript is unreachable in the UI.
+      const t = recordTracks(
+        rec({
+          translations: { en: "Hello" },
+          translationTargets: ["en"],
+          includeOriginal: undefined,
+        }),
+      );
+      expect(t).toEqual([
+        { lang: "de", text: "Hallo das ist ein Test", orig: true },
+        { lang: "en", text: "Hello" },
+      ]);
+    });
+
+    it("keeps the configured target ORDER, not object key order", () => {
+      const t = recordTracks(
+        rec({
+          translations: { fr: "Salut", en: "Hello" },
+          translationTargets: ["en", "fr"],
+        }),
+      );
+      expect(t!.filter((x) => !x.orig).map((x) => x.lang)).toEqual(["en", "fr"]);
+    });
+
+    it("drops a target that produced no text", () => {
+      const t = recordTracks(
+        rec({
+          translations: { en: "Hello", fr: "   " },
+          translationTargets: ["en", "fr"],
+        }),
+      );
+      expect(t!.filter((x) => !x.orig).map((x) => x.lang)).toEqual(["en"]);
+    });
+
+    it("returns null for a record written before tracks existed", () => {
+      // Its translatedText is a blank-line join and a transcript contains its
+      // own line breaks, so splitting it would mislabel text rather than
+      // recover it. One untitled block is the honest rendering.
+      expect(recordTracks(rec({ translatedText: "Hallo\n\nHello\n\nSalut" }))).toBeNull();
+      expect(recordTracks(rec({}))).toBeNull();
+    });
+
+    it("returns null rather than throwing on a hand-edited record", () => {
+      // Records are read back from FILES: nothing validates the shape of an
+      // optional field on load.
+      expect(recordTracks(rec({ translations: "nope" as never }))).toBeNull();
+      expect(recordTracks(rec({ translations: {} }))).toBeNull();
+      // A string where the target list belongs, a number where a track belongs.
+      expect(() => recordTracks(rec({ translations: { en: "hi" }, translationTargets: "en" as never }))).not.toThrow();
+      const t = recordTracks(rec({ translations: { en: "hi" }, translationTargets: "en" as never }));
+      expect(t![t!.length - 1]).toEqual({ lang: "en", text: "hi" });
+      expect(recordTracks(rec({ translations: { en: 5 } as never, translationTargets: ["en"] }))).toBeNull();
+    });
+
+    it("falls back to a neutral code when the language is unknown", () => {
+      const t = recordTracks(
+        rec({
+          language: "auto",
+          translations: { en: "Hello" },
+          translationTargets: ["en"],
+          includeOriginal: true,
+        }),
+      );
+      expect(t![0]).toEqual({ lang: "orig", text: base.result.text, orig: true });
+    });
+  });
+
+  describe("appChipLabel", () => {
+    it("names the app, never the grouped session's window title", () => {
+      expect(
+        appChipLabel({ appId: "org.mozilla.thunderbird", sourceName: "Re: invoice — Mozilla Thunderbird" }),
+      ).toBe("Thunderbird");
+    });
+    it("falls back to the stored name when there is no app id", () => {
+      expect(appChipLabel({ appId: undefined, sourceName: "Notes" })).toBe("Notes");
+      expect(appChipLabel({ appId: undefined, sourceName: "Dictation" })).toBe("Dictation");
+    });
   });
 });
