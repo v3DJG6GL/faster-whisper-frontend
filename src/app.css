@@ -86,7 +86,7 @@
   --c-para: #4dd0c4; /* the live-dictation preview's hard break (new paragraph) */
   --c-whisper: #ff9e2c; /* identity: a Whisper-transcribed track (the default accent's amber, fixed — it never drifts with the Signal colour) */
   /* Remaining pipeline-stage hues. These were bare hexes inside STAGE_COLORS
-     in Transcribe.tsx, which meant they had NO light-theme value at all —
+     (components/transcribe/railTheme.ts), which meant they had NO light-theme value at all —
      #c68fb4 is barely legible on a light background. They are also what the
      backend's /logs receipt and the quick-config trace viewer colour their
      stage rows with, so a stage should read the same wherever it appears;
