@@ -17,7 +17,7 @@ import { sessionShape } from "./sessionShape";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
 import { configuredRouteTargets } from "./overlay";
 import { pushRecent } from "./recent";
-import { modelShortName, translationLanguages } from "./capabilities";
+import { translationTargetInfo } from "./capabilities";
 import type { Backend, Profile } from "./types";
 
 export type TriggerAction = "start" | "stop" | "toggle" | "reclassify";
@@ -326,10 +326,7 @@ function askTranslationTargets(seed: Record<string, unknown>): Promise<TargetPic
 function targetLanguages(profile: Profile, backend: Backend): { supported: string[] | null; modelName?: string } {
   const caps = ownProp(useApp.getState().caps, backend.id);
   const model = profile.translationOverrides?.model || backend.translationOverrides?.model;
-  return {
-    supported: translationLanguages(caps, model),
-    modelName: modelShortName(model || caps?.translation_models?.[0]?.id),
-  };
+  return translationTargetInfo(caps, model);
 }
 
 /** Keep the most recent picks for the picker's "Recent" group, newest first. */

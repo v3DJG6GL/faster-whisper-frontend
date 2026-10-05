@@ -11,7 +11,7 @@ import { SpokenLanguageRow, useLinkLanguage } from "@/components/SpokenLanguageR
 import { SiteSubtitlesPanel } from "@/components/SiteSubtitlesPanel";
 import { addLanguage, derive, flip, initialSiteState, toggleTarget, type SiteChange, type SiteSubsState } from "@/lib/siteSubtitles";
 import { siteDisplayName } from "@/lib/mediaExport";
-import { modelShortName, translationLanguages } from "@/lib/capabilities";
+import { translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -1540,8 +1540,7 @@ export default function Transcribe() {
                       onChange={applySite}
                       detecting={linkLang.check.state === "running"}
                       mt={translationAvailable}
-                      supported={translationLanguages(caps, translationModel || backend?.translationOverrides?.model)}
-                      modelName={modelShortName(translationModel || backend?.translationOverrides?.model || caps?.translation_models?.[0]?.id)}
+                      {...translationTargetInfo(caps, translationModel || backend?.translationOverrides?.model)}
                       disabled={busy}
                     />
                   </div>

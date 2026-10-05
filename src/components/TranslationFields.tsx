@@ -5,7 +5,7 @@
 import type { ReactNode } from "react";
 import { Eraser, RotateCcw } from "lucide-react";
 import { languageLabel } from "../lib/languages";
-import { modelShortName, translationLanguages } from "../lib/capabilities";
+import { translationTargetInfo } from "../lib/capabilities";
 import { TargetLanguagePicker } from "./LanguagePicker";
 import { CompoundChip } from "./CompoundChip";
 import type { ChipPart } from "../lib/siteSubtitles";
@@ -171,8 +171,7 @@ export function TranslationOptionsFields({
         <TranslationTargetChips
           value={targets}
           onChange={onTargetsChange}
-          supported={translationLanguages(caps, model || inheritedModel)}
-          modelName={modelShortName(model || inheritedModel || caps?.translation_models?.[0]?.id)}
+          {...translationTargetInfo(caps, model || inheritedModel)}
           exclude={exclude}
           disabled={disabled}
           parts={chipParts}
@@ -389,8 +388,7 @@ export function TranslationDefaultsEditor({
         <TranslationTargetChips
           value={v.translateTo ?? []}
           onChange={(next) => patch({ translateTo: next })}
-          supported={translationLanguages(caps, v.model || inheritedModel)}
-          modelName={modelShortName(v.model || inheritedModel || caps?.translation_models?.[0]?.id)}
+          {...translationTargetInfo(caps, v.model || inheritedModel)}
         />
         {/* An empty chip row cannot tell "none set" from "explicitly none" on its own,
             and the two resolve differently: absent inherits the layer below (a Profile its

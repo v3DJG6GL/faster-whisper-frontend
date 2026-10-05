@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { translationLanguages, translationWarm } from "./capabilities";
+import { translationLanguages, translationTargetInfo, translationWarm } from "./capabilities";
 import type { Capabilities } from "./types";
 
 function caps(patch: Partial<Capabilities>): Capabilities {
@@ -82,5 +82,17 @@ describe("translationLanguages", () => {
     expect(translationLanguages(caps({ translation_models: models }), "other")).toBe(null);
     expect(translationLanguages(caps({}))).toBe(null);
     expect(translationLanguages(null)).toBe(null);
+  });
+});
+
+describe("translationTargetInfo", () => {
+  const models = [
+    { id: "org/hy-mt", loaded: true, languages: ["de", "fr"] },
+    { id: "custom", loaded: false, languages: null },
+  ];
+  it("the named model's languages and short name; the server default's without one", () => {
+    expect(translationTargetInfo(caps({ translation_models: models }), "custom")).toEqual({ supported: null, modelName: "custom" });
+    expect(translationTargetInfo(caps({ translation_models: models }))).toEqual({ supported: ["de", "fr"], modelName: "hy-mt" });
+    expect(translationTargetInfo(null, "")).toEqual({ supported: null, modelName: undefined });
   });
 });

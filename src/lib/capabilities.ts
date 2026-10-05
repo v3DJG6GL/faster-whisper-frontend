@@ -112,3 +112,14 @@ export function translationLanguages(caps: Capabilities | null | undefined, mode
 export function modelShortName(id: string | undefined): string | undefined {
   return id ? safeDisplayText(id.split("/").pop() || id, 40) : undefined;
 }
+
+/** A translation-target picker's grouping for a model (empty = the server's default): its
+ *  languages (translationLanguages) and the short name "Supported by …" shows. */
+export function translationTargetInfo(
+  caps: Capabilities | null | undefined, model?: string,
+): { supported: string[] | null; modelName?: string } {
+  return {
+    supported: translationLanguages(caps, model),
+    modelName: modelShortName(model || caps?.translation_models?.[0]?.id),
+  };
+}
