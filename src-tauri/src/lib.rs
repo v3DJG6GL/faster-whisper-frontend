@@ -11,14 +11,12 @@ mod key_debounce;
 mod kwin;
 mod langpick;
 mod logging;
-mod media_decode;
 mod memwatch;
 mod migrate_identifier;
 mod overlay;
 mod quickadd;
 mod remote_desktop;
 mod session;
-mod sound;
 mod store;
 mod transport;
 mod tray;
@@ -315,7 +313,7 @@ pub fn run() {
             langpick::abort_lang_pick,
             quickadd::show_quick_add,
             quickadd::hide_quick_add,
-            sound::play_cue,
+            audio::cues::play_cue,
             tray::set_tray_state,
             tray::show_main_at_screen,
             logging::get_log_tail,

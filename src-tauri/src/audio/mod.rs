@@ -12,6 +12,8 @@ use tauri::{AppHandle, Emitter};
 #[cfg(target_os = "linux")]
 pub mod alsa_paths;
 pub mod capture;
+pub mod cues;
+pub mod decode;
 pub mod device;
 pub mod host;
 pub mod playback;
