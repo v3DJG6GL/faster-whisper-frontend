@@ -15,7 +15,7 @@ import type { LucideIcon } from "lucide-react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, ArrowLeft, Check, Info, Minus, Plus, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { languageLabel } from "@/lib/languages";
+import { langCode, languageLabel } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
 
 /* ── Card ─────────────────────────────────────────────────────────────── */
@@ -1073,6 +1073,47 @@ export function ChipToggle({
       )}
     >
       {children}
+    </button>
+  );
+}
+
+/* ── CodeChip ─────────────────────────────────────────────────────────── */
+/** A chosen language code that a click removes ("DE ×"). `head` = a CompoundChip's code
+ *  segment (the compound draws the outline); `size="md"` = the language picker's route rail. */
+export function CodeChip({
+  code,
+  onRemove,
+  disabled,
+  head,
+  size = "sm",
+}: {
+  code: string;
+  onRemove: () => void;
+  disabled?: boolean;
+  head?: boolean;
+  size?: "sm" | "md";
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onRemove}
+      title={`Remove ${languageLabel(code)}`}
+      className={cn(
+        "ring-signal group inline-flex items-center gap-1.5 rounded-pill border px-2.5 font-mono",
+        size === "sm" ? "h-7 text-[11.5px]" : "py-1 text-[12px]",
+        // Selection chrome takes the accent; teal is reserved for the translating STAGE.
+        "border-accent/50 text-accent transition-colors",
+        // A click removes the chip, so hover/press previews that in the danger tone.
+        "enabled:hover:border-rec/45 enabled:hover:bg-rec/10 enabled:hover:text-rec enabled:active:bg-rec/20",
+        disabled && "opacity-50",
+        head && "rounded-none border-0",
+      )}
+    >
+      {langCode(code, 12)}
+      <span aria-hidden className="opacity-60 transition-opacity group-enabled:group-hover:opacity-100">
+        ×
+      </span>
     </button>
   );
 }

@@ -13,7 +13,7 @@ import { cn } from "../lib/cn";
 import { safeDisplayText } from "../lib/sanitize";
 import type { Capabilities, TranscribeOptions, TranslationOverrides } from "../lib/types";
 import { ModelPicker } from "./ModelPicker";
-import { MicroLabel, Segmented, Stepper, TextArea } from "./ui";
+import { CodeChip, MicroLabel, Segmented, Stepper, TextArea } from "./ui";
 import { inheritLabel, onOff } from "../lib/inherit";
 
 export const TRANSLATION_MAX_TARGETS = 8;
@@ -80,27 +80,13 @@ export function TranslationTargetChips({
     <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={ariaLabel}>
       {shown.map((code) => {
         const chip = (
-          <button
+          <CodeChip
             key={code}
-            type="button"
+            code={code}
             disabled={disabled}
-            onClick={() => onChange(value.filter((c) => codeOf(c) !== code))}
-            title={`Remove ${languageLabel(code)}`}
-            className={cn(
-              "ring-signal group inline-flex h-7 items-center gap-1.5 rounded-pill border px-2.5 font-mono text-[11.5px]",
-              // Selection chrome takes the accent; teal is reserved for the translating STAGE.
-              "border-accent/50 text-accent transition-colors",
-              // A click removes the chip, so hover/press previews that in the danger tone.
-              "enabled:hover:border-rec/45 enabled:hover:bg-rec/10 enabled:hover:text-rec enabled:active:bg-rec/20",
-              disabled && "opacity-50",
-              parts?.[code] && "rounded-none border-0",
-            )}
-          >
-            {code.toUpperCase()}
-            <span aria-hidden className="opacity-60 transition-opacity group-enabled:group-hover:opacity-100">
-              ×
-            </span>
-          </button>
+            head={!!parts?.[code]}
+            onRemove={() => onChange(value.filter((c) => codeOf(c) !== code))}
+          />
         );
         if (!parts?.[code]) return chip;
         return <CompoundChip key={code} head={chip} parts={parts[code]} onPart={onPart} disabled={disabled} />;
