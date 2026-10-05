@@ -113,6 +113,16 @@ export const useTranscriptHistory = create<HistoryState>(() => ({
   loaded: false,
 }));
 
+/** The selector behind useRecord: one record by id. */
+export const selectRecord = (id: string | null | undefined) => (s: Pick<HistoryState, "records">) =>
+  id ? s.records.find((r) => r.id === id) : undefined;
+
+/** One record, subscribed on its own: the component re-renders when THIS record changes,
+ *  not on every history write (a subscription to `records` re-rendered on each). */
+export function useRecord(id: string | null | undefined): TranscriptRecord | undefined {
+  return useTranscriptHistory(selectRecord(id));
+}
+
 /** Records are read back from disk — malformed files (hand-edited, foreign)
  *  must never break the listing. */
 function isRecord(v: unknown): v is TranscriptRecord {

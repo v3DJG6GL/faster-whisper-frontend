@@ -18,7 +18,7 @@ vi.mock("./api", async (importOriginal) => ({
 
 const {
   currentRecord, deleteRecord, dropPendingWrites, loadHistory, patchRecord, recordDictation, upsertRecord,
-  useTranscriptHistory,
+  selectRecord, useTranscriptHistory,
 } = await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
 
@@ -395,5 +395,15 @@ describe("lastWriteAt pruning keeps coalescing intact", () => {
       dropPendingWrites();
       vi.useRealTimers();
     }
+  });
+});
+
+describe("selectRecord (useRecord's selector)", () => {
+  it("one record by id; none without an id", () => {
+    const a = { id: "a" } as TranscriptRecord;
+    const b = { id: "b" } as TranscriptRecord;
+    expect(selectRecord("b")({ records: [a, b] })).toBe(b);
+    expect(selectRecord("c")({ records: [a, b] })).toBeUndefined();
+    expect(selectRecord(undefined)({ records: [a] })).toBeUndefined();
   });
 });

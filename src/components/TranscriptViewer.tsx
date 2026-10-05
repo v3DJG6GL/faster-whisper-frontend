@@ -45,7 +45,7 @@ import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
 import { basename, withTrackSites, type MediaChoice } from "@/lib/mediaExport";
 import { releaseMedia } from "@/lib/media";
-import { patchRecord, useTranscriptHistory } from "@/lib/transcriptHistory";
+import { patchRecord, useRecord } from "@/lib/transcriptHistory";
 import {
   defaultViewTracks, mergeOrder, readTrackPrefs, trackOrder, transcriptTracks, translationTracks, type TrackPrefs,
 } from "@/lib/exportTracks";
@@ -865,8 +865,10 @@ export function TranscriptViewer({
   // transcript's record — without one (not saved yet) here. Read's chips and
   // the export share them, so lanes, chips and files keep one order.
   const [localTrackPrefs, setLocalTrackPrefs] = useState<TrackPrefs>({});
-  const recId = useTranscriptHistory((s) => (overlayKey && s.records.some((r) => r.id === overlayKey) ? overlayKey : null));
-  const savedTrackPrefs = useTranscriptHistory((s) => (recId ? s.records.find((r) => r.id === recId)?.exportTracks : undefined));
+  // The overlay slot's record (okey is the record id whenever there is one).
+  const record = useRecord(okey);
+  const recId = overlayKey && record ? overlayKey : null;
+  const savedTrackPrefs = recId ? record?.exportTracks : undefined;
   const trackPrefs = useMemo(
     () => (recId ? readTrackPrefs(savedTrackPrefs) : localTrackPrefs),
     [recId, savedTrackPrefs, localTrackPrefs],
@@ -927,11 +929,7 @@ export function TranscriptViewer({
 
   // ── re-translate / retro-translate ───────────────────────────────────────
   const backends = useApp((s) => s.backends);
-  const historyRecords = useTranscriptHistory((s) => s.records);
-  const historyBackendId = useMemo(
-    () => historyRecords.find((r) => r.id === okey)?.backendId,
-    [historyRecords, okey],
-  );
+  const historyBackendId = record?.backendId;
   // Retro-translate needs a full backend — a PROVEN-standard server has no
   // /v1/text/translations, so don't offer a button that can only fail.
   const connections = useApp((s) => s.connections);
@@ -2432,6 +2430,7 @@ export function TranscriptViewer({
         overlayKey={overlayKey}
         initialExport={initialExport}
         order={trackOrd}
+        record={recId ? record : undefined}
         visibleTracks={visibleTracks}
         trackPrefs={trackPrefs}
         onTrackPrefs={setTrackPrefs}

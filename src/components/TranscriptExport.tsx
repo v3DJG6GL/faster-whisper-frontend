@@ -39,7 +39,7 @@ import {
   legacyTrackIndices, mediaExportPlan, mp4Disabled, sidecarFiles, sidecarNames, type MediaChoice, type MediaContainer,
   type MediaExportPhase, type MediaStreams, type SubtitleMode,
 } from "@/lib/mediaExport";
-import { patchRecord, useTranscriptHistory } from "@/lib/transcriptHistory";
+import { patchRecord, type TranscriptRecord } from "@/lib/transcriptHistory";
 import { useTranscribeRun } from "@/lib/transcribeRun";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import type { Backend, BatchResult, Capabilities, TranscribeSettings, TranscriptWord } from "@/lib/types";
@@ -57,7 +57,7 @@ const FORMAT_CARDS: { value: ExportFormat; label: string; use: string }[] = [
 
 
 export function TranscriptExport({
-  open, result, editedResult, effWords, path, mediaPath, overlayKey, initialExport,
+  open, result, editedResult, effWords, path, mediaPath, overlayKey, record: rec, initialExport,
   order, visibleTracks, trackPrefs: prefs, onTrackPrefs: setPrefs, fileRenames, fileColors, speakers, editCount, cueOpts, fill, focus, trBackend, trCaps,
 }: {
   /** The panel shows; closed it renders nothing but keeps its state. */
@@ -70,6 +70,8 @@ export function TranscriptExport({
   path: string;
   mediaPath?: string;
   overlayKey?: string;
+  /** The transcript's record (its local copies + server ids), when it has one. */
+  record?: TranscriptRecord;
   initialExport?: { media: MediaChoice };
   /** Every track ("orig", its machine translations, the site's own tracks) in track
    *  order (D92) — the viewer's, so lanes, chips and files keep one order. */
@@ -143,8 +145,6 @@ export function TranscriptExport({
 
   // ── Media section facts ──────────────────────────────────────────────────
   // The record behind this transcript (its local copies + server ids).
-  const records = useTranscriptHistory((s) => s.records);
-  const rec = overlayKey ? records.find((r) => r.id === overlayKey) : undefined;
   // A link's export stem leads with when and where it was fetched.
   const extractor = useTranscribeRun((s) => s.urlMeta[path]?.extractor);
   const stemLink = { createdAt: rec?.createdAt, extractor };
