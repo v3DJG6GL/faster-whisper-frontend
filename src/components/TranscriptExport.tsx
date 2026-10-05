@@ -678,10 +678,10 @@ export function TranscriptExport({
   })();
   const tracksBox = langs.length > 0 && exportFormat !== "json" && (
     <div className={box}>
-      <div className="flex flex-wrap items-center justify-between gap-2.5">
+      <div className="flex flex-wrap items-start justify-between gap-2.5">
         <span className={boxTitle}>Tracks</span>
         <span
-          className="-my-2 flex"
+          className="flex"
           title={effTracks.length < 2 ? "Pick a second track to set the order"
             : textNames.length > 1 ? "Each language goes to its own file" : "Lines inside each subtitle follow the chips"}
         >
@@ -806,9 +806,9 @@ export function TranscriptExport({
           {media}
 
           <div className={box}>
-            <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-start justify-between gap-2.5">
               <span className={boxTitle}>Subtitle length</span>
-              <span className="-my-2 flex" title={subs ? undefined : "Only SRT and VTT have subtitles to split"}>
+              <span className="flex" title={subs ? undefined : "Only SRT and VTT have subtitles to split"}>
                 <Segmented<SubtitleLength>
                   ariaLabel="Subtitle length"
                   value={length}
