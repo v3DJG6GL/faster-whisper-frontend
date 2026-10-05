@@ -1292,83 +1292,167 @@ export default function Transcribe() {
 
   const configSections = (
     <>
-      {files.length ? (
-        <div
-          className={cn(
-            "mt-5 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-8",
-            // Drops still add files in this state — say so, like the empty dropzone does.
-            dragOver && !busy && "border-accent bg-accent-soft/30",
-          )}
-        >
-          <div className="flex max-w-full flex-wrap items-center justify-center gap-3">
-            {files.map((path) => (
+      {/* Files left, backend/model/language right. A CONTAINER query, not
+          a viewport one: the same tree is the studio's resizable rail, and
+          only the wrapper's own width says whether two columns fit. Narrower,
+          it stacks: files, then the three pickers as a row (or a column). */}
+      <div className="@container mt-5">
+        <div className="grid gap-5 @[40rem]:grid-cols-[minmax(0,1fr)_minmax(15rem,18rem)]">
+          <div className="min-w-0">
+            {files.length ? (
               <div
-                key={path}
-                className="flex items-center gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3"
-              >
-                {isSourceUrl(path) ? (
-                  <Link2 className="size-5 shrink-0 text-accent" />
-                ) : isTextSourcePath(path) ? (
-                  <FileText className="size-5 shrink-0 text-accent" />
-                ) : (
-                  <FileAudio className="size-5 shrink-0 text-accent" />
+                className={cn(
+                  "grid h-full w-full place-items-center content-center rounded-card border border-dashed border-line-strong bg-surface/60 px-6 py-8",
+                  // Drops still add files in this state — say so, like the empty dropzone does.
+                  dragOver && !busy && "border-accent bg-accent-soft/30",
                 )}
-                <span className="max-w-[300px] truncate text-[13px] text-text">
-                  {displayLabel(path, urlMeta[path]?.title)}
-                  {isSourceUrl(path) && (
-                    <span className="ml-2 font-mono text-[11px] text-faint">{urlHost(path)}</span>
-                  )}
-                </span>
+              >
+                <div className="flex max-w-full flex-wrap items-center justify-center gap-3">
+                  {files.map((path) => (
+                    <div
+                      key={path}
+                      className="flex items-center gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3"
+                    >
+                      {isSourceUrl(path) ? (
+                        <Link2 className="size-5 shrink-0 text-accent" />
+                      ) : isTextSourcePath(path) ? (
+                        <FileText className="size-5 shrink-0 text-accent" />
+                      ) : (
+                        <FileAudio className="size-5 shrink-0 text-accent" />
+                      )}
+                      <span className="max-w-[300px] truncate text-[13px] text-text">
+                        {displayLabel(path, urlMeta[path]?.title)}
+                        {isSourceUrl(path) && (
+                          <span className="ml-2 font-mono text-[11px] text-faint">{urlHost(path)}</span>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${displayLabel(path, urlMeta[path]?.title)}`}
+                        disabled={busy}
+                        onClick={() => removeFile(path)}
+                        className="ring-signal grid size-6 place-items-center rounded-lg text-faint transition-colors hover:text-rec disabled:opacity-40"
+                      >
+                        <X className="size-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
                 <button
                   type="button"
-                  aria-label={`Remove ${displayLabel(path, urlMeta[path]?.title)}`}
+                  onClick={choose}
                   disabled={busy}
-                  onClick={() => removeFile(path)}
-                  className="ring-signal grid size-6 place-items-center rounded-lg text-faint transition-colors hover:text-rec disabled:opacity-40"
+                  className="ring-signal mt-4 inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium text-dim hover:text-text disabled:opacity-40"
                 >
-                  <X className="size-4" />
+                  <Plus className="size-3.5" /> Add more files
                 </button>
               </div>
-            ))}
+            ) : (
+              // The dashed box is only the drop target (the window-level drag-drop
+              // listener drives dragOver); just the icon + title open the picker.
+              <div
+                className={cn(
+                  "grid h-full w-full place-items-center content-center rounded-card border border-dashed border-line-strong bg-surface/60 px-6 py-10 text-center transition-colors @[40rem]:py-6",
+                  dragOver && "border-accent bg-accent-soft/30",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={choose}
+                  className="ring-signal group flex cursor-pointer flex-col items-center rounded-xl px-3 py-1.5"
+                >
+                  <span className="grid size-12 place-items-center rounded-2xl bg-surface-2 text-faint transition-colors group-hover:bg-accent-soft group-hover:text-accent group-focus-visible:bg-accent-soft group-focus-visible:text-accent">
+                    <UploadCloud aria-hidden className="size-6" />
+                  </span>
+                  <span className="mt-4 text-[14px] text-text transition-colors group-hover:text-accent group-focus-visible:text-accent">
+                    {dragOver ? "Drop to add" : "Choose or drop files to transcribe"}
+                  </span>
+                </button>
+                <div className="mt-0.5 text-[12.5px] text-dim">Audio, video — or subtitles/text to translate (srt, vtt, lrc, txt, json)</div>
+              </div>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={choose}
-            disabled={busy}
-            className="ring-signal mt-4 inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium text-dim hover:text-text disabled:opacity-40"
-          >
-            <Plus className="size-3.5" /> Add more files
-          </button>
+          <div className="grid content-start gap-4 @[28rem]:grid-cols-3 @[40rem]:grid-cols-1">
+            <div>
+              <label className="mb-2 block text-[12px] font-medium text-dim">Backend</label>
+              <Select
+                ariaLabel="Backend"
+                value={backendId}
+                // A backend change is an input change: abandon any in-flight run + clear stale
+                // results, else the prior backend's transcript/error shows under the new selection.
+                onChange={applyBackendPick}
+                disabled={busy}
+                options={backendOptions(backends)}
+              />
+            </div>
+            <div>
+              {/* Reset lives in the LABEL row (decode-editor treatment: accent dot
+                  = overridden, ↺ right-aligned) — under the field it added height
+                  to this cell only and broke the row's shared baseline. */}
+              <div className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-dim">
+                <label>Model</label>
+                {model !== "" && (
+                  <>
+                    <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        resetForInputChange();
+                        setModel("");
+                        persistOptions({ backendId, model: "" });
+                      }}
+                      title={backend?.model ? `Default · ${backend.model}` : "Default · server model"}
+                      className="ring-signal ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1 text-[11px] font-normal text-faint hover:text-text"
+                    >
+                      <RotateCcw className="size-3" /> use default
+                    </button>
+                  </>
+                )}
+              </div>
+              <ModelPicker
+                ariaLabel="Model"
+                value={model}
+                disabled={busy}
+                onChange={(v) => {
+                  resetForInputChange();
+                  setModel(v);
+                  persistOptions({ backendId, model: v });
+                }}
+                models={advertised}
+                defaultLabel={backend?.model ? `Default · ${backend.model}` : "Default · server model"}
+                hideReset
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-[12px] font-medium text-dim">Language</label>
+              <SpokenLanguagePicker
+                ariaLabel="Language"
+                value={spoken.value}
+                multi={multiOffered}
+                disabled={busy}
+                onChange={(v) => {
+                  resetForInputChange();
+                  const { language: lang, overrides } = spoken.pick(v);
+                  setLanguage(lang);
+                  setRunOverrides(overrides ?? {});
+                  // The seed never targets the known source; keep that true when the
+                  // source changes AFTER seeding (a de→de stage is a no-op run).
+                  const next = pruneTargets(translateTo, lang);
+                  if (next.length !== translateTo.length) setTranslateTo(next);
+                  persistOptions({ backendId, language: lang, translateTo: next });
+                }}
+              />
+            </div>
+          </div>
         </div>
-      ) : (
-        // The dashed box is only the drop target (the window-level drag-drop
-        // listener drives dragOver); just the icon + title open the picker.
-        <div
-          className={cn(
-            "mt-5 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-12 text-center transition-colors",
-            dragOver && "border-accent bg-accent-soft/30",
-          )}
-        >
-          <button
-            type="button"
-            onClick={choose}
-            className="ring-signal group flex cursor-pointer flex-col items-center rounded-xl px-3 py-1.5"
-          >
-            <span className="grid size-12 place-items-center rounded-2xl bg-surface-2 text-faint transition-colors group-hover:bg-accent-soft group-hover:text-accent group-focus-visible:bg-accent-soft group-focus-visible:text-accent">
-              <UploadCloud aria-hidden className="size-6" />
-            </span>
-            <span className="mt-4 text-[14px] text-text transition-colors group-hover:text-accent group-focus-visible:text-accent">
-              {dragOver ? "Drop to add" : "Choose or drop files to transcribe"}
-            </span>
-          </button>
-          <div className="mt-0.5 text-[12.5px] text-dim">Audio, video — or subtitles/text to translate (srt, vtt, lrc, txt, json)</div>
-        </div>
-      )}
+      </div>
 
       {urlAvailable && (
-        <div className="mt-4">
-          {/* One queue, two ways in: the link row sits under the dropzone
-              behind a quiet divider — files and links mix in one run. */}
+        <div className="mt-6">
+          {/* One queue, two ways in: the link row sits under the files +
+              backend block behind a quiet divider — files and links mix in
+              one run. */}
           <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-label text-faint">
             <span aria-hidden className="h-px flex-1 bg-line" />
             or paste a link
@@ -1532,80 +1616,6 @@ export default function Transcribe() {
           )}
         </div>
       )}
-
-      <div className="mt-6 grid grid-cols-3 gap-4">
-        <div>
-          <label className="mb-2 block text-[12px] font-medium text-dim">Backend</label>
-          <Select
-            ariaLabel="Backend"
-            value={backendId}
-            // A backend change is an input change: abandon any in-flight run + clear stale
-            // results, else the prior backend's transcript/error shows under the new selection.
-            onChange={applyBackendPick}
-            disabled={busy}
-            options={backendOptions(backends)}
-          />
-        </div>
-        <div>
-          {/* Reset lives in the LABEL row (decode-editor treatment: accent dot
-              = overridden, ↺ right-aligned) — under the field it added height
-              to this cell only and broke the three-column baseline. */}
-          <div className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-dim">
-            <label>Model</label>
-            {model !== "" && (
-              <>
-                <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => {
-                    resetForInputChange();
-                    setModel("");
-                    persistOptions({ backendId, model: "" });
-                  }}
-                  title={backend?.model ? `Default · ${backend.model}` : "Default · server model"}
-                  className="ring-signal ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1 text-[11px] font-normal text-faint hover:text-text"
-                >
-                  <RotateCcw className="size-3" /> use default
-                </button>
-              </>
-            )}
-          </div>
-          <ModelPicker
-            ariaLabel="Model"
-            value={model}
-            disabled={busy}
-            onChange={(v) => {
-              resetForInputChange();
-              setModel(v);
-              persistOptions({ backendId, model: v });
-            }}
-            models={advertised}
-            defaultLabel={backend?.model ? `Default · ${backend.model}` : "Default · server model"}
-            hideReset
-          />
-        </div>
-        <div>
-          <label className="mb-2 block text-[12px] font-medium text-dim">Language</label>
-          <SpokenLanguagePicker
-            ariaLabel="Language"
-            value={spoken.value}
-            multi={multiOffered}
-            disabled={busy}
-            onChange={(v) => {
-              resetForInputChange();
-              const { language: lang, overrides } = spoken.pick(v);
-              setLanguage(lang);
-              setRunOverrides(overrides ?? {});
-              // The seed never targets the known source; keep that true when the
-              // source changes AFTER seeding (a de→de stage is a no-op run).
-              const next = pruneTargets(translateTo, lang);
-              if (next.length !== translateTo.length) setTranslateTo(next);
-              persistOptions({ backendId, language: lang, translateTo: next });
-            }}
-          />
-        </div>
-      </div>
 
       <div className="mt-6">
         <div className="mb-2.5 font-mono text-[11px] uppercase tracking-label text-faint">processing</div>
