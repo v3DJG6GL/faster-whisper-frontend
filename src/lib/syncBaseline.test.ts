@@ -430,6 +430,43 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(useApp.getState().settings.transcribe?.revealAfterSave).toBe(true);
   });
 
+  it("the export Media defaults and the link-video keep settings travel; bad values are dropped", async () => {
+    const cfg = slice();
+    cfg.settings.transcribe = {
+      ...cfg.settings.transcribe,
+      exportMedia: "video", exportContainer: "mp4", exportSubtitleMode: "both",
+      keepUrlVideoCopies: false, urlVideoMaxHeight: 720,
+    };
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    expect(blob.transcription).toMatchObject({ exportMedia: "video", exportContainer: "mp4", exportSubtitleMode: "both" });
+    expect(blob.fileTranscriptions).toMatchObject({ keepUrlVideoCopies: false, urlVideoMaxHeight: 720 });
+    useApp.setState({ settings: settings() });
+    await applyBlob(
+      {
+        transcription: { exportMedia: "audio", exportContainer: "mkv", exportSubtitleMode: "sidecar" },
+        fileTranscriptions: { keepUrlVideoCopies: false, urlVideoMaxHeight: 1080 },
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    expect(useApp.getState().settings.transcribe).toMatchObject({
+      exportMedia: "audio", exportContainer: "mkv", exportSubtitleMode: "sidecar",
+      keepUrlVideoCopies: false, urlVideoMaxHeight: 1080,
+    });
+    await applyBlob(
+      {
+        transcription: { exportMedia: "gif", exportContainer: "avi", exportSubtitleMode: 3 } as never,
+        fileTranscriptions: { keepUrlVideoCopies: "yes", urlVideoMaxHeight: "tall" } as never,
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    expect(useApp.getState().settings.transcribe).toMatchObject({
+      exportMedia: "audio", exportContainer: "mkv", exportSubtitleMode: "sidecar",
+      keepUrlVideoCopies: false, urlVideoMaxHeight: 1080,
+    });
+    await applyBlob({ fileTranscriptions: { urlVideoMaxHeight: null } }, { ...CATS_ALL, backends: false });
+    expect(useApp.getState().settings.transcribe?.urlVideoMaxHeight).toBeNull();
+  });
+
   it("an explicit restore applies machine-specific settings the sync switches would gate", async () => {
     // Chip position's switch is OFF on a stock install; a backup must still restore it.
     useApp.setState({ settings: settings() });

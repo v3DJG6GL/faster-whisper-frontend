@@ -1013,7 +1013,7 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
   const BOOLS = [
     "diarize", "translate", "separateBgm", "wordTimestamps", "showTimestamps",
     "showSpeakerNames", "colorizeSpeakers", "keepDictationHistory", "keepAudioCopies",
-    "keepUrlAudioCopies", "revealAfterSave",
+    "keepUrlAudioCopies", "keepUrlVideoCopies", "revealAfterSave",
   ];
   for (const k of BOOLS) {
     const b = ownProp(v, k);
@@ -1054,6 +1054,19 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
   if (custom) out.subtitleCustom = custom;
   const timing = ownProp(v, "translationTiming");
   if (timing === "same" || timing === "own") out.translationTiming = timing;
+  // The export panel's Media defaults and the link-video keep height (manifest rows
+  // exportMedia / urlVideoQuality promise these travel).
+  const media = ownProp(v, "exportMedia");
+  if (media === "none" || media === "audio" || media === "video") out.exportMedia = media;
+  const box = ownProp(v, "exportContainer");
+  if (box === "mkv" || box === "mp4") out.exportContainer = box;
+  const subs = ownProp(v, "exportSubtitleMode");
+  if (subs === "embedded" || subs === "sidecar" || subs === "both") out.exportSubtitleMode = subs;
+  const height = ownProp(v, "urlVideoMaxHeight");
+  if (height === null) out.urlVideoMaxHeight = null;
+  else if (typeof height === "number" && Number.isFinite(height)) {
+    out.urlVideoMaxHeight = Math.max(144, Math.min(4320, Math.round(height)));
+  }
   // The sub-toggle-gated picks: free strings, bounded. backendId is only a
   // reference — the Transcribe screen ignores ids that don't resolve.
   for (const k of ["backendId", "model", "language", "translationModel"]) {

@@ -153,6 +153,9 @@ export const TRANSCRIPTION_FIELDS = [
   "subtitleCustom",
   "translationTiming",
   "revealAfterSave",
+  "exportMedia",
+  "exportContainer",
+  "exportSubtitleMode",
   "wordTimestamps",
   "showTimestamps",
   "showSpeakerNames",
@@ -173,6 +176,8 @@ export const FILE_TRANSCRIPTION_FIELDS = [
   "historyRetentionDays",
   "keepAudioCopies",
   "keepUrlAudioCopies",
+  "keepUrlVideoCopies",
+  "urlVideoMaxHeight",
 ] as const satisfies readonly (keyof TranscribeSettings)[];
 
 export type SyncFileTranscriptions = Partial<

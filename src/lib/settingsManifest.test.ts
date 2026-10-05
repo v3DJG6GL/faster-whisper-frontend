@@ -13,6 +13,7 @@ import {
   settingsOfGroup,
   type FieldRef,
 } from "./settingsManifest";
+import { DICTATION_HISTORY_FIELDS, FILE_TRANSCRIPTION_FIELDS, TRANSCRIPTION_FIELDS, TRANSCRIPTION_PICK_FIELDS } from "./syncTypes";
 
 
 describe("manifest integrity", () => {
@@ -90,6 +91,20 @@ describe("manifest integrity", () => {
     for (const key of owned) {
       expect(covered.has(key), `${key} owned but not in a coverage map`).toBe(true);
     }
+  });
+
+  it("every Transcribe setting with a Sync switch is in a list that actually travels", () => {
+    // A manifest row promises its fields sync; for settings.transcribe that only holds when the
+    // key is in one of the field lists compose/apply allowlist (five export / link-video keys
+    // once showed a switch and never moved).
+    const travels = new Set<string>([
+      ...TRANSCRIPTION_FIELDS, ...FILE_TRANSCRIPTION_FIELDS, ...DICTATION_HISTORY_FIELDS, ...TRANSCRIPTION_PICK_FIELDS,
+    ]);
+    const missing = DEFS.filter((d) => !d.localOnly)
+      .flatMap((d) => (d.fields ?? []) as FieldRef[])
+      .filter((f) => f.slice === "transcribe" && !travels.has(f.key))
+      .map((f) => f.key);
+    expect(missing).toEqual([]);
   });
 
   it("the appearance settings form their own Sync group card", () => {
