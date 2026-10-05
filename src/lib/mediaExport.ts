@@ -23,12 +23,16 @@ export function fileStem(path: string): string {
   return (path.split(/[\\/]/).pop() ?? "").replace(/\.[^.]+$/, "");
 }
 
+/** A path's extension, lower-cased, without the dot ("" when it has none). */
+export function extOf(path: string): string {
+  return /\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase() ?? "";
+}
+
 /** Video containers the picker accepts and the packaging route can read. */
 const VIDEO_SOURCE_EXTS = ["mp4", "mkv", "webm", "mov", "m4v"] as const;
 
 export function isVideoSourcePath(path: string): boolean {
-  const m = /\.([A-Za-z0-9]+)$/.exec(path);
-  return !!m && (VIDEO_SOURCE_EXTS as readonly string[]).includes(m[1].toLowerCase());
+  return (VIDEO_SOURCE_EXTS as readonly string[]).includes(extOf(path));
 }
 
 /** Codec facts the panel greys out MP4 on (the server's `streams`). */

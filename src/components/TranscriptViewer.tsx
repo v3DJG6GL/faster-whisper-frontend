@@ -2393,9 +2393,8 @@ export function TranscriptViewer({
 
       <TranscriptExport
         open={mode === "export"}
-        result={result}
         editedResult={editedResult}
-        effWords={effWords}
+        hasWords={effWords.length > 0}
         path={path}
         mediaPath={mediaPath}
         overlayKey={overlayKey}

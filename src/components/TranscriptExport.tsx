@@ -35,14 +35,14 @@ import {
   type TrackPrefs,
 } from "@/lib/exportTracks";
 import {
-  derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, isVideoSourcePath,
+  derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
   legacyTrackIndices, mediaExportPlan, mp4Disabled, sidecarFiles, sidecarNames, type MediaChoice, type MediaContainer,
   type MediaExportPhase, type MediaStreams, type SubtitleMode,
 } from "@/lib/mediaExport";
 import { patchRecord, type TranscriptRecord } from "@/lib/transcriptHistory";
 import { useTranscribeRun } from "@/lib/transcribeRun";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
-import type { Backend, BatchResult, Capabilities, TranscriptWord } from "@/lib/types";
+import type { Backend, BatchResult, Capabilities } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { useResizeObserver } from "@/lib/useResizeObserver";
 
@@ -59,16 +59,15 @@ const FORMAT_CARDS: { value: ExportFormat; label: string; use: string }[] = [
 
 
 export function TranscriptExport({
-  open, result, editedResult, effWords, path, mediaPath, overlayKey, record: rec, initialExport,
+  open, editedResult, hasWords, path, mediaPath, overlayKey, record: rec, initialExport,
   order, visibleTracks, trackPrefs: prefs, onTrackPrefs: setPrefs, fileRenames, fileColors, speakers, editCount, cueOpts, fill, focus, trBackend, trCaps,
 }: {
   /** The panel shows; closed it renders nothing but keeps its state. */
   open: boolean;
-  result: BatchResult;
   /** The result with corrections applied — what Save writes. */
   editedResult: BatchResult;
-  /** Words re-aligned to the corrections. */
-  effWords: TranscriptWord[];
+  /** The transcript has word timings (re-aligned to the corrections). */
+  hasWords: boolean;
   path: string;
   mediaPath?: string;
   overlayKey?: string;
@@ -149,7 +148,7 @@ export function TranscriptExport({
   // The record behind this transcript (its local copies + server ids).
   // A link's export stem leads with when and where it was fetched.
   const extractor = useTranscribeRun((s) => s.urlMeta[path]?.extractor);
-  const stemLink = { createdAt: rec?.createdAt, extractor };
+  const stem = exportStem(rec?.title, path, { createdAt: rec?.createdAt, extractor });
   const trackNames = useMemo(() => prefs.names ?? {}, [prefs.names]);
   const nowSec = Date.now() / 1000;
   // The server's retained VIDEO: a link run's kept video, or the upload a
@@ -163,10 +162,11 @@ export function TranscriptExport({
   // The local VIDEO: the app's copy of a link's video, or the file itself.
   const localVideo = rec?.videoPath ?? (!urlSource && !textSource && isVideoSourcePath(path) ? path : null);
   const packageOn = trCaps?.media_package_enabled === true;
+  const noPackageWhy = trCaps?.media_package?.reason ?? "this server can't package subtitles";
   const urlVideoOnDemand = urlSource && trCaps?.url_video_enabled === true;
   const hasVideoSource = !!(serverVideoId || localVideo || urlVideoOnDemand);
   const showMedia = !textSource && (urlSource || isVideoSourcePath(path));
-  const audioExt = mediaPath ? (/\.([a-z0-9]+)$/i.exec(mediaPath)?.[1]?.toLowerCase() ?? "m4a") : null;
+  const audioExt = mediaPath ? extOf(mediaPath) || "m4a" : null;
   const mp4Why = mediaChoice === "video" ? mp4Disabled(streams, trCaps ?? null) : null;
   // Codec facts for the MP4 verdict, fetched once the panel wants them.
   useEffect(() => {
@@ -228,7 +228,7 @@ export function TranscriptExport({
   const origIncluded = !effTracks.length || effTracks.includes("orig");
   const content = contentStates({
     format: exportFormat, showTs, showNames, colorize, wordTs, hasSpeakers,
-    hasWords: !!effWords.length, origIncluded,
+    hasWords, origIncluded,
   });
   const toggleContent: Record<ContentItem["key"], () => void> = {
     ts: () => setShowTs(!showTs),
@@ -266,11 +266,11 @@ export function TranscriptExport({
    *  Memoized: a video export re-renders the viewer per progress event. Only
    *  while the panel shows it. */
   const exportPreview = useMemo(() => {
-    if (!open || !result.segments?.length || !previewFile) return null;
+    if (!open || !editedResult.segments?.length || !previewFile) return null;
     return previewExport(
       editedResult, { ...exportOptions, format: previewFile.format, tracks: previewFile.tracks }, PREVIEW_CUES,
     );
-  }, [open, result.segments, editedResult, exportOptions, previewFile]);
+  }, [open, editedResult, exportOptions, previewFile]);
 
   /** The files one Save writes (the media file first, then the text files),
    *  from the panel's current choices. */
@@ -280,10 +280,20 @@ export function TranscriptExport({
       choice: mediaChoice, container, subtitleMode, format: exportFormat,
       textFileNames: exportFileNames(opts, editedResult),
       audioExt,
-      tracks: effTracks.length ? effTracks : ["orig"],
+      tracks: videoTracks,
       result: editedResult,
       hasVideoSource,
     });
+  };
+
+  /** A local copy under way: the footer shows "copying…" until it settles. */
+  const copying = async (job: Promise<unknown>) => {
+    setMediaJob({ jobId: "", phase: "copying", done: 0, total: null });
+    try {
+      await job;
+    } finally {
+      setMediaJob(null);
+    }
   };
 
   /** Plain copy of the audio (the app's local copy; a link's is fetched
@@ -300,12 +310,7 @@ export function TranscriptExport({
     }
     if (!src) throw new Error("No audio is stored for this transcription.");
     if (!rec) throw new Error("This transcription has no record to export from.");
-    setMediaJob({ jobId: "", phase: "copying", done: 0, total: null });
-    try {
-      await copyMediaTo({ src, dest, recordId: rec.id, audioBase: audioBasePref(settings.recording) });
-    } finally {
-      setMediaJob(null);
-    }
+    await copying(copyMediaTo({ src, dest, recordId: rec.id, audioBase: audioBasePref(settings.recording) }));
   };
 
   /** The video: a plain copy when no tracks ride inside it and a local copy
@@ -316,12 +321,7 @@ export function TranscriptExport({
     if (!rec) throw new Error("This transcription has no record to export from.");
     const audioBase = audioBasePref(settings.recording);
     if (!embedded.length && localVideo) {
-      setMediaJob({ jobId: "", phase: "copying", done: 0, total: null });
-      try {
-        await copyMediaTo({ src: localVideo, dest, recordId: rec.id, audioBase });
-      } finally {
-        setMediaJob(null);
-      }
+      await copying(copyMediaTo({ src: localVideo, dest, recordId: rec.id, audioBase }));
       return true;
     }
     if (!trBackend) throw new Error("No backend is selected.");
@@ -435,7 +435,6 @@ export function TranscriptExport({
   const doExport = async () => {
     setSaveError(null);
     setMediaError(null);
-    const stem = exportStem(rec?.title, path, stemLink);
     const opts = exportOptions;
     const plan = exportPlanNow();
     // Beside a video the text files are one subtitle file per language; the
@@ -500,11 +499,10 @@ export function TranscriptExport({
   if (!open) return null;
 
   const plan = exportPlanNow();
-  const stem = exportStem(rec?.title, path, stemLink);
   const names = plan.files.map((f) => f.name(stem));
   const textNames = plan.files.filter((f) => f.kind === "text");
   const cpsLimits = new Set(
-    (effTracks.length ? effTracks : ["orig"]).map((t) => trackLimits(editedResult, cueOpts, t)?.cps ?? TRANSCRIBED_CPS),
+    videoTracks.map((t) => trackLimits(editedResult, cueOpts, t)?.cps ?? TRANSCRIBED_CPS),
   );
   const summary = exportSummary({
     format: exportFormat,
@@ -512,7 +510,7 @@ export function TranscriptExport({
     stacked: textNames.length === 1,
     filePerTrack: textNames.length > 1 || !!plan.sidecars,
     cueCount: grid ? grid.cues.length : null,
-    segCount: result.segments?.length ?? 0,
+    segCount: editedResult.segments?.length ?? 0,
     showTs,
     content,
     hasSpeakers,
@@ -598,7 +596,7 @@ export function TranscriptExport({
     const videoWhy = !hasVideoSource
       ? "no video is available for this transcription"
       : !packageOn && subtitleMode !== "sidecar" && !localVideo
-        ? (trCaps?.media_package?.reason ?? "this server can't package subtitles")
+        ? noPackageWhy
         : null;
     const pick = (c: MediaChoice) => { setSwitchNote(null); setMediaChoice(c); persistOptions({ exportMedia: c }); };
     return (
@@ -633,7 +631,7 @@ export function TranscriptExport({
               <span className="w-[72px] shrink-0 font-mono text-[10.5px] uppercase tracking-label text-faint">container</span>
               {(["mkv", "mp4"] as const).map((c) => {
                 const off = subtitleMode === "sidecar" && !!localVideo && !serverVideoId
-                  ? c !== (/\.([a-z0-9]+)$/i.exec(localVideo)?.[1]?.toLowerCase() === "mp4" ? "mp4" : "mkv")
+                  ? c !== (extOf(localVideo) === "mp4" ? "mp4" : "mkv")
                   : c === "mp4" && !!mp4Why;
                 return (
                   <ChipToggle key={c} on={container === c} disabled={off} size="xs" className="font-mono font-medium"
@@ -649,7 +647,7 @@ export function TranscriptExport({
               {([["embedded", "embedded"], ["sidecar", "files"], ["both", "both"]] as const).map(([v, l]) => (
                 <ChipToggle key={v} on={subtitleMode === v} disabled={v !== "sidecar" && !packageOn}
                   size="xs" className="font-mono font-medium"
-                  title={v !== "sidecar" && !packageOn ? (trCaps?.media_package?.reason ?? "this server can't package subtitles") : undefined}
+                  title={v !== "sidecar" && !packageOn ? noPackageWhy : undefined}
                   onClick={() => { setSubtitleMode(v); persistOptions({ exportSubtitleMode: v }); }}>
                   {l}
                 </ChipToggle>
@@ -826,7 +824,7 @@ export function TranscriptExport({
                 ))}
               </div>
             )}
-            {order.some((t) => trackInfo(result, t).source === "mt") && (
+            {order.some((t) => trackInfo(editedResult, t).source === "mt") && (
               <div className="flex flex-col gap-2 border-t border-line pt-3">
                 <span className="text-[12.5px] text-dim">Translation timing</span>
                 <div role="radiogroup" aria-label="Translation timing" className="flex gap-2.5">
