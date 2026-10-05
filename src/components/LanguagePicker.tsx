@@ -173,6 +173,9 @@ export function TargetLanguagePicker({
   renderTrigger?: (p: TriggerProps) => ReactNode;
 }) {
   const { recent, use, flush } = useRecent("recentTranslationTargets");
+  // At the server's cap the "+ language" button rests: remove a chip to pick another.
+  const full = value.length >= max;
+  const fullTitle = `This server translates into at most ${max} languages`;
   return (
     <ListPicker<LangRow>
       label={ariaLabel}
@@ -190,23 +193,27 @@ export function TargetLanguagePicker({
       renderTrigger={
         renderTrigger ??
         ((p) => (
-          <button
-            {...p}
-            aria-label="Add a target language"
-            className={cn(
-              "ring-signal h-7 rounded-pill border border-dashed border-line-strong px-2.5 text-[11.5px] text-dim hover:text-text",
-              p["aria-expanded"] && "border-accent/55 text-text",
-              p.disabled && "cursor-not-allowed opacity-50",
-            )}
-          >
-            + language
-          </button>
+          // The tooltip sits on a wrapper: a disabled button shows none in some webviews.
+          <span title={full ? fullTitle : undefined} className="inline-flex">
+            <button
+              {...p}
+              aria-label={full ? `Add a target language — ${fullTitle}` : "Add a target language"}
+              className={cn(
+                "ring-signal h-7 rounded-pill border border-dashed border-line-strong px-2.5 text-[11.5px] text-dim hover:text-text",
+                p["aria-expanded"] && "border-accent/55 text-text",
+                p.disabled && "cursor-not-allowed opacity-50",
+              )}
+            >
+              + language
+            </button>
+          </span>
         ))
       }
       placeholder="Search languages"
       noun="language"
       keys={MULTI_KEYS}
-      disabled={disabled}
+      // A custom trigger (the site-subtitles "Choose a language…") is not capped here.
+      disabled={disabled || (full && !renderTrigger)}
     />
   );
 }

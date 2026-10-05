@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { targetCap } from "./languages";
 import { maxTranslationTargets, translationLanguages, translationTargetInfo, translationWarm } from "./capabilities";
 import type { Capabilities } from "./types";
 
@@ -94,6 +95,15 @@ describe("translationTargetInfo", () => {
     expect(translationTargetInfo(caps({ translation_models: models }), "custom")).toEqual({ supported: null, modelName: "custom" });
     expect(translationTargetInfo(caps({ translation_models: models }))).toEqual({ supported: ["de", "fr"], modelName: "hy-mt" });
     expect(translationTargetInfo(null, "")).toEqual({ supported: null, modelName: undefined });
+  });
+});
+
+describe("targetCap", () => {
+  it("bounds a seeded cap like the caps one", () => {
+    expect(targetCap(3)).toBe(3);
+    expect(targetCap(99)).toBe(8);
+    expect(targetCap("3")).toBe(8);
+    expect(targetCap(undefined)).toBe(8);
   });
 });
 

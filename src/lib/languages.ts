@@ -21,6 +21,15 @@ export const MULTI_LANGUAGE = "multi";
  *  once per target, so the cost is linear in this number and the cap is a real one. */
 export const TRANSLATION_MAX_TARGETS = 8;
 
+/** A server's target cap as the app takes it: the lower of it and the app's ceiling; anything
+ *  that is not a number ≥ 1 (unknown, an older server) = the ceiling — an absent cap never
+ *  narrows a choice. maxTranslationTargets reads it from caps; the language picker window gets
+ *  it as a bare value in its seed. */
+export function targetCap(limit: unknown): number {
+  if (typeof limit !== "number" || !Number.isFinite(limit) || limit < 1) return TRANSLATION_MAX_TARGETS;
+  return Math.min(TRANSLATION_MAX_TARGETS, Math.floor(limit));
+}
+
 /** Names the runtime gets wrong or spells differently from Whisper's own list (WebKit's ICU
  *  may not know the deprecated `jw`, says "Bangla" for bn, …), plus the pinned "auto". */
 const LABEL_FIX: Record<string, string> = {

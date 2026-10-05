@@ -17,7 +17,7 @@ import { sessionShape } from "./sessionShape";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
 import { configuredRouteTargets } from "./overlay";
 import { rememberRecent } from "./recent";
-import { translationTargetInfo } from "./capabilities";
+import { maxTranslationTargets, translationTargetInfo } from "./capabilities";
 import type { Backend, Profile } from "./types";
 
 export type TriggerAction = "start" | "stop" | "toggle" | "reclassify";
@@ -317,6 +317,8 @@ function targetPickerSeed(profile: Profile, backend: Backend, when: "before" | "
     accentHue: st.settings.accentHue,
     accentMotion: st.settings.accentMotion,
     ...translationTargetInfo(ownProp(st.caps, backend.id), model),
+    // The server's target cap: the picker never lets you choose more than it takes.
+    max: maxTranslationTargets(ownProp(st.caps, backend.id)),
   };
 }
 

@@ -15,7 +15,7 @@ import { effectiveServerKind } from "./serverKind";
 import { effectiveServerUrl } from "./backends";
 import { hasOwn, ownProp } from "./own";
 import { safeDisplayText } from "./sanitize";
-import { TRANSLATION_MAX_TARGETS } from "./languages";
+import { targetCap } from "./languages";
 import type { Backend, Capabilities } from "./types";
 
 /** Floor between two fetches for the same Backend. A queue edit, a profile
@@ -115,9 +115,7 @@ export function translationLanguages(caps: Capabilities | null | undefined, mode
  *  not a number ≥ 1) = the app's ceiling — an absent capability never narrows a choice. The
  *  text route refuses a request over the server's cap, so dictation clamps to this too. */
 export function maxTranslationTargets(caps: Capabilities | null | undefined): number {
-  const limit = caps?.server_info?.limits?.translation_max_targets;
-  if (typeof limit !== "number" || !Number.isFinite(limit) || limit < 1) return TRANSLATION_MAX_TARGETS;
-  return Math.min(TRANSLATION_MAX_TARGETS, Math.floor(limit));
+  return targetCap(caps?.server_info?.limits?.translation_max_targets);
 }
 
 /** A translation model id as the "Supported by …" group names it: its last path part. */

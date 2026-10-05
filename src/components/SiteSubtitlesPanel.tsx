@@ -30,8 +30,11 @@ export function SiteSubtitlesPanel({
   mt,
   supported,
   modelName,
+  maxTargets,
   disabled,
 }: {
+  /** How many languages this server machine-translates into per run (maxTranslationTargets). */
+  maxTargets: number;
   input: SiteSubsInput;
   state: SiteSubsState;
   onChange: (ch: SiteChange) => void;
@@ -49,6 +52,9 @@ export function SiteSubtitlesPanel({
   const hasAuto = input.tracks.some((t) => t.kind === "auto");
   const listed = listedLanguages(input, state);
   const { used, of, existing } = v.counter;
+  // Only machine-translation targets count against the server's cap (the site's own subtitles
+  // and the transcript are free).
+  const mtFull = (v.run?.mtTargets.length ?? 0) >= maxTargets;
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -164,11 +170,15 @@ export function SiteSubtitlesPanel({
                         modelName={modelName}
                         exclude={input.spoken ?? undefined}
                         max={Number.MAX_SAFE_INTEGER}
-                        disabled={disabled}
+                        // A new language is machine-translated: at the server's target cap
+                        // there is no room for one more.
+                        disabled={disabled || mtFull}
                         renderTrigger={(p) => (
-                          <FieldTrigger {...p} open={p["aria-expanded"]} size="sm">
-                            Choose a language…
-                          </FieldTrigger>
+                          <span title={mtFull ? `This server translates into at most ${maxTargets} languages` : undefined} className="block">
+                            <FieldTrigger {...p} open={p["aria-expanded"]} size="sm">
+                              Choose a language…
+                            </FieldTrigger>
+                          </span>
                         )}
                       />
                     </div>

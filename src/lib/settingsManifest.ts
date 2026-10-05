@@ -295,12 +295,12 @@ export const MANIFEST = [
     desc: "Stored on your own server; mirrors the export dialog's “Include API keys”. Needs Server list on.",
     custom: "backendKeys", fields: [] },
   { id: "modelDecodeDefaults", label: "Model & decode defaults", group: "backends", category: "backends",
-    desc: "Model, language, prompt, response format, decode overrides. Needs Server list on.",
+    desc: "Model, language, prompt, response format, decode defaults (incl. output prefix/suffix, language detection), live dictation defaults. Needs Server list on.",
     custom: "backendDefaults", fields: [] },
 
   // ── Profiles ─────────────────────────────────────────────────────────
   { id: "profileList", label: "Profile list & settings", group: "profiles", category: "profiles",
-    desc: "Name, backend, activation, chip tag, decode options.",
+    desc: "Name, backend, activation, chip tag, decode and live dictation overrides.",
     custom: "profileList", fields: [] },
   { id: "profileHotkeys", label: "Profile shortcuts", group: "profiles", category: "profiles",
     desc: "Off = each machine keeps its own chords. Needs Profile list & settings on.",

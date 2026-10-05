@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { displayLabel, isSourceUrl, normalizeMediaUrl, urlHost } from "./urlSource";
+import { displayLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, urlHost } from "./urlSource";
+
+describe("linkTooLong", () => {
+  it("names the server's limit when the link runs longer", () => {
+    expect(linkTooLong({ duration: 18120, url_max_duration_s: 14400 })).toBe("Longer than this server's 4h limit.");
+  });
+  it("is null when it fits or either number is unknown", () => {
+    expect(linkTooLong({ duration: 1092, url_max_duration_s: 14400 })).toBeNull();
+    expect(linkTooLong({ duration: 14400, url_max_duration_s: 14400 })).toBeNull();
+    expect(linkTooLong({ duration: 18120 })).toBeNull();
+    expect(linkTooLong({ duration: null, url_max_duration_s: 14400 })).toBeNull();
+    expect(linkTooLong(null)).toBeNull();
+  });
+});
 
 describe("isSourceUrl", () => {
   it("matches http(s) links, case-insensitively", () => {

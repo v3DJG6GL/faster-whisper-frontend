@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { abortLangPick, commitLangPick, isTauri } from "@/lib/api";
-import { TRANSLATION_MAX_TARGETS, langCode, targetSections, toggleCode, type LangRow } from "@/lib/languages";
+import { langCode, targetCap, targetSections, toggleCode, type LangRow } from "@/lib/languages";
 import { navKey } from "@/lib/listNav";
 import { cleanRecent } from "@/lib/recent";
 import { KeyHint, OptionRows, comboboxInputProps } from "@/components/ListPicker";
@@ -53,6 +53,8 @@ interface Seed {
   tag?: string;
   /** "before" (hands-free, about to start) or "after" (push-to-talk, transcript ready). */
   when?: "before" | "after";
+  /** How many targets this server takes (maxTranslationTargets); absent = the app's ceiling. */
+  max?: number;
   /** The session's translation model's languages; null/absent = unknown (all, untagged). */
   supported?: string[] | null;
   /** That model's short name, for the "Supported by …" group. */
@@ -93,7 +95,7 @@ export default function LangPick() {
           // what would have happened without the picker. Anything else makes the prompt a
           // trap — confirming it by habit would silently change the outcome. (Esc is the
           // other habit, and it aborts loudly rather than changing anything.)
-          setChosen(cleanRecent(s.preset, TRANSLATION_MAX_TARGETS));
+          setChosen(cleanRecent(s.preset, targetCap(s.max)));
           setQuery("");
           setActive(0);
           setShowSeq((n) => n + 1);
@@ -142,7 +144,8 @@ export default function LangPick() {
   // you press can't disagree.
   const rows = useMemo(() => groups.flatMap((g) => g.rows.map((r) => r.value)), [groups]);
 
-  const toggle = useCallback((code: string) => setChosen((cur) => toggleCode(cur, code, TRANSLATION_MAX_TARGETS)), []);
+  const max = targetCap(seed.max);
+  const toggle = useCallback((code: string) => setChosen((cur) => toggleCode(cur, code, max)), [max]);
 
   const onKeyDown = useCallback((e: KeyboardEvent) => {
     const typing = document.activeElement === inputRef.current && query.length > 0;
@@ -282,7 +285,7 @@ export default function LangPick() {
       <div className="flex flex-wrap items-center gap-2 border-t border-line bg-surface px-4 py-2.5 text-[11.5px] text-faint">
         <KeyHint k="1–9">pick</KeyHint>
         {query.length > 0 && <KeyHint k="↵">pick filtered</KeyHint>}
-        {chosen.length >= TRANSLATION_MAX_TARGETS && <span className="text-warn">max {TRANSLATION_MAX_TARGETS}</span>}
+        {chosen.length >= max && <span className="text-warn">max {max}</span>}
         <span className="flex-1" aria-hidden />
         <FooterButton tone="danger" k="esc" onClick={abort}>
           {seed.when === "after" ? "Don’t insert" : "Cancel"}

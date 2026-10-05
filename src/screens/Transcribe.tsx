@@ -11,12 +11,14 @@ import { SpokenLanguageRow, useLinkLanguage } from "@/components/SpokenLanguageR
 import { SiteSubtitlesPanel } from "@/components/SiteSubtitlesPanel";
 import { derive, flip, frozenSiteRun, initialSiteState, setTargets, type SiteChange, type SiteSubsState } from "@/lib/siteSubtitles";
 import { siteDisplayName } from "@/lib/mediaExport";
-import { translationTargetInfo } from "@/lib/capabilities";
+import { maxTranslationTargets, translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields, pruneTargets, translationRunOptions } from "@/components/TranslationFields";
-import { inheritLabel, onOff, serverInherited } from "@/lib/inherit";
+import { inheritLabel, onOff, serverContextSegments, serverInherited } from "@/lib/inherit";
+import { OverrideHeader } from "@/components/OverrideField";
+import { envDesc } from "@/lib/settingDesc";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { TranscriptViewer } from "@/components/TranscriptViewer";
 import { speakerOrder as speakersOf } from "@/lib/transcriptExport";
@@ -30,7 +32,7 @@ import {
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, skippedStages, startRun, useTranscribeRun,
   type RailStage, type RunContext, type StepState, settledPanelItem, runTotals } from "@/lib/transcribeRun";
-import { displayLabel, formatLabel, isSourceUrl, normalizeMediaUrl, pickRung, rungFacts, tierWords, type UrlPreview, type VideoRung, urlHost } from "@/lib/urlSource";
+import { displayLabel, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, pickRung, rungFacts, tierWords, type UrlPreview, type VideoRung, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcriptHistory";
@@ -645,11 +647,16 @@ export default function Transcribe() {
   // Per-run server override-profile pick; "" = inherit the Backend's. Same
   // not-persisted contract as runOverrides.
   const [runOverrideProfile, setRunOverrideProfile] = useState("");
+  // Per-run TRANSLATION_CONTEXT_SEGMENTS; undefined = the backend's, else the server's. Same
+  // not-persisted contract as runOverrides (it is not a synced setting).
+  const [runContextSegments, setRunContextSegments] = useState<number | undefined>(undefined);
   const [showOverrides, setShowOverrides] = useState(false);
   // Transcribe-from-URL: the draft link, its debounced server preview, and a
   // sequence ref so a stale probe can never overwrite a newer draft's state.
   const [urlDraft, setUrlDraft] = useState("");
   const [urlPreviewData, setUrlPreviewData] = useState<UrlPreview | null>(null);
+  // The server refuses a link longer than its URL_MAX_DURATION_S: say so before Add link.
+  const linkTooLongWhy = linkTooLong(urlPreviewData);
   const [urlPreviewErr, setUrlPreviewErr] = useState<string | null>(null);
   const [urlPreviewLoading, setUrlPreviewLoading] = useState(false);
   // The link card's per-item video choice, seeded from Settings on every new
@@ -722,6 +729,7 @@ export default function Transcribe() {
     setSeparationModel("");
     setDiarizationModel("");
     setTranslationModel("");
+    setRunContextSegments(undefined); // its inherited value is the new server's
   };
   // ONE path for every backend change — the dropdown and the auto-resync above share it, so
   // they can't drift: the effect used to skip the run reset, the target prune and the language
@@ -1155,8 +1163,8 @@ export default function Transcribe() {
       mode: translationMode,
       model: translationModel || backend.translationOverrides?.model,
       glossary: backend.translationOverrides?.glossary,
-      // Transcribe has no profile: the backend default (the per-run pick lands with FU5).
-      contextSegments: backend.translationOverrides?.contextSegments,
+      // Transcribe has no profile: the per-run pick, else the backend default (else the server's).
+      contextSegments: runContextSegments ?? backend.translationOverrides?.contextSegments,
     });
     // Always present for a standard server (it carries the wire-shaping `standard` flag
     // even when no stage is on), else only when a stage asked for something.
@@ -1470,7 +1478,7 @@ export default function Transcribe() {
               value={urlDraft}
               onChange={(e) => setUrlDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && normalizeMediaUrl(urlDraft) && !busy && !urlPreviewLoading) addLink();
+                if (e.key === "Enter" && normalizeMediaUrl(urlDraft) && !busy && !urlPreviewLoading && !linkTooLongWhy) addLink();
               }}
               disabled={busy}
               spellCheck={false}
@@ -1481,9 +1489,13 @@ export default function Transcribe() {
             <Button
               variant="accent"
               className="shrink-0 whitespace-nowrap"
-              disabled={!normalizeMediaUrl(urlDraft) || busy || urlPreviewLoading}
+              disabled={!normalizeMediaUrl(urlDraft) || busy || urlPreviewLoading || !!linkTooLongWhy}
               onClick={addLink}
-              title={urlPreviewLoading ? "Waiting for the link preview and its download options" : undefined}
+              title={
+                urlPreviewLoading
+                  ? "Waiting for the link preview and its download options"
+                  : (linkTooLongWhy ?? undefined)
+              }
             >
               {urlPreviewLoading ? (
                 <>
@@ -1514,6 +1526,7 @@ export default function Transcribe() {
               </div>
             </Notice>
           )}
+          {linkTooLongWhy && <div className="mt-2 text-[12px] text-warn">{linkTooLongWhy}</div>}
           {urlPreviewData && (
             <div className="mt-3 flex items-center gap-4 rounded-card border border-line bg-surface px-4 py-3.5">
               {urlPreviewData.thumbnail?.startsWith("data:image/") && (
@@ -1614,6 +1627,7 @@ export default function Transcribe() {
                       detecting={linkLang.check.state === "running"}
                       mt={translationAvailable}
                       {...translationTargetInfo(caps, translationModel || backend?.translationOverrides?.model)}
+                      maxTargets={maxTranslationTargets(caps)}
                       disabled={busy}
                     />
                   </div>
@@ -1914,6 +1928,25 @@ export default function Transcribe() {
                             caps={caps}
                             exclude={language !== "auto" ? language : undefined}
                           >
+                            <OverrideHeader
+                              title="TRANSLATION_CONTEXT_SEGMENTS"
+                              desc={envDesc("TRANSLATION_CONTEXT_SEGMENTS")}
+                              overridden={runContextSegments !== undefined}
+                              last
+                            >
+                              <Stepper
+                                value={runContextSegments}
+                                inherited={backend?.translationOverrides?.contextSegments ?? serverContextSegments(decodeDefaults)}
+                                inheritNote={backend?.translationOverrides?.contextSegments !== undefined ? "backend" : "server"}
+                                onReset={() => setRunContextSegments(undefined)}
+                                onChange={setRunContextSegments}
+                                min={0}
+                                max={10}
+                                unit="segments"
+                                ariaLabel="Context segments"
+                                disabled={busy}
+                              />
+                            </OverrideHeader>
                             <p className="text-[12px] text-faint">
                               Fluent translates whole sentences, then spreads them back over the same
                               subtitles · Faithful translates each subtitle on its own · timing never changes ·
@@ -1940,7 +1973,8 @@ export default function Transcribe() {
                                 ? caps.translate_to_default
                                 : ["en"]
                           ).filter((c) => c !== src);
-                          const next = seed.length ? seed : [src === "en" ? "de" : "en"];
+                          // Within the server's target cap, as the picker is.
+                          const next = (seed.length ? seed : [src === "en" ? "de" : "en"]).slice(0, maxTranslationTargets(caps));
                           setTranslateTo(next);
                           if (translate) {
                             setTranslate(false);

@@ -7,7 +7,7 @@ import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "./OverrideFiel
 import { envDesc } from "../lib/settingDesc";
 import { TRANSLATION_MAX_TARGETS, languageLabel } from "../lib/languages";
 import { cleanCodes } from "../lib/recent";
-import { translationTargetInfo } from "../lib/capabilities";
+import { maxTranslationTargets, translationTargetInfo } from "../lib/capabilities";
 import { TargetLanguagePicker } from "./LanguagePicker";
 import { CompoundChip } from "./CompoundChip";
 import type { ChipPart } from "../lib/siteSubtitles";
@@ -89,7 +89,11 @@ export function TranslationTargetChips({
         max={max}
         disabled={disabled}
       />
-      {shown.length >= max && <span className="text-[11px] text-faint">max {max}</span>}
+      {shown.length > 0 && (
+        <span className={cn("text-[11px] tabular-nums", shown.length >= max ? "text-warn" : "text-faint")}>
+          {shown.length} of {max}
+        </span>
+      )}
     </div>
   );
 }
@@ -147,6 +151,7 @@ export function TranslationOptionsFields({
           value={targets}
           onChange={onTargetsChange}
           {...translationTargetInfo(caps, model || inheritedModel)}
+          max={maxTranslationTargets(caps)}
           exclude={exclude}
           disabled={disabled}
           parts={chipParts}
@@ -334,6 +339,7 @@ export function TranslationDefaultsEditor({
           value={v.translateTo ?? []}
           onChange={(next) => patch({ translateTo: next })}
           {...translationTargetInfo(caps, v.model || inheritedModel)}
+          max={maxTranslationTargets(caps)}
         />
       </OverrideHeader>
       <OverrideHeader

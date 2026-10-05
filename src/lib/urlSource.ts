@@ -8,6 +8,7 @@
 
 import { stripUrlNoise } from "./backends";
 import { safeDisplayText } from "./sanitize";
+import { fmtDuration } from "./format";
 
 /** Is this queue key a media link rather than a filesystem path?
  *
@@ -106,6 +107,15 @@ export interface UrlPreview {
   language?: string | null;
   /** The site's own subtitle tracks (ids only; the server keeps the URLs). */
   subtitle_tracks?: SiteTrackInfo[] | null;
+}
+
+/** Why the server will refuse this link before downloading it — longer than its
+ *  URL_MAX_DURATION_S — or null when it fits (or either number is unknown). */
+export function linkTooLong(p: Pick<UrlPreview, "duration" | "url_max_duration_s"> | null | undefined): string | null {
+  const d = p?.duration;
+  const max = p?.url_max_duration_s;
+  if (typeof d !== "number" || typeof max !== "number" || !(d > 0) || !(max > 0) || d <= max) return null;
+  return `Longer than this server's ${fmtDuration(max)} limit.`;
 }
 
 /** One subtitle track a link offers. `hoh` = hearing-impaired, from its name. */
