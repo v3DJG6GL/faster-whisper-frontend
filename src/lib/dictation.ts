@@ -16,7 +16,7 @@ import { effectiveLanguage } from "./backends";
 import { sessionShape } from "./sessionShape";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
 import { configuredRouteTargets } from "./overlay";
-import { pushRecent } from "./recent";
+import { rememberRecent } from "./recent";
 import { translationTargetInfo } from "./capabilities";
 import type { Backend, Profile } from "./types";
 
@@ -181,7 +181,7 @@ export function dictate(profileId: string, action: TriggerAction): void {
             accentMotion: useApp.getState().settings.accentMotion,
             ...targetLanguages(profile, backend),
           }).then((pick) => {
-            if (pick.kind === "picked") rememberTranslationTargets(pick.targets);
+            if (pick.kind === "picked") rememberRecent("recentTranslationTargets", pick.targets);
             return pick;
           })
       : null,
@@ -248,7 +248,7 @@ async function startWithPickedTargets(
     }
     // "unavailable" (no picker could be shown) → the Profile's own targets, unchanged behaviour.
     const targets = pick.kind === "picked" ? pick.targets : preset;
-    if (pick.kind === "picked") rememberTranslationTargets(pick.targets);
+    if (pick.kind === "picked") rememberRecent("recentTranslationTargets", pick.targets);
     // An explicit "0" (original only) is a decision the chip should acknowledge ("· original")
     // rather than render as a session that merely has no route. The hint is consumed once by
     // startLiveInner, so a Profile that simply configures no targets never picks it up. It has
@@ -327,13 +327,6 @@ function targetLanguages(profile: Profile, backend: Backend): { supported: strin
   const caps = ownProp(useApp.getState().caps, backend.id);
   const model = profile.translationOverrides?.model || backend.translationOverrides?.model;
   return translationTargetInfo(caps, model);
-}
-
-/** Keep the most recent picks for the picker's "Recent" group, newest first. */
-function rememberTranslationTargets(picked: string[]): void {
-  if (picked.length === 0) return;
-  const st = useApp.getState();
-  st.updateSettings({ recentTranslationTargets: pushRecent(st.settings.recentTranslationTargets, picked) });
 }
 
 // Wire the queued-start consumer: streaming.ts owns settleIdle but can't import us

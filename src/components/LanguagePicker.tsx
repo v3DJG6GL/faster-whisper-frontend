@@ -13,7 +13,7 @@ import {
   WHISPER_LANGUAGES, languageLabel, namedLanguage, nativeName, spokenLabel, spokenSections, targetSections,
   toggleCode, type LangRow,
 } from "@/lib/languages";
-import { cleanRecent, pushRecent } from "@/lib/recent";
+import { cleanRecent, rememberRecent } from "@/lib/recent";
 import { safeDisplayText } from "@/lib/sanitize";
 import { useApp } from "@/lib/store";
 
@@ -79,9 +79,7 @@ function useRecent(key: "recentSpokenLanguages" | "recentTranslationTargets") {
       used.current = [code, ...used.current.filter((c) => c !== code)];
     },
     flush: () => {
-      if (!used.current.length) return;
-      const st = useApp.getState();
-      st.updateSettings({ [key]: pushRecent(cleanRecent(st.settings[key]), used.current) });
+      rememberRecent(key, used.current);
       used.current = [];
     },
   };

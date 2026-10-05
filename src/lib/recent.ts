@@ -2,6 +2,8 @@
 // pickers show the first few and update the list only when they close, so rows never move
 // under the pointer.
 
+import { useApp } from "./store";
+
 /** How many recent picks are stored (the pickers show fewer). */
 export const MAX_RECENT_STORED = 12;
 
@@ -21,4 +23,12 @@ export function cleanRecent(v: unknown, max = MAX_RECENT_STORED): string[] {
     if (out.length >= max) break;
   }
   return out;
+}
+
+/** Remember `picked` (newest first) in a settings recent list — the stored list cleaned
+ *  first, since it may come from a synced or hand-edited config. */
+export function rememberRecent(key: "recentSpokenLanguages" | "recentTranslationTargets", picked: readonly string[]): void {
+  if (!picked.length) return;
+  const st = useApp.getState();
+  st.updateSettings({ [key]: pushRecent(cleanRecent(st.settings[key]), picked) });
 }
