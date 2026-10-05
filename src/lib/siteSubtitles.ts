@@ -11,7 +11,7 @@
 // Any badge click flips used ↔ not used and snapshots everything into Custom (v25, v27).
 
 import type { UrlLanguageCheck } from "./api";
-import { MULTI_LANGUAGE, languageLabel } from "./languages";
+import { MULTI_LANGUAGE, languageLabel, primarySubtag } from "./languages";
 import { safeDisplayText } from "./sanitize";
 import type { ImportedText } from "./subtitleImport";
 import type { BatchResult, TimedTrack } from "./types";
@@ -121,11 +121,6 @@ export interface SiteSubsView {
   run: SiteSubsRun | null;
 }
 
-/** The language a track counts for: its primary subtag ("de-CH" → "de", "de-orig" → "de"). */
-export function trackLanguage(lang: string): string {
-  return lang.split("-")[0].toLowerCase();
-}
-
 const uniq = <T,>(xs: T[]) => [...new Set(xs)];
 
 /** The source words every place uses for a subtitle (D88): our transcript, a machine
@@ -165,7 +160,7 @@ function fromMap(input: SiteSubsInput, state: SiteSubsState, tg: Record<string, 
 
 /** Everything one render needs, plus the click machinery (snapshot + key → language). */
 function model(input: SiteSubsInput, st: SiteSubsState) {
-  const tracks = input.tracks.map((t) => ({ ...t, code: trackLanguage(t.lang) }));
+  const tracks = input.tracks.map((t) => ({ ...t, code: primarySubtag(t.lang) }));
   type T = (typeof tracks)[number];
   const avail = tracks.filter((t) => t.kind === "manual" || st.auto);
   const use = (t: T) => st.subs && (t.kind === "manual" || st.auto);
@@ -489,7 +484,7 @@ export function linkSpoken(args: {
 }): LinkSpoken {
   const r = args.check.state === "done" ? args.check.result : undefined;
   const detected = r && r.verdict !== "unknown" && r.language ? r.language : null;
-  const site = args.siteLanguage ? trackLanguage(args.siteLanguage) : null;
+  const site = args.siteLanguage ? primarySubtag(args.siteLanguage) : null;
   const screen = args.screen !== "auto" && args.screen !== MULTI_LANGUAGE ? args.screen : null;
   const base = detected ?? site ?? screen;
   const source = args.edited ? "edited" : detected ? "detected" : site ? "site" : screen ? "screen" : null;

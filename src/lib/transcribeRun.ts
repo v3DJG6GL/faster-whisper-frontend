@@ -26,9 +26,9 @@ import type {
 import type { VideoRung } from "./urlSource";
 import { isVideoSourcePath, siteDisplayName } from "./mediaExport";
 import { forgetRow, persistRow, type LedgerRow } from "./jobsLedger";
-import { applyMultilingual, spokenLanguage } from "./languages";
+import { applyMultilingual, primarySubtag, spokenLanguage } from "./languages";
 import {
-  attachSiteTracks, siteTimedTracks, trackLanguage, type ParsedSiteTrack, type SiteSubsRun,
+  attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
 } from "./siteSubtitles";
 
 export type ItemStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -1566,7 +1566,7 @@ async function runLink(
       warnings.push(`The audio could not be downloaded, so there is no playback: ${String(e).replace(/^Error:\s*/, "")}`);
     }
   }
-  const parsed = { ...got.transcript.parsed, language: trackLanguage(got.transcript.lang) };
+  const parsed = { ...got.transcript.parsed, language: primarySubtag(got.transcript.lang) };
   const res = await translateParsed(parsed, { ...options, translateTo: site.mtTargets }, ctx, pid, epoch);
   let videoPid: string | undefined;
   if (options.keepVideo && epoch === get().epoch) {

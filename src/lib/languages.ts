@@ -46,6 +46,12 @@ function intlName(code: string): string | undefined {
   }
 }
 
+/** The language a code counts for — its primary subtag, lowercased ("de-CH", "de_CH" and
+ *  "de-orig" are German). */
+export function primarySubtag(code: string | null | undefined): string {
+  return (code ?? "").toLowerCase().split(/[-_]/)[0];
+}
+
 /** English name for a language code; an unknown code comes back unchanged. */
 export function languageLabel(code: string): string {
   return LABEL_FIX[code] ?? intlName(code) ?? code;

@@ -3,9 +3,9 @@
 // language's plain one, its title in a video and its file name. Pure; unit-tested.
 
 import { cueTrackLang } from "./cueSplit";
-import { languageLabel as baseLanguageLabel } from "./languages";
+import { languageLabel as baseLanguageLabel, primarySubtag } from "./languages";
 import { safeDisplayText, stripControlChars } from "./sanitize";
-import { MT_WORD, WHISPER_WORD, siteWord, trackLanguage, type SiteBadge } from "./siteSubtitles";
+import { MT_WORD, WHISPER_WORD, siteWord, type SiteBadge } from "./siteSubtitles";
 import type { BatchResult } from "./types";
 
 type TrackResult = Pick<BatchResult, "language" | "timedTracks">;
@@ -80,12 +80,12 @@ export function transcriptTracks(result: Pick<BatchResult, "translation" | "segm
 const SOURCE_RANK: Record<TrackSource, number> = { whisper: 0, site: 1, auto: 2, mt: 3 };
 
 /** The language a track counts for — its primary subtag ("de-CH" and "de" are one language). */
-const langOf = (result: TrackResult, track: string) => trackLanguage(trackInfo(result, track).lang);
+const langOf = (result: TrackResult, track: string) => primarySubtag(trackInfo(result, track).lang);
 
 /** The order nothing was dragged into: the spoken language first, then the other languages in
  *  the order `tracks` brings them; within a language by source (SOURCE_RANK). */
 export function defaultTrackOrder(result: TrackResult, tracks: readonly string[]): string[] {
-  const spoken = trackLanguage(result.language ?? "");
+  const spoken = primarySubtag(result.language ?? "");
   const langs = [...new Set(tracks.map((t) => langOf(result, t)))];
   const rank = (t: string) => {
     const l = langOf(result, t);
@@ -238,7 +238,7 @@ function titleSource(t: TrackInfo): string {
 export function planTracks(
   result: TrackResult, chosen: readonly string[], names: Readonly<Record<string, string>> = {},
 ): PlannedTrack[] {
-  const spoken = trackLanguage(result.language ?? "");
+  const spoken = primarySubtag(result.language ?? "");
   const groups = languageGroups(result, chosen);
   return chosen.map((id) => {
     const info = trackInfo(result, id);

@@ -12,6 +12,7 @@
 // synthesized clocks) are never split — only their lines are wrapped.
 // Pure, no Tauri imports.
 
+import { primarySubtag } from "./languages";
 import { segmentWordRanges } from "./wordAlign";
 import type { BatchResult, TranscriptSegment } from "./types";
 
@@ -69,8 +70,6 @@ export const CUE_RANGES: Record<keyof CueLimits, { min: number; max: number; ste
 
 const CJK_CPL: Record<string, number> = { ja: 13, zh: 16, yue: 16, ko: 16 };
 
-const baseLang = (lang?: string) => (lang ?? "").toLowerCase().split(/[-_]/)[0];
-
 /** Clamp an untrusted (synced / stored) limits object; undefined when unusable. */
 export function sanitizeCueLimits(v: unknown): CueLimits | undefined {
   if (!v || typeof v !== "object") return undefined;
@@ -104,7 +103,7 @@ export function cueOptionsOf(t?: {
  *  and line length (CJK glyphs are wide); Custom applies as set, except the
  *  CJK line length. */
 export function limitsFor(o: CueOptions, lang?: string): CueLimits {
-  const b = baseLang(lang);
+  const b = primarySubtag(lang);
   const base =
     o.length === "custom" ? (o.custom ?? CUE_PRESETS.standard) : { ...CUE_PRESETS[o.length], cps: b === "en" ? 20 : 17 };
   const cjk = CJK_CPL[b];

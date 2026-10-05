@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, languageLabel, matchesLanguage,
+  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, languageLabel, matchesLanguage, primarySubtag,
   nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode,
 } from "./languages";
 
@@ -149,5 +149,13 @@ describe("Multiple languages", () => {
     const locked = spokenField("auto", { multilingual: true }, false, false);
     expect(locked.value).toBe("auto");
     expect(locked.pick("auto")).toEqual({ language: "auto", overrides: { multilingual: true } });
+  });
+});
+
+describe("primarySubtag", () => {
+  it("the language a code counts for: lowercased, before any - or _", () => {
+    expect(["de-CH", "DE_ch", "de-orig", "de", "zh-Hant"].map(primarySubtag)).toEqual(["de", "de", "de", "de", "zh"]);
+    expect(primarySubtag(undefined)).toBe("");
+    expect(primarySubtag(null)).toBe("");
   });
 });
