@@ -1,4 +1,4 @@
-// The pieces of a dictation route (`source → targets`) as RouteBadge (components/ui.tsx)
+// The pieces of a dictation route (`source → targets`) as RouteBadge (components/ui/feedback.tsx)
 // and the Dashboard readout show them: language labels, each part bounded, the list capped.
 
 import { languageLabel } from "./languages";

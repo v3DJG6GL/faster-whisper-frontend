@@ -5,7 +5,7 @@
 // field: ↑↓ / PageUp / PageDown / Home / End move the highlighted row (aria-activedescendant),
 // Enter picks it and closes, Space ticks it in a multi-select list (only while the search is
 // empty — a space can be part of a name), Esc closes back to the trigger, Tab and a click outside
-// just close. ↑↓ on the closed trigger opens it. A short list (`search={false}`, ui.tsx's Select)
+// just close. ↑↓ on the closed trigger opens it. A short list (`search={false}`, ui/form.tsx's Select)
 // has no search field: the listbox itself takes focus and the same keys, Space included.
 //
 // The popover is PORTALED to <body> and fixed-positioned at the trigger (useAnchoredRect, shared
@@ -28,7 +28,7 @@ import { Search } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { comboboxInputProps, navKey, optionId } from "@/lib/listNav";
 import { POPOVER_PANEL } from "@/components/styles";
-import { Kbd } from "@/components/Kbd";
+import { Kbd } from "@/components/ui/Kbd";
 import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
 import { useOutsidePress } from "@/lib/useOutsidePress";
 

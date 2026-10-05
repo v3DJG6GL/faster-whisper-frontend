@@ -10,7 +10,7 @@ import homeSrc from "../../screens/Dashboard.tsx?raw";
 // COMPLETENESS is exactly what a missing entry breaks (a tone with no fill/glow renders
 // as `undefined`, i.e. an invisible dot), so read them out of the source instead.
 import overlaySrc from "../../Overlay.tsx?raw";
-import uiSrc from "../../components/ui.tsx?raw";
+import feedbackSrc from "../../components/ui/feedback.tsx?raw";
 import {
   dictationVisual, isActiveDictation, isGracefulStop, isProcessing, type DictationTone,
 } from "./dictationVisual";
@@ -170,8 +170,8 @@ describe("the chip's tone maps", () => {
   it("the sidebar dot's DOT_BG (typed Record<string, string>) covers every DictationTone", () => {
     // The one map TS cannot check: a tone added to the union would compile and render
     // an unstyled dot in the sidebar.
-    const m = /const DOT_BG: Record<string, string> = \{([^}]*)\}/.exec(uiSrc);
-    if (!m) throw new Error("DOT_BG not found in ui.tsx");
+    const m = /const DOT_BG: Record<string, string> = \{([^}]*)\}/.exec(feedbackSrc);
+    if (!m) throw new Error("DOT_BG not found in components/ui/feedback.tsx");
     const keys = [...m[1].matchAll(/^\s*([a-z]+):/gm)].map((k) => k[1]);
     for (const t of TONES) expect(keys, `DOT_BG lacks ${t}`).toContain(t);
   });

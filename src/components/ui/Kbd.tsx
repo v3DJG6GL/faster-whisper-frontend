@@ -1,5 +1,5 @@
-// The keycap. Its own module so ListPicker can use it without importing ui.tsx, which
-// imports ListPicker (ui.tsx re-exports it for everyone else).
+// The keycap. Its own module so ListPicker can use it without importing the ui barrel,
+// whose form.tsx imports ListPicker (ui/index.ts re-exports it for everyone else).
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
