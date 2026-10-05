@@ -94,7 +94,6 @@ export function TranscriptExport({
   trCaps: Capabilities | null | undefined;
 }) {
   const settings = useApp((s) => s.settings);
-  const persistOptions = patchTranscribe;
   const { showTs, showNames, colorize, wordTs, setShowTs, setShowNames, setColorize, setWordTs } = useDisplayToggles();
   const hasSpeakers = speakers.length > 0;
   const urlSource = isSourceUrl(path);
@@ -130,7 +129,7 @@ export function TranscriptExport({
     if (mediaChoice !== "video" || isSubtitleFormat(exportFormat)) return;
     setSwitchNote(`SRT — switched from ${exportFormat.toUpperCase()}, which can't ride with a video`);
     setExportFormat("srt");
-    persistOptions({ exportFormat: "srt" });
+    patchTranscribe({ exportFormat: "srt" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediaChoice, exportFormat]);
   useEffect(() => {
@@ -275,10 +274,9 @@ export function TranscriptExport({
   /** The files one Save writes (the media file first, then the text files),
    *  from the panel's current choices. */
   const exportPlanNow = () => {
-    const opts = exportOptions;
     return mediaExportPlan({
       choice: mediaChoice, container, subtitleMode, format: exportFormat,
-      textFileNames: exportFileNames(opts, editedResult),
+      textFileNames: exportFileNames(exportOptions, editedResult),
       audioExt,
       tracks: videoTracks,
       result: editedResult,
@@ -361,8 +359,7 @@ export function TranscriptExport({
       setMediaError({ kind: "none", msg: "No video is available for this transcription." });
       return false;
     }
-    const opts = exportOptions;
-    const subtitles = embedded.length ? embeddedSubtitleTracks(editedResult, opts, embedded, trackNames) : [];
+    const subtitles = embedded.length ? embeddedSubtitleTracks(editedResult, exportOptions, embedded, trackNames) : [];
     const { defaultTrack, originalTrack } = legacyTrackIndices(subtitles);
     // The spoken language is known here; the source file's audio tag is
     // whatever the uploader's default was ("en" on a German video).
@@ -435,13 +432,12 @@ export function TranscriptExport({
   const doExport = async () => {
     setSaveError(null);
     setMediaError(null);
-    const opts = exportOptions;
     const plan = exportPlanNow();
     // Beside a video the text files are one subtitle file per language; the
     // plain text export stays the (possibly bilingual) reading file.
     const files = plan.sidecars
-      ? sidecarFiles(editedResult, opts, plan.sidecars.tracks, plan.sidecars.format)
-      : generateExports(editedResult, opts);
+      ? sidecarFiles(editedResult, exportOptions, plan.sidecars.tracks, plan.sidecars.format)
+      : generateExports(editedResult, exportOptions);
     let target: string | null;
     try {
       target = await pickExportPath(
@@ -589,7 +585,7 @@ export function TranscriptExport({
       : !packageOn && subtitleMode !== "sidecar" && !localVideo
         ? noPackageWhy
         : null;
-    const pick = (c: MediaChoice) => { setSwitchNote(null); setMediaChoice(c); persistOptions({ exportMedia: c }); };
+    const pick = (c: MediaChoice) => { setSwitchNote(null); setMediaChoice(c); patchTranscribe({ exportMedia: c }); };
     // `why` = not on offer, and why (the card's tooltip).
     const cards: { value: MediaChoice; label: string; sub: string; why?: string }[] = [
       { value: "none", label: "None", sub: "text file only" },
@@ -619,7 +615,7 @@ export function TranscriptExport({
                 return (
                   <ChipToggle key={c} on={container === c} disabled={off} size="xs" className="font-mono font-medium"
                     title={c === "mp4" && mp4Why ? mp4Why : subtitleMode === "sidecar" && !!localVideo && !serverVideoId ? "a plain copy keeps the original container" : undefined}
-                    onClick={() => { if (!off) { setContainer(c); persistOptions({ exportContainer: c }); } }}>
+                    onClick={() => { if (!off) { setContainer(c); patchTranscribe({ exportContainer: c }); } }}>
                     {c.toUpperCase()}
                   </ChipToggle>
                 );
@@ -631,7 +627,7 @@ export function TranscriptExport({
                 <ChipToggle key={v} on={subtitleMode === v} disabled={v !== "sidecar" && !packageOn}
                   size="xs" className="font-mono font-medium"
                   title={v !== "sidecar" && !packageOn ? noPackageWhy : undefined}
-                  onClick={() => { setSubtitleMode(v); persistOptions({ exportSubtitleMode: v }); }}>
+                  onClick={() => { setSubtitleMode(v); patchTranscribe({ exportSubtitleMode: v }); }}>
                   {l}
                 </ChipToggle>
               ))}
@@ -736,7 +732,7 @@ export function TranscriptExport({
                     onPick={() => {
                       setSwitchNote(null);
                       setExportFormat(f.value);
-                      persistOptions({ exportFormat: f.value });
+                      patchTranscribe({ exportFormat: f.value });
                     }}
                   />
                 );
@@ -766,7 +762,7 @@ export function TranscriptExport({
                 <Segmented<SubtitleLength>
                   ariaLabel="Subtitle length"
                   value={length}
-                  onChange={(v) => persistOptions({ subtitleLength: v })}
+                  onChange={(v) => patchTranscribe({ subtitleLength: v })}
                   disabled={!subs}
                   options={[
                     { value: "transcribed", label: "As transcribed", title: "One subtitle per segment, however long it runs" },
@@ -787,7 +783,7 @@ export function TranscriptExport({
                     value={custom[k]}
                     defaultValue={CUE_PRESETS.standard[k]}
                     {...CUE_RANGES[k]}
-                    onChange={(v) => persistOptions({ subtitleCustom: { ...custom, [k]: v } })}
+                    onChange={(v) => patchTranscribe({ subtitleCustom: { ...custom, [k]: v } })}
                   />
                 ))}
               </div>
@@ -808,7 +804,7 @@ export function TranscriptExport({
                         on={on}
                         off={off}
                         title={off ? "Needs SRT or VTT with split subtitles" : why}
-                        onPick={() => persistOptions({ translationTiming: v })}
+                        onPick={() => patchTranscribe({ translationTiming: v })}
                         className="flex items-center gap-3"
                       >
                         <TimingMini own={v === "own"} />
@@ -868,7 +864,7 @@ export function TranscriptExport({
                 {safeDisplayText(mediaError.msg, 300)}
                 {mediaError.kind === "mp4" && (
                   <button type="button" className="ml-2 underline"
-                    onClick={() => { setContainer("mkv"); persistOptions({ exportContainer: "mkv" }); setMediaError(null); }}>
+                    onClick={() => { setContainer("mkv"); patchTranscribe({ exportContainer: "mkv" }); setMediaError(null); }}>
                     Save as MKV
                   </button>
                 )}

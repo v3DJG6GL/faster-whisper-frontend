@@ -760,7 +760,6 @@ export function TranscriptViewer({
   // early (every other transient timer in the app is cleared the same way).
   const copyTimer = useRef<number | undefined>(undefined);
 
-  const persistOptions = patchTranscribe;
 
   // ── selected-result derivations ──────────────────────────────────────────
   // Site tracks of older records name their site from the link.
@@ -926,7 +925,7 @@ export function TranscriptViewer({
     const all = subtitlesView ? next : [...next, ...visibleTracks.filter((t) => timedIds.includes(t))];
     const picked = trackOrd.filter((t) => all.includes(t));
     setViewTracks(picked);
-    persistOptions({ viewTracks: picked });
+    patchTranscribe({ viewTracks: picked });
   };
 
   // ── re-translate / retro-translate ───────────────────────────────────────
