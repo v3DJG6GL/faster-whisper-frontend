@@ -630,22 +630,10 @@ pub async fn fetch_url_media(
     record_id: String,
     audio_base: Option<String>,
 ) -> Result<Option<String>, String> {
-    if !crate::transcripts::valid_id(&record_id) {
-        return Err("malformed record id".into());
-    }
-    let key = resolve_key(api_key, backend_id);
-    let dir = crate::transcripts::links_media_dir(&app, audio_base)?;
-    transport::batch::download_result_media(
-        &server_url,
-        key.as_deref(),
-        &media_id,
-        &dir,
-        &record_id,
-        crate::transcripts::MAX_MEDIA_BYTES,
-        transport::batch::FILE_TRANSCRIBE_TIMEOUT,
+    fetch_link_media(
+        &app, server_url, backend_id, api_key, media_id, record_id, audio_base, false,
     )
     .await
-    .map_err(|e| e.to_string())
 }
 
 /// Pull the server-retained VIDEO of a link run into `<base>/video/<record_id>.<ext>`.
@@ -660,11 +648,40 @@ pub async fn fetch_url_video(
     record_id: String,
     audio_base: Option<String>,
 ) -> Result<Option<String>, String> {
+    fetch_link_media(
+        &app, server_url, backend_id, api_key, media_id, record_id, audio_base, true,
+    )
+    .await
+}
+
+/// The body `fetch_url_media` and `fetch_url_video` share; `video` picks the
+/// folder and the ceiling.
+#[allow(clippy::too_many_arguments)]
+async fn fetch_link_media(
+    app: &tauri::AppHandle,
+    server_url: String,
+    backend_id: Option<String>,
+    api_key: Option<String>,
+    media_id: String,
+    record_id: String,
+    audio_base: Option<String>,
+    video: bool,
+) -> Result<Option<String>, String> {
     if !crate::transcripts::valid_id(&record_id) {
         return Err("malformed record id".into());
     }
     let key = resolve_key(api_key, backend_id);
-    let dir = crate::transcripts::video_media_dir(&app, audio_base)?;
+    let (dir, timeout) = if video {
+        (
+            crate::transcripts::video_media_dir(app, audio_base)?,
+            transport::batch::FILE_TRANSCRIBE_TIMEOUT * 4,
+        )
+    } else {
+        (
+            crate::transcripts::links_media_dir(app, audio_base)?,
+            transport::batch::FILE_TRANSCRIBE_TIMEOUT,
+        )
+    };
     transport::batch::download_result_media(
         &server_url,
         key.as_deref(),
@@ -672,7 +689,7 @@ pub async fn fetch_url_video(
         &dir,
         &record_id,
         crate::transcripts::MAX_MEDIA_BYTES,
-        transport::batch::FILE_TRANSCRIBE_TIMEOUT * 4,
+        timeout,
     )
     .await
     .map_err(|e| e.to_string())
