@@ -1,7 +1,7 @@
 // P30: the settings-sync engine — composes the synced blob, 3-way merges,
 // applies pulls, and drives the automatic triggers (startup pull, focus pull,
 // debounced push). File export/import reuses the same extract/apply core
-// (lib/exportImport.ts).
+// (lib/sync/settingsFile.ts).
 //
 // Invariants this module owns:
 //  - CATEGORY MAP: the authoritative config-path → category classification
@@ -37,7 +37,7 @@ import { IS_WINDOWS } from "./platform";
 import { hasOwn, ownProp } from "./own";
 import { sanitizeCueLimits } from "./cueSplit";
 import { normalizeAppId, safeDisplayText } from "./sanitize";
-import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./conflicts";
+import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./hotkeyConflicts";
 import { LEGACY_HANDSFREE } from "./types";
 import { TRANSLATION_MAX_TARGETS } from "./languages";
 import { clampDecodeOverrides, DECODE_KEYS, TYPED_TEXT_KEYS } from "./decodeKeys";

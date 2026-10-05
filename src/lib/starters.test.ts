@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conflicts, quickAddPeer } from "./conflicts";
+import { conflicts, quickAddPeer } from "./hotkeyConflicts";
 import { starterProfiles } from "./starters";
 
 // The "Suggested starters" card commits fixed chords; if the user rebound the

@@ -12,7 +12,7 @@ import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "@/components/O
 import type { DecodeOverrides, InheritedValues } from "@/lib/types";
 import { keySpec, sectionKeys, type DecodeKey } from "@/lib/decodeKeys";
 import { LOCKED_REASON, NOT_ON_SERVER_REASON, type ServerInherited } from "@/lib/inherit";
-import { envDesc } from "@/lib/settingDesc";
+import { envDesc } from "@/lib/envDesc";
 import {
   keepInnerBelowOuter,
   LIVE_FALLBACK,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conflicts, findChordConflict, quickAddPeer, QUICK_ADD_PEER_ID } from "./conflicts";
+import { conflicts, findChordConflict, quickAddPeer, QUICK_ADD_PEER_ID } from "./hotkeyConflicts";
 import type { Profile } from "./types";
 
 // These rules gate three surfaces at once — the per-card banner, the capture-time

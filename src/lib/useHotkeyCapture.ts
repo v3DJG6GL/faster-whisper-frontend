@@ -26,7 +26,7 @@ import {
   altGrPhantomActive,
 } from "./keys";
 import { learnLetter } from "./keyboardLayout";
-import { findChordConflict, type BindingKind, type ConflictKind } from "./conflicts";
+import { findChordConflict, type BindingKind, type ConflictKind } from "./hotkeyConflicts";
 import type { Profile } from "./types";
 
 export function useHotkeyCapture(opts: {
@@ -35,7 +35,7 @@ export function useHotkeyCapture(opts: {
   others: Profile[];
   /** What the chord being bound will behave as — decides whether a nesting with
    *  another binding is the designed hold ⊂ hands-free nesting (allowed) or a real
-   *  shadow conflict — quick-add nests with nothing (see conflicts.ts). */
+   *  shadow conflict — quick-add nests with nothing (see hotkeyConflicts.ts). */
   selfKind: BindingKind;
   onCommit: (codes: string[]) => void;
   onCancel: () => void;

@@ -6,7 +6,7 @@ import { setChipHitRegion, chipPointerOver, emitOverlayAction, showMainAtScreen,
 import { cn } from "@/lib/cn";
 import { safeDisplayText, safeIdentityText, stripControlChars } from "@/lib/sanitize";
 import { langCode } from "@/lib/languages";
-import { quickLaunchMeta } from "@/lib/screens";
+import { quickLaunchMeta } from "@/lib/screenRegistry";
 import { newSpeakMemo, stepSpeaking } from "@/lib/speaking";
 import { dictationVisual, isActiveDictation, isProcessing, type DictationTone } from "@/lib/dictationVisual";
 import {

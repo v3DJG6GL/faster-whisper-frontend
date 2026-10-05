@@ -8,7 +8,7 @@
 // full 10k-line buffer — and live OUTSIDE the store (see lib/logs.ts).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { screenEyebrow, screenTitle } from "@/lib/screens";
+import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { ArrowDown, Check, ChevronRight, Copy, Eraser, FolderOpen, ScrollText } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/cn";

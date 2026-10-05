@@ -13,7 +13,7 @@ import { initJobReconcile } from "@/lib/jobsReconcile";
 import { noteRoute, onTrigger, onSystemResumed, onOverlayAction, onAppNavigate } from "@/lib/api";
 import { dictate, runOverlayAction } from "@/lib/dictation";
 import { cancelLive, requestStopIfStarting } from "@/lib/streaming";
-import { SCREEN_PATH } from "@/lib/screens";
+import { SCREEN_PATH } from "@/lib/screenRegistry";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import { initLogStatus, openLogsPrefiltered } from "@/lib/logs";
 import { flushRecordWrites } from "@/lib/transcriptHistory";

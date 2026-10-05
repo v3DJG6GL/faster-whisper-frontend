@@ -1,6 +1,6 @@
 import { useApp, CONFIG_VERSION } from "./store";
 import { isTauri, loadConfig, saveConfig, reregisterShortcutsUnlessCapturing, evdevStatus } from "./api";
-import { conflicts, quickAddPeer } from "./conflicts";
+import { conflicts, quickAddPeer } from "./hotkeyConflicts";
 import { IS_WINDOWS } from "./platform";
 
 /**

@@ -18,7 +18,7 @@ import {
   syncPull, testConnection,
 } from "@/lib/api";
 import { insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
-import { quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/conflicts";
+import { quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/hotkeyConflicts";
 import { ALL_CATEGORIES, applyBlob, categorySelection, migrateBlob } from "@/lib/sync";
 import { starterProfiles } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";

@@ -1,5 +1,5 @@
 import { ownProp } from "@/lib/own";
-import { screenEyebrow, screenTitle } from "@/lib/screens";
+import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, ChevronDown, Link2, AudioLines, Film } from "lucide-react";
@@ -24,7 +24,7 @@ import {
 import { OverrideHeader } from "@/components/OverrideField";
 import { StageGear, StageOptions, useStageOptions } from "@/components/StageOptions";
 import { diarizationSummary, separationSummary, speakersText, stageModelText } from "@/lib/stageSummary";
-import { envDesc } from "@/lib/settingDesc";
+import { envDesc } from "@/lib/envDesc";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { TranscriptViewer } from "@/components/TranscriptViewer";
 import { speakerOrder as speakersOf } from "@/lib/transcriptExport";

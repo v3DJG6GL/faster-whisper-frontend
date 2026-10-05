@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { CONFIG_VERSION } from "./store";
-import { categorySelection } from "./sync";
-import type { SyncCategory } from "./types";
-import type { ImportResult, SyncBlob } from "./syncTypes";
+import { CONFIG_VERSION } from "../store";
+import { categorySelection } from "../sync";
+import type { SyncCategory } from "../types";
+import type { ImportResult, SyncBlob } from "../syncTypes";
 
-vi.mock("./api", async (importOriginal) => {
-  const mod = await importOriginal<typeof import("./api")>();
+vi.mock("../api", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../api")>();
   return {
     ...mod,
     appVersion: async () => "0.0.0-test",
@@ -15,8 +15,8 @@ vi.mock("./api", async (importOriginal) => {
 
 // applyImport delegates to the sync engine; keep the real migrator (its output
 // is part of the contract under test) but spy on both entry points.
-vi.mock("./sync", async (importOriginal) => {
-  const mod = await importOriginal<typeof import("./sync")>();
+vi.mock("../sync", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../sync")>();
   return {
     ...mod,
     applyBlob: vi.fn(async () => {}),
@@ -45,16 +45,16 @@ const emptyResult = (): ImportResult => ({
 // future bump can never leave the envelope behind again.
 describe("buildEnvelope", () => {
   it("stamps the app's CONFIG_VERSION, not a frozen literal", async () => {
-    const { buildEnvelope } = await import("./exportImport");
+    const { buildEnvelope } = await import("./settingsFile");
     const env = await buildEnvelope(false);
     expect(env.configVersion).toBe(CONFIG_VERSION);
     expect(env.formatVersion).toBe(1);
   });
   it("carries the Transcribe screen's last-used server, model and language", async () => {
-    const { useApp } = await import("./store");
+    const { useApp } = await import("../store");
     const s = useApp.getState().settings;
     useApp.setState({ settings: { ...s, transcribe: { ...s.transcribe, backendId: "b1", model: "m", language: "en" } } });
-    const { buildEnvelope } = await import("./exportImport");
+    const { buildEnvelope } = await import("./settingsFile");
     const tr = (await buildEnvelope(false)).categories.transcription as Record<string, unknown>;
     expect(tr.backendId).toBe("b1");
     expect(tr.model).toBe("m");
@@ -68,13 +68,13 @@ describe("buildEnvelope", () => {
 // bypassed (a file import is an explicit act, not a sync round).
 describe("applyImport", () => {
   it("refuses while a dictation session is live, without touching the store", async () => {
-    const { useApp } = await import("./store");
-    const { applyBlob } = await import("./sync");
+    const { useApp } = await import("../store");
+    const { applyBlob } = await import("../sync");
     vi.mocked(applyBlob).mockClear();
     const prev = useApp.getState().status;
     useApp.setState({ status: "listening" });
     try {
-      const { applyImport } = await import("./exportImport");
+      const { applyImport } = await import("./settingsFile");
       await expect(applyImport(allOff(), emptyResult())).rejects.toThrow(/dictating/);
       expect(applyBlob).not.toHaveBeenCalled();
     } finally {
@@ -83,8 +83,8 @@ describe("applyImport", () => {
   });
 
   it("carries the plaintext secrets only when the backends category is selected", async () => {
-    const { applyBlob } = await import("./sync");
-    const { applyImport } = await import("./exportImport");
+    const { applyBlob } = await import("../sync");
+    const { applyImport } = await import("./settingsFile");
     const result: ImportResult = {
       ...emptyResult(),
       categories: { backends: { list: [] } } as unknown as SyncBlob,
@@ -103,8 +103,8 @@ describe("applyImport", () => {
   });
 
   it("migrates a pre-split file: chip fields leave recording, the quick-add chord leaves general", async () => {
-    const { applyBlob, migrateBlob } = await import("./sync");
-    const { applyImport } = await import("./exportImport");
+    const { applyBlob, migrateBlob } = await import("../sync");
+    const { applyImport } = await import("./settingsFile");
     vi.mocked(applyBlob).mockClear();
     const preSplit = {
       recording: { indicatorPosition: "top-right", persistentDock: true },
@@ -129,8 +129,8 @@ describe("applyImport", () => {
   });
 
   it("always applies with the sub-toggle gates bypassed", async () => {
-    const { applyBlob } = await import("./sync");
-    const { applyImport } = await import("./exportImport");
+    const { applyBlob } = await import("../sync");
+    const { applyImport } = await import("./settingsFile");
     vi.mocked(applyBlob).mockClear();
     const sel = { ...allOff(), general: true };
     await applyImport(sel, emptyResult());

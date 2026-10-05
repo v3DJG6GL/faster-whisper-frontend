@@ -19,7 +19,7 @@ import {
   Toggle,
 } from "@/components/ui";
 import { evdevStatus, importSettingsFile, pickImportFile, pickSavePath, syncDelete, type EvdevStatus } from "@/lib/api";
-import { applyImport, exportToFile } from "@/lib/exportImport";
+import { applyImport, exportToFile } from "@/lib/sync/settingsFile";
 import { SyncSettingsList } from "@/components/SyncSettingsList";
 import {
   ALL_CATEGORIES,
@@ -42,7 +42,7 @@ import {
 import { authorityOf, backendOptions, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
 import { ownProp } from "@/lib/own";
 import { relTime } from "@/lib/format";
-import { conflicts as chordConflicts, quickAddPeer } from "@/lib/conflicts";
+import { conflicts as chordConflicts, quickAddPeer } from "@/lib/hotkeyConflicts";
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import type { Backend, SyncCategory } from "@/lib/types";

@@ -3,7 +3,7 @@
 import { Info } from "lucide-react";
 import { IconButton } from "@/components/ui";
 import { OverrideHeader } from "@/components/OverrideField";
-import { envDesc } from "@/lib/settingDesc";
+import { envDesc } from "@/lib/envDesc";
 import { capturesOn, keepRows, limitRows, type InfoRow, type KeepTone } from "@/lib/serverInfo";
 import type { ServerInfo } from "@/lib/types";
 

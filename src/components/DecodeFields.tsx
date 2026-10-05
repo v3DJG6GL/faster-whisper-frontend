@@ -6,7 +6,7 @@ import type { DecodeOverrides, InheritedValues } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
 import { inheritLabel, LOCKED_REASON, NOT_ON_SERVER_REASON, type DecodeKey, type InheritWord, type ServerInherited } from "@/lib/inherit";
 import { DECODE_SECTIONS, keySpec, parseLadderInput, sectionKeys, stepDecimals, type KeySection } from "@/lib/decodeKeys";
-import { envDesc } from "@/lib/settingDesc";
+import { envDesc } from "@/lib/envDesc";
 
 // Decode-param editor shared by the Backend (defaults) and Profile (override) editors and
 // Transcribe. Every field is OPTIONAL: empty = "inherit" (backend default ?? the server's resolved

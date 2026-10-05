@@ -10,7 +10,7 @@
 // render — so editing never remounts an input (cf. DecodeFields focus-loss caveat).
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { screenEyebrow, screenTitle } from "@/lib/screens";
+import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { safeDisplayText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";

@@ -5,7 +5,7 @@ import { Settings as SettingsIcon, Moon, Sun, SunMoon } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
 import { appVersion } from "@/lib/api";
-import { VISIBLE_SCREENS } from "@/lib/screens";
+import { VISIBLE_SCREENS } from "@/lib/screenRegistry";
 import { PRIDE_FLAG_URI } from "@/lib/prideFlag";
 import { dictationVisual } from "@/lib/dictationVisual";
 import { runBadgeFraction, useTranscribeRun } from "@/lib/transcribeRun";

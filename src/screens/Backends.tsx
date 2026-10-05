@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { screenEyebrow, screenTitle } from "@/lib/screens";
+import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { useSearchParams } from "react-router-dom";
 import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
 import { useApp } from "@/lib/store";
@@ -8,7 +8,7 @@ import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "@/components/O
 import { ServerInfoButton, ServerInfoPanel } from "@/components/ServerInfoPanel";
 import { backendChips } from "@/lib/backendChips";
 import { countSet } from "@/lib/decodeKeys";
-import { envDesc } from "@/lib/settingDesc";
+import { envDesc } from "@/lib/envDesc";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { DecodeFields } from "@/components/DecodeFields";
 import { LiveDictationFields } from "@/components/LiveDictationFields";

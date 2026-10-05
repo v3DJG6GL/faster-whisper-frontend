@@ -8,7 +8,7 @@
 // matches, a banner names them (NN/g scoped-search guidance).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { screenEyebrow, screenTitle } from "@/lib/screens";
+import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { useNavigate } from "react-router-dom";
 import { Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, FileText, Film, Link2, Mic, MicOff, Pause, Play, RotateCcw, Search, Trash2, X, History as HistoryIcon } from "lucide-react";
 import {

@@ -4,7 +4,7 @@
 // "Translation defaults" editors, and retro-translate popovers.
 import type { ReactNode } from "react";
 import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "./OverrideField";
-import { envDesc } from "../lib/settingDesc";
+import { envDesc } from "../lib/envDesc";
 import { TRANSLATION_MAX_TARGETS } from "../lib/languages";
 import { chipCodes, pruneTranslationOverrides } from "../lib/translationTargets";
 import { maxTranslationTargets, translationTargetInfo } from "../lib/capabilities";

@@ -2,11 +2,11 @@
 // apply core so a file round-trip and a server sync agree on exactly what
 // travels (same categories, same machine-local exclusions).
 
-import { CONFIG_VERSION, useApp } from "./store";
-import { appVersion, exportSettingsFile, syncDeviceInfo } from "./api";
-import { applyBlob, categorySelection, composeBlob, migrateBlob } from "./sync";
-import type { SyncCategory } from "./types";
-import type { ExportEnvelope, ImportResult, SyncBlob } from "./syncTypes";
+import { CONFIG_VERSION, useApp } from "../store";
+import { appVersion, exportSettingsFile, syncDeviceInfo } from "../api";
+import { applyBlob, categorySelection, composeBlob, migrateBlob } from "../sync";
+import type { SyncCategory } from "../types";
+import type { ExportEnvelope, ImportResult, SyncBlob } from "../syncTypes";
 
 /** Compose the export envelope from the CURRENT store state. All categories
  *  are always included (an export is a backup — the choosing happens on

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { screenEyebrow, screenTitle } from "@/lib/screens";
+import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { AppWindow, Ban, Crosshair, Pencil, Trash2 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { Button, Card, ConfirmLeave, EditorHeader, Labeled, ListScreenHeader, Notice, SectionLabel, Segmented, TextInput, Toggle } from "@/components/ui";

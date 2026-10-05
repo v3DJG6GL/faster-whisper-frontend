@@ -5,7 +5,7 @@ import { useApp } from "@/lib/store";
 import { swap } from "@/lib/arr";
 import { Button, Card, Notice, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
-import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta, screenEyebrow, screenTitle } from "@/lib/screens";
+import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta, screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";

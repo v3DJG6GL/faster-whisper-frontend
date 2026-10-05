@@ -1,5 +1,5 @@
 // What a Profile's dictation session is fixed to at start — for the chord family (a hold chord
-// nested in a hands-free one, see conflicts.ts / chord_engine.rs). Completing the superset over a
+// nested in a hands-free one, see hotkeyConflicts.ts / chord_engine.rs). Completing the superset over a
 // live hold upgrades that session in place (streaming.ts `reclassifyLive`), which can flip the
 // activation, typing mode, insertion overrides and label — but NOT what the session was opened
 // with. Two Profiles whose shapes differ can't share a session: dictation.ts restarts instead.

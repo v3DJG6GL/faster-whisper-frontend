@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { Mic, Radio, Hand, Square, Pencil, LayoutDashboard } from "lucide-react";
-import { screenEyebrow } from "@/lib/screens";
+import { screenEyebrow } from "@/lib/screenRegistry";
 import { cn } from "@/lib/cn";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useNavigate } from "react-router-dom";
