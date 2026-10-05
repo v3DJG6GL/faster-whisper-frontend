@@ -5,6 +5,8 @@ import ReactDOM from "react-dom/client";
 import "@fontsource-variable/hubot-sans";
 import "@fontsource-variable/mona-sans";
 import "@fontsource-variable/geist-mono";
+// The live-dictation preview's "typed into your app" sample (latin 400 only).
+import "@fontsource/special-elite/latin-400.css";
 
 import "./app.css";
 import App from "./App";

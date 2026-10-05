@@ -81,8 +81,7 @@ export const DECODE_KEYS = {
   // ── Language detection (only with an auto-detected language) ──
   language_detection_segments: { kind: "int", env: "LANGUAGE_DETECTION_SEGMENTS", section: "langdetect", min: 1, max: 10, step: 1 },
   language_detection_threshold: { kind: "float", env: "LANGUAGE_DETECTION_THRESHOLD", section: "langdetect", min: 0, max: 1, step: 0.05 },
-  // ── Live dictation (stream handshake only) ──
-  streaming_vad_threshold: { kind: "float", env: "STREAMING_VAD_THRESHOLD", section: "live", live: true, min: 0, max: 1, step: 0.05 },
+  // ── Live dictation (stream handshake only), in the block's row order ──
   streaming_vad_inner_silence_ms: {
     kind: "int", env: "STREAMING_VAD_INNER_SILENCE_MS", section: "live", live: true, min: 0, max: 5000, step: 100, unit: "ms",
   },
@@ -95,6 +94,7 @@ export const DECODE_KEYS = {
   streaming_hard_break_separator: {
     kind: "text", env: "STREAMING_HARD_BREAK_SEPARATOR", section: "live", live: true, maxLen: 8, multiline: true, typed: true,
   },
+  streaming_vad_threshold: { kind: "float", env: "STREAMING_VAD_THRESHOLD", section: "live", live: true, min: 0, max: 1, step: 0.05 },
   // ── Spoken-language picker ("Multiple languages") ──
   multilingual: { kind: "bool", env: "MULTILINGUAL", section: "picker" },
 } as const satisfies Record<DecodeKey, KeySpec>;

@@ -692,6 +692,9 @@ export function RangeField({
   unit = "",
   defaultValue,
   onChange,
+  onReset,
+  hideLabel,
+  inherited,
   disabled,
 }: {
   label: string;
@@ -703,14 +706,26 @@ export function RangeField({
   unit?: string;
   defaultValue: number;
   onChange: (v: number) => void;
+  /** What ↺ does instead of setting `defaultValue` (an override editor: back to inherit). */
+  onReset?: () => void;
+  /** The label is the slider's accessible name only (a setting row already titles it). */
+  hideLabel?: boolean;
+  /** The value shown is inherited, not set here: greyed. */
+  inherited?: boolean;
   disabled?: boolean;
 }) {
   const id = useId();
   return (
-    <div className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_5.5rem_1.75rem] items-center gap-3 text-[12.5px] text-dim">
-      <label htmlFor={id}>{label}</label>
+    <div
+      className={cn(
+        "grid items-center gap-3 text-[12.5px] text-dim",
+        hideLabel ? "grid-cols-[10.5rem_3.5rem_1.75rem]" : "grid-cols-[minmax(0,9rem)_minmax(0,1fr)_5.5rem_1.75rem]",
+      )}
+    >
+      {!hideLabel && <label htmlFor={id}>{label}</label>}
       <input
         id={id}
+        aria-label={hideLabel ? label : undefined}
         type="range"
         min={min}
         max={max}
@@ -720,17 +735,20 @@ export function RangeField({
         onChange={(e) => onChange(Number(e.target.value))}
         className="ring-signal h-2 w-full cursor-pointer appearance-none rounded-pill bg-surface-2 disabled:cursor-not-allowed"
       />
-      <output htmlFor={id} className="text-right font-mono text-[12px] tabular-nums text-text">
+      <output
+        htmlFor={id}
+        className={cn("text-right font-mono text-[12px] tabular-nums", inherited ? "text-faint" : "text-text")}
+      >
         {value}
         {unit}
       </output>
-      {value !== defaultValue ? (
+      {(onReset ? !inherited : value !== defaultValue) ? (
         <button
           type="button"
           title={`Reset to ${defaultValue}${unit}`}
           aria-label={`Reset ${label.toLowerCase()} to ${defaultValue}${unit}`}
           disabled={disabled}
-          onClick={() => onChange(defaultValue)}
+          onClick={() => (onReset ? onReset() : onChange(defaultValue))}
           className="ring-signal grid size-7 place-items-center rounded-lg text-accent hover:bg-surface-2"
         >
           <RotateCcw className="size-3.5" />

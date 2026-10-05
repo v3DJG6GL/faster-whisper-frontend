@@ -12,6 +12,7 @@ import { HotkeyChips } from "@/components/HotkeyChips";
 import { starterProfiles } from "@/lib/starters";
 import { TriggerTile } from "@/components/TriggerTile";
 import { DecodeFields } from "@/components/DecodeFields";
+import { LiveDictationFields } from "@/components/LiveDictationFields";
 import { dictationControls, hasInsertionOverrides, insertionSetCount, FIELD_LABEL } from "@/components/DictationFields";
 import { TranslationDefaultsEditor, targetsLabel, type TranslationInherited } from "@/components/TranslationFields";
 import { inheritLabel, LOCKED_REASON, onOff, serverInherited } from "@/lib/inherit";
@@ -55,6 +56,9 @@ function translationInherited(t: TranslationOverrides | undefined): TranslationI
     includeOriginal: t?.includeOriginal ?? false,
   };
 }
+
+/** Why a batch profile's live-dictation block does nothing. */
+const LIVE_BATCH_REASON = "Live dictation only: this profile uses the Batch endpoint, which sends the audio once after you stop.";
 
 function blankProfile(backendId: string | null): Profile {
   return { id: crypto.randomUUID(), name: "New profile", activation: "hold", enabled: true, hotkey: [], backendId };
@@ -100,6 +104,7 @@ function Editor({
   const [takeovers, setTakeovers] = useState<string[]>([]);
   // Every disclosure starts closed; its header's "· n set" says whether it holds anything.
   const [showDecode, setShowDecode] = useState(false);
+  const [showLive, setShowLive] = useState(false);
   const [showInsertion, setShowInsertion] = useState(false);
   const [showTranslation, setShowTranslation] = useState(false);
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
@@ -448,6 +453,39 @@ function Editor({
             languagePinned={namedLanguage(p.language || backend?.language)}
             serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}
+          />
+        </DisclosureCard>
+      </div>
+
+      <div className="mt-5">
+        <DisclosureCard
+          open={showLive}
+          onToggle={() => setShowLive((v) => !v)}
+          title="Live dictation overrides"
+          summary={
+            !streams ? (
+              <span className="text-faint">· not used with Batch</span>
+            ) : (
+              <SetSummary count={countSet(p.decodeOverrides, "live")} inherit="inherit backend" />
+            )
+          }
+          hint={!streams ? LIVE_BATCH_REASON : "Only for this profile. Empty inherits the bound backend's defaults."}
+        >
+          <LiveDictationFields
+            value={p.decodeOverrides ?? {}}
+            onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
+            inherited={server.values}
+            sources={server.sources}
+            locked={server.locked}
+            known={server.known}
+            disabledReason={
+              !streams
+                ? LIVE_BATCH_REASON
+                : serverKind === "standard" || caps?.can_request_decode_overrides === false
+                  ? "This connection can't send live dictation settings."
+                  : undefined
+            }
+            preview
           />
         </DisclosureCard>
       </div>

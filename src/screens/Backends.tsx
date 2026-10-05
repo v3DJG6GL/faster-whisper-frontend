@@ -9,6 +9,7 @@ import { countSet } from "@/lib/decodeKeys";
 import { envDesc } from "@/lib/settingDesc";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { DecodeFields } from "@/components/DecodeFields";
+import { LiveDictationFields } from "@/components/LiveDictationFields";
 import { TranslationDefaultsEditor, targetsLabel } from "@/components/TranslationFields";
 import { inheritLabel, LOCKED_REASON, serverInherited } from "@/lib/inherit";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
@@ -118,6 +119,7 @@ function Editor({
   const [keyError, setKeyError] = useState<string | null>(null);
   // Every disclosure starts closed; its header's "· n set" says whether it holds anything.
   const [showDecode, setShowDecode] = useState(false);
+  const [showLive, setShowLive] = useState(false);
   const [showTranslation, setShowTranslation] = useState(false);
   const set = (patch: Partial<Backend>) => setB((x) => ({ ...x, ...patch }));
   // The prompt's tri-state view: undefined = inherit, "" = explicit clear, value = set.
@@ -467,6 +469,30 @@ function Editor({
             languagePinned={namedLanguage(b.language)}
             serverKind={kind}
             canCustomize={caps?.can_request_decode_overrides}
+          />
+        </DisclosureCard>
+      </div>
+
+      <div className="mt-5">
+        <DisclosureCard
+          open={showLive}
+          onToggle={() => setShowLive((v) => !v)}
+          title="Live dictation defaults"
+          summary={<SetSummary count={countSet(b.decodeOverrides, "live")} inherit="inherit server" />}
+          hint="Defaults for every streaming profile on this backend (a profile can still override per field). Empty = the server's config."
+        >
+          <LiveDictationFields
+            value={b.decodeOverrides ?? {}}
+            onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
+            inherited={server.values}
+            sources={server.sources}
+            locked={server.locked}
+            known={server.known}
+            disabledReason={
+              kind === "standard" || caps?.can_request_decode_overrides === false
+                ? "This connection can't send live dictation settings."
+                : undefined
+            }
           />
         </DisclosureCard>
       </div>
