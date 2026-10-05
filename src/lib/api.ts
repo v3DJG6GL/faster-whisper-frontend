@@ -514,8 +514,8 @@ export interface UrlLanguageCheck {
   verdict: "detected" | "mixed" | "unknown";
   also: string[];
   pieces: { at: number; language: string | null; probability: number }[];
-  media_id: string | null;
-  media_expires_at: number | null;
+  mediaId: string | null;
+  mediaExpiresAt: number | null;
 }
 
 /** Which language does this link speak? Slow (the server downloads the audio

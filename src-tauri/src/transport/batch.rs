@@ -318,6 +318,9 @@ mod wire_field_tests {
         assert_eq!(c.pieces[1].language, None);
         assert_eq!(c.media_id, None);
         assert_eq!(c.media_expires_at, Some(1_700_000_000));
+        // Re-emitted to the webview as camelCase.
+        let out = serde_json::to_string(&c).expect("serializes");
+        assert!(out.contains("\"mediaExpiresAt\":1700000000"), "{out}");
     }
 
     /// The stored result of a lost run goes through the same door as the
@@ -1558,6 +1561,7 @@ fn bound_subtitles(parsed: UrlSubtitles) -> UrlSubtitles {
 
 /// One sampled piece of the language check: where it starts and what Whisper heard.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LanguagePiece {
     pub at: f64,
     #[serde(default)]
@@ -1567,8 +1571,10 @@ pub struct LanguagePiece {
 }
 
 /// What `POST /v1/audio/url-language` answers. The check downloads the audio,
-/// which the run then reuses through `prefetched_media_id`.
+/// which the run then reuses through `prefetched_media_id`. Snake_case on the
+/// wire, camelCase to the webview (like `UrlMediaDownload`).
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UrlLanguageCheck {
     #[serde(default)]
     pub language: Option<String>,
@@ -1582,9 +1588,9 @@ pub struct UrlLanguageCheck {
     pub also: Vec<String>,
     #[serde(default)]
     pub pieces: Vec<LanguagePiece>,
-    #[serde(default)]
+    #[serde(default, alias = "media_id")]
     pub media_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "media_expires_at")]
     pub media_expires_at: Option<i64>,
 }
 

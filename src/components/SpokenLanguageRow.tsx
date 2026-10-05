@@ -95,7 +95,7 @@ export function useLinkLanguage(args: {
     pick: (v) => setEdited(v),
     reset: () => setEdited(null),
     recheck: start,
-    prefetchMediaId: check.state === "done" ? check.result?.media_id ?? null : null,
+    prefetchMediaId: check.state === "done" ? check.result?.mediaId ?? null : null,
   };
 }
 

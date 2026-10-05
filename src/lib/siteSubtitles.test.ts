@@ -213,7 +213,7 @@ describe("the link's spoken language", () => {
   const done = (over: object = {}) => ({
     state: "done" as const,
     result: {
-      language: "de", probability: 0.99, verdict: "detected" as const, also: [], media_id: null, media_expires_at: null,
+      language: "de", probability: 0.99, verdict: "detected" as const, also: [], mediaId: null, mediaExpiresAt: null,
       pieces: [{ at: 289, language: "de", probability: 0.98 }, { at: 963, language: "de", probability: 1 }, { at: 1638, language: "de", probability: 1 }],
       ...over,
     },
