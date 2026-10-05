@@ -1,7 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <!-- The unified app mark: five-bar level meter on the warm-dark Signal tile.
-       Same artwork as the Sidebar BrandMark (src/components/Sidebar.tsx) — keep the
-       two in sync. Regenerate the set with: pnpm tauri icon src-tauri/icons/icon.svg
+       src-tauri/icons/icon.svg is the source of truth. Byte-identical copies live in
+       public/icon.svg (the favicon index.html loads — `pnpm tauri icon` does NOT
+       regenerate it) and docs/brand/icon.svg; CI fails if the three differ. The same
+       artwork is drawn in code as the Sidebar BrandMark (src/components/Sidebar.tsx).
+       Change all four together. Regenerate the app icon set with:
+       pnpm tauri icon src-tauri/icons/icon.svg
        (then delete the unused icons/android + icons/ios output). -->
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
