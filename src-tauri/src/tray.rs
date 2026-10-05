@@ -326,8 +326,10 @@ mod sni {
 
     /// Tauri images are RGBA; the SNI pixmap is ARGB32 in network byte order (A, R, G, B).
     pub(super) fn rgba_to_argb(rgba: &[u8]) -> Vec<u8> {
-        rgba.chunks_exact(4)
-            .flat_map(|p| [p[3], p[0], p[1], p[2]])
+        let (pixels, _partial) = rgba.as_chunks::<4>();
+        pixels
+            .iter()
+            .flat_map(|&[r, g, b, a]| [a, r, g, b])
             .collect()
     }
 }
