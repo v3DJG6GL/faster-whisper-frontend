@@ -34,7 +34,7 @@
       "groupName": "github-actions"
     },
     {
-      "description": "Cargo.toml declares loose requirements on purpose (`tauri = \"2\"`, `cpal = \"0.18\"`). The global `bump` strategy would rewrite each of those to an exact minor on every release, churning the manifest for no gain. `update-lockfile` instead moves Cargo.lock for in-range updates and only edits Cargo.toml when the new version falls outside the existing requirement. ci.yml runs `cargo check --locked`, so the refreshed lock is exactly what gets verified.",
+      "description": "Cargo.toml declares loose requirements on purpose (`tauri = \"2\"`, `cpal = \"0.18\"`). The global `bump` strategy would rewrite each of those to an exact minor on every release, churning the manifest for no gain. `update-lockfile` instead moves Cargo.lock for in-range updates and only edits Cargo.toml when the new version falls outside the existing requirement. ci.yml builds, lints and tests with `--locked` (`cargo clippy --locked -D warnings`, `cargo test --locked`, `cargo audit` on the lockfile), so the refreshed lock is exactly what gets verified.",
       "matchManagers": ["cargo"],
       "rangeStrategy": "update-lockfile"
     },
@@ -46,7 +46,7 @@
       "automerge": false
     },
     {
-      "description": "Tauri's Rust crates and its JS packages are released in lockstep, and a mismatch between them surfaces as an IPC/type error at runtime rather than a compile error - so they must land in a single PR. This is the one grouping Dependabot structurally cannot express, since its groups never span two ecosystems. Not automerged: ci.yml only runs `cargo check` + `vite build` and never launches the app, so a regression in the tray-icon / global-shortcut / autostart plugins would pass green.",
+      "description": "Tauri's Rust crates and its JS packages are released in lockstep, and a mismatch between them surfaces as an IPC/type error at runtime rather than a compile error - so they must land in a single PR. This is the one grouping Dependabot structurally cannot express, since its groups never span two ecosystems. Not automerged: ci.yml compiles, lints and unit-tests both halves (`pnpm build` + `pnpm test`, cargo clippy + `cargo test`) but never launches the app, so a regression in the tray-icon / global-shortcut / autostart plugins or at the IPC boundary would pass green.",
       "groupName": "tauri",
       "matchPackageNames": [
         "tauri",

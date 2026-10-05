@@ -68,13 +68,17 @@ store under the app's name, not in these folders).
 ```bash
 pnpm install          # JS deps (also installs the OFL fonts + Tauri plugins)
 pnpm build            # type-check + build the web UI
+pnpm lint             # type-check only (app + vite.config.ts)
+pnpm test             # frontend unit tests (vitest)
 pnpm tauri:dev        # run the desktop app (requires the Rust toolchain)
 pnpm tauri:build      # produce installers (.msi + .exe NSIS / .deb / AppImage)
 ```
 
 Requires Node + pnpm, the Rust toolchain, and (on Linux) `libwebkit2gtk-4.1-dev`,
-`libayatana-appindicator3-dev`, `librsvg2-dev`, `libasound2-dev` (ALSA, the audio fallback) and
-`libxkbcommon-dev` (Wayland keystroke injection) — the same set `.forgejo/workflows/ci.yml` installs.
+`libayatana-appindicator3-dev`, `libasound2-dev` (ALSA, the audio fallback) and
+`libxkbcommon-dev` (Wayland keystroke injection) — the set `.forgejo/workflows/ci.yml` installs.
+Building the AppImage additionally needs `librsvg2-dev`, `patchelf` and `xdg-utils`, as
+`.forgejo/workflows/release.yml` installs them.
 On Linux the app records and plays through PipeWire or PulseAudio over their PulseAudio-protocol
 socket (a pure-Rust client, no extra packages) and falls back to raw ALSA when no sound server runs.
 

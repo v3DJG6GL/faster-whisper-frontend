@@ -4,12 +4,17 @@
 #
 #   * Actions unqualified — resolved via DEFAULT_ACTIONS_URL against local
 #     pull mirrors; see ci.yml.
-#   * windows-latest runs on the self-hosted VM runner (host mode). The job
-#     inherits every ci.yml host-mode workaround (manual token checkout,
-#     corepack, no setup-node) and builds with `pnpm tauri build` directly —
-#     tauri-action resolves paths via $GITHUB_WORKSPACE, which the host-mode
-#     runner reports as the container path /github/workspace.
-#   * tauri-action is used in build-only mode (empty tagName): its release
+#   * The two build jobs are set up differently:
+#       - `build` (ubuntu-latest, ephemeral container) uses the stock actions:
+#         actions/checkout (persist-credentials: false), pnpm/action-setup +
+#         setup-node with the pnpm cache, rust-cache, and tauri-action to build.
+#       - `windows` (windows-latest) runs on the self-hosted VM runner (host
+#         mode). It inherits every ci.yml host-mode workaround (manual token
+#         checkout, corepack, no setup-node, no rust-cache) and builds with
+#         `pnpm tauri build` directly — tauri-action resolves paths via
+#         $GITHUB_WORKSPACE, which the host-mode runner reports as the
+#         container path /github/workspace.
+#   * tauri-action (Linux job) is used in build-only mode (empty tagName): its release
 #     path talks the GitHub releases API (octokit upload_url flow), which
 #     Forgejo's API doesn't implement. Release create / asset upload /
 #     publish are plain curl against the Forgejo API instead, using the

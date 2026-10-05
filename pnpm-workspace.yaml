@@ -9,8 +9,8 @@
 # it, and keep the lifecycle script switched off.
 #
 # The setting was `onlyBuiltDependencies` (a list) in pnpm 10 and is `allowBuilds`
-# (a map) in pnpm 11. pnpm 10 ignores the unknown key, so this file is inert until
-# the pnpm 11 bump lands.
+# (a map) since pnpm 11. package.json pins pnpm 12 ("packageManager"), which reads
+# it; pnpm 10 would silently ignore the key.
 allowBuilds:
   esbuild: false
 
