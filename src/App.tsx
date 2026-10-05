@@ -275,8 +275,10 @@ export default function App() {
     );
   }
 
+  // Navigations render synchronously: as a transition, a heavy page (Statistics) would be
+  // starved for seconds by the Dashboard's ~30 Hz dictation level updates interrupting it.
   return (
-    <HashRouter>
+    <HashRouter useTransitions={false}>
       <NavigationBridge />
       <ScrollReset />
       <div className="relative z-10 flex h-screen overflow-hidden">
