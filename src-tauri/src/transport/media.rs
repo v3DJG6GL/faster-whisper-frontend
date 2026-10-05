@@ -5,8 +5,8 @@
 //! (`POST /v1/audio/media/{id}/package`, streamed to disk with a cap).
 
 use super::{
-    base_url, body_capped_to, client, detail_from, friendly_err, json_capped_to, with_auth,
-    MAX_ERROR_BODY, MAX_META_BODY,
+    base_url, body_capped_to, client, detail_from, ensure_ok, error_detail, friendly_err,
+    gate_media_id, json_capped_to, with_auth, MAX_ERROR_BODY, MAX_META_BODY,
 };
 use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
@@ -40,17 +40,21 @@ pub struct SubtitleTrack {
 /// The longest track title the server keeps.
 pub const MAX_LABEL_CHARS: usize = 64;
 
-/// A track title as the server takes it: control characters dropped,
-/// bounded, blank = none.
+/// A track title as the server takes it: control and bidi/format characters
+/// dropped, bounded, blank = none.
 pub fn bound_label(label: Option<&str>) -> Option<String> {
     label
-        .map(|l| {
-            l.chars()
-                .filter(|c| !c.is_control())
-                .take(MAX_LABEL_CHARS)
-                .collect::<String>()
-        })
+        .map(|l| super::clean_text(l, MAX_LABEL_CHARS))
         .filter(|l| !l.trim().is_empty())
+}
+
+/// The longest language code the package route takes — its regex is
+/// `[a-z]{2,3}(-[A-Za-z0-9]{2,8})?`, tighter than [`super::is_lang_code`]'s 16.
+const MAX_PACKAGE_LANG: usize = 12;
+
+/// A subtitle-track / audio language code the package route will accept.
+pub fn is_package_lang(l: &str) -> bool {
+    l.len() <= MAX_PACKAGE_LANG && super::is_lang_code(l)
 }
 
 /// The wire's `subtitles` list: each track with its (bounded) title and
@@ -210,23 +214,15 @@ pub async fn upload_media(
     .send()
     .await
     .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
-    let status = resp.status();
-    if !status.is_success() {
-        let body = body_capped_to(resp, MAX_ERROR_BODY)
-            .await
-            .unwrap_or_else(|reason| reason);
-        return Ok(UploadOutcome::Http {
-            status: status.as_u16(),
-            detail: detail_from(&body),
-        });
+    if !resp.status().is_success() {
+        let (status, detail) = error_detail(resp).await;
+        return Ok(UploadOutcome::Http { status, detail });
     }
     let parsed: UploadAnswer = json_capped_to::<UploadAnswer>(resp, MAX_META_BODY)
         .await
         .map_err(|e| anyhow::anyhow!(e))
         .context("decoding the upload answer")?;
-    if !super::batch::is_progress_id(&parsed.media_id) {
-        bail!("the server answered with a malformed media id");
-    }
+    gate_media_id(&parsed.media_id).context("the server answered with a malformed media id")?;
     Ok(UploadOutcome::Ok {
         media_id: parsed.media_id,
         expires_at: parsed.expires_at,
@@ -239,9 +235,7 @@ pub async fn get_streams(
     api_key: Option<&str>,
     media_id: &str,
 ) -> anyhow::Result<Option<MediaStreams>> {
-    if !super::batch::is_progress_id(media_id) {
-        bail!("malformed media id");
-    }
+    gate_media_id(media_id)?;
     let base = base_url(server_url);
     let resp = with_auth(
         client().get(format!("{base}/v1/audio/media/{media_id}/streams")),
@@ -254,16 +248,10 @@ pub async fn get_streams(
     if resp.status().as_u16() == 404 {
         return Ok(None);
     }
-    let status = resp.status();
-    if !status.is_success() {
-        let body = body_capped_to(resp, MAX_ERROR_BODY)
+    let parsed: MediaStreams =
+        json_capped_to::<MediaStreams>(ensure_ok(resp).await?, MAX_META_BODY)
             .await
-            .unwrap_or_else(|r| r);
-        bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
-    }
-    let parsed: MediaStreams = json_capped_to::<MediaStreams>(resp, MAX_META_BODY)
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+            .map_err(|e| anyhow::anyhow!(e))?;
     Ok(Some(bound_streams(parsed)))
 }
 
@@ -306,9 +294,7 @@ pub async fn package_to_path(
     max_bytes: u64,
     progress: Progress,
 ) -> anyhow::Result<PackageOutcome> {
-    if !super::batch::is_progress_id(media_id) {
-        bail!("malformed media id");
-    }
+    gate_media_id(media_id)?;
     let base = base_url(server_url);
     let body = serde_json::json!({
         "container": container,
@@ -429,7 +415,7 @@ mod tests {
     #[test]
     fn subtitle_tracks_carry_their_flags_and_a_bounded_title() {
         let subs: Vec<SubtitleTrack> = serde_json::from_value(serde_json::json!([
-            {"lang": "de", "label": format!("German\u{7}{}", "x".repeat(80)), "srt": "1",
+            {"lang": "de", "label": format!("German\u{7}\u{202E}{}", "x".repeat(80)), "srt": "1",
              "original": true, "default": true, "hearingImpaired": true},
             {"lang": "en", "label": " ", "srt": "2"},
         ]))
@@ -439,8 +425,10 @@ mod tests {
         assert_eq!(body[0]["default"], true);
         assert_eq!(body[0]["hearing_impaired"], true);
         let label = body[0]["label"].as_str().unwrap();
+        // The bell and the right-to-left override are both dropped, not counted.
         assert!(label.starts_with("Germanx"));
         assert_eq!(label.chars().count(), MAX_LABEL_CHARS);
+        assert!(is_package_lang("pt-BR") && !is_package_lang("zh-Hant-TW-x1"));
         assert_eq!(body[1]["label"], serde_json::Value::Null);
         assert_eq!(body[1]["original"], false);
         assert_eq!(body[1]["default"], false);

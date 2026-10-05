@@ -10,8 +10,8 @@
 //! and are typed on the TS side.
 
 use super::{
-    base_url, body_capped_to, client, detail_from, friendly_err, json_capped_to, with_auth,
-    MAX_ERROR_BODY, MAX_META_BODY,
+    base_url, body_capped_to, client, friendly_err, json_capped_to, with_auth, MAX_ERROR_BODY,
+    MAX_META_BODY,
 };
 use serde::{Deserialize, Serialize};
 
@@ -111,11 +111,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                     }
                 }
             } else {
-                let body = match body_capped_to(resp, MAX_ERROR_BODY).await {
-                    Ok(b) => b,
-                    Err(r) => r,
-                };
-                let detail = detail_from(&body);
+                let (_, detail) = super::error_detail(resp).await;
                 tracing::warn!("[pipeline] rules GET failed: HTTP {code} {detail}");
                 PipelineFetch {
                     ok: false,

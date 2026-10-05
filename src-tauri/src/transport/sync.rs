@@ -170,15 +170,12 @@ pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
                 // Pure error arm: the body goes straight into `detail_from` and nothing
                 // else, so the error-body ceiling is enough — buffering 4 MiB to extract
                 // 200 characters is wasted on the unattended startup/focus-change leg.
-                let body = match body_capped_to(resp, super::MAX_ERROR_BODY).await {
-                    Ok(b) => b,
-                    Err(r) => r,
-                };
+                let (_, detail) = super::error_detail(resp).await;
                 SyncPull {
                     ok: false,
                     status: code,
                     state: None,
-                    error: Some(detail_from(&body)),
+                    error: Some(detail),
                 }
             }
         }
@@ -332,14 +329,11 @@ pub async fn delete(server_url: &str, api_key: Option<&str>) -> SyncDelete {
             } else {
                 // Pure error arm: `detail_from` extracts at most 200 characters, so the
                 // error-body ceiling matches every other non-2xx arm in the transport.
-                let body = match body_capped_to(resp, super::MAX_ERROR_BODY).await {
-                    Ok(b) => b,
-                    Err(r) => r,
-                };
+                let (_, detail) = super::error_detail(resp).await;
                 SyncDelete {
                     ok: false,
                     status: code,
-                    error: Some(detail_from(&body)),
+                    error: Some(detail),
                 }
             }
         }

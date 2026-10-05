@@ -785,11 +785,39 @@ pub fn bounded_server_text(s: &str, n: usize) -> String {
     out
 }
 
+/// A short label (a track title) as it rides a request: control AND invisible-format characters
+/// dropped (not folded — a label is a name, not a sentence), at most `n` characters, no ellipsis.
+/// The bidi strip is [`bounded_server_text`]'s reason: the label ends up as a stream title a
+/// media player renders.
+pub fn clean_text(s: &str, n: usize) -> String {
+    s.chars()
+        .filter(|&c| !c.is_control() && !crate::inject::is_deceptive_format_char(c))
+        .take(n)
+        .collect()
+}
+
 /// Target-language codes are short ISO-ish tags ("de", "pt-BR") — screened before they join
 /// a form field or a JSON body. Shared by the batch form and the T2T text route, which used
 /// to carry two hand-copied versions of this predicate.
 pub(crate) fn is_lang_code(s: &str) -> bool {
     (2..=16).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// Progress ids are client-generated lowercase hex (a UUID without dashes) —
+/// validated before they reach a form field or, critically, a URL path. Job and
+/// media ids are the same shape (server-minted hex) and pass the same gate.
+pub(crate) fn is_progress_id(s: &str) -> bool {
+    (8..=64).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+/// A media id about to be interpolated into a URL path (`/v1/audio/media/{id}/…`).
+pub(crate) fn gate_media_id(id: &str) -> anyhow::Result<()> {
+    if !is_progress_id(id) {
+        anyhow::bail!("malformed media id");
+    }
+    Ok(())
 }
 
 /// Most target languages one request carries. NOTE the two routes apply it differently and
@@ -935,6 +963,43 @@ pub async fn body_capped_to(mut resp: reqwest::Response, limit: usize) -> Result
         }
     }
     String::from_utf8(buf).map_err(|_| "The server sent a response that wasn't valid text.".into())
+}
+
+/// The non-2xx arm every route shares: the status and the server's bounded `detail`, the body
+/// read under [`MAX_ERROR_BODY`] (a failed read's own reason stands in for the body).
+pub async fn error_detail(resp: reqwest::Response) -> (u16, String) {
+    let status = resp.status().as_u16();
+    let body = body_capped_to(resp, MAX_ERROR_BODY)
+        .await
+        .unwrap_or_else(|reason| reason);
+    (status, detail_from(&body))
+}
+
+/// Pass a 2xx response through; anything else becomes `HTTP <status>: <detail>`.
+pub async fn ensure_ok(resp: reqwest::Response) -> anyhow::Result<reqwest::Response> {
+    if resp.status().is_success() {
+        return Ok(resp);
+    }
+    let (status, detail) = error_detail(resp).await;
+    anyhow::bail!("HTTP {status}: {detail}")
+}
+
+/// Send a built request and read its JSON answer under `cap`: a transport failure is the
+/// [`friendly_err`] sentence, a non-2xx [`ensure_ok`]'s, an unreadable body `what` plus the reason.
+pub async fn send_json<T: serde::de::DeserializeOwned>(
+    req: reqwest::RequestBuilder,
+    cap: usize,
+    what: &'static str,
+) -> anyhow::Result<T> {
+    use anyhow::Context as _;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
+    json_capped_to::<T>(ensure_ok(resp).await?, cap)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))
+        .context(what)
 }
 
 /// [`body_capped_to`] plus a JSON parse.

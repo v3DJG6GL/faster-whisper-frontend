@@ -3,8 +3,7 @@
 //! retro-translation from History, and subtitle/text-file sources.
 
 use super::{
-    base_url, bounded_server_text, client, detail_from, friendly_err, json_capped, with_auth,
-    MAX_ERROR_TEXT,
+    base_url, bounded_server_text, client, friendly_err, json_capped, with_auth, MAX_ERROR_TEXT,
 };
 use anyhow::bail;
 use std::collections::BTreeMap;
@@ -223,14 +222,10 @@ pub async fn translate_texts(
         tracing::warn!("[text] translate request failed: {msg}");
         anyhow::anyhow!(msg)
     })?;
-    let status = resp.status();
-    if !status.is_success() {
-        let body = super::body_capped_to(resp, super::MAX_ERROR_BODY)
-            .await
-            .unwrap_or_else(|reason| reason);
-        let detail = detail_from(&body);
-        tracing::warn!("[text] translate failed: HTTP {} {detail}", status.as_u16());
-        bail!("HTTP {}: {}", status.as_u16(), detail);
+    if !resp.status().is_success() {
+        let (status, detail) = super::error_detail(resp).await;
+        tracing::warn!("[text] translate failed: HTTP {status} {detail}");
+        bail!("HTTP {status}: {detail}");
     }
     let parsed: ResponseBody = json_capped::<ResponseBody>(resp)
         .await

@@ -13,11 +13,10 @@
 //! foreign — one answer, no oracle), a 409 (result asked for while running)
 //! and a 403 (feature off) each drive a different client decision.
 
-use super::batch::{
-    bound_progress, is_progress_id, to_batch_result, BatchProgress, BatchResult, VerboseJson,
-};
+use super::batch::{bound_progress, to_batch_result, BatchProgress, BatchResult, VerboseJson};
 use super::{
-    base_url, client, friendly_err, json_capped, json_capped_to, with_auth, MAX_META_BODY,
+    base_url, client, friendly_err, is_progress_id, json_capped, json_capped_to, with_auth,
+    MAX_META_BODY,
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;

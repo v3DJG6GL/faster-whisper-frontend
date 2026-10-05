@@ -851,7 +851,7 @@ pub async fn package_media(
     max_upload_bytes: Option<u64>,
 ) -> Result<transport::media::PackageOutcome, String> {
     use transport::media::{self as media, PackageOutcome, UploadOutcome};
-    if !job_id.is_empty() && !transport::batch::is_progress_id(&job_id) {
+    if !job_id.is_empty() && !transport::is_progress_id(&job_id) {
         return Err("malformed job id".into());
     }
     if !matches!(container.as_str(), "mkv" | "mp4") {
@@ -860,14 +860,11 @@ pub async fn package_media(
     if subtitles.len() > media::MAX_TRACKS {
         return Err(format!("at most {} subtitle tracks", media::MAX_TRACKS));
     }
-    let lang_ok = |l: &str| {
-        (2..=12).contains(&l.len()) && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-    };
     for t in &subtitles {
         if t.srt.len() > media::MAX_SRT_BYTES {
             return Err("a subtitle track is too large".into());
         }
-        if !lang_ok(&t.lang) {
+        if !media::is_package_lang(&t.lang) {
             return Err("a subtitle track has a malformed language code".into());
         }
     }
@@ -881,7 +878,7 @@ pub async fn package_media(
     }
     // An unusable audio language is dropped, not fatal: the mux still works,
     // only the audio stream keeps whatever tag the source carried.
-    let audio_lang = audio_lang.filter(|l| lang_ok(l));
+    let audio_lang = audio_lang.filter(|l| media::is_package_lang(l));
     let audio_label = media::bound_label(audio_label.as_deref());
     let dest = PathBuf::from(&dest_path);
     let Some(parent) = dest.parent().filter(|p| p.is_dir()) else {
@@ -892,9 +889,7 @@ pub async fn package_media(
     }
     let (media_id, path) = match (source_media_id, source_path) {
         (Some(id), None) => {
-            if !transport::batch::is_progress_id(&id) {
-                return Err("malformed media id".into());
-            }
+            transport::gate_media_id(&id).map_err(|e| e.to_string())?;
             (Some(id), None)
         }
         (None, Some(p)) => {

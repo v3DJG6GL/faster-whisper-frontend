@@ -219,12 +219,9 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     caps.translation_models = bound_models(caps.translation_models);
     caps.diarization_models = bound_models(caps.diarization_models);
     caps.separation_models = bound_models(caps.separation_models);
-    caps.translate_to_default = caps.translate_to_default.map(|mut v| {
-        v.truncate(super::MAX_TARGETS);
-        v.iter()
-            .map(|s| super::bounded_server_text(s, 16))
-            .collect()
-    });
+    caps.translate_to_default = caps
+        .translate_to_default
+        .map(|v| bound_codes(v, super::MAX_TARGETS));
     Some(caps)
 }
 
@@ -237,17 +234,18 @@ fn bound_models(list: Option<Vec<ServerModel>>) -> Option<Vec<ServerModel>> {
             .map(|m| ServerModel {
                 id: bounded_name(&m.id),
                 loaded: m.loaded,
-                languages: m.languages.map(bound_codes),
+                languages: m.languages.map(|v| bound_codes(v, MAX_MODELS)),
             })
             .collect()
     })
 }
 
-/// A server list of language codes: at most `MAX_MODELS` entries, 16 chars each.
-fn bound_codes(mut v: Vec<String>) -> Vec<String> {
-    v.truncate(MAX_MODELS);
-    v.iter()
-        .map(|s| super::bounded_server_text(s, 16))
+/// A server list of language codes: a code [`super::is_lang_code`] refuses is dropped (the
+/// batch form's rule — a truncated code is no code at all), at most `max` kept.
+fn bound_codes(v: Vec<String>, max: usize) -> Vec<String> {
+    v.into_iter()
+        .filter(|c| super::is_lang_code(c))
+        .take(max)
         .collect()
 }
 
@@ -681,8 +679,7 @@ mod tests {
         let caps: super::super::Capabilities = serde_json::from_value(raw).unwrap();
         let models = super::bound_models(caps.translation_models).unwrap();
         let langs = models[0].languages.as_ref().unwrap();
-        assert_eq!(langs[0], "de");
-        assert!(langs[1].chars().count() <= 17); // 16 + "…"
+        assert_eq!(langs, &["de"]); // the 40-char "code" is dropped, not truncated
         assert_eq!(models[1].languages, None);
         assert_eq!(models[2].languages.as_ref().unwrap().len(), 500);
         let out = serde_json::to_value(&models).unwrap();

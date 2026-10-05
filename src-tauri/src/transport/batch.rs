@@ -1,8 +1,8 @@
 //! Batch transcription: `POST /v1/audio/transcriptions` (multipart).
 
 use super::{
-    base_url, body_capped_to, client, detail_from, friendly_err, json_capped, json_capped_to,
-    with_auth, MAX_ERROR_BODY, MAX_META_BODY,
+    base_url, client, friendly_err, gate_media_id, is_progress_id, json_capped_to, send_json,
+    with_auth, MAX_BODY, MAX_META_BODY,
 };
 use anyhow::{bail, Context};
 use reqwest::multipart::Part;
@@ -481,14 +481,6 @@ mod wire_field_tests {
         let junk: Vec<String> = vec!["!".to_string()];
         assert_eq!(translate_to_field(Some(&junk)), Some(String::new()));
     }
-}
-
-/// Progress ids are client-generated lowercase hex (a UUID without dashes) —
-/// validated before they reach a form field or, critically, a URL path.
-pub(crate) fn is_progress_id(s: &str) -> bool {
-    (8..=64).contains(&s.len())
-        && s.bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 /// One translation target inside the run plan's translating stage. The server
@@ -1138,24 +1130,7 @@ async fn post(
     // Classify connect/timeout failures the same way discovery/pipeline/streaming do, so the
     // Transcribe screen and batch dictation show "Could not connect…" / "Timed out…" instead of
     // a raw reqwest error chain.
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        let body = match body_capped_to(resp, MAX_ERROR_BODY).await {
-            Ok(b) => b,
-            Err(reason) => reason,
-        };
-        bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
-    }
-
-    let parsed: VerboseJson = json_capped::<VerboseJson>(resp)
-        .await
-        .map_err(|e| anyhow::anyhow!(e))
-        .context("decoding response")?;
+    let parsed: VerboseJson = send_json(req, MAX_BODY, "decoding response").await?;
     Ok(to_batch_result(parsed))
 }
 
@@ -1323,22 +1298,25 @@ const MAX_SUBTITLE_TRACKS: usize = 24;
 
 /// A subtitle track id as the server mints it: `^[A-Za-z0-9_-]{1,32}$`. It rides
 /// back in the url-subtitles body, so it is gated on the way in too.
-pub(crate) fn is_track_id(s: &str) -> bool {
+fn is_track_id(s: &str) -> bool {
     (1..=32).contains(&s.len())
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-fn is_track_kind(kind: &str, ext: &str) -> bool {
-    matches!(kind, "manual" | "auto") && matches!(ext, "vtt" | "srt")
+/// The gate a listed or fetched track passes: a minted id, a language code, a
+/// known kind and a subtitle format.
+fn track_ok(id: &str, lang: &str, kind: &str, ext: &str) -> bool {
+    is_track_id(id)
+        && super::is_lang_code(lang)
+        && matches!(kind, "manual" | "auto")
+        && matches!(ext, "vtt" | "srt")
 }
 
 fn bound_tracks(tracks: Vec<SubtitleTrackInfo>) -> Vec<SubtitleTrackInfo> {
     tracks
         .into_iter()
-        .filter(|t| {
-            is_track_id(&t.id) && super::is_lang_code(&t.lang) && is_track_kind(&t.kind, &t.ext)
-        })
+        .filter(|t| track_ok(&t.id, &t.lang, &t.kind, &t.ext))
         .take(MAX_SUBTITLE_TRACKS)
         .map(|t| SubtitleTrackInfo {
             name: t.name.map(|n| super::bounded_server_text(&n, 64)),
@@ -1444,23 +1422,10 @@ async fn post_url_json<T: serde::de::DeserializeOwned>(
     what: &'static str,
 ) -> anyhow::Result<T> {
     let base = base_url(server_url);
-    let resp = with_auth(client().post(format!("{base}{path}")), api_key)
+    let req = with_auth(client().post(format!("{base}{path}")), api_key)
         .timeout(timeout)
-        .json(body)
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!(friendly_err(&e)))?;
-    let status = resp.status();
-    if !status.is_success() {
-        let body = body_capped_to(resp, MAX_ERROR_BODY)
-            .await
-            .unwrap_or_else(|reason| reason);
-        bail!("HTTP {}: {}", status.as_u16(), detail_from(&body));
-    }
-    json_capped_to::<T>(resp, cap)
-        .await
-        .map_err(|e| anyhow::anyhow!(e))
-        .context(what)
+        .json(body);
+    send_json(req, cap, what).await
 }
 
 pub async fn url_preview(
@@ -1574,10 +1539,7 @@ fn bound_subtitles(parsed: UrlSubtitles) -> UrlSubtitles {
             .tracks
             .into_iter()
             .filter(|t| {
-                is_track_id(&t.id)
-                    && super::is_lang_code(&t.lang)
-                    && is_track_kind(&t.kind, &t.ext)
-                    && t.text.len() <= MAX_SUBTITLE_TEXT
+                track_ok(&t.id, &t.lang, &t.kind, &t.ext) && t.text.len() <= MAX_SUBTITLE_TEXT
             })
             .take(MAX_SUBTITLE_FETCH)
             .collect(),
@@ -1628,6 +1590,8 @@ pub struct UrlLanguageCheck {
 
 /// The check downloads a whole link's audio before it listens.
 const URL_LANGUAGE_TIMEOUT: Duration = Duration::from_secs(240);
+/// Most other languages / sampled pieces one check lists (the server samples three).
+const MAX_HEARD: usize = 8;
 
 /// Ask the server which language a link speaks. Slow (it downloads the
 /// audio); cancel through the shared progress cancel route on `progress_id`.
@@ -1671,12 +1635,12 @@ fn bound_language_check(parsed: UrlLanguageCheck) -> UrlLanguageCheck {
             .also
             .into_iter()
             .filter(|l| super::is_lang_code(l))
-            .take(8)
+            .take(MAX_HEARD)
             .collect(),
         pieces: parsed
             .pieces
             .into_iter()
-            .take(8)
+            .take(MAX_HEARD)
             .map(|p| LanguagePiece {
                 language: lang(p.language),
                 ..p
@@ -1787,9 +1751,7 @@ async fn url_media_download(
         "decoding the media download answer",
     )
     .await?;
-    if !is_progress_id(&parsed.media_id) {
-        bail!("the server answered with a malformed media id");
-    }
+    gate_media_id(&parsed.media_id).context("the server answered with a malformed media id")?;
     Ok(UrlMediaDownload {
         container: parsed.container.map(|s| super::bounded_server_text(&s, 8)),
         ext: parsed.ext.map(|s| super::bounded_server_text(&s, 8)),
@@ -1813,9 +1775,7 @@ pub async fn download_result_media(
     max_bytes: u64,
     timeout: Duration,
 ) -> anyhow::Result<Option<String>> {
-    if !is_progress_id(media_id) {
-        bail!("malformed media id");
-    }
+    gate_media_id(media_id)?;
     let base = base_url(server_url);
     let mut resp = with_auth(
         client().get(format!("{base}/v1/audio/url-media/{media_id}")),
