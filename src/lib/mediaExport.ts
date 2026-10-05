@@ -7,6 +7,7 @@ import { cueTrackLang } from "./cueSplit";
 import { languageLabel as baseLanguageLabel } from "./languages";
 import { generateExports, type ExportOptions } from "./transcriptExport";
 import type { BatchResult, Capabilities } from "./types";
+import { isSourceUrl } from "./urlSource";
 
 export type MediaChoice = "none" | "audio" | "video";
 export type MediaContainer = "mkv" | "mp4";
@@ -212,26 +213,110 @@ export function mediaExportPlan(a: {
   };
 }
 
-/** Where the siblings of a multi-file save go: the picked path names the
- *  FIRST file; strip that exact suffix (e.g. ".de.lrc") from what the user
- *  confirmed so siblings never double-suffix and the first file lands on
- *  the picked path. Extracted from the viewer's and History's exports. */
-/** The save dialog's default file stem: the record's title, cleaned for
- *  every file system, else the source file's own name. A link's basename is
- *  its URL tail ("watch?v=…"), which is why the title leads. */
-export function exportStem(title: string | null | undefined, path: string): string {
-  const clean = (title ?? "")
+/** Cleans a title (or a file name) into one path-safe stem segment: control
+ *  and reserved characters become spaces, whitespace collapses, trailing
+ *  dots/spaces go (Windows strips them), and the result is bounded. Letters
+ *  of any script — é, ü, ñ — are kept. */
+function cleanStemPart(s: string | null | undefined, max = 120): string {
+  return (s ?? "")
     .replace(/[\u0000-\u001f\u007f/\\:*?"<>|]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/[. ]+$/, "")
-    .slice(0, 120)
+    .slice(0, max)
     .replace(/[. ]+$/, "");
-  if (clean) return clean;
-  const base = path.split(/[\\/]/).pop() ?? "";
-  return base.replace(/\.[^.]+$/, "") || "transcript";
 }
 
+/** Two-part public suffixes under which the site's name is the THIRD label
+ *  from the right (bbc.co.uk → bbc). Deliberately tiny — not the PSL. */
+const TWO_PART_SUFFIXES = new Set([
+  "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "ltd.uk", "plc.uk",
+  "com.au", "net.au", "org.au", "co.nz", "org.nz", "co.jp", "or.jp", "ne.jp",
+  "co.kr", "com.br", "com.ar", "com.mx", "com.tr", "com.cn", "com.tw", "com.hk",
+  "co.in", "co.za", "com.sg", "co.il",
+]);
+
+/** Short-link domains whose name is not the site's own. */
+const SITE_ALIASES: Record<string, string> = { youtu: "youtube" };
+
+/** The site a link came from, reduced to its name for a file name: the label
+ *  just left of the public suffix (www.rtve.es → "rtve", m.youtube.com and
+ *  youtu.be → "youtube", play.srf.ch → "srf", bbc.co.uk → "bbc"). An IP
+ *  literal or single-label host falls back to the yt-dlp extractor key
+ *  lowercased ("Youtube" → "youtube"; "Generic" says nothing → none), else "". */
+export function linkSiteName(url: string, extractor?: string | null): string {
+  let host = "";
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    host = "";
+  }
+  const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.startsWith("[") || host.includes(":");
+  const labels = isIp ? [] : host.split(".").filter(Boolean);
+  if (labels.length >= 2) {
+    const lastTwo = labels.slice(-2).join(".");
+    const name = labels.length >= 3 && TWO_PART_SUFFIXES.has(lastTwo)
+      ? labels[labels.length - 3]
+      : labels[labels.length - 2];
+    if (/^[a-z0-9-]{1,40}$/.test(name) && !/^-|-$/.test(name)) return SITE_ALIASES[name] ?? name;
+  }
+  const ex = (extractor ?? "").split(":")[0].toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
+  return ex && ex !== "generic" ? ex : "";
+}
+
+/** "YYYY.MM.DD_HH.MM" in LOCAL time (what the viewer shows as "04 OCT,
+ *  19:34"); "" for a missing or unparsable timestamp. */
+export function stemTimestamp(when: string | number | Date | null | undefined): string {
+  if (when == null || when === "") return "";
+  const d = when instanceof Date ? when : new Date(when);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())}_${p(d.getHours())}.${p(d.getMinutes())}`;
+}
+
+/** What a LINK's export stem carries besides its title: when the transcript
+ *  was made (the record's createdAt) and the yt-dlp extractor key, the
+ *  site-name fallback for hosts that do not name one. */
+export interface LinkStemInfo {
+  createdAt?: string | number | Date | null;
+  extractor?: string | null;
+}
+
+/** The save dialog's default file stem — the ONE builder every export (text
+ *  formats, subtitle sidecars, audio, video) and History's quick export use.
+ *
+ *  A local file: the record's title, cleaned for every file system, else the
+ *  file's own name (unchanged from before links existed).
+ *
+ *  A link (`path` is its URL): `<YYYY.MM.DD>_<HH.MM>_<site>___<title>` — the
+ *  fetch date/time and the site lead so a folder of saved links sorts by
+ *  when and groups by where (2026.10.04_19.34_rtve___El_declive_de_un_régimen).
+ *  Title spaces become underscores; parts that are unknown (no record yet,
+ *  no site name) are left out rather than guessed. A link's URL tail
+ *  ("watch?v=…") is only the title's last resort, cleaned like any title. */
+export function exportStem(title: string | null | undefined, path: string, link?: LinkStemInfo): string {
+  if (!isSourceUrl(path)) {
+    const clean = cleanStemPart(title);
+    if (clean) return clean;
+    const base = path.split(/[\\/]/).pop() ?? "";
+    return base.replace(/\.[^.]+$/, "") || "transcript";
+  }
+  let tail = "";
+  try {
+    const u = new URL(path);
+    tail = (u.pathname.split("/").filter(Boolean).pop() ?? "") + u.search;
+  } catch {
+    tail = "";
+  }
+  const name = (cleanStemPart(title) || cleanStemPart(tail) || "transcript").replace(/ /g, "_");
+  const prefix = [stemTimestamp(link?.createdAt), linkSiteName(path, link?.extractor)].filter(Boolean).join("_");
+  return prefix ? `${prefix}___${name}` : name;
+}
+
+/** Where the siblings of a multi-file save go: the picked path names the
+ *  FIRST file; strip that exact suffix (e.g. ".de.lrc") from what the user
+ *  confirmed so siblings never double-suffix and the first file lands on
+ *  the picked path. Extracted from the viewer's and History's exports. */
 export function derivePickedStem(
   target: string,
   firstSuffix: string,

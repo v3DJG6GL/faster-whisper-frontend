@@ -452,7 +452,11 @@ export default function History() {
     const t = settings.transcribe ?? {};
     const format = (t.exportFormat ?? "srt") as ExportFormat;
     const ext = EXPORT_EXTENSIONS[format];
-    const stem = exportStem(rec.title, rec.sourceName);
+    // A link's sourceName is its title; its sourcePath is the URL the stem
+    // reads the site from (and the date leads, like the viewer's export).
+    const stem = rec.kind === "url"
+      ? exportStem(rec.title, rec.sourcePath, { createdAt: rec.createdAt })
+      : exportStem(rec.title, rec.sourceName);
     let path: string | null;
     try {
       path = await pickExportPath(`${stem}.${ext}`, format.toUpperCase(), ext);

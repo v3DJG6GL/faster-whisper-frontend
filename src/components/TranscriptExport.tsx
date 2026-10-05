@@ -32,6 +32,7 @@ import {
   type MediaExportPhase, type MediaStreams, type SubtitleMode,
 } from "@/lib/mediaExport";
 import { patchRecord, useTranscriptHistory } from "@/lib/transcriptHistory";
+import { useTranscribeRun } from "@/lib/transcribeRun";
 import { useDisplayToggles } from "@/lib/useDisplayToggles";
 import type { Backend, BatchResult, Capabilities, TranscribeSettings, TranscriptWord } from "@/lib/types";
 
@@ -143,6 +144,9 @@ export function TranscriptExport({
   // The record behind this transcript (its local copies + server ids).
   const records = useTranscriptHistory((s) => s.records);
   const rec = overlayKey ? records.find((r) => r.id === overlayKey) : undefined;
+  // A link's export stem leads with when and where it was fetched.
+  const extractor = useTranscribeRun((s) => s.urlMeta[path]?.extractor);
+  const stemLink = { createdAt: rec?.createdAt, extractor };
   const nowSec = Date.now() / 1000;
   // The server's retained VIDEO: a link run's kept video, or the upload a
   // file run retained (retain_media) — either way, packaging needs no upload.
@@ -451,7 +455,7 @@ export function TranscriptExport({
   const doExport = async () => {
     setSaveError(null);
     setMediaError(null);
-    const stem = exportStem(rec?.title, path);
+    const stem = exportStem(rec?.title, path, stemLink);
     const opts = exportOpts();
     const plan = exportPlanNow();
     // Beside a video the text files are one subtitle file per language; the
@@ -523,7 +527,7 @@ export function TranscriptExport({
   if (!open) return null;
 
   const plan = exportPlanNow();
-  const stem = exportStem(rec?.title, path);
+  const stem = exportStem(rec?.title, path, stemLink);
   const names = plan.files.map((f) => f.name(stem));
   const textNames = plan.files.filter((f) => f.kind === "text");
   const cpsLimits = new Set(

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  derivePickedStem, embeddedSubtitleTracks, isSubtitleFormat, isVideoSourcePath, languageLabel,
-  mediaExportPlan, mp4Disabled, sidecarFiles, sidecarName,
+  derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath, languageLabel,
+  linkSiteName, mediaExportPlan, mp4Disabled, sidecarFiles, sidecarName, stemTimestamp,
 } from "./mediaExport";
 import type { BatchResult } from "./types";
 
@@ -129,14 +129,73 @@ describe("mediaExportPlan", () => {
 });
 
 describe("exportStem", () => {
-  it("leads with the record title, cleaned for every file system, else the file's own name", async () => {
-    const { exportStem } = await import("./mediaExport");
-    expect(exportStem("Starkes Übergewicht – Ela | SRF", "https://www.youtube.com/watch?v=GnNIH6bCbtU&t=6s"))
-      .toBe("Starkes Übergewicht – Ela SRF");
+  it("local files: the record title, cleaned for every file system, else the file's own name", () => {
+    expect(exportStem("Starkes Übergewicht – Ela | SRF", "/v/talk.mp4")).toBe("Starkes Übergewicht – Ela SRF");
     expect(exportStem("  a/b\\c:d*e?f\"g<h>i|j.  ", "/x/y.mp4")).toBe("a b c d e f g h i j");
     expect(exportStem(undefined, "/tmp/interview-2026.mkv")).toBe("interview-2026");
-    expect(exportStem("", "https://example.com/watch?v=abc")).toBe("watch?v=abc");
+    expect(exportStem(undefined, "C:\\rec\\Interview 2026.wav")).toBe("Interview 2026");
     expect(exportStem("x".repeat(200), "/a.mp4")).toHaveLength(120);
+    // The link info is ignored for a local file — its names stay as before.
+    expect(exportStem("Talk", "/a.mp4", { createdAt: new Date(2026, 9, 4, 19, 34), extractor: "Youtube" })).toBe("Talk");
+  });
+
+  it("links: <YYYY.MM.DD>_<HH.MM>_<site>___<title>, local time, underscores, accents kept", () => {
+    const createdAt = new Date(2026, 9, 4, 19, 34).toISOString();
+    expect(exportStem("El declive de un régimen", "https://www.rtve.es/play/videos/x/123/", { createdAt }))
+      .toBe("2026.10.04_19.34_rtve___El_declive_de_un_régimen");
+    expect(exportStem("Starkes Übergewicht – Ela | SRF", "https://www.youtube.com/watch?v=GnNIH6bCbtU&t=6s", { createdAt }))
+      .toBe("2026.10.04_19.34_youtube___Starkes_Übergewicht_–_Ela_SRF");
+  });
+
+  it("links: unknown parts are left out, the URL tail is the title's cleaned last resort", () => {
+    expect(exportStem("Talk", "https://youtu.be/q")).toBe("youtube___Talk");
+    expect(exportStem("Talk", "http://192.168.1.5/a.mp4", { createdAt: new Date(2026, 0, 2, 3, 4) }))
+      .toBe("2026.01.02_03.04___Talk");
+    expect(exportStem("Talk", "http://192.168.1.5/a.mp4", { extractor: "Vimeo" })).toBe("vimeo___Talk");
+    expect(exportStem("", "https://example.com/watch?v=abc")).toBe("example___watch_v=abc");
+    expect(exportStem(null, "https://example.com/")).toBe("example___transcript");
+    expect(exportStem("Talk", "https://www.rtve.es/x", { createdAt: "not a date" })).toBe("rtve___Talk");
+  });
+
+  it("links: a long title is bounded and stays path-safe", () => {
+    const prefix = "2026.10.04_19.34_rtve___";
+    const stem = exportStem(`${"é".repeat(150)} a/b`, "https://www.rtve.es/x", { createdAt: new Date(2026, 9, 4, 19, 34) });
+    expect(stem.startsWith(prefix)).toBe(true);
+    expect(stem).toHaveLength(prefix.length + 120);
+    expect(stem).not.toMatch(/[\\/:*?"<>|\s]/);
+  });
+});
+
+describe("stemTimestamp", () => {
+  it("zero-pads every field and reads the LOCAL clock", () => {
+    expect(stemTimestamp(new Date(2026, 0, 5, 7, 3))).toBe("2026.01.05_07.03");
+    // An ISO (UTC) string renders in local time, like the viewer's "04 OCT, 19:34".
+    expect(stemTimestamp(new Date(2026, 11, 31, 23, 59).toISOString())).toBe("2026.12.31_23.59");
+    expect(stemTimestamp(undefined)).toBe("");
+    expect(stemTimestamp("garbage")).toBe("");
+  });
+});
+
+describe("linkSiteName", () => {
+  it("takes the label just left of the public suffix", () => {
+    expect(linkSiteName("https://www.rtve.es/play/x")).toBe("rtve");
+    expect(linkSiteName("https://youtube.com/watch?v=1")).toBe("youtube");
+    expect(linkSiteName("https://m.youtube.com/watch?v=1")).toBe("youtube");
+    expect(linkSiteName("https://youtu.be/abc")).toBe("youtube");
+    expect(linkSiteName("https://play.srf.ch/x")).toBe("srf");
+    expect(linkSiteName("https://www.bbc.co.uk/iplayer/x")).toBe("bbc");
+    expect(linkSiteName("https://abc.net.au/x")).toBe("abc");
+    expect(linkSiteName("https://www.nhk.or.jp/x")).toBe("nhk");
+    expect(linkSiteName("https://WWW.Arte.TV./x")).toBe("arte");
+  });
+
+  it("falls back to the extractor (lowercased) for IPs and unusable hosts, else nothing", () => {
+    expect(linkSiteName("http://192.168.1.5:8080/a.mp4", "Youtube")).toBe("youtube");
+    expect(linkSiteName("http://[::1]/a.mp4", "BBCiPlayer")).toBe("bbciplayer");
+    expect(linkSiteName("http://localhost/a.mp4", "youtube:tab")).toBe("youtube");
+    expect(linkSiteName("http://192.168.1.5/a.mp4", "Generic")).toBe("");
+    expect(linkSiteName("http://192.168.1.5/a.mp4")).toBe("");
+    expect(linkSiteName("not a url")).toBe("");
   });
 });
 
