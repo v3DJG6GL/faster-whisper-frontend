@@ -548,7 +548,7 @@ export async function preloadModels(args: ServerTarget & {
 }
 
 /** The decode values the caller inherits from the server for one model and override profile
- *  (GET /v1/decode-defaults) — the "Inherit · <value>" labels. `model` "" = the server's default
+ *  (GET /v1/request-default-settings) — the "Inherit · <value>" labels. `model` "" = the server's default
  *  model; `overrideProfile` is what the request would name (NO_OVERRIDE_PROFILE included).
  *  Best-effort: null outside Tauri or on any error. */
 export async function getDecodeDefaults(args: ServerTarget & {
@@ -1287,14 +1287,14 @@ export async function pickRecordingsDir(): Promise<string | null> {
 
 // ── P30: settings export/import + server sync ──────────────────────────────
 
-/** Pull the account's synced settings blob (GET /v1/client-settings). Structured
+/** Pull the account's synced settings blob (GET /v1/synced-client-settings). Structured
  *  result: 0 = unreachable, 200 = ok (version 0 = empty store), 401 = key,
  *  404 = the backend build predates sync. Outside Tauri → unreachable. */
 export async function syncPull(args: ServerTarget): Promise<SyncPullResult> {
   return invokeServer<SyncPullResult>("sync_pull", args, {}, { ok: false, status: 0, error: "Not running in the desktop app." });
 }
 
-/** Push the composed blob (PUT /v1/client-settings). `baseVersion` is the server
+/** Push the composed blob (PUT /v1/synced-client-settings). `baseVersion` is the server
  *  version this device last saw (0 creates); a 409 comes back in `conflict`
  *  carrying the current server state for the merge loop. */
 export async function syncPush(args: ServerTarget & {
@@ -1309,7 +1309,7 @@ export async function syncPush(args: ServerTarget & {
   }, { ok: false, status: 0, error: "Not running in the desktop app." });
 }
 
-/** Drop the account's server-side blob (DELETE /v1/client-settings). */
+/** Drop the account's server-side blob (DELETE /v1/synced-client-settings). */
 export async function syncDelete(args: ServerTarget): Promise<SyncDeleteResult> {
   return invokeServer<SyncDeleteResult>("sync_delete", args, {}, { ok: false, status: 0, error: "Not running in the desktop app." });
 }

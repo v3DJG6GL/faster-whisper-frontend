@@ -5,7 +5,7 @@
 //                         over Profile/Settings)
 //   Default · large-v3  — a per-run choice on the Transcribe page
 //
-// The server's own decode values come from GET /v1/decode-defaults (serverInherited); a value
+// The server's own decode values come from GET /v1/request-default-settings (serverInherited); a value
 // nobody can name (the server is unreachable) leaves the bare word.
 
 import type { DecodeDefault, DecodeDefaults, DecodeOverrides, InheritedValues } from "./types";

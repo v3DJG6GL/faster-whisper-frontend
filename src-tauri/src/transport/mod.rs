@@ -5,7 +5,7 @@
 //! `preload` sends the best-effort model pre-warm hint;
 //! `batch` does the multipart `POST /v1/audio/transcriptions`; `stream` is the
 //! streaming WebSocket client; `pipeline` reads/writes the server's text rules;
-//! `sync` is the settings-sync client (`/v1/client-settings`);
+//! `sync` is the settings-sync client (`/v1/synced-client-settings`);
 //! `text` handles T2T translation (`/v1/text/translations`);
 //! `usage` reports dictation outcomes (`/v1/usage/outcome`).
 
@@ -167,7 +167,7 @@ pub struct MediaPackageCaps {
     pub ffmpeg_version: Option<String>,
 }
 
-/// One inherited decode value from `GET /v1/decode-defaults`: what the server uses when the
+/// One inherited decode value from `GET /v1/request-default-settings`: what the server uses when the
 /// request sends nothing for the key, where it comes from, and whether an admin locked it.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct DecodeDefault {
@@ -284,7 +284,7 @@ pub struct StreamingDefaults {
     pub best_of: StreamingBestOf,
 }
 
-/// `GET /v1/decode-defaults`: the decode values the caller's requests get when they send no
+/// `GET /v1/request-default-settings`: the decode values the caller's requests get when they send no
 /// `decode_overrides`, resolved by the server for one model and override profile — the
 /// "Inherit · <value>" labels in every decode editor.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -1032,11 +1032,163 @@ pub async fn get_json<T: serde::de::DeserializeOwned>(
     url: String,
     api_key: Option<&str>,
 ) -> Option<T> {
+    get_json_status(url, api_key).await.ok()
+}
+
+/// [`get_json`] that keeps the reason: `Err(Some(status))` for a non-2xx answer (or a 2xx whose
+/// body would not read), `Err(None)` when the request never got an answer — so a caller can tell
+/// "the server has no such path" (404) from every other failure.
+pub async fn get_json_status<T: serde::de::DeserializeOwned>(
+    url: String,
+    api_key: Option<&str>,
+) -> Result<T, Option<u16>> {
     match with_auth(client().get(url), api_key).send().await {
         Ok(resp) if resp.status().is_success() => {
-            json_capped_to::<T>(resp, MAX_META_BODY).await.ok()
+            let code = resp.status().as_u16();
+            json_capped_to::<T>(resp, MAX_META_BODY)
+                .await
+                .map_err(|_| Some(code))
         }
-        _ => None,
+        Ok(resp) => Err(Some(resp.status().as_u16())),
+        Err(_) => Err(None),
+    }
+}
+
+/// The HTTP status an outcome carries, for [`with_legacy_path`]: `None` = no answer at all.
+pub(crate) trait Answered {
+    fn answered(&self) -> Option<u16>;
+}
+
+impl<T> Answered for Result<T, Option<u16>> {
+    fn answered(&self) -> Option<u16> {
+        match self {
+            Ok(_) => Some(200),
+            Err(status) => *status,
+        }
+    }
+}
+
+type LegacyMemo = std::collections::HashMap<(String, &'static str), &'static str>;
+
+/// Per (base URL, new path): the path that last answered, when it was the OLD one. Bounded —
+/// the key is whatever server address the user typed, and the decode-defaults probe re-fires
+/// as it is typed.
+static LEGACY_PATHS: std::sync::Mutex<Option<LegacyMemo>> = std::sync::Mutex::new(None);
+const LEGACY_MEMO_MAX: usize = 64;
+
+fn legacy_memo(base: &str, new: &'static str) -> Option<&'static str> {
+    let memo = LEGACY_PATHS.lock().unwrap_or_else(|e| e.into_inner());
+    memo.as_ref()?.get(&(base.to_string(), new)).copied()
+}
+
+fn set_legacy_memo(base: &str, new: &'static str, answered_by: &'static str) {
+    let mut guard = LEGACY_PATHS.lock().unwrap_or_else(|e| e.into_inner());
+    let memo = guard.get_or_insert_with(Default::default);
+    let key = (base.to_string(), new);
+    if answered_by == new {
+        memo.remove(&key);
+        return;
+    }
+    if memo.len() >= LEGACY_MEMO_MAX && !memo.contains_key(&key) {
+        memo.clear();
+    }
+    memo.insert(key, answered_by);
+}
+
+/// Call `f` with a renamed endpoint's path: the path that last answered this server first (the
+/// new one until the old one has), and on a 404 the other one, once. A real answer from either
+/// (anything but a 404 or no answer at all) is remembered per base URL, so a server from before
+/// the rename costs one extra request per run, not one per call. A 404 on both stays a 404 —
+/// "this server has no such endpoint" keeps its meaning for the caller.
+pub(crate) async fn with_legacy_path<T, F, Fut>(
+    base: &str,
+    new: &'static str,
+    old: &'static str,
+    f: F,
+) -> T
+where
+    T: Answered,
+    F: Fn(&'static str) -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    let first = legacy_memo(base, new).unwrap_or(new);
+    let other = if first == new { old } else { new };
+    let out = f(first).await;
+    let (out, path) = match out.answered() {
+        Some(404) => (f(other).await, other),
+        _ => (out, first),
+    };
+    if matches!(out.answered(), Some(code) if code != 404) {
+        set_legacy_memo(base, new, path);
+    }
+    out
+}
+
+#[cfg(test)]
+mod legacy_path_tests {
+    use super::{legacy_memo, with_legacy_path};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    const NEW: &str = "/v1/new-name";
+    const OLD: &str = "/v1/old-name";
+
+    /// A fake server answering `new`/`old` per path; `asked` records every path tried, in order.
+    async fn run(base: &str, new: u16, old: u16, asked: &Mutex<Vec<&'static str>>) -> u16 {
+        let out: Result<(), Option<u16>> = with_legacy_path(base, NEW, OLD, |path| async move {
+            asked.lock().unwrap().push(path);
+            match if path == NEW { new } else { old } {
+                200 => Ok(()),
+                code => Err(Some(code)),
+            }
+        })
+        .await;
+        out.err().flatten().unwrap_or(200)
+    }
+
+    #[tokio::test]
+    async fn a_new_server_answers_on_the_new_path_alone() {
+        let asked = Mutex::new(vec![]);
+        assert_eq!(run("http://new:1", 200, 200, &asked).await, 200);
+        assert_eq!(*asked.lock().unwrap(), [NEW]);
+        assert_eq!(legacy_memo("http://new:1", NEW), None);
+    }
+
+    #[tokio::test]
+    async fn an_old_server_costs_one_extra_request_then_only_the_old_path() {
+        let asked = Mutex::new(vec![]);
+        assert_eq!(run("http://old:1", 404, 200, &asked).await, 200);
+        assert_eq!(*asked.lock().unwrap(), [NEW, OLD]);
+        asked.lock().unwrap().clear();
+        // Any real answer (here a 401) on the remembered path is final.
+        assert_eq!(run("http://old:1", 404, 401, &asked).await, 401);
+        assert_eq!(*asked.lock().unwrap(), [OLD]);
+        // Upgraded server that dropped the alias: the new path is found again and remembered.
+        asked.lock().unwrap().clear();
+        assert_eq!(run("http://old:1", 200, 404, &asked).await, 200);
+        assert_eq!(*asked.lock().unwrap(), [OLD, NEW]);
+        assert_eq!(legacy_memo("http://old:1", NEW), None);
+    }
+
+    #[tokio::test]
+    async fn a_404_on_both_paths_stays_a_404_and_is_not_remembered() {
+        let asked = Mutex::new(vec![]);
+        assert_eq!(run("http://none:1", 404, 404, &asked).await, 404);
+        assert_eq!(*asked.lock().unwrap(), [NEW, OLD]);
+        assert_eq!(legacy_memo("http://none:1", NEW), None);
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_server_is_asked_once_and_not_remembered() {
+        let calls = AtomicUsize::new(0);
+        let out: Result<(), Option<u16>> = with_legacy_path("http://down:1", NEW, OLD, |_| async {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Err(None)
+        })
+        .await;
+        assert_eq!(out, Err(None));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(legacy_memo("http://down:1", NEW), None);
     }
 }
 

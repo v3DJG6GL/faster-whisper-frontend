@@ -1,4 +1,4 @@
-//! Client API for settings sync: `GET`/`PUT`/`DELETE /v1/client-settings`.
+//! Client API for settings sync: `GET`/`PUT`/`DELETE /v1/synced-client-settings`.
 //!
 //! Like `pipeline.rs`, these return STRUCTURED results carrying the HTTP
 //! status — the sync engine must distinguish an old backend without the
@@ -7,10 +7,41 @@
 //! whose body carries the CURRENT server state so the client can 3-way
 //! merge without a second GET). Blobs pass through as opaque JSON — the
 //! category shapes are typed on the TS side.
+//!
+//! The path was renamed from `/v1/client-settings`; a server from before the rename is reached
+//! through [`super::with_legacy_path`] (new path first, the old one on a 404).
 
 use super::{
     base_url, body_capped_to, client, detail_from, friendly_err, json_capped_to, with_auth,
+    with_legacy_path, Answered,
 };
+
+/// The settings-sync resource, and its name before the rename (still served, deprecated).
+const SYNC_PATH: &str = "/v1/synced-client-settings";
+const LEGACY_SYNC_PATH: &str = "/v1/client-settings";
+
+/// Status 0 = no answer (unreachable), as the sync outcomes already spell it.
+fn answered(status: u16) -> Option<u16> {
+    (status != 0).then_some(status)
+}
+
+impl Answered for SyncPull {
+    fn answered(&self) -> Option<u16> {
+        answered(self.status)
+    }
+}
+
+impl Answered for SyncPush {
+    fn answered(&self) -> Option<u16> {
+        answered(self.status)
+    }
+}
+
+impl Answered for SyncDelete {
+    fn answered(&self) -> Option<u16> {
+        answered(self.status)
+    }
+}
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -131,10 +162,16 @@ pub struct SyncDelete {
     pub error: Option<String>,
 }
 
-/// GET /v1/client-settings — the account's stored blob (or the zero-state).
+/// GET /v1/synced-client-settings — the account's stored blob (or the zero-state).
 pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
     let base = base_url(server_url);
-    let url = format!("{base}/v1/client-settings");
+    with_legacy_path(&base, SYNC_PATH, LEGACY_SYNC_PATH, |path| {
+        pull_at(format!("{base}{path}"), api_key)
+    })
+    .await
+}
+
+async fn pull_at(url: String, api_key: Option<&str>) -> SyncPull {
     match with_auth(client().get(url), api_key)
         .timeout(SYNC_TIMEOUT)
         .send()
@@ -188,7 +225,7 @@ pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
     }
 }
 
-/// PUT /v1/client-settings — optimistic write; `base_version` is the version
+/// PUT /v1/synced-client-settings — optimistic write; `base_version` is the version
 /// this device last saw (0 creates). Never log `blob` — it can carry API keys.
 pub async fn push(
     server_url: &str,
@@ -198,7 +235,6 @@ pub async fn push(
     device: &str,
 ) -> SyncPush {
     let base = base_url(server_url);
-    let url = format!("{base}/v1/client-settings");
     let body = serde_json::json!({
         "blob": blob,
         "base_version": base_version,
@@ -216,6 +252,15 @@ pub async fn push(
             ..Default::default()
         };
     }
+    // The body is built once; a retry on the old path re-sends the same bytes.
+    let bytes = &bytes;
+    with_legacy_path(&base, SYNC_PATH, LEGACY_SYNC_PATH, |path| {
+        push_at(format!("{base}{path}"), api_key, bytes.clone())
+    })
+    .await
+}
+
+async fn push_at(url: String, api_key: Option<&str>, bytes: Vec<u8>) -> SyncPush {
     match with_auth(client().put(url), api_key)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .body(bytes)
@@ -309,10 +354,16 @@ pub async fn push(
     }
 }
 
-/// DELETE /v1/client-settings — drop the account's stored blob.
+/// DELETE /v1/synced-client-settings — drop the account's stored blob.
 pub async fn delete(server_url: &str, api_key: Option<&str>) -> SyncDelete {
     let base = base_url(server_url);
-    let url = format!("{base}/v1/client-settings");
+    with_legacy_path(&base, SYNC_PATH, LEGACY_SYNC_PATH, |path| {
+        delete_at(format!("{base}{path}"), api_key)
+    })
+    .await
+}
+
+async fn delete_at(url: String, api_key: Option<&str>) -> SyncDelete {
     match with_auth(client().delete(url), api_key)
         .timeout(SYNC_TIMEOUT)
         .send()

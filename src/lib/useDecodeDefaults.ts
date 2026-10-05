@@ -4,7 +4,7 @@ import type { DecodeDefaults } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
 
 /**
- * The decode values a request inherits from the server (GET /v1/decode-defaults) for one
+ * The decode values a request inherits from the server (GET /v1/request-default-settings) for one
  * model and override profile — feed it to serverInherited() for the editor's "Inherit · X".
  *
  * Fetched when an editor opens and again whenever the backend, typed address/key, model or

@@ -1,8 +1,8 @@
 //! Connection test + model discovery against `/v1/models` and `/auth/whoami`.
 
 use super::{
-    base_url, client, friendly_err, get_json, with_auth, Capabilities, ConnectionInfo,
-    DecodeDefault, DecodeDefaults, ServerModel, UsageStats,
+    base_url, client, friendly_err, get_json, get_json_status, with_auth, with_legacy_path,
+    Capabilities, ConnectionInfo, DecodeDefault, DecodeDefaults, ServerModel, UsageStats,
 };
 use serde::Deserialize;
 
@@ -419,7 +419,12 @@ pub async fn get_usage_stats(
     Some(u)
 }
 
-/// The longest model id sent to `/v1/decode-defaults` (the server refuses longer ones too).
+/// The request-default-settings resource, and its name before the rename (still served,
+/// deprecated) — reached through [`with_legacy_path`].
+const DEFAULTS_PATH: &str = "/v1/request-default-settings";
+const LEGACY_DEFAULTS_PATH: &str = "/v1/decode-defaults";
+
+/// The longest model id sent to `/v1/request-default-settings` (the server refuses longer ones too).
 const MODEL_ID_MAX: usize = 200;
 /// Prompts and hotwords: the server caps both at 2048 characters.
 const SERVER_TEXT_MAX: usize = 2048;
@@ -432,17 +437,17 @@ fn is_profile_slug(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-/// `{base}/v1/decode-defaults?model=…&override_profile=…`. Model ids carry `/` and `:`, so both
+/// `{base}{path}?model=…&override_profile=…`. Model ids carry `/` and `:`, so both
 /// go through the URL's own query encoder. An over-long model is sent as "" (the server's default
 /// model) rather than refused; a profile that is not a server slug (`[A-Za-z0-9_-]`, which
 /// includes `__none__`) is left out — it could not name a real profile.
 fn decode_defaults_url(
     server_url: &str,
+    path: &str,
     model: &str,
     profile: Option<&str>,
 ) -> Option<reqwest::Url> {
-    let mut url =
-        reqwest::Url::parse(&format!("{}/v1/decode-defaults", base_url(server_url))).ok()?;
+    let mut url = reqwest::Url::parse(&format!("{}{path}", base_url(server_url))).ok()?;
     {
         let mut q = url.query_pairs_mut();
         let model = model.trim();
@@ -485,16 +490,29 @@ fn bound_decode_defaults(d: &mut DecodeDefaults) {
 }
 
 /// The decode values the caller inherits from the server for `model` (and `profile`, the
-/// override profile the request would name) — `GET /v1/decode-defaults`. Best-effort: any
-/// error → None, and the editor shows the bare "Inherit".
+/// override profile the request would name) — `GET /v1/request-default-settings` (the old
+/// `/v1/decode-defaults` on a server from before the rename). Best-effort: any error → None,
+/// and the editor shows the bare "Inherit".
 pub async fn get_decode_defaults(
     server_url: &str,
     model: &str,
     profile: Option<&str>,
     api_key: Option<&str>,
 ) -> Option<DecodeDefaults> {
-    let url = decode_defaults_url(server_url, model, profile)?;
-    let mut d: DecodeDefaults = get_json(url.into(), api_key).await?;
+    // A URL the parser refuses is "no answer" (`Err(None)`): no retry, nothing remembered.
+    let mut d: DecodeDefaults = with_legacy_path(
+        &base_url(server_url),
+        DEFAULTS_PATH,
+        LEGACY_DEFAULTS_PATH,
+        |path| async move {
+            match decode_defaults_url(server_url, path, model, profile) {
+                Some(url) => get_json_status(url.into(), api_key).await,
+                None => Err(None),
+            }
+        },
+    )
+    .await
+    .ok()?;
     bound_decode_defaults(&mut d);
     Some(d)
 }
@@ -506,16 +524,26 @@ mod tests {
 
     #[test]
     fn decode_defaults_url_encodes_the_model_and_keeps_only_a_slug_profile() {
-        let u = decode_defaults_url("http://h:8000", "org/repo:q8 x", Some("studio")).unwrap();
+        let u = decode_defaults_url(
+            "http://h:8000/",
+            super::DEFAULTS_PATH,
+            "org/repo:q8 x",
+            Some("studio"),
+        )
+        .unwrap();
         assert_eq!(
             u.as_str(),
-            "http://h:8000/v1/decode-defaults?model=org%2Frepo%3Aq8+x&override_profile=studio"
+            "http://h:8000/v1/request-default-settings?model=org%2Frepo%3Aq8+x&override_profile=studio"
         );
-        let none = decode_defaults_url("http://h:8000", "", Some("__none__")).unwrap();
+        let old = decode_defaults_url("http://h:8000", super::LEGACY_DEFAULTS_PATH, "tiny", None)
+            .unwrap();
+        assert_eq!(old.as_str(), "http://h:8000/v1/decode-defaults?model=tiny");
+        let p = super::DEFAULTS_PATH;
+        let none = decode_defaults_url("http://h:8000", p, "", Some("__none__")).unwrap();
         assert_eq!(none.query(), Some("model=&override_profile=__none__"));
-        let bad = decode_defaults_url("http://h:8000", "tiny", Some("../x")).unwrap();
+        let bad = decode_defaults_url("http://h:8000", p, "tiny", Some("../x")).unwrap();
         assert_eq!(bad.query(), Some("model=tiny"));
-        let long = decode_defaults_url("http://h:8000", &"m".repeat(201), None).unwrap();
+        let long = decode_defaults_url("http://h:8000", p, &"m".repeat(201), None).unwrap();
         assert_eq!(long.query(), Some("model="));
     }
 

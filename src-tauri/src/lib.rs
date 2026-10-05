@@ -203,7 +203,7 @@ pub fn run() {
             commands::list_override_profiles,
             commands::get_capabilities,    // P11: GET /v1/me capabilities
             commands::preload_models,      // POST /v1/models/preload (best-effort warm hint)
-            commands::get_decode_defaults, // GET /v1/decode-defaults
+            commands::get_decode_defaults, // GET /v1/request-default-settings
             commands::get_pipeline_rules,  // P17: GET /v1/pipeline-rules
             commands::save_pipeline_rules, // P17: PATCH /v1/pipeline-rules
             commands::get_recent_words,    // P18: GET /v1/recent-words (key suggestions)
@@ -216,9 +216,9 @@ pub fn run() {
             commands::get_job,         // GET /v1/jobs/{id} (re-attach poll)
             commands::get_job_result,  // GET /v1/jobs/{id}/result (late ingest)
             commands::delete_job,      // DELETE /v1/jobs/{id}
-            commands::sync_pull,       // P30: GET /v1/client-settings
-            commands::sync_push,       // P30: PUT /v1/client-settings
-            commands::sync_delete,     // P30: DELETE /v1/client-settings
+            commands::sync_pull,       // P30: GET /v1/synced-client-settings
+            commands::sync_push,       // P30: PUT /v1/synced-client-settings
+            commands::sync_delete,     // P30: DELETE /v1/synced-client-settings
             commands::load_sync_state, // P30: local sync bookkeeping
             commands::save_sync_state,
             commands::sync_device_info,

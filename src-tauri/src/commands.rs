@@ -1228,7 +1228,7 @@ pub async fn preload_models(
 }
 
 /// The decode values the caller inherits from the server for one model and override profile
-/// (`GET /v1/decode-defaults`) — the "Inherit · <value>" labels. Best-effort — null on error.
+/// (`GET /v1/request-default-settings`) — the "Inherit · <value>" labels. Best-effort — null on error.
 #[tauri::command]
 pub async fn get_decode_defaults(
     server_url: String,
@@ -1356,7 +1356,7 @@ pub fn save_jobs_ledger(app: AppHandle, ledger: serde_json::Value) -> Result<(),
 
 // ── P30: settings export/import + server sync ──────────────────────────────
 
-/// Pull the account's synced settings blob (`GET /v1/client-settings`).
+/// Pull the account's synced settings blob (`GET /v1/synced-client-settings`).
 /// Structured result so the engine can distinguish old-backend (404) /
 /// unauthorized (401) / unreachable (0) / empty store (200, version 0).
 #[tauri::command]
@@ -1369,7 +1369,7 @@ pub async fn sync_pull(
     transport::sync::pull(&server_url, key.as_deref()).await
 }
 
-/// Push the composed settings blob (`PUT /v1/client-settings`). A 409 comes
+/// Push the composed settings blob (`PUT /v1/synced-client-settings`). A 409 comes
 /// back in `conflict` carrying the current server state for the merge loop.
 #[tauri::command]
 pub async fn sync_push(
@@ -1384,7 +1384,7 @@ pub async fn sync_push(
     transport::sync::push(&server_url, key.as_deref(), blob, base_version, &device).await
 }
 
-/// Drop the account's server-side settings blob (`DELETE /v1/client-settings`).
+/// Drop the account's server-side settings blob (`DELETE /v1/synced-client-settings`).
 #[tauri::command]
 pub async fn sync_delete(
     server_url: String,

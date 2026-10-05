@@ -666,12 +666,12 @@ export interface Capabilities {
 }
 
 /** A baseline shown (ghosted) under the decode editor: the server's decode defaults
- *  (GET /v1/decode-defaults) with the backend's own defaults over them. Loosely typed because the server
+ *  (GET /v1/request-default-settings) with the backend's own defaults over them. Loosely typed because the server
  *  may send `temperature` as a string (a ladder); display-only. A DecodeOverrides
  *  is assignable to it, so backend defaults merge in cleanly. */
 export type InheritedValues = Partial<Record<keyof DecodeOverrides, number | string | boolean>>;
 
-/** Where an inherited decode value comes from (GET /v1/decode-defaults): the server's global
+/** Where an inherited decode value comes from (GET /v1/request-default-settings): the server's global
  *  config, its per-model config, a layer bound to the caller's key/user, the override profile
  *  the request names, or faster-whisper's own default (value null). */
 export type DecodeSource = "server" | "model" | "account" | "override_profile" | "builtin";
@@ -687,7 +687,7 @@ export interface DecodeDefault {
   locked: boolean;
 }
 
-/** GET /v1/decode-defaults: what the caller's requests get when they send no decode_overrides,
+/** GET /v1/request-default-settings: what the caller's requests get when they send no decode_overrides,
  *  for one model and override profile. */
 export interface DecodeDefaults {
   /** The model the server resolved ("" → its default model). */
