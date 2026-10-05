@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath, languageLabel,
-  linkSiteName, mediaExportPlan, mp4Disabled, sidecarFiles, sidecarName, stemTimestamp,
+  linkSiteName, mediaExportPlan, siteDisplayName, withTrackSites, mp4Disabled, sidecarFiles, sidecarName, stemTimestamp,
 } from "./mediaExport";
 import type { BatchResult } from "./types";
 
@@ -196,6 +196,27 @@ describe("linkSiteName", () => {
     expect(linkSiteName("http://192.168.1.5/a.mp4", "Generic")).toBe("");
     expect(linkSiteName("http://192.168.1.5/a.mp4")).toBe("");
     expect(linkSiteName("not a url")).toBe("");
+  });
+});
+
+describe("siteDisplayName", () => {
+  it("writes a site as people do, capitalises the rest, empty when unknown", () => {
+    expect(siteDisplayName("https://youtu.be/abc")).toBe("YouTube");
+    expect(siteDisplayName("https://play.srf.ch/x")).toBe("SRF");
+    expect(siteDisplayName("https://www.rtve.es/play/x")).toBe("RTVE");
+    expect(siteDisplayName("https://www.arte.tv/x")).toBe("arte");
+    expect(siteDisplayName("https://vimeo.com/1")).toBe("Vimeo");
+    expect(siteDisplayName("https://www.example.org/v")).toBe("Example");
+    expect(siteDisplayName("http://192.168.1.5/a.mp4", "Generic")).toBe("");
+  });
+
+  it("withTrackSites fills a missing site from the link, else leaves the result alone", () => {
+    const tt = { id: "de-x-site", lang: "de", source: "site" as const, kind: "manual" as const, cues: [] };
+    const res = { text: "", timedTracks: [tt, { ...tt, id: "en-x-site", site: "SRF" }] };
+    const out = withTrackSites(res, "https://www.youtube.com/watch?v=1");
+    expect(out.timedTracks!.map((t) => t.site)).toEqual(["YouTube", "SRF"]);
+    expect(withTrackSites(res, "/home/a.mp4")).toBe(res);
+    expect(withTrackSites(out, "https://www.youtube.com/watch?v=1")).toBe(out);
   });
 });
 

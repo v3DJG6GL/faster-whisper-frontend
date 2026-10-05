@@ -24,7 +24,7 @@ import type {
   TranscriptSegment, VideoProgress,
 } from "./types";
 import type { VideoRung } from "./urlSource";
-import { isVideoSourcePath } from "./mediaExport";
+import { isVideoSourcePath, siteDisplayName } from "./mediaExport";
 import { forgetRow, persistRow, type LedgerRow } from "./jobsLedger";
 import { applyMultilingual, spokenLanguage } from "./languages";
 import {
@@ -1507,7 +1507,7 @@ export async function withSiteTracks(
   const site = meta?.siteSubs;
   if (!site?.fetch.length) return res;
   const got = await fetchSiteSubs(url, { ...site, transcriptTrackId: null }, ctx);
-  return attachSiteTracks(res, siteTimedTracks(got.others, site.tracks), got.warnings);
+  return attachSiteTracks(res, siteTimedTracks(got.others, site.tracks, siteDisplayName(url, meta?.extractor)), got.warnings);
 }
 
 /** A link run: the link card's spoken language and reused audio, and — when the
@@ -1539,7 +1539,7 @@ async function runLink(
   };
   if (!site?.fetch.length) return { res: await transcribeUrl({ ...req, sourceUrl: url, options }) };
   const got = await fetchSiteSubs(url, site, ctx);
-  const timed = siteTimedTracks(got.others, site.tracks);
+  const timed = siteTimedTracks(got.others, site.tracks, siteDisplayName(url, meta?.extractor));
   if (!got.transcript) {
     const res = await transcribeUrl({ ...req, sourceUrl: url, options });
     return { res: attachSiteTracks(res, timed, got.warnings) };

@@ -37,6 +37,8 @@ export interface SiteSubsInput {
   multi: boolean;
   /** The Processing card's translation targets — the languages explicitly wanted. */
   targets: readonly string[];
+  /** The site's display name ("YouTube", siteDisplayName) for the source words; absent = "Site". */
+  site?: string;
 }
 
 /** The panel's own state for one link. */
@@ -87,9 +89,11 @@ export interface SiteRow {
   deletable: boolean;
 }
 
-/** One part of a compound translation chip, in fixed order: machine translation, existing. */
+/** One part of a compound chip (translation targets: machine translation, then the site's;
+ *  the export's tracks: every track of a language), coloured by its source. */
 export interface ChipPart {
-  kind: "mt" | "existing";
+  kind: SiteBadge["kind"];
+  hoh?: boolean;
   on: boolean;
   key: string;
   text: string;
@@ -124,6 +128,18 @@ export function trackLanguage(lang: string): string {
 
 const uniq = <T,>(xs: T[]) => [...new Set(xs)];
 
+/** The source words every place uses for a subtitle (D88): our transcript, a machine
+ *  translation, and the site's own — by the site's name. */
+export const WHISPER_WORD = "Whisper";
+export const MT_WORD = "Machine translation";
+
+/** A site track's source word: "YouTube", "YouTube auto" (auto-generated), "YouTube SDH"
+ *  (hearing-impaired). An unknown site reads "Site". */
+export function siteWord(t: { kind: "manual" | "auto"; hoh?: boolean; site?: string }): string {
+  const site = safeDisplayText(t.site ?? "", 40) || "Site";
+  return t.kind === "auto" ? `${site} auto` : t.hoh ? `${site} SDH` : site;
+}
+
 /** The targets as the mockup's map: true = wanted, false = explicitly not wanted. */
 function targetMap(input: SiteSubsInput, st: SiteSubsState): Record<string, boolean> {
   const m: Record<string, boolean> = {};
@@ -156,6 +172,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   const sp = input.spoken;
   const multi = input.multi;
   const custom = st.policy === "custom";
+  const site = input.site;
   const tmap = targetMap(input, st);
   const shown = new Set<string>();
   const siteCodes = uniq(avail.map((t) => t.code)).filter((c) => c !== sp);
@@ -190,7 +207,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     return mk({
       key: (prefix ? "cand:" : "ex:") + t.id,
       kind: t.kind === "auto" ? "auto" : "existing",
-      text: prefix + (t.kind === "auto" ? "auto-generated" : "existing") + (t.hoh ? " · hearing-impaired" : ""),
+      text: prefix + siteWord({ ...t, site }),
       title: name + why,
       hoh: t.hoh,
       tentative,
@@ -214,7 +231,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
       : mtState === "idle"
         ? `Not needed: existing subtitles cover ${name} — click to machine-translate anyway`
         : `Click to stop translating into ${name}`;
-    const mtB = mk({ key: "mt:" + code, kind: "mt", text: "machine translation", title: mtTitle }, mtState);
+    const mtB = mk({ key: "mt:" + code, kind: "mt", text: MT_WORD, title: mtTitle }, mtState);
     if (custom && !isTarget && mtB.state === "active") { mtB.state = "off"; snap["mt:" + code] = false; }
     // A wanted language never ends up without a source: machine translation fills in (v28/v30).
     if (isTarget && mtB.state !== "active" && !used) { mtB.state = "active"; snap["mt:" + code] = true; }
@@ -226,7 +243,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   // Original language — known or not, it always has a row.
   const origTracks = sp ? avail.filter((t) => t.code === sp) : [];
   const anyOrigUsed = origTracks.some(use);
-  const genText = multi ? "transcribe · each part in its language" : "transcribe";
+  const genText = multi ? `${WHISPER_WORD} · each part in its language` : WHISPER_WORD;
   const origBadges: SiteBadge[] = [];
   let genOn = true;
   let transcriptTrackId: string | null = null;
@@ -282,18 +299,19 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     const [mtB, ...exBs] = langSources(code).badges;
     const exB = exBs.find((b) => !b.hoh) ?? exBs[0];
     const mtOn = mtB.state === "active";
-    // Fixed order — machine translation, existing — so nothing jumps; off parts read "+ …" (v30).
+    // Fixed order — machine translation, the site's — so nothing jumps; off parts read "+ …" (v30).
     const parts: ChipPart[] = [{
       kind: "mt", on: mtOn, key: mtB.key!,
-      text: mtOn ? "machine translation" : "+ machine translation",
+      text: mtOn ? MT_WORD : `+ ${MT_WORD}`,
       title: mtOn ? `Stop machine-translating into ${name}` : `Machine-translate into ${name} as well`,
     }];
     if (exB) {
       const exOn = exB.state === "active";
+      const word = exB.text;
       parts.push({
-        kind: "existing", on: exOn, key: exB.key!,
-        text: exOn ? "existing" : "+ existing",
-        title: exOn ? `Leave out the site's ${name} subtitles` : `Add the site's ${name} subtitles`,
+        kind: exB.kind, hoh: exB.hoh, on: exOn, key: exB.key!,
+        text: exOn ? word : `+ ${word}`,
+        title: exOn ? `Leave out the ${word} ${name} subtitles` : `Add the ${word} ${name} subtitles`,
       });
     }
     return { code, parts };
@@ -396,8 +414,12 @@ export interface ParsedSiteTrack {
 
 /** Downloaded site tracks → timed tracks with their own timing. Ids are `<lang>-x-site` (a
  *  BCP-47 private use tag, never an MT code), `-auto` / `-hoh` / a number added only when two
- *  tracks of a language would collide. */
-export function siteTimedTracks(fetched: readonly ParsedSiteTrack[], infos: readonly SiteTrackInfo[] = []): TimedTrack[] {
+ *  tracks of a language would collide. `site` = the site's display name (siteDisplayName). */
+export function siteTimedTracks(
+  fetched: readonly ParsedSiteTrack[],
+  infos: readonly SiteTrackInfo[] = [],
+  site = "",
+): TimedTrack[] {
   const out: TimedTrack[] = [];
   for (const f of fetched) {
     const info = infos.find((t) => t.id === f.id);
@@ -415,6 +437,7 @@ export function siteTimedTracks(fetched: readonly ParsedSiteTrack[], infos: read
       id, lang: f.lang, source: "site", kind: f.kind, cues,
       ...(hoh ? { hoh } : {}),
       ...(info?.name ? { label: info.name } : {}),
+      ...(site ? { site } : {}),
     });
   }
   return out;
@@ -430,16 +453,9 @@ export function attachSiteTracks(res: BatchResult, timed: readonly TimedTrack[],
   };
 }
 
-/** How a site track reads in chips and lane labels: "DE · existing", "DE · auto-generated". */
-export function siteTrackLabel(t: Pick<TimedTrack, "lang" | "kind" | "hoh">): string {
-  return `${safeDisplayText(t.lang, 16).toUpperCase()} · ${t.kind === "auto" ? "auto-generated" : "existing"}${t.hoh ? " · hearing-impaired" : ""}`;
-}
-
-/** A non-original track's chip or lane label: a site track says what it is, a machine
- *  translation is its code. */
-export function trackChipLabel(result: Pick<BatchResult, "timedTracks">, track: string): string {
-  const tt = result.timedTracks?.find((t) => t.id === track);
-  return tt ? siteTrackLabel(tt) : safeDisplayText(track, 16).toUpperCase();
+/** How a site track reads in lane labels: "DE · YouTube", "DE · YouTube auto". */
+export function siteTrackLabel(t: Pick<TimedTrack, "lang" | "kind" | "hoh" | "site">): string {
+  return `${safeDisplayText(t.lang, 16).toUpperCase()} · ${siteWord(t)}`;
 }
 
 // ── The link's spoken language (the link card's "Spoken language" row) ──────────────────────

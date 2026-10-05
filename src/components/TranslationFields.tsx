@@ -115,7 +115,7 @@ export function TranslationTargetChips({
                 onClick={() => onPart?.(p.key)}
                 className={cn(
                   "ring-signal whitespace-nowrap border-l border-line px-2.5 text-[11.5px] enabled:hover:brightness-125",
-                  p.on ? sourceTone(p.kind) : "text-faint enabled:hover:text-text",
+                  p.on ? sourceTone(p.kind, p.hoh) : "text-faint enabled:hover:text-text",
                 )}
               >
                 {p.text}

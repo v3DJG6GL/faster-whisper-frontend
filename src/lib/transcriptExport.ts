@@ -573,6 +573,7 @@ function jsonTimedTrack(t: TimedTrack) {
     source: t.source,
     kind: t.kind,
     ...(t.hoh ? { hoh: true } : {}),
+    ...(t.site ? { site: stripControlChars(t.site) } : {}),
     cues: t.cues.map((c) => ({ start: c.start, end: c.end, text: stripControlChars(c.text) })),
   };
 }

@@ -25,7 +25,7 @@ import { contentStates, exportSummary, type ContentItem } from "@/lib/exportSumm
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
-import { trackChipLabel } from "@/lib/siteSubtitles";
+import { trackChipLabel } from "@/lib/exportTracks";
 import {
   basename, derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath, languageLabel,
   mediaExportPlan, mp4Disabled, sidecarFiles, trackLang, type MediaChoice, type MediaContainer,
@@ -718,7 +718,7 @@ export function TranscriptExport({
                   : "border-line bg-surface-2 text-dim hover:text-text",
               )}
             >
-              {t === "orig" ? `${origCode} · original` : trackChipLabel(result, t)}
+              {trackChipLabel(result, t)}
             </button>
           );
         })}

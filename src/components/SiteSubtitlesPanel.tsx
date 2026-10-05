@@ -1,6 +1,6 @@
 // The link card's "Download existing subtitles" panel (D86, LinkSubs mockup v39): the switch,
 // the Existing-subtitles presets, and the "Subtitles" table — one row per language with its
-// source badges (transcribe / existing / machine translation; active, idle = greyed, off =
+// source badges (Whisper / the site's / machine translation; active, idle = greyed, off =
 // struck), a trash button for languages the site lacks, and "Add language" last. Every rule
 // lives in lib/siteSubtitles; this file only draws derive() and routes clicks back.
 

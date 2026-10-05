@@ -43,7 +43,7 @@ import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
-import { basename, type MediaChoice } from "@/lib/mediaExport";
+import { basename, withTrackSites, type MediaChoice } from "@/lib/mediaExport";
 import { releaseMedia } from "@/lib/media";
 import { useTranscriptHistory } from "@/lib/transcriptHistory";
 import { useDisplayToggles } from "@/lib/useDisplayToggles";
@@ -581,7 +581,7 @@ function TranslateProgressCard({
 }
 
 export function TranscriptViewer({
-  result,
+  result: rawResult,
   path,
   mediaPath,
   fileLabel,
@@ -759,6 +759,8 @@ export function TranscriptViewer({
   };
 
   // ── selected-result derivations ──────────────────────────────────────────
+  // Site tracks of older records name their site from the link.
+  const result = useMemo(() => withTrackSites(rawResult, path), [rawResult, path]);
   const speakers = useMemo(() => speakerOrder(result), [result]);
   const hasSegments = !!result.segments?.length;
   const hasSpeakers = speakers.length > 0;

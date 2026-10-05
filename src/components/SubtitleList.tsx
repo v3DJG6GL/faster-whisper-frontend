@@ -9,7 +9,7 @@ import { Pencil } from "lucide-react";
 import { LangTag } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { fmtTimestamp } from "@/lib/format";
-import { trackChipLabel } from "@/lib/siteSubtitles";
+import { trackChipLabel } from "@/lib/exportTracks";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { lastStartedAt } from "@/lib/seekKeys";
 import { cueTrackLang, limitsFor, trackCues, wrapLines, type CueGrid, type CueOptions } from "@/lib/cueSplit";
@@ -130,7 +130,7 @@ export function SubtitleList({
   const layout = useMemo(() => {
     const limitOf = (track: string) => (cues ? limitsFor(cues, cueTrackLang(result, track)) : null);
     const code = (track: string) => safeDisplayText(cueTrackLang(result, track) ?? "??", 16).toUpperCase();
-    /** A lane's head: a site track says it is one ("DE · existing"), others show their code. */
+    /** A lane's head: a site track says whose it is ("DE · YouTube"), others show their code. */
     const head = (track: string) => (result.timedTracks?.some((t) => t.id === track) ? trackChipLabel(result, track) : code(track));
     const maxDur = limitOf("orig")?.maxDur ?? 7;
     /** One track's text of a cue: name prefix, wrapped to its limits. */

@@ -1015,6 +1015,9 @@ export interface TimedTrack {
   source: "site";
   kind: "manual" | "auto";
   hoh?: boolean;
+  /** The site's display name ("YouTube", "SRF") — the track's source word. Absent on
+   *  records made before it: the viewer derives it from the link (withTrackSites). */
+  site?: string;
   cues: { start: number; end: number; text: string }[];
 }
 

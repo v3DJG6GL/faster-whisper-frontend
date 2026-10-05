@@ -9,6 +9,7 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguageRow, useLinkLanguage } from "@/components/SpokenLanguageRow";
 import { SiteSubtitlesPanel } from "@/components/SiteSubtitlesPanel";
 import { addLanguage, derive, flip, initialSiteState, toggleTarget, type SiteChange, type SiteSubsState } from "@/lib/siteSubtitles";
+import { siteDisplayName } from "@/lib/mediaExport";
 import { modelShortName, translationLanguages } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { offersMultilingual, spokenField } from "@/lib/languages";
@@ -842,6 +843,7 @@ export default function Transcribe() {
         spoken: linkLang.sp.spoken,
         multi: linkLang.sp.multi,
         targets: translationAvailable ? translateTo : [],
+        site: siteDisplayName(normalizeMediaUrl(urlDraft) ?? "", urlPreviewData.extractor),
       }
     : null;
   const siteView = siteInput && siteState ? derive(siteInput, siteState) : null;

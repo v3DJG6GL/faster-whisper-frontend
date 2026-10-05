@@ -264,6 +264,33 @@ export function linkSiteName(url: string, extractor?: string | null): string {
   return ex && ex !== "generic" ? ex : "";
 }
 
+/** Sites whose name is not just capitalised. */
+const SITE_DISPLAY: Record<string, string> = {
+  youtube: "YouTube", srf: "SRF", rtve: "RTVE", arte: "arte", bbc: "BBC", ard: "ARD", zdf: "ZDF",
+  orf: "ORF", rts: "RTS", rsi: "RSI", rai: "RAI", ndr: "NDR", wdr: "WDR", br: "BR", swr: "SWR",
+  mdr: "MDR", hr: "HR", rbb: "RBB", sr: "SR", nhk: "NHK", cbc: "CBC", abc: "ABC", nbc: "NBC",
+  cbs: "CBS", cnn: "CNN", pbs: "PBS", npr: "NPR", ted: "TED", tiktok: "TikTok", soundcloud: "SoundCloud",
+  ardmediathek: "ARD Mediathek", zdfmediathek: "ZDF Mediathek", "3sat": "3sat", tv5monde: "TV5Monde",
+  francetv: "France TV", dailymotion: "Dailymotion", vimeo: "Vimeo", twitch: "Twitch",
+};
+
+/** The site's name as people write it — the source word of its subtitles (D88): YouTube,
+ *  SRF, RTVE, arte, Vimeo; any other site capitalised ("Example"); "" when the link names
+ *  none. */
+export function siteDisplayName(url: string, extractor?: string | null): string {
+  const name = linkSiteName(url, extractor);
+  return SITE_DISPLAY[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+/** The result with every site track's `site` filled in from the link — records made
+ *  before tracks carried it. The same object when nothing is missing. */
+export function withTrackSites(result: BatchResult, url: string): BatchResult {
+  if (!result.timedTracks?.some((t) => !t.site)) return result;
+  const site = isSourceUrl(url) ? siteDisplayName(url) : "";
+  if (!site) return result;
+  return { ...result, timedTracks: result.timedTracks.map((t) => (t.site ? t : { ...t, site })) };
+}
+
 /** "YYYY.MM.DD_HH.MM" in LOCAL time (what the viewer shows as "04 OCT,
  *  19:34"); "" for a missing or unparsable timestamp. */
 export function stemTimestamp(when: string | number | Date | null | undefined): string {

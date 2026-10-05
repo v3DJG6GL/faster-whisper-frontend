@@ -1,7 +1,7 @@
 // One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
-  addLanguage, attachSiteTracks, derive, linkSpoken, spokenPill, trackChipLabel, siteTimedTracks, siteTrackLabel, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
+  addLanguage, attachSiteTracks, derive, linkSpoken, spokenPill, siteTimedTracks, siteTrackLabel, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "./urlSource";
@@ -29,7 +29,7 @@ describe("presets (v18, v31, v32)", () => {
     const st = initialSiteState(inp.targets);
     const v = derive(inp, st);
     expect(v.rows[0].badges.map((b) => [b.text, b.state])).toEqual([
-      ["transcribe", "idle"], ["existing", "active"], ["existing · hearing-impaired", "active"],
+      ["Whisper", "idle"], ["Site", "active"], ["Site SDH", "active"],
     ]);
     expect(badge(inp, st, "en", "mt:en").state).toBe("idle");
     expect(v.run).toEqual({ fetch: ["de", "de-hoh", "en", "fr", "it"], transcriptTrackId: "de", mtTargets: [] });
@@ -53,13 +53,13 @@ describe("presets (v18, v31, v32)", () => {
     const inp = input({ targets: [] });
     const v = derive(inp, initialSiteState([]));
     expect(v.chips.map((c) => c.code)).toEqual(["en", "fr", "it"]);
-    expect(v.chips[2].parts.map((p) => p.text)).toEqual(["+ machine translation", "existing"]);
+    expect(v.chips[2].parts.map((p) => p.text)).toEqual(["+ Machine translation", "Site"]);
   });
   it("Prefer with an unknown spoken language behaves like Side by side: transcribe, candidates ride along", () => {
     const inp = input({ spoken: null, tracks: YT });
     const v = derive(inp, initialSiteState(inp.targets));
     expect(v.rows[0].sub).toBe("Unknown");
-    expect(v.rows[0].badges.map((b) => b.text)).toEqual(["transcribe", "if German: existing"]);
+    expect(v.rows[0].badges.map((b) => b.text)).toEqual(["Whisper", "if German: Site"]);
     expect(v.rows[0].badges[1].tentative).toBe(true);
     expect(v.run).toEqual({ fetch: ["de-CH"], transcriptTrackId: null, mtTargets: ["en", "fr"] });
   });
@@ -142,19 +142,19 @@ describe("rows and chips (v30, v34, v37)", () => {
     const inp = input({ targets: ["en", "es"] });
     const v = derive(inp, initialSiteState(inp.targets));
     const en = v.chips.find((c) => c.code === "en")!;
-    expect(en.parts.map((p) => [p.kind, p.text])).toEqual([["mt", "+ machine translation"], ["existing", "existing"]]);
+    expect(en.parts.map((p) => [p.kind, p.text])).toEqual([["mt", "+ Machine translation"], ["existing", "Site"]]);
     const es = v.chips.find((c) => c.code === "es")!;
-    expect(es.parts.map((p) => p.text)).toEqual(["machine translation"]);
+    expect(es.parts.map((p) => p.text)).toEqual(["Machine translation"]);
   });
 });
 
 describe("tracks and switches", () => {
   it("auto-generated tracks join only with the switch; hearing-impaired comes from the track", () => {
-    const inp = input({ tracks: YT, targets: [] });
+    const inp = input({ tracks: YT, targets: [], site: "YouTube" });
     const st = initialSiteState([]);
-    expect(derive(inp, st).rows[0].badges.map((b) => b.text)).toEqual(["transcribe", "existing"]);
+    expect(derive(inp, st).rows[0].badges.map((b) => b.text)).toEqual(["Whisper", "YouTube"]);
     const auto = derive(inp, { ...st, auto: true }).rows[0].badges.map((b) => b.text);
-    expect(auto).toEqual(["transcribe", "existing", "auto-generated"]);
+    expect(auto).toEqual(["Whisper", "YouTube", "YouTube auto"]);
     expect(derive(inp, { ...st, auto: true }).run!.transcriptTrackId).toBe("de-CH");
   });
   it("Download existing subtitles off: the run ignores the site", () => {
@@ -165,7 +165,7 @@ describe("tracks and switches", () => {
     const inp = input({ multi: true });
     const v = derive(inp, initialSiteState(inp.targets));
     expect(v.rows[0].sub).toBe("Multiple languages · main: German");
-    expect(v.rows[0].badges[0].text).toBe("transcribe · each part in its language");
+    expect(v.rows[0].badges[0].text).toBe("Whisper · each part in its language");
   });
   it("counter counts the tracks in use", () => {
     const inp = input();
@@ -190,9 +190,10 @@ describe("site tracks in a result", () => {
     expect(timed.map((t) => t.id)).toEqual(["de-x-site", "de-x-site-hoh", "de-x-site-auto", "de-x-site-2"]);
     expect(timed[1]).toMatchObject({ hoh: true, label: "Deutsch (SDH)", source: "site" });
     expect(timed[0].cues).toEqual([{ start: 1, end: 2, text: "a" }]);
-    expect(siteTrackLabel(timed[2])).toBe("DE · auto-generated");
-    expect(trackChipLabel({ timedTracks: timed }, "de-x-site-hoh")).toBe("DE · existing · hearing-impaired");
-    expect(trackChipLabel({ timedTracks: timed }, "en")).toBe("EN");
+    expect(siteTrackLabel(timed[2])).toBe("DE · Site auto");
+    expect(siteTrackLabel(timed[1])).toBe("DE · Site SDH");
+    expect(siteTimedTracks([{ id: "de", lang: "de", kind: "manual", parsed: parsed("a") }], [], "SRF")[0].site).toBe("SRF");
+    expect(siteTrackLabel({ lang: "de", kind: "manual", site: "SRF" })).toBe("DE · SRF");
   });
   it("attaching keeps the result's own tracks and warnings", () => {
     const res = { text: "", segments: [], warnings: ["w1"] } as never;
