@@ -1,7 +1,7 @@
 // The insertion controls for the two OVERRIDE layers of the cascade — the Profile editor
 // (per task) and App Rules (per target app) — which share the tri-state "Inherit" shape.
 // Settings → Dictation, the global default the two inherit from, has no inherit state and
-// keeps its own two-state rows; it imports `METHOD_OPTIONS` so the method's labels and
+// keeps its own two-state rows; it imports `METHOD_OPTIONS` (lib/insertion) so the method's labels and
 // order are pinned there too, and takes its row labels from the same manifest entries.
 //
 // One module because the surfaces had already drifted: App Rules called the method
@@ -18,17 +18,12 @@
 
 import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
 import { inheritLabel, onOff } from "@/lib/inherit";
+import { METHOD_OPTIONS } from "@/lib/insertion";
 import { Segmented, Select } from "@/components/ui";
 import { SETTING } from "@/lib/settingsManifest";
 import type { InsertMethod, InsertionOverrides } from "@/lib/types";
 
 const INHERIT = "inherit";
-
-export const METHOD_OPTIONS: { value: InsertMethod; label: string }[] = [
-  { value: "paste", label: "Clipboard paste" },
-  { value: "direct", label: "Direct typing" },
-  { value: "clipboard", label: "Clipboard only" },
-];
 
 /** Labels for the four rows, from the manifest so the Sync list can never disagree. */
 export const FIELD_LABEL = {
@@ -130,14 +125,4 @@ export function dictationControls({ value, onChange, disabled, inherited }: Dict
       value.insertMethod === "direct" || value.insertMethod === "clipboard",
     ),
   };
-}
-
-/** Does this layer override anything? Drives the "· set" / "· inherit" disclosure suffix. */
-export function hasInsertionOverrides(v: InsertionOverrides | undefined): boolean {
-  return insertionSetCount(v) > 0;
-}
-
-/** How many insertion fields an override object sets (the block's "· n set"). */
-export function insertionSetCount(v: InsertionOverrides | undefined): number {
-  return v ? Object.values(v).filter((x) => x !== undefined && x !== null).length : 0;
 }

@@ -40,7 +40,7 @@ import type { MicInventory, OverlayQuickAction, RecordingSettings } from "@/lib/
 import { MicPicker } from "@/components/MicPicker";
 import { buildMicView, isAlsaPin, labelForPick } from "@/lib/micOptions";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
-import { METHOD_OPTIONS } from "@/components/DictationFields";
+import { METHOD_OPTIONS } from "@/lib/insertion";
 // Row titles come from the settings manifest — the single source both this
 // screen and the Sync list render from, so their labels can never drift.
 import { SETTING } from "@/lib/settingsManifest";

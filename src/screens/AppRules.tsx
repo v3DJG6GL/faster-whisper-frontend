@@ -6,7 +6,8 @@ import { Button, Card, ConfirmLeave, EditorHeader, Labeled, ListScreenHeader, No
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { getFocusedOtherApp, remoteDesktopAutoDetected } from "@/lib/api";
 import { pasteLabel } from "@/lib/paste";
-import { dictationControls, FIELD_LABEL, METHOD_OPTIONS } from "@/components/DictationFields";
+import { dictationControls, FIELD_LABEL } from "@/components/DictationFields";
+import { METHOD_OPTIONS } from "@/lib/insertion";
 import { IS_WINDOWS } from "@/lib/platform";
 import type { AppRule } from "@/lib/types";
 import { cn } from "@/lib/cn";
