@@ -232,6 +232,8 @@ describe("siteDisplayName", () => {
     expect(out.timedTracks!.map((t) => t.site)).toEqual(["YouTube", "SRF"]);
     expect(withTrackSites(res, "/home/a.mp4")).toBe(res);
     expect(withTrackSites(out, "https://www.youtube.com/watch?v=1")).toBe(out);
+    // A host that names no site falls back to the extractor, as the run's own naming does.
+    expect(withTrackSites(res, "http://192.168.1.5/a.mp4", "Youtube").timedTracks![0].site).toBe("YouTube");
   });
 });
 

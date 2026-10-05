@@ -762,7 +762,8 @@ export function TranscriptViewer({
 
   // ── selected-result derivations ──────────────────────────────────────────
   // Site tracks of older records name their site from the link.
-  const result = useMemo(() => withTrackSites(rawResult, path), [rawResult, path]);
+  const extractor = useTranscribeRun((s) => s.urlMeta[path]?.extractor);
+  const result = useMemo(() => withTrackSites(rawResult, path, extractor), [rawResult, path, extractor]);
   const speakers = useMemo(() => speakerOrder(result), [result]);
   const hasSegments = !!result.segments?.length;
   const hasSpeakers = speakers.length > 0;

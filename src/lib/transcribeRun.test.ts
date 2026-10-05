@@ -18,7 +18,7 @@ import {
   railIndex, railOf, railStages, selectPath, setRename, skippedStages,
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
-  cancelRun, retryFile, retryRunVideo, runBadgeFraction, runTotals, settledPanelItem,
+  cancelRun, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
 } from "./transcribeRun";
 import type { PlanStage } from "./types";
 import type { QueueItem } from "./transcribeRun";
@@ -863,5 +863,16 @@ describe("an on-demand video that fails outright shows on the Video row", () => 
       vi.unstubAllGlobals();
       useTranscribeRun.setState({ stageMeta: {} });
     }
+  });
+});
+
+describe("withSiteTracks", () => {
+  it("a site-track download that fails becomes a warning on the result, never an error", async () => {
+    const res = { text: "x", warnings: ["w1"] };
+    const meta = { siteSubs: { fetch: ["de"], transcriptTrackId: null, mtTargets: [] } };
+    const out = await withSiteTracks(res, "https://youtu.be/q", meta, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+    expect(out.timedTracks).toBeUndefined();
+    expect(out.warnings).toEqual(["w1", "The site's subtitles could not be downloaded: Subtitle download requires the desktop app."]);
+    expect(await withSiteTracks(res, "https://youtu.be/q", undefined, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false })).toBe(res);
   });
 });

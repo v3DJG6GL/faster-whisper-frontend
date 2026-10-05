@@ -279,11 +279,12 @@ export function siteDisplayName(url: string, extractor?: string | null): string 
   return SITE_DISPLAY[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-/** The result with every site track's `site` filled in from the link — records made
- *  before tracks carried it. The same object when nothing is missing. */
-export function withTrackSites(result: BatchResult, url: string): BatchResult {
+/** The result with every site track's `site` filled in from the link (and its extractor,
+ *  when known — the run's own derivation) — records made before tracks carried it. The
+ *  same object when nothing is missing. */
+export function withTrackSites(result: BatchResult, url: string, extractor?: string | null): BatchResult {
   if (!result.timedTracks?.some((t) => !t.site)) return result;
-  const site = isSourceUrl(url) ? siteDisplayName(url) : "";
+  const site = isSourceUrl(url) ? siteDisplayName(url, extractor) : "";
   if (!site) return result;
   return { ...result, timedTracks: result.timedTracks.map((t) => (t.site ? t : { ...t, site })) };
 }

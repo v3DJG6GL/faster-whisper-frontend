@@ -1508,6 +1508,18 @@ async function fetchSiteSubs(
   return { transcript, others: parsed.filter((p) => p !== transcript), warnings };
 }
 
+/** A result + a link's downloaded site tracks, named by the link's site, and the warnings
+ *  their download produced. */
+function attachFetched(
+  res: BatchResult,
+  got: { others: ParsedSiteTrack[]; warnings: string[] },
+  url: string,
+  meta: TranscribeRunState["urlMeta"][string] | undefined,
+): BatchResult {
+  const timed = siteTimedTracks(got.others, meta?.siteSubs?.tracks, siteDisplayName(url, meta?.extractor));
+  return attachSiteTracks(res, timed, got.warnings);
+}
+
 /** A transcription result + the link's site tracks (D86). Shared by the run and
  *  by a job result ingested after a restart. */
 export async function withSiteTracks(
@@ -1519,7 +1531,7 @@ export async function withSiteTracks(
   const site = meta?.siteSubs;
   if (!site?.fetch.length) return res;
   const got = await fetchSiteSubs(url, { ...site, transcriptTrackId: null }, ctx);
-  return attachSiteTracks(res, siteTimedTracks(got.others, site.tracks, siteDisplayName(url, meta?.extractor)), got.warnings);
+  return attachFetched(res, got, url, meta);
 }
 
 /** A link run: the link card's spoken language and reused audio, and — when the
@@ -1551,10 +1563,9 @@ async function runLink(
   };
   if (!site?.fetch.length) return { res: await transcribeUrl({ ...req, sourceUrl: url, options }) };
   const got = await fetchSiteSubs(url, site, ctx);
-  const timed = siteTimedTracks(got.others, site.tracks, siteDisplayName(url, meta?.extractor));
   if (!got.transcript) {
     const res = await transcribeUrl({ ...req, sourceUrl: url, options });
-    return { res: attachSiteTracks(res, timed, got.warnings) };
+    return { res: attachFetched(res, got, url, meta) };
   }
   // The transcript is the site's: keep the audio (the check's download, else one now).
   const warnings = [...got.warnings];
@@ -1574,15 +1585,16 @@ async function runLink(
     startOnDemandVideo(url, ctx, videoPid, epoch);
   }
   return {
-    res: attachSiteTracks(
+    res: attachFetched(
       {
         ...res,
         ...(meta?.durationSec ? { duration: meta.durationSec } : {}),
         ...(audio ? { sourceMediaId: audio } : {}),
         ...(videoPid ? { sourceVideoPending: true } : {}),
       },
-      timed,
-      warnings,
+      { others: got.others, warnings },
+      url,
+      meta,
     ),
     videoPid,
   };
