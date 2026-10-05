@@ -4,7 +4,7 @@
 // segment/word text is server-controlled and speaker names are user-typed,
 // and both end up in files that get opened elsewhere.
 
-import { buildCues, cueResult, trackLang, limitsFor, trackCues, wrapLines, type CueOptions } from "./cueSplit";
+import { buildCues, cueResult, limitsFor, trText, trackCues, trackLang, wrapLines, type CueOptions } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { codeSlug, stripControlChars } from "./sanitize";
 import { segmentWordRanges } from "./wordAlign";
@@ -188,15 +188,10 @@ interface Ctx {
   wrap: (text: string, track: string, reserve: number) => string;
 }
 
-/** A segment's translation for one track, cleaned; null when absent — or when
- *  the server's quality guard KEPT the source text for this target (emitting
- *  it as a translated line would duplicate the original). */
+/** A segment's translation for one track (trText), cleaned; null when there is none. */
 function trOf(seg: TranscriptSegment, lang: string): string | null {
-  if (seg.translationsKept?.includes(lang)) return null;
-  const t = seg.translations?.[lang];
-  if (!t?.trim()) return null;
-  const cleaned = clean(t);
-  return cleaned.trim() ? cleaned : null;
+  const t = trText(seg, lang);
+  return t === null ? null : clean(t) || null;
 }
 
 /** Is this export carrying more than one translated track?

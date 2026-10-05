@@ -53,7 +53,7 @@ import { ExportTrackChips } from "@/components/ExportTrackChips";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import { TranscriptExport } from "@/components/TranscriptExport";
 import { SubtitleList } from "@/components/SubtitleList";
-import { cueOptionsOf, limitsFor } from "@/lib/cueSplit";
+import { cueOptionsOf, limitsFor, trText } from "@/lib/cueSplit";
 import type { BatchResult, TranscriptWord } from "@/lib/types";
 
 /** Live retro-translate controls, keyed by record. MODULE scope on purpose:
@@ -1174,18 +1174,16 @@ export function TranscriptViewer({
         if (origVisible) lines.push(`${ts}${who}${seg.text.trim()}`);
         for (const lang of visLangs) {
           const src = result.segments?.[i];
-          const tr = src?.translations?.[lang];
-          // Skip a track the server's quality guard kept as the ORIGINAL —
-          // pasting the source language under a translation's label is worse
-          // than omitting it. (trOf in transcriptExport already does this;
-          // this copy path never did.)
-          if (src?.translationsKept?.includes(lang)) continue;
-          if (!tr?.trim()) continue;
+          // trText skips a track the server's quality guard kept as the
+          // ORIGINAL — pasting the source language under a translation's
+          // label is worse than omitting it.
+          const tr = src && trText(src, lang);
+          if (!tr) continue;
           // Tag only when the clipboard would otherwise be ambiguous: with
           // two targets an untagged line says nothing about which language it
           // is, and `lang` was in scope here all along and simply unused.
           const tag = visLangs.length > 1 ? `[${lang.toUpperCase()}] ` : "";
-          lines.push(`${origVisible ? "  " : ts}${tag}${who}${tr.trim()}`);
+          lines.push(`${origVisible ? "  " : ts}${tag}${who}${tr}`);
         }
         return lines.join("\n");
       })

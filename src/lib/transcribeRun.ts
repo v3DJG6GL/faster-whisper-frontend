@@ -27,6 +27,7 @@ import type { VideoRung } from "./urlSource";
 import { isVideoSourcePath, siteDisplayName } from "./mediaExport";
 import { forgetRow, persistRow, type LedgerRow } from "./jobsLedger";
 import { applyMultilingual, primarySubtag, spokenLanguage } from "./languages";
+import { trText } from "./cueSplit";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
 } from "./siteSubtitles";
@@ -1437,7 +1438,7 @@ async function translateParsed(
       targets.map((lang) => [
         lang,
         segments
-          .map((seg) => (seg.translationsKept?.includes(lang) ? "" : (seg.translations?.[lang] ?? "")))
+          .map((seg) => trText(seg, lang))
           .filter(Boolean)
           .join(" "),
       ]),

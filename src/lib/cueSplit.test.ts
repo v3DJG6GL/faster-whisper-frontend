@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildCues, cueOptionsOf, cueResult, cutByShare, limitsFor, sanitizeCueLimits, trackCues, trackLang, wrapLines,
+  buildCues, cueOptionsOf, cueResult, cutByShare, limitsFor, sanitizeCueLimits, trText, trackCues, trackLang, wrapLines,
   type CueOptions,
 } from "./cueSplit";
 import type { BatchResult, TranscriptWord } from "./types";
@@ -214,5 +214,12 @@ describe("trackLang", () => {
     const r: BatchResult = { text: "", language: " de ", timedTracks: [{ id: "x", lang: "fr", source: "site", kind: "manual", cues: [] }] };
     expect(["orig", "en", "x"].map((t) => trackLang(r, t))).toEqual(["de", "en", "fr"]);
     expect(trackLang({}, "orig")).toBe("und");
+  });
+});
+
+describe("trText", () => {
+  it("a usable translation, trimmed; none when kept-original, absent or blank", () => {
+    const seg = { start: 0, end: 1, text: "Hallo", translations: { en: " Hello ", fr: "  ", it: "Ciao" }, translationsKept: ["it"] };
+    expect(["en", "fr", "it", "es"].map((l) => trText(seg, l))).toEqual(["Hello", null, null, null]);
   });
 });

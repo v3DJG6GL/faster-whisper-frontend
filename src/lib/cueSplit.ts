@@ -422,8 +422,9 @@ export function buildCues(
   return { cues, own };
 }
 
-/** A segment's usable translation (kept-original and empty lines excluded). */
-function trText(seg: TranscriptSegment, lang: string): string | null {
+/** A segment's usable translation, trimmed: null when absent or empty — or when the server's
+ *  quality guard KEPT the source text for this target (it would duplicate the original). */
+export function trText(seg: TranscriptSegment, lang: string): string | null {
   if (seg.translationsKept?.includes(lang)) return null;
   const t = seg.translations?.[lang]?.trim();
   return t ? t : null;
