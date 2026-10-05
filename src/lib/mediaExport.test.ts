@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  derivePickedStem, embeddedSubtitleTracks, exportStem, isVideoSourcePath,
+  derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, isVideoSourcePath,
   legacyTrackIndices, linkSiteName, mediaExportPlan, siteDisplayName, withTrackSites, mp4Disabled, sidecarFiles,
   sidecarNames, stemTimestamp,
 } from "./mediaExport";
@@ -239,5 +239,13 @@ describe("derivePickedStem", () => {
     expect(derivePickedStem("/out/talk.de.lrc", ".de.lrc", "lrc")).toEqual({ dir: "/out/", stem: "talk" });
     expect(derivePickedStem("/out/renamed.lrc", ".de.lrc", "lrc")).toEqual({ dir: "/out/", stem: "renamed" });
     expect(derivePickedStem("C:\\out\\talk.mkv", ".mkv", "mkv")).toEqual({ dir: "C:\\out\\", stem: "talk" });
+  });
+});
+
+describe("fileStem", () => {
+  it("the file name without its last extension, either separator", () => {
+    expect(fileStem("/out/talk.de.srt")).toBe("talk.de");
+    expect(fileStem("C:\\out\\talk.mkv")).toBe("talk");
+    expect(fileStem("/out/")).toBe("");
   });
 });

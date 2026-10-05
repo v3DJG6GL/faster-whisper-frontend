@@ -18,6 +18,11 @@ export function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
 
+/** A path's file name without its extension ("/a/talk.de.srt" → "talk.de"). */
+export function fileStem(path: string): string {
+  return (path.split(/[\\/]/).pop() ?? "").replace(/\.[^.]+$/, "");
+}
+
 /** Video containers the picker accepts and the packaging route can read. */
 export const VIDEO_SOURCE_EXTS = ["mp4", "mkv", "webm", "mov", "m4v"] as const;
 
@@ -321,8 +326,7 @@ export function exportStem(title: string | null | undefined, path: string, link?
   if (!isSourceUrl(path)) {
     const clean = cleanStemPart(title);
     if (clean) return clean;
-    const base = path.split(/[\\/]/).pop() ?? "";
-    return base.replace(/\.[^.]+$/, "") || "transcript";
+    return fileStem(path) || "transcript";
   }
   let tail = "";
   try {

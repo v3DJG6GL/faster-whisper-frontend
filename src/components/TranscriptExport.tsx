@@ -35,7 +35,7 @@ import {
   type TrackPrefs,
 } from "@/lib/exportTracks";
 import {
-  basename, derivePickedStem, embeddedSubtitleTracks, exportStem, isVideoSourcePath,
+  derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, isVideoSourcePath,
   legacyTrackIndices, mediaExportPlan, mp4Disabled, sidecarFiles, sidecarNames, type MediaChoice, type MediaContainer,
   type MediaExportPhase, type MediaStreams, type SubtitleMode,
 } from "@/lib/mediaExport";
@@ -382,7 +382,7 @@ export function TranscriptExport({
         ...source,
         container, subtitles, defaultTrack, originalTrack,
         audioLang, audioLabel: audioLang ? trackLanguageName(audioLang) : null,
-        destPath: dest, filename: basename(dest).replace(/\.[^.]+$/, ""),
+        destPath: dest, filename: fileStem(dest),
         maxUploadBytes: trCaps?.media_package?.max_upload_bytes ?? null,
       });
     } finally {
