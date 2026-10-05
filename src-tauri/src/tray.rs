@@ -113,7 +113,7 @@ pub(crate) fn tray_missing() -> bool {
 
 #[cfg(not(target_os = "linux"))]
 mod native {
-    use super::{menu_entries, run_menu_action, show_main, MenuEntry, TRAY_TITLE};
+    use super::{menu_entries, run_menu_action, toggle_main, MenuEntry, TRAY_TITLE};
     use tauri::{
         menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem},
         tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -148,7 +148,7 @@ mod native {
                     ..
                 } = event
                 {
-                    show_main(tray.app_handle());
+                    toggle_main(tray.app_handle());
                 }
             })
             .on_menu_event(|app, event| run_menu_action(app, event.id.as_ref()));
@@ -164,7 +164,7 @@ mod native {
 
 #[cfg(target_os = "linux")]
 mod sni {
-    use super::{menu_entries, run_menu_action, show_main, MenuEntry, TRAY_TITLE};
+    use super::{menu_entries, run_menu_action, show_main, toggle_main, MenuEntry, TRAY_TITLE};
     use ksni::{menu::StandardItem, Handle, Icon, MenuItem, ToolTip, TrayMethods};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Mutex, OnceLock};
@@ -222,9 +222,9 @@ mod sni {
             }
         }
 
-        /// Left click.
+        /// Left click: toggles the window.
         fn activate(&mut self, _x: i32, _y: i32) {
-            show_main(&self.app);
+            toggle_main(&self.app);
         }
 
         /// Middle click.
@@ -341,6 +341,28 @@ pub(crate) fn show_main(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(window) = handle.get_webview_window("main") {
+            crate::winvis::notify(&window, "main", true);
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    });
+}
+
+/// The tray icon's left click: hide the main window when it is up (visible, not minimized),
+/// otherwise bring it up like `show_main`. Hiding goes through the same winvis notice as the
+/// close-to-tray path, so the webview knows it went to the tray.
+pub(crate) fn toggle_main(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window("main") else {
+            return;
+        };
+        let up = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false);
+        if up && !tray_missing() {
+            let _ = window.hide();
+            crate::winvis::notify(&window, "main", false);
+        } else {
             crate::winvis::notify(&window, "main", true);
             let _ = window.show();
             let _ = window.unminimize();
