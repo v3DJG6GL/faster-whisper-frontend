@@ -1,7 +1,7 @@
 // One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
-  addLanguage, attachSiteTracks, derive, linkSpoken, spokenPill, siteTimedTracks, siteTrackLabel, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
+  addLanguage, attachSiteTracks, derive, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "./urlSource";
@@ -190,10 +190,10 @@ describe("site tracks in a result", () => {
     expect(timed.map((t) => t.id)).toEqual(["de-x-site", "de-x-site-hoh", "de-x-site-auto", "de-x-site-2"]);
     expect(timed[1]).toMatchObject({ hoh: true, label: "Deutsch (SDH)", source: "site" });
     expect(timed[0].cues).toEqual([{ start: 1, end: 2, text: "a" }]);
-    expect(siteTrackLabel(timed[2])).toBe("DE · Site auto");
-    expect(siteTrackLabel(timed[1])).toBe("DE · Site SDH");
+    expect(siteWord(timed[2])).toBe("Site auto");
+    expect(siteWord(timed[1])).toBe("Site SDH");
     expect(siteTimedTracks([{ id: "de", lang: "de", kind: "manual", parsed: parsed("a") }], [], "SRF")[0].site).toBe("SRF");
-    expect(siteTrackLabel({ lang: "de", kind: "manual", site: "SRF" })).toBe("DE · SRF");
+    expect(siteWord({ kind: "manual", site: "SRF" })).toBe("SRF");
   });
   it("attaching keeps the result's own tracks and warnings", () => {
     const res = { text: "", segments: [], warnings: ["w1"] } as never;

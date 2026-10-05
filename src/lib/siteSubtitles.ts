@@ -448,11 +448,6 @@ export function attachSiteTracks(res: BatchResult, timed: readonly TimedTrack[],
   };
 }
 
-/** How a site track reads in lane labels: "DE · YouTube", "DE · YouTube auto". */
-export function siteTrackLabel(t: Pick<TimedTrack, "lang" | "kind" | "hoh" | "site">): string {
-  return `${safeDisplayText(t.lang, 16).toUpperCase()} · ${siteWord(t)}`;
-}
-
 // ── The link's spoken language (the link card's "Spoken language" row) ──────────────────────
 
 /** The language check of one link, as the row shows it. */
