@@ -7,7 +7,7 @@
 // transcript box: a long video's ~2000 cue rows cost WebKitGTK its frame rate
 // in style/layout/paint alone, even with React idle.
 
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { memo, useCallback, useMemo, useRef, useState, type RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Pencil } from "lucide-react";
 import { LangTag } from "@/components/ui";
@@ -22,6 +22,7 @@ import {
 } from "@/lib/cueSplit";
 import { trackCode } from "@/lib/exportTracks";
 import type { BatchResult } from "@/lib/types";
+import { useResizeObserver } from "@/lib/useResizeObserver";
 
 interface Line {
   text: string;
@@ -140,18 +141,10 @@ function VirtualCues({
   // padding sit above them) — the virtualizer's scrollMargin. Re-measured
   // whenever the list's box changes (width, total height).
   const [margin, setMargin] = useState(0);
-  useLayoutEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const measure = () => {
-      const box = scrollRef.current;
-      if (box) setMargin(Math.round(el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [scrollRef]);
+  useResizeObserver(listRef, (el) => {
+    const box = scrollRef.current;
+    if (box) setMargin(Math.round(el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop));
+  });
   // Keyed on the rows: a new layout (options, tracks, edits) re-runs the
   // positions with fresh estimates for the rows not measured yet.
   const getItemKey = useCallback((i: number) => rows[i].key, [rows]);

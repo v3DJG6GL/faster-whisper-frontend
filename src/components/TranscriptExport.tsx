@@ -3,7 +3,7 @@
 // it stays mounted with the viewer (hidden while closed), so its picks and a
 // running media export survive closing the panel.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Circle, Download, Minus, PanelBottom, PanelRight, RotateCcw, TriangleAlert } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
@@ -44,6 +44,7 @@ import { useTranscribeRun } from "@/lib/transcribeRun";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import type { Backend, BatchResult, Capabilities, TranscriptWord } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
+import { useResizeObserver } from "@/lib/useResizeObserver";
 
 /** The five export formats as always-visible cards (5 options is below every
  *  buttons-vs-dropdown threshold — NN/g, Fluent, Apple HIG). The one-liner
@@ -493,16 +494,7 @@ export function TranscriptExport({
   // the bottom of the window. Measured before paint; kept while closed.
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [panelW, setPanelW] = useState(0);
-  useLayoutEffect(() => {
-    const el = panelRef.current;
-    if (!open || !el) return;
-    const measure = () => setPanelW(el.clientWidth);
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [open]);
+  useResizeObserver(panelRef, (el) => setPanelW(el.clientWidth), open);
   const twoCol = panelW >= 860;
 
   if (!open) return null;

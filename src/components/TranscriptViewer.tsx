@@ -51,6 +51,7 @@ import {
 } from "@/lib/exportTracks";
 import { ExportTrackChips } from "@/components/ExportTrackChips";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
+import { useResizeObserver } from "@/lib/useResizeObserver";
 import { TranscriptExport } from "@/components/TranscriptExport";
 import { SubtitleList } from "@/components/SubtitleList";
 import { cueOptionsOf, limitsFor, limitsTitle, trText } from "@/lib/cueSplit";
@@ -1503,21 +1504,11 @@ export function TranscriptViewer({
   // the element itself 65vh tall with the scrollbar running off-screen.
   // The sticky toolbar's height as `--viewer-bar` on the card: the export panel's sticky
   // Summary column sits below it instead of under it. 0 where the toolbar isn't sticky.
+  const barSticky = !(fill || focus);
+  useResizeObserver(toolbarRef, (bar) => bar.parentElement?.style.setProperty("--viewer-bar", `${bar.offsetHeight}px`), barSticky);
   useEffect(() => {
-    const bar = toolbarRef.current;
-    const card = bar?.parentElement;
-    if (!bar || !card) return;
-    if (fill || focus) {
-      card.style.removeProperty("--viewer-bar");
-      return;
-    }
-    const ro = new ResizeObserver(() => card.style.setProperty("--viewer-bar", `${bar.offsetHeight}px`));
-    ro.observe(bar);
-    return () => {
-      ro.disconnect();
-      card.style.removeProperty("--viewer-bar");
-    };
-  }, [fill, focus]);
+    if (!barSticky) toolbarRef.current?.parentElement?.style.removeProperty("--viewer-bar");
+  }, [barSticky]);
   const stickyShiftRef = useRef(0); // current translateY, read by follow
   useEffect(() => {
     if (fill || focus) return; // toolbar isn't sticky there — no overlap
