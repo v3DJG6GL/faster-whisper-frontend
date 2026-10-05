@@ -29,6 +29,7 @@ import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { backendOptions, backendPrompt, effectiveServerUrl } from "@/lib/backends";
+import { withBackendChips } from "@/lib/backendChips";
 import { backendForProfile } from "@/lib/dictation";
 import { liveAllowed } from "@/lib/streaming";
 import { configuredRouteTargets } from "@/lib/overlay";
@@ -318,7 +319,7 @@ function Editor({
                       // and a backend rename raises no SecurityChange — so a hostile sync server
                       // can relabel the options silently. Same defanging as the sync-server
                       // picker, for the same reason.
-                      ...backendOptions(backends),
+                      ...withBackendChips(backendOptions(backends), backends, connections),
                     ]
                   : [{ value: "", label: "No backends — add one" }]
               }

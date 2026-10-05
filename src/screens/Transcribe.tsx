@@ -37,6 +37,7 @@ import {
 import { closeRecord, openHistoryRecord, retryRunVideo } from "@/lib/transcribeRun";
 import { clampJobsTtl } from "@/lib/jobsLedger";
 import { backendOptions, backendPrompt, effectiveServerUrl } from "@/lib/backends";
+import { withBackendChips } from "@/lib/backendChips";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/subtitleImport";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
@@ -1388,7 +1389,7 @@ export default function Transcribe() {
                 // results, else the prior backend's transcript/error shows under the new selection.
                 onChange={applyBackendPick}
                 disabled={busy}
-                options={backendOptions(backends)}
+                options={withBackendChips(backendOptions(backends), backends, connections)}
               />
             </div>
             <div>

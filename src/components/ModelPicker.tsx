@@ -12,6 +12,8 @@
 import { useEffect, useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { Combobox } from "@/components/Combobox";
+import { Badge } from "@/components/ui";
+import { deviceChip } from "@/lib/backendChips";
 import type { ServerModel } from "@/lib/types";
 
 export function ModelPicker({
@@ -50,6 +52,10 @@ export function ModelPicker({
 
   const ids = models.map((m) => m.id);
   const loaded = new Set(models.filter((m) => m.loaded).map((m) => m.id));
+  const device = new Map(models.flatMap((m) => {
+    const d = deviceChip(m.device);
+    return d ? [[m.id, d] as const] : [];
+  }));
   // Only claim "custom" when there IS a list to be absent from.
   const isCustom = value !== "" && ids.length > 0 && !ids.includes(value);
 
@@ -75,7 +81,20 @@ export function ModelPicker({
         ariaLabel={ariaLabel}
         placeholder={defaultLabel ?? placeholder ?? "large-v3 / org/repo"}
         footerLabel="models on this server"
-        suffix={(id) => (loaded.has(id) ? <span className="ml-1.5 text-ok">●</span> : null)}
+        // Loaded dot, and where the model runs ("CUDA"/"CPU") so a CPU fallback is visible.
+        suffix={(id) => {
+          const dev = device.get(id);
+          return loaded.has(id) || dev ? (
+            <>
+              {loaded.has(id) && <span className="ml-1.5 text-ok">●</span>}
+              {dev && (
+                <span className="ml-1.5">
+                  <Badge>{dev}</Badge>
+                </span>
+              )}
+            </>
+          ) : null;
+        }}
       />
       {(isCustom || (!hideReset && defaultLabel !== undefined && value !== "")) && (
         <div className="mt-1.5 flex items-center gap-2 text-[11px] text-faint">

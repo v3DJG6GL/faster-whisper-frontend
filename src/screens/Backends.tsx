@@ -7,6 +7,7 @@ import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, IconBu
 import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "@/components/OverrideField";
 import { ServerInfoPanel } from "@/components/ServerInfoPanel";
 import { capturesOn } from "@/lib/serverInfo";
+import { backendChips } from "@/lib/backendChips";
 import { countSet } from "@/lib/decodeKeys";
 import { envDesc } from "@/lib/settingDesc";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
@@ -140,6 +141,7 @@ function Editor({
   // The freshest verdict for the top card and the model list: this editor's test, else the
   // session cache (the list card's tests, the Transcribe screen's probes).
   const conn = result ?? storedConn;
+  const chips = backendChips(b, conn ?? undefined);
   const kind = effectiveServerKind(b, result);
   // Caller capabilities, for gating the decode editor.
   const { caps } = useOverrideContext({
@@ -284,7 +286,17 @@ function Editor({
       <EditorHeader
         onBack={() => guard.guardExit(onCancel)}
         title={b.name.trim() || "New backend"}
-        subtitle="Backend · faster-whisper / OpenAI-compatible"
+        subtitle={
+          chips.length ? (
+            <span className="inline-flex items-center gap-1.5">
+              {chips.map((c) => (
+                <Badge key={c}>{c}</Badge>
+              ))}
+            </span>
+          ) : (
+            "Backend · faster-whisper / OpenAI-compatible"
+          )
+        }
         dirty={dirty}
         saveLabel="Save backend"
         onSave={() => void doSave()}
@@ -310,7 +322,7 @@ function Editor({
           </div>
           <span className="rounded-pill border border-line-strong px-2.5 py-0.5 text-[12px] text-dim" title={conn?.error}>
             {conn?.ok
-              ? `Connected${conn.serverVersion ? ` · ${safeDisplayText(conn.serverVersion, 40)}` : ""}`
+              ? "Connected"
               : conn?.error
                 ? "Error"
                 : "Untested"}
@@ -1096,6 +1108,9 @@ export default function Backends() {
                       <Badge tone="accent">{b.endpoint}</Badge>
                       <Badge>{safeDisplayText(languageLabel(b.language), 40)}</Badge>
                       {b.hasApiKey && <Badge>key</Badge>}
+                      {backendChips(b, conn).map((c) => (
+                        <Badge key={c}>{c}</Badge>
+                      ))}
                     </div>
                     <div className="mt-1 flex items-center gap-2 font-mono text-[12px] text-dim">
                       {/* The card is the audit surface — non-security sync categories still apply
@@ -1120,8 +1135,13 @@ export default function Backends() {
                           <Badge tone="warn">override in use</Badge>
                         </span>
                       )}
-                      <span className="text-faint">·</span>
-                      <span className="text-faint">{safeDisplayText(b.model, 80)}</span>
+                      {/* No model = the server's default: no separator dangling before nothing. */}
+                      {b.model.trim() && (
+                        <>
+                          <span className="text-faint">·</span>
+                          <span className="text-faint">{safeDisplayText(b.model, 80)}</span>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="flex w-24 items-center justify-end gap-1.5 text-[12px] text-dim" title={conn?.error}>

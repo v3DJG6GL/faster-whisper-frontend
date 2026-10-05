@@ -809,13 +809,22 @@ export function Select<T extends string>({
 }: {
   value: T;
   onChange: (v: T) => void;
-  options: { value: T; label: string }[];
+  /** `chips`: small badges after an option's label (e.g. a backend's version and device),
+   *  in its row and on the closed field. */
+  options: { value: T; label: string; chips?: string[] }[];
   className?: string;
   disabled?: boolean;
   ariaLabel?: string;
 }) {
-  type Option = { value: T; label: string };
-  const current = (options.find((o) => o.value === value) ?? options[0])?.label ?? "";
+  type Option = { value: T; label: string; chips?: string[] };
+  const picked = options.find((o) => o.value === value) ?? options[0];
+  const current = picked?.label ?? "";
+  const chips = (list: string[] | undefined) =>
+    list?.map((c) => (
+      <span key={c} className="ml-1.5">
+        <Badge>{c}</Badge>
+      </span>
+    ));
   const search = options.length >= SELECT_SEARCH_MIN;
   return (
     <div className={className}>
@@ -836,11 +845,13 @@ export function Select<T extends string>({
               {selected && <Check className="size-3.5 text-accent" />}
             </span>
             <span className="min-w-0 flex-1 truncate text-text">{o.label}</span>
+            {o.chips?.length ? <span className="shrink-0">{chips(o.chips)}</span> : null}
           </>
         )}
         renderTrigger={(p) => (
           <FieldTrigger {...p} open={p["aria-expanded"]} aria-label={ariaLabel ? `${ariaLabel}: ${current}` : undefined}>
             {current}
+            {chips(picked?.chips)}
           </FieldTrigger>
         )}
         search={search}
