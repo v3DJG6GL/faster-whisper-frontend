@@ -44,7 +44,7 @@ export function OverrideHeader({
   /** The server ENV name (`env`, mono) or, for a setting only the app has, its plain name. */
   title: string;
   env?: boolean;
-  desc?: string;
+  desc?: ReactNode;
   /** The title's tooltip — what an app-only setting does (they have no backend description). */
   hint?: string;
   /** The field holds an override (empty or not): the accent dot, and the reset. */

@@ -1,22 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screens";
 import { useSearchParams } from "react-router-dom";
-import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
+import { Server, Pencil, Copy, Trash2, Plug, Loader2, Info } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, SetSummary, StatusDot, TextInput } from "@/components/ui";
-import { OverrideHeader, OverrideText } from "@/components/OverrideField";
+import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, IconButton, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, SetSummary, StatusDot, TextInput } from "@/components/ui";
+import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "@/components/OverrideField";
+import { ServerInfoPanel } from "@/components/ServerInfoPanel";
+import { capturesOn } from "@/lib/serverInfo";
 import { countSet } from "@/lib/decodeKeys";
 import { envDesc } from "@/lib/settingDesc";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { DecodeFields } from "@/components/DecodeFields";
 import { LiveDictationFields } from "@/components/LiveDictationFields";
 import { TranslationDefaultsEditor, targetsLabel } from "@/components/TranslationFields";
-import { inheritLabel, LOCKED_REASON, serverInherited } from "@/lib/inherit";
+import { inheritLabel, LOCKED_REASON, serverContextSegments, serverInherited } from "@/lib/inherit";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
-import { languageLabel, namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
+import { languageLabel, namedLanguage, offersMultilingual, spokenField, spokenLabel } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey, syncPull } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/syncTypes";
@@ -118,8 +120,15 @@ function Editor({
   const [savingKey, setSavingKey] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
   // Every disclosure starts closed; its header's "· n set" says whether it holds anything.
+  // A blank draft ("Enter details manually") opens on Connection: there is nothing to edit
+  // anywhere else until it has an address.
+  const [showConnection, setShowConnection] = useState(() => !initial.serverUrl.trim());
+  const [showDefaults, setShowDefaults] = useState(false);
   const [showDecode, setShowDecode] = useState(false);
   const [showLive, setShowLive] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
+  const infoId = useId();
+  const reportApp = useApp((s) => s.settings.recording.reportTargetApp);
   const [showTranslation, setShowTranslation] = useState(false);
   const set = (patch: Partial<Backend>) => setB((x) => ({ ...x, ...patch }));
   // The prompt's tri-state view: undefined = inherit, "" = explicit clear, value = set.
@@ -128,6 +137,9 @@ function Editor({
   // `detected` = what the last connection test inferred; `kind` = the effective
   // classification (a manual override wins). `kind` gates the decode-override editor.
   const detected = classifyConnection(result);
+  // The freshest verdict for the top card and the model list: this editor's test, else the
+  // session cache (the list card's tests, the Transcribe screen's probes).
+  const conn = result ?? storedConn;
   const kind = effectiveServerKind(b, result);
   // Caller capabilities, for gating the decode editor.
   const { caps } = useOverrideContext({
@@ -287,168 +299,246 @@ function Editor({
         />
       )}
 
-      <div className="mt-5 grid grid-cols-2 gap-4">
-        <Labeled label="Name">
-          <TextInput value={b.name} onChange={(e) => set({ name: e.target.value })} placeholder="My backend" />
-        </Labeled>
-        <Labeled label="Server URL">
-          <TextInput value={b.serverUrl} onChange={(e) => set({ serverUrl: e.target.value })} placeholder="http://host:8000" />
-          {insecureUrlWarning(b.serverUrl) && (
-            <Notice className="mt-2">{insecureUrlWarning(b.serverUrl)}</Notice>
-          )}
-        </Labeled>
-        {/* Per-device address override: connects THIS machine somewhere else while
-            the canonical URL above stays shared through settings sync (classic
-            case: localhost on the box running the server, a LAN IP elsewhere).
-            Applied live via the store (it's device state, not part of the Backend
-            being edited); grayed out (never hidden) while sync is off, where the
-            canonical URL is already local-only.
-
-            EXCEPT when one is actually set. The override applies whether or not sync is on and
-            survives turning it off (see the warning note below, and `effectiveServerUrl`), so
-            greying the box on `!syncEnabled` alone locked a value that was still routing every
-            request: a user following the "override in use" badge on the card here to clear a
-            misrouting address found a disabled field, with only "turn sync back on" or "delete
-            the backend" as ways out. Never disable a control that is currently in effect. */}
-        <Labeled label="Address on this device (optional)">
-          <TextInput
-            value={urlOverride}
-            disabled={!syncEnabled && !urlOverride.trim()}
-            onChange={(e) => setUrlOverride(b.id, e.target.value)}
-            placeholder={syncEnabled ? "override the synced URL here only" : "used with settings sync"}
-          />
-          {!syncEnabled && urlOverride.trim() && (
-            <Notice className="mt-2">
-              Sync is off, but this address is still where this device sends everything for this
-              backend. Clear the field to go back to the address above.
-            </Notice>
-          )}
-          {/* This field bypasses normalizeUrl entirely — it goes to the transport verbatim — so
-              it needs the warning at least as much as the canonical URL above. NOT gated on
-              syncEnabled: `effectiveServerUrl` consults the override regardless of whether sync
-              is on, and turning sync off does not clear it — so after enable → set an override →
-              disable, that address is still where every request goes, while the field is grayed
-              out and (when gated) its warning hidden. The warning must track the address actually
-              in use, not the toggle. */}
-          {urlOverride.trim() && insecureUrlWarning(urlOverride) && (
-            <Notice className="mt-2">{insecureUrlWarning(urlOverride)}</Notice>
-          )}
-        </Labeled>
-        <Labeled label="Model">
-          <ModelPicker
-            ariaLabel="Model"
-            value={b.model}
-            onChange={(v) => set({ model: v })}
-            models={result?.ok ? result.models : storedConn?.ok ? storedConn.models : []}
-            placeholder="whisper-1 / large-v3"
-          />
-        </Labeled>
-        <Labeled label="API key (optional)">
-          <TextInput
-            type="password"
-            value={key}
-            onChange={(e) => {
-              setKey(e.target.value);
-              set({ hasApiKey: e.target.value.length > 0 || initial.hasApiKey });
-            }}
-            placeholder={initial.hasApiKey ? "•••••••••• (stored — leave blank to keep)" : "wk_…"}
-          />
-        </Labeled>
-        <Labeled label="Default language">
-          <SpokenLanguagePicker
-            ariaLabel="Default language"
-            value={spoken.value}
-            multi={multiOffered}
-            onChange={(v) => {
-              const { language, overrides } = spoken.pick(v);
-              set({ language, decodeOverrides: overrides && Object.keys(overrides).length ? overrides : undefined });
-            }}
-          />
-        </Labeled>
-        <Labeled label="Endpoint">
-          <Segmented
-            value={b.endpoint}
-            onChange={(v) => set({ endpoint: v })}
-            options={[
-              { value: "stream", label: "Streaming" },
-              { value: "batch", label: "Batch" },
-            ]}
-          />
-        </Labeled>
-        <Labeled label="Server type">
-          <Segmented
-            value={b.kind ?? "auto"}
-            onChange={(v) => set({ kind: v === "auto" ? undefined : v })}
-            options={[
-              { value: "auto", label: "Auto" },
-              { value: "full", label: "Full" },
-              { value: "standard", label: "Standard" },
-            ]}
-          />
-        </Labeled>
-        <Labeled label="Detected">
-          <div className="flex h-10 items-center gap-2 text-[12.5px]">
-            {detected === "unknown" ? (
-              <span className="text-faint">Test the connection to detect</span>
-            ) : detected === "full" ? (
-              <>
-                <StatusDot tone="ok" />
-                <span className="text-dim">
-                  faster-whisper-backend
-                  {/* Older builds identify via boot_id but don't report a version yet. */}
-                  {result?.serverVersion && (
-                    <span className="text-faint"> · {safeDisplayText(result.serverVersion, 60)}</span>
-                  )}
-                </span>
-              </>
-            ) : (
-              <>
-                <StatusDot tone="warn" />
-                <span className="text-dim">Standard Whisper server</span>
-              </>
-            )}
-            {b.kind && b.kind !== "auto" && <span className="text-faint">· manual</span>}
+      {/* The backend at a glance: where it points, whether it answered, and — behind ⓘ — what
+          this server allows and keeps (red dot while it records captures). */}
+      <div className="mt-5 rounded-card border border-line bg-surface-2/40 px-[18px]">
+        <div className="flex flex-wrap items-center gap-3 py-3">
+          <StatusDot tone={conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[14px] font-medium text-text">{safeIdentityText(b.name, 80) || "New backend"}</div>
+            <div className="truncate font-mono text-[11.5px] text-faint">{safeIdentityText(effUrl, 120) || "no address yet"}</div>
           </div>
-        </Labeled>
+          <span className="rounded-pill border border-line-strong px-2.5 py-0.5 text-[12px] text-dim" title={conn?.error}>
+            {conn?.ok
+              ? `Connected${conn.serverVersion ? ` · ${safeDisplayText(conn.serverVersion, 40)}` : ""}`
+              : conn?.error
+                ? "Error"
+                : "Untested"}
+          </span>
+          {caps?.server_info && (
+            <IconButton
+              label="What this server allows and keeps"
+              onClick={() => setShowInfo((v) => !v)}
+              expanded={showInfo}
+              controls={infoId}
+              className="relative"
+            >
+              <Info className="size-4" />
+              {capturesOn(caps.server_info) && (
+                <span
+                  className="absolute right-1 top-1 size-[7px] rounded-full bg-rec shadow-[0_0_0_2px_var(--c-surface-2)]"
+                  aria-hidden
+                />
+              )}
+            </IconButton>
+          )}
+        </div>
+        {showInfo && caps?.server_info && <ServerInfoPanel id={infoId} info={caps.server_info} reportApp={reportApp} />}
       </div>
 
-      {kind === "standard" && b.endpoint === "stream" && (
-        <Notice className="mt-3">
-          A standard Whisper server has no streaming endpoint — switch Endpoint to{" "}
-          <span className="font-medium">Batch</span>.
-        </Notice>
-      )}
-
-      {/* Tri-state, the same shape the Profile editor and the decode fields use:
-          undefined = inherit the server's default prompt (omit the
-          field), "" = explicit clear (send an empty prompt, so nothing is inherited),
-          value = use it. Stored as `prompt` + `promptCleared` — see `backendPrompt`. */}
-      <div className="mt-4">
-        <OverrideHeader
-          title="DEFAULT_PROMPT"
-          desc={envDesc("DEFAULT_PROMPT")}
-          overridden={promptOverridden}
-          lockReason={promptLocked ? LOCKED_REASON : undefined}
-          onClear={() => set(backendPromptFields(""))}
-          canClear={promptOverride !== ""}
-          clearTitle="Override with empty (suppress the inherited prompt)"
-          onReset={() => set(backendPromptFields(undefined))}
-          note={promptLocked && promptOverridden ? "Ignored · locked by the server" : undefined}
-          wide
-          last
+      <div className="mt-5">
+        <DisclosureCard
+          open={showConnection}
+          onToggle={() => setShowConnection((v) => !v)}
+          title="Connection"
+          summary={<span className="text-faint">· {safeIdentityText(authorityOf(effUrl)?.host, 60) || "no address"}</span>}
         >
-          {/* Ghost the server's default prompt (its own, or the override profile's) as the
-              inherited baseline; a cleared field says so instead. */}
-          <OverrideText
-            ariaLabel="Default vocabulary / prompt"
-            rows={2}
-            value={promptOverride}
-            onChange={(v) => set(backendPromptFields(v))}
-            inherited={server.prompt ? (server.prompt.value ?? "no prompt") : undefined}
-            fixedLabel={promptLocked ? inheritLabel(server.prompt?.value ?? "no prompt", "Set by server") : undefined}
-            title={promptLocked ? LOCKED_REASON : server.prompt?.source}
-          />
-        </OverrideHeader>
+          <OverrideHeader title="Name" env={false}>
+            <div className={OVERRIDE_CONTROL_W}>
+              <TextInput aria-label="Name" value={b.name} onChange={(e) => set({ name: e.target.value })} placeholder="My backend" />
+            </div>
+          </OverrideHeader>
+          <OverrideHeader title="Server URL" env={false}>
+            <div className={OVERRIDE_CONTROL_W}>
+              <TextInput aria-label="Server URL" value={b.serverUrl} onChange={(e) => set({ serverUrl: e.target.value })} placeholder="http://host:8000" />
+            </div>
+            {insecureUrlWarning(b.serverUrl) && <Notice className="mt-1">{insecureUrlWarning(b.serverUrl)}</Notice>}
+          </OverrideHeader>
+          {/* Per-device address override: connects THIS machine somewhere else while
+              the canonical URL above stays shared through settings sync (classic
+              case: localhost on the box running the server, a LAN IP elsewhere).
+              Applied live via the store (it's device state, not part of the Backend
+              being edited); grayed out (never hidden) while sync is off, where the
+              canonical URL is already local-only.
+
+              EXCEPT when one is actually set. The override applies whether or not sync is on and
+              survives turning it off (see the warning note below, and `effectiveServerUrl`), so
+              greying the box on `!syncEnabled` alone locked a value that was still routing every
+              request: a user following the "override in use" badge on the card here to clear a
+              misrouting address found a disabled field, with only "turn sync back on" or "delete
+              the backend" as ways out. Never disable a control that is currently in effect. */}
+          <OverrideHeader
+            title="Address on this device"
+            env={false}
+            hint="Overrides the synced Server URL on this device only (e.g. localhost on the machine running the server)."
+            overridden={!!urlOverride.trim()}
+          >
+            <div className={OVERRIDE_CONTROL_W}>
+              <TextInput
+                aria-label="Address on this device"
+                value={urlOverride}
+                disabled={!syncEnabled && !urlOverride.trim()}
+                onChange={(e) => setUrlOverride(b.id, e.target.value)}
+                placeholder={syncEnabled ? "override the synced URL here only" : "used with settings sync"}
+              />
+            </div>
+            {!syncEnabled && urlOverride.trim() && (
+              <Notice className="mt-1">
+                Sync is off, but this address is still where this device sends everything for this
+                backend. Clear the field to go back to the address above.
+              </Notice>
+            )}
+            {/* This field bypasses normalizeUrl entirely — it goes to the transport verbatim — so
+                it needs the warning at least as much as the canonical URL above. NOT gated on
+                syncEnabled: `effectiveServerUrl` consults the override regardless of whether sync
+                is on, and turning sync off does not clear it. The warning must track the address
+                actually in use, not the toggle. */}
+            {urlOverride.trim() && insecureUrlWarning(urlOverride) && (
+              <Notice className="mt-1">{insecureUrlWarning(urlOverride)}</Notice>
+            )}
+          </OverrideHeader>
+          <OverrideHeader title="API key" env={false}>
+            <div className={OVERRIDE_CONTROL_W}>
+              <TextInput
+                aria-label="API key"
+                type="password"
+                value={key}
+                onChange={(e) => {
+                  setKey(e.target.value);
+                  set({ hasApiKey: e.target.value.length > 0 || initial.hasApiKey });
+                }}
+                placeholder={initial.hasApiKey ? "•••••••••• (stored — leave blank to keep)" : "wk_… (optional)"}
+              />
+            </div>
+          </OverrideHeader>
+          <OverrideHeader
+            title="Server type"
+            env={false}
+            overridden={!!b.kind && b.kind !== "auto"}
+            note={
+              detected === "unknown" ? (
+                "Test the connection to detect"
+              ) : (
+                <span className="inline-flex items-center gap-1.5">
+                  <StatusDot tone={detected === "full" ? "ok" : "warn"} />
+                  {detected === "full" ? "faster-whisper-backend" : "Standard Whisper server"}
+                  {b.kind && b.kind !== "auto" && " · manual"}
+                </span>
+              )
+            }
+          >
+            <Segmented
+              ariaLabel="Server type"
+              value={b.kind ?? "auto"}
+              onChange={(v) => set({ kind: v === "auto" ? undefined : v })}
+              options={[
+                { value: "auto", label: "Auto" },
+                { value: "full", label: "Full" },
+                { value: "standard", label: "Standard" },
+              ]}
+            />
+          </OverrideHeader>
+          <OverrideHeader title="Server override profile" env={false} overridden={!!b.overrideProfile} last>
+            <div className={OVERRIDE_CONTROL_W}>
+              <OverrideProfilePicker
+                serverUrl={debouncedUrl}
+                backendId={b.id}
+                apiKey={debouncedKey || null}
+                serverKind={kind}
+                canRequest={caps?.can_request_override_profile}
+                value={b.overrideProfile ?? ""}
+                inheritLabel="Server default"
+                onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
+              />
+            </div>
+          </OverrideHeader>
+        </DisclosureCard>
+      </div>
+
+      <div className="mt-5">
+        <DisclosureCard
+          open={showDefaults}
+          onToggle={() => setShowDefaults((v) => !v)}
+          title="Defaults"
+          summary={
+            <span className="text-faint">
+              · {safeDisplayText((b.model || "server model").split("/").pop(), 40)} ·{" "}
+              {safeDisplayText(spokenLabel(spoken.value), 30)} · {b.endpoint === "batch" ? "Batch" : "Streaming"}
+            </span>
+          }
+          hint="What every profile on this backend starts from."
+        >
+          <OverrideHeader title="DEFAULT_MODEL" desc={envDesc("DEFAULT_MODEL")} overridden={!!b.model.trim()}>
+            <div className={OVERRIDE_CONTROL_W}>
+              <ModelPicker
+                ariaLabel="Model"
+                value={b.model}
+                onChange={(v) => set({ model: v })}
+                models={result?.ok ? result.models : storedConn?.ok ? storedConn.models : []}
+                placeholder="whisper-1 / large-v3"
+              />
+            </div>
+          </OverrideHeader>
+          <OverrideHeader title="DEFAULT_LANGUAGE" desc={envDesc("DEFAULT_LANGUAGE")}>
+            <div className={OVERRIDE_CONTROL_W}>
+              <SpokenLanguagePicker
+                ariaLabel="Default language"
+                value={spoken.value}
+                multi={multiOffered}
+                onChange={(v) => {
+                  const { language, overrides } = spoken.pick(v);
+                  set({ language, decodeOverrides: overrides && Object.keys(overrides).length ? overrides : undefined });
+                }}
+              />
+            </div>
+          </OverrideHeader>
+          <OverrideHeader title="Endpoint" env={false}>
+            <Segmented
+              ariaLabel="Endpoint"
+              value={b.endpoint}
+              onChange={(v) => set({ endpoint: v })}
+              options={[
+                { value: "stream", label: "Streaming" },
+                { value: "batch", label: "Batch" },
+              ]}
+            />
+            {kind === "standard" && b.endpoint === "stream" && (
+              <Notice className="mt-1">
+                A standard Whisper server has no streaming endpoint — switch Endpoint to{" "}
+                <span className="font-medium">Batch</span>.
+              </Notice>
+            )}
+          </OverrideHeader>
+          {/* Tri-state, the same shape the Profile editor and the decode fields use:
+              undefined = inherit the server's default prompt (omit the
+              field), "" = explicit clear (send an empty prompt, so nothing is inherited),
+              value = use it. Stored as `prompt` + `promptCleared` — see `backendPrompt`. */}
+          <OverrideHeader
+            title="DEFAULT_PROMPT"
+            desc={envDesc("DEFAULT_PROMPT")}
+            overridden={promptOverridden}
+            lockReason={promptLocked ? LOCKED_REASON : undefined}
+            onClear={() => set(backendPromptFields(""))}
+            canClear={promptOverride !== ""}
+            clearTitle="Override with empty (suppress the inherited prompt)"
+            onReset={() => set(backendPromptFields(undefined))}
+            note={promptLocked && promptOverridden ? "Ignored · locked by the server" : undefined}
+            wide
+            last
+          >
+            {/* Ghost the server's default prompt (its own, or the override profile's) as the
+                inherited baseline; a cleared field says so instead. */}
+            <OverrideText
+              ariaLabel="Default vocabulary / prompt"
+              rows={2}
+              value={promptOverride}
+              onChange={(v) => set(backendPromptFields(v))}
+              inherited={server.prompt ? (server.prompt.value ?? "no prompt") : undefined}
+              fixedLabel={promptLocked ? inheritLabel(server.prompt?.value ?? "no prompt", "Set by server") : undefined}
+              title={promptLocked ? LOCKED_REASON : server.prompt?.source}
+            />
+          </OverrideHeader>
+        </DisclosureCard>
       </div>
 
       <div className="mt-5">
@@ -509,29 +599,19 @@ function Editor({
             value={b.translationOverrides}
             onChange={(v) => set({ translationOverrides: v })}
             caps={caps}
-            // The server's own values where /v1/me publishes them. Its TRANSLATE_TO seeds the
-            // Transcribe page; dictation translates only into targets set here or on a profile.
+            // The server's own values where it publishes them: TRANSLATE_TO from /v1/me (it seeds
+            // the Transcribe page; dictation translates only into targets set here or on a
+            // profile), TRANSLATION_CONTEXT_SEGMENTS from /v1/request-default-settings.
             inherited={{
               targets: targetsLabel(caps?.translate_to_default, "server default"),
               model: "server default",
+              contextSegments: serverContextSegments(decodeDefaults),
               includeOriginal: false,
             }}
+            inheritedFrom="server"
           />
         </DisclosureCard>
       </div>
-
-      <Labeled label="Server override profile" className="mt-5">
-        <OverrideProfilePicker
-          serverUrl={debouncedUrl}
-          backendId={b.id}
-          apiKey={debouncedKey || null}
-          serverKind={kind}
-          canRequest={caps?.can_request_override_profile}
-          value={b.overrideProfile ?? ""}
-          inheritLabel="Server default"
-          onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
-        />
-      </Labeled>
 
       {result && <ConnResult info={result} />}
 

@@ -15,7 +15,7 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { LiveDictationFields } from "@/components/LiveDictationFields";
 import { dictationControls, hasInsertionOverrides, insertionSetCount, FIELD_LABEL } from "@/components/DictationFields";
 import { TranslationDefaultsEditor, targetsLabel, type TranslationInherited } from "@/components/TranslationFields";
-import { inheritLabel, LOCKED_REASON, onOff, serverInherited } from "@/lib/inherit";
+import { inheritLabel, LOCKED_REASON, onOff, serverContextSegments, serverInherited } from "@/lib/inherit";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -46,12 +46,12 @@ const ACTIVATION = {
 
 /** What a profile's empty translation fields inherit: its backend's values. For the targets
  *  dictation stops at the backend — none there means no translation (streaming.ts trOv). */
-function translationInherited(t: TranslationOverrides | undefined): TranslationInherited {
+function translationInherited(t: TranslationOverrides | undefined, serverContext: number | undefined): TranslationInherited {
   return {
     targets: targetsLabel(t?.translateTo, "no translation"),
     model: t?.model ? safeDisplayText(t.model, 60) : "server default",
     mode: t?.mode === "fluent" ? "Fluent" : t?.mode === "faithful" ? "Faithful" : undefined,
-    contextSegments: t?.contextSegments,
+    contextSegments: t?.contextSegments ?? serverContext,
     glossary: t?.glossary,
     includeOriginal: t?.includeOriginal ?? false,
   };
@@ -627,9 +627,9 @@ function Editor({
               activation: p.activation,
               method: p.insertionOverrides?.insertMethod ?? globalInsertMethod,
             })}
-            inherited={translationInherited(backend?.translationOverrides)}
+            inherited={translationInherited(backend?.translationOverrides, serverContextSegments(decodeDefaults))}
             inheritedModel={backend?.translationOverrides?.model}
-            inheritedFrom="backend"
+            inheritedFrom={backend?.translationOverrides?.contextSegments !== undefined ? "backend" : "server"}
           />
         </DisclosureCard>
       </div>

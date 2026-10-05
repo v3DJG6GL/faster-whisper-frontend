@@ -78,6 +78,13 @@ export interface ServerInherited {
   known: ReadonlySet<DecodeKey> | null;
 }
 
+/** The server's TRANSLATION_CONTEXT_SEGMENTS for these requests (request-default-settings
+ *  `translation.context_segments`), or undefined when it doesn't say (an older backend). */
+export function serverContextSegments(dd: DecodeDefaults | null | undefined): number | undefined {
+  const v = dd?.translation?.context_segments?.value;
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
 /** Why a decode row is disabled because the server does not list its key. */
 export const NOT_ON_SERVER_REASON = "This server doesn't have this setting (an older backend).";
 

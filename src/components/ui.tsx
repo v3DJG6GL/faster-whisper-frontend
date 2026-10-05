@@ -1251,6 +1251,8 @@ export function IconButton({
   disabled,
   size = "md",
   danger,
+  expanded,
+  controls,
   className,
   children,
 }: {
@@ -1259,6 +1261,10 @@ export function IconButton({
   disabled?: boolean;
   size?: "sm" | "md";
   danger?: boolean;
+  /** A disclosure button: whether its panel is open (aria-expanded, accent while open). */
+  expanded?: boolean;
+  /** The panel's id (aria-controls). */
+  controls?: string;
   className?: string;
   children: ReactNode;
 }) {
@@ -1267,12 +1273,15 @@ export function IconButton({
       type="button"
       disabled={disabled}
       aria-label={label}
+      aria-expanded={expanded}
+      aria-controls={expanded ? controls : undefined}
       title={label}
       onClick={onClick}
       className={cn(
         "ring-signal grid place-items-center rounded-lg border border-line-strong bg-surface-2 text-dim",
         size === "sm" ? "size-7" : "size-8",
         danger ? "enabled:hover:border-rec/45 enabled:hover:text-rec" : "enabled:hover:border-accent/45 enabled:hover:text-accent",
+        expanded && "border-accent/45 text-accent",
         className,
       )}
     >

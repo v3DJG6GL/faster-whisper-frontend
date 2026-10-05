@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inheritLabel, onOff, serverInherited } from "./inherit";
+import { inheritLabel, onOff, serverContextSegments, serverInherited } from "./inherit";
 import type { DecodeDefault, DecodeDefaults } from "./types";
 
 describe("inheritLabel", () => {
@@ -46,6 +46,16 @@ function dd(over: Partial<DecodeDefaults> = {}): DecodeDefaults {
     ...over,
   };
 }
+
+describe("serverContextSegments", () => {
+  it("reads the server's translation context depth", () => {
+    const entry = { value: 3, source: "server", label: "", locked: false };
+    expect(serverContextSegments(dd({ translation: { context_segments: entry } }))).toBe(3);
+    expect(serverContextSegments(dd({ translation: { context_segments: { ...entry, value: "3" } } }))).toBeUndefined();
+    expect(serverContextSegments(dd())).toBeUndefined();
+    expect(serverContextSegments(null)).toBeUndefined();
+  });
+});
 
 describe("serverInherited", () => {
   it("knows which keys the server lists — a missing one is a row to disable", () => {
