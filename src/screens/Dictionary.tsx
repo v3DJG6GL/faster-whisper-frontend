@@ -24,7 +24,7 @@ import { Badge, Button, Card, ConfirmLeave, Labeled, Notice, SectionLabel, Stack
 import { Combobox } from "@/components/Combobox";
 import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
 import { IS_LINUX } from "@/lib/platform";
-import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf } from "@/lib/pipelineMap";
+import { type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
 import { effectiveServerKind } from "@/lib/serverKind";
@@ -142,15 +142,6 @@ const monoInput = "font-mono text-[12.5px]";
 // RENDER-ONLY, never applied to `edit.pairs` / `edit.entries` — the save path PATCHes those back
 // as the ENTIRE map, so capping the state would delete every server entry past the cap.
 const MAX_SHOWN_RULES = 500;
-
-/** What a collapsed cb:map list can honestly promise: `hidden` = rows the toggle reveals,
- *  `unshown` = rows past the render cap that nothing on screen can show. */
-export function collapseCounts(total: number, collapseAfter: number, max: number): { hidden: number; unshown: number } {
-  const ceil = Math.min(total, max);
-  const collapsed = Math.min(collapseAfter, max);
-  const hidden = collapseAfter > 0 && ceil > collapsed ? ceil - collapsed : 0;
-  return { hidden, unshown: Math.max(0, total - max) };
-}
 const MAX_SHOWN_MAP_ROWS = 500;
 const MAX_SHOWN_ENTRIES = 500;
 const MAX_RECENT_WORDS = 500;

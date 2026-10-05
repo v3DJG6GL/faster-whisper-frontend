@@ -161,3 +161,12 @@ function isBoundary(left: string, right: string): boolean {
 function isWordChar(ch: string): boolean {
   return ch !== "" && /[\p{L}\p{N}_]/u.test(ch);
 }
+
+/** What a collapsed cb:map list can honestly promise: `hidden` = rows the toggle reveals,
+ *  `unshown` = rows past the render cap that nothing on screen can show. */
+export function collapseCounts(total: number, collapseAfter: number, max: number): { hidden: number; unshown: number } {
+  const ceil = Math.min(total, max);
+  const collapsed = Math.min(collapseAfter, max);
+  const hidden = collapseAfter > 0 && ceil > collapsed ? ceil - collapsed : 0;
+  return { hidden, unshown: Math.max(0, total - max) };
+}
