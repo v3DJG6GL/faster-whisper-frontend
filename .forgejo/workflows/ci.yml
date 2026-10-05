@@ -81,6 +81,16 @@ jobs:
           git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 "https://x-access-token:${GIT_TOKEN}@forgejo.informethic.ch/${{ github.repository }}.git" "$GIT_REF"
           git checkout -q --force FETCH_HEAD
 
+      # The app icon exists as three byte-identical svg copies: the source of truth
+      # src-tauri/icons/icon.svg, the favicon public/icon.svg (which `pnpm tauri icon`
+      # does NOT regenerate) and docs/brand/icon.svg. Needs no toolchain, so Linux only
+      # and before any install: a stale copy fails in seconds. See docs/brand/README.md.
+      - name: Icon copies in sync
+        if: runner.os == 'Linux'
+        run: |
+          cmp src-tauri/icons/icon.svg public/icon.svg
+          cmp src-tauri/icons/icon.svg docs/brand/icon.svg
+
       # Linux only: setup-node downloads a node tarball and extracts it, which
       # on the host-mode Windows runner fails (bundled 7zr.exe errors extracting
       # into the SYSTEM-profile tool cache). The Windows VM already has a system
