@@ -828,7 +828,11 @@ export default function Transcribe() {
     preview: urlPreviewData,
     serverUrl,
     backendId: backend?.id,
-    enabled: caps?.url_language_check_enabled === true,
+    // Only a link WITH site subtitles needs its spoken language before the run (to pick the
+    // matching track); without them Whisper detects the language while transcribing anyway,
+    // and the check would download the whole audio up front for nothing.
+    enabled: caps?.url_language_check_enabled === true && caps?.url_subtitles_enabled === true
+      && !!urlPreviewData?.subtitle_tracks?.length,
     model: model || backend?.model,
     screen: spoken.value,
   });

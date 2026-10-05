@@ -32,7 +32,7 @@ export function useLinkLanguage(args: {
   preview: UrlPreview | null;
   serverUrl: string;
   backendId?: string;
-  /** caps.url_language_check_enabled */
+  /** The check is offered: the server has it and the link has site subtitles to match. */
   enabled: boolean;
   /** The Whisper model the run would use. */
   model?: string;
