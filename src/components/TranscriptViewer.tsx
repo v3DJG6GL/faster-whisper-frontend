@@ -50,7 +50,7 @@ import {
   defaultViewTracks, mergeOrder, readTrackPrefs, trackOrder, transcriptTracks, translationTracks, type TrackPrefs,
 } from "@/lib/exportTracks";
 import { ExportTrackChips } from "@/components/ExportTrackChips";
-import { useDisplayToggles } from "@/lib/useDisplayToggles";
+import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import { TranscriptExport } from "@/components/TranscriptExport";
 import { SubtitleList } from "@/components/SubtitleList";
 import { cueOptionsOf, limitsFor } from "@/lib/cueSplit";
@@ -621,7 +621,6 @@ export function TranscriptViewer({
   className?: string;
 }) {
   const settings = useApp((s) => s.settings);
-  const updateSettings = useApp((s) => s.updateSettings);
   const renames = useTranscribeRun((s) => s.renames);
   const speakerColors = useTranscribeRun((s) => s.speakerColors);
   const edits = useTranscribeRun((s) => s.edits);
@@ -759,9 +758,7 @@ export function TranscriptViewer({
   // early (every other transient timer in the app is cleared the same way).
   const copyTimer = useRef<number | undefined>(undefined);
 
-  const persistOptions = (patch: Partial<NonNullable<typeof settings.transcribe>>) => {
-    updateSettings({ transcribe: { ...settings.transcribe, ...patch } });
-  };
+  const persistOptions = patchTranscribe;
 
   // ── selected-result derivations ──────────────────────────────────────────
   // Site tracks of older records name their site from the link.

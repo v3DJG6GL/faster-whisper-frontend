@@ -39,7 +39,7 @@ import {
 } from "@/lib/mediaExport";
 import { patchRecord, useTranscriptHistory } from "@/lib/transcriptHistory";
 import { useTranscribeRun } from "@/lib/transcribeRun";
-import { useDisplayToggles } from "@/lib/useDisplayToggles";
+import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import type { Backend, BatchResult, Capabilities, TranscribeSettings, TranscriptWord } from "@/lib/types";
 
 /** The five export formats as always-visible cards (5 options is below every
@@ -88,10 +88,7 @@ export function TranscriptExport({
   trCaps: Capabilities | null | undefined;
 }) {
   const settings = useApp((s) => s.settings);
-  const updateSettings = useApp((s) => s.updateSettings);
-  const persistOptions = (patch: Partial<TranscribeSettings>) => {
-    updateSettings({ transcribe: { ...settings.transcribe, ...patch } });
-  };
+  const persistOptions = patchTranscribe;
   const { showTs, showNames, colorize, wordTs, setShowTs, setShowNames, setColorize, setWordTs } = useDisplayToggles();
   const hasSpeakers = speakers.length > 0;
   const urlSource = isSourceUrl(path);

@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, ChevronDown, Link2, AudioLines, Film } from "lucide-react";
 import { useApp } from "@/lib/store";
+import { patchTranscribe } from "@/lib/useDisplayToggles";
 import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingExpand, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguageRow, useLinkLanguage } from "@/components/SpokenLanguageRow";
@@ -560,7 +561,6 @@ export default function Transcribe() {
   const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
   const settings = useApp((s) => s.settings);
-  const updateSettings = useApp((s) => s.updateSettings);
   // Recent transcripts for the idle-screen strip (full list: History screen).
   const historyRecords = useTranscriptHistory((s) => s.records);
   const recentRecords = useMemo(
@@ -1045,9 +1045,7 @@ export default function Transcribe() {
   const studio =
     wideEnough && (layoutPref === "studio" || (layoutPref !== "stacked" && !!result));
 
-  const persistOptions = (patch: Partial<NonNullable<typeof settings.transcribe>>) => {
-    updateSettings({ transcribe: { ...settings.transcribe, ...patch } });
-  };
+  const persistOptions = patchTranscribe;
 
   // The studio splitter: the rail width lives in the transcribe settings (local, never
   // synced); while a drag is in flight the live value is local state, persisted on release.
@@ -1076,8 +1074,7 @@ export default function Transcribe() {
       el.removeEventListener("pointercancel", up);
       const final = liveClamp(start + ev.clientX - startX);
       setRailDrag(null);
-      const { settings: cur } = useApp.getState();
-      updateSettings({ transcribe: { ...cur.transcribe, studioRailPx: final } });
+      persistOptions({ studioRailPx: final });
     };
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);

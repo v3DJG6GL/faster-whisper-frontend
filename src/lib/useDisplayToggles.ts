@@ -18,18 +18,21 @@ export function displayToggles(t: TranscribeSettings | undefined) {
   };
 }
 
+/** Patch the saved Transcribe settings. Reads the store at call time: two
+ *  patches fired in one tick must not overwrite each other from the same
+ *  render's snapshot. */
+export function patchTranscribe(patch: Partial<TranscribeSettings>) {
+  const { settings, updateSettings } = useApp.getState();
+  updateSettings({ transcribe: { ...settings.transcribe, ...patch } });
+}
+
 export function useDisplayToggles() {
   const t = useApp((s) => s.settings.transcribe);
-  const updateSettings = useApp((s) => s.updateSettings);
-  // Read the store at call time: two setters fired in one tick must not
-  // overwrite each other from the same render's snapshot.
-  const set = (patch: Partial<TranscribeSettings>) =>
-    updateSettings({ transcribe: { ...useApp.getState().settings.transcribe, ...patch } });
   return {
     ...displayToggles(t),
-    setShowTs: (v: boolean) => set({ showTimestamps: v }),
-    setShowNames: (v: boolean) => set({ showSpeakerNames: v }),
-    setColorize: (v: boolean) => set({ colorizeSpeakers: v }),
-    setWordTs: (v: boolean) => set({ wordTimestamps: v }),
+    setShowTs: (v: boolean) => patchTranscribe({ showTimestamps: v }),
+    setShowNames: (v: boolean) => patchTranscribe({ showSpeakerNames: v }),
+    setColorize: (v: boolean) => patchTranscribe({ colorizeSpeakers: v }),
+    setWordTs: (v: boolean) => patchTranscribe({ wordTimestamps: v }),
   };
 }
