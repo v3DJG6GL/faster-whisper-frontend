@@ -18,7 +18,7 @@ import { createPortal } from "react-dom";
 import { AlertTriangle, ArrowLeft, Check, ChevronDown, Info, Minus, Plus, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { langCode, languageLabel } from "@/lib/languages";
-import { safeDisplayText } from "@/lib/sanitize";
+import { routeParts } from "@/lib/routeParts";
 import { KeyHint, ListPicker, POPOVER_PANEL } from "@/components/ListPicker";
 import { navKey } from "@/lib/listNav";
 import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
@@ -296,31 +296,6 @@ export function LangTag({ code, orig, color }: { code: string; orig?: boolean; c
 }
 
 /* ── RouteBadge ───────────────────────────────────────────────────────── */
-// How many targets are spelled out before the rest become "+N". Three is what fits
-// beside a profile's name, model and endpoint badges without wrapping the row.
-const ROUTE_TARGETS_SHOWN = 3;
-
-/** The pieces of a `source → targets` route, bounded for display.
- *
- *  Pure + exported so it can be tested: every part is user- or peer-authored (a
- *  profile's language, a synced backend's, the translate-to list), and
- *  `languageLabel` passes an unknown code through unchanged — the same unbounded-leaf
- *  hazard the badge's own truncate exists for, except a LIST of them multiplies it. */
-export function routeParts(
-  source: string,
-  targets?: string[] | null,
-): { source: string; targets: string[]; more: number } {
-  const labels = (targets ?? [])
-    .map((t) => (typeof t === "string" ? t.trim() : ""))
-    .filter(Boolean)
-    .map((t) => safeDisplayText(languageLabel(t), 24));
-  return {
-    source: safeDisplayText(languageLabel(source), 24),
-    targets: labels.slice(0, ROUTE_TARGETS_SHOWN),
-    more: Math.max(0, labels.length - ROUTE_TARGETS_SHOWN),
-  };
-}
-
 /** The dictation ROUTE as one badge: the spoken language, and — when the profile
  *  translates — the languages its output is turned into. With no targets it renders
  *  exactly the plain language badge it replaced, so a profile without translation

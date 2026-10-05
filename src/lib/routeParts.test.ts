@@ -1,11 +1,11 @@
 // The route readout's bounds. Both halves are user- or peer-authored — a profile's
 // language, a synced backend's, the translate-to list — and `languageLabel` passes an
-// unknown code through UNCHANGED, so an unbounded leaf reaches the pill. ui.tsx records
+// unknown code through UNCHANGED, so an unbounded leaf reaches the pill. components/ui.tsx records
 // what that cost the last time (a single field pushed a card's controls off screen);
 // a LIST of them multiplies it, hence the per-part cap AND the "+N" list cap.
 
 import { describe, expect, it } from "vitest";
-import { routeParts } from "./ui";
+import { routeParts } from "./routeParts";
 
 describe("routeParts", () => {
   it("renders as a plain language badge with no targets", () => {
