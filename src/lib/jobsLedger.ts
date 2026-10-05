@@ -45,9 +45,26 @@ export const EMPTY_LEDGER: Ledger = { v: 1, rows: [] };
 
 /** Bound on rows — a run per file, so a big multi-file drop is the realistic ceiling. */
 export const MAX_ROWS = 20;
-/** A row older than the server's 72 h TTL (plus slack) names a job the server has
- *  already swept — nothing to ask about. */
-export const MAX_AGE_MS = 73 * 3_600_000;
+/** The TTL assumed when the server did not announce `jobs.ttl_s` (the server's own
+ *  default), and the ceiling on one it did: a 10-year TTL must not pin a row forever. */
+const DEFAULT_TTL_S = 72 * 3600;
+const MAX_TTL_S = 30 * 86_400;
+/** Grace past the TTL: the server sweeps on its own clock, not ours. */
+const SLACK_MS = 3_600_000;
+
+/** The server's `caps.jobs.ttl_s` within (0, 30 d] (a larger one is capped); anything
+ *  else is `undefined` = assume the default. */
+export function clampJobsTtl(ttlS: unknown): number | undefined {
+  if (typeof ttlS !== "number" || !Number.isFinite(ttlS) || ttlS <= 0) return undefined;
+  return Math.min(ttlS, MAX_TTL_S);
+}
+
+/** A row older than ITS server's TTL (frozen into the row's context at post time) plus
+ *  slack names a job the server has already swept — nothing to ask about. Re-clamped
+ *  here because the row came back from disk. */
+export function maxAgeMs(row: LedgerRow): number {
+  return (clampJobsTtl(row.ctx.jobsTtlS) ?? DEFAULT_TTL_S) * 1000 + SLACK_MS;
+}
 
 const JOB_ID_RE = /^[0-9a-f]{8,64}$/;
 
@@ -81,7 +98,7 @@ export function parseLedger(raw: unknown): Ledger {
 
 /** Drop rows the server cannot still know about. */
 export function pruneLedger(l: Ledger, now: number): Ledger {
-  const rows = l.rows.filter((r) => now - r.startedAt <= MAX_AGE_MS);
+  const rows = l.rows.filter((r) => now - r.startedAt <= maxAgeMs(r));
   return rows.length === l.rows.length ? l : { v: 1, rows };
 }
 

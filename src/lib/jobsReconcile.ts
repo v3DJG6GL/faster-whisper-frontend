@@ -18,7 +18,7 @@
 
 import { getJob, getJobResult, isTauri } from "./api";
 import { configReady } from "./persistence";
-import { forgetRow, initLedger, ledgerRows, MAX_AGE_MS, type LedgerRow } from "./jobsLedger";
+import { forgetRow, initLedger, ledgerRows, maxAgeMs, type LedgerRow } from "./jobsLedger";
 import { useApp } from "./store";
 import {
   failJob, foldProgress, ingestJobResult, reattachRun, setReattachStop, useTranscribeRun, withSiteTracks,
@@ -105,7 +105,7 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
       stop();
       return;
     }
-    if (Date.now() - row.startedAt > MAX_AGE_MS) {
+    if (Date.now() - row.startedAt > maxAgeMs(row)) {
       stop();
       if (opts.attached) setReattachStop(null);
       failJob(row, GAVE_UP_ERROR, { attached: opts.attached });

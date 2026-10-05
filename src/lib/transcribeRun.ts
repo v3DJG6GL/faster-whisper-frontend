@@ -405,6 +405,10 @@ export interface RunContext {
   /** The server's upload limit (caps.media_max_bytes): a local file over it stops before
    *  the upload (Rust checks the size) instead of streaming gigabytes into a 413. */
   mediaMaxBytes?: number;
+  /** How long that server keeps a job (caps.jobs.ttl_s, clamped by
+   *  `clampJobsTtl`): how long the ledger row stays worth asking about.
+   *  Absent = the server's 72 h default. */
+  jobsTtlS?: number;
 }
 
 export interface TranscribeRunState {

@@ -28,7 +28,7 @@ vi.mock("./api", async (importOriginal) => ({
 }));
 vi.mock("./persistence", () => ({ configReady: Promise.resolve() }));
 
-const { _resetLedgerForTests, ledgerRows, persistRow, MAX_AGE_MS } = await import("./jobsLedger");
+const { _resetLedgerForTests, ledgerRows, persistRow, maxAgeMs } = await import("./jobsLedger");
 const { _resetReconcileForTests, initJobReconcile, reconcileJobs, NOT_FOUND_ERROR } =
   await import("./jobsReconcile");
 const { useTranscribeRun, forgetRecord, cancelRun } = await import("./transcribeRun");
@@ -254,7 +254,7 @@ describe("reconcileJobs", () => {
     expect(useTranscribeRun.getState().running).toBe(false);
   });
 
-  it("a result fetch that keeps failing backs off, and still gives up at MAX_AGE_MS", async () => {
+  it("a result fetch that keeps failing backs off, and still gives up past the row's age limit", async () => {
     await seed(row(JOB_A, T0));
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
     await reconcileJobs();
@@ -271,7 +271,7 @@ describe("reconcileJobs", () => {
     expect(Math.max(...gaps)).toBe(30_000);
     expect(ledgerRows()).toHaveLength(1);
     // Past the ledger's age limit the watcher fails the run instead of polling forever.
-    vi.setSystemTime(T0 + MAX_AGE_MS + 1);
+    vi.setSystemTime(T0 + maxAgeMs(row(JOB_A, T0)) + 1);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(records()[0]).toMatchObject({ id: JOB_A, status: "failed" });
     expect(ledgerRows()).toEqual([]);
@@ -279,6 +279,25 @@ describe("reconcileJobs", () => {
     const calls = getJobResult.mock.calls.length;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(getJobResult).toHaveBeenCalledTimes(calls);
+  });
+
+  it("a row from a long-TTL server is still watched past the 72 h default", async () => {
+    const long = row(JOB_A, T0);
+    long.ctx = { ...long.ctx, jobsTtlS: 7 * 86_400 };
+    await seed(long);
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    await reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.setSystemTime(T0 + 100 * 3_600_000);
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(getJob).toHaveBeenCalled();
+    expect(ledgerRows()).toHaveLength(1);
+    expect(records()).toEqual([]);
+    vi.setSystemTime(T0 + maxAgeMs(long) + 1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(records()[0]).toMatchObject({ id: JOB_A, status: "failed" });
+    expect(ledgerRows()).toEqual([]);
   });
 
   it("cancelling after a failed result fetch still forgets the row", async () => {

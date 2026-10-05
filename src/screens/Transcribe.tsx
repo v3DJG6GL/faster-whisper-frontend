@@ -35,6 +35,7 @@ import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcriptHistory";
 import { closeRecord, openHistoryRecord, retryRunVideo } from "@/lib/transcribeRun";
+import { clampJobsTtl } from "@/lib/jobsLedger";
 import { backendOptions, backendPrompt, effectiveServerUrl } from "@/lib/backends";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/subtitleImport";
@@ -1130,6 +1131,7 @@ export default function Transcribe() {
       mediaPackageEnabled: !isStandard && caps?.media_package_enabled === true,
       jobsEnabled: !isStandard && caps?.jobs_enabled === true,
       mediaMaxBytes: caps?.media_max_bytes,
+      jobsTtlS: clampJobsTtl(caps?.jobs?.ttl_s),
     };
   };
 
