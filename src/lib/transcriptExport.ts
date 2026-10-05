@@ -247,11 +247,16 @@ function cueLines(
   });
 }
 
+/** A speaker's display name: the user's rename, else the prettified label — the
+ *  viewer's chips, the panel's Summary and every export. Sanitized BEFORE choosing: a
+ *  rename made only of bidi/format characters is truthy but cleans to "", which would
+ *  blank the name everywhere. */
+export function speakerName(renames: Record<string, string> | undefined, label: string): string {
+  return clean(renames?.[label] ?? "") || clean(prettySpeaker(label));
+}
+
 function nameOf(ctx: Ctx, label: string): string {
-  // Sanitize BEFORE choosing: a rename made only of bidi/format characters is
-  // truthy but cleans to "", which would blank the name for the whole export.
-  const renamed = clean(ctx.opts.renames?.[label] ?? "");
-  return renamed || clean(prettySpeaker(label));
+  return speakerName(ctx.opts.renames, label);
 }
 
 function colorOf(ctx: Ctx, label: string): string {

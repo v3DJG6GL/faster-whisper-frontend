@@ -18,7 +18,7 @@ import {
 import { safeDisplayText } from "@/lib/sanitize";
 import { langCode, trackLanguageName } from "@/lib/languages";
 import {
-  cpsWarnings, cueGrid, exportFileGroups, exportOptionsFor, generateExports, isSubtitleFormat, prettySpeaker, previewExport, tracksOf,
+  cpsWarnings, cueGrid, exportFileGroups, exportOptionsFor, generateExports, isSubtitleFormat, previewExport, speakerName, tracksOf,
   type ExportFormat,
   type ExportOptions, exportFileNames,
 } from "@/lib/transcriptExport";
@@ -527,7 +527,7 @@ export function TranscriptExport({
     showTs,
     content,
     hasSpeakers,
-    firstName: speakers.length ? safeDisplayText(fileRenames[speakers[0]]?.trim() || prettySpeaker(speakers[0])) : null,
+    firstName: speakers.length ? safeDisplayText(speakerName(fileRenames, speakers[0])) : null,
     cpsCount: cpsWarn.length,
     cpsLimit: cpsLimits.size === 1 ? `${[...cpsLimits][0]} chars/s` : "each language's limit",
     editCount,

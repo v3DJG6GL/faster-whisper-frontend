@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  cpsWarnings, cueGrid, previewExport, DEFAULT_SPEAKER_COLORS, exportFileNames, exportOptionsFor, exportStemSuffix, generateExport, isSubtitleFormat, tracksOf,
+  cpsWarnings, cueGrid, previewExport, DEFAULT_SPEAKER_COLORS, exportFileNames, exportOptionsFor, exportStemSuffix, generateExport, isSubtitleFormat, speakerName, tracksOf,
   generateExports,
   prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
   type ExportOptions,
@@ -789,5 +789,13 @@ describe("cueGrid / tracksOf", () => {
     expect(cueGrid(CUED, { format: "txt", cues: STANDARD }, ["orig"]).cues).toHaveLength(1);
     expect(tracksOf({})).toEqual(["orig"]);
     expect(tracksOf({ tracks: ["en"] })).toEqual(["en"]);
+  });
+});
+
+describe("speakerName (viewer, panel and exports)", () => {
+  it("the rename, else the prettified label — a bidi-only rename never blanks it", () => {
+    expect(speakerName({ SPEAKER_00: "  Ann\n Lee " }, "SPEAKER_00")).toBe("Ann  Lee");
+    expect(speakerName({ SPEAKER_00: "\u202e\u200f" }, "SPEAKER_00")).toBe("Speaker 1");
+    expect(speakerName(undefined, "SPEAKER_01")).toBe("Speaker 2");
   });
 });

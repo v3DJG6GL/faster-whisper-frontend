@@ -37,7 +37,7 @@ import {
 } from "@/lib/transcribeRun";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
-  cueGrid, DEFAULT_SPEAKER_COLORS, prettySpeaker, speakerColorIndex, speakerOrder,
+  cueGrid, DEFAULT_SPEAKER_COLORS, prettySpeaker, speakerColorIndex, speakerName, speakerOrder,
 } from "@/lib/transcriptExport";
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
 import { cn } from "@/lib/cn";
@@ -772,7 +772,7 @@ export function TranscriptViewer({
   const fileRenames = useMemo(() => renames[okey] ?? {}, [renames, okey]);
   const fileColors = useMemo(() => speakerColors[okey] ?? {}, [speakerColors, okey]);
   const displayName = useCallback(
-    (label: string) => safeDisplayText(fileRenames[label]?.trim() || prettySpeaker(label)),
+    (label: string) => safeDisplayText(speakerName(fileRenames, label)),
     [fileRenames],
   );
   // User-picked palette index first, else first-appearance order — the chips
