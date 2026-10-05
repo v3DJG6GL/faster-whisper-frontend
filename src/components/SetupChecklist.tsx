@@ -12,7 +12,7 @@ import { Button, Card } from "@/components/ui";
 import { importSettingsFile, pickImportFile } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import type { ImportResult } from "@/lib/syncTypes";
-import { ImportPreview } from "@/screens/SettingsSync";
+import { ImportPreview } from "@/components/SettingsSync";
 import { safeDisplayText } from "@/lib/sanitize";
 
 function StepBullet({ state, n }: { state: "done" | "now" | "off"; n: number }) {

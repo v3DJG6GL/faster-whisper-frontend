@@ -60,7 +60,7 @@ import {
   subscribeAccentHue,
 } from "@/lib/theme";
 import type { AccentMotion, ThemeName } from "@/lib/types";
-import { SyncTab } from "@/screens/SettingsSync";
+import { SyncTab } from "@/components/SettingsSync";
 import {
   DICTATION_RETENTION_OPTIONS,
   HISTORY_RETENTION_OPTIONS,

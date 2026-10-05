@@ -20,7 +20,7 @@ import {
 } from "@/components/ui";
 import { evdevStatus, importSettingsFile, pickImportFile, pickSavePath, syncDelete, type EvdevStatus } from "@/lib/api";
 import { applyImport, exportToFile } from "@/lib/exportImport";
-import { SyncSettingsList } from "@/screens/SyncSettingsList";
+import { SyncSettingsList } from "@/components/SyncSettingsList";
 import {
   ALL_CATEGORIES,
   applyBlob,

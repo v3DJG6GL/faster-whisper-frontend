@@ -2,7 +2,7 @@
 // "changed & default-off" mode the panel's contents follow the filter, not the
 // toggle, and a collapsed group has no panel node to point `aria-controls` at.
 import { describe, expect, it } from "vitest";
-import { groupPanelState } from "./SyncSettingsList";
+import { groupPanelState } from "@/components/SyncSettingsList";
 import type { SettingDef, SettingId } from "../lib/settingsManifest";
 
 const DEFS = [{ id: "a" }, { id: "b" }] as unknown as SettingDef[];
