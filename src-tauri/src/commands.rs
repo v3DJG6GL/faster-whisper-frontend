@@ -2708,21 +2708,21 @@ pub fn discard_injection_snapshot(snap: State<ClipboardSnapshot>) {
 #[tauri::command]
 pub async fn get_focused_app(
     app: AppHandle,
-    guard: State<'_, crate::atspi_guard::AtspiGuard>,
-) -> Result<Option<crate::atspi_guard::FocusedApp>, String> {
+    guard: State<'_, crate::focus::AtspiGuard>,
+) -> Result<Option<crate::focus::FocusedApp>, String> {
     // Authoritative own-window check (same as inject_text's guard): a Wayland client always
     // knows its own keyboard focus. Dictation won't type into our own UI, so surface that
     // truthfully instead of letting AT-SPI report whatever was focused before us. The
     // click-through "overlay" chip never holds focus; exclude it.
     if own_window_focused(&app) {
-        return Ok(Some(crate::atspi_guard::FocusedApp {
+        return Ok(Some(crate::focus::FocusedApp {
             app_id: "self".into(),
             title: "this app".into(),
             editable: Some(false),
             is_self: true,
         }));
     }
-    let focused = crate::atspi_guard::focused_app(guard.inner()).await;
+    let focused = crate::focus::focused_app(guard.inner()).await;
     // The window TITLE can carry sensitive data (open document / email subject / private tab names)
     // and this is polled ~every 700ms during a session, so keep it OUT of the default-on `info` line —
     // log only app_id + editable there; the full record (incl. title) goes to `debug` (off by default).
@@ -2740,9 +2740,9 @@ pub async fn get_focused_app(
 /// window holds focus, so the self-aware `get_focused_app` would always report "this app".
 #[tauri::command]
 pub async fn get_focused_other_app(
-    guard: State<'_, crate::atspi_guard::AtspiGuard>,
-) -> Result<Option<crate::atspi_guard::FocusedApp>, String> {
-    let focused = crate::atspi_guard::focused_app(guard.inner()).await;
+    guard: State<'_, crate::focus::AtspiGuard>,
+) -> Result<Option<crate::focus::FocusedApp>, String> {
+    let focused = crate::focus::focused_app(guard.inner()).await;
     // Keep the window title out of the default-on `info` line (see get_focused_app) — it can hold
     // sensitive data; log app_id + editable at info, the full record at `debug` (off by default).
     match &focused {
@@ -2767,7 +2767,7 @@ pub async fn get_focused_other_app(
 /// `begin_injection`). The text is sanitised to a single short line either way.
 #[tauri::command]
 pub async fn get_quickadd_seed(
-    guard: State<'_, crate::atspi_guard::AtspiGuard>,
+    guard: State<'_, crate::focus::AtspiGuard>,
     seed_rdv: State<'_, crate::quickadd::SeedRendezvous>,
 ) -> Result<Option<String>, String> {
     // Windows: no AT-SPI / PRIMARY — the copy chord fired BEFORE the window took focus
@@ -2806,8 +2806,8 @@ pub async fn get_quickadd_seed(
     #[cfg(not(windows))]
     {
         let _ = &seed_rdv;
-        use crate::atspi_guard::SelRead;
-        match crate::atspi_guard::focused_selection(guard.inner()).await {
+        use crate::focus::SelRead;
+        match crate::focus::focused_selection(guard.inner()).await {
             SelRead::Text(s) => {
                 let seed = sanitize_seed(&s);
                 tracing::info!(
@@ -2854,7 +2854,7 @@ pub async fn get_quickadd_seed(
 #[tauri::command]
 pub async fn get_focused_selection(
     app: tauri::AppHandle,
-    guard: State<'_, crate::atspi_guard::AtspiGuard>,
+    guard: State<'_, crate::focus::AtspiGuard>,
 ) -> Result<Option<String>, String> {
     #[cfg(windows)]
     {
@@ -2875,15 +2875,13 @@ pub async fn get_focused_selection(
     #[cfg(not(windows))]
     {
         let _ = &app;
-        use crate::atspi_guard::SelRead;
-        Ok(
-            match crate::atspi_guard::focused_selection(guard.inner()).await {
-                // `Text` is already capped at its own read; the PRIMARY fallback is only TIME-bounded.
-                SelRead::Text(s) => Some(s),
-                SelRead::Opaque => read_primary_now().await.map(bounded_selection),
-                SelRead::Empty | SelRead::Unavailable => None,
-            },
-        )
+        use crate::focus::SelRead;
+        Ok(match crate::focus::focused_selection(guard.inner()).await {
+            // `Text` is already capped at its own read; the PRIMARY fallback is only TIME-bounded.
+            SelRead::Text(s) => Some(s),
+            SelRead::Opaque => read_primary_now().await.map(bounded_selection),
+            SelRead::Empty | SelRead::Unavailable => None,
+        })
     }
 }
 
@@ -2903,7 +2901,7 @@ async fn read_primary_now() -> Option<String> {
 /// Truncation cannot change the outcome downstream: the value is only compared against a mapping
 /// key that `sanitize_seed` already limits to a single line of ≤100 characters.
 fn bounded_selection(s: String) -> String {
-    match s.char_indices().nth(crate::atspi_guard::SEL_MAX) {
+    match s.char_indices().nth(crate::focus::SEL_MAX) {
         Some((i, _)) => s[..i].to_string(),
         None => s,
     }
@@ -2928,11 +2926,11 @@ fn sanitize_seed(raw: &str) -> Option<String> {
 /// which lets the focused-element editability read correctly for browser/Electron apps.
 #[tauri::command]
 pub fn set_deep_field_detection(
-    guard: State<'_, crate::atspi_guard::AtspiGuard>,
+    guard: State<'_, crate::focus::AtspiGuard>,
     enabled: bool,
 ) -> Result<(), String> {
     tracing::info!("[atspi] deep field detection = {enabled}");
-    crate::atspi_guard::set_deep(guard.inner(), enabled);
+    crate::focus::set_deep(guard.inner(), enabled);
     Ok(())
 }
 
@@ -2985,7 +2983,7 @@ pub async fn inject_text(
     app: AppHandle,
     typer: State<'_, WaylandTyper>,
     vkbd: State<'_, crate::virtual_keyboard::VirtualKeyboard>,
-    guard: State<'_, crate::atspi_guard::AtspiGuard>,
+    guard: State<'_, crate::focus::AtspiGuard>,
     text: String,
     method: String,
     auto_enter: bool,
@@ -3144,7 +3142,7 @@ pub async fn inject_text(
     // window in that gap landed the keys in the app's own settings/dictionary fields — and on the
     // paste path the clipboard was clobbered first, regardless.
     //
-    // The per-app re-check below CANNOT stand in for this. `focused_app_now` (and `win_focus`'s
+    // The per-app re-check below CANNOT stand in for this. `focused_app_now` (and `focus::windows`'s
     // twin) classify our own window as noise and fall back to `last_other`, so they report the
     // PREVIOUS app — which still matches `expect_app_id`, so the mismatch arm never fires. Only
     // the authoritative webview-focus check sees it, so re-run exactly that.
@@ -3204,7 +3202,7 @@ pub async fn inject_text(
     // entering one left it false, giving the paste the 60ms local settle instead of 300ms AND
     // scheduling a restore — reproducing the delayed-rendering failure described above, where the
     // remote's deferred fetch pastes the RESTORED value.
-    let focused_now = crate::atspi_guard::focused_app_now(guard.inner());
+    let focused_now = crate::focus::focused_app_now(guard.inner());
     let method = match (&expect_app_id, &focused_now) {
         (Some(expected), Some(now)) if !now.app_id.eq_ignore_ascii_case(expected) => {
             tracing::warn!(

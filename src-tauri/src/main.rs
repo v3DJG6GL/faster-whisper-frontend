@@ -22,7 +22,7 @@ fn main() {
     // itself an AT-SPI *client* — its own listeners are precisely what force
     // every app (including this one) to bridge — so opting our own tree out
     // both dodges the crash and removes noise from the desktop a11y tree.
-    // atspi_guard (app detection / field guard) reads OTHER apps as a client
+    // focus (app detection / field guard) reads OTHER apps as a client
     // and is unaffected; the own-window inject guard uses Tauri is_focused(),
     // not AT-SPI. Cost: our UI is invisible to screen readers — export
     // NO_AT_BRIDGE=0 to re-enable the bridge explicitly. Must happen before

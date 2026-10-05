@@ -623,7 +623,7 @@ mod imp {
         if pid == 0 {
             return "unknown".into();
         }
-        unsafe { crate::atspi_guard::exe_basename(pid) }.unwrap_or_else(|| "unknown".into())
+        unsafe { crate::focus::exe_basename(pid) }.unwrap_or_else(|| "unknown".into())
     }
 
     /// The process that currently has the clipboard open (the one asking us to render, or the

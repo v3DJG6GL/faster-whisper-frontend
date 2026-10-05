@@ -1,5 +1,5 @@
 //! Windows foreground-app tracker — the Windows twin of the AT-SPI focus
-//! listener, compiled as a child module of `atspi_guard` (via `#[path]`) so it
+//! listener, compiled as a child module of `focus` so it
 //! feeds the SAME private `Snapshot` the portable `focused_app()` reads.
 //! Everything downstream — per-app rules, the chip's target readout, the
 //! AppRules "Use current" capture — works unchanged once this populates it.
@@ -54,7 +54,7 @@ static LAST_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsiz
 
 /// The shared snapshot, reachable from the bare `extern "system"` WinEvent
 /// callback (which can't capture). Set once by `run`; the `started` flag in
-/// `atspi_guard::start` guarantees a single tracker per process.
+/// `focus::start` guarantees a single tracker per process.
 static SNAP: OnceLock<Arc<parking_lot::Mutex<Snapshot>>> = OnceLock::new();
 
 /// Thread entry — runs for the process lifetime, like the Linux listener
@@ -211,7 +211,7 @@ unsafe fn is_shell_window(hwnd: HWND) -> bool {
 /// Process id → lowercased exe basename without `.exe`. None when the process
 /// can't be opened (protected / cross-session) — callers keep the prior state.
 ///
-/// `pub(crate)` (re-exported by `atspi_guard`) so the clipboard owner in `win_clip` names the
+/// `pub(crate)` (re-exported by `focus`) so the clipboard owner in `win_clip` names the
 /// process that fetched a delayed-rendered paste with the SAME identity the per-app rules and the
 /// remote-desktop detector use — "render #12 for mstsc" must mean the id a rule would match.
 pub(crate) unsafe fn exe_basename(pid: u32) -> Option<String> {

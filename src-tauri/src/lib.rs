@@ -1,9 +1,9 @@
-mod atspi_guard;
 mod audio;
 mod chord_engine;
 mod commands;
 mod config;
 mod evdev_hotkeys;
+mod focus;
 mod held_keys;
 mod inject;
 mod key_debounce;
@@ -86,7 +86,7 @@ pub fn run() {
         .manage(win_hotkeys::WinHookState::default())
         .manage(held_keys::HeldKeys::default())
         .manage(virtual_keyboard::VirtualKeyboard::default())
-        .manage(atspi_guard::AtspiGuard::default())
+        .manage(focus::AtspiGuard::default())
         .manage(quickadd::SeedRendezvous::default())
         .manage(log_ring)
         .manage(log_writer)
@@ -162,9 +162,9 @@ pub fn run() {
             // the time the user dictates (per-app rules + the chip target readout), and
             // apply the saved "deep field detection" preference.
             {
-                let guard = app.state::<atspi_guard::AtspiGuard>();
-                atspi_guard::start(&guard);
-                atspi_guard::set_deep(&guard, cfg.settings.general.deep_field_detection);
+                let guard = app.state::<focus::AtspiGuard>();
+                focus::start(&guard);
+                focus::set_deep(&guard, cfg.settings.general.deep_field_detection);
             }
             // Recover hotkeys + any in-flight dictation after the machine wakes from
             // suspend (a dropped key-release / dead WebSocket would otherwise wedge us).
