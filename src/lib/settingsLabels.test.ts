@@ -37,6 +37,7 @@ describe("manifest labels match the screens' literal labels", () => {
     ["lib/exportSummary.ts", "wordTimestamps"], // the export's Content box
     ["components/TranscriptExport.tsx", "subtitleLength"],
     ["components/TranscriptExport.tsx", "translationTiming"],
+    ["components/TranscriptExport.tsx", "revealAfterSave"], // the Save button's menu
     ["components/TranscriptExport.tsx", "exportFormat"], // aria-label on the bespoke radiogroup
     ["screens/Settings.tsx", "audioFolder"], // bespoke Audio-storage block heading
   ];

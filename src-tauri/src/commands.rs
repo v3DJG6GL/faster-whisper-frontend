@@ -1522,6 +1522,41 @@ pub fn open_source_url(app: AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// The longest path `reveal_in_folder` accepts (bytes) — past every OS's own limit.
+const REVEAL_PATH_MAX: usize = 4096;
+
+/// A path `reveal_in_folder` may show: non-empty, bounded, free of control
+/// characters, absolute, and present on disk. A just-saved export always is.
+fn reveal_target(path: &str) -> Result<PathBuf, String> {
+    if path.is_empty() || path.len() > REVEAL_PATH_MAX {
+        return Err("not a usable path".into());
+    }
+    if path.chars().any(char::is_control) {
+        return Err("the path has control characters".into());
+    }
+    let p = PathBuf::from(path);
+    if !p.is_absolute() {
+        return Err("not an absolute path".into());
+    }
+    if !p.exists() {
+        return Err("the file is not there".into());
+    }
+    Ok(p)
+}
+
+/// Show a saved export in the system file manager: its folder opens with the
+/// file selected. async + spawn_blocking: the Linux path is a blocking D-Bus
+/// call (FileManager1, else the OpenURI portal).
+#[tauri::command]
+pub async fn reveal_in_folder(path: String) -> Result<(), String> {
+    let target = reveal_target(&path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri_plugin_opener::reveal_item_in_dir(target).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Decode a media file in-process (symphonia) — the playback fallback for
 /// codecs the system webview can't handle (AAC/MP4 on Linux
 /// WebKitGTK, i.e. every retained YouTube audio). Returns the path of a
@@ -3649,6 +3684,24 @@ pub fn frontend_log(level: String, tag: String, msg: String) {
 #[cfg(test)]
 mod tests {
     use super::move_dir_contents;
+
+    #[test]
+    fn reveal_target_takes_only_an_existing_absolute_clean_path() {
+        use super::{reveal_target, REVEAL_PATH_MAX};
+        let file = std::env::temp_dir().join(format!("fwf-reveal-{}.srt", std::process::id()));
+        std::fs::write(&file, b"1").unwrap();
+        let ok = file.to_string_lossy().into_owned();
+        assert_eq!(reveal_target(&ok).unwrap(), file);
+        // Relative, empty, over-long, control characters, missing: all refused.
+        assert!(reveal_target("talk.srt").is_err());
+        assert!(reveal_target("").is_err());
+        let long = format!("/{}", "a".repeat(REVEAL_PATH_MAX));
+        assert!(reveal_target(&long).is_err());
+        assert!(reveal_target(&format!("{ok}\n")).is_err());
+        assert!(reveal_target(&format!("{ok}\u{7f}")).is_err());
+        std::fs::remove_file(&file).unwrap();
+        assert!(reveal_target(&ok).is_err());
+    }
 
     #[test]
     fn frontend_log_is_defanged() {

@@ -8,7 +8,7 @@ import { trackLang } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { generateExports, type ExportOptions, type SubtitleFormat } from "./transcriptExport";
 import { codeSlug } from "./sanitize";
-import type { BatchResult, Capabilities } from "./types";
+import type { BatchResult, Capabilities, TranscribeSettings } from "./types";
 import { isSourceUrl } from "./urlSource";
 
 export type MediaChoice = "none" | "audio" | "video";
@@ -361,6 +361,12 @@ export function derivePickedStem(
     ? base.slice(0, -firstSuffix.length)
     : base.replace(new RegExp(`\\.${fallbackExt}$`, "i"), "");
   return { dir, stem };
+}
+
+/** Whether a Save ends by showing the saved file in the file manager — on
+ *  unless the user turned it off (absent = on). */
+export function revealAfterSaveOn(t: Pick<TranscribeSettings, "revealAfterSave"> | undefined): boolean {
+  return t?.revealAfterSave !== false;
 }
 
 export type MediaExportPhase = "fetching" | "uploading" | "packaging" | "downloading" | "copying" | "writing";

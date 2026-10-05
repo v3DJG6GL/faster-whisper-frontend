@@ -1013,7 +1013,7 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
   const BOOLS = [
     "diarize", "translate", "separateBgm", "wordTimestamps", "showTimestamps",
     "showSpeakerNames", "colorizeSpeakers", "keepDictationHistory", "keepAudioCopies",
-    "keepUrlAudioCopies",
+    "keepUrlAudioCopies", "revealAfterSave",
   ];
   for (const k of BOOLS) {
     const b = ownProp(v, k);

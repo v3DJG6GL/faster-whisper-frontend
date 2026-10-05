@@ -416,6 +416,20 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(useApp.getState().settings.transcribe).toMatchObject({ subtitleLength: "short", translationTiming: "own", subtitleCustom: { cpl: 60 } });
   });
 
+  it("revealAfterSave travels in the transcription block; a non-boolean is dropped on apply", async () => {
+    const cfg = slice();
+    cfg.settings.transcribe = { ...cfg.settings.transcribe, revealAfterSave: false };
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    expect(blob.transcription?.revealAfterSave).toBe(false);
+    useApp.setState({ settings: settings() });
+    await applyBlob({ transcription: { revealAfterSave: false } }, { ...CATS_ALL, backends: false });
+    expect(useApp.getState().settings.transcribe?.revealAfterSave).toBe(false);
+    await applyBlob({ transcription: { revealAfterSave: "no" } as never }, { ...CATS_ALL, backends: false });
+    expect(useApp.getState().settings.transcribe?.revealAfterSave).toBe(false); // bogus value dropped
+    await applyBlob({ transcription: { revealAfterSave: true } }, { ...CATS_ALL, backends: false });
+    expect(useApp.getState().settings.transcribe?.revealAfterSave).toBe(true);
+  });
+
   it("an explicit restore applies machine-specific settings the sync switches would gate", async () => {
     // Chip position's switch is OFF on a stock install; a backup must still restore it.
     useApp.setState({ settings: settings() });

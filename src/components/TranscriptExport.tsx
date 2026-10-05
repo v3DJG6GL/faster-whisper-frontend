@@ -7,12 +7,12 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactN
 import { Check, Circle, Download, Hourglass, Minus, PanelBottom, PanelRight, RotateCcw, TriangleAlert } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
-import { Badge, Button, ChipToggle, RangeField, Segmented, TextInput } from "@/components/ui";
+import { Badge, Button, ChipToggle, RangeField, Segmented, SplitButton, TextInput } from "@/components/ui";
 import { ExportTrackChips } from "@/components/ExportTrackChips";
 import { fmtBytes } from "@/lib/format";
 import {
   pickExportPath, saveTextFile, audioBasePref, cancelMediaExport, copyMediaTo, fetchUrlMedia, fetchUrlVideo,
-  fetchUrlVideoOnDemand, getMediaStreams, onMediaExportProgress, packageMedia,
+  fetchUrlVideoOnDemand, getMediaStreams, onMediaExportProgress, packageMedia, revealSaved,
 } from "@/lib/api";
 import { safeDisplayText } from "@/lib/sanitize";
 import { langCode, trackLanguageName } from "@/lib/languages";
@@ -36,7 +36,7 @@ import {
 } from "@/lib/exportTracks";
 import {
   dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
-  legacyTrackIndices, mediaExportPlan, mp4Disabled, queueMediaExport, queuedExportFor, sidecarFiles, sidecarNames,
+  legacyTrackIndices, mediaExportPlan, mp4Disabled, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, sidecarNames,
   subscribeExportQueue, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaStreams,
   type SubtitleMode,
 } from "@/lib/mediaExport";
@@ -487,17 +487,20 @@ export function TranscriptExport({
     const { dir, stem: pickedStem } = derivePickedStem(target, plan.primary.name(""), plan.primaryExt);
     // Each planned text file by its name (an empty track writes nothing).
     const contents = new Map(files.map((f) => [f.name(pickedStem), f.content]));
+    const written: string[] = [];
     try {
       for (const f of plan.files) {
         const dest = dir + f.name(pickedStem);
         if (f.kind === "text") {
           const content = contents.get(f.name(pickedStem));
-          if (content !== undefined) await saveTextFile(dest, content);
+          if (content === undefined) continue;
+          await saveTextFile(dest, content);
         } else if (f.kind === "audio") {
           await exportAudioTo(dest);
         } else if (!(await exportVideoTo(dest, plan.embedded))) {
           return;
         }
+        written.push(dest);
       }
     } catch (e) {
       setMediaJob(null);
@@ -507,6 +510,9 @@ export function TranscriptExport({
     setSaved(true);
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => setSaved(false), 1500);
+    // Read now, not at the click: a queued video export can finish long after, and the
+    // menu's switch may have changed meanwhile.
+    if (revealAfterSaveOn(useApp.getState().settings.transcribe)) void revealSaved(written);
   };
   // Clear a still-pending confirmation timer if the panel unmounts mid-window.
   useEffect(() => () => window.clearTimeout(saveTimer.current), []);
@@ -897,10 +903,18 @@ export function TranscriptExport({
                   </Button>
                 </span>
               ) : (
-                <Button variant="accent" onClick={doExport}>
+                <SplitButton
+                  onClick={doExport}
+                  menuLabel="Save options"
+                  options={[{
+                    label: "Open folder after saving",
+                    checked: revealAfterSaveOn(settings.transcribe),
+                    onChange: (on) => patchTranscribe({ revealAfterSave: on }),
+                  }]}
+                >
                   {saved ? <Check className="size-4" /> : <Download className="size-4" />}
                   {saved ? "Saved" : plan.saveLabel}
-                </Button>
+                </SplitButton>
               )}
             </div>
             {saveError && <span className="mt-2 text-[12px] text-warn">{safeDisplayText(saveError, 300)}</span>}

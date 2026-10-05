@@ -28,7 +28,7 @@ import { Search } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { navKey } from "@/lib/listNav";
 import { Kbd } from "@/components/ui";
-import { useAnchoredRect } from "@/lib/useAnchoredRect";
+import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
 import { useOutsidePress } from "@/lib/useOutsidePress";
 
 export interface PickerSection<R> {
@@ -168,6 +168,10 @@ export function KeyHint({ k, children }: { k: string; children: ReactNode }) {
   );
 }
 
+/** The portaled popover's frame — shared with ui.tsx's SplitButton menu. */
+export const POPOVER_PANEL =
+  "animate-combobox-pop overflow-hidden rounded-xl border border-line-strong bg-panel shadow-[0_12px_32px_-8px_rgba(0,0,0,0.55)]";
+
 /** Popover width floor and list height ceiling (px). */
 const MIN_WIDTH = 320;
 const MAX_LIST = 470;
@@ -290,20 +294,9 @@ export function ListPicker<R>({
   let pos: CSSProperties | null = null;
   let listMax = MAX_LIST;
   if (rect) {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const width = Math.min(Math.max(rect.width, minWidth), vw - 16);
-    const below = vh - rect.bottom - 12;
-    const above = rect.top - 12;
-    const up = below < 320 && above > below;
-    listMax = Math.max(120, Math.min(MAX_LIST, (up ? above : below) - (search ? CHROME : CHROME_BARE)));
-    pos = {
-      position: "fixed",
-      left: Math.max(8, Math.min(rect.left, vw - width - 8)),
-      width,
-      zIndex: 70,
-      ...(up ? { bottom: vh - rect.top + 4 } : { top: rect.bottom + 4 }),
-    };
+    const box = popoverBox(rect, { minWidth });
+    listMax = Math.max(120, Math.min(MAX_LIST, box.room - (search ? CHROME : CHROME_BARE)));
+    pos = box.style;
   }
 
   return (
@@ -328,7 +321,7 @@ export function ListPicker<R>({
           <div
             ref={popRef}
             style={pos}
-            className="animate-combobox-pop overflow-hidden rounded-xl border border-line-strong bg-panel shadow-[0_12px_32px_-8px_rgba(0,0,0,0.55)]"
+            className={POPOVER_PANEL}
           >
             {search && (
               <div className="flex items-center gap-2 border-b border-line px-3 py-2.5 text-faint">

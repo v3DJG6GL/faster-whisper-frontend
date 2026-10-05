@@ -152,6 +152,7 @@ export const TRANSCRIPTION_FIELDS = [
   "subtitleLength",
   "subtitleCustom",
   "translationTiming",
+  "revealAfterSave",
   "wordTimestamps",
   "showTimestamps",
   "showSpeakerNames",

@@ -23,7 +23,7 @@ import {
 } from "@/components/ui";
 import { useApp } from "@/lib/store";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
-import { pickExportPath, readMediaFile, saveTextFile } from "@/lib/api";
+import { pickExportPath, readMediaFile, revealSaved, saveTextFile } from "@/lib/api";
 import {
   deleteRecord, loadHistory, recordEditedResult, recordText,
   useTranscriptHistory, type TranscriptRecord,
@@ -36,7 +36,7 @@ import {
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { langCode } from "@/lib/languages";
 import { urlHost } from "@/lib/urlSource";
-import { derivePickedStem, exportStem, isVideoSourcePath, withTrackSites } from "@/lib/mediaExport";
+import { derivePickedStem, exportStem, isVideoSourcePath, revealAfterSaveOn, withTrackSites } from "@/lib/mediaExport";
 import { readTrackPrefs, trackOrder, transcriptTracks } from "@/lib/exportTracks";
 import { cueOptionsOf } from "@/lib/cueSplit";
 import { displayToggles } from "@/lib/useDisplayToggles";
@@ -483,13 +483,20 @@ export default function History() {
         cues: cueOptionsOf(t),
         tracks: all.length > 1 ? trackOrder(result, all, readTrackPrefs(rec.exportTracks).order) : [],
       }));
+      const written: string[] = [];
       if (files.length === 1) {
         await saveTextFile(path, files[0].content);
+        written.push(path);
       } else {
         // The picked path names the first file — never double-suffix its siblings.
         const { dir, stem: pickedStem } = derivePickedStem(path, files[0].name(""), ext);
-        for (const f of files) await saveTextFile(dir + f.name(pickedStem), f.content);
+        for (const f of files) {
+          const dest = dir + f.name(pickedStem);
+          await saveTextFile(dest, f.content);
+          written.push(dest);
+        }
       }
+      if (revealAfterSaveOn(t)) void revealSaved(written);
     } catch (e) {
       console.error("history export failed:", e);
       setExportError({ id: rec.id, msg: String(e) });

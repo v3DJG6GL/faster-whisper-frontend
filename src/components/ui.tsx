@@ -3,6 +3,7 @@ import {
   type ReactNode,
   type ReactElement,
   type InputHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type TextareaHTMLAttributes,
   cloneElement,
   forwardRef,
@@ -18,7 +19,10 @@ import { AlertTriangle, ArrowLeft, Check, ChevronDown, Info, Minus, Plus, Rotate
 import { cn } from "@/lib/cn";
 import { langCode, languageLabel } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
-import { KeyHint, ListPicker } from "@/components/ListPicker";
+import { KeyHint, ListPicker, POPOVER_PANEL } from "@/components/ListPicker";
+import { navKey } from "@/lib/listNav";
+import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
+import { useOutsidePress } from "@/lib/useOutsidePress";
 
 /* ── Card ─────────────────────────────────────────────────────────────── */
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
@@ -1089,6 +1093,29 @@ export function Stepper({
 }
 
 /* ── Button ───────────────────────────────────────────────────────────── */
+type ButtonVariant = "default" | "accent" | "ghost" | "danger";
+type ButtonSize = "sm" | "md";
+
+/** A Button's face, for the controls that draw one on a <button> of their own. `part` = one
+ *  half of a SplitButton: the action (square right edge) or the chevron (square left edge, no
+ *  side padding). Each class is chosen, never overridden — `cn` is clsx, not tailwind-merge. */
+function buttonClass(variant: ButtonVariant, size: ButtonSize, part?: "action" | "chevron"): string {
+  const sm = size === "sm";
+  return cn(
+    "ring-signal inline-flex items-center justify-center gap-2 font-medium transition-colors disabled:opacity-40",
+    part === "action" ? "rounded-l-xl" : part === "chevron" ? "rounded-r-xl" : "rounded-xl",
+    sm ? "h-8 text-[12px]" : "h-10 text-[13px]",
+    part === "chevron" ? (sm ? "w-7" : "w-8") : sm ? "px-3" : "px-4",
+    variant === "accent" && "bg-accent text-accent-ink hover:brightness-110",
+    variant === "default" && "border border-line-strong bg-surface-2 text-text hover:border-faint",
+    // Transparent border at rest reserves the box, so hover/press only
+    // recolor it — no layout shift when the outline appears.
+    variant === "ghost" &&
+      "border border-transparent text-dim hover:border-line-strong hover:bg-surface-2 hover:text-text active:border-faint",
+    variant === "danger" && "border border-rec/40 text-rec hover:bg-rec/10",
+  );
+}
+
 export function Button({
   children,
   onClick,
@@ -1101,8 +1128,8 @@ export function Button({
 }: {
   children: ReactNode;
   onClick?: () => void;
-  variant?: "default" | "accent" | "ghost" | "danger";
-  size?: "sm" | "md";
+  variant?: ButtonVariant;
+  size?: ButtonSize;
   className?: string;
   type?: "button" | "submit";
   disabled?: boolean;
@@ -1114,21 +1141,165 @@ export function Button({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={cn(
-        "ring-signal inline-flex items-center justify-center gap-2 rounded-xl font-medium transition-colors disabled:opacity-40",
-        size === "sm" ? "h-8 px-3 text-[12px]" : "h-10 px-4 text-[13px]",
-        variant === "accent" && "bg-accent text-accent-ink hover:brightness-110",
-        variant === "default" && "border border-line-strong bg-surface-2 text-text hover:border-faint",
-        // Transparent border at rest reserves the box, so hover/press only
-        // recolor it — no layout shift when the outline appears.
-        variant === "ghost" &&
-          "border border-transparent text-dim hover:border-line-strong hover:bg-surface-2 hover:text-text active:border-faint",
-        variant === "danger" && "border border-rec/40 text-rec hover:bg-rec/10",
-        className,
-      )}
+      className={cn(buttonClass(variant, size), className)}
     >
       {children}
     </button>
+  );
+}
+
+/* ── SplitButton ──────────────────────────────────────────────────────── */
+/** One on/off option in a SplitButton's menu. */
+export interface MenuCheck {
+  label: string;
+  checked: boolean;
+  onChange: (on: boolean) => void;
+  title?: string;
+}
+
+/** A Button with a chevron beside it that opens a menu of on/off options for the same action
+ *  (role="menu" of menuitemcheckbox rows, portaled like ListPicker's popover). ↑↓ on the
+ *  chevron opens it; in the menu ↑↓ move, Space ticks, Enter ticks and closes, Esc closes back
+ *  to the chevron; Tab and a click outside just close. */
+export function SplitButton({
+  children,
+  onClick,
+  variant = "accent",
+  size = "md",
+  disabled,
+  title,
+  menuLabel,
+  options,
+}: {
+  children: ReactNode;
+  onClick: () => void;
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  disabled?: boolean;
+  title?: string;
+  /** The chevron's accessible name and tooltip, and the menu's name. */
+  menuLabel: string;
+  options: MenuCheck[];
+}) {
+  const menuId = `${useId()}-menu`;
+  const itemId = (i: number) => `${menuId}-${i}`;
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const chevronRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const rect = useAnchoredRect(wrapRef, open);
+  const placed = open && rect !== null;
+  // Roving focus: the active row holds it while the menu is up.
+  useEffect(() => {
+    if (placed) document.getElementById(`${menuId}-${active}`)?.focus({ preventScroll: true });
+  }, [placed, active, menuId]);
+  useOutsidePress([menuRef, chevronRef], open, () => setOpen(false));
+
+  const show = (at: number) => {
+    if (disabled || !options.length) return;
+    setActive(at);
+    setOpen(true);
+  };
+  const close = (refocus: boolean) => {
+    setOpen(false);
+    if (refocus) chevronRef.current?.focus();
+  };
+  const tick = (i: number) => {
+    const o = options[i];
+    if (o) o.onChange(!o.checked);
+  };
+  const onMenuKey = (e: ReactKeyboardEvent<HTMLElement>) => {
+    const next = navKey(e.key, active, options.length);
+    if (next !== null) {
+      e.preventDefault();
+      setActive(next);
+    } else if (e.key === " ") {
+      e.preventDefault();
+      tick(active);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      tick(active);
+      close(true);
+    } else if (e.key === "Escape") {
+      // Ours alone, like ListPicker's: a dialog behind the menu must not take this Esc.
+      e.preventDefault();
+      e.stopPropagation();
+      close(true);
+    } else if (e.key === "Tab") {
+      close(false);
+    }
+  };
+
+  return (
+    <div ref={wrapRef} className="inline-flex">
+      <button type="button" onClick={onClick} disabled={disabled} title={title} className={buttonClass(variant, size, "action")}>
+        {children}
+      </button>
+      <button
+        ref={chevronRef}
+        type="button"
+        disabled={disabled}
+        aria-label={menuLabel}
+        title={menuLabel}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => (open ? close(false) : show(0))}
+        onKeyDown={(e) => {
+          if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+            e.preventDefault();
+            show(e.key === "ArrowUp" ? options.length - 1 : 0);
+          }
+        }}
+        className={cn(
+          buttonClass(variant, size, "chevron"),
+          // The seam between the halves: a hairline in the face's own ink.
+          variant === "accent" ? "border-l border-accent-ink/20" : "-ml-px",
+        )}
+      >
+        <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} aria-hidden />
+      </button>
+      {open &&
+        rect &&
+        createPortal(
+          <div
+            ref={menuRef}
+            id={menuId}
+            role="menu"
+            aria-label={menuLabel}
+            style={popoverBox(rect, { minWidth: 220, minRoom: 120, align: "end" }).style}
+            className={cn(POPOVER_PANEL, "p-1.5")}
+            onKeyDown={onMenuKey}
+          >
+            {options.map((o, i) => (
+              <div
+                key={o.label}
+                id={itemId(i)}
+                role="menuitemcheckbox"
+                aria-checked={o.checked}
+                tabIndex={i === active ? 0 : -1}
+                title={o.title}
+                onClick={() => {
+                  setActive(i);
+                  tick(i);
+                  close(true);
+                }}
+                className={cn(
+                  "flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] text-text outline-none",
+                  "hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-[1.5px] focus-visible:ring-inset focus-visible:ring-accent",
+                )}
+              >
+                <span className="grid size-4 shrink-0 place-items-center">
+                  {o.checked && <Check className="size-3.5 text-accent" />}
+                </span>
+                <span className="min-w-0 flex-1 whitespace-nowrap">{o.label}</span>
+              </div>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </div>
   );
 }
 

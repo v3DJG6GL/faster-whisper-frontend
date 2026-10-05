@@ -1382,6 +1382,20 @@ export async function saveTextFile(path: string, contents: string): Promise<void
   await invoke("save_text_file", { path, contents });
 }
 
+/** Show a Save's result in the system file manager: the folder opens with the FIRST saved
+ *  file selected — once per Save, never per file. A failure is logged, never thrown: the
+ *  files are saved either way. */
+export async function revealSaved(paths: readonly string[]): Promise<void> {
+  const first = paths[0];
+  if (!isTauri || !first) return;
+  try {
+    await invoke("reveal_in_folder", { path: first });
+  } catch (e) {
+    console.warn("could not open the saved file's folder:", e);
+    logLine("warn", "export", `could not open the saved file's folder: ${String(e)}`);
+  }
+}
+
 /** Persist one transcription-history record (opaque JSON, atomic write).
  *  `record` is pre-serialized by the caller so Rust never re-encodes it. */
 export async function saveTranscriptRecord(

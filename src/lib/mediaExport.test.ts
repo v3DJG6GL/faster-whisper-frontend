@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem,
-  isVideoSourcePath, legacyTrackIndices, linkSiteName, mediaExportPlan, queueMediaExport, queuedExportFor,
+  isVideoSourcePath, legacyTrackIndices, linkSiteName, mediaExportPlan, queueMediaExport, queuedExportFor, revealAfterSaveOn,
   siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, stemTimestamp,
 } from "./mediaExport";
 import type { BatchResult } from "./types";
@@ -13,6 +13,15 @@ describe("isVideoSourcePath", () => {
     expect(isVideoSourcePath("/a/talk.m4a")).toBe(false);
     expect(isVideoSourcePath("/a/talk.srt")).toBe(false);
     expect(isVideoSourcePath("https://x/v")).toBe(false);
+  });
+});
+
+describe("revealAfterSaveOn", () => {
+  it("is on unless the user turned it off", () => {
+    expect(revealAfterSaveOn(undefined)).toBe(true);
+    expect(revealAfterSaveOn({})).toBe(true);
+    expect(revealAfterSaveOn({ revealAfterSave: true })).toBe(true);
+    expect(revealAfterSaveOn({ revealAfterSave: false })).toBe(false);
   });
 });
 

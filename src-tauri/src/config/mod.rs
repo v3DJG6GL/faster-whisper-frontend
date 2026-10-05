@@ -1236,6 +1236,7 @@ mod tests {
         json["settings"]["recentSpokenLanguages"] = serde_json::json!(["de", "yue"]);
         json["settings"]["accentHue"] = serde_json::json!(330);
         json["settings"]["accentMotion"] = serde_json::json!({"period": 3600, "range": "wheel"});
+        json["settings"]["transcribe"] = serde_json::json!({"revealAfterSave": false});
         json["profiles"] = serde_json::json!([{
             "id": "p1", "name": "P", "activation": "hold", "enabled": true, "hotkey": [],
             "askTranslationTargets": true
@@ -1257,6 +1258,11 @@ mod tests {
         );
         // The quick-add and picker windows read the Signal colour through this struct.
         assert_eq!(out["settings"]["accentHue"], serde_json::json!(330.0));
+        // The export panel's "Open folder after saving" (an opaque transcribe key).
+        assert_eq!(
+            out["settings"]["transcribe"]["revealAfterSave"],
+            serde_json::json!(false)
+        );
         assert_eq!(
             out["settings"]["accentMotion"]["period"],
             serde_json::json!(3600)

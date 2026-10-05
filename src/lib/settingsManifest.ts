@@ -237,6 +237,9 @@ export const MANIFEST = [
   { id: "translationTiming", label: "Translation timing", group: "transcribeDefaults", category: "transcription",
     desc: "Machine translations share the original's subtitles or get their own.",
     fields: [t("translationTiming")] },
+  { id: "revealAfterSave", label: "Open folder after saving", group: "transcribeDefaults", category: "transcription",
+    desc: "After an export's Save, the folder opens with the saved file selected.",
+    fields: [t("revealAfterSave")] },
   { id: "exportMedia", label: "Export media", group: "transcribeDefaults", category: "transcription",
     desc: "What the Save also writes: nothing, the audio, or the video (with its subtitle tracks).",
     fields: [t("exportMedia"), t("exportContainer"), t("exportSubtitleMode")] },
@@ -456,6 +459,7 @@ export const TRANSCRIBE_COVERAGE = {
   subtitleLength: "subtitleLength",
   subtitleCustom: "subtitleLength",
   translationTiming: "translationTiming",
+  revealAfterSave: "revealAfterSave",
 } as const satisfies Record<keyof TranscribeSettings, Covered>;
 
 export const LOGGING_COVERAGE = {

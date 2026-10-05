@@ -471,6 +471,9 @@ export interface TranscribeSettings {
   subtitleCustom?: CueLimits;
   /** Machine translations share the original's cues, or get their own. */
   translationTiming?: TranslationTiming;
+  /** After an export's Save, show the saved file in the system file manager
+   *  (its folder, the file selected). Absent = true. */
+  revealAfterSave?: boolean;
 }
 
 /** Capture threshold for the in-app log ring + session file — lower levels

@@ -240,6 +240,7 @@ pub fn run() {
             commands::export_settings_file, // P30: settings export to file
             commands::save_text_file,    // transcript exports (Transcribe screen)
             commands::read_text_file,    // subtitle/text sources for translate-only runs
+            commands::reveal_in_folder,  // show a saved export in the file manager
             transcripts::save_transcript_record, // transcription history (local store)
             transcripts::list_transcript_records,
             transcripts::delete_transcript_record,
