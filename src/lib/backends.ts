@@ -112,7 +112,9 @@ export function newBackendDraft(conn?: {
     hasApiKey: false,
     model: "whisper-1",
     endpoint: "stream",
-    language: "auto",
+    // "" = the server's DEFAULT_LANGUAGE (W6, decided 2026-10-05): a backend added from now on
+    // starts on the server's language; backends that already exist keep their "auto".
+    language: "",
     prompt: "",
     responseFormat: "verbose_json",
   };

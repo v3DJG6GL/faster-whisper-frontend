@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactN
 import { Check, Circle, Download, Hourglass, Minus, PanelBottom, PanelRight, RotateCcw, TriangleAlert } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
-import { Button, ChipToggle, RangeField, Segmented, TextInput } from "@/components/ui";
+import { Badge, Button, ChipToggle, RangeField, Segmented, TextInput } from "@/components/ui";
 import { ExportTrackChips } from "@/components/ExportTrackChips";
 import { fmtBytes } from "@/lib/format";
 import {
@@ -25,7 +25,7 @@ import {
   CUE_PRESETS, CUE_RANGES, TRANSCRIBED_CPS, limitsTitle, sanitizeCueLimits, trackLimits, type CueLimits,
   type CueOptions, type SubtitleLength,
 } from "@/lib/cueSplit";
-import { contentStates, exportSummary, type ContentItem } from "@/lib/exportSummary";
+import { contentStates, exportSummary, lengthNeedsWords, NO_WORDS_SPLIT_WHY, type ContentItem } from "@/lib/exportSummary";
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
@@ -788,7 +788,12 @@ export function TranscriptExport({
           {namesBox}
 
           <PanelBox title="Subtitle length" head="flex flex-wrap items-start justify-between gap-2.5" right={
-              <span className="flex" title={subs ? undefined : "Only SRT and VTT have subtitles to split"}>
+              <span className="flex items-center gap-2" title={subs ? undefined : "Only SRT and VTT have subtitles to split"}>
+                {subs && lengthNeedsWords(hasWords, length) && (
+                  <span title={NO_WORDS_SPLIT_WHY} className="inline-flex">
+                    <Badge tone="warn">no word timing</Badge>
+                  </span>
+                )}
                 <Segmented<SubtitleLength>
                   ariaLabel="Subtitle length"
                   value={length}

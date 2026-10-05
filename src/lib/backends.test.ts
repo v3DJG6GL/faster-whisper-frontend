@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { effectiveLanguage } from "./backends";
+import { effectiveLanguage, newBackendDraft } from "./backends";
+
+describe("newBackendDraft", () => {
+  it("a new backend starts on the server's language (W6)", () => {
+    expect(newBackendDraft().language).toBe("");
+  });
+});
 
 describe("effectiveLanguage", () => {
   it("a set profile language wins, trimmed", () => {

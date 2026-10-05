@@ -14,7 +14,9 @@ import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { DecodeFields } from "@/components/DecodeFields";
 import { LiveDictationFields } from "@/components/LiveDictationFields";
 import { TranslationDefaultsEditor, targetsLabel } from "@/components/TranslationFields";
-import { inheritLabel, LOCKED_REASON, serverContextSegments, serverInherited } from "@/lib/inherit";
+import {
+  inheritLabel, LOCKED_REASON, serverContextSegments, serverInherited, serverLanguageLabel, shortModelName,
+} from "@/lib/inherit";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -474,8 +476,9 @@ function Editor({
           title="Defaults"
           summary={
             <span className="text-faint">
-              · {safeDisplayText((b.model || "server model").split("/").pop(), 40)} ·{" "}
-              {safeDisplayText(spokenLabel(spoken.value), 30)} · {b.endpoint === "batch" ? "Batch" : "Streaming"}
+              · {shortModelName(b.model || decodeDefaults?.model) ?? "server model"} ·{" "}
+              {safeDisplayText(spoken.value ? spokenLabel(spoken.value) : (serverLanguageLabel(decodeDefaults) ?? "server language"), 30)}{" "}
+              · {b.endpoint === "batch" ? "Batch" : "Streaming"}
             </span>
           }
           hint="What every profile on this backend starts from."
@@ -487,7 +490,7 @@ function Editor({
                 value={b.model}
                 onChange={(v) => set({ model: v })}
                 models={result?.ok ? result.models : storedConn?.ok ? storedConn.models : []}
-                placeholder="whisper-1 / large-v3"
+                placeholder={decodeDefaults?.model ? inheritLabel(shortModelName(decodeDefaults.model), "Default") : "whisper-1 / large-v3"}
               />
             </div>
           </OverrideHeader>
@@ -497,6 +500,8 @@ function Editor({
                 ariaLabel="Default language"
                 value={spoken.value}
                 multi={multiOffered}
+                // "" = send no language: the server's DEFAULT_LANGUAGE (new backends start here).
+                inheritLabel={inheritLabel(serverLanguageLabel(decodeDefaults), "Default")}
                 onChange={(v) => {
                   const { language, overrides } = spoken.pick(v);
                   set({ language, decodeOverrides: overrides && Object.keys(overrides).length ? overrides : undefined });
@@ -568,7 +573,7 @@ function Editor({
             sources={server.sources}
             locked={server.locked}
             known={server.known}
-            languagePinned={namedLanguage(b.language)}
+            languagePinned={namedLanguage(b.language || String(decodeDefaults?.language?.value ?? ""))}
             serverKind={kind}
             canCustomize={caps?.can_request_decode_overrides}
           />
@@ -1106,7 +1111,8 @@ export default function Backends() {
                         {safeIdentityText(b.name, 80)}
                       </span>
                       <Badge tone="accent">{b.endpoint}</Badge>
-                      <Badge>{safeDisplayText(languageLabel(b.language), 40)}</Badge>
+                      {/* "" = the backend leaves the language to the server. */}
+                      <Badge>{b.language ? safeDisplayText(languageLabel(b.language), 40) : "server default"}</Badge>
                       {b.hasApiKey && <Badge>key</Badge>}
                       {backendChips(b, conn).map((c) => (
                         <Badge key={c}>{c}</Badge>

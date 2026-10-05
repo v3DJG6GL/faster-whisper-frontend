@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { inheritLabel, onOff, serverContextSegments, serverInherited } from "./inherit";
+import {
+  inheritLabel, onOff, serverContextSegments, serverInherited, serverLanguageLabel, serverName, shortModelName, withDefaultModel,
+} from "./inherit";
 import type { DecodeDefault, DecodeDefaults } from "./types";
 
 describe("inheritLabel", () => {
@@ -46,6 +48,28 @@ function dd(over: Partial<DecodeDefaults> = {}): DecodeDefaults {
     ...over,
   };
 }
+
+describe("server default names (W6–W8)", () => {
+  const e = (value: DecodeDefault["value"]): DecodeDefault => ({ value, source: "server", label: "", locked: false });
+  it("names a default model short", () => {
+    expect(shortModelName("Systran/faster-whisper-large-v3")).toBe("faster-whisper-large-v3");
+    expect(serverName(e("pyannote/speaker-diarization-community-1"))).toBe("speaker-diarization-community-1");
+    expect(serverName(e(""))).toBeUndefined();
+    expect(serverName(e(null))).toBeUndefined();
+    expect(serverName(undefined)).toBeUndefined();
+  });
+  it("the inherit row of the language pickers: the server's language, \"\" = auto-detect", () => {
+    expect(serverLanguageLabel(dd({ language: e("de") }))).toBe("German");
+    expect(serverLanguageLabel(dd({ language: e("") }))).toBe(serverLanguageLabel(dd({ language: e("auto") })));
+    expect(serverLanguageLabel(dd())).toBeUndefined();
+  });
+  it("adds an identity-only default model to the picker's list once", () => {
+    const models = [{ id: "a", loaded: true }];
+    expect(withDefaultModel(models, "b").map((m) => m.id)).toEqual(["a", "b"]);
+    expect(withDefaultModel(models, "a").map((m) => m.id)).toEqual(["a"]);
+    expect(withDefaultModel(undefined, null)).toEqual([]);
+  });
+});
 
 describe("serverContextSegments", () => {
   it("reads the server's translation context depth", () => {

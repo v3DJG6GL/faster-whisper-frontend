@@ -16,7 +16,10 @@ import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields, pruneTargets, translationRunOptions } from "@/components/TranslationFields";
-import { inheritLabel, onOff, serverContextSegments, serverInherited } from "@/lib/inherit";
+import {
+  inheritLabel, onOff, serverContextSegments, serverInherited, serverLanguageLabel, serverName, shortModelName,
+  withDefaultModel,
+} from "@/lib/inherit";
 import { OverrideHeader } from "@/components/OverrideField";
 import { envDesc } from "@/lib/settingDesc";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -816,6 +819,19 @@ export default function Transcribe() {
   // defaults over them (the Profiles editor's merge), locked keys back to the server's.
   const server = serverInherited(decodeDefaults, backend?.decodeOverrides, "batch", "Backend default");
   const inheritedBaseline = server.values;
+  // The model a blank Model field runs with: the Backend's, else the server's default (named by
+  // request-default-settings — only while no per-run model is picked, else it names that one).
+  const defaultModelName = backend?.model || (model ? undefined : decodeDefaults?.model) || "server model";
+  // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE.
+  const serverLang = serverLanguageLabel(decodeDefaults);
+  // The stage models a blank pick runs with, as the server resolves them for this caller (an
+  // identity-bound default joins the list so the field can name it).
+  const separationModels = withDefaultModel(caps?.separation_models, decodeDefaults?.separation_model?.value);
+  const diarizationModels = withDefaultModel(caps?.diarization_models, decodeDefaults?.diarization_model?.value);
+  const defaultSeparationName =
+    serverName(decodeDefaults?.separation_model) ?? shortModelName(caps?.separation_models?.[0]?.id) ?? "server model";
+  const defaultDiarizationName =
+    serverName(decodeDefaults?.diarization_model) ?? shortModelName(caps?.diarization_models?.[0]?.id) ?? "server model";
 
   // Per-run model pick: "" = backend default. The advertised list comes from
   // the shared hook (session connection cache + one background probe).
@@ -1460,7 +1476,7 @@ export default function Transcribe() {
                         setModel("");
                         persistOptions({ backendId, model: "" });
                       }}
-                      title={backend?.model ? `Default · ${backend.model}` : "Default · server model"}
+                      title={`Default · ${defaultModelName}`}
                       className="ring-signal ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1 text-[11px] font-normal text-faint hover:text-text"
                     >
                       <RotateCcw className="size-3" /> use default
@@ -1478,7 +1494,7 @@ export default function Transcribe() {
                   persistOptions({ backendId, model: v });
                 }}
                 models={advertised}
-                defaultLabel={backend?.model ? `Default · ${backend.model}` : "Default · server model"}
+                defaultLabel={`Default · ${defaultModelName}`}
                 hideReset
               />
             </div>
@@ -1488,6 +1504,8 @@ export default function Transcribe() {
                 ariaLabel="Language"
                 value={spoken.value}
                 multi={multiOffered}
+                // "" = send no language: the server's DEFAULT_LANGUAGE (W6).
+                inheritLabel={inheritLabel(serverLang, "Default")}
                 disabled={busy}
                 onChange={(v) => {
                   resetForInputChange();
@@ -1721,7 +1739,7 @@ export default function Transcribe() {
                   }
                   disabled={!bgmAvailable}
                   expand={
-                    effBgm && (caps?.separation_models?.length ?? 0) > 1 ? (
+                    effBgm && separationModels.length > 1 ? (
                       <SettingExpand>
                         <div>
                           <MicroLabel>model</MicroLabel>
@@ -1729,8 +1747,8 @@ export default function Transcribe() {
                             <ModelPicker
                               value={separationModel}
                               onChange={setSeparationModel}
-                              models={caps?.separation_models ?? []}
-                              defaultLabel={`Default · ${caps?.separation_models?.[0]?.id ?? "server model"}`}
+                              models={separationModels}
+                              defaultLabel={`Default · ${defaultSeparationName}`}
                               ariaLabel="Separation model"
                             />
                           </div>
@@ -1907,15 +1925,15 @@ export default function Transcribe() {
                             )}
                           </div>
                         </div>
-                        {(caps?.diarization_models?.length ?? 0) > 1 && (
+                        {diarizationModels.length > 1 && (
                           <div>
                             <MicroLabel>model</MicroLabel>
                             <div className="w-56">
                               <ModelPicker
                                 value={diarizationModel}
                                 onChange={setDiarizationModel}
-                                models={caps?.diarization_models ?? []}
-                                defaultLabel={`Default · ${caps?.diarization_models?.[0]?.id?.split("/").pop() ?? "server model"}`}
+                                models={diarizationModels}
+                                defaultLabel={`Default · ${defaultDiarizationName}`}
                                 ariaLabel="Diarization model"
                               />
                             </div>

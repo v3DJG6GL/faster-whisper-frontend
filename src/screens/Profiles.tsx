@@ -15,7 +15,7 @@ import { DecodeFields } from "@/components/DecodeFields";
 import { LiveDictationFields } from "@/components/LiveDictationFields";
 import { dictationControls, hasInsertionOverrides, insertionSetCount, FIELD_LABEL } from "@/components/DictationFields";
 import { TranslationDefaultsEditor, targetsLabel, type TranslationInherited } from "@/components/TranslationFields";
-import { inheritLabel, LOCKED_REASON, onOff, serverContextSegments, serverInherited } from "@/lib/inherit";
+import { inheritLabel, LOCKED_REASON, onOff, serverContextSegments, serverInherited, serverLanguageLabel } from "@/lib/inherit";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -346,7 +346,12 @@ function Editor({
                 set({ language: language || undefined, decodeOverrides: overrides && Object.keys(overrides).length ? overrides : undefined });
               }}
               inheritLabel={inheritLabel(
-                backend ? spokenLabel(spokenValue(backend.language || "auto", undefined, multiInherited)) : undefined,
+                !backend
+                  ? undefined
+                  : backend.language === ""
+                    ? // The backend leaves it to the server: name the server's language.
+                      serverLanguageLabel(decodeDefaults)
+                    : spokenLabel(spokenValue(backend.language || "auto", undefined, multiInherited)),
               )}
             />
           </div>
@@ -358,7 +363,9 @@ function Editor({
               value={p.model ?? ""}
               onChange={(v) => set({ model: v || undefined })}
               models={models}
-              defaultLabel={backend?.model ? `Inherit · ${backend.model}` : "Inherit from backend"}
+              defaultLabel={inheritLabel(
+                backend?.model || (p.model ? undefined : decodeDefaults?.model) || (backend ? "server model" : undefined),
+              )}
             />
           </div>
         </OverrideHeader>
@@ -451,7 +458,7 @@ function Editor({
             pinned={server.pinned}
             ignored={server.ignored}
             known={server.known}
-            languagePinned={namedLanguage(p.language || backend?.language)}
+            languagePinned={namedLanguage(p.language || backend?.language || String(decodeDefaults?.language?.value ?? ""))}
             serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}
           />

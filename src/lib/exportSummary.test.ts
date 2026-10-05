@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { contentStates, exportSummary, type ContentItem } from "./exportSummary";
+import { contentStates, exportSummary, lengthNeedsWords, type ContentItem } from "./exportSummary";
+
+describe("lengthNeedsWords", () => {
+  it("marks a split that has no word timing to work with", () => {
+    expect(lengthNeedsWords(false, "standard")).toBe(true);
+    expect(lengthNeedsWords(false, "custom")).toBe(true);
+  });
+  it("as transcribed, or with words, there is nothing to say", () => {
+    expect(lengthNeedsWords(false, "transcribed")).toBe(false);
+    expect(lengthNeedsWords(true, "short")).toBe(false);
+  });
+});
 
 const base = {
   showTs: false, showNames: true, colorize: true, wordTs: false,

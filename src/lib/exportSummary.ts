@@ -63,6 +63,16 @@ export function contentStates(a: {
   ];
 }
 
+/** Why Subtitle length has nothing to work with: a cue is split only at word timings, and this
+ *  run has none — each segment stays one subtitle, only its lines are wrapped (cueSplit). */
+export const NO_WORDS_SPLIT_WHY =
+  "This run captured no word timing, so subtitles are not split: each segment stays one subtitle, only its lines are wrapped.";
+
+/** Mark Subtitle length while it asks for a split the transcript cannot get (W8). */
+export function lengthNeedsWords(hasWords: boolean, length: string): boolean {
+  return !hasWords && length !== "transcribed";
+}
+
 /** ✓ on · ○ off · – not part of this format · ! needs a look. */
 export type SummaryState = "on" | "off" | "na" | "warn";
 

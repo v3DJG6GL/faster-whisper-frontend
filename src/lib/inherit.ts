@@ -8,7 +8,9 @@
 // The server's own decode values come from GET /v1/request-default-settings (serverInherited); a value
 // nobody can name (the server is unreachable) leaves the bare word.
 
-import type { DecodeDefault, DecodeDefaults, InheritedValues } from "./types";
+import type { DecodeDefault, DecodeDefaults, InheritedValues, ServerModel } from "./types";
+import { languageLabel } from "./languages";
+import { safeDisplayText } from "./sanitize";
 import { BOOL_KEYS, isDecodeKey, keySpec, NULL_TEXT, type DecodeKey } from "./decodeKeys";
 
 export type InheritWord = "Inherit" | "Default";
@@ -83,6 +85,36 @@ export interface ServerInherited {
 export function serverContextSegments(dd: DecodeDefaults | null | undefined): number | undefined {
   const v = dd?.translation?.context_segments?.value;
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+/** A model name for an inherit label: the last path part ("large-v3" for
+ *  "Systran/faster-whisper-large-v3"), bounded; undefined when there is none. */
+export function shortModelName(id: unknown): string | undefined {
+  if (typeof id !== "string" || !id.trim()) return undefined;
+  const t = id.trim();
+  return safeDisplayText(t.split("/").pop() || t, 60) || undefined;
+}
+
+/** The name a request-default-settings entry gives (the default model, a stage model), short. */
+export function serverName(d: Pick<DecodeDefault, "value"> | null | undefined): string | undefined {
+  return shortModelName(d?.value);
+}
+
+/** The server's DEFAULT_LANGUAGE for these requests as the language pickers' inherit row names it
+ *  ("German", "Auto-detect" for ""), or undefined when the server doesn't say. */
+export function serverLanguageLabel(dd: DecodeDefaults | null | undefined): string | undefined {
+  const v = dd?.language?.value;
+  if (typeof v !== "string") return undefined;
+  return languageLabel(v.trim() || "auto");
+}
+
+/** A picker's model list with the server's default model in it: a default bound to the caller's
+ *  identity may not be among the models the caller is offered, and the field would then name a
+ *  default it cannot show. */
+export function withDefaultModel(models: readonly ServerModel[] | undefined, id: unknown): ServerModel[] {
+  const list = [...(models ?? [])];
+  if (typeof id === "string" && id.trim() && !list.some((m) => m.id === id.trim())) list.push({ id: id.trim(), loaded: false });
+  return list;
 }
 
 /** Why a decode row is disabled because the server does not list its key. */
