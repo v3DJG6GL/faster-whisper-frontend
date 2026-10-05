@@ -180,6 +180,10 @@ describe("site subtitle cleanup", () => {
       "Das hat mit Vertrauen zu tun, Ein- und Ausgang, Vor- oder Nachteil.",
     ]);
   });
+  it("character references decode after the tags go: &nbsp; is a space, &lt;i&gt; stays text", () => {
+    const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nper Re-Prompting&nbsp; vergleichen,&nbsp;&nbsp;\nTom &amp; Jerry &#39;&#x263A;&#39; &lt;i&gt; &bogus;\n";
+    expect(parseImportedText("vtt", vtt).segments[0].text).toBe("per Re-Prompting vergleichen, Tom & Jerry '\u263A' <i> &bogus;");
+  });
   it("ordinary cues pass through: no repeated lines, no short cues", () => {
     const cues = [
       { start: 0, end: 2, lines: ["Hello there."] },

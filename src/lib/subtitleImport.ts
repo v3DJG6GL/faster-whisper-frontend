@@ -66,14 +66,32 @@ function parseClock(s: string): number | undefined {
   return h * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10) + frac;
 }
 
-/** Strip markup a cue line may carry and split a leading "Name:" speaker. */
-function cueText(lines: string[]): { text: string; speaker?: string } {
-  const joined = lines
-    .join(" ")
-    .replace(/<[^>\n]{0,64}>/g, "") // <font>/<c.x>/<i>/inline word tags
-    .replace(/\{\\[^}]{0,64}\}/g, "") // ASS-style override blocks
+/** Character references a cue may carry (WebVTT allows all HTML ones; sites send
+ *  `&nbsp;`, `&amp;`, `&#39;`). Unknown names stay as written. */
+const ENTITIES: Record<string, string> = {
+  nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", lrm: "\u200E", rlm: "\u200F",
+};
+
+function decodeEntities(s: string): string {
+  return s.replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{2,8});/gi, (m, ref: string) => {
+    if (ref[0] !== "#") return ENTITIES[ref.toLowerCase()] ?? m;
+    const cp = ref[1] === "x" || ref[1] === "X" ? parseInt(ref.slice(2), 16) : parseInt(ref.slice(1), 10);
+    return cp > 0 && cp <= 0x10ffff && (cp < 0xd800 || cp > 0xdfff) ? String.fromCodePoint(cp) : m;
+  });
+}
+
+/** Cue text without markup: tags (`<font>`, `<c.x>`, `<i>`, inline word tags) and ASS
+ *  override blocks go, then character references decode (after, so `&lt;i&gt;` stays text),
+ *  whitespace collapses. */
+function stripMarkup(s: string): string {
+  return decodeEntities(s.replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, ""))
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** Strip markup a cue line may carry and split a leading "Name:" speaker. */
+function cueText(lines: string[]): { text: string; speaker?: string } {
+  const joined = stripMarkup(lines.join(" "));
   const m = /^([^:\n]{1,40}):\s+(.*)$/.exec(joined);
   // A leading "Name: " prefix becomes the speaker — but never a clock-like
   // token ("12:30 lunch") or a URL scheme.
@@ -92,7 +110,7 @@ export interface RawCue {
 
 /** Markup-free, whitespace-collapsed line — what two cues compare on. */
 function plainLine(line: string): string {
-  return line.replace(/<[^>\n]{0,64}>/g, "").replace(/\s+/g, " ").trim();
+  return stripMarkup(line);
 }
 
 /** YouTube's auto captions "roll": every cue repeats the previous cue's last line above its
@@ -158,7 +176,7 @@ function cuesToSegments(cues: RawCue[]): ImportedText {
     const lines = fixBroadcasterText(raw);
     const v = /^<v\s+([^>]{1,40})>([\s\S]*?)(?:<\/v>)?$/.exec(lines.join(" ").trim());
     if (v) {
-      const text = v[2].replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, "").replace(/\s+/g, " ").trim();
+      const text = stripMarkup(v[2]);
       if (text) segments.push({ start, end, text, speaker: v[1].trim() });
     } else {
       const { text, speaker } = cueText(lines);
