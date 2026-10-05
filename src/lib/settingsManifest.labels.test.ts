@@ -11,15 +11,15 @@ import { SETTING } from "./settingsManifest";
 // tsconfig, and vitest resolves them through the same pipeline as the app.
 import transcribeSrc from "../screens/Transcribe.tsx?raw";
 import settingsSrc from "../screens/Settings.tsx?raw";
-import viewerSrc from "../components/TranscriptViewer.tsx?raw";
-import exportSrc from "../components/TranscriptExport.tsx?raw";
+import viewerSrc from "../components/transcribe/TranscriptViewer.tsx?raw";
+import exportSrc from "../components/transcribe/TranscriptExport.tsx?raw";
 import summarySrc from "./transcript/exportSummary.ts?raw";
 
 const SOURCES: Record<string, string> = {
   "screens/Transcribe.tsx": transcribeSrc,
   "screens/Settings.tsx": settingsSrc,
-  "components/TranscriptViewer.tsx": viewerSrc,
-  "components/TranscriptExport.tsx": exportSrc,
+  "components/transcribe/TranscriptViewer.tsx": viewerSrc,
+  "components/transcribe/TranscriptExport.tsx": exportSrc,
   "lib/transcript/exportSummary.ts": summarySrc,
 };
 const src = (p: string) => SOURCES[p];
@@ -31,14 +31,14 @@ describe("manifest labels match the screens' literal labels", () => {
     ["screens/Transcribe.tsx", "translateTo"],
     ["screens/Transcribe.tsx", "separateBgm"],
     ["screens/Transcribe.tsx", "keepUrlVideoCopies"], // the link card's per-link switch
-    ["components/TranscriptViewer.tsx", "showTimestamps"],
-    ["components/TranscriptViewer.tsx", "showSpeakerNames"],
-    ["components/TranscriptViewer.tsx", "colorizeSpeakers"],
+    ["components/transcribe/TranscriptViewer.tsx", "showTimestamps"],
+    ["components/transcribe/TranscriptViewer.tsx", "showSpeakerNames"],
+    ["components/transcribe/TranscriptViewer.tsx", "colorizeSpeakers"],
     ["lib/transcript/exportSummary.ts", "wordTimestamps"], // the export's Content box
-    ["components/TranscriptExport.tsx", "subtitleLength"],
-    ["components/TranscriptExport.tsx", "translationTiming"],
-    ["components/TranscriptExport.tsx", "revealAfterSave"], // the Save button's menu
-    ["components/TranscriptExport.tsx", "exportFormat"], // aria-label on the bespoke radiogroup
+    ["components/transcribe/TranscriptExport.tsx", "subtitleLength"],
+    ["components/transcribe/TranscriptExport.tsx", "translationTiming"],
+    ["components/transcribe/TranscriptExport.tsx", "revealAfterSave"], // the Save button's menu
+    ["components/transcribe/TranscriptExport.tsx", "exportFormat"], // aria-label on the bespoke radiogroup
     ["screens/Settings.tsx", "audioFolder"], // bespoke Audio-storage block heading
   ];
   for (const [file, id] of cases) {

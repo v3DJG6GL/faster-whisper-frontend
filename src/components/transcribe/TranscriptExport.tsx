@@ -8,7 +8,7 @@ import { Check, Circle, Download, Hourglass, Minus, PanelBottom, PanelRight, Rot
 import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
 import { Badge, Button, ChipToggle, RangeField, Segmented, SplitButton, TextInput } from "@/components/ui";
-import { ExportTrackChips } from "@/components/ExportTrackChips";
+import { ExportTrackChips } from "@/components/transcribe/ExportTrackChips";
 import { fmtBytes } from "@/lib/format";
 import {
   pickExportPath, saveTextFile, audioBasePref, cancelMediaExport, copyMediaTo, fetchUrlMedia, fetchUrlVideo,

@@ -7,8 +7,8 @@ import { useApp } from "@/lib/store";
 import { patchTranscribe } from "@/lib/useDisplayToggles";
 import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingExpand, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
-import { SpokenLanguageRow, useLinkLanguage } from "@/components/SpokenLanguageRow";
-import { SiteSubtitlesPanel } from "@/components/SiteSubtitlesPanel";
+import { SpokenLanguageRow, useLinkLanguage } from "@/components/transcribe/SpokenLanguageRow";
+import { SiteSubtitlesPanel } from "@/components/transcribe/SiteSubtitlesPanel";
 import { derive, flip, frozenSiteRun, initialSiteState, setTargets, type SiteChange, type SiteSubsState } from "@/lib/transcript/siteSubtitles";
 import { siteDisplayName } from "@/lib/transcript/mediaExport";
 import { maxTranslationTargets, translationTargetInfo } from "@/lib/capabilities";
@@ -22,11 +22,11 @@ import {
   withDefaultModel,
 } from "@/lib/inherit";
 import { OverrideHeader } from "@/components/OverrideField";
-import { StageGear, StageOptions, useStageOptions } from "@/components/StageOptions";
+import { StageGear, StageOptions, useStageOptions } from "@/components/transcribe/StageOptions";
 import { diarizationSummary, separationSummary, speakersText, stageModelText } from "@/lib/stageSummary";
 import { envDesc } from "@/lib/envDesc";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
-import { TranscriptViewer } from "@/components/TranscriptViewer";
+import { TranscriptViewer } from "@/components/transcribe/TranscriptViewer";
 import { speakerOrder as speakersOf } from "@/lib/transcript/transcriptFormats";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
