@@ -14,6 +14,10 @@ import {
   type SiteBadge, type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "@/lib/siteSubtitles";
 
+/** A table row: language, its source badges, the remove button. */
+const ROW =
+  "grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)_2rem] items-center gap-3.5 border-t border-line px-3 py-2 text-[12.5px]";
+
 /** The three badge states: idle greys out, off strikes through. */
 const stateTone = (state: SiteBadge["state"]) =>
   state === "idle" ? "opacity-45 grayscale" : state === "off" ? "opacity-40 line-through" : "";
@@ -102,10 +106,7 @@ export function SiteSubtitlesPanel({
                 {v.rows.map((row) => (
                   <div
                     key={row.code ?? "orig"}
-                    className={cn(
-                      "grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)_2rem] items-center gap-3.5 border-t border-line px-3 py-2 text-[12.5px]",
-                      row.code === null && "bg-accent-soft/30",
-                    )}
+                    className={cn(ROW, row.code === null && "bg-accent-soft/30")}
                   >
                     <div className="flex min-w-0 flex-col">
                       <span className="truncate text-text">{row.label}</span>
@@ -149,7 +150,7 @@ export function SiteSubtitlesPanel({
                   </div>
                 ))}
                 {mt && (
-                  <div className="grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)_2rem] items-center gap-3.5 border-t border-line px-3 py-2 text-[12.5px]">
+                  <div className={ROW}>
                     <span className="text-text">Add language</span>
                     <div className="w-56">
                       <TargetLanguagePicker
