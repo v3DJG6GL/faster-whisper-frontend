@@ -2431,7 +2431,7 @@ export function TranscriptViewer({
         mediaPath={mediaPath}
         overlayKey={overlayKey}
         initialExport={initialExport}
-        allTracks={allTracks}
+        order={trackOrd}
         visibleTracks={visibleTracks}
         trackPrefs={trackPrefs}
         onTrackPrefs={setTrackPrefs}
