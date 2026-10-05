@@ -70,9 +70,9 @@ pub(crate) fn resolve_recordings_dir(app: &AppHandle, custom: Option<String>) ->
 }
 
 /// Does one of OUR real windows hold keyboard focus? The click-through "overlay" chip never
-/// does, so it is excluded. Every sink guard in commands/inject.rs asks this before typing or pasting —
+/// does, so it is excluded. Every sink guard in inject/text.rs asks this before typing or pasting —
 /// keys sent while our own window is focused fire buttons/shortcuts in the app itself.
-fn own_window_focused(app: &AppHandle) -> bool {
+pub(crate) fn own_window_focused(app: &AppHandle) -> bool {
     app.webview_windows()
         .iter()
         .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
@@ -124,7 +124,7 @@ async fn resolve_key_async(explicit: Option<String>, backend_id: Option<String>)
 /// The flag lives in `inject` so the clipboard WRITERS can see it too: on Windows the stuck read
 /// still holds the clipboard, and every write path now waits it out (`wait_clip_read_idle`)
 /// instead of racing it.
-async fn read_selection_bounded(
+pub(crate) async fn read_selection_bounded(
     read: impl FnOnce() -> Option<String> + Send + 'static,
 ) -> Option<String> {
     use crate::inject::CLIP_READ_BUSY;

@@ -14,6 +14,7 @@
 //! (`windows_clipboard`) and remote-desktop client detection (`rdp_client`).
 
 pub mod rdp_client;
+pub mod text;
 pub mod virtual_keyboard;
 pub mod wayland;
 pub mod windows_clipboard;
