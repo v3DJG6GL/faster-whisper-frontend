@@ -1116,7 +1116,7 @@ export default function Settings() {
   const [storeMsg, setStoreMsg] = useState<{ text: string; error?: boolean } | null>(null);
   const [dirBusy, setDirBusy] = useState(false);
   const dirBusyRef = useRef(false);
-  // Both die with the tab that owns them: an armed "Delete 214 sessions" confirm must not
+  // Both die with the tab that owns them: an armed "Delete 214 dictations" confirm must not
   // survive a trip to another tab, and a stale "Removed N files." must not greet the next visit.
   useEffect(() => {
     setConfirming(null);
@@ -1563,7 +1563,7 @@ export default function Settings() {
             <SectionLabel className="mb-1 mt-4">Dictations</SectionLabel>
             <SettingRow
               title={SETTING.keepDictationHistory.label}
-              desc="Each session appears on the History screen — its text, target app, and its audio (below), on this machine only. Turning this off also deletes the stored entries."
+              desc="Each dictation appears on the History screen — its text, target app, and its audio (below), on this machine only. Turning this off also deletes the stored entries."
             >
               <Toggle
                 checked={s.transcribe?.keepDictationHistory ?? true}
@@ -1601,7 +1601,7 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title={SETTING.dictationRetention.label}
-              desc="One clock for the whole session — text and audio leave together. Dictations are usually typed into their target and done; a short window is plenty. Old ones are removed on launch and whenever you change this."
+              desc="One clock for each dictation — text and audio leave together. Dictations are usually typed into their target and done; a short window is plenty. Old ones are removed on launch and whenever you change this."
               disabled={dictOff}
               disabledReason={`Nothing is kept, so there is nothing to expire. Turn on “${SETTING.keepDictationHistory.label}” or “${SETTING.keepDictationAudio.label}” to set a clock.`}
             >
@@ -1620,13 +1620,13 @@ export default function Settings() {
 
             <SettingRow
               title="Delete all dictations"
-              desc={`Removes all ${storeStats?.dictationCount ?? 0} stored sessions and their audio. The retention clock stays as set.`}
+              desc={`Removes all ${storeStats?.dictationCount ?? 0} stored dictations and their audio. The retention clock stays as set.`}
               last
             >
               {confirming === "dict" ? (
                 <span className="flex items-center gap-2">
                   <Button size="sm" variant="danger" onClick={() => runStoreAction("dict")}>
-                    Delete {storeStats?.dictationCount ?? 0} sessions
+                    Delete {storeStats?.dictationCount ?? 0} dictations
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
