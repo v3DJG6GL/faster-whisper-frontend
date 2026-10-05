@@ -1,4 +1,5 @@
 import {
+  type ComponentProps,
   type ReactNode,
   type ReactElement,
   type InputHTMLAttributes,
@@ -13,7 +14,7 @@ import {
 } from "react";
 import type { LucideIcon } from "lucide-react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, ArrowLeft, Check, Info, Minus, Plus, RotateCcw } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, Info, Minus, Plus, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { langCode, languageLabel } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
@@ -1114,6 +1115,34 @@ export function CodeChip({
       <span aria-hidden className="opacity-60 transition-opacity group-enabled:group-hover:opacity-100">
         ×
       </span>
+    </button>
+  );
+}
+
+/* ── FieldTrigger ─────────────────────────────────────────────────────── */
+/** A dropdown's closed face drawn as a form field: the current value and a chevron. `open`
+ *  outlines it in the accent while its list is up; `sm` = a table row's compact field. */
+export function FieldTrigger({
+  open,
+  size = "md",
+  className,
+  children,
+  ...rest
+}: ComponentProps<"button"> & { open?: boolean; size?: "sm" | "md" }) {
+  return (
+    <button
+      type="button"
+      {...rest}
+      className={cn(
+        "ring-signal flex w-full items-center justify-between gap-2 border border-line bg-surface-2 text-left",
+        size === "md" ? "h-10 rounded-xl pl-3.5 pr-3 text-[13px] text-text" : "h-8 rounded-lg px-2.5 text-[12.5px] text-dim",
+        open && "border-accent/55",
+        rest.disabled && "cursor-not-allowed opacity-40",
+        className,
+      )}
+    >
+      <span className="truncate">{children}</span>
+      <ChevronDown className={cn("shrink-0 text-faint", size === "md" ? "size-4" : "size-3.5")} />
     </button>
   );
 }

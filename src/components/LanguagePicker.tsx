@@ -6,8 +6,9 @@
 // row, a form field or a table's "Add language" row opens the same list.
 
 import { useRef, type ReactNode } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check } from "lucide-react";
 import { KeyHint, ListPicker, type TriggerProps } from "@/components/ListPicker";
+import { FieldTrigger } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import {
   WHISPER_LANGUAGES, languageLabel, namedLanguage, nativeName, spokenLabel, spokenSections, targetSections,
@@ -85,21 +86,6 @@ function useRecent(key: "recentSpokenLanguages" | "recentTranslationTargets") {
   };
 }
 
-const fieldTrigger = (p: TriggerProps, label: string, ariaLabel: string) => (
-  <button
-    {...p}
-    aria-label={`${ariaLabel}: ${label}`}
-    className={cn(
-      "ring-signal flex h-10 w-full items-center justify-between gap-2 rounded-xl border border-line bg-surface-2 pl-3.5 pr-3 text-left text-[13px] text-text",
-      p["aria-expanded"] && "border-accent/55",
-      p.disabled && "cursor-not-allowed opacity-40",
-    )}
-  >
-    <span className="truncate">{label}</span>
-    <ChevronDown className="size-4 shrink-0 text-faint" />
-  </button>
-);
-
 export function SpokenLanguagePicker({
   value,
   onChange,
@@ -107,7 +93,6 @@ export function SpokenLanguagePicker({
   multi,
   ariaLabel = "Language",
   disabled,
-  renderTrigger,
 }: {
   /** A language code, "auto", MULTI_LANGUAGE, or "" (inherit — only with `inheritLabel`). */
   value: string;
@@ -118,8 +103,6 @@ export function SpokenLanguagePicker({
   multi?: boolean;
   ariaLabel?: string;
   disabled?: boolean;
-  /** Draw the trigger yourself; `label` names the current value. */
-  renderTrigger?: (p: TriggerProps, label: string) => ReactNode;
 }) {
   const { recent, use, flush } = useRecent("recentSpokenLanguages");
   const labelOf = (v: string) => (v === "" ? inheritLabel ?? "Inherit" : spokenLabel(v));
@@ -145,7 +128,11 @@ export function SpokenLanguagePicker({
           />
         );
       }}
-      renderTrigger={(p) => (renderTrigger ?? ((tp, l) => fieldTrigger(tp, l, ariaLabel)))(p, current)}
+      renderTrigger={(p) => (
+        <FieldTrigger {...p} open={p["aria-expanded"]} aria-label={`${ariaLabel}: ${current}`}>
+          {current}
+        </FieldTrigger>
+      )}
       placeholder={`Search ${WHISPER_LANGUAGES.length} languages — name, native name or code`}
       noun="language"
       keys={

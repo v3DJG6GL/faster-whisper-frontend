@@ -4,9 +4,9 @@
 // struck), a trash button for languages the site lacks, and "Add language" last. Every rule
 // lives in lib/siteSubtitles; this file only draws derive() and routes clicks back.
 
-import { ChevronDown, Loader2, Trash2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { TargetLanguagePicker } from "@/components/LanguagePicker";
-import { Segmented, Toggle } from "@/components/ui";
+import { FieldTrigger, Segmented, Toggle } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { sourceTone } from "@/lib/sourceTone";
 import {
@@ -166,16 +166,9 @@ export function SiteSubtitlesPanel({
                         max={Number.MAX_SAFE_INTEGER}
                         disabled={disabled}
                         renderTrigger={(p) => (
-                          <button
-                            {...p}
-                            className={cn(
-                              "ring-signal flex h-8 w-full items-center justify-between gap-2 rounded-lg border border-line bg-surface-2 px-2.5 text-left text-[12.5px] text-dim",
-                              p["aria-expanded"] && "border-accent/55",
-                            )}
-                          >
+                          <FieldTrigger {...p} open={p["aria-expanded"]} size="sm">
                             Choose a language…
-                            <ChevronDown className="size-3.5 shrink-0 text-faint" />
-                          </button>
+                          </FieldTrigger>
                         )}
                       />
                     </div>

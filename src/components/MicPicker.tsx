@@ -9,8 +9,8 @@
 // it, Escape closes back to the trigger, Tab closes.
 
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { Bluetooth, Check, ChevronDown, Mic, SlidersHorizontal } from "lucide-react";
-import { Badge, Toggle } from "@/components/ui";
+import { Bluetooth, Check, Mic, SlidersHorizontal } from "lucide-react";
+import { Badge, FieldTrigger, Toggle } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { buildMicView, isSelectable, type MicRow, type SelectableRow } from "@/lib/micOptions";
 import { safeDisplayText } from "@/lib/sanitize";
@@ -167,9 +167,8 @@ export function MicPicker({
 
   return (
     <div ref={rootRef} className={cn("relative", className)}>
-      <button
+      <FieldTrigger
         ref={triggerRef}
-        type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? `${uid}-list` : undefined}
@@ -182,15 +181,10 @@ export function MicPicker({
             setOpen(true);
           }
         }}
-        className={cn(
-          "ring-signal flex h-10 w-full items-center justify-between gap-2 rounded-xl border border-line bg-surface-2 pl-3.5 pr-3 text-left text-[13px] text-text",
-          view.missing && "text-dim",
-          disabled && "cursor-not-allowed opacity-40",
-        )}
+        className={cn(view.missing && "text-dim")}
       >
-        <span className="truncate">{safeDisplayText(view.triggerLabel, LABEL_MAX)}</span>
-        <ChevronDown className="size-4 shrink-0 text-faint" />
-      </button>
+        {safeDisplayText(view.triggerLabel, LABEL_MAX)}
+      </FieldTrigger>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 w-[420px] max-w-[calc(100vw-2rem)] rounded-xl border border-line-strong bg-panel p-1.5 shadow-lg">
           <ul
